@@ -65,7 +65,7 @@ services:
       - ./data:/app/data:rw
       - ./locales:/app/locales:rw
       # Конфигурация приложения
-      # - ./app-config.json:/app/app-config.json:ro
+      - ./app-config.json:/app/app-config.json:ro
       # Timezone
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
@@ -82,7 +82,27 @@ services:
       retries: 3
       start_period: 30s
 
+  caddy:
+    image: caddy:2-alpine
+    container_name: remnawave_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./wildcard:/etc/caddy/certs:ro
+      - ./miniapp:/miniapp:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - bot_network
+
 volumes:
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
   postgres_data:
     driver: local
   redis_data:
