@@ -2225,7 +2225,6 @@ async def confirm_purchase(
             existing_subscription.traffic_limit_gb = final_traffic_gb
             if should_update_devices:
                 existing_subscription.device_limit = selected_devices
-            # Проверка стран уже выполнена до списания денег
             existing_subscription.connected_squads = selected_countries
 
             existing_subscription.start_date = current_time
