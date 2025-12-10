@@ -9,7 +9,12 @@ from aiogram.types import (
     InlineKeyboardMarkup,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.handlers.subscription.purchase import save_cart_and_redirect_to_topup, return_to_saved_cart, clear_saved_cart
+from app.handlers.subscription.purchase import (
+    save_cart_and_redirect_to_topup,
+    return_to_saved_cart,
+    clear_saved_cart,
+    confirm_extend_subscription,
+)
 from app.handlers.subscription.autopay import handle_subscription_cancel
 from app.database.models import User, Subscription
 
@@ -347,9 +352,59 @@ async def test_return_to_saved_cart_insufficient_funds(mock_callback_query, mock
         # Проверяем, что сообщение было отредактировано с сообщением о недостатке средств
         mock_callback_query.message.edit_text.assert_called_once()
 
-        # В этой функции в сценарии недостатка средств вызова callback.answer() не происходит
-        # (ответ отправляется через return до вызова callback.answer())
-        mock_callback_query.answer.assert_not_called()
+
+async def test_confirm_extend_subscription_saves_countries(mock_callback_query, mock_user, mock_db):
+    """Продление с недостатком средств должно сохранять выбранные страны и настройки."""
+
+    from datetime import datetime, timedelta
+
+    subscription = MagicMock(spec=Subscription)
+    subscription.id = 42
+    subscription.connected_squads = ["ru", "us"]
+    subscription.device_limit = 3
+    subscription.traffic_limit_gb = 50
+    subscription.end_date = datetime.utcnow() + timedelta(days=5)
+    subscription.status = "active"
+    mock_user.subscription = subscription
+    mock_user.balance_kopeks = 100
+    mock_user.get_promo_discount = MagicMock(return_value=0)
+    mock_user.promo_group_id = None
+
+    mock_callback_query.data = "extend_period_30"
+
+    with patch('app.handlers.subscription.purchase.user_cart_service') as mock_cart_service, \
+         patch('app.handlers.subscription.purchase.settings') as mock_settings, \
+         patch('app.handlers.subscription.purchase.SubscriptionService') as mock_service_cls, \
+         patch('app.handlers.subscription.purchase.apply_percentage_discount', return_value=(10000, 0)), \
+         patch('app.handlers.subscription.purchase.get_texts') as mock_get_texts, \
+         patch('app.handlers.subscription.purchase.get_insufficient_balance_keyboard') as mock_keyboard:
+
+        service_instance = mock_service_cls.return_value
+        service_instance.get_countries_price_by_uuids = AsyncMock(return_value=(0, [0, 0]))
+
+        mock_cart_service.save_user_cart = AsyncMock()
+
+        mock_settings.is_devices_selection_enabled.return_value = True
+        mock_settings.DEFAULT_DEVICE_LIMIT = 1
+        mock_settings.PRICE_PER_DEVICE = 0
+        mock_settings.get_disabled_mode_device_limit.return_value = None
+        mock_settings.get_traffic_price.return_value = 0
+
+        mock_texts = MagicMock()
+        mock_texts.format_price = lambda value: f"{value / 100:.0f}₽"
+        mock_texts.t = lambda key, default=None: default or ""
+        mock_get_texts.return_value = mock_texts
+
+        await confirm_extend_subscription(mock_callback_query, mock_user, mock_db)
+
+        mock_cart_service.save_user_cart.assert_called_once()
+        _, saved_cart = mock_cart_service.save_user_cart.call_args[0]
+
+        assert saved_cart['countries'] == subscription.connected_squads
+        assert saved_cart['devices'] == subscription.device_limit
+        assert saved_cart['traffic_gb'] == subscription.traffic_limit_gb
+
+        mock_callback_query.answer.assert_called_once()
 
 async def test_clear_saved_cart(mock_callback_query, mock_state, mock_user, mock_db):
     """Тест очистки сохраненной корзины"""
