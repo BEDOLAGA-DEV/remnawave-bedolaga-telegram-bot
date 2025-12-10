@@ -38,3 +38,7 @@ aiofiles==23.2.1
 
 # Вебхуки PayPalych (Flask)
 Flask==3.1.0
+
+# Тестирование
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
