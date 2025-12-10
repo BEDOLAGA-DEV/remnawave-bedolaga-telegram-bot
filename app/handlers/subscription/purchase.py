@@ -2076,6 +2076,22 @@ async def confirm_purchase(
         )
     logger.info(f"   ИТОГО: {final_price / 100}₽")
 
+    # Проверяем выбор стран ДО списания денег
+    selected_countries = data.get('countries', [])
+    existing_subscription = db_user.subscription
+    
+    # Должна быть выбрана хотя бы одна страна для подписки
+    if not selected_countries:
+        await callback.message.edit_text(
+            texts.t(
+                "COUNTRIES_MINIMUM_REQUIRED",
+                "❌ Нельзя отключить все страны. Должна быть подключена хотя бы одна страна."
+            ),
+            reply_markup=get_back_keyboard(db_user.language)
+        )
+        await callback.answer()
+        return
+
     if db_user.balance_kopeks < final_price:
         missing_kopeks = final_price - db_user.balance_kopeks
         message_text = texts.t(
@@ -2209,33 +2225,7 @@ async def confirm_purchase(
             existing_subscription.traffic_limit_gb = final_traffic_gb
             if should_update_devices:
                 existing_subscription.device_limit = selected_devices
-            # Проверяем, что при обновлении существующей подписки есть хотя бы одна страна
-            selected_countries = data.get('countries', [])
-            if not selected_countries:
-                # В случае если подписка уже существовала, не разрешаем отключать все страны
-                # Если подписка новая, разрешаем, но обычно через UI пользователь должен выбрать хотя бы один сервер
-                if existing_subscription and existing_subscription.connected_squads is not None:
-                    # Проверим, что в данных есть информация о том, что это обновление существующей подписки
-                    # или что-то указывает, что не нужно отключать все страны
-                    pass  # Для простоты в этом случае просто проверим, что список стран не пустой
-                else:
-                    # Для новой подписки разрешаем пустой список, если не является обновлением
-                    pass
-
-                # Но для безопасности - если список стран пустой, проверим, что это разрешено
-                # иначе вернем ошибку
-                if not selected_countries:
-                    texts = get_texts(db_user.language)
-                    await callback.message.edit_text(
-                        texts.t(
-                            "COUNTRIES_MINIMUM_REQUIRED",
-                            "❌ Нельзя отключить все страны. Должна быть подключена хотя бы одна страна."
-                        ),
-                        reply_markup=get_back_keyboard(db_user.language)
-                    )
-                    await callback.answer()
-                    return
-
+            # Проверка стран уже выполнена до списания денег
             existing_subscription.connected_squads = selected_countries
 
             existing_subscription.start_date = current_time
@@ -2265,23 +2255,7 @@ async def confirm_purchase(
             if resolved_device_limit is None and devices_selection_enabled:
                 resolved_device_limit = default_device_limit
 
-            # Проверяем, что для новой подписки также есть хотя бы одна страна, если пользователь проходит через интерфейс стран
             new_subscription_countries = data.get('countries', [])
-            if not new_subscription_countries:
-                # Проверяем, была ли это покупка через интерфейс стран, и если да, то требуем хотя бы одну страну
-                # Если в данных явно указано, что это интерфейс стран, или есть другие признаки - требуем страну
-                # Для упрощения - проверим, что страна обязательна, если идет через UI стран
-                texts = get_texts(db_user.language)
-                await callback.message.edit_text(
-                    texts.t(
-                        "COUNTRIES_MINIMUM_REQUIRED",
-                        "❌ Нельзя отключить все страны. Должна быть подключена хотя бы одна страна."
-                    ),
-                    reply_markup=get_back_keyboard(db_user.language)
-                )
-                await callback.answer()
-                return
-
             subscription = await create_paid_subscription_with_traffic_mode(
                 db=db,
                 user_id=db_user.id,
