@@ -212,6 +212,8 @@
   "ADMIN_MESSAGES_BY_CRITERIA": "🔍 По критериям",
   "ADMIN_MESSAGES_BY_SUBSCRIPTIONS": "🎯 По подпискам",
   "ADMIN_MESSAGES_HISTORY": "📋 История",
+  "ADMIN_PINNED_MESSAGE": "📌 Закрепленное сообщение",
+  "ADMIN_PINNED_MESSAGE_UPDATE": "✏️ Обновить",
   "ADMIN_MONITORING": "🔍 Мониторинг",
   "ADMIN_MONITORING_ALL_LOGS": "📋 Все логи",
   "ADMIN_MONITORING_AUTOPAY_SETTINGS": "💳 Настройки автооплаты",

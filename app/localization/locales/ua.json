@@ -139,6 +139,8 @@
  "ADMIN_MESSAGES_BY_CRITERIA": "🔍 За критеріями",
  "ADMIN_MESSAGES_BY_SUBSCRIPTIONS": "🎯 За підписками",
  "ADMIN_MESSAGES_HISTORY": "📋 Історія",
+ "ADMIN_PINNED_MESSAGE": "📌 Закріплене повідомлення",
+ "ADMIN_PINNED_MESSAGE_UPDATE": "✏️ Оновити",
  "ADMIN_MONITORING": "🔍 Моніторинг",
  "ADMIN_MONITORING_ALL_LOGS": "📋 Всі логи",
  "ADMIN_MONITORING_AUTOPAY_SETTINGS": "💳 Налаштування автооплати",

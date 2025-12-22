@@ -209,6 +209,8 @@
   "ADMIN_MESSAGES_BY_CRITERIA": "🔍 By criteria",
   "ADMIN_MESSAGES_BY_SUBSCRIPTIONS": "🎯 By subscriptions",
   "ADMIN_MESSAGES_HISTORY": "📋 History",
+  "ADMIN_PINNED_MESSAGE": "📌 Pinned message",
+  "ADMIN_PINNED_MESSAGE_UPDATE": "✏️ Update",
   "ADMIN_MONITORING": "🔍 Monitoring",
   "ADMIN_MONITORING_ALL_LOGS": "📋 All logs",
   "ADMIN_MONITORING_AUTOPAY_SETTINGS": "💳 Auto-pay settings",

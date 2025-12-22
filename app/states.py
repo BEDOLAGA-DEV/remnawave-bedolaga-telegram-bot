@@ -134,6 +134,7 @@ class AdminStates(StatesGroup):
     creating_server_country = State()
 
     editing_welcome_text = State()
+    editing_pinned_message = State()
     waiting_for_message_buttons = "waiting_for_message_buttons"
 
     editing_promo_offer_message = State()
