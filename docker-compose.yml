@@ -11,7 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - bot_network
+      - bot_network_dev5
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-remnawave_user} -d ${POSTGRES_DB:-remnawave_bot}"]
       interval: 30s
@@ -27,7 +27,7 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      - bot_network
+      - bot_network_dev5
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 30s
@@ -74,7 +74,7 @@ services:
     ports:
       - "${WEB_API_PORT:-8080}:8080"
     networks:
-      - bot_network
+      - bot_network_dev5
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import requests, os; requests.get('http://localhost:8080/health', headers={'X-API-Key': os.environ.get('WEB_API_DEFAULT_TOKEN')}, timeout=5) or exit(1)\""]
       interval: 60s
@@ -89,9 +89,9 @@ volumes:
     driver: local
 
 networks:
-  bot_network:
+  bot_network_dev5:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
-          gateway: 172.20.0.1
+    # ipam:
+    #   config:
+    #     - subnet: 172.20.0.0/16
+    #       gateway: 172.20.0.1
