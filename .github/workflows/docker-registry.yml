@@ -49,13 +49,13 @@ jobs:
             VERSION=${GITHUB_REF#refs/tags/}
             echo "🏷️ Building release version: $VERSION"
           elif [[ $GITHUB_REF == refs/heads/main ]]; then
-            VERSION="v2.9.2-$(git rev-parse --short HEAD)"
+            VERSION="v2.9.3-$(git rev-parse --short HEAD)"
             echo "🚀 Building main version: $VERSION"
           elif [[ $GITHUB_REF == refs/heads/dev ]]; then
-            VERSION="v2.9.2-dev-$(git rev-parse --short HEAD)"
+            VERSION="v2.9.3-dev-$(git rev-parse --short HEAD)"
             echo "🧪 Building dev version: $VERSION"
           else
-            VERSION="v2.9.2-pr-$(git rev-parse --short HEAD)"
+            VERSION="v2.9.3-pr-$(git rev-parse --short HEAD)"
             echo "🔀 Building PR version: $VERSION"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT

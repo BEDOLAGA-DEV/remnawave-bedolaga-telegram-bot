@@ -36,15 +36,15 @@ jobs:
           TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:latest,fr1ngg/remnawave-bedolaga-telegram-bot:${VERSION}"
           echo "🏷️ Собираем релизную версию: $VERSION"
         elif [[ $GITHUB_REF == refs/heads/main ]]; then
-          VERSION="v2.9.2-$(git rev-parse --short HEAD)"
+          VERSION="v2.9.3-$(git rev-parse --short HEAD)"
           TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:latest,fr1ngg/remnawave-bedolaga-telegram-bot:${VERSION}"
           echo "🚀 Собираем версию из main: $VERSION"
         elif [[ $GITHUB_REF == refs/heads/dev ]]; then
-          VERSION="v2.9.2-dev-$(git rev-parse --short HEAD)"
+          VERSION="v2.9.3-dev-$(git rev-parse --short HEAD)"
           TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:dev,fr1ngg/remnawave-bedolaga-telegram-bot:${VERSION}"
           echo "🧪 Собираем dev версию: $VERSION"
         else
-          VERSION="v2.9.2-pr-$(git rev-parse --short HEAD)"
+          VERSION="v2.9.3-pr-$(git rev-parse --short HEAD)"
           TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:pr-$(git rev-parse --short HEAD)"
           echo "🔀 Собираем PR версию: $VERSION"
         fi
