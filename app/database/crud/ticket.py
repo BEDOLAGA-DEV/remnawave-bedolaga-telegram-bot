@@ -474,6 +474,26 @@ class TicketMessageCRUD:
         
         await db.commit()
         await db.refresh(message)
+        
+        # Отправляем событие о новом сообщении в тикете
+        try:
+            from app.services.event_emitter import event_emitter
+            await event_emitter.emit(
+                "ticket.message_added",
+                {
+                    "ticket_id": ticket_id,
+                    "message_id": message.id,
+                    "user_id": user_id,
+                    "is_from_admin": is_from_admin,
+                    "message_text": message_text[:200],  # Ограничиваем длину для события
+                    "has_media": bool(media_type and media_file_id),
+                    "status": ticket.status if ticket else None,
+                },
+                db=db,
+            )
+        except Exception as error:
+            logger.warning("Failed to emit ticket.message_added event: %s", error)
+        
         return message
     
     @staticmethod

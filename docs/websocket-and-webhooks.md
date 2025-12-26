@@ -72,6 +72,7 @@ const ws = new WebSocket('ws://localhost:8080/ws?api_key=YOUR_API_TOKEN');
 - `transaction.created` - создана транзакция
 - `ticket.created` - создан новый тикет
 - `ticket.status_changed` - изменен статус тикета
+- `ticket.message_added` - добавлено новое сообщение в тикет (от пользователя или админа)
 
 ## Webhooks
 

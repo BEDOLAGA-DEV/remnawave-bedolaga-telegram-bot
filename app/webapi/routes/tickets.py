@@ -238,6 +238,25 @@ async def reply_to_ticket(
 
     ticket_with_messages = await TicketCRUD.get_ticket_by_id(db, ticket_id, load_messages=True, load_user=False)
 
+    # Отправляем событие о новом сообщении через API
+    try:
+        from app.services.event_emitter import event_emitter
+        await event_emitter.emit(
+            "ticket.message_added",
+            {
+                "ticket_id": ticket_id,
+                "message_id": message.id,
+                "user_id": ticket.user_id,
+                "is_from_admin": True,
+                "message_text": final_message_text[:200],
+                "has_media": bool(payload.media_file_id),
+                "status": ticket_with_messages.status,
+            },
+            db=db,
+        )
+    except Exception as error:
+        logger.warning("Failed to emit ticket.message_added event: %s", error)
+
     return TicketReplyResponse(
         ticket=_serialize_ticket(ticket_with_messages, include_messages=True),
         message=_serialize_message(message),

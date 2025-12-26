@@ -204,6 +204,12 @@ function App() {
       // Обновить статус тикета в списке
     });
 
+    manager.on('ticket.message_added', (payload) => {
+      console.log('New message in ticket:', payload);
+      // Обновить список сообщений в тикете
+      // Показать уведомление о новом сообщении
+    });
+
     return () => {
       manager.disconnect();
     };
@@ -310,11 +316,13 @@ function DashboardStats() {
     wsManager.on('user.created', updateOnNewUser);
     wsManager.on('payment.completed', updateOnPayment);
     wsManager.on('ticket.created', updateOnTicket);
+    wsManager.on('ticket.message_added', updateOnTicketMessage);
 
     return () => {
-      wsManager.off('user.created', updateOnUser);
+      wsManager.off('user.created', updateOnNewUser);
       wsManager.off('payment.completed', updateOnPayment);
       wsManager.off('ticket.created', updateOnTicket);
+      wsManager.off('ticket.message_added', updateOnTicketMessage);
     };
   }, [wsManager]);
 
@@ -398,14 +406,34 @@ function NotificationCenter() {
       });
     };
 
+    const handleNewMessage = (payload: any) => {
+      const notification: Notification = {
+        id: `ticket-message-${payload.message_id}`,
+        type: 'ticket.message_added',
+        message: payload.is_from_admin 
+          ? `Новый ответ в тикете #${payload.ticket_id}`
+          : `Новое сообщение от пользователя в тикете #${payload.ticket_id}`,
+        timestamp: new Date(),
+      };
+      addNotification(notification);
+      toast.info(notification.message, {
+        onClick: () => {
+          // Перейти к тикету
+          window.location.href = `/tickets/${payload.ticket_id}`;
+        },
+      });
+    };
+
     wsManager.on('user.created', handleNewUser);
     wsManager.on('payment.completed', handleNewPayment);
     wsManager.on('ticket.created', handleNewTicket);
+    wsManager.on('ticket.message_added', handleNewMessage);
 
     return () => {
       wsManager.off('user.created', handleNewUser);
       wsManager.off('payment.completed', handleNewPayment);
       wsManager.off('ticket.created', handleNewTicket);
+      wsManager.off('ticket.message_added', handleNewMessage);
     };
   }, [wsManager]);
 
@@ -551,6 +579,11 @@ export const WEBHOOK_EVENT_TYPES = [
     value: 'ticket.status_changed',
     label: 'Изменение статуса тикета',
     description: 'Отправляется при изменении статуса тикета',
+  },
+  {
+    value: 'ticket.message_added',
+    label: 'Новое сообщение в тикете',
+    description: 'Отправляется при добавлении нового сообщения в тикет (от пользователя или админа)',
   },
 ] as const;
 
