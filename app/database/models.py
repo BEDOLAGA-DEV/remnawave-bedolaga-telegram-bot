@@ -1827,3 +1827,58 @@ class ButtonClickLog(Base):
 
     def __repr__(self) -> str:
         return f"<ButtonClickLog id={self.id} button='{self.button_id}' user={self.user_id} at={self.clicked_at}>"
+
+
+class Webhook(Base):
+    """Webhook конфигурация для подписки на события."""
+    __tablename__ = "webhooks"
+    __table_args__ = (
+        Index("ix_webhooks_event_type", "event_type"),
+        Index("ix_webhooks_is_active", "is_active"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    url = Column(Text, nullable=False)
+    secret = Column(String(128), nullable=True)  # Секрет для подписи payload
+    event_type = Column(String(50), nullable=False, index=True)  # user.created, payment.completed, ticket.created, etc.
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    last_triggered_at = Column(DateTime, nullable=True)
+    failure_count = Column(Integer, default=0, nullable=False)
+    success_count = Column(Integer, default=0, nullable=False)
+
+    deliveries = relationship("WebhookDelivery", back_populates="webhook", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        status = "active" if self.is_active else "inactive"
+        return f"<Webhook id={self.id} name='{self.name}' event='{self.event_type}' status={status}>"
+
+
+class WebhookDelivery(Base):
+    """История доставки webhooks."""
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (
+        Index("ix_webhook_deliveries_webhook_created", "webhook_id", "created_at"),
+        Index("ix_webhook_deliveries_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    webhook_id = Column(Integer, ForeignKey("webhooks.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False)
+    payload = Column(JSON, nullable=False)  # Отправленный payload
+    response_status = Column(Integer, nullable=True)  # HTTP статус ответа
+    response_body = Column(Text, nullable=True)  # Тело ответа (может быть обрезано)
+    status = Column(String(20), nullable=False, index=True)  # pending, success, failed
+    error_message = Column(Text, nullable=True)
+    attempt_number = Column(Integer, default=1, nullable=False)
+    created_at = Column(DateTime, default=func.now(), index=True)
+    delivered_at = Column(DateTime, nullable=True)
+    next_retry_at = Column(DateTime, nullable=True)
+
+    webhook = relationship("Webhook", back_populates="deliveries")
+
+    def __repr__(self) -> str:
+        return f"<WebhookDelivery id={self.id} webhook_id={self.webhook_id} status='{self.status}' event='{self.event_type}'>"

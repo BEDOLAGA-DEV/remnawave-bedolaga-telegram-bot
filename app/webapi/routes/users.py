@@ -7,7 +7,15 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database.crud.promo_group import get_promo_group_by_id
+from app.database.crud.subscription import (
+    create_paid_subscription,
+    create_trial_subscription,
+    deactivate_subscription,
+    get_subscription_by_user_id,
+    replace_subscription,
+)
 from app.database.crud.user import (
     add_user_balance,
     create_user,
@@ -17,6 +25,7 @@ from app.database.crud.user import (
     update_user,
 )
 from app.database.models import PromoGroup, Subscription, User, UserStatus
+from app.services.subscription_service import SubscriptionService
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.users import (
@@ -26,6 +35,7 @@ from ..schemas.users import (
     UserCreateRequest,
     UserListResponse,
     UserResponse,
+    UserSubscriptionCreateRequest,
     UserUpdateRequest,
 )
 
@@ -321,3 +331,149 @@ async def update_balance(
         found_user = await get_user_by_id(db, found_user.id)
         
     return _serialize_user(found_user)
+
+
+async def _get_user_by_id_or_telegram_id(db: AsyncSession, user_id: int) -> User:
+    """Helper function to get user by ID or telegram_id"""
+    user = await get_user_by_telegram_id(db, user_id)
+    if user:
+        return user
+    
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    return user
+
+
+@router.post("/{user_id}/subscription", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user_subscription(
+    user_id: int,
+    payload: UserSubscriptionCreateRequest,
+    _: Any = Security(require_api_token),
+    db: AsyncSession = Depends(get_db_session),
+) -> UserResponse:
+    """
+    Создать или заменить подписку для пользователя.
+    Поддерживает создание как триальных, так и платных подписок.
+    """
+    user = await _get_user_by_id_or_telegram_id(db, user_id)
+    
+    existing = await get_subscription_by_user_id(db, user.id)
+    if existing and not payload.replace_existing:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "User already has a subscription. Use replace_existing=true to replace it"
+        )
+
+    forced_devices = None
+    if not settings.is_devices_selection_enabled():
+        forced_devices = settings.get_disabled_mode_device_limit()
+
+    if payload.is_trial:
+        trial_device_limit = payload.device_limit
+        if trial_device_limit is None:
+            trial_device_limit = forced_devices
+        duration_days = payload.duration_days or settings.TRIAL_DURATION_DAYS
+        traffic_limit_gb = payload.traffic_limit_gb or settings.TRIAL_TRAFFIC_LIMIT_GB
+
+        if existing:
+            # Сохраняем существующие сквады при замене
+            connected_squads = list(existing.connected_squads or [])
+            if payload.squad_uuid:
+                connected_squads = [payload.squad_uuid]
+            elif payload.connected_squads:
+                connected_squads = payload.connected_squads
+            
+            subscription = await replace_subscription(
+                db,
+                existing,
+                duration_days=duration_days,
+                traffic_limit_gb=traffic_limit_gb,
+                device_limit=(
+                    trial_device_limit
+                    if trial_device_limit is not None
+                    else settings.TRIAL_DEVICE_LIMIT
+                ),
+                connected_squads=connected_squads,
+                is_trial=True,
+                update_server_counters=True,
+            )
+        else:
+            subscription = await create_trial_subscription(
+                db,
+                user_id=user.id,
+                duration_days=duration_days,
+                traffic_limit_gb=traffic_limit_gb,
+                device_limit=trial_device_limit,
+                squad_uuid=payload.squad_uuid,
+            )
+    else:
+        if payload.duration_days is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "duration_days is required for paid subscriptions"
+            )
+        device_limit = payload.device_limit
+        if device_limit is None:
+            if forced_devices is not None:
+                device_limit = forced_devices
+            else:
+                device_limit = settings.DEFAULT_DEVICE_LIMIT
+        
+        if existing:
+            subscription = await replace_subscription(
+                db,
+                existing,
+                duration_days=payload.duration_days,
+                traffic_limit_gb=payload.traffic_limit_gb or settings.DEFAULT_TRAFFIC_LIMIT_GB,
+                device_limit=device_limit,
+                connected_squads=payload.connected_squads or [],
+                is_trial=False,
+                update_server_counters=True,
+            )
+        else:
+            subscription = await create_paid_subscription(
+                db,
+                user_id=user.id,
+                duration_days=payload.duration_days,
+                traffic_limit_gb=payload.traffic_limit_gb or settings.DEFAULT_TRAFFIC_LIMIT_GB,
+                device_limit=device_limit,
+                connected_squads=payload.connected_squads or [],
+                update_server_counters=True,
+            )
+        
+        # Создаем пользователя в RemnaWave для платных подписок
+        subscription_service = SubscriptionService()
+        await subscription_service.create_remnawave_user(db, subscription)
+
+    # Перезагружаем пользователя с подпиской
+    user = await get_user_by_id(db, user.id)
+    return _serialize_user(user)
+
+
+@router.delete("/{user_id}/subscription", response_model=UserResponse)
+async def delete_user_subscription(
+    user_id: int,
+    _: Any = Security(require_api_token),
+    db: AsyncSession = Depends(get_db_session),
+) -> UserResponse:
+    """
+    Деактивировать подписку пользователя.
+    Подписка не удаляется физически, а помечается как DISABLED.
+    """
+    user = await _get_user_by_id_or_telegram_id(db, user_id)
+    
+    subscription = await get_subscription_by_user_id(db, user.id)
+    if not subscription:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User has no subscription")
+
+    await deactivate_subscription(db, subscription)
+
+    # Деактивируем пользователя в RemnaWave, если есть UUID
+    if user.remnawave_uuid:
+        subscription_service = SubscriptionService()
+        await subscription_service.disable_remnawave_user(user.remnawave_uuid)
+
+    # Перезагружаем пользователя
+    user = await get_user_by_id(db, user.id)
+    return _serialize_user(user)

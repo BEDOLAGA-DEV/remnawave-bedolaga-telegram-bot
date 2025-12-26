@@ -86,3 +86,14 @@ class BalanceUpdateRequest(BaseModel):
     amount_kopeks: int
     description: Optional[str] = Field(default="Корректировка через веб-API")
     create_transaction: bool = True
+
+
+class UserSubscriptionCreateRequest(BaseModel):
+    """Схема для создания подписки через users API (user_id берется из URL)"""
+    is_trial: bool = False
+    duration_days: Optional[int] = None
+    traffic_limit_gb: Optional[int] = None
+    device_limit: Optional[int] = None
+    squad_uuid: Optional[str] = None
+    connected_squads: Optional[List[str]] = None
+    replace_existing: bool = False

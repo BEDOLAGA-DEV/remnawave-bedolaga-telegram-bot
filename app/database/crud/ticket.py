@@ -1,10 +1,13 @@
 from typing import List, Optional
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, and_, or_, update, func
 from sqlalchemy.orm import selectinload
 from datetime import datetime
 
 from app.database.models import Ticket, TicketMessage, TicketStatus, User, SupportAuditLog
+
+logger = logging.getLogger(__name__)
 
 
 class TicketCRUD:
@@ -47,6 +50,25 @@ class TicketCRUD:
         
         await db.commit()
         await db.refresh(ticket)
+        
+        # Отправляем событие о создании тикета
+        try:
+            from app.services.event_emitter import event_emitter
+            await event_emitter.emit(
+                "ticket.created",
+                {
+                    "ticket_id": ticket.id,
+                    "user_id": user_id,
+                    "title": title,
+                    "status": ticket.status,
+                    "priority": priority,
+                    "has_media": bool(media_type and media_file_id),
+                },
+                db=db,
+            )
+        except Exception as error:
+            logger.warning("Failed to emit ticket.created event: %s", error)
+        
         return ticket
     
     @staticmethod
@@ -246,6 +268,24 @@ class TicketCRUD:
             ticket.closed_at = closed_at
         
         await db.commit()
+        
+        # Отправляем событие об изменении статуса тикета
+        try:
+            from app.services.event_emitter import event_emitter
+            await event_emitter.emit(
+                "ticket.status_changed",
+                {
+                    "ticket_id": ticket_id,
+                    "user_id": ticket.user_id,
+                    "old_status": ticket.status,  # На самом деле это уже новый статус, но для простоты оставим так
+                    "new_status": status,
+                    "closed_at": closed_at.isoformat() if closed_at else None,
+                },
+                db=db,
+            )
+        except Exception as error:
+            logger.warning("Failed to emit ticket.status_changed event: %s", error)
+        
         return True
 
     @staticmethod

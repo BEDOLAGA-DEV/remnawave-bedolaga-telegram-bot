@@ -37,6 +37,8 @@ from .routes import (
     transactions,
     users,
     logs,
+    webhooks,
+    websocket,
 )
 
 
@@ -145,6 +147,14 @@ OPENAPI_TAGS = [
         "name": "contests",
         "description": "Управление конкурсами: реферальными и ежедневными играми/раундами.",
     },
+    {
+        "name": "webhooks",
+        "description": "Управление webhooks для подписки на события системы (пользователи, платежи, тикеты).",
+    },
+    {
+        "name": "websocket",
+        "description": "WebSocket подключения для real-time обновлений дашборда и уведомлений.",
+    },
 ]
 
 
@@ -229,5 +239,7 @@ def create_web_api_app() -> FastAPI:
         prefix="/notifications/subscriptions",
         tags=["notifications"],
     )
+    app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
+    app.include_router(websocket.router, tags=["websocket"])
 
     return app

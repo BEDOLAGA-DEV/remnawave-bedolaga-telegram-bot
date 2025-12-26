@@ -38,6 +38,27 @@ async def create_transaction(
     
     logger.info(f"💳 Создана транзакция: {type.value} на {amount_kopeks/100}₽ для пользователя {user_id}")
 
+    # Отправляем событие о транзакции
+    try:
+        from app.services.event_emitter import event_emitter
+        await event_emitter.emit(
+            "payment.completed" if type == TransactionType.DEPOSIT else "transaction.created",
+            {
+                "transaction_id": transaction.id,
+                "user_id": user_id,
+                "type": type.value,
+                "amount_kopeks": amount_kopeks,
+                "amount_rubles": amount_kopeks / 100,
+                "payment_method": payment_method.value if payment_method else None,
+                "external_id": external_id,
+                "is_completed": is_completed,
+                "description": description,
+            },
+            db=db,
+        )
+    except Exception as error:
+        logger.warning("Failed to emit transaction event: %s", error)
+
     try:
         from app.services.promo_group_assignment import (
             maybe_assign_promo_group_by_total_spent,

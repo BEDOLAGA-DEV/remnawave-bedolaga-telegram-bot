@@ -279,6 +279,26 @@ async def create_user(
             logger.info(
                 f"✅ Создан пользователь {telegram_id} с реферальным кодом {referral_code}"
             )
+            
+            # Отправляем событие о создании пользователя
+            try:
+                from app.services.event_emitter import event_emitter
+                await event_emitter.emit(
+                    "user.created",
+                    {
+                        "user_id": user.id,
+                        "telegram_id": user.telegram_id,
+                        "username": user.username,
+                        "first_name": user.first_name,
+                        "last_name": user.last_name,
+                        "referral_code": user.referral_code,
+                        "referred_by_id": user.referred_by_id,
+                    },
+                    db=db,
+                )
+            except Exception as error:
+                logger.warning("Failed to emit user.created event: %s", error)
+            
             return user
 
         except IntegrityError as exc:
