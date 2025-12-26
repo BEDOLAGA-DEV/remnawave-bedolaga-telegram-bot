@@ -1866,15 +1866,15 @@ class WebhookDelivery(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    webhook_id = Column(Integer, ForeignKey("webhooks.id", ondelete="CASCADE"), nullable=False, index=True)
+    webhook_id = Column(Integer, ForeignKey("webhooks.id", ondelete="CASCADE"), nullable=False)
     event_type = Column(String(50), nullable=False)
     payload = Column(JSON, nullable=False)  # Отправленный payload
     response_status = Column(Integer, nullable=True)  # HTTP статус ответа
     response_body = Column(Text, nullable=True)  # Тело ответа (может быть обрезано)
-    status = Column(String(20), nullable=False, index=True)  # pending, success, failed
+    status = Column(String(20), nullable=False)  # pending, success, failed
     error_message = Column(Text, nullable=True)
     attempt_number = Column(Integer, default=1, nullable=False)
-    created_at = Column(DateTime, default=func.now(), index=True)
+    created_at = Column(DateTime, default=func.now())
     delivered_at = Column(DateTime, nullable=True)
     next_retry_at = Column(DateTime, nullable=True)
 

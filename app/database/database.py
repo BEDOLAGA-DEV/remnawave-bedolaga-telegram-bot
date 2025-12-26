@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool, AsyncAdaptedQueuePool
 from sqlalchemy import event, text, bindparam, inspect
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.engine import Engine
 import time
 from app.config import settings
@@ -256,8 +257,44 @@ async def init_db():
     """Инициализация БД с оптимизациями"""
     logger.info("🚀 Создание таблиц базы данных...")
     
-    async with engine.begin() as conn:
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True))
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True))
+    except (ProgrammingError, Exception) as e:
+        # Игнорируем ошибки дублирования индексов/таблиц - они уже существуют
+        # Это может произойти если таблицы были созданы вручную или через миграции
+        error_str = str(e).lower()
+        error_type = type(e).__name__.lower()
+        
+        # Проверяем оригинальную ошибку для asyncpg
+        orig_error = getattr(e, "orig", None)
+        if orig_error:
+            orig_type = type(orig_error).__name__.lower()
+            if "duplicatetableerror" in orig_type or "duplicatekeyerror" in orig_type:
+                logger.warning(
+                    "⚠️ Некоторые индексы/таблицы уже существуют в БД, это нормально. "
+                    "Продолжаем инициализацию..."
+                )
+                return
+        
+        # Проверяем, является ли это ошибкой дублирования
+        is_duplicate_error = (
+            "already exists" in error_str
+            or "duplicate" in error_str
+            or "duplicatetableerror" in error_type
+            or "duplicatekeyerror" in error_type
+        )
+        
+        if is_duplicate_error:
+            logger.warning(
+                "⚠️ Некоторые объекты БД уже существуют (таблицы/индексы), это нормально. "
+                "Продолжаем инициализацию..."
+            )
+            # Продолжаем выполнение, так как основные таблицы могут быть созданы
+        else:
+            # Для других ошибок пробрасываем исключение
+            logger.error(f"❌ Ошибка при создании таблиц: {e}")
+            raise
 
     if not settings.get_database_url().startswith("sqlite"):
         logger.info("📊 Создание индексов для оптимизации...")
