@@ -257,7 +257,7 @@ async def init_db():
     logger.info("🚀 Создание таблиц базы данных...")
     
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True))
 
     if not settings.get_database_url().startswith("sqlite"):
         logger.info("📊 Создание индексов для оптимизации...")

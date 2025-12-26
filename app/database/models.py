@@ -1841,8 +1841,8 @@ class Webhook(Base):
     name = Column(String(255), nullable=False)
     url = Column(Text, nullable=False)
     secret = Column(String(128), nullable=True)  # Секрет для подписи payload
-    event_type = Column(String(50), nullable=False, index=True)  # user.created, payment.completed, ticket.created, etc.
-    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    event_type = Column(String(50), nullable=False)  # user.created, payment.completed, ticket.created, etc.
+    is_active = Column(Boolean, default=True, nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
