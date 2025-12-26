@@ -37,26 +37,45 @@ async def verify_websocket_token(
                 token,
                 remote_ip=websocket.client.host if websocket.client else None,
             )
+            if webhook_token:
+                logger.debug("WebSocket token authenticated successfully")
+            else:
+                logger.warning("WebSocket token authentication failed: token not found or invalid")
             return webhook_token is not None
         except Exception as error:
-            logger.warning("WebSocket authentication error: %s", error)
+            logger.warning("WebSocket authentication error: %s", error, exc_info=True)
             return False
 
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint для real-time обновлений."""
-    await websocket.accept()
-
-    # Проверяем авторизацию
+    client_host = websocket.client.host if websocket.client else "unknown"
+    logger.info("WebSocket connection attempt from %s", client_host)
+    
+    # Сначала проверяем авторизацию ДО принятия соединения
     token = websocket.query_params.get("token") or websocket.query_params.get("api_key")
+    
+    if not token:
+        logger.warning("WebSocket: No token provided from %s", client_host)
+        await websocket.close(code=1008, reason="Unauthorized: No token provided")
+        return
+    
     if not await verify_websocket_token(websocket, token):
-        await websocket.close(code=1008, reason="Unauthorized")
+        logger.warning("WebSocket: Invalid token from %s", client_host)
+        await websocket.close(code=1008, reason="Unauthorized: Invalid token")
+        return
+    
+    # Только после успешной проверки принимаем соединение
+    try:
+        await websocket.accept()
+        logger.info("WebSocket connection accepted from %s", client_host)
+    except Exception as e:
+        logger.error("WebSocket: Failed to accept connection from %s: %s", client_host, e)
         return
 
     # Регистрируем подключение
     event_emitter.register_websocket(websocket)
-    logger.info("WebSocket client connected from %s", websocket.client.host if websocket.client else "unknown")
 
     try:
         # Отправляем приветственное сообщение
