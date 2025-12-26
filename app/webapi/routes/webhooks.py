@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -182,13 +182,14 @@ async def delete_webhook_endpoint(
     webhook_id: int,
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
-) -> None:
+) -> Response:
     """Удалить webhook."""
     webhook = await get_webhook_by_id(db, webhook_id)
     if not webhook:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Webhook not found")
 
     await delete_webhook(db, webhook)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{webhook_id}/deliveries", response_model=WebhookDeliveryListResponse)
