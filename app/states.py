@@ -53,6 +53,9 @@ class AdminStates(StatesGroup):
     setting_promocode_uses = State()
     setting_promocode_expiry = State()
     selecting_promo_group = State()
+    selecting_discount_type = State()
+    setting_discount_value = State()
+    selecting_discount_applies_to = State()
 
     creating_campaign_name = State()
     creating_campaign_start = State()

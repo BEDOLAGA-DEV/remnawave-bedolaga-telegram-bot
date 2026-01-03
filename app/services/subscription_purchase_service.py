@@ -298,6 +298,62 @@ def _get_promo_offer_discount_percent(user: Optional[User]) -> int:
     return get_user_active_promo_discount_percent(user)
 
 
+async def _apply_promo_offer_discount_with_fixed(
+    db: AsyncSession,
+    user: Optional[User],
+    amount: int,
+    is_subscription_only: bool = False
+) -> Tuple[int, int, int]:
+    """
+    Применяет промо-скидку (процентную или фиксированную).
+
+    Returns: (final_amount, discount_value, discount_percent)
+    """
+    if not user:
+        return amount, 0, 0
+
+    # Получаем процентную скидку
+    percent = _get_promo_offer_discount_percent(user)
+
+    # Проверяем активную одноразовую скидку
+    from app.database.crud.discount_offer import get_latest_claimed_offer_for_user
+
+    source = getattr(user, "promo_offer_discount_source", None)
+    if source and source.startswith("promocode:"):
+        try:
+            offer = await get_latest_claimed_offer_for_user(db, user.id, source)
+            if offer and offer.effect_type == "one_time_promo_discount":
+                extra_data = getattr(offer, "extra_data", {}) or {}
+
+                # Проверка области применения
+                discount_applies_to = extra_data.get("discount_applies_to", "all")
+                if discount_applies_to == "subscription_only" and not is_subscription_only:
+                    # Скидка НЕ применяется (это не подписка)
+                    return amount, 0, 0
+
+                # Проверяем тип скидки
+                discount_type = extra_data.get("discount_type")
+
+                if discount_type == "fixed_amount":
+                    # Фиксированная сумма
+                    fixed_amount = extra_data.get("discount_value", 0)
+                    if fixed_amount > 0:
+                        discount_value = min(fixed_amount, amount)  # Не больше суммы
+                        final_amount = max(0, amount - discount_value)
+                        # Эквивалентный процент для отображения
+                        equiv_percent = int(discount_value * 100 / amount) if amount > 0 else 0
+                        return final_amount, discount_value, equiv_percent
+        except Exception as e:
+            logger.error(f"Ошибка применения одноразовой скидки: {e}")
+
+    # Обычная процентная скидка
+    if amount <= 0 or percent <= 0:
+        return amount, 0, 0
+
+    discounted, discount_value = _apply_percentage_discount(amount, percent)
+    return discounted, discount_value, percent
+
+
 def _apply_promo_offer_discount(user: Optional[User], amount: int) -> Tuple[int, int, int]:
     percent = _get_promo_offer_discount_percent(user)
     if amount <= 0 or percent <= 0:
@@ -747,8 +803,8 @@ class MiniAppSubscriptionPurchaseService:
             + details["devices_price_per_month"] * months
         )
 
-        final_total, promo_discount_value, promo_percent = _apply_promo_offer_discount(
-            context.user, total_without_promo
+        final_total, promo_discount_value, promo_percent = await _apply_promo_offer_discount_with_fixed(
+            db, context.user, total_without_promo, is_subscription_only=True
         )
 
         discounted_total = total_without_promo

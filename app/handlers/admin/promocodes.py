@@ -496,7 +496,8 @@ async def select_promocode_type(
         "balance": "💰 Пополнение баланса",
         "days": "📅 Дни подписки",
         "trial": "🎁 Тестовая подписка",
-        "group": "🏷️ Промогруппа"
+        "group": "🏷️ Промогруппа",
+        "discount": "🎟️ Одноразовая скидка"
     }
 
     await state.update_data(promocode_type=promo_type)
@@ -591,6 +592,19 @@ async def process_promocode_code(
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard)
         )
         await state.set_state(AdminStates.selecting_promo_group)
+    elif promo_type == "discount":
+        # One-time discount - ask for discount type
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="📊 Процентная скидка (%)", callback_data="discount_type_percent")],
+            [types.InlineKeyboardButton(text="💵 Фиксированная сумма (₽)", callback_data="discount_type_fixed")],
+            [types.InlineKeyboardButton(text="❌ Отмена", callback_data="admin_promocodes")]
+        ])
+        await message.answer(
+            f"🎟️ <b>Промокод:</b> <code>{code}</code>\n\n"
+            f"Выберите тип скидки:",
+            reply_markup=keyboard
+        )
+        await state.set_state(AdminStates.selecting_discount_type)
 
 
 @admin_required
@@ -625,6 +639,90 @@ async def process_promo_group_selection(
         f"📊 Введите количество использований промокода (или 0 для безлимита):"
     )
 
+    await state.set_state(AdminStates.setting_promocode_uses)
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def process_discount_type_selection(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext
+):
+    """Handle discount type selection for one-time discount promocode"""
+    discount_type = callback.data.split('_')[-1]  # percent or fixed
+
+    await state.update_data(discount_type=discount_type)
+
+    if discount_type == "percent":
+        prompt = "📊 Введите процент скидки (от 1 до 100):"
+    else:  # fixed
+        prompt = "💵 Введите сумму скидки в рублях:"
+
+    await callback.message.edit_text(prompt)
+    await state.set_state(AdminStates.setting_discount_value)
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def process_discount_value(
+    message: types.Message,
+    db_user: User,
+    state: FSMContext
+):
+    """Handle discount value input for one-time discount promocode"""
+    data = await state.get_data()
+    discount_type = data.get('discount_type')
+
+    try:
+        value = int(message.text.strip())
+
+        if discount_type == "percent":
+            if value < 1 or value > 100:
+                await message.answer("❌ Процент скидки должен быть от 1 до 100")
+                return
+        else:  # fixed
+            if value < 1 or value > 100000:
+                await message.answer("❌ Сумма скидки должна быть от 1 до 100,000 рублей")
+                return
+
+        await state.update_data(discount_value=value)
+
+        # Ask for discount scope
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="📱 Только подписка", callback_data="discount_scope_subscription")],
+            [types.InlineKeyboardButton(text="🛒 Любая покупка", callback_data="discount_scope_all")],
+            [types.InlineKeyboardButton(text="❌ Отмена", callback_data="admin_promocodes")]
+        ])
+
+        await message.answer(
+            "🎯 Выберите область применения скидки:",
+            reply_markup=keyboard
+        )
+        await state.set_state(AdminStates.selecting_discount_applies_to)
+
+    except ValueError:
+        await message.answer("❌ Введите корректное число")
+
+
+@admin_required
+@error_handler
+async def process_discount_applies_to_selection(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext
+):
+    """Handle discount scope selection for one-time discount promocode"""
+    scope = callback.data.split('_')[-1]  # subscription or all
+
+    discount_applies_to = "subscription_only" if scope == "subscription" else "all"
+    await state.update_data(discount_applies_to=discount_applies_to)
+
+    await callback.message.edit_text(
+        "📊 Введите количество использований промокода (или 0 для безлимита):"
+    )
     await state.set_state(AdminStates.setting_promocode_uses)
     await callback.answer()
 
@@ -829,6 +927,11 @@ async def process_promocode_expiry(
         promo_group_id = data.get('promo_group_id')
         promo_group_name = data.get('promo_group_name')
 
+        # For one-time discount promocodes
+        discount_type = data.get('discount_type')
+        discount_value = data.get('discount_value')
+        discount_applies_to = data.get('discount_applies_to', 'all')
+
         valid_until = None
         if expiry_days > 0:
             valid_until = datetime.utcnow() + timedelta(days=expiry_days)
@@ -837,8 +940,18 @@ async def process_promocode_expiry(
             "balance": PromoCodeType.BALANCE,
             "days": PromoCodeType.SUBSCRIPTION_DAYS,
             "trial": PromoCodeType.TRIAL_SUBSCRIPTION,
-            "group": PromoCodeType.PROMO_GROUP
+            "group": PromoCodeType.PROMO_GROUP,
+            "discount": PromoCodeType.ONE_TIME_DISCOUNT
         }
+
+        # Convert discount_type to the format expected by the model
+        if promo_type == "discount" and discount_type:
+            model_discount_type = "percent" if discount_type == "percent" else "fixed_amount"
+            # Convert rubles to kopeks for fixed amount
+            model_discount_value = discount_value if discount_type == "percent" else discount_value * 100
+        else:
+            model_discount_type = None
+            model_discount_value = None
 
         promocode = await create_promocode(
             db=db,
@@ -849,14 +962,18 @@ async def process_promocode_expiry(
             max_uses=max_uses,
             valid_until=valid_until,
             created_by=db_user.id,
-            promo_group_id=promo_group_id if promo_type == "group" else None
+            promo_group_id=promo_group_id if promo_type == "group" else None,
+            discount_type=model_discount_type,
+            discount_value=model_discount_value,
+            discount_applies_to=discount_applies_to if promo_type == "discount" else None
         )
         
         type_names = {
             "balance": "Пополнение баланса",
             "days": "Дни подписки",
             "trial": "Тестовая подписка",
-            "group": "Промогруппа"
+            "group": "Промогруппа",
+            "discount": "Одноразовая скидка"
         }
 
         summary_text = f"""
@@ -872,6 +989,16 @@ async def process_promocode_expiry(
             summary_text += f"📅 <b>Дней:</b> {promocode.subscription_days}\n"
         elif promo_type == "group" and promo_group_name:
             summary_text += f"🏷️ <b>Промогруппа:</b> {promo_group_name}\n"
+        elif promo_type == "discount":
+            discount_type_text = "Процентная" if discount_type == "percent" else "Фиксированная"
+            if discount_type == "percent":
+                discount_value_text = f"{discount_value}%"
+            else:
+                discount_value_text = f"{discount_value}₽"
+
+            applies_to_text = "только подписка" if discount_applies_to == "subscription_only" else "любая покупка"
+            summary_text += f"🎟️ <b>Скидка:</b> {discount_value_text} ({discount_type_text})\n"
+            summary_text += f"🎯 <b>Применяется к:</b> {applies_to_text}\n"
 
         summary_text += f"📊 <b>Использований:</b> {promocode.max_uses}\n"
         
@@ -1158,7 +1285,9 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(start_promocode_creation, F.data == "admin_promo_create")
     dp.callback_query.register(select_promocode_type, F.data.startswith("promo_type_"))
     dp.callback_query.register(process_promo_group_selection, F.data.startswith("promo_select_group_"))
-    
+    dp.callback_query.register(process_discount_type_selection, F.data.startswith("discount_type_"))
+    dp.callback_query.register(process_discount_applies_to_selection, F.data.startswith("discount_scope_"))
+
     dp.callback_query.register(show_promocode_management, F.data.startswith("promo_manage_"))
     dp.callback_query.register(toggle_promocode_first_purchase, F.data.startswith("promo_toggle_first_"))
     dp.callback_query.register(toggle_promocode_status, F.data.startswith("promo_toggle_"))
@@ -1180,6 +1309,7 @@ def register_handlers(dp: Dispatcher):
     
     dp.message.register(process_promocode_code, AdminStates.creating_promocode)
     dp.message.register(process_promocode_value, AdminStates.setting_promocode_value)
+    dp.message.register(process_discount_value, AdminStates.setting_discount_value)
     dp.message.register(process_promocode_uses, AdminStates.setting_promocode_uses)
     dp.message.register(process_promocode_expiry, AdminStates.setting_promocode_expiry)
     

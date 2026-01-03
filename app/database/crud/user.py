@@ -495,9 +495,28 @@ async def subtract_user_balance(
         user.balance_kopeks -= amount_kopeks
 
         if consume_promo_offer and getattr(user, "promo_offer_discount_percent", 0):
+            # Очистка user полей
+            source = user.promo_offer_discount_source
             user.promo_offer_discount_percent = 0
             user.promo_offer_discount_source = None
             user.promo_offer_discount_expires_at = None
+
+            # Деактивация DiscountOffer для одноразовых скидок
+            if source and source.startswith("promocode:"):
+                from app.database.crud.discount_offer import list_active_discount_offers_for_user
+
+                try:
+                    active_offers = await list_active_discount_offers_for_user(db, user.id)
+                    for offer in active_offers:
+                        if (offer.effect_type == "one_time_promo_discount" and
+                            offer.notification_type == source):
+                            # Помечаем offer как использованный
+                            offer.is_active = False
+                            offer.claimed_at = datetime.utcnow()
+                            logger.info(f"✅ Деактивирована одноразовая скидка {source} для пользователя {user.id}")
+                            break
+                except Exception as e:
+                    logger.error(f"Ошибка деактивации одноразовой скидки: {e}")
 
         user.updated_at = datetime.utcnow()
 

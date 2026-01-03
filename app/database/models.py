@@ -74,6 +74,7 @@ class PromoCodeType(Enum):
     SUBSCRIPTION_DAYS = "subscription_days"
     TRIAL_SUBSCRIPTION = "trial_subscription"
     PROMO_GROUP = "promo_group"
+    ONE_TIME_DISCOUNT = "one_time_discount"
 
 
 class PaymentMethod(Enum):
@@ -997,6 +998,11 @@ class PromoCode(Base):
 
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     promo_group_id = Column(Integer, ForeignKey("promo_groups.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Поля для ONE_TIME_DISCOUNT
+    discount_type = Column(String(20), nullable=True)  # "percent" или "fixed_amount"
+    discount_value = Column(Integer, nullable=True, default=0)  # процент (0-100) или копейки
+    discount_applies_to = Column(String(20), nullable=True, default="all")  # "subscription_only" или "all"
 
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())

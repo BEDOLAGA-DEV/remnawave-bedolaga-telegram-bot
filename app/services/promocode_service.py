@@ -231,5 +231,77 @@ class PromoCodeService:
                 logger.info(f"✅ Создана триал подписка для пользователя {user.telegram_id} на {trial_days} дней")
             else:
                 effects.append("ℹ️ У вас уже есть активная подписка")
-        
+
+        if promocode.type == PromoCodeType.ONE_TIME_DISCOUNT.value:
+            from app.database.crud.discount_offer import (
+                upsert_discount_offer,
+                list_active_discount_offers_for_user
+            )
+
+            # Проверка: только одна активная одноразовая скидка
+            active_offers = await list_active_discount_offers_for_user(db, user.id)
+            for offer in active_offers:
+                if offer.effect_type == "one_time_promo_discount":
+                    effects.append("⚠️ У вас уже есть активная одноразовая скидка")
+                    return "\n".join(effects)
+
+            # Определяем параметры скидки
+            discount_percent = 0
+            bonus_amount_kopeks = 0
+
+            if promocode.discount_type == "percent":
+                discount_percent = promocode.discount_value
+            elif promocode.discount_type == "fixed_amount":
+                bonus_amount_kopeks = promocode.discount_value
+
+            # Срок действия из valid_until промокода или 30 дней
+            now = datetime.utcnow()
+            if promocode.valid_until and promocode.valid_until > now:
+                valid_hours = int((promocode.valid_until - now).total_seconds() / 3600)
+            else:
+                valid_hours = 30 * 24  # 30 дней по умолчанию
+
+            # Создаем DiscountOffer с extra_data
+            extra_data = {
+                "promocode_id": promocode.id,
+                "promocode_code": promocode.code,
+                "discount_applies_to": promocode.discount_applies_to or "all",
+                "discount_type": promocode.discount_type,
+                "discount_value": promocode.discount_value,
+            }
+
+            offer = await upsert_discount_offer(
+                db,
+                user_id=user.id,
+                subscription_id=None,
+                notification_type=f"promocode:{promocode.code}",
+                discount_percent=discount_percent,
+                bonus_amount_kopeks=bonus_amount_kopeks,
+                valid_hours=valid_hours,
+                effect_type="one_time_promo_discount",
+                extra_data=extra_data,
+            )
+
+            # Устанавливаем скидку в поля user
+            if discount_percent > 0:
+                user.promo_offer_discount_percent = discount_percent
+
+            user.promo_offer_discount_source = f"promocode:{promocode.code}"
+            user.promo_offer_discount_expires_at = offer.expires_at
+
+            await db.commit()
+            await db.refresh(user)
+
+            # Формируем сообщение
+            if promocode.discount_type == "percent":
+                discount_text = f"{promocode.discount_value}%"
+            else:
+                rubles = promocode.discount_value / 100
+                discount_text = f"{rubles}₽"
+
+            applies_to_text = "на подписку" if promocode.discount_applies_to == "subscription_only" else "на любую покупку"
+            effects.append(f"🎁 Активирована одноразовая скидка {discount_text} {applies_to_text}")
+            effects.append(f"⏰ Скидка действительна до {offer.expires_at.strftime('%d.%m.%Y %H:%M')}")
+            effects.append(f"💡 Скидка применится автоматически при следующей покупке")
+
         return "\n".join(effects) if effects else "✅ Промокод активирован"
