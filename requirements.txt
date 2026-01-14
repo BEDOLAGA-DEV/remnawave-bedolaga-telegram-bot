@@ -1,20 +1,20 @@
 # Основные зависимости
-aiogram==3.22.0
-aiohttp==3.12.15
-asyncpg==0.30.0
-SQLAlchemy==2.0.43
-alembic==1.16.5
-aiosqlite==0.21.0
+aiogram==3.24.0
+aiohttp==3.13.3
+asyncpg==0.31.0
+SQLAlchemy==2.0.45
+alembic==1.18.0
+aiosqlite==0.22.1
 
 # Дополнительные зависимости
-pydantic==2.11.9
-pydantic-settings==2.10.1
-python-dotenv==1.1.1
+pydantic==2.12.5
+pydantic-settings==2.12.0
+python-dotenv==1.2.1
 redis==5.0.1
-PyYAML==6.0.2
-fastapi==0.115.6
-uvicorn==0.32.1
-python-multipart==0.0.9
+PyYAML==6.0.3
+fastapi==0.128.0
+uvicorn==0.40.0
+python-multipart==0.0.21
 
 # YooKassa SDK
 yookassa==3.9.0
@@ -27,7 +27,7 @@ httpx  # зависимость для nalogo
 structlog==23.2.0
 
 # Планировщик задач для техработ
-APScheduler==3.11.0
+APScheduler==3.11.2
 
 # Утилиты
 python-dateutil==2.9.0.post0
@@ -37,8 +37,8 @@ qrcode[pil]==7.4.2
 
 # Личный кабинет (Cabinet)
 bcrypt==4.2.0
-PyJWT==2.8.0
-email-validator==2.1.0
+PyJWT==2.10.1
+email-validator==2.3.0
 
 # Для работы с версиями
 packaging==23.2
@@ -46,7 +46,7 @@ packaging==23.2
 aiofiles==23.2.1
 
 # Вебхуки PayPalych (Flask)
-Flask==3.1.0
+Flask==3.1.2
 
 # Архивирование с паролем
 pyzipper==0.3.6
