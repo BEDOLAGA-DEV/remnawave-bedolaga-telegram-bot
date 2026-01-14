@@ -86,7 +86,8 @@ async def show_promocodes_list(
             "balance": "💰",
             "subscription_days": "📅",
             "trial_subscription": "🎁",
-            "promo_group": "🏷️"
+            "promo_group": "🏷️",
+            "discount": "💸"
         }.get(promo.type, "🎫")
 
         text += f"{status_emoji} {type_emoji} <code>{promo.code}</code>\n"
@@ -99,6 +100,12 @@ async def show_promocodes_list(
         elif promo.type == PromoCodeType.PROMO_GROUP.value:
             if promo.promo_group:
                 text += f"🏷️ Промогруппа: {promo.promo_group.name}\n"
+        elif promo.type == PromoCodeType.DISCOUNT.value:
+            text += f"💸 Скидка: {promo.balance_bonus_kopeks}%"
+            if promo.subscription_days > 0:
+                text += f" ({promo.subscription_days} ч.)\n"
+            else:
+                text += " (до покупки)\n"
 
         if promo.valid_until:
             text += f"⏰ До: {format_datetime(promo.valid_until)}\n"
@@ -164,7 +171,8 @@ async def show_promocode_management(
         "balance": "💰",
         "subscription_days": "📅",
         "trial_subscription": "🎁",
-        "promo_group": "🏷️"
+        "promo_group": "🏷️",
+        "discount": "💸"
     }.get(promo.type, "🎫")
 
     text = f"""
@@ -184,6 +192,12 @@ async def show_promocode_management(
             text += f"🏷️ <b>Промогруппа:</b> {promo.promo_group.name} (приоритет: {promo.promo_group.priority})\n"
         elif promo.promo_group_id:
             text += f"🏷️ <b>Промогруппа ID:</b> {promo.promo_group_id} (не найдена)\n"
+    elif promo.type == PromoCodeType.DISCOUNT.value:
+        text += f"💸 <b>Скидка:</b> {promo.balance_bonus_kopeks}%\n"
+        if promo.subscription_days > 0:
+            text += f"⏰ <b>Действует:</b> {promo.subscription_days} ч.\n"
+        else:
+            text += f"⏰ <b>Действует:</b> до первой покупки\n"
 
     if promo.valid_until:
         text += f"⏰ <b>Действует до:</b> {format_datetime(promo.valid_until)}\n"
@@ -496,7 +510,8 @@ async def select_promocode_type(
         "balance": "💰 Пополнение баланса",
         "days": "📅 Дни подписки",
         "trial": "🎁 Тестовая подписка",
-        "group": "🏷️ Промогруппа"
+        "group": "🏷️ Промогруппа",
+        "discount": "💸 Одноразовая скидка"
     }
 
     await state.update_data(promocode_type=promo_type)
@@ -554,6 +569,12 @@ async def process_promocode_code(
         await message.answer(
             f"🎁 <b>Промокод:</b> <code>{code}</code>\n\n"
             f"Введите количество дней тестовой подписки:"
+        )
+        await state.set_state(AdminStates.setting_promocode_value)
+    elif promo_type == "discount":
+        await message.answer(
+            f"💸 <b>Промокод:</b> <code>{code}</code>\n\n"
+            f"Введите процент скидки (1-100):"
         )
         await state.set_state(AdminStates.setting_promocode_value)
     elif promo_type == "group":
@@ -654,6 +675,9 @@ async def process_promocode_value(
         elif promo_type in ["days", "trial"] and (value < 1 or value > 3650):
             await message.answer("❌ Количество дней должно быть от 1 до 3650")
             return
+        elif promo_type == "discount" and (value < 1 or value > 100):
+            await message.answer("❌ Процент скидки должен быть от 1 до 100")
+            return
         
         await state.update_data(promocode_value=value)
         
@@ -743,10 +767,18 @@ async def process_promocode_uses(
             max_uses = 999999
         
         await state.update_data(promocode_max_uses=max_uses)
-        
-        await message.answer(
-            f"⏰ Введите срок действия промокода в днях (или 0 для бессрочного):"
-        )
+
+        data = await state.get_data()
+        promo_type = data.get('promocode_type')
+
+        if promo_type == "discount":
+            await message.answer(
+                f"⏰ Введите срок действия скидки в часах (или 0 для бессрочного до первой покупки):"
+            )
+        else:
+            await message.answer(
+                f"⏰ Введите срок действия промокода в днях (или 0 для бессрочного):"
+            )
         await state.set_state(AdminStates.setting_promocode_expiry)
         
     except ValueError:
@@ -816,12 +848,8 @@ async def process_promocode_expiry(
         return
     
     try:
-        expiry_days = int(message.text.strip())
-        
-        if expiry_days < 0 or expiry_days > 3650:
-            await message.answer("❌ Срок действия должен быть от 0 до 3650 дней")
-            return
-        
+        expiry_value = int(message.text.strip())
+
         code = data.get('promocode_code')
         promo_type = data.get('promocode_type')
         value = data.get('promocode_value', 0)
@@ -829,23 +857,37 @@ async def process_promocode_expiry(
         promo_group_id = data.get('promo_group_id')
         promo_group_name = data.get('promo_group_name')
 
-        valid_until = None
-        if expiry_days > 0:
-            valid_until = datetime.utcnow() + timedelta(days=expiry_days)
+        if promo_type == "discount":
+            # For discount type, expiry_value is hours for discount validity
+            if expiry_value < 0 or expiry_value > 8760:
+                await message.answer("❌ Срок действия скидки должен быть от 0 до 8760 часов (1 год)")
+                return
+            discount_hours = expiry_value
+            valid_until = None  # Promocode itself doesn't expire
+        else:
+            # For other types, expiry_value is days for promocode expiry
+            if expiry_value < 0 or expiry_value > 3650:
+                await message.answer("❌ Срок действия должен быть от 0 до 3650 дней")
+                return
+            discount_hours = 0
+            valid_until = None
+            if expiry_value > 0:
+                valid_until = datetime.utcnow() + timedelta(days=expiry_value)
 
         type_map = {
             "balance": PromoCodeType.BALANCE,
             "days": PromoCodeType.SUBSCRIPTION_DAYS,
             "trial": PromoCodeType.TRIAL_SUBSCRIPTION,
-            "group": PromoCodeType.PROMO_GROUP
+            "group": PromoCodeType.PROMO_GROUP,
+            "discount": PromoCodeType.DISCOUNT
         }
 
         promocode = await create_promocode(
             db=db,
             code=code,
             type=type_map[promo_type],
-            balance_bonus_kopeks=value * 100 if promo_type == "balance" else 0,
-            subscription_days=value if promo_type in ["days", "trial"] else 0,
+            balance_bonus_kopeks=value * 100 if promo_type == "balance" else value if promo_type == "discount" else 0,
+            subscription_days=value if promo_type in ["days", "trial"] else discount_hours if promo_type == "discount" else 0,
             max_uses=max_uses,
             valid_until=valid_until,
             created_by=db_user.id,
@@ -856,7 +898,8 @@ async def process_promocode_expiry(
             "balance": "Пополнение баланса",
             "days": "Дни подписки",
             "trial": "Тестовая подписка",
-            "group": "Промогруппа"
+            "group": "Промогруппа",
+            "discount": "Одноразовая скидка"
         }
 
         summary_text = f"""
@@ -872,6 +915,12 @@ async def process_promocode_expiry(
             summary_text += f"📅 <b>Дней:</b> {promocode.subscription_days}\n"
         elif promo_type == "group" and promo_group_name:
             summary_text += f"🏷️ <b>Промогруппа:</b> {promo_group_name}\n"
+        elif promo_type == "discount":
+            summary_text += f"💸 <b>Скидка:</b> {promocode.balance_bonus_kopeks}%\n"
+            if promocode.subscription_days > 0:
+                summary_text += f"⏰ <b>Действует:</b> {promocode.subscription_days} ч.\n"
+            else:
+                summary_text += f"⏰ <b>Действует:</b> до первой покупки\n"
 
         summary_text += f"📊 <b>Использований:</b> {promocode.max_uses}\n"
         

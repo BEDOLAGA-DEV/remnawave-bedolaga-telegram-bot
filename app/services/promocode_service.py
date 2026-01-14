@@ -59,7 +59,17 @@ class PromoCodeService:
 
             balance_before_kopeks = user.balance_kopeks
 
-            result_description = await self._apply_promocode_effects(db, user, promocode)
+            try:
+                result_description = await self._apply_promocode_effects(db, user, promocode)
+            except ValueError as e:
+                # Проверяем тип ошибки
+                if "active_discount_exists" in str(e):
+                    await db.rollback()
+                    return {"success": False, "error": "active_discount_exists"}
+                else:
+                    # Прокидываем другие ошибки дальше
+                    raise
+
             balance_after_kopeks = user.balance_kopeks
 
             if promocode.type == PromoCodeType.SUBSCRIPTION_DAYS.value and promocode.subscription_days > 0:
@@ -231,5 +241,42 @@ class PromoCodeService:
                 logger.info(f"✅ Создана триал подписка для пользователя {user.telegram_id} на {trial_days} дней")
             else:
                 effects.append("ℹ️ У вас уже есть активная подписка")
-        
+
+        if promocode.type == PromoCodeType.DISCOUNT.value:
+            # Проверка на существующую активную скидку
+            if getattr(user, "promo_offer_discount_percent", 0) > 0:
+                expires_at = getattr(user, "promo_offer_discount_expires_at", None)
+                if expires_at is None or expires_at > datetime.utcnow():
+                    # У пользователя уже есть активная скидка
+                    effects.append("❌ У вас уже есть активная скидка")
+                    logger.warning(
+                        f"⚠️ Пользователь {user.telegram_id} попытался активировать промокод со скидкой, "
+                        f"но у него уже есть активная скидка {user.promo_offer_discount_percent}%"
+                    )
+                    # Возвращаем ошибку через исключение
+                    raise ValueError("active_discount_exists")
+
+            # Процент скидки хранится в balance_bonus_kopeks (1-100)
+            discount_percent = max(1, min(100, promocode.balance_bonus_kopeks))
+
+            # Записываем скидку в профиль пользователя
+            user.promo_offer_discount_percent = discount_percent
+            user.promo_offer_discount_source = f"promocode:{promocode.code}"
+
+            # Срок действия хранится в subscription_days (в часах)
+            discount_hours = promocode.subscription_days
+            if discount_hours and discount_hours > 0:
+                from datetime import timedelta
+                user.promo_offer_discount_expires_at = datetime.utcnow() + timedelta(hours=discount_hours)
+                expires_text = f" (действует {discount_hours} ч.)"
+            else:
+                user.promo_offer_discount_expires_at = None
+                expires_text = " (до первой покупки)"
+
+            effects.append(f"🎉 Активирована скидка {discount_percent}%{expires_text}")
+            logger.info(
+                f"✅ Пользователю {user.telegram_id} активирована скидка {discount_percent}% "
+                f"по промокоду {promocode.code}, срок: {user.promo_offer_discount_expires_at}"
+            )
+
         return "\n".join(effects) if effects else "✅ Промокод активирован"

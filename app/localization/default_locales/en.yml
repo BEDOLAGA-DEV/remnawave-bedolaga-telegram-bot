@@ -41,3 +41,13 @@ PAYMENT_METHODS_NONE_AVAILABLE: |
   Choose a top-up option:
 SUPPORT_TOPUP_DISABLED: "Top-ups via support are disabled. Please use another payment method."
 
+PROMOCODE:
+  TYPE_DISCOUNT: "One-time discount"
+  ACTIVE_DISCOUNT_EXISTS: |
+    ❌ <b>Cannot activate promo code</b>
+
+    You already have an active discount. Wait for it to expire or use it in a purchase to activate a new promo code.
+  DISCOUNT_ACTIVATED: "🎉 Activated {percent}% discount on your next purchase!"
+
+ADMIN_PROMOCODE_TYPE_DISCOUNT: "💸 One-time discount"
+
