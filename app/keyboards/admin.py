@@ -1312,6 +1312,12 @@ def get_promocode_type_keyboard(language: str = "ru") -> InlineKeyboardMarkup:
             )
         ],
         [
+            InlineKeyboardButton(
+                text=_t(texts, "ADMIN_PROMOCODE_TYPE_DISCOUNT", "💸 Одноразовая скидка"),
+                callback_data="promo_type_discount"
+            )
+        ],
+        [
             InlineKeyboardButton(text=texts.BACK, callback_data="admin_promocodes")
         ]
     ])
@@ -1323,7 +1329,7 @@ def get_promocode_list_keyboard(promocodes: list, page: int, total_pages: int, l
     
     for promo in promocodes:
         status_emoji = "✅" if promo.is_active else "❌"
-        type_emoji = {"balance": "💰", "subscription_days": "📅", "trial_subscription": "🎁"}.get(promo.type, "🎫")
+        type_emoji = {"balance": "💰", "subscription_days": "📅", "trial_subscription": "🎁", "promo_group": "🏷️", "discount": "💸"}.get(promo.type, "🎫")
         
         keyboard.append([
             InlineKeyboardButton(
