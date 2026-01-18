@@ -1,55 +1,61 @@
 """
 Клавиатуры для работы с подарочными подписками.
 """
-from typing import List
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from app.config import PERIOD_PRICES, get_traffic_prices
 
 
 def get_gift_period_keyboard() -> InlineKeyboardMarkup:
     """
-    Клавиатура выбора периода gift-подписки.
+    Клавиатура выбора периода gift-подписки из PERIOD_PRICES.
 
     Returns:
-        InlineKeyboardMarkup с периодами: 7/30/90/180 дней
+        InlineKeyboardMarkup с доступными периодами
     """
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="7 дней", callback_data="gift_period:7"),
-            InlineKeyboardButton(text="30 дней", callback_data="gift_period:30"),
-        ],
-        [
-            InlineKeyboardButton(text="90 дней", callback_data="gift_period:90"),
-            InlineKeyboardButton(text="180 дней", callback_data="gift_period:180"),
-        ],
-        [
-            InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel"),
-        ]
+    buttons = []
+
+    # Используем периоды из конфига
+    for days in sorted(PERIOD_PRICES.keys()):
+        price = PERIOD_PRICES[days] / 100  # в рублях
+        button_text = f"{days} дней ({price:.0f}₽)"
+        buttons.append([
+            InlineKeyboardButton(text=button_text, callback_data=f"gift_period:{days}")
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel"),
     ])
-    return keyboard
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_gift_traffic_keyboard() -> InlineKeyboardMarkup:
     """
-    Клавиатура выбора трафика gift-подписки.
+    Клавиатура выбора трафика gift-подписки из TRAFFIC_PRICES.
 
     Returns:
-        InlineKeyboardMarkup с вариантами трафика: 50/100/200/безлимит ГБ
+        InlineKeyboardMarkup с вариантами трафика
     """
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="50 ГБ", callback_data="gift_traffic:50"),
-            InlineKeyboardButton(text="100 ГБ", callback_data="gift_traffic:100"),
-        ],
-        [
-            InlineKeyboardButton(text="200 ГБ", callback_data="gift_traffic:200"),
-            InlineKeyboardButton(text="♾ Безлимит", callback_data="gift_traffic:0"),
-        ],
-        [
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="gift_back_period"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel"),
-        ]
+    buttons = []
+
+    # Используем пакеты трафика из конфига
+    traffic_prices = get_traffic_prices()
+    for gb in sorted(traffic_prices.keys()):
+        if gb == 0:
+            button_text = "♾ Безлимит"
+        else:
+            price = traffic_prices[gb] / 100  # в рублях
+            button_text = f"{gb} ГБ (+{price:.0f}₽)"
+        buttons.append([
+            InlineKeyboardButton(text=button_text, callback_data=f"gift_traffic:{gb}")
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="gift_back_period"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel"),
     ])
-    return keyboard
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_gift_devices_keyboard() -> InlineKeyboardMarkup:
@@ -59,6 +65,7 @@ def get_gift_devices_keyboard() -> InlineKeyboardMarkup:
     Returns:
         InlineKeyboardMarkup с вариантами: 1/3/5 устройств
     """
+    # Используем стандартные варианты устройств
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="1 устройство", callback_data="gift_devices:1"),
@@ -74,43 +81,6 @@ def get_gift_devices_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel"),
         ]
     ])
-    return keyboard
-
-
-def get_gift_countries_keyboard(squads: List[dict]) -> InlineKeyboardMarkup:
-    """
-    Клавиатура выбора серверов (стран) gift-подписки.
-
-    Args:
-        squads: Список доступных серверов/сквадов из БД
-                Формат: [{"uuid": "...", "name": "...", "flag": "🇷🇺"}, ...]
-
-    Returns:
-        InlineKeyboardMarkup с доступными странами
-    """
-    buttons = []
-
-    # Создаем кнопки для каждого сквада
-    for squad in squads:
-        flag = squad.get("flag", "🌍")
-        name = squad.get("name", "Unknown")
-        uuid = squad.get("uuid", "")
-
-        button_text = f"{flag} {name}"
-        buttons.append([
-            InlineKeyboardButton(
-                text=button_text,
-                callback_data=f"gift_country:{uuid}"
-            )
-        ])
-
-    # Добавляем кнопки управления
-    buttons.append([
-        InlineKeyboardButton(text="⬅️ Назад", callback_data="gift_back_devices"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel"),
-    ])
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return keyboard
 
 
@@ -132,7 +102,7 @@ def get_gift_confirm_keyboard(price_rubles: float) -> InlineKeyboardMarkup:
             ),
         ],
         [
-            InlineKeyboardButton(text="⬅️ Изменить", callback_data="gift_back_countries"),
+            InlineKeyboardButton(text="⬅️ Изменить", callback_data="gift_back_devices"),
             InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel"),
         ]
     ])

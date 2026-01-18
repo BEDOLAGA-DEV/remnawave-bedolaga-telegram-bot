@@ -271,5 +271,4 @@ class GiftSubscriptionStates(StatesGroup):
     selecting_period = State()
     selecting_traffic = State()
     selecting_devices = State()
-    selecting_countries = State()
     confirming_purchase = State()

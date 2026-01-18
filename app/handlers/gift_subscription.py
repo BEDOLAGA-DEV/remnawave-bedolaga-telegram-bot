@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.states import GiftSubscriptionStates
 from app.database.models import User
 from app.database.crud.user import get_user_by_id
-from app.database.crud.server_squad import get_available_server_squads
 from app.localization.texts import get_texts
 from app.services.gift_subscription_service import (
     gift_subscription_service,
@@ -20,14 +19,12 @@ from app.keyboards.gift_keyboards import (
     get_gift_period_keyboard,
     get_gift_traffic_keyboard,
     get_gift_devices_keyboard,
-    get_gift_countries_keyboard,
     get_gift_confirm_keyboard,
     get_gift_share_keyboard,
     get_gift_cancel_keyboard,
 )
 from app.utils.decorators import error_handler
 from app.config import settings
-from app.database.database import db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -124,10 +121,11 @@ async def handle_gift_traffic_selection(
 async def handle_gift_devices_selection(
     callback: types.CallbackQuery,
     db_user: User,
-    state: FSMContext
+    state: FSMContext,
+    db: AsyncSession
 ):
     """
-    Обработка выбора количества устройств.
+    Обработка выбора количества устройств и финальное подтверждение.
     """
     texts = get_texts(db_user.language)
 
@@ -138,52 +136,25 @@ async def handle_gift_devices_selection(
     # Сохраняем количество устройств в state
     await state.update_data(devices=devices)
 
-    # Получаем список доступных серверов
-    async with db_manager.session(read_only=True) as db_session:
-        squads = await get_available_server_squads(db_session)
+    # Получаем случайный доступный сервер (как для trial)
+    from app.database.crud.server_squad import get_random_trial_squad_uuid
+    try:
+        squad_uuid = await get_random_trial_squad_uuid(db)
+        if not squad_uuid:
+            await callback.answer("❌ Нет доступных серверов", show_alert=True)
+            return
+        squads = [squad_uuid]
+    except Exception as e:
+        logger.error(f"Ошибка получения сервера для gift: {e}")
+        await callback.answer("❌ Ошибка получения сервера", show_alert=True)
+        return
 
-    # Формируем список для клавиатуры
-    squad_list = []
-    for squad in squads:
-        squad_list.append({
-            "uuid": squad.uuid,
-            "name": squad.name,
-            "flag": getattr(squad, "flag_emoji", "🌍")
-        })
+    await state.update_data(squads=squads)
 
-    # Переходим к выбору серверов
-    await callback.message.edit_text(
-        text=texts.GIFT_SELECT_COUNTRIES,
-        reply_markup=get_gift_countries_keyboard(squad_list)
-    )
-
-    await state.set_state(GiftSubscriptionStates.selecting_countries)
-    await callback.answer()
-
-
-@error_handler
-async def handle_gift_country_selection(
-    callback: types.CallbackQuery,
-    db_user: User,
-    state: FSMContext,
-    db: AsyncSession
-):
-    """
-    Обработка выбора сервера (страны).
-    """
-    texts = get_texts(db_user.language)
-
-    # Извлекаем UUID сквада из callback_data (формат: gift_country:uuid)
-    _, squad_uuid = callback.data.split(":", 1)
-
-    # Сохраняем выбранный сквад в state
+    # Получаем данные из state для расчёта цены
     data = await state.get_data()
     period_days = data.get("period_days")
     traffic_gb = data.get("traffic_gb")
-    devices = data.get("devices")
-    squads = [squad_uuid]  # Для простоты пока один сквад
-
-    await state.update_data(squads=squads)
 
     # Рассчитываем цену
     try:
@@ -207,19 +178,11 @@ async def handle_gift_country_selection(
     traffic_text = f"{traffic_gb} ГБ" if traffic_gb > 0 else "♾ Безлимит"
     period_text = texts.get(f"GIFT_PERIOD_{period_days}_DAYS", f"{period_days} дней")
 
-    # Получаем название сервера
-    squads_list = await get_available_server_squads(db)
-    server_name = "Unknown"
-    for squad in squads_list:
-        if squad.uuid == squad_uuid:
-            server_name = squad.name
-            break
-
     confirm_text = texts.GIFT_CONFIRM_PURCHASE.format(
         period=period_text,
         traffic=traffic_text,
         devices=devices,
-        countries=server_name,
+        countries="Авто",  # Автоматический выбор сервера
         price=f"{price_kopeks/100:.2f}"
     )
 
@@ -406,39 +369,6 @@ async def handle_gift_back_devices(
     await callback.answer()
 
 
-@error_handler
-async def handle_gift_back_countries(
-    callback: types.CallbackQuery,
-    db_user: User,
-    state: FSMContext
-):
-    """
-    Возврат к выбору серверов.
-    """
-    texts = get_texts(db_user.language)
-
-    # Получаем список доступных серверов
-    async with db_manager.session(read_only=True) as db_session:
-        squads = await get_available_server_squads(db_session)
-
-    # Формируем список для клавиатуры
-    squad_list = []
-    for squad in squads:
-        squad_list.append({
-            "uuid": squad.uuid,
-            "name": squad.name,
-            "flag": getattr(squad, "flag_emoji", "🌍")
-        })
-
-    await callback.message.edit_text(
-        text=texts.GIFT_SELECT_COUNTRIES,
-        reply_markup=get_gift_countries_keyboard(squad_list)
-    )
-
-    await state.set_state(GiftSubscriptionStates.selecting_countries)
-    await callback.answer()
-
-
 def register_gift_subscription_handlers(dp: Dispatcher):
     """
     Регистрирует все handlers для gift-подписок.
@@ -468,13 +398,6 @@ def register_gift_subscription_handlers(dp: Dispatcher):
         handle_gift_devices_selection,
         F.data.startswith("gift_devices:"),
         GiftSubscriptionStates.selecting_devices
-    )
-
-    # Выбор сервера
-    dp.callback_query.register(
-        handle_gift_country_selection,
-        F.data.startswith("gift_country:"),
-        GiftSubscriptionStates.selecting_countries
     )
 
     # Подтверждение покупки
@@ -510,11 +433,6 @@ def register_gift_subscription_handlers(dp: Dispatcher):
     dp.callback_query.register(
         handle_gift_back_devices,
         F.data == "gift_back_devices"
-    )
-
-    dp.callback_query.register(
-        handle_gift_back_countries,
-        F.data == "gift_back_countries"
     )
 
     logger.info("✅ Gift subscription handlers registered")
