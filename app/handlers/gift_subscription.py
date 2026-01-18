@@ -27,7 +27,7 @@ from app.keyboards.gift_keyboards import (
 )
 from app.utils.decorators import error_handler
 from app.config import settings
-from app.database.database import get_session
+from app.database.database import db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +139,8 @@ async def handle_gift_devices_selection(
     await state.update_data(devices=devices)
 
     # Получаем список доступных серверов
-    async with get_session() as db:
-        squads = await get_available_server_squads(db)
+    async with db_manager.session(read_only=True) as db_session:
+        squads = await get_available_server_squads(db_session)
 
     # Формируем список для клавиатуры
     squad_list = []
@@ -418,8 +418,8 @@ async def handle_gift_back_countries(
     texts = get_texts(db_user.language)
 
     # Получаем список доступных серверов
-    async with get_session() as db:
-        squads = await get_available_server_squads(db)
+    async with db_manager.session(read_only=True) as db_session:
+        squads = await get_available_server_squads(db_session)
 
     # Формируем список для клавиатуры
     squad_list = []
