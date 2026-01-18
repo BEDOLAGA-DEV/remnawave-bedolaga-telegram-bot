@@ -600,11 +600,9 @@ async def login_email(
         if is_allowed:
             verification_token = generate_verification_token()
             verification_expires = get_verification_expires_at()
-
             user.email_verification_token = verification_token
             user.email_verification_expires = verification_expires
             await db.commit()
-
             if email_service.is_configured():
                 verification_url = f"{settings.CABINET_URL}/verify-email"
                 sent = email_service.send_verification_email(
@@ -615,11 +613,11 @@ async def login_email(
                 )
                 if sent:
                     await email_rate_limiter.register_attempt(user.email)
-
-        return {
-            "message": "Email not verified. A new verification email has been sent (if not recently sent). Please check your inbox or spam folder.",
-            "email_not_verified": True,
-        }
+        from app.cabinet.schemas.email_verification_required import EmailVerificationRequiredResponse
+        return EmailVerificationRequiredResponse(
+            message="Email not verified. A new verification email has been sent (if not recently sent). Please check your inbox or spam folder.",
+            email_not_verified=True
+        )
 
     if user.status != "active":
         raise HTTPException(

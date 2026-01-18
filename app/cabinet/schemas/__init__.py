@@ -14,6 +14,7 @@ from .auth import (
     AuthResponse,
 )
 from .email_resend import EmailResendRequest
+from .email_verification_required import EmailVerificationRequiredResponse
 from .subscription import (
     SubscriptionResponse,
     TrafficPurchaseInfo,
