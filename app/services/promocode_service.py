@@ -269,12 +269,12 @@ class PromoCodeService:
         if promocode.type == PromoCodeType.TRIAL_SUBSCRIPTION.value:
             from app.database.crud.subscription import create_trial_subscription
             from app.config import settings
-            
+
             subscription = await get_subscription_by_user_id(db, user.id)
-            
+
             if not subscription:
                 trial_days = promocode.subscription_days if promocode.subscription_days > 0 else settings.TRIAL_DURATION_DAYS
-                
+
                 forced_devices = None
                 if not settings.is_devices_selection_enabled():
                     forced_devices = settings.get_disabled_mode_device_limit()
@@ -285,12 +285,94 @@ class PromoCodeService:
                     duration_days=trial_days,
                     device_limit=forced_devices,
                 )
-                
+
                 await self.subscription_service.create_remnawave_user(db, trial_subscription)
-                
+
                 effects.append(f"🎁 Активирована тестовая подписка на {trial_days} дней")
                 logger.info(f"✅ Создана триал подписка для пользователя {user.telegram_id} на {trial_days} дней")
             else:
                 effects.append("ℹ️ У вас уже есть активная подписка")
-        
+
+        # Обработка GIFT типа (подарочная подписка)
+        if promocode.type == PromoCodeType.GIFT.value:
+            import json
+            from app.database.crud.subscription import create_paid_subscription, extend_subscription
+            from app.database.crud.transaction import create_transaction
+            from app.database.models import TransactionType
+
+            # Парсим параметры из description JSON
+            try:
+                params = json.loads(promocode.description or "{}")
+                traffic_gb = params.get("traffic_gb", 0)
+                devices = params.get("devices", 1)
+                squads = params.get("squads", [])
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Ошибка парсинга параметров gift-кода {promocode.code}: {e}")
+                raise ValueError("Ошибка чтения параметров подарка")
+
+            subscription = await get_subscription_by_user_id(db, user.id)
+
+            if subscription and subscription.is_active:
+                # Продление существующей подписки
+                await extend_subscription(db, subscription.id, promocode.subscription_days)
+
+                # Обновляем параметры если подарок щедрее
+                if traffic_gb > subscription.traffic_limit_gb:
+                    subscription.traffic_limit_gb = traffic_gb
+                if devices > subscription.device_limit:
+                    subscription.device_limit = devices
+
+                # Объединяем squads
+                existing_squads = set(subscription.connected_squads or [])
+                new_squads = existing_squads.union(set(squads))
+                subscription.connected_squads = list(new_squads)
+
+                await db.flush()
+
+                # Обновляем пользователя в RemnaWave
+                await self.subscription_service.update_remnawave_user(db, subscription)
+
+                effects.append(f"🎁 Подписка продлена на {promocode.subscription_days} дней")
+                logger.info(
+                    f"✅ Подписка пользователя {user.telegram_id} продлена gift-кодом {promocode.code} "
+                    f"на {promocode.subscription_days} дней"
+                )
+            else:
+                # Создание новой подписки
+                from app.database.crud.subscription import create_paid_subscription
+
+                new_subscription = await create_paid_subscription(
+                    db=db,
+                    user_id=user.id,
+                    duration_days=promocode.subscription_days,
+                    traffic_limit_gb=traffic_gb,
+                    device_limit=devices,
+                    connected_squads=squads,
+                    update_server_counters=True,
+                )
+
+                # Создаём пользователя в RemnaWave
+                await self.subscription_service.create_remnawave_user(db, new_subscription)
+
+                effects.append(f"🎁 Активирована gift-подписка на {promocode.subscription_days} дней")
+                logger.info(
+                    f"✅ Создана gift-подписка для пользователя {user.telegram_id} "
+                    f"на {promocode.subscription_days} дней (код: {promocode.code})"
+                )
+
+            # Помечаем пользователя как имевшего платную подписку
+            user.has_had_paid_subscription = True
+
+            # Создаём транзакцию активации gift-подписки
+            traffic_text = f"{traffic_gb} ГБ" if traffic_gb > 0 else "Безлимит"
+            gifter_text = f" от пользователя ID {promocode.created_by}" if promocode.created_by else ""
+            await create_transaction(
+                db,
+                user_id=user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=0,
+                description=f"Получена gift-подписка{gifter_text} (код: {promocode.code})",
+                external_id=f"gift_activation_{promocode.code}"
+            )
+
         return "\n".join(effects) if effects else "✅ Промокод активирован"
