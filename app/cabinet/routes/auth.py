@@ -616,11 +616,10 @@ async def login_email(
                 if sent:
                     await email_rate_limiter.register_attempt(user.email)
 
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Email not verified",
-            headers={"X-Email-Verification-Required": "1"},
-        )
+        return {
+            "message": "Email not verified. A new verification email has been sent (if not recently sent). Please check your inbox or spam folder.",
+            "email_not_verified": True,
+        }
 
     if user.status != "active":
         raise HTTPException(
