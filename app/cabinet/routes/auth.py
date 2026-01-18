@@ -284,8 +284,7 @@ async def register_email(
 
     # Send verification email
     if email_service.is_configured():
-        # TODO: Get actual verification URL from settings
-        verification_url = "https://example.com/cabinet/verify-email"
+        verification_url = f"{settings.CABINET_URL}/verify-email"
         email_service.send_verification_email(
             to_email=request.email,
             verification_token=verification_token,
@@ -363,7 +362,7 @@ async def resend_verification(
 
     # Send verification email
     if email_service.is_configured():
-        verification_url = "https://example.com/cabinet/verify-email"
+        verification_url = f"{settings.CABINET_URL}/verify-email"
         email_service.send_verification_email(
             to_email=user.email,
             verification_token=verification_token,
@@ -536,7 +535,7 @@ async def forgot_password(
 
     # Send reset email
     if email_service.is_configured():
-        reset_url = "https://example.com/cabinet/reset-password"
+        reset_url = f"{settings.CABINET_URL}/reset-password"
         email_service.send_password_reset_email(
             to_email=user.email,
             reset_token=reset_token,

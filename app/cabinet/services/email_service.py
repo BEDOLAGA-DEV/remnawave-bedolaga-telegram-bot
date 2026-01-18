@@ -29,16 +29,46 @@ class EmailService:
 
     def _get_smtp_connection(self) -> smtplib.SMTP:
         """Create and return SMTP connection."""
-        if self.use_tls:
-            smtp = smtplib.SMTP(self.host, self.port)
-            smtp.starttls()
-        else:
-            smtp = smtplib.SMTP(self.host, self.port)
+        
+        # Always check for dynamic setting updates (from DB/System Settings)
+        if settings.SMTP_HOST:
+            self.host = settings.SMTP_HOST
+            self.port = settings.SMTP_PORT
+            self.user = settings.SMTP_USER
+            self.password = settings.SMTP_PASSWORD
+            self.from_email = settings.get_smtp_from_email()
+            self.from_name = settings.SMTP_FROM_NAME
+            self.use_tls = settings.SMTP_USE_TLS
 
-        if self.user and self.password:
-            smtp.login(self.user, self.password)
+        logger.debug(f"Connecting to SMTP server: {self.host}:{self.port} (TLS: {self.use_tls})")
 
-        return smtp
+        if not self.host:
+             raise ValueError("SMTP_HOST is not configured (empty or None)")
+             
+        smtp = None
+        try:
+            if self.port == 465:
+                smtp = smtplib.SMTP_SSL(self.host, self.port)
+            else:
+                smtp = smtplib.SMTP(self.host, self.port)
+
+            if self.port != 465 and self.use_tls:
+                import ssl
+                context = ssl.create_default_context()
+                smtp.starttls(context=context)
+
+            if self.user and self.password:
+                smtp.login(self.user, self.password)
+
+            return smtp
+        except Exception as e:
+            try:
+                if smtp:
+                    smtp.quit()
+            except Exception:
+                pass
+            logger.error(f"Failed to connect to SMTP server {self.host}:{self.port} - {e}")
+            raise
 
     def send_email(
         self,
