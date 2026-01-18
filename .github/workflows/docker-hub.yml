@@ -23,10 +23,49 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+<<<<<<< HEAD
       - name: Get version info
         id: version
         run: |
           echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+=======
+    - name: Get version info
+      id: version
+      run: |
+        echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        
+        echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+        
+        # Определяем версию и теги
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/}
+          TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:latest,fr1ngg/remnawave-bedolaga-telegram-bot:${VERSION}"
+          echo "🏷️ Собираем релизную версию: $VERSION"
+        elif [[ $GITHUB_REF == refs/heads/main ]]; then
+          VERSION="v3.1.0-$(git rev-parse --short HEAD)"
+          TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:latest,fr1ngg/remnawave-bedolaga-telegram-bot:${VERSION}"
+          echo "🚀 Собираем версию из main: $VERSION"
+        elif [[ $GITHUB_REF == refs/heads/dev ]]; then
+          VERSION="v3.1.0-dev-$(git rev-parse --short HEAD)"
+          TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:dev,fr1ngg/remnawave-bedolaga-telegram-bot:${VERSION}"
+          echo "🧪 Собираем dev версию: $VERSION"
+        else
+          VERSION="v3.1.0-pr-$(git rev-parse --short HEAD)"
+          TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:pr-$(git rev-parse --short HEAD)"
+          echo "🔀 Собираем PR версию: $VERSION"
+        fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tags=$TAGS" >> $GITHUB_OUTPUT
+        echo "should_push=${{ github.event_name != 'pull_request' }}" >> $GITHUB_OUTPUT
+        
+        echo "=== Информация о сборке ==="
+        echo "Версия: $VERSION"
+        echo "Коммит: $(git rev-parse --short HEAD)"
+        echo "Теги: $TAGS"
+        echo "Push: ${{ github.event_name != 'pull_request' }}"
+        echo "==========================="
+>>>>>>> 04bb20c1e7f5570975e9edb5515a772aa0c5edf7
 
           echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
 
