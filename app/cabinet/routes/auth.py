@@ -596,6 +596,26 @@ async def login_email(
         )
 
     if not user.email_verified:
+        is_allowed, try_again_in = await email_rate_limiter.check_rate_limit(request.email)
+        if is_allowed:
+            verification_token = generate_verification_token()
+            verification_expires = get_verification_expires_at()
+
+            user.email_verification_token = verification_token
+            user.email_verification_expires = verification_expires
+            await db.commit()
+
+            if email_service.is_configured():
+                verification_url = f"{settings.CABINET_URL}/verify-email"
+                sent = email_service.send_verification_email(
+                    to_email=user.email,
+                    verification_token=verification_token,
+                    verification_url=verification_url,
+                    username=user.first_name,
+                )
+                if sent:
+                    await email_rate_limiter.register_attempt(user.email)
+
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Email not verified",
