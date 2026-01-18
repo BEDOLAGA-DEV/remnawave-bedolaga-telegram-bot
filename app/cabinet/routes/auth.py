@@ -1,43 +1,3 @@
-from fastapi import APIRouter
-from ..schemas.email_resend import EmailResendRequest
-
-router = APIRouter(prefix="/auth", tags=["Cabinet Auth"])
-
-@router.post("/email/resend-by-credentials")
-async def resend_verification_by_credentials(
-    request: EmailResendRequest,
-    db: AsyncSession = Depends(get_cabinet_db),
-):
-    result = await db.execute(
-        select(User).where(User.email == request.email)
-    )
-    user = result.scalar_one_or_none()
-    if not user or not user.password_hash or not verify_password(request.password, user.password_hash):
-        return {"message": "If the email exists and is not verified, a verification email has been sent"}
-    if user.email_verified:
-        return {"message": "Email is already verified"}
-    is_allowed, try_again_in = await email_rate_limiter.check_rate_limit(user.email)
-    if not is_allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Too many emails. Please wait {int(try_again_in)} seconds.",
-        )
-    verification_token = generate_verification_token()
-    verification_expires = get_verification_expires_at()
-    user.email_verification_token = verification_token
-    user.email_verification_expires = verification_expires
-    await db.commit()
-    if email_service.is_configured():
-        verification_url = f"{settings.CABINET_URL}/verify-email"
-        sent = email_service.send_verification_email(
-            to_email=user.email,
-            verification_token=verification_token,
-            verification_url=verification_url,
-            username=user.first_name,
-        )
-        if sent:
-            await email_rate_limiter.register_attempt(user.email)
-    return {"message": "If the email exists and is not verified, a verification email has been sent"}
 """Authentication routes for cabinet."""
 
 import hashlib
@@ -74,6 +34,7 @@ from ..schemas.auth import (
     UserResponse,
     AuthResponse,
 )
+from ..schemas.email_resend import EmailResendRequest
 from ..auth import (
     validate_telegram_login_widget,
     validate_telegram_init_data,
@@ -97,6 +58,52 @@ from ..services.email_rate_limiter import email_rate_limiter
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Cabinet Auth"])
+
+
+@router.post("/email/resend-by-credentials")
+async def resend_verification_by_credentials(
+    request: EmailResendRequest,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    result = await db.execute(
+        select(User).where(User.email == request.email)
+    )
+    user = result.scalar_one_or_none()
+    if not user or not user.password_hash or not verify_password(request.password, user.password_hash):
+        # Always generic response for security
+        return {"message": "If the email exists and is not verified, a verification email has been sent"}
+    
+    if user.email_verified:
+        return {"message": "Email is already verified"}
+        
+    is_allowed, try_again_in = await email_rate_limiter.check_rate_limit(user.email)
+    if not is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many emails. Please wait {int(try_again_in)} seconds.",
+        )
+        
+    verification_token = generate_verification_token()
+    verification_expires = get_verification_expires_at()
+    
+    user.email_verification_token = verification_token
+    user.email_verification_expires = verification_expires
+    
+    await db.commit()
+    
+    # Send verification email
+    if email_service.is_configured():
+        verification_url = f"{settings.CABINET_URL}/verify-email"
+        sent = email_service.send_verification_email(
+            to_email=user.email,
+            verification_token=verification_token,
+            verification_url=verification_url,
+            username=user.first_name,
+        )
+        if sent:
+            await email_rate_limiter.register_attempt(user.email)
+            
+    return {"message": "If the email exists and is not verified, a verification email has been sent"}
 
 
 def _user_to_response(user: User) -> UserResponse:
