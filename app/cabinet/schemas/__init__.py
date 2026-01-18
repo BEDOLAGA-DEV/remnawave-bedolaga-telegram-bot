@@ -13,6 +13,7 @@ from .auth import (
     UserResponse,
     AuthResponse,
 )
+from .email_resend import EmailResendRequest
 from .subscription import (
     SubscriptionResponse,
     TrafficPurchaseInfo,

@@ -1,3 +1,41 @@
+from ..schemas.email_resend import EmailResendRequest
+
+@router.post("/email/resend-by-credentials")
+async def resend_verification_by_credentials(
+    request: EmailResendRequest,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    result = await db.execute(
+        select(User).where(User.email == request.email)
+    )
+    user = result.scalar_one_or_none()
+    if not user or not user.password_hash or not verify_password(request.password, user.password_hash):
+        # Always generic response for security
+        return {"message": "If the email exists and is not verified, a verification email has been sent"}
+    if user.email_verified:
+        return {"message": "Email is already verified"}
+    is_allowed, try_again_in = await email_rate_limiter.check_rate_limit(user.email)
+    if not is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many emails. Please wait {int(try_again_in)} seconds.",
+        )
+    verification_token = generate_verification_token()
+    verification_expires = get_verification_expires_at()
+    user.email_verification_token = verification_token
+    user.email_verification_expires = verification_expires
+    await db.commit()
+    if email_service.is_configured():
+        verification_url = f"{settings.CABINET_URL}/verify-email"
+        sent = email_service.send_verification_email(
+            to_email=user.email,
+            verification_token=verification_token,
+            verification_url=verification_url,
+            username=user.first_name,
+        )
+        if sent:
+            await email_rate_limiter.register_attempt(user.email)
+    return {"message": "If the email exists and is not verified, a verification email has been sent"}
 """Authentication routes for cabinet."""
 
 import hashlib
@@ -325,7 +363,6 @@ async def register(
     Register a new user with email and password (without Telegram).
     Assigns a virtual ID (-1, -2, etc) to avoid conflicts with real Telegram IDs.
     """
-    # Check rate limit
     is_allowed, try_again_in = await email_rate_limiter.check_rate_limit(request.email)
     if not is_allowed:
         raise HTTPException(
@@ -333,44 +370,48 @@ async def register(
             detail=f"Too many emails. Please wait {int(try_again_in)} seconds.",
         )
 
-    # Check if email already exists
-    result = await db.execute(
-        select(User).where(User.email == request.email)
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This email is already registered",
-        )
+    result = await db.execute(select(User).where(User.email == request.email))
+    existing_user = result.scalar_one_or_none()
 
-    # Generate virtual telegram_id (negative numbers starting from -1)
-    # real telegram IDs are positive, so we use negative IDs for email-only users
+    if existing_user:
+        if existing_user.email_verified:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This email is already registered",
+            )
+        existing_user.password_hash = hash_password(request.password)
+        existing_user.email_verification_token = generate_verification_token()
+        existing_user.email_verification_expires = get_verification_expires_at()
+        existing_user.first_name = sanitize_telegram_name(request.first_name)
+        existing_user.last_name = sanitize_telegram_name(request.last_name)
+        await db.commit()
+        if email_service.is_configured():
+            verification_url = f"{settings.CABINET_URL}/verify-email"
+            sent = email_service.send_verification_email(
+                to_email=existing_user.email,
+                verification_token=existing_user.email_verification_token,
+                verification_url=verification_url,
+                username=existing_user.first_name,
+            )
+            if sent:
+                await email_rate_limiter.register_attempt(request.email)
+        return {"message": "Verification email sent. Please check your email."}
+
     stmt = select(func.min(User.telegram_id))
     result = await db.execute(stmt)
     min_id = result.scalar()
-    
-    # If min_id is None (table empty) or min_id >= 0 (no negative IDs yet), start at -1
     if min_id is None or min_id >= 0:
         new_virtual_id = -1
     else:
-        # Otherwise decrement the minimum found
         new_virtual_id = min_id - 1
 
-    # Generate verification token
     verification_token = generate_verification_token()
     verification_expires = get_verification_expires_at()
-
-    # Generate referral code
     referral_code = await create_unique_referral_code(db)
-    
-    # Get default promo group
     default_group = await get_default_promo_group(db)
     promo_group_id = default_group.id if default_group else None
-
-    # Create new user
     safe_first = sanitize_telegram_name(request.first_name)
     safe_last = sanitize_telegram_name(request.last_name)
-    
     new_user = User(
         telegram_id=new_virtual_id,
         email=request.email,
@@ -389,7 +430,6 @@ async def register(
         has_made_first_topup=False,
         notification_settings={},
     )
-
     db.add(new_user)
     try:
         await db.commit()
@@ -400,8 +440,6 @@ async def register(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed",
         )
-    
-    # Emit user.created event (for webhooks, stats, etc.)
     try:
         from app.services.event_emitter import event_emitter
         await event_emitter.emit(
@@ -420,8 +458,6 @@ async def register(
         )
     except Exception as error:
         logger.warning(f"Failed to emit user.created event: {error}")
-
-    # Send verification email
     if email_service.is_configured():
         verification_url = f"{settings.CABINET_URL}/verify-email"
         sent = email_service.send_verification_email(
@@ -432,7 +468,6 @@ async def register(
         )
         if sent:
             await email_rate_limiter.register_attempt(request.email)
-    
     return {"message": "Registration successful. Please verify your email."}
 
 
@@ -554,7 +589,8 @@ async def login_email(
     if not user.email_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Please verify your email first",
+            detail="Email not verified",
+            headers={"X-Email-Verification-Required": "1"},
         )
 
     if user.status != "active":
