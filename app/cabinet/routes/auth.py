@@ -45,6 +45,7 @@ from ..auth.email_verification import (
     is_token_expired,
 )
 from ..services.email_service import email_service
+from ..services.email_rate_limiter import email_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +253,14 @@ async def register_email(
     Requires valid JWT token from Telegram authentication.
     Sends verification email to the provided address.
     """
+    # Check rate limit
+    is_allowed, try_again_in = await email_rate_limiter.check_rate_limit(request.email)
+    if not is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many emails. Please wait {int(try_again_in)} seconds.",
+        )
+
     # Check if email already exists
     existing_user = await db.execute(
         select(User).where(User.email == request.email)
@@ -285,13 +294,15 @@ async def register_email(
     # Send verification email
     if email_service.is_configured():
         verification_url = f"{settings.CABINET_URL}/verify-email"
-        email_service.send_verification_email(
+        sent = email_service.send_verification_email(
             to_email=request.email,
             verification_token=verification_token,
             verification_url=verification_url,
             username=user.first_name,
         )
-
+        if sent:
+            await email_rate_limiter.register_attempt(request.email)
+    
     return {
         "message": "Verification email sent",
         "email": request.email,
@@ -351,6 +362,14 @@ async def resend_verification(
             detail="Email is already verified",
         )
 
+    # Check rate limit
+    is_allowed, try_again_in = await email_rate_limiter.check_rate_limit(user.email)
+    if not is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many emails. Please wait {int(try_again_in)} seconds.",
+        )
+
     # Generate new token
     verification_token = generate_verification_token()
     verification_expires = get_verification_expires_at()
@@ -363,12 +382,14 @@ async def resend_verification(
     # Send verification email
     if email_service.is_configured():
         verification_url = f"{settings.CABINET_URL}/verify-email"
-        email_service.send_verification_email(
+        sent = email_service.send_verification_email(
             to_email=user.email,
             verification_token=verification_token,
             verification_url=verification_url,
             username=user.first_name,
         )
+        if sent:
+            await email_rate_limiter.register_attempt(user.email)
 
     return {"message": "Verification email sent"}
 
@@ -515,6 +536,14 @@ async def forgot_password(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Request password reset."""
+    # Check rate limit
+    is_allowed, try_again_in = await email_rate_limiter.check_rate_limit(request.email)
+    if not is_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many emails. Please wait {int(try_again_in)} seconds.",
+        )
+
     result = await db.execute(
         select(User).where(User.email == request.email)
     )
@@ -536,12 +565,14 @@ async def forgot_password(
     # Send reset email
     if email_service.is_configured():
         reset_url = f"{settings.CABINET_URL}/reset-password"
-        email_service.send_password_reset_email(
+        sent = email_service.send_password_reset_email(
             to_email=user.email,
             reset_token=reset_token,
             reset_url=reset_url,
             username=user.first_name,
         )
+        if sent:
+            await email_rate_limiter.register_attempt(request.email)
 
     return {"message": "If the email exists, a password reset link has been sent"}
 

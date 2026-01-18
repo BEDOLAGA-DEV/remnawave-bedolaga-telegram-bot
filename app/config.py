@@ -667,7 +667,7 @@ class Settings(BaseSettings):
     CABINET_EMAIL_VERIFICATION_ENABLED: bool = True
     CABINET_EMAIL_VERIFICATION_EXPIRE_HOURS: int = 24
     CABINET_PASSWORD_RESET_EXPIRE_HOURS: int = 1
-    CABINET_URL: str = "https://example.com"
+    CABINET_URL: str = ""
 
     # SMTP settings for cabinet email
     SMTP_HOST: Optional[str] = None
