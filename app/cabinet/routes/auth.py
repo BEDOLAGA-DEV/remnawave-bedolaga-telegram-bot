@@ -1,5 +1,7 @@
 from ..schemas.email_resend import EmailResendRequest
 
+router = APIRouter(prefix="/auth", tags=["Cabinet Auth"])
+
 @router.post("/email/resend-by-credentials")
 async def resend_verification_by_credentials(
     request: EmailResendRequest,
@@ -10,7 +12,6 @@ async def resend_verification_by_credentials(
     )
     user = result.scalar_one_or_none()
     if not user or not user.password_hash or not verify_password(request.password, user.password_hash):
-        # Always generic response for security
         return {"message": "If the email exists and is not verified, a verification email has been sent"}
     if user.email_verified:
         return {"message": "Email is already verified"}
