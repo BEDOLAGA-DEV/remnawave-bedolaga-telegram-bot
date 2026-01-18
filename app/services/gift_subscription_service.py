@@ -17,7 +17,7 @@ from app.config import settings
 from app.database.models import PromoCode, PromoCodeType, User, TransactionType
 from app.database.crud.promocode import create_promocode, get_promocode_by_code
 from app.database.crud.transaction import create_transaction
-from app.database.crud.user import update_user_balance
+from app.database.crud.user import subtract_user_balance
 from app.database.crud.subscription import create_paid_subscription
 from app.utils.pricing_utils import compute_simple_subscription_price
 from app.services.subscription_service import SubscriptionService
@@ -219,11 +219,17 @@ class GiftSubscriptionService:
         )
 
         # Списываем баланс
-        await update_user_balance(db, user.id, -price_kopeks)
+        traffic_text = f"{traffic_gb} ГБ" if traffic_gb > 0 else "Безлимит"
+        await subtract_user_balance(
+            db=db,
+            user=user,
+            amount_kopeks=price_kopeks,
+            description=f"Покупка gift-подписки ({period_days} дней, {traffic_text}, {devices} устройства)",
+            create_transaction=False  # Транзакцию создаём отдельно ниже
+        )
         logger.info(f"💸 Списано {price_kopeks/100}₽ с баланса user_id={user.id}")
 
         # Создаём транзакцию покупки gift-подписки
-        traffic_text = f"{traffic_gb} ГБ" if traffic_gb > 0 else "Безлимит"
         await create_transaction(
             db=db,
             user_id=user.id,
