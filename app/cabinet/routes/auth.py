@@ -1,3 +1,4 @@
+from fastapi import APIRouter
 from ..schemas.email_resend import EmailResendRequest
 
 router = APIRouter(prefix="/auth", tags=["Cabinet Auth"])
