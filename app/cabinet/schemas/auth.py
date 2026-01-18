@@ -25,6 +25,8 @@ class EmailRegisterRequest(BaseModel):
     """Request to register/link email to existing Telegram account."""
     email: EmailStr = Field(..., description="Email address")
     password: str = Field(..., min_length=8, max_length=128, description="Password (min 8 chars)")
+    first_name: Optional[str] = Field(None, description="First Name of the user")
+    last_name: Optional[str] = Field(None, description="Last Name of the user")
 
 
 class EmailVerifyRequest(BaseModel):
