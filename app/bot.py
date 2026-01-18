@@ -27,6 +27,7 @@ from app.handlers import (
     server_status,
     common,
     tickets,
+    gift_subscription,
 )
 from app.handlers import polls as user_polls
 from app.handlers import simple_subscription
@@ -155,6 +156,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     subscription.register_handlers(dp)
     balance.register_balance_handlers(dp)
     promocode.register_handlers(dp)
+    gift_subscription.register_gift_subscription_handlers(dp)
     referral.register_handlers(dp)
     support.register_handlers(dp)
     server_status.register_handlers(dp)
