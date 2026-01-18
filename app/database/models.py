@@ -94,6 +94,7 @@ class PromoCodeType(Enum):
     TRIAL_SUBSCRIPTION = "trial_subscription"
     PROMO_GROUP = "promo_group"
     DISCOUNT = "discount"  # Одноразовая процентная скидка (balance_bonus_kopeks = процент, subscription_days = часы)
+    GIFT = "gift"  # Подарочная подписка с параметрами в description
 
 
 class PaymentMethod(Enum):
@@ -1342,6 +1343,7 @@ class PromoCode(Base):
 
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     promo_group_id = Column(Integer, ForeignKey("promo_groups.id", ondelete="SET NULL"), nullable=True, index=True)
+    description = Column(Text, nullable=True)  # JSON с параметрами для gift-подписок
 
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
