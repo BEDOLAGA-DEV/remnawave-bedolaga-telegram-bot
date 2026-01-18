@@ -400,6 +400,26 @@ async def register(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed",
         )
+    
+    # Emit user.created event (for webhooks, stats, etc.)
+    try:
+        from app.services.event_emitter import event_emitter
+        await event_emitter.emit(
+            "user.created",
+            {
+                "user_id": new_user.id,
+                "telegram_id": new_user.telegram_id,
+                "username": new_user.username,
+                "first_name": new_user.first_name,
+                "last_name": new_user.last_name,
+                "referral_code": new_user.referral_code,
+                "referred_by_id": new_user.referred_by_id,
+                "email": new_user.email,
+            },
+            db=db,
+        )
+    except Exception as error:
+        logger.warning(f"Failed to emit user.created event: {error}")
 
     # Send verification email
     if email_service.is_configured():
@@ -658,6 +678,8 @@ async def forgot_password(
 
     # Always return success to prevent email enumeration
     if not user or not user.email_verified:
+        # Register fake attempt to match rate limiting behavior of real users
+        await email_rate_limiter.register_attempt(request.email)
         return {"message": "If the email exists, a password reset link has been sent"}
 
     # Generate reset token
