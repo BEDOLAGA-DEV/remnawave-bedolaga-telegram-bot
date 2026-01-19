@@ -79,13 +79,37 @@ async def handle_gift_period_selection(
     # Сохраняем период в state
     await state.update_data(period_days=period_days)
 
-    # Переходим к выбору трафика
-    await callback.message.edit_text(
-        text=texts.GIFT_SELECT_TRAFFIC,
-        reply_markup=get_gift_traffic_keyboard()
-    )
+    # Проверяем режим выбора трафика
+    if settings.is_traffic_fixed():
+        # Трафик фиксированный - используем значение из настроек
+        traffic_gb = settings.get_fixed_traffic_limit()
+        await state.update_data(traffic_gb=traffic_gb)
 
-    await state.set_state(GiftSubscriptionStates.selecting_traffic)
+        logger.info(f"Gift: Трафик фиксированный ({traffic_gb} ГБ), пропускаем выбор")
+
+        # Проверяем, нужен ли выбор устройств
+        if not settings.is_devices_selection_enabled():
+            # Устройства тоже фиксированные
+            devices = settings.DEVICES_SELECTION_DISABLED_AMOUNT if settings.DEVICES_SELECTION_DISABLED_AMOUNT > 0 else settings.DEFAULT_DEVICE_LIMIT
+            await state.update_data(devices=devices)
+
+            # Переходим сразу к выбору серверов или подтверждению
+            await _handle_gift_continue_to_servers_or_confirm(callback, db_user, state, db)
+        else:
+            # Переходим к выбору устройств
+            await callback.message.edit_text(
+                text=texts.GIFT_SELECT_DEVICES,
+                reply_markup=get_gift_devices_keyboard()
+            )
+            await state.set_state(GiftSubscriptionStates.selecting_devices)
+    else:
+        # Переходим к выбору трафика
+        await callback.message.edit_text(
+            text=texts.GIFT_SELECT_TRAFFIC,
+            reply_markup=get_gift_traffic_keyboard()
+        )
+        await state.set_state(GiftSubscriptionStates.selecting_traffic)
+
     await callback.answer()
 
 
@@ -114,62 +138,8 @@ async def handle_gift_traffic_selection(
         devices = settings.DEVICES_SELECTION_DISABLED_AMOUNT if settings.DEVICES_SELECTION_DISABLED_AMOUNT > 0 else settings.DEFAULT_DEVICE_LIMIT
         await state.update_data(devices=devices)
 
-        # Получаем случайный доступный сервер (как для trial)
-        from app.database.crud.server_squad import get_random_trial_squad_uuid
-        try:
-            squad_uuid = await get_random_trial_squad_uuid(db)
-            if not squad_uuid:
-                await callback.answer("❌ Нет доступных серверов", show_alert=True)
-                return
-            squads = [squad_uuid]
-        except Exception as e:
-            logger.error(f"Ошибка получения сервера для gift: {e}")
-            await callback.answer("❌ Ошибка получения сервера", show_alert=True)
-            return
-
-        await state.update_data(squads=squads)
-
-        # Получаем данные из state для расчёта цены
-        data = await state.get_data()
-        period_days = data.get("period_days")
-
-        # Рассчитываем цену
-        try:
-            price_kopeks = await gift_subscription_service.calculate_gift_price(
-                db=db,
-                period_days=period_days,
-                traffic_gb=traffic_gb,
-                devices=devices,
-                squads=squads,
-                user=db_user
-            )
-        except Exception as e:
-            logger.error(f"Ошибка расчета цены gift-подписки: {e}")
-            await callback.answer("❌ Ошибка расчета цены", show_alert=True)
-            return
-
-        # Сохраняем цену в state
-        await state.update_data(price_kopeks=price_kopeks)
-
-        # Формируем текст подтверждения
-        traffic_text = f"{traffic_gb} ГБ" if traffic_gb > 0 else "♾ Безлимит"
-        period_text = texts.get(f"GIFT_PERIOD_{period_days}_DAYS", f"{period_days} дней")
-
-        confirm_text = texts.GIFT_CONFIRM_PURCHASE.format(
-            period=period_text,
-            traffic=traffic_text,
-            devices=devices,
-            countries="Авто",  # Автоматический выбор сервера
-            price=f"{price_kopeks/100:.2f}"
-        )
-
-        # Показываем подтверждение
-        await callback.message.edit_text(
-            text=confirm_text,
-            reply_markup=get_gift_confirm_keyboard(price_kopeks / 100)
-        )
-
-        await state.set_state(GiftSubscriptionStates.confirming_purchase)
+        # Переходим к выбору серверов или подтверждению
+        await _handle_gift_continue_to_servers_or_confirm(callback, db_user, state, db)
     else:
         # Переходим к выбору устройств
         await callback.message.edit_text(
@@ -201,63 +171,8 @@ async def handle_gift_devices_selection(
     # Сохраняем количество устройств в state
     await state.update_data(devices=devices)
 
-    # Получаем случайный доступный сервер (как для trial)
-    from app.database.crud.server_squad import get_random_trial_squad_uuid
-    try:
-        squad_uuid = await get_random_trial_squad_uuid(db)
-        if not squad_uuid:
-            await callback.answer("❌ Нет доступных серверов", show_alert=True)
-            return
-        squads = [squad_uuid]
-    except Exception as e:
-        logger.error(f"Ошибка получения сервера для gift: {e}")
-        await callback.answer("❌ Ошибка получения сервера", show_alert=True)
-        return
-
-    await state.update_data(squads=squads)
-
-    # Получаем данные из state для расчёта цены
-    data = await state.get_data()
-    period_days = data.get("period_days")
-    traffic_gb = data.get("traffic_gb")
-
-    # Рассчитываем цену
-    try:
-        price_kopeks = await gift_subscription_service.calculate_gift_price(
-            db=db,
-            period_days=period_days,
-            traffic_gb=traffic_gb,
-            devices=devices,
-            squads=squads,
-            user=db_user
-        )
-    except Exception as e:
-        logger.error(f"Ошибка расчета цены gift-подписки: {e}")
-        await callback.answer("❌ Ошибка расчета цены", show_alert=True)
-        return
-
-    # Сохраняем цену в state
-    await state.update_data(price_kopeks=price_kopeks)
-
-    # Формируем текст подтверждения
-    traffic_text = f"{traffic_gb} ГБ" if traffic_gb > 0 else "♾ Безлимит"
-    period_text = texts.get(f"GIFT_PERIOD_{period_days}_DAYS", f"{period_days} дней")
-
-    confirm_text = texts.GIFT_CONFIRM_PURCHASE.format(
-        period=period_text,
-        traffic=traffic_text,
-        devices=devices,
-        countries="Авто",  # Автоматический выбор сервера
-        price=f"{price_kopeks/100:.2f}"
-    )
-
-    # Показываем подтверждение
-    await callback.message.edit_text(
-        text=confirm_text,
-        reply_markup=get_gift_confirm_keyboard(price_kopeks / 100)
-    )
-
-    await state.set_state(GiftSubscriptionStates.confirming_purchase)
+    # Переходим к выбору серверов или подтверждению
+    await _handle_gift_continue_to_servers_or_confirm(callback, db_user, state, db)
     await callback.answer()
 
 
@@ -451,6 +366,190 @@ async def handle_gift_back_devices(
     await callback.answer()
 
 
+async def _handle_gift_continue_to_servers_or_confirm(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext,
+    db: AsyncSession
+):
+    """
+    Вспомогательная функция: определяет нужно ли показывать выбор серверов
+    или сразу перейти к подтверждению.
+    """
+    from app.handlers.subscription.countries import _get_available_countries
+
+    texts = get_texts(db_user.language)
+
+    # Получаем доступные серверы с учетом promo_group
+    promo_group_id = db_user.promo_group_id if hasattr(db_user, 'promo_group_id') else None
+    available_countries = await _get_available_countries(promo_group_id)
+
+    # Фильтруем только доступные серверы (is_available=True)
+    available_countries = [c for c in available_countries if c.get('is_available', True)]
+
+    if len(available_countries) == 0:
+        # Нет доступных серверов - ошибка
+        await callback.answer("❌ Нет доступных серверов", show_alert=True)
+        return
+    elif len(available_countries) == 1:
+        # Только один сервер - используем автоматически
+        squad_uuid = available_countries[0]['uuid']
+        await state.update_data(squads=[squad_uuid])
+
+        logger.info(f"Gift: Только 1 сервер доступен ({squad_uuid}), автоматический выбор")
+
+        # Переходим к подтверждению
+        await _show_gift_confirmation(callback, db_user, state, db)
+    else:
+        # Несколько серверов - показываем выбор
+        logger.info(f"Gift: Доступно {len(available_countries)} серверов, показываем выбор")
+
+        # Автоматически предвыбираем бесплатные серверы
+        free_servers = [c['uuid'] for c in available_countries if c.get('price_kopeks', 0) == 0]
+        if not free_servers:
+            # Если нет бесплатных, предвыбираем первый
+            free_servers = [available_countries[0]['uuid']]
+
+        await state.update_data(squads=free_servers, available_countries=available_countries)
+
+        # Импортируем клавиатуру для выбора стран
+        from app.keyboards.subscription import get_countries_keyboard
+
+        await callback.message.edit_text(
+            text=texts.GIFT_SELECT_COUNTRIES,
+            reply_markup=get_countries_keyboard(available_countries, free_servers, db_user.language),
+            parse_mode="HTML"
+        )
+
+        await state.set_state(GiftSubscriptionStates.selecting_countries)
+
+
+async def _show_gift_confirmation(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext,
+    db: AsyncSession
+):
+    """
+    Показывает подтверждение покупки gift-подписки.
+    """
+    texts = get_texts(db_user.language)
+    data = await state.get_data()
+
+    period_days = data.get("period_days")
+    traffic_gb = data.get("traffic_gb")
+    devices = data.get("devices")
+    squads = data.get("squads", [])
+
+    # Рассчитываем цену
+    try:
+        price_kopeks = await gift_subscription_service.calculate_gift_price(
+            db=db,
+            period_days=period_days,
+            traffic_gb=traffic_gb,
+            devices=devices,
+            squads=squads,
+            user=db_user
+        )
+    except Exception as e:
+        logger.error(f"Ошибка расчета цены gift-подписки: {e}")
+        await callback.answer("❌ Ошибка расчета цены", show_alert=True)
+        return
+
+    # Сохраняем цену в state
+    await state.update_data(price_kopeks=price_kopeks)
+
+    # Формируем текст подтверждения
+    traffic_text = f"{traffic_gb} ГБ" if traffic_gb > 0 else "♾ Безлимит"
+    period_text = texts.get(f"GIFT_PERIOD_{period_days}_DAYS", f"{period_days} дней")
+
+    # Получаем названия выбранных серверов
+    available_countries = data.get("available_countries", [])
+    if available_countries:
+        selected_names = [c['name'] for c in available_countries if c['uuid'] in squads]
+        countries_text = ", ".join(selected_names) if selected_names else "Авто"
+    else:
+        countries_text = "Авто"
+
+    confirm_text = texts.GIFT_CONFIRM_PURCHASE.format(
+        period=period_text,
+        traffic=traffic_text,
+        devices=devices,
+        countries=countries_text,
+        price=f"{price_kopeks/100:.2f}"
+    )
+
+    # Показываем подтверждение
+    await callback.message.edit_text(
+        text=confirm_text,
+        reply_markup=get_gift_confirm_keyboard(price_kopeks / 100)
+    )
+
+    await state.set_state(GiftSubscriptionStates.confirming_purchase)
+
+
+@error_handler
+async def handle_gift_select_country(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext,
+    db: AsyncSession
+):
+    """
+    Обработка выбора/отмены выбора сервера для gift-подписки.
+    """
+    # Извлекаем UUID сервера из callback_data (формат: country_UUID или gift_country_UUID)
+    parts = callback.data.split('_')
+    country_uuid = '_'.join(parts[1:])  # Все после первого underscore
+
+    data = await state.get_data()
+    selected_countries = data.get('squads', [])
+
+    # Переключаем выбор сервера
+    if country_uuid in selected_countries:
+        selected_countries.remove(country_uuid)
+    else:
+        selected_countries.append(country_uuid)
+
+    # Обновляем state
+    data['squads'] = selected_countries
+    await state.set_data(data)
+
+    # Получаем список доступных серверов для обновления клавиатуры
+    available_countries = data.get('available_countries', [])
+
+    from app.keyboards.subscription import get_countries_keyboard
+
+    # Обновляем клавиатуру
+    await callback.message.edit_reply_markup(
+        reply_markup=get_countries_keyboard(available_countries, selected_countries, db_user.language)
+    )
+
+    await callback.answer()
+
+
+@error_handler
+async def handle_gift_countries_continue(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext,
+    db: AsyncSession
+):
+    """
+    Подтверждение выбора серверов и переход к финальному подтверждению.
+    """
+    data = await state.get_data()
+    selected_squads = data.get('squads', [])
+
+    if not selected_squads:
+        await callback.answer("❌ Выберите хотя бы один сервер", show_alert=True)
+        return
+
+    # Переходим к подтверждению покупки
+    await _show_gift_confirmation(callback, db_user, state, db)
+    await callback.answer()
+
+
 def register_gift_subscription_handlers(dp: Dispatcher):
     """
     Регистрирует все handlers для gift-подписок.
@@ -480,6 +579,20 @@ def register_gift_subscription_handlers(dp: Dispatcher):
         handle_gift_devices_selection,
         F.data.startswith("gift_devices:"),
         GiftSubscriptionStates.selecting_devices
+    )
+
+    # Выбор серверов
+    dp.callback_query.register(
+        handle_gift_select_country,
+        F.data.startswith("country_"),
+        GiftSubscriptionStates.selecting_countries
+    )
+
+    # Подтверждение выбора серверов и переход дальше
+    dp.callback_query.register(
+        handle_gift_countries_continue,
+        F.data == "countries_continue",
+        GiftSubscriptionStates.selecting_countries
     )
 
     # Подтверждение покупки
