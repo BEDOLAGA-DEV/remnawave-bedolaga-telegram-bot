@@ -155,12 +155,6 @@ def get_gift_share_keyboard(code: str, bot_username: str) -> InlineKeyboardMarku
         ],
         [
             InlineKeyboardButton(
-                text="📋 Скопировать код",
-                callback_data=f"gift_copy_code:{code}"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
                 text="🏠 Главное меню",
                 callback_data="main_menu"
             ),
