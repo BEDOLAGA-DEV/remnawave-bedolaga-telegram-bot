@@ -1163,6 +1163,7 @@
 "PROMOCODE_SUCCESS":"🎉优惠码已激活！{description}",
 "PROMOCODE_USED":"❌优惠码已被使用",
 "PROMOCODE_ACTIVE_DISCOUNT_EXISTS":"❌您已有活动折扣。请先使用后再激活新折扣。",
+"PROMOCODE_NOT_FIRST_PURCHASE":"❌此优惠码仅适用于首次购买",
 "PROMO_GROUPS_INFO_CURRENT_LEVEL":"🏆当前等级：{name}",
 "PROMO_GROUPS_INFO_EMPTY":"尚未设置带自动分配的促销组。",
 "PROMO_GROUPS_INFO_HEADER":"🎯<b>消费折扣</b>",
