@@ -73,25 +73,34 @@ def get_gift_devices_keyboard() -> InlineKeyboardMarkup:
     Клавиатура выбора количества устройств gift-подписки.
 
     Returns:
-        InlineKeyboardMarkup с вариантами: 1/3/5 устройств
+        InlineKeyboardMarkup с вариантами устройств из конфига
     """
-    # Используем стандартные варианты устройств
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="1 устройство", callback_data="gift_devices:1"),
-        ],
-        [
-            InlineKeyboardButton(text="3 устройства", callback_data="gift_devices:3"),
-        ],
-        [
-            InlineKeyboardButton(text="5 устройств", callback_data="gift_devices:5"),
-        ],
-        [
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="gift_back_traffic"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel"),
-        ]
+    buttons = []
+
+    # Используем настройки из конфига
+    start_devices = settings.DEFAULT_DEVICE_LIMIT
+    max_devices = settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else 50
+    end_devices = min(max_devices + 1, start_devices + 10)
+
+    for devices in range(start_devices, end_devices):
+        # Расчет доплаты за дополнительные устройства
+        price = max(0, devices - settings.DEFAULT_DEVICE_LIMIT) * settings.PRICE_PER_DEVICE
+        price_text = f" (+{price / 100:.0f}₽)" if price > 0 else " (вкл.)"
+
+        # Форматирование текста кнопки
+        device_word = "устройство" if devices == 1 else ("устройства" if 2 <= devices <= 4 else "устройств")
+        button_text = f"{devices} {device_word}{price_text}"
+
+        buttons.append([
+            InlineKeyboardButton(text=button_text, callback_data=f"gift_devices:{devices}")
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="gift_back_traffic"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel"),
     ])
-    return keyboard
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_gift_confirm_keyboard(price_rubles: float) -> InlineKeyboardMarkup:
