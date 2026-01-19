@@ -268,6 +268,7 @@ class ReferralWithdrawalStates(StatesGroup):
 
 class GiftSubscriptionStates(StatesGroup):
     """Состояния FSM для создания подарочной подписки."""
+    selecting_tariff = State()  # Для режима тарифов
     selecting_period = State()
     selecting_traffic = State()
     selecting_devices = State()

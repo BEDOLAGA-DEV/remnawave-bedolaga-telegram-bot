@@ -33,7 +33,8 @@ logger = logging.getLogger(__name__)
 async def start_gift_subscription_flow(
     callback: types.CallbackQuery,
     db_user: User,
-    state: FSMContext
+    state: FSMContext,
+    db: AsyncSession
 ):
     """
     Точка входа в flow создания подарочной подписки.
@@ -43,20 +44,27 @@ async def start_gift_subscription_flow(
     # Очищаем state и начинаем новый flow
     await state.clear()
 
-    # Отправляем сообщение с выбором периода
-    if isinstance(callback.message, InaccessibleMessage):
-        await callback.bot.send_message(
-            chat_id=callback.from_user.id,
-            text=texts.GIFT_SELECT_PERIOD,
-            reply_markup=get_gift_period_keyboard()
-        )
+    # Проверяем режим продаж
+    if settings.is_tariffs_mode():
+        # Режим тарифов - показываем список тарифов
+        await show_gift_tariffs_list(callback, db_user, state, db)
     else:
-        await callback.message.edit_text(
-            text=texts.GIFT_SELECT_PERIOD,
-            reply_markup=get_gift_period_keyboard()
-        )
+        # Классический режим - выбор параметров по отдельности
+        # Отправляем сообщение с выбором периода
+        if isinstance(callback.message, InaccessibleMessage):
+            await callback.bot.send_message(
+                chat_id=callback.from_user.id,
+                text=texts.GIFT_SELECT_PERIOD,
+                reply_markup=get_gift_period_keyboard()
+            )
+        else:
+            await callback.message.edit_text(
+                text=texts.GIFT_SELECT_PERIOD,
+                reply_markup=get_gift_period_keyboard()
+            )
 
-    await state.set_state(GiftSubscriptionStates.selecting_period)
+        await state.set_state(GiftSubscriptionStates.selecting_period)
+
     await callback.answer()
 
 
@@ -366,6 +374,252 @@ async def handle_gift_back_devices(
     await callback.answer()
 
 
+async def show_gift_tariffs_list(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext,
+    db: AsyncSession
+):
+    """
+    Показывает список тарифов для создания gift-подписки.
+    """
+    from app.database.crud.tariff import get_tariffs_for_user
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    texts = get_texts(db_user.language)
+
+    # Получаем доступные тарифы
+    promo_group_id = getattr(db_user, 'promo_group_id', None)
+    tariffs = await get_tariffs_for_user(db, promo_group_id)
+
+    if not tariffs:
+        await callback.message.edit_text(
+            "😔 <b>Нет доступных тарифов</b>\n\n"
+            "К сожалению, сейчас нет тарифов для создания gift-подписки.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]
+            ]),
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+
+    # Формируем список тарифов
+    text = "🎁 <b>Выберите тариф для подарка</b>\n\n"
+    text += "Выберите готовый тариф, который получит ваш друг:\n\n"
+
+    buttons = []
+    for tariff in tariffs:
+        # Формируем описание тарифа
+        traffic_text = f"{tariff.traffic_limit_gb} ГБ" if tariff.traffic_limit_gb > 0 else "♾ Безлимит"
+        tariff_desc = f"📦 {tariff.name}\n"
+        tariff_desc += f"   📊 Трафик: {traffic_text}\n"
+        tariff_desc += f"   📱 Устройства: {tariff.device_limit}\n"
+
+        # Минимальная цена из доступных периодов
+        if tariff.period_prices:
+            min_price = min(tariff.period_prices.values()) / 100
+            tariff_desc += f"   💰 От {min_price:.0f}₽"
+
+        text += tariff_desc + "\n"
+
+        # Кнопка выбора тарифа
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📦 {tariff.name}",
+                callback_data=f"gift_tariff:{tariff.id}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel")
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(
+        text=text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+    await state.set_state(GiftSubscriptionStates.selecting_tariff)
+    await callback.answer()
+
+
+@error_handler
+async def handle_gift_tariff_selection(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext,
+    db: AsyncSession
+):
+    """
+    Обработка выбора тарифа для gift-подписки.
+    """
+    from app.database.crud.tariff import get_tariff_by_id
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    texts = get_texts(db_user.language)
+
+    # Извлекаем ID тарифа
+    _, tariff_id_str = callback.data.split(":")
+    tariff_id = int(tariff_id_str)
+
+    # Получаем тариф
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if not tariff:
+        await callback.answer("❌ Тариф не найден", show_alert=True)
+        return
+
+    # Сохраняем параметры тарифа в state
+    await state.update_data(
+        tariff_id=tariff.id,
+        traffic_gb=tariff.traffic_limit_gb,
+        devices=tariff.device_limit,
+        squads=tariff.allowed_squads or []
+    )
+
+    # Если у тарифа несколько периодов - показываем выбор
+    if tariff.period_prices and len(tariff.period_prices) > 1:
+        text = f"🎁 <b>Тариф: {tariff.name}</b>\n\n"
+        text += f"📊 Трафик: {tariff.traffic_limit_gb if tariff.traffic_limit_gb > 0 else '♾ Безлимит'} ГБ\n"
+        text += f"📱 Устройства: {tariff.device_limit}\n\n"
+        text += "Выберите период подписки:\n"
+
+        buttons = []
+        for days in sorted(tariff.period_prices.keys()):
+            price = tariff.period_prices[days] / 100
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"{days} дней - {price:.0f}₽",
+                    callback_data=f"gift_tariff_period:{days}"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(text="🔙 Назад", callback_data="buy_gift_subscription"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel")
+        ])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await callback.message.edit_text(
+            text=text,
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+        await state.set_state(GiftSubscriptionStates.selecting_period)
+    else:
+        # Только один период - используем его автоматически
+        period_days = list(tariff.period_prices.keys())[0]
+        await state.update_data(period_days=period_days)
+
+        # Переходим сразу к подтверждению
+        await _show_gift_tariff_confirmation(callback, db_user, state, db, tariff)
+
+    await callback.answer()
+
+
+@error_handler
+async def handle_gift_tariff_period_selection(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext,
+    db: AsyncSession
+):
+    """
+    Обработка выбора периода для тарифа.
+    """
+    from app.database.crud.tariff import get_tariff_by_id
+
+    # Извлекаем период
+    _, period_str = callback.data.split(":")
+    period_days = int(period_str)
+
+    # Сохраняем период
+    await state.update_data(period_days=period_days)
+
+    # Получаем тариф из state
+    data = await state.get_data()
+    tariff_id = data.get('tariff_id')
+
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if not tariff:
+        await callback.answer("❌ Тариф не найден", show_alert=True)
+        return
+
+    # Показываем подтверждение
+    await _show_gift_tariff_confirmation(callback, db_user, state, db, tariff)
+    await callback.answer()
+
+
+async def _show_gift_tariff_confirmation(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext,
+    db: AsyncSession,
+    tariff
+):
+    """
+    Показывает подтверждение покупки gift-подписки по тарифу.
+    """
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    texts = get_texts(db_user.language)
+    data = await state.get_data()
+
+    period_days = data.get("period_days")
+    traffic_gb = data.get("traffic_gb")
+    devices = data.get("devices")
+    squads = data.get("squads", [])
+
+    # Рассчитываем цену
+    try:
+        price_kopeks = await gift_subscription_service.calculate_gift_price(
+            db=db,
+            period_days=period_days,
+            traffic_gb=traffic_gb,
+            devices=devices,
+            squads=squads,
+            user=db_user
+        )
+    except Exception as e:
+        logger.error(f"Ошибка расчета цены gift-подписки по тарифу: {e}")
+        await callback.answer("❌ Ошибка расчета цены", show_alert=True)
+        return
+
+    # Сохраняем цену
+    await state.update_data(price_kopeks=price_kopeks)
+
+    # Формируем текст подтверждения
+    traffic_text = f"{traffic_gb} ГБ" if traffic_gb > 0 else "♾ Безлимит"
+    period_text = f"{period_days} дней"
+
+    confirm_text = f"🎁 <b>Подарочная подписка</b>\n\n"
+    confirm_text += f"📦 Тариф: {tariff.name}\n"
+    confirm_text += f"📅 Период: {period_text}\n"
+    confirm_text += f"📊 Трафик: {traffic_text}\n"
+    confirm_text += f"📱 Устройства: {devices}\n\n"
+    confirm_text += f"💰 <b>Стоимость: {price_kopeks/100:.2f} ₽</b>\n\n"
+    confirm_text += "Подтвердите покупку:"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Купить подарок", callback_data="gift_confirm_purchase")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="buy_gift_subscription")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="gift_cancel")]
+    ])
+
+    await callback.message.edit_text(
+        text=confirm_text,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+    await state.set_state(GiftSubscriptionStates.confirming_purchase)
+
+
 async def _handle_gift_continue_to_servers_or_confirm(
     callback: types.CallbackQuery,
     db_user: User,
@@ -560,7 +814,21 @@ def register_gift_subscription_handlers(dp: Dispatcher):
         F.data == "buy_gift_subscription"
     )
 
-    # Выбор периода
+    # Режим тарифов - выбор тарифа
+    dp.callback_query.register(
+        handle_gift_tariff_selection,
+        F.data.startswith("gift_tariff:"),
+        GiftSubscriptionStates.selecting_tariff
+    )
+
+    # Режим тарифов - выбор периода для тарифа
+    dp.callback_query.register(
+        handle_gift_tariff_period_selection,
+        F.data.startswith("gift_tariff_period:"),
+        GiftSubscriptionStates.selecting_period
+    )
+
+    # Классический режим - выбор периода
     dp.callback_query.register(
         handle_gift_period_selection,
         F.data.startswith("gift_period:"),
