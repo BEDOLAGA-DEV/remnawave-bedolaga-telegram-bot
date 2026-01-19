@@ -6183,6 +6183,41 @@ async def add_subscription_traffic_reset_at_column() -> bool:
         return False
 
 
+async def add_promocodes_description_column():
+    """
+    Добавляет колонку description в таблицу promocodes для хранения JSON-параметров gift-подписок.
+    """
+    try:
+        column_exists = await check_column_exists('promocodes', 'description')
+
+        if not column_exists:
+            async with engine.begin() as conn:
+                db_type = await get_database_type()
+
+                if db_type == 'sqlite':
+                    await conn.execute(text(
+                        "ALTER TABLE promocodes ADD COLUMN description TEXT NULL"
+                    ))
+                elif db_type == 'postgresql':
+                    await conn.execute(text(
+                        "ALTER TABLE promocodes ADD COLUMN description TEXT NULL"
+                    ))
+                else:  # MySQL
+                    await conn.execute(text(
+                        "ALTER TABLE promocodes ADD COLUMN description TEXT NULL"
+                    ))
+
+                logger.info("✅ Колонка description добавлена в promocodes")
+                return True
+        else:
+            logger.info("ℹ️ Колонка description уже существует в promocodes")
+            return True
+
+    except Exception as error:
+        logger.error(f"❌ Ошибка добавления колонки description в promocodes: {error}")
+        return False
+
+
 async def run_universal_migration():
     logger.info("=== НАЧАЛО УНИВЕРСАЛЬНОЙ МИГРАЦИИ ===")
 
@@ -6799,6 +6834,13 @@ async def run_universal_migration():
             logger.info("✅ Таблицы колеса удачи готовы")
         else:
             logger.warning("⚠️ Проблемы с таблицами колеса удачи")
+
+        logger.info("=== ДОБАВЛЕНИЕ КОЛОНКИ DESCRIPTION В PROMOCODES ===")
+        promocodes_description_ready = await add_promocodes_description_column()
+        if promocodes_description_ready:
+            logger.info("✅ Колонка description в promocodes готова")
+        else:
+            logger.warning("⚠️ Проблемы с колонкой description в promocodes")
 
         async with engine.begin() as conn:
             total_subs = await conn.execute(text("SELECT COUNT(*) FROM subscriptions"))
