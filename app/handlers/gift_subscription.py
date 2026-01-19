@@ -375,6 +375,23 @@ async def handle_gift_cancel(
 
 
 @error_handler
+async def handle_gift_main_menu(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext,
+    db: AsyncSession
+):
+    """
+    Возврат в главное меню из gift-подписок.
+    """
+    from app.handlers.menu import show_main_menu
+
+    await state.clear()
+    await show_main_menu(callback, db_user, db)
+    await callback.answer()
+
+
+@error_handler
 async def handle_gift_back_period(
     callback: types.CallbackQuery,
     db_user: User,
@@ -482,6 +499,12 @@ def register_gift_subscription_handlers(dp: Dispatcher):
     dp.callback_query.register(
         handle_gift_cancel,
         F.data == "gift_cancel"
+    )
+
+    # Главное меню (из gift-подписок)
+    dp.callback_query.register(
+        handle_gift_main_menu,
+        F.data == "main_menu"
     )
 
     # Кнопки "Назад"

@@ -239,6 +239,9 @@ class Settings(BaseSettings):
     SIMPLE_SUBSCRIPTION_TRAFFIC_GB: int = 0  # 0 означает безлимит
     SIMPLE_SUBSCRIPTION_SQUAD_UUID: Optional[str] = None
 
+    # Настройки подарочных подписок
+    GIFT_SUBSCRIPTIONS_ENABLED: bool = True
+
     # Настройки конструктора меню (API)
     MENU_LAYOUT_ENABLED: bool = False  # Включить управление меню через API
 
