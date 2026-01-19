@@ -107,19 +107,21 @@ class GiftSubscriptionService:
         Returns:
             Цена в копейках
         """
-        # Используем существующую функцию расчета цены подписки
-        result = await compute_simple_subscription_price(
-            db=db,
-            user=user,
-            period_days=period_days,
-            traffic_gb=traffic_gb,
-            device_limit=devices,
-            squad_uuids=squads,
-            promo_group=None,  # Для gift не применяем промогруппы
-            apply_discounts=False,  # Для gift не применяем скидки
-        )
+        # Подготавливаем параметры для расчета цены
+        params = {
+            "period_days": period_days,
+            "traffic_limit_gb": traffic_gb,
+            "device_limit": devices,
+            "squad_uuid": squads,  # Можно передать список
+        }
 
-        price_kopeks = result["final_price_kopeks"]
+        # Используем существующую функцию расчета цены подписки
+        price_kopeks, breakdown = await compute_simple_subscription_price(
+            db=db,
+            params=params,
+            user=user,
+            resolved_squad_uuids=squads
+        )
 
         logger.info(
             f"💰 Цена gift-подписки: {price_kopeks/100}₽ "
