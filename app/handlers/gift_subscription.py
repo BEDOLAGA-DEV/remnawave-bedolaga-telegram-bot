@@ -304,7 +304,7 @@ async def handle_gift_confirm_purchase(
         )
 
         # Отправляем сообщение с результатом
-        bot_username = settings.BOT_USERNAME.replace("@", "")
+        bot_username = settings.BOT_USERNAME.replace("@", "") if settings.BOT_USERNAME else "bot"
         await callback.message.edit_text(
             text=success_text,
             reply_markup=get_gift_share_keyboard(code, bot_username),

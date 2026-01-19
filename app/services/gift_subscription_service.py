@@ -242,7 +242,7 @@ class GiftSubscriptionService:
         )
 
         # Формируем deep link
-        bot_username = settings.BOT_USERNAME.replace("@", "")
+        bot_username = settings.BOT_USERNAME.replace("@", "") if settings.BOT_USERNAME else "bot"
         deep_link = f"https://t.me/{bot_username}?start={code}"
 
         logger.info(f"✅ Gift-подписка создана: {code}, цена {price_kopeks/100}₽")
