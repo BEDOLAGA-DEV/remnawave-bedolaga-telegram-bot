@@ -2,21 +2,23 @@
 Клавиатуры для работы с подарочными подписками.
 """
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from app.config import PERIOD_PRICES, get_traffic_prices
+from app.config import settings, PERIOD_PRICES
 
 
 def get_gift_period_keyboard() -> InlineKeyboardMarkup:
     """
-    Клавиатура выбора периода gift-подписки из PERIOD_PRICES.
+    Клавиатура выбора периода gift-подписки из доступных периодов.
 
     Returns:
         InlineKeyboardMarkup с доступными периодами
     """
     buttons = []
 
-    # Используем периоды из конфига
-    for days in sorted(PERIOD_PRICES.keys()):
-        price = PERIOD_PRICES[days] / 100  # в рублях
+    # Используем только включенные периоды из конфига
+    available_periods = settings.get_available_subscription_periods()
+
+    for days in sorted(available_periods):
+        price = PERIOD_PRICES.get(days, 0) / 100  # в рублях
         button_text = f"{days} дней ({price:.0f}₽)"
         buttons.append([
             InlineKeyboardButton(text=button_text, callback_data=f"gift_period:{days}")
@@ -31,21 +33,29 @@ def get_gift_period_keyboard() -> InlineKeyboardMarkup:
 
 def get_gift_traffic_keyboard() -> InlineKeyboardMarkup:
     """
-    Клавиатура выбора трафика gift-подписки из TRAFFIC_PRICES.
+    Клавиатура выбора трафика gift-подписки из доступных пакетов.
 
     Returns:
         InlineKeyboardMarkup с вариантами трафика
     """
     buttons = []
 
-    # Используем пакеты трафика из конфига
-    traffic_prices = get_traffic_prices()
-    for gb in sorted(traffic_prices.keys()):
+    # Используем только включенные пакеты трафика из конфига
+    all_packages = settings.get_traffic_packages()
+    enabled_packages = [pkg for pkg in all_packages if pkg['enabled']]
+
+    # Сортируем по GB
+    enabled_packages.sort(key=lambda x: x['gb'])
+
+    for pkg in enabled_packages:
+        gb = pkg['gb']
+        price = pkg['price']
+
         if gb == 0:
             button_text = "♾ Безлимит"
         else:
-            price = traffic_prices[gb] / 100  # в рублях
-            button_text = f"{gb} ГБ (+{price:.0f}₽)"
+            button_text = f"{gb} ГБ (+{price / 100:.0f}₽)"
+
         buttons.append([
             InlineKeyboardButton(text=button_text, callback_data=f"gift_traffic:{gb}")
         ])
