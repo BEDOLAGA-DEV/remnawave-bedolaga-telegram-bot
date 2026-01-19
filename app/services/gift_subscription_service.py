@@ -328,7 +328,7 @@ class GiftSubscriptionService:
             old_end_date = user.subscription.end_date
             await extend_subscription(
                 db=db,
-                subscription_id=user.subscription.id,
+                subscription=user.subscription,
                 days=promocode.subscription_days
             )
 

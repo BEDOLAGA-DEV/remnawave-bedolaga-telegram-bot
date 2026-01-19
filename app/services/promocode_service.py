@@ -314,7 +314,7 @@ class PromoCodeService:
 
             if subscription and subscription.is_active:
                 # Продление существующей подписки
-                await extend_subscription(db, subscription.id, promocode.subscription_days)
+                await extend_subscription(db, subscription, promocode.subscription_days)
 
                 # Обновляем параметры если подарок щедрее
                 if traffic_gb > subscription.traffic_limit_gb:

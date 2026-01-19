@@ -1227,6 +1227,7 @@
   "PROMOCODE_SUCCESS": "🎉 Promo code applied!",
   "PROMOCODE_USED": "ℹ️ Promo code has already been used",
   "PROMOCODE_ACTIVE_DISCOUNT_EXISTS": "❌ You already have an active discount. Use it before activating a new one.",
+  "PROMOCODE_NOT_FIRST_PURCHASE": "❌ This promo code is only available for the first purchase",
   "PROMO_GROUPS_INFO_CURRENT_LEVEL": "🏆 Current level: {name}",
   "PROMO_GROUPS_INFO_EMPTY": "Auto-assigned promo groups are not configured yet.",
   "PROMO_GROUPS_INFO_HEADER": "🎯 <b>Promo groups</b>",
