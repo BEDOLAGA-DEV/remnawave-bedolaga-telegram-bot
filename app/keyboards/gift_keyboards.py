@@ -1,7 +1,10 @@
 """
 Клавиатуры для работы с подарочными подписками.
 """
+from urllib.parse import quote
+
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
 from app.config import settings, PERIOD_PRICES
 
 
@@ -142,9 +145,10 @@ def get_gift_share_keyboard(code: str, bot_username: str) -> InlineKeyboardMarku
     # Формируем deep link
     deep_link = f"https://t.me/{bot_username}?start={code}"
 
-    # URL для кнопки "Поделиться" через Telegram
+    # Текст для кнопки "Поделиться" через Telegram
+    # Используем quote() для корректного отображения на мобильных клиентах
     share_text = f"🎁 Я подарил тебе VPN-подписку! Активируй её здесь: {deep_link}"
-    share_url = f"https://t.me/share/url?url={deep_link}&text={share_text}"
+    share_url = f"https://t.me/share/url?url={quote(deep_link)}&text={quote(share_text)}"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
