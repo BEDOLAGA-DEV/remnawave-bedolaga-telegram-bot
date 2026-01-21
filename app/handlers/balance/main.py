@@ -546,9 +546,10 @@ async def handle_successful_topup_with_cart(
     db: AsyncSession
 ):
     from app.database.crud.user import get_user_by_id
-    from aiogram.fsm.context import FSMContext
     from aiogram.fsm.storage.base import StorageKey
     from app.bot import dp
+    from app.handlers.subscription.purchase import return_to_saved_cart
+    from aiogram.fsm.context import FSMContext
     
     user = await get_user_by_id(db, user_id)
     if not user:
@@ -564,17 +565,52 @@ async def handle_successful_topup_with_cart(
         if (current_state == "SubscriptionStates:cart_saved_for_topup" and 
             state_data.get('saved_cart')):
             
+            # Вместо того чтобы просто показать кнопку, мы попробуем активировать подписку сразу
+            # Для этого нам нужен FSMContext
+            state = FSMContext(storage=storage, key=key)
+            
+            # Создаем фейковый callback для вызова return_to_saved_cart
+            # Но return_to_saved_cart ожидает callback.message, так что лучше вызвать логику активации
+            
             texts = get_texts(user.language)
             total_price = state_data.get('total_price', 0)
             
+            if user.balance_kopeks >= total_price:
+                # Денег хватает, пробуем вызвать активацию
+                # Нам нужно передать сообщение для вывода результата
+                # Мы отправим сообщение о пополнении и сразу попробуем купить
+                
+                success_text = (
+                    f"✅ Оплата {texts.format_price(amount_kopeks)} получена!\n\n"
+                    f"🔄 <b>Автоматически активируем вашу подписку...</b>"
+                )
+                
+                sent_msg = await bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=success_text,
+                    parse_mode="HTML"
+                )
+                
+                # Создаем объект-обертку, чтобы удовлетворить return_to_saved_cart
+                class FakeCallback:
+                    def __init__(self, message, user):
+                        self.message = message
+                        self.from_user = user
+                        self.id = "fake_cb"
+                    async def answer(self, *args, **kwargs): pass
+                
+                fake_cb = FakeCallback(sent_msg, user)
+                
+                # Вызываем возврат в корзину (там есть проверка баланса и вызов подтверждения, если баланса хватает)
+                # Важно: return_to_saved_cart в purchase.py делает именно то что нужно
+                await return_to_saved_cart(fake_cb, state, user, db)
+                return
+
+            # Если всё же не хватает (странно, но бывает)
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
                 [types.InlineKeyboardButton(
                     text="🛒 Вернуться к оформлению подписки", 
                     callback_data="return_to_saved_cart"
-                )],
-                [types.InlineKeyboardButton(
-                    text="💰 Мой баланс", 
-                    callback_data="menu_balance"
                 )],
                 [types.InlineKeyboardButton(
                     text="🏠 Главное меню", 
@@ -582,27 +618,23 @@ async def handle_successful_topup_with_cart(
                 )]
             ])
             
-            success_text = (
-                f"✅ Баланс пополнен на {texts.format_price(amount_kopeks)}!\n\n"
+            status_text = (
+                f"✅ Оплата {texts.format_price(amount_kopeks)} получена!\n\n"
                 f"💰 Текущий баланс: {texts.format_price(user.balance_kopeks)}\n\n"
-                f"⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. "
-                f"Обязательно активируйте подписку отдельно!\n\n"
-                f"🔄 При наличии сохранённой корзины подписки и включенной автопокупке, "
-                f"подписка будет приобретена автоматически после пополнения баланса.\n\n"
                 f"🛒 У вас есть сохраненная корзина подписки\n"
                 f"Стоимость: {texts.format_price(total_price)}\n\n"
-                f"Хотите продолжить оформление?"
+                f"Нажмите кнопку ниже, чтобы завершить покупку:"
             )
             
             await bot.send_message(
                 chat_id=user.telegram_id,
-                text=success_text,
+                text=status_text,
                 reply_markup=keyboard,
                 parse_mode="HTML"
             )
             
     except Exception as e:
-        logger.error(f"Ошибка обработки успешного пополнения с корзиной: {e}")
+        logger.error(f"Ошибка обработки успешного пополнения с корзиной: {e}", exc_info=True)
 
 
 @error_handler

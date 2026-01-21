@@ -524,7 +524,7 @@ def get_main_menu_keyboard(
                 InlineKeyboardButton(text=texts.t("BUY_TRAFFIC_BUTTON", "📈 Докупить трафик"), callback_data="buy_traffic")
             )
 
-    keyboard.append([InlineKeyboardButton(text=balance_button_text, callback_data="menu_balance")])
+    # keyboard.append([InlineKeyboardButton(text=balance_button_text, callback_data="menu_balance")])
     
     show_trial = not has_had_paid_subscription and not has_active_subscription
 

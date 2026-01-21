@@ -104,13 +104,7 @@ class PaymentCommonMixin:
                         )
                     ])
 
-        # Стандартные кнопки быстрого доступа к балансу и главному меню.
-        keyboard_rows.append([
-            build_miniapp_or_callback_button(
-                text="💰 Мой баланс",
-                callback_data="menu_balance",
-            )
-        ])
+        # Стандартные кнопки быстрого доступа к главному меню.
         keyboard_rows.append([
             InlineKeyboardButton(
                 text="🏠 Главное меню",
@@ -134,6 +128,47 @@ class PaymentCommonMixin:
             # Если бот не передан (например, внутри фоновых задач), уведомление пропускаем.
             return
 
+        # Пробуем вызвать автоматическую активацию подписки, если есть корзина
+        try:
+            from app.handlers.balance.main import handle_successful_topup_with_cart
+            from app.database.crud.user import get_user_by_telegram_id
+            
+            # Получаем свежего пользователя из БД
+            target_db = db
+            if not target_db:
+                from app.database.database import get_db
+                async for session in get_db():
+                    target_db = session
+                    break
+            
+            db_user = await get_user_by_telegram_id(target_db, telegram_id)
+            if db_user:
+                # Пытаемся обработать как покупку из корзины
+                # Если эта функция сработает и найдет корзину, она сама отправит сообщение
+                # и вернет управление. 
+                # Нам нужно понять, отправила ли она сообщение, чтобы не дублировать.
+                # В нашей новой версии handle_successful_topup_with_cart возвращает None, 
+                # но мы можем проверить состояние до/после или просто полагаться на то,
+                # что если корзина есть, мы не шлем обычное уведомление.
+                
+                from app.bot import dp
+                from aiogram.fsm.storage.base import StorageKey
+                key = StorageKey(bot_id=self.bot.id, chat_id=telegram_id, user_id=telegram_id)
+                state_data = await dp.storage.get_data(key)
+                current_state = await dp.storage.get_state(key)
+                
+                if (current_state == "SubscriptionStates:cart_saved_for_topup" and 
+                    state_data.get('saved_cart')):
+                    await handle_successful_topup_with_cart(
+                        user_id=db_user.id,
+                        amount_kopeks=amount_kopeks,
+                        bot=self.bot,
+                        db=target_db
+                    )
+                    return
+        except Exception as e:
+            logger.error(f"Ошибка автоматической активации подписки: {e}")
+
         user_snapshot = await self._ensure_user_snapshot(
             telegram_id,
             user,
@@ -141,75 +176,16 @@ class PaymentCommonMixin:
         )
 
         try:
-            payment_method = payment_method_title or "Банковская карта (YooKassa)"
+            payment_method = payment_method_title or "Банковская карта"
 
-            # Проверяем, нужно ли показывать яркое предупреждение об активации
-            if settings.SHOW_ACTIVATION_PROMPT_AFTER_TOPUP:
-                # Определяем статус подписки для выбора правильной кнопки
-                has_active_subscription = False
-                if user_snapshot:
-                    try:
-                        subscription = user_snapshot.subscription
-                        has_active_subscription = bool(
-                            subscription
-                            and not getattr(subscription, "is_trial", False)
-                            and getattr(subscription, "is_active", False)
-                        )
-                    except Exception:
-                        pass
-
-                # Яркое сообщение с восклицательными знаками
-                message = (
-                    "✅ <b>Платеж успешно завершен!</b>\n\n"
-                    f"💰 Сумма: {settings.format_price(amount_kopeks)}\n"
-                    f"💳 Способ: {payment_method}\n\n"
-                    "💎 Средства зачислены на ваш баланс!\n\n"
-                    "‼️ <b>ВНИМАНИЕ! ОБЯЗАТЕЛЬНО АКТИВИРУЙТЕ ПОДПИСКУ!</b> ‼️\n\n"
-                    "⚠️ Пополнение баланса <b>НЕ АКТИВИРУЕТ</b> подписку автоматически!\n\n"
-                    "👇 <b>НАЖМИТЕ КНОПКУ НИЖЕ ДЛЯ АКТИВАЦИИ</b> 👇"
-                )
-
-                # Формируем клавиатуру с кнопками действий
-                keyboard_rows: list[list[InlineKeyboardButton]] = []
-
-                # Кнопка активации или продления в зависимости от статуса
-                if has_active_subscription:
-                    # Активная платная подписка - показываем продление и изменение устройств
-                    keyboard_rows.append([
-                        build_miniapp_or_callback_button(
-                            text="🔄 ПРОДЛИТЬ ПОДПИСКУ",
-                            callback_data="subscription_extend",
-                        )
-                    ])
-                    keyboard_rows.append([
-                        build_miniapp_or_callback_button(
-                            text="📱 Изменить количество устройств",
-                            callback_data="subscription_change_devices",
-                        )
-                    ])
-                else:
-                    # Нет подписки или истекла - показываем только активацию
-                    keyboard_rows.append([
-                        build_miniapp_or_callback_button(
-                            text="🔥 АКТИВИРОВАТЬ ПОДПИСКУ",
-                            callback_data="menu_buy",
-                        )
-                    ])
-
-                keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
-            else:
-                # Стандартное сообщение с полной клавиатурой
-                keyboard = await self.build_topup_success_keyboard(user_snapshot)
-                message = (
-                    "✅ <b>Платеж успешно завершен!</b>\n\n"
-                    f"💰 Сумма: {settings.format_price(amount_kopeks)}\n"
-                    f"💳 Способ: {payment_method}\n\n"
-                    "Средства зачислены на ваш баланс!\n\n"
-                    "⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. "
-                    "Обязательно активируйте подписку отдельно!\n\n"
-                    f"🔄 При наличии сохранённой корзины подписки и включенной автопокупке, "
-                    f"подписка будет приобретена автоматически после пополнения баланса."
-                )
+            # Стандартное сообщение с полной клавиатурой
+            keyboard = await self.build_topup_success_keyboard(user_snapshot)
+            message = (
+                "✅ <b>Платеж успешно завершен!</b>\n\n"
+                f"💰 Сумма: {settings.format_price(amount_kopeks)}\n"
+                f"💳 Способ: {payment_method}\n\n"
+                "Средства зачислены на ваш баланс!"
+            )
 
             await self.bot.send_message(
                 chat_id=telegram_id,

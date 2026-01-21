@@ -10,7 +10,6 @@ def get_main_reply_keyboard(language: str = "ru") -> ReplyKeyboardMarkup:
     
     keyboard = [
         [
-            KeyboardButton(text=texts.MENU_BALANCE),
             KeyboardButton(text=texts.MENU_SUBSCRIPTION)
         ]
     ]
