@@ -361,26 +361,35 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
     if state_needs_update:
         await state.set_data(data)
 
+    gift_code = None
     if start_parameter:
-        campaign = await get_campaign_by_start_parameter(
-            db,
-            start_parameter,
-            only_active=True,
-        )
-
-        if campaign:
-            logger.info(
-                "📣 Найдена рекламная кампания %s (start=%s)",
-                campaign.id,
-                campaign.start_parameter,
-            )
-            await state.update_data(campaign_id=campaign.id)
+        # Проверяем, является ли параметр gift-кодом (начинается с GIFT_)
+        if start_parameter.startswith("GIFT_"):
+            gift_code = start_parameter
+            logger.info(f"🎁 Найден gift-код: {gift_code}")
         else:
-            referral_code = start_parameter
-            logger.info(f"🔎 Найден реферальный код: {referral_code}")
+            campaign = await get_campaign_by_start_parameter(
+                db,
+                start_parameter,
+                only_active=True,
+            )
+
+            if campaign:
+                logger.info(
+                    "📣 Найдена рекламная кампания %s (start=%s)",
+                    campaign.id,
+                    campaign.start_parameter,
+                )
+                await state.update_data(campaign_id=campaign.id)
+            else:
+                referral_code = start_parameter
+                logger.info(f"🔎 Найден реферальный код: {referral_code}")
 
     if referral_code:
         await state.update_data(referral_code=referral_code)
+
+    if gift_code:
+        await state.update_data(gift_code=gift_code)
 
     user = db_user if db_user else await get_user_by_telegram_id(db, message.from_user.id)
 
@@ -455,6 +464,66 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 logger.error(
                     f"Ошибка отправки уведомления о рекламной кампании: {e}"
                 )
+
+        # Обработка gift-кода для зарегистрированного пользователя
+        if gift_code:
+            try:
+                from app.services.gift_subscription_service import gift_subscription_service
+
+                logger.info(f"🎁 Активация gift-кода {gift_code} для пользователя {user.telegram_id}")
+
+                result = await gift_subscription_service.activate_gift_subscription(
+                    db=db,
+                    user=user,
+                    code=gift_code
+                )
+
+                if result["success"]:
+                    traffic_text = f"{result['traffic_gb']} ГБ" if result['traffic_gb'] > 0 else "Безлимит"
+                    await message.answer(
+                        texts.t(
+                            "GIFT_ACTIVATION_SUCCESS",
+                            "🎉 <b>Подписка активирована!</b>\n\n"
+                            "📅 Период: {period}\n"
+                            "📊 Трафик: {traffic}\n"
+                            "📱 Устройства: {devices}\n"
+                            "🌍 Серверы: {countries}\n\n"
+                            "💚 Приятного пользования!"
+                        ).format(
+                            period=f"{result['period_days']} дней",
+                            traffic=traffic_text,
+                            devices=result['devices'],
+                            countries=len(result.get('squads', []))
+                        ),
+                        parse_mode="HTML"
+                    )
+                    logger.info(f"✅ Gift-код {gift_code} успешно активирован для пользователя {user.telegram_id}")
+                    # Обновляем пользователя после активации
+                    await db.refresh(user, ['subscription'])
+            except Exception as e:
+                logger.error(f"❌ Ошибка активации gift-кода {gift_code}: {e}")
+                error_message = str(e)
+                if "GiftCodeNotFoundError" in str(type(e).__name__):
+                    await message.answer(
+                        texts.t(
+                            "GIFT_CODE_INVALID",
+                            "❌ Неверный код или подарок уже активирован"
+                        )
+                    )
+                elif "GiftCodeAlreadyUsedError" in str(type(e).__name__):
+                    await message.answer(
+                        texts.t(
+                            "GIFT_CODE_ALREADY_USED",
+                            "❌ Этот подарок уже был активирован"
+                        )
+                    )
+                else:
+                    await message.answer(
+                        texts.t(
+                            "ERROR_TRY_AGAIN",
+                            "❌ Произошла ошибка при активации подарка. Попробуйте еще раз."
+                        )
+                    )
 
         has_active_subscription, subscription_is_active = _calculate_subscription_flags(
             user.subscription
@@ -1250,6 +1319,60 @@ async def complete_registration_from_callback(
         except Exception as e:
             logger.error(f"Ошибка при обработке реферальной регистрации: {e}")
 
+    # Активируем gift-код если был сохранен в state
+    gift_code_to_activate = data.get('gift_code')
+    if gift_code_to_activate:
+        try:
+            from app.services.gift_subscription_service import gift_subscription_service
+
+            logger.info(f"🎁 Активация gift-кода {gift_code_to_activate} для нового пользователя {user.id}")
+
+            result = await gift_subscription_service.activate_gift_subscription(
+                db=db,
+                user=user,
+                code=gift_code_to_activate
+            )
+
+            if result["success"]:
+                traffic_text = f"{result['traffic_gb']} ГБ" if result['traffic_gb'] > 0 else "Безлимит"
+                await callback.message.answer(
+                    texts.t(
+                        "GIFT_ACTIVATION_SUCCESS",
+                        "🎉 <b>Подписка активирована!</b>\n\n"
+                        "📅 Период: {period}\n"
+                        "📊 Трафик: {traffic}\n"
+                        "📱 Устройства: {devices}\n"
+                        "🌍 Серверы: {countries}\n\n"
+                        "💚 Приятного пользования!"
+                    ).format(
+                        period=f"{result['period_days']} дней",
+                        traffic=traffic_text,
+                        devices=result['devices'],
+                        countries=len(result.get('squads', []))
+                    ),
+                    parse_mode="HTML"
+                )
+                logger.info(f"✅ Gift-код {gift_code_to_activate} активирован для нового пользователя {user.id}")
+            else:
+                logger.warning(f"⚠️ Не удалось активировать gift-код {gift_code_to_activate}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при активации gift-кода {gift_code_to_activate}: {e}")
+            error_message = str(e)
+            if "GiftCodeNotFoundError" in str(type(e).__name__):
+                await callback.message.answer(
+                    texts.t(
+                        "GIFT_CODE_INVALID",
+                        "❌ Неверный код или подарок уже активирован"
+                    )
+                )
+            elif "GiftCodeAlreadyUsedError" in str(type(e).__name__):
+                await callback.message.answer(
+                    texts.t(
+                        "GIFT_CODE_ALREADY_USED",
+                        "❌ Этот подарок уже был активирован"
+                    )
+                )
+
     campaign_message = await _apply_campaign_bonus_if_needed(db, user, data, texts)
 
     try:
@@ -1555,6 +1678,60 @@ async def complete_registration(
                 logger.warning(f"⚠️ Не удалось активировать промокод {promocode_to_activate}: {promocode_result.get('error')}")
         except Exception as e:
             logger.error(f"❌ Ошибка при активации промокода {promocode_to_activate}: {e}")
+
+    # Активируем gift-код если был сохранен в state
+    gift_code_to_activate = data.get('gift_code')
+    if gift_code_to_activate:
+        try:
+            from app.services.gift_subscription_service import gift_subscription_service
+
+            logger.info(f"🎁 Активация gift-кода {gift_code_to_activate} для нового пользователя {user.id}")
+
+            result = await gift_subscription_service.activate_gift_subscription(
+                db=db,
+                user=user,
+                code=gift_code_to_activate
+            )
+
+            if result["success"]:
+                traffic_text = f"{result['traffic_gb']} ГБ" if result['traffic_gb'] > 0 else "Безлимит"
+                await message.answer(
+                    texts.t(
+                        "GIFT_ACTIVATION_SUCCESS",
+                        "🎉 <b>Подписка активирована!</b>\n\n"
+                        "📅 Период: {period}\n"
+                        "📊 Трафик: {traffic}\n"
+                        "📱 Устройства: {devices}\n"
+                        "🌍 Серверы: {countries}\n\n"
+                        "💚 Приятного пользования!"
+                    ).format(
+                        period=f"{result['period_days']} дней",
+                        traffic=traffic_text,
+                        devices=result['devices'],
+                        countries=len(result.get('squads', []))
+                    ),
+                    parse_mode="HTML"
+                )
+                logger.info(f"✅ Gift-код {gift_code_to_activate} активирован для нового пользователя {user.id}")
+            else:
+                logger.warning(f"⚠️ Не удалось активировать gift-код {gift_code_to_activate}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при активации gift-кода {gift_code_to_activate}: {e}")
+            error_message = str(e)
+            if "GiftCodeNotFoundError" in str(type(e).__name__):
+                await message.answer(
+                    texts.t(
+                        "GIFT_CODE_INVALID",
+                        "❌ Неверный код или подарок уже активирован"
+                    )
+                )
+            elif "GiftCodeAlreadyUsedError" in str(type(e).__name__):
+                await message.answer(
+                    texts.t(
+                        "GIFT_CODE_ALREADY_USED",
+                        "❌ Этот подарок уже был активирован"
+                    )
+                )
 
     campaign_message = await _apply_campaign_bonus_if_needed(db, user, data, texts)
 

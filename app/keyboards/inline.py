@@ -579,7 +579,13 @@ def get_main_menu_keyboard(
     paired_buttons.append(
         InlineKeyboardButton(text=texts.MENU_PROMOCODE, callback_data="menu_promocode")
     )
-    
+
+    # Добавляем кнопку подарочной подписки, только если функция включена
+    if settings.GIFT_SUBSCRIPTIONS_ENABLED:
+        paired_buttons.append(
+            InlineKeyboardButton(text=texts.GIFT_SUBSCRIPTION_MENU_BUTTON, callback_data="buy_gift_subscription")
+        )
+
     # Добавляем кнопку рефералов, только если программа включена
     if settings.is_referral_program_enabled():
         paired_buttons.append(

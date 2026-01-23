@@ -239,6 +239,9 @@ class Settings(BaseSettings):
     SIMPLE_SUBSCRIPTION_TRAFFIC_GB: int = 0  # 0 означает безлимит
     SIMPLE_SUBSCRIPTION_SQUAD_UUID: Optional[str] = None
 
+    # Настройки подарочных подписок
+    GIFT_SUBSCRIPTIONS_ENABLED: bool = True
+
     # Настройки конструктора меню (API)
     MENU_LAYOUT_ENABLED: bool = False  # Включить управление меню через API
 
@@ -543,6 +546,24 @@ class Settings(BaseSettings):
     LOG_ROTATION_SEND_TO_TELEGRAM: bool = False  # Отправлять в канал
     LOG_ROTATION_CHAT_ID: Optional[str] = None  # Канал для логов (или BACKUP_SEND_CHAT_ID)
     LOG_ROTATION_TOPIC_ID: Optional[int] = None  # Топик в канале
+
+    @field_validator('ADMIN_REPORTS_TOPIC_ID', 'LOG_ROTATION_TOPIC_ID', mode='before')
+    @classmethod
+    def parse_optional_int(cls, value):
+        """Конвертирует пустые строки и комментарии в None для опциональных int полей."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            # Если пустая строка или комментарий, возвращаем None
+            if not value or value.startswith('#'):
+                return None
+            # Пытаемся преобразовать в int
+            try:
+                return int(value)
+            except ValueError:
+                return None
+        return value
 
     # Пути к лог-файлам (при LOG_ROTATION_ENABLED=true)
     LOG_DIR: str = "logs"

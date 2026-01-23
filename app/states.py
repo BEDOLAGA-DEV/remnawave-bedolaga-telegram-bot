@@ -265,3 +265,13 @@ class ReferralWithdrawalStates(StatesGroup):
     waiting_for_amount = State()
     waiting_for_payment_details = State()
     confirming = State()
+
+
+class GiftSubscriptionStates(StatesGroup):
+    """Состояния FSM для создания подарочной подписки."""
+    selecting_tariff = State()  # Для режима тарифов
+    selecting_period = State()
+    selecting_traffic = State()
+    selecting_devices = State()
+    selecting_countries = State()
+    confirming_purchase = State()
