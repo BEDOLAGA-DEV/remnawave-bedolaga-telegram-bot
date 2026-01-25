@@ -512,6 +512,12 @@ class Settings(BaseSettings):
     MINIAPP_SERVICE_NAME_RU: str = "Bedolaga VPN"
     MINIAPP_SERVICE_DESCRIPTION_EN: str = "Secure & Fast Connection"
     MINIAPP_SERVICE_DESCRIPTION_RU: str = "Безопасное и быстрое подключение"
+    
+    # Inline query settings
+    INLINE_VPN_NAME: str = "VPN"
+    INLINE_REFERRAL_THUMBNAIL_URL: Optional[str] = None
+    INLINE_TRIAL_THUMBNAIL_URL: Optional[str] = None
+    INLINE_GENVPN_THUMBNAIL_URL: Optional[str] = None
     CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED: bool = False
     HAPP_CRYPTOLINK_REDIRECT_TEMPLATE: Optional[str] = None
     HAPP_DOWNLOAD_LINK_IOS: Optional[str] = None

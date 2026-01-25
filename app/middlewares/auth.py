@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
-from aiogram.types import Message, CallbackQuery, TelegramObject, User as TgUser, InaccessibleMessage
+from aiogram.types import Message, CallbackQuery, InlineQuery, TelegramObject, User as TgUser, InaccessibleMessage
 from aiogram.fsm.context import FSMContext
 
 from app.config import settings
@@ -50,7 +50,7 @@ class AuthMiddleware(BaseMiddleware):
         #     pass  # Раньше здесь был return None, теперь пропускаем дальше
 
         user: TgUser = None
-        if isinstance(event, (Message, CallbackQuery)):
+        if isinstance(event, (Message, CallbackQuery, InlineQuery)):
             user = event.from_user
 
         if not user:

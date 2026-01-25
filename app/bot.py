@@ -24,6 +24,7 @@ from app.handlers import (
     promocode,
     referral,
     support,
+    inline,
     server_status,
     common,
     tickets,
@@ -148,14 +149,17 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     dp.message.middleware(AuthMiddleware())
     dp.callback_query.middleware(AuthMiddleware())
     dp.pre_checkout_query.middleware(AuthMiddleware())
+    dp.inline_query.middleware(AuthMiddleware())
     dp.message.middleware(SubscriptionStatusMiddleware())
     dp.callback_query.middleware(SubscriptionStatusMiddleware())
+    dp.inline_query.middleware(SubscriptionStatusMiddleware())
     start.register_handlers(dp)
     menu.register_handlers(dp)
     subscription.register_handlers(dp)
     balance.register_balance_handlers(dp)
     promocode.register_handlers(dp)
     referral.register_handlers(dp)
+    inline.register_handlers(dp)
     support.register_handlers(dp)
     server_status.register_handlers(dp)
     tickets.register_handlers(dp)

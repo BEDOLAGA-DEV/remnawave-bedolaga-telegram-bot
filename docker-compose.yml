@@ -79,6 +79,7 @@ services:
       - '${WEB_API_PORT:-8080}:8080'
     networks:
       - bot_network
+      - remnawave-network
     healthcheck:
       test:
         [
@@ -105,3 +106,5 @@ networks:
           gateway: 172.20.0.1
     driver_opts:
       com.docker.network.driver.mtu: 1350
+  remnawave-network:
+    external: true
