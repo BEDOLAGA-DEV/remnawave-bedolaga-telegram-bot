@@ -370,41 +370,38 @@ async def _auto_extend_subscription(
         )
         return False
 
+    subscription = prepared.subscription
+    old_end_date = subscription.end_date
+    was_trial = subscription.is_trial  # Запоминаем, была ли подписка триальной
+    old_tariff_id = subscription.tariff_id  # Запоминаем старый тариф для определения смены
+
+    # Определяем, произошла ли смена тарифа
+    is_tariff_change = prepared.tariff_id is not None and old_tariff_id != prepared.tariff_id
+
+    # ВАЖНО: Все операции выполняем в единой транзакции без автокоммита,
+    # чтобы при ошибке на любом шаге можно было откатить всё целиком
     try:
+        # Шаг 1: Списываем баланс БЕЗ автокоммита
         deducted = await subtract_user_balance(
             db,
             user,
             prepared.price_kopeks,
             prepared.description,
             consume_promo_offer=prepared.consume_promo_offer,
+            auto_commit=False,  # Не коммитим сразу!
         )
-    except Exception as error:  # pragma: no cover - defensive logging
-        logger.error(
-            '❌ Автопокупка: ошибка списания средств при продлении пользователя %s: %s',
-            _format_user_id(user),
-            error,
-            exc_info=True,
-        )
-        return False
 
-    if not deducted:
-        logger.warning(
-            '❌ Автопокупка: списание средств для продления подписки пользователя %s не выполнено',
-            _format_user_id(user),
-        )
-        return False
+        if not deducted:
+            logger.warning(
+                '❌ Автопокупка: списание средств для продления подписки пользователя %s не выполнено',
+                _format_user_id(user),
+            )
+            await db.rollback()
+            return False
 
-    subscription = prepared.subscription
-    old_end_date = subscription.end_date
-    was_trial = subscription.is_trial  # Запоминаем, была ли подписка триальной
-    old_tariff_id = subscription.tariff_id  # Запоминаем старый тариф для определения смены
+        _apply_extension_updates(prepared)
 
-    _apply_extension_updates(prepared)
-
-    # Определяем, произошла ли смена тарифа
-    is_tariff_change = prepared.tariff_id is not None and old_tariff_id != prepared.tariff_id
-
-    try:
+        # Шаг 2: Продлеваем подписку БЕЗ автокоммита
         # При смене тарифа передаём traffic_limit_gb для сброса трафика в БД
         updated_subscription = await extend_subscription(
             db,
@@ -413,28 +410,32 @@ async def _auto_extend_subscription(
             tariff_id=prepared.tariff_id if is_tariff_change else None,
             traffic_limit_gb=prepared.traffic_limit_gb if is_tariff_change else None,
             device_limit=prepared.device_limit if is_tariff_change else None,
+            auto_commit=False,  # Не коммитим сразу, коммит будет ниже
         )
 
-        # НОВОЕ: Конвертируем триал в платную подписку ТОЛЬКО после успешного продления
+        # Шаг 3: Конвертируем триал в платную подписку если нужно
         if was_trial and subscription.is_trial:
             subscription.is_trial = False
             subscription.status = 'active'
             user.has_had_paid_subscription = True
-            await db.commit()
             logger.info(
                 '✅ Триал конвертирован в платную подписку %s для пользователя %s',
                 subscription.id,
                 _format_user_id(user),
             )
 
+        # Шаг 4: Коммитим всю транзакцию целиком
+        await db.commit()
+        await db.refresh(user)
+
     except Exception as error:  # pragma: no cover - defensive logging
         logger.error(
-            '❌ Автопокупка: не удалось продлить подписку пользователя %s: %s',
+            '❌ Автопокупка: ошибка при продлении подписки пользователя %s: %s',
             _format_user_id(user),
             error,
             exc_info=True,
         )
-        # НОВОЕ: Откатываем изменения при ошибке
+        # Откатываем ВСЕ изменения включая списание баланса
         await db.rollback()
         return False
 
@@ -728,6 +729,7 @@ async def _auto_purchase_tariff(
 
     # Обновляем Remnawave
     # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
+    remnawave_success = False
     try:
         subscription_service = SubscriptionService()
         await subscription_service.create_remnawave_user(
@@ -736,12 +738,37 @@ async def _auto_purchase_tariff(
             reset_traffic=True,
             reset_reason='покупка тарифа',
         )
+        remnawave_success = True
     except Exception as error:
-        logger.warning(
-            '⚠️ Автопокупка тарифа: не удалось обновить Remnawave для пользователя %s: %s',
+        logger.error(
+            '❌ КРИТИЧНО Автопокупка тарифа: не удалось обновить Remnawave для пользователя %s: %s',
             _format_user_id(user),
             error,
         )
+        # КРИТИЧНО: Уведомляем админов об ошибке RemnaWave — деньги списаны, VPN не работает!
+        if bot:
+            try:
+                from app.config import settings as app_settings
+
+                admin_ids = app_settings.ADMIN_IDS or []
+                for admin_id in admin_ids[:3]:  # Первые 3 админа
+                    await bot.send_message(
+                        chat_id=admin_id,
+                        text=(
+                            f'🚨 <b>КРИТИЧНО: Ошибка RemnaWave при автопокупке тарифа</b>\n\n'
+                            f'👤 User ID: {user.id}\n'
+                            f'🆔 Telegram: {user.telegram_id or "N/A"}\n'
+                            f'📧 Email: {user.email or "N/A"}\n'
+                            f'📦 Подписка: {subscription.id}\n'
+                            f'💰 Списано: {final_price / 100:.2f} ₽\n'
+                            f'❌ Ошибка: {str(error)[:200]}\n\n'
+                            f'⚠️ Деньги СПИСАНЫ, но VPN НЕ РАБОТАЕТ!\n'
+                            f'Требуется ручное создание в RemnaWave.'
+                        ),
+                        parse_mode='HTML',
+                    )
+            except Exception as admin_notify_err:
+                logger.error(f'Не удалось уведомить админов об ошибке RemnaWave: {admin_notify_err}')
 
     # Очищаем корзину
     await user_cart_service.delete_user_cart(user.id)
