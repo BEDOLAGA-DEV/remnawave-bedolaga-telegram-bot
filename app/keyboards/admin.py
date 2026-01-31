@@ -374,6 +374,12 @@ def get_admin_users_filters_keyboard(language: str = 'ru') -> InlineKeyboardMark
             ],
             [
                 InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_USERS_FILTER_POTENTIAL_CUSTOMERS', '💰 Потенциальные клиенты'),
+                    callback_data='admin_users_potential_customers_filter',
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_USERS_FILTER_CAMPAIGN', '📢 По кампании'),
                     callback_data='admin_users_campaign_filter',
                 )

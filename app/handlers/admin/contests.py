@@ -1015,6 +1015,10 @@ async def show_virtual_participants(
                 text='➕ Добавить',
                 callback_data=f'admin_contest_vp_add_{contest_id}',
             ),
+            types.InlineKeyboardButton(
+                text='🎭 Массовка',
+                callback_data=f'admin_contest_vp_mass_{contest_id}',
+            ),
         ],
     ]
     if vps:
@@ -1160,7 +1164,10 @@ async def delete_virtual_participant_handler(
         lines.append('Пока нет виртуальных участников.')
 
     rows = [
-        [types.InlineKeyboardButton(text='➕ Добавить', callback_data=f'admin_contest_vp_add_{contest_id}')],
+        [
+            types.InlineKeyboardButton(text='➕ Добавить', callback_data=f'admin_contest_vp_add_{contest_id}'),
+            types.InlineKeyboardButton(text='🎭 Массовка', callback_data=f'admin_contest_vp_mass_{contest_id}'),
+        ],
     ]
     if vps:
         for v in vps:
@@ -1177,6 +1184,160 @@ async def delete_virtual_participant_handler(
     await callback.message.edit_text(
         '\n'.join(lines),
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@admin_required
+@error_handler
+async def start_mass_virtual_participants(
+    callback: types.CallbackQuery,
+    db_user,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Начинает массовое создание виртуальных участников (массовка)."""
+    contest_id = int(callback.data.split('_')[-1])
+    await state.set_state(AdminStates.adding_mass_virtual_count)
+    await state.update_data(mass_vp_contest_id=contest_id)
+
+    text = """
+🎭 <b>Массовка — массовое создание виртуальных участников</b>
+
+<i>Для чего это нужно?</i>
+Виртуальные участники (призраки) позволяют создать видимость активности в конкурсе. Они отображаются в таблице лидеров наравне с реальными участниками, но помечаются значком 👻.
+
+Это помогает:
+• Мотивировать реальных участников соревноваться
+• Задать планку для участия
+• Сделать конкурс более живым
+
+<b>Введите количество призраков для создания:</b>
+<i>(от 1 до 50)</i>
+"""
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'admin_contest_vp_{contest_id}')],
+            ]
+        ),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def process_mass_virtual_count(
+    message: types.Message,
+    db_user,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Обрабатывает количество призраков для массового создания."""
+    try:
+        count = int(message.text.strip())
+        if count < 1 or count > 50:
+            await message.answer(
+                '❌ Введите число от 1 до 50:',
+                reply_markup=types.InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_contests_ref')],
+                    ]
+                ),
+            )
+            return
+    except ValueError:
+        await message.answer(
+            '❌ Введите корректное число от 1 до 50:',
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_contests_ref')],
+                ]
+            ),
+        )
+        return
+
+    await state.update_data(mass_vp_count=count)
+    await state.set_state(AdminStates.adding_mass_virtual_referrals)
+
+    data = await state.get_data()
+    contest_id = data.get('mass_vp_contest_id')
+
+    await message.answer(
+        f'✅ Будет создано <b>{count}</b> призраков.\n\n'
+        f'<b>Введите количество рефералов у каждого:</b>\n'
+        f'<i>(от 1 до 100)</i>',
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'admin_contest_vp_{contest_id}')],
+            ]
+        ),
+    )
+
+
+@admin_required
+@error_handler
+async def process_mass_virtual_referrals(
+    message: types.Message,
+    db_user,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Создаёт массовку призраков с рандомными именами."""
+    import random
+    import string
+
+    try:
+        referrals_count = int(message.text.strip())
+        if referrals_count < 1 or referrals_count > 100:
+            await message.answer('❌ Введите число от 1 до 100:')
+            return
+    except ValueError:
+        await message.answer('❌ Введите корректное число от 1 до 100:')
+        return
+
+    data = await state.get_data()
+    contest_id = data.get('mass_vp_contest_id')
+    ghost_count = data.get('mass_vp_count', 1)
+
+    await state.clear()
+
+    # Генерируем и создаём призраков
+    created = []
+    for _ in range(ghost_count):
+        # Рандомное имя до 5 символов (буквы + цифры)
+        name_length = random.randint(3, 5)
+        name = ''.join(random.choices(string.ascii_letters + string.digits, k=name_length))
+
+        vp = await add_virtual_participant(db, contest_id, name, referrals_count)
+        created.append(vp)
+
+    # Показываем результат
+    text = f"""
+✅ <b>Массовка создана!</b>
+
+📊 <b>Результат:</b>
+• Создано призраков: {len(created)}
+• Рефералов у каждого: {referrals_count}
+• Всего виртуальных рефералов: {len(created) * referrals_count}
+
+👻 <b>Созданные призраки:</b>
+"""
+    for vp in created[:10]:
+        text += f'• {vp.display_name} — {vp.referral_count} реф.\n'
+
+    if len(created) > 10:
+        text += f'<i>... и ещё {len(created) - 10}</i>\n'
+
+    await message.answer(
+        text,
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [types.InlineKeyboardButton(text='👻 К списку призраков', callback_data=f'admin_contest_vp_{contest_id}')],
+                [types.InlineKeyboardButton(text='⬅️ К конкурсу', callback_data=f'admin_contest_view_{contest_id}')],
+            ]
+        ),
     )
 
 
@@ -1282,7 +1443,10 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(start_add_virtual_participant, F.data.startswith('admin_contest_vp_add_'))
     dp.callback_query.register(delete_virtual_participant_handler, F.data.startswith('admin_contest_vp_del_'))
     dp.callback_query.register(start_edit_virtual_participant, F.data.startswith('admin_contest_vp_edit_'))
+    dp.callback_query.register(start_mass_virtual_participants, F.data.startswith('admin_contest_vp_mass_'))
     dp.callback_query.register(show_virtual_participants, F.data.regexp(r'^admin_contest_vp_\d+$'))
     dp.message.register(process_virtual_participant_name, AdminStates.adding_virtual_participant_name)
     dp.message.register(process_virtual_participant_count, AdminStates.adding_virtual_participant_count)
     dp.message.register(process_edit_virtual_participant_count, AdminStates.editing_virtual_participant_count)
+    dp.message.register(process_mass_virtual_count, AdminStates.adding_mass_virtual_count)
+    dp.message.register(process_mass_virtual_referrals, AdminStates.adding_mass_virtual_referrals)

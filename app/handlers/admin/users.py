@@ -70,6 +70,7 @@ class UserFilterType(Enum):
     SPENDING = 'spending'
     PURCHASES = 'purchases'
     CAMPAIGN = 'campaign'
+    POTENTIAL_CUSTOMERS = 'potential_customers'
 
 
 @dataclass
@@ -125,6 +126,13 @@ USER_FILTER_CONFIGS: dict[UserFilterType, UserFilterConfig] = {
         title='👥 <b>Пользователи по кампании регистрации</b>',
         empty_message='📢 Пользователи с кампанией не найдены',
         pagination_prefix='admin_users_campaign_list',
+        order_param='',  # использует специальный метод
+    ),
+    UserFilterType.POTENTIAL_CUSTOMERS: UserFilterConfig(
+        fsm_state=AdminStates.viewing_user_from_potential_customers_list,
+        title='👥 <b>Потенциальные клиенты</b>',
+        empty_message='💰 Потенциальные клиенты не найдены',
+        pagination_prefix='admin_users_potential_customers_list',
         order_param='',  # использует специальный метод
     ),
 }
@@ -576,6 +584,125 @@ async def show_users_ready_to_renew(
 
 @admin_required
 @error_handler
+async def show_potential_customers(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext, page: int = 1
+):
+    """Показывает пользователей без активной подписки с балансом >= месячной цены."""
+    await state.set_state(AdminStates.viewing_user_from_potential_customers_list)
+
+    texts = get_texts(db_user.language)
+    from app.config import PERIOD_PRICES
+
+    monthly_price = PERIOD_PRICES.get(30, 99000)
+
+    user_service = UserService()
+    users_data = await user_service.get_potential_customers(
+        db,
+        min_balance_kopeks=monthly_price,
+        page=page,
+        limit=10,
+    )
+
+    amount_text = settings.format_price(monthly_price)
+    header = texts.t(
+        'ADMIN_USERS_FILTER_POTENTIAL_CUSTOMERS_TITLE',
+        '💰 Потенциальные клиенты',
+    )
+    description = texts.t(
+        'ADMIN_USERS_FILTER_POTENTIAL_CUSTOMERS_DESC',
+        'Пользователи без активной подписки с балансом {amount} или больше.',
+    ).format(amount=amount_text)
+
+    if not users_data['users']:
+        empty_text = texts.t(
+            'ADMIN_USERS_FILTER_POTENTIAL_CUSTOMERS_EMPTY',
+            'Сейчас нет пользователей, которые подходят под этот фильтр.',
+        )
+        await callback.message.edit_text(
+            f'{header}\n\n{description}\n\n{empty_text}',
+            reply_markup=get_admin_users_keyboard(db_user.language),
+        )
+        await callback.answer()
+        return
+
+    text = f'{header}\n\n{description}\n\n'
+    text += 'Нажмите на пользователя для управления:'
+
+    keyboard = []
+
+    for user in users_data['users']:
+        subscription = user.subscription
+        status_emoji = '✅' if user.status == UserStatus.ACTIVE.value else '🚫'
+        subscription_emoji = '❌'
+
+        if subscription:
+            if subscription.is_trial:
+                subscription_emoji = '🎁'
+            elif subscription.is_active:
+                subscription_emoji = '💎'
+            else:
+                subscription_emoji = '⏰'
+
+        button_text = (
+            f'{status_emoji} {subscription_emoji} {user.full_name}'
+            f' | 💰 {settings.format_price(user.balance_kopeks)}'
+        )
+
+        if len(button_text) > 60:
+            short_name = user.full_name
+            if len(short_name) > 20:
+                short_name = short_name[:17] + '...'
+            button_text = f'{status_emoji} {subscription_emoji} {short_name} | 💰 {settings.format_price(user.balance_kopeks)}'
+
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=button_text,
+                    callback_data=f'admin_user_manage_{user.id}',
+                )
+            ]
+        )
+
+    if users_data['total_pages'] > 1:
+        pagination_row = get_admin_pagination_keyboard(
+            users_data['current_page'],
+            users_data['total_pages'],
+            'admin_users_potential_customers_list',
+            'admin_users_potential_customers_filter',
+            db_user.language,
+        ).inline_keyboard[0]
+        keyboard.append(pagination_row)
+
+    keyboard.extend(
+        [
+            [
+                types.InlineKeyboardButton(
+                    text='🔍 Поиск',
+                    callback_data='admin_users_search',
+                ),
+                types.InlineKeyboardButton(
+                    text='📊 Статистика',
+                    callback_data='admin_users_stats',
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text='⬅️ Назад',
+                    callback_data='admin_users',
+                )
+            ],
+        ]
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
 async def show_users_list_by_traffic(
     callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext, page: int = 1
 ):
@@ -714,6 +841,19 @@ async def handle_users_ready_to_renew_pagination(
     except (ValueError, IndexError) as e:
         logger.error(f'Ошибка парсинга номера страницы: {e}')
         await show_users_ready_to_renew(callback, db_user, db, state, 1)
+
+
+@admin_required
+@error_handler
+async def handle_potential_customers_pagination(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext
+):
+    try:
+        page = int(callback.data.split('_')[-1])
+        await show_potential_customers(callback, db_user, db, state, page)
+    except (ValueError, IndexError) as e:
+        logger.error(f'Ошибка парсинга номера страницы: {e}')
+        await show_potential_customers(callback, db_user, db, state, 1)
 
 
 @admin_required
@@ -1322,6 +1462,8 @@ async def show_user_management(callback: types.CallbackQuery, db_user: User, db:
         back_callback = 'admin_users_campaign_filter'
     elif current_state == AdminStates.viewing_user_from_ready_to_renew_list:
         back_callback = 'admin_users_ready_to_renew_filter'
+    elif current_state == AdminStates.viewing_user_from_potential_customers_list:
+        back_callback = 'admin_users_potential_customers_filter'
 
     # Базовая клавиатура профиля
     kb = get_user_management_keyboard(user.id, user.status, db_user.language, back_callback)
@@ -5504,6 +5646,10 @@ def register_handlers(dp: Dispatcher):
     )
 
     dp.callback_query.register(
+        handle_potential_customers_pagination, F.data.startswith('admin_users_potential_customers_list_page_')
+    )
+
+    dp.callback_query.register(
         handle_users_campaign_list_pagination, F.data.startswith('admin_users_campaign_list_page_')
     )
 
@@ -5668,5 +5814,7 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_users_list_by_purchases, F.data == 'admin_users_purchases_filter')
 
     dp.callback_query.register(show_users_ready_to_renew, F.data == 'admin_users_ready_to_renew_filter')
+
+    dp.callback_query.register(show_potential_customers, F.data == 'admin_users_potential_customers_filter')
 
     dp.callback_query.register(show_users_list_by_campaign, F.data == 'admin_users_campaign_filter')

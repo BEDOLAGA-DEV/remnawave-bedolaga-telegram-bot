@@ -345,6 +345,72 @@ class UserService:
                 'total_count': 0,
             }
 
+    async def get_potential_customers(
+        self,
+        db: AsyncSession,
+        min_balance_kopeks: int,
+        page: int = 1,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Возвращает пользователей без активной подписки с достаточным балансом."""
+        try:
+            offset = (page - 1) * limit
+
+            # Фильтры: нет активной подписки И баланс >= порога
+            base_filters = [
+                User.balance_kopeks >= min_balance_kopeks,
+            ]
+
+            # Основной запрос с LEFT JOIN для поддержки пользователей без подписки
+            query = (
+                select(User)
+                .options(selectinload(User.subscription))
+                .outerjoin(Subscription, Subscription.user_id == User.id)
+                .where(
+                    *base_filters,
+                    or_(
+                        User.subscription == None,
+                        ~Subscription.status.in_(['active', 'trial']),
+                    ),
+                )
+                .order_by(User.balance_kopeks.desc(), User.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            result = await db.execute(query)
+            users = result.scalars().unique().all()
+
+            # Запрос для подсчета общего количества
+            count_query = (
+                select(func.count(User.id))
+                .outerjoin(Subscription, Subscription.user_id == User.id)
+                .where(
+                    *base_filters,
+                    or_(
+                        User.subscription == None,
+                        ~Subscription.status.in_(['active', 'trial']),
+                    ),
+                )
+            )
+            total_count = (await db.execute(count_query)).scalar() or 0
+            total_pages = (total_count + limit - 1) // limit if total_count else 0
+
+            return {
+                'users': users,
+                'current_page': page,
+                'total_pages': total_pages,
+                'total_count': total_count,
+            }
+
+        except Exception as e:
+            logger.error(f'Ошибка получения потенциальных клиентов: {e}')
+            return {
+                'users': [],
+                'current_page': 1,
+                'total_pages': 1,
+                'total_count': 0,
+            }
+
     async def get_user_spending_stats_map(self, db: AsyncSession, user_ids: list[int]) -> dict[int, dict[str, int]]:
         try:
             return await get_users_spending_stats(db, user_ids)

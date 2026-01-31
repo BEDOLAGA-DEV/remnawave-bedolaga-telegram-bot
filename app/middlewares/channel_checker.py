@@ -15,7 +15,7 @@ from app.database.crud.campaign import get_campaign_by_start_parameter
 from app.database.crud.subscription import deactivate_subscription, reactivate_subscription
 from app.database.crud.user import get_user_by_telegram_id
 from app.database.database import AsyncSessionLocal
-from app.database.models import SubscriptionStatus
+from app.database.models import SubscriptionStatus, UserStatus
 from app.keyboards.inline import get_channel_sub_keyboard
 from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
@@ -394,6 +394,14 @@ class ChannelCheckerMiddleware(BaseMiddleware):
             try:
                 user = await get_user_by_telegram_id(db, telegram_id)
                 if not user or not user.subscription:
+                    return
+
+                # НЕ реактивируем подписку заблокированным пользователям
+                if user.status == UserStatus.BLOCKED.value:
+                    logger.info(
+                        '🚫 Пропуск реактивации для заблокированного пользователя %s',
+                        telegram_id,
+                    )
                     return
 
                 subscription = user.subscription
