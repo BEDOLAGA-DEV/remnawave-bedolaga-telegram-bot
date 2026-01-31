@@ -1011,19 +1011,45 @@ class MonitoringService:
                     continue
 
                 if user.balance_kopeks >= charge_amount:
-                    success = await subtract_user_balance(db, user, charge_amount, 'Автопродление подписки')
-
-                    if success:
-                        await extend_subscription(db, subscription, 30)
-                        await self.subscription_service.update_remnawave_user(
-                            db,
-                            subscription,
-                            reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
-                            reset_reason='автопродление подписки',
+                    # Атомарная операция: списание + продление в одной транзакции
+                    try:
+                        # Шаг 1: Списываем баланс БЕЗ автокоммита
+                        success = await subtract_user_balance(
+                            db, user, charge_amount, 'Автопродление подписки', auto_commit=False
                         )
 
-                        if promo_discount_value > 0:
-                            await self._consume_user_promo_offer_discount(db, user)
+                        if success:
+                            # Шаг 2: Продлеваем подписку БЕЗ автокоммита
+                            await extend_subscription(
+                                db, subscription, 30, tariff_id=subscription.tariff_id, auto_commit=False
+                            )
+
+                            if promo_discount_value > 0:
+                                await self._consume_user_promo_offer_discount(db, user)
+
+                            # Шаг 3: Коммитим всю транзакцию целиком
+                            await db.commit()
+                            await db.refresh(user)
+                            await db.refresh(subscription)
+
+                            # Шаг 4: Обновляем RemnaWave (после успешного коммита)
+                            await self.subscription_service.update_remnawave_user(
+                                db,
+                                subscription,
+                                reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
+                                reset_reason='автопродление подписки',
+                            )
+                    except Exception as autopay_error:
+                        logger.error(
+                            '❌ Ошибка автопродления для пользователя %s: %s',
+                            user_identifier,
+                            autopay_error,
+                            exc_info=True,
+                        )
+                        await db.rollback()
+                        success = False
+
+                    if success:
 
                         # Send notification via appropriate channel
                         if user.telegram_id and self.bot:

@@ -636,10 +636,34 @@ class YooKassaPaymentMixin:
 
                                 # Создаем пользователя в RemnaWave
                                 subscription_service = SubscriptionService()
+                                remnawave_success = False
                                 try:
                                     await subscription_service.create_remnawave_user(db, subscription)
+                                    remnawave_success = True
                                 except Exception as rw_error:
-                                    logger.error(f'Ошибка создания RemnaWave для триала: {rw_error}')
+                                    logger.error('Ошибка создания RemnaWave для триала: %s', rw_error)
+                                    # КРИТИЧНО: Уведомляем админов об ошибке RemnaWave
+                                    if getattr(self, 'bot', None):
+                                        try:
+                                            from app.config import settings as app_settings
+
+                                            admin_ids = app_settings.ADMIN_IDS or []
+                                            for admin_id in admin_ids[:3]:  # Первые 3 админа
+                                                await self.bot.send_message(
+                                                    chat_id=admin_id,
+                                                    text=(
+                                                        f'⚠️ <b>КРИТИЧНО: Ошибка RemnaWave</b>\n\n'
+                                                        f'👤 User ID: {user.id}\n'
+                                                        f'📧 Email: {user.email or "N/A"}\n'
+                                                        f'🆔 Telegram: {user.telegram_id or "N/A"}\n'
+                                                        f'📦 Подписка: {subscription.id}\n'
+                                                        f'❌ Ошибка: {str(rw_error)[:200]}\n\n'
+                                                        f'⚠️ Подписка активирована, но VPN НЕ РАБОТАЕТ!\n'
+                                                        f'Требуется ручное создание в RemnaWave.'
+                                                    ),
+                                                )
+                                        except Exception as admin_notify_err:
+                                            logger.error('Не удалось уведомить админов об ошибке RemnaWave: %s', admin_notify_err)
 
                                 # Уведомление админам
                                 if getattr(self, 'bot', None):

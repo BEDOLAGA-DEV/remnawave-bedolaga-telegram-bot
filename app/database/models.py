@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -1312,6 +1313,11 @@ class TrafficPurchase(Base):
 
 class Transaction(Base):
     __tablename__ = 'transactions'
+    # NOTE: Для защиты от race condition при дублировании webhooks используется
+    # create_transaction_idempotent() в app/database/crud/transaction.py
+    # Unique index на (external_id, payment_method) можно добавить вручную:
+    # CREATE UNIQUE INDEX CONCURRENTLY ix_transactions_external_payment_unique
+    # ON transactions (external_id, payment_method) WHERE external_id IS NOT NULL;
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
