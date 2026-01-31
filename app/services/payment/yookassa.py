@@ -641,7 +641,7 @@ class YooKassaPaymentMixin:
                                     await subscription_service.create_remnawave_user(db, subscription)
                                     remnawave_success = True
                                 except Exception as rw_error:
-                                    logger.error(f'Ошибка создания RemnaWave для триала: {rw_error}')
+                                    logger.error('Ошибка создания RemnaWave для триала: %s', rw_error)
                                     # КРИТИЧНО: Уведомляем админов об ошибке RemnaWave
                                     if getattr(self, 'bot', None):
                                         try:
@@ -661,10 +661,9 @@ class YooKassaPaymentMixin:
                                                         f'⚠️ Подписка активирована, но VPN НЕ РАБОТАЕТ!\n'
                                                         f'Требуется ручное создание в RemnaWave.'
                                                     ),
-                                                    parse_mode='HTML',
                                                 )
                                         except Exception as admin_notify_err:
-                                            logger.error(f'Не удалось уведомить админов об ошибке RemnaWave: {admin_notify_err}')
+                                            logger.error('Не удалось уведомить админов об ошибке RemnaWave: %s', admin_notify_err)
 
                                 # Уведомление админам
                                 if getattr(self, 'bot', None):

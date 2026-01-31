@@ -265,7 +265,9 @@ class PromoCodeService:
                     await self.subscription_service.create_remnawave_user(db, new_subscription)
                 except Exception as rw_error:
                     logger.error(
-                        f'❌ Ошибка создания RemnaWave для промокода подписки пользователя {self._format_user_log(user)}: {rw_error}'
+                        '❌ Ошибка создания RemnaWave для промокода подписки пользователя %s: %s',
+                        self._format_user_log(user),
+                        rw_error,
                     )
                     # Удаляем созданную подписку, так как VPN не будет работать
                     await db.delete(new_subscription)
@@ -303,7 +305,9 @@ class PromoCodeService:
                     await self.subscription_service.create_remnawave_user(db, trial_subscription)
                 except Exception as rw_error:
                     logger.error(
-                        f'❌ Ошибка создания RemnaWave для триал промокода пользователя {self._format_user_log(user)}: {rw_error}'
+                        '❌ Ошибка создания RemnaWave для триал промокода пользователя %s: %s',
+                        self._format_user_log(user),
+                        rw_error,
                     )
                     # Удаляем созданную подписку, так как VPN не будет работать
                     await db.delete(trial_subscription)

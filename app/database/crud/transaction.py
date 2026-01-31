@@ -162,8 +162,15 @@ async def create_transaction_idempotent(
         existing = await get_transaction_by_external_id(db, external_id, payment_method)
         if existing:
             return existing, False
-        # Если транзакции всё ещё нет — что-то пошло совсем не так
-        raise
+        # Если транзакции всё ещё нет — IntegrityError был по другой причине
+        logger.error(
+            '❌ IntegrityError при создании транзакции, но дубликат не найден. external_id=%s, payment_method=%s',
+            external_id,
+            payment_method.value,
+        )
+        raise ValueError(
+            f'Не удалось создать транзакцию: IntegrityError, но дубликат не найден (external_id={external_id})'
+        ) from e
 
 
 async def get_transaction_by_id(db: AsyncSession, transaction_id: int) -> Transaction | None:
