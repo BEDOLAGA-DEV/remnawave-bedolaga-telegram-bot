@@ -122,13 +122,10 @@ async def _aggregate_traffic(
         for node_uuid, stats in results:
             if not isinstance(stats, dict):
                 continue
-            # The node-users endpoint may return user data under 'users' or 'series'
-            entries = stats.get('users', []) or stats.get('series', [])
-            if not entries and stats:
-                logger.debug('Unexpected node-users response keys: %s', list(stats.keys()))
-            for user_entry in entries:
-                uid = user_entry.get('uuid', '')
-                total = int(user_entry.get('total', 0))
+            # Non-legacy response: {series: [{userUuid, nodeUuid, total, ...}], topUsers: [...]}
+            for entry in stats.get('series', []):
+                uid = entry.get('userUuid', '')
+                total = int(entry.get('total', 0))
                 if uid and total > 0 and uid in user_uuids_set:
                     user_traffic.setdefault(uid, {})[node_uuid] = user_traffic.get(uid, {}).get(node_uuid, 0) + total
 
