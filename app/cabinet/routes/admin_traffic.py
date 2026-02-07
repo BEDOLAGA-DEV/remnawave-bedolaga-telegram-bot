@@ -197,6 +197,8 @@ def _build_traffic_items(
     if sort_by.startswith('node_'):
         node_uuid = sort_by[5:]
         items.sort(key=lambda x: x.node_traffic.get(node_uuid, 0), reverse=sort_desc)
+    elif sort_by in ('full_name', 'tariff_name'):
+        items.sort(key=lambda x: (getattr(x, sort_by, None) or '').lower(), reverse=sort_desc)
     else:
         items.sort(key=lambda x: getattr(x, sort_by, 0) or 0, reverse=sort_desc)
 
