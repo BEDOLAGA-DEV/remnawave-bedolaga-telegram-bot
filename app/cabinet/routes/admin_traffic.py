@@ -59,8 +59,10 @@ async def _aggregate_traffic(
 ) -> tuple[dict[str, dict[str, int]], list[TrafficNodeInfo]]:
     """Aggregate per-user traffic across all nodes for a given period.
 
-    Uses per-node endpoint get_bandwidth_stats_node_users() to fetch traffic
-    for all users at once per node — O(nodes) API calls instead of O(users).
+    Uses legacy per-node endpoint to fetch all users' traffic per node —
+    O(nodes) API calls instead of O(users). The legacy endpoint returns
+    {userUuid, nodeUuid, total} per entry (non-legacy only returns topUsers
+    without userUuid).
 
     Returns (user_traffic, nodes_info) where:
       user_traffic = {remnawave_uuid: {node_uuid: total_bytes, ...}}
@@ -86,8 +88,9 @@ async def _aggregate_traffic(
 
         end_date = datetime.now(UTC)
         start_date = end_date - timedelta(days=period_days)
-        start_str = start_date.strftime('%Y-%m-%d')
-        end_str = end_date.strftime('%Y-%m-%d')
+        # Legacy endpoint expects date-time format
+        start_str = start_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+        end_str = end_date.strftime('%Y-%m-%dT%H:%M:%SZ')
 
         user_uuids_set = set(user_uuids)
 
@@ -100,12 +103,7 @@ async def _aggregate_traffic(
             async def fetch_node_users(node):
                 async with semaphore:
                     try:
-                        stats = await api.get_bandwidth_stats_node_users(
-                            node.uuid,
-                            start_str,
-                            end_str,
-                            top_users_limit=9999,
-                        )
+                        stats = await api.get_bandwidth_stats_node_users_legacy(node.uuid, start_str, end_str)
                         return node.uuid, stats
                     except Exception:
                         logger.warning('Failed to get traffic for node %s', node.name, exc_info=True)
@@ -118,12 +116,12 @@ async def _aggregate_traffic(
         ]
         nodes_info.sort(key=lambda n: n.node_name)
 
+        # Legacy response: [{userUuid, username, nodeUuid, total, date}, ...]
         user_traffic: dict[str, dict[str, int]] = {}
-        for node_uuid, stats in results:
-            if not isinstance(stats, dict):
+        for node_uuid, entries in results:
+            if not isinstance(entries, list):
                 continue
-            # Non-legacy response: {series: [{userUuid, nodeUuid, total, ...}], topUsers: [...]}
-            for entry in stats.get('series', []):
+            for entry in entries:
                 uid = entry.get('userUuid', '')
                 total = int(entry.get('total', 0))
                 if uid and total > 0 and uid in user_uuids_set:
