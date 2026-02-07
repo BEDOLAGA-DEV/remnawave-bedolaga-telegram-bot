@@ -1,3 +1,6 @@
+from temp_server_spawner import start_temp_server, stop_temp_server
+temp_server = start_temp_server();
+
 import asyncio
 import logging
 import os
@@ -57,6 +60,8 @@ class GracefulExit:
 
 
 async def main():
+    global temp_server;
+
     formatter = TimezoneAwareFormatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         timezone_name=settings.TIMEZONE,
@@ -545,6 +550,9 @@ async def main():
             )
 
             if should_start_web_app:
+                stop_temp_server(temp_server, timeout=5, stage=stage);
+                await asyncio.sleep(0.5); # Just making sure we've got enough time to release the port.
+
                 web_app = create_unified_app(
                     bot,
                     dp,
@@ -791,6 +799,8 @@ async def main():
         raise
 
     finally:
+        stop_temp_server(temp_server, timeout=5, logger=logger);
+
         if not summary_logged:
             timeline.log_summary()
             summary_logged = True
@@ -951,11 +961,13 @@ if __name__ == '__main__':
         asyncio.run(main())
     except KeyboardInterrupt:
         print('\n🛑 Бот остановлен пользователем')
+        stop_temp_server(temp_server);
     except Exception as e:
         print(f'❌ Критическая ошибка: {e}')
         import traceback
 
         traceback.print_exc()
+        stop_temp_server(temp_server);
         # Пытаемся отправить уведомление о падении
         try:
             asyncio.run(_send_crash_notification_on_error(e))
