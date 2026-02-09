@@ -7,8 +7,23 @@ from aiogram.types import FSInputFile, InaccessibleMessage, InputMediaPhoto, Mes
 from app.config import settings
 from app.localization.texts import get_texts
 
-
 LOGO_PATH = Path(settings.LOGO_FILE)
+
+LOGO_FILE_ID: str | None = None;
+def get_logo_file() -> FSInputFile | str:
+    global LOGO_FILE_ID;
+    if LOGO_FILE_ID:
+        return LOGO_FILE_ID;
+
+    return FSInputFile(LOGO_PATH);
+
+def update_logo_file_id(file_id_or_fs: str | FSInputFile):
+    global LOGO_FILE_ID;
+    if isinstance(file_id_or_fs, FSInputFile):
+        return;
+
+    LOGO_FILE_ID = file_id_or_fs;
+
 _PRIVACY_RESTRICTED_CODE = 'BUTTON_USER_PRIVACY_RESTRICTED'
 _TOPIC_REQUIRED_ERRORS = (
     'topic must be specified',
@@ -111,7 +126,9 @@ async def _answer_with_photo(self: Message, text: str = None, **kwargs):
     if LOGO_PATH.exists():
         try:
             # Отправляем caption как есть; при ошибке парсинга ниже сработает фоллбек
-            return await self.answer_photo(FSInputFile(LOGO_PATH), caption=text, **kwargs)
+            msg_ = await self.answer_photo(get_logo_file(), caption=text, **kwargs);
+            update_logo_file_id(msg_.photo[-1].file_id);
+            return msg_;
         except TelegramBadRequest as error:
             if is_topic_required_error(error):
                 # Канал с топиками — просто игнорируем, нельзя ответить без message_thread_id
@@ -168,7 +185,7 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
         if (settings.ENABLE_LOGO_MODE and LOGO_PATH.exists() and not is_qr_message(self)) or (
             is_qr_message(self) and LOGO_PATH.exists()
         ):
-            media = FSInputFile(LOGO_PATH)
+            media = get_logo_file();
         else:
             media = self.photo[-1].file_id
         media_kwargs = {'media': media, 'caption': text}

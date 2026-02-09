@@ -108,13 +108,15 @@ class MonitoringService:
 
         if settings.ENABLE_LOGO_MODE and LOGO_PATH.exists() and (text is None or len(text) <= 1000):
             try:
-                return await self.bot.send_photo(
+                msg = await self.bot.send_photo(
                     chat_id=chat_id,
-                    photo=FSInputFile(LOGO_PATH),
+                    photo=get_logo_file(),
                     caption=text,
                     reply_markup=reply_markup,
                     parse_mode=parse_mode,
                 )
+                update_logo_file_id(msg.photo[-1].file_id);
+                return msg;
             except TelegramBadRequest as exc:
                 logger.warning(
                     'Не удалось отправить сообщение с логотипом пользователю %s: %s. Отправляем текстовое сообщение.',

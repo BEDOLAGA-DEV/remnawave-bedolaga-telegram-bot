@@ -8,7 +8,8 @@ from aiogram.types import FSInputFile, InaccessibleMessage, InputMediaPhoto
 from app.config import settings
 
 from .message_patch import (
-    LOGO_PATH,
+    get_logo_file,
+    update_logo_file_id,
     append_privacy_hint,
     is_privacy_restricted_error,
     is_qr_message,
@@ -21,19 +22,18 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 RETRY_DELAY = 0.5
 
-
-def _resolve_media(message: types.Message):
+def _resolve_media(message: types.Message) -> tuple[str | FSInputFile, bool]:
     # Если сообщение недоступно, возвращаем логотип по умолчанию
     if isinstance(message, InaccessibleMessage):
-        return FSInputFile(LOGO_PATH)
+        return get_logo_file(), False;
     # Всегда используем логотип если включен режим логотипа,
     # кроме специальных случаев (QR сообщения)
     if settings.ENABLE_LOGO_MODE and not is_qr_message(message):
-        return FSInputFile(LOGO_PATH)
+        return get_logo_file(), False;
     # Только если режим логотипа выключен, используем фото из сообщения
     if message.photo:
-        return message.photo[-1].file_id
-    return FSInputFile(LOGO_PATH)
+        return message.photo[-1].file_id, True
+    return get_logo_file(), False
 
 
 def _get_language(callback: types.CallbackQuery) -> str | None:
@@ -91,12 +91,13 @@ async def edit_or_answer_photo(
     if isinstance(callback.message, InaccessibleMessage):
         try:
             if settings.ENABLE_LOGO_MODE and LOGO_PATH.exists():
-                await callback.message.answer_photo(
-                    photo=FSInputFile(LOGO_PATH),
+                msg_ = await callback.message.answer_photo(
+                    photo=get_logo_file(),
                     caption=caption,
                     reply_markup=keyboard,
                     parse_mode=resolved_parse_mode,
                 )
+                update_logo_file_id(msg_.photo[-1].file_id);
             else:
                 await callback.message.answer(
                     caption,
@@ -145,7 +146,7 @@ async def edit_or_answer_photo(
             await _answer_text(callback, caption, keyboard, resolved_parse_mode, error)
         return
 
-    media = _resolve_media(callback.message)
+    media, is_real_photo = _resolve_media(callback.message)
 
     # Retry logic для сетевых ошибок
     for attempt in range(MAX_RETRIES):
@@ -183,12 +184,14 @@ async def edit_or_answer_photo(
                 pass
             try:
                 # Отправим как фото с логотипом
-                await callback.message.answer_photo(
-                    photo=media if isinstance(media, FSInputFile) else FSInputFile(LOGO_PATH),
+                msg_ = await callback.message.answer_photo(
+                    photo=media,
                     caption=caption,
                     reply_markup=keyboard,
                     parse_mode=resolved_parse_mode,
                 )
+                if not is_real_photo:
+                    update_logo_file_id(msg_.photo[-1].file_id)
             except TelegramBadRequest as photo_error:
                 await _answer_text(callback, caption, keyboard, resolved_parse_mode, photo_error)
             except Exception:
