@@ -1051,8 +1051,9 @@ class Settings(BaseSettings):
         )
 
         raw_username = template.format_map(values).strip()
-        sanitized_username = re.sub(r'[^0-9A-Za-z._-]+', '_', raw_username)
-        sanitized_username = re.sub(r'_+', '_', sanitized_username).strip('._-')
+        # Remnawave разрешает только буквы, цифры, подчёркивания и дефисы
+        sanitized_username = re.sub(r'[^0-9A-Za-z_-]+', '_', raw_username)
+        sanitized_username = re.sub(r'_+', '_', sanitized_username).strip('_-')
 
         if not sanitized_username:
             sanitized_username = f'user_{identifier}'

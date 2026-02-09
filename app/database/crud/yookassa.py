@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 
 from sqlalchemy import and_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -24,7 +25,7 @@ async def create_yookassa_payment(
     payment_method_type: str | None = None,
     yookassa_created_at: datetime | None = None,
     test_mode: bool = False,
-) -> YooKassaPayment:
+) -> YooKassaPayment | None:
     payment = YooKassaPayment(
         user_id=user_id,
         yookassa_payment_id=yookassa_payment_id,
@@ -40,7 +41,17 @@ async def create_yookassa_payment(
     )
 
     db.add(payment)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(
+            'FK violation при создании платежа YooKassa %s: user_id=%s не существует в БД: %s',
+            yookassa_payment_id,
+            user_id,
+            e,
+        )
+        return None
     await db.refresh(payment)
 
     logger.info(f'Создан платеж YooKassa: {yookassa_payment_id} на {amount_kopeks / 100}₽ для пользователя {user_id}')

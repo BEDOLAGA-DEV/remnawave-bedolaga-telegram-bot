@@ -468,6 +468,10 @@ async def select_country(callback: types.CallbackQuery, state: FSMContext, db_us
     country_uuid = callback.data.split('_')[1]
     data = await state.get_data()
 
+    if 'period_days' not in data:
+        await callback.answer('❌ Данные подписки устарели. Начните оформление заново.', show_alert=True)
+        return
+
     selected_countries = data.get('countries', [])
     if country_uuid in selected_countries:
         selected_countries.remove(country_uuid)

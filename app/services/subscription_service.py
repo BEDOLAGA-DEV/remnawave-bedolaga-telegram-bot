@@ -205,14 +205,21 @@ class SubscriptionService:
 
                 # Ищем существующего пользователя в панели
                 existing_users = []
-                if user.telegram_id:
-                    existing_users = await api.get_user_by_telegram_id(user.telegram_id)
-                elif user.remnawave_uuid:
-                    # Для email-пользователей ищем по uuid если есть
+                if user.remnawave_uuid:
                     try:
-                        existing_user = await api.get_user(user.remnawave_uuid)
+                        existing_user = await api.get_user_by_uuid(user.remnawave_uuid)
                         if existing_user:
                             existing_users = [existing_user]
+                    except Exception:
+                        pass
+
+                if not existing_users and user.telegram_id:
+                    existing_users = await api.get_user_by_telegram_id(user.telegram_id)
+
+                # Fallback: поиск по email (для OAuth юзеров без telegram_id)
+                if not existing_users and user.email:
+                    try:
+                        existing_users = await api.get_user_by_email(user.email)
                     except Exception:
                         pass
 

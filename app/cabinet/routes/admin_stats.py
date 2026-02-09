@@ -1,6 +1,8 @@
 """Admin routes for statistics dashboard in cabinet."""
 
 import logging
+import sys
+import time
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,11 +24,14 @@ from app.database.models import (
     User,
 )
 from app.services.remnawave_service import RemnaWaveService
+from app.services.version_service import version_service
 
 from ..dependencies import get_cabinet_db, get_current_admin_user
 
 
 logger = logging.getLogger(__name__)
+
+_start_time = time.time()
 
 router = APIRouter(prefix='/admin/stats', tags=['Cabinet Admin Stats'])
 
@@ -140,6 +145,16 @@ class DashboardStats(BaseModel):
     servers: ServerStats
     revenue_chart: list[RevenueData]
     tariff_stats: TariffStats | None = None
+
+
+class SystemInfoResponse(BaseModel):
+    """System information for admin dashboard."""
+
+    bot_version: str
+    python_version: str
+    uptime_seconds: int
+    users_total: int
+    subscriptions_active: int
 
 
 # ============ Extended Stats Schemas ============
@@ -306,6 +321,38 @@ async def get_dashboard_stats(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to load dashboard statistics',
+        )
+
+
+@router.get('/system-info', response_model=SystemInfoResponse)
+async def get_system_info(
+    admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get system information for admin dashboard."""
+    try:
+        users_total_result = await db.execute(select(func.count()).select_from(User))
+        users_total = users_total_result.scalar() or 0
+
+        subs_active_result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                Subscription.status == SubscriptionStatus.ACTIVE.value,
+            )
+        )
+        subscriptions_active = subs_active_result.scalar() or 0
+
+        return SystemInfoResponse(
+            bot_version=version_service.current_version,
+            python_version=sys.version.split()[0],
+            uptime_seconds=int(time.time() - _start_time),
+            users_total=users_total,
+            subscriptions_active=subscriptions_active,
+        )
+    except Exception as e:
+        logger.error(f'Failed to get system info: {e}')
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to load system information',
         )
 
 

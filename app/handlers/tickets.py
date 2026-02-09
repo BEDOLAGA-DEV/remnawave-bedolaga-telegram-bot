@@ -80,6 +80,9 @@ async def handle_ticket_title_input(message: types.Message, state: FSMContext, d
         return
 
     """Обработать ввод заголовка тикета"""
+    if not message.text:
+        asyncio.create_task(_try_delete_message_later(message.bot, message.chat.id, message.message_id, 2.0))
+        return
     title = message.text.strip()
 
     data_prompt = await state.get_data()

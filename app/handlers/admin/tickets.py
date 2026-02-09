@@ -1045,10 +1045,11 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
             return
 
         if not getattr(user, 'telegram_id', None):
-            logger.error(
-                'Cannot notify ticket #%s user without telegram_id (username=%s)',
+            logger.warning(
+                'Cannot notify ticket #%s user without telegram_id (username=%s, auth_type=%s)',
                 ticket.id,
                 getattr(user, 'username', None),
+                getattr(user, 'auth_type', None),
             )
             return
 

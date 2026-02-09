@@ -28,6 +28,7 @@ from app.database.models import (
     PromoGroup,
     Subscription,
     SubscriptionStatus,
+    TrafficPurchase,
     Transaction,
     TransactionType,
     User,
@@ -37,8 +38,10 @@ from app.utils.timezone import panel_datetime_to_naive_utc
 
 from ..dependencies import get_cabinet_db, get_current_admin_user
 from ..schemas.users import (
+    DeleteDeviceResponse,
     DeleteUserRequest,
     DeleteUserResponse,
+    DeviceInfo,
     DisableUserRequest,
     DisableUserResponse,
     FullDeleteUserRequest,
@@ -46,6 +49,7 @@ from ..schemas.users import (
     PanelSyncStatusResponse,
     PanelUserInfo,
     PeriodPriceInfo,
+    ResetDevicesResponse,
     ResetSubscriptionRequest,
     ResetSubscriptionResponse,
     ResetTrialRequest,
@@ -55,10 +59,13 @@ from ..schemas.users import (
     SyncFromPanelResponse,
     SyncToPanelRequest,
     SyncToPanelResponse,
+    TrafficPurchaseItem,
     UpdateBalanceRequest,
     UpdateBalanceResponse,
     UpdatePromoGroupRequest,
     UpdatePromoGroupResponse,
+    UpdateReferralCommissionRequest,
+    UpdateReferralCommissionResponse,
     UpdateRestrictionsRequest,
     UpdateRestrictionsResponse,
     UpdateSubscriptionRequest,
@@ -68,6 +75,7 @@ from ..schemas.users import (
     UserAvailableTariffItem,
     UserAvailableTariffsResponse,
     UserDetailResponse,
+    UserDevicesResponse,
     UserListItem,
     UserNodeUsageItem,
     UserNodeUsageResponse,
@@ -157,13 +165,43 @@ def _build_subscription_info(subscription: Subscription, tariff_name: str | None
 
 
 async def _build_subscription_info_async(db: AsyncSession, subscription: Subscription) -> UserSubscriptionInfo:
-    """Build UserSubscriptionInfo from Subscription model, fetching tariff name asynchronously."""
+    """Build UserSubscriptionInfo from Subscription model, fetching tariff name and traffic purchases."""
     tariff_name = None
     if subscription.tariff_id:
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
         if tariff:
             tariff_name = tariff.name
-    return _build_subscription_info(subscription, tariff_name=tariff_name)
+
+    # Fetch traffic purchases
+    now = datetime.utcnow()
+    tp_query = (
+        select(TrafficPurchase)
+        .where(TrafficPurchase.subscription_id == subscription.id)
+        .order_by(TrafficPurchase.created_at.desc())
+    )
+    tp_result = await db.execute(tp_query)
+    purchases = tp_result.scalars().all()
+
+    traffic_purchase_items = []
+    for p in purchases:
+        delta = p.expires_at - now
+        days_remaining = max(0, delta.days)
+        is_expired = now >= p.expires_at
+        traffic_purchase_items.append(
+            TrafficPurchaseItem(
+                id=p.id,
+                traffic_gb=p.traffic_gb,
+                expires_at=p.expires_at,
+                created_at=p.created_at,
+                days_remaining=days_remaining,
+                is_expired=is_expired,
+            )
+        )
+
+    info = _build_subscription_info(subscription, tariff_name=tariff_name)
+    info.purchased_traffic_gb = getattr(subscription, 'purchased_traffic_gb', 0) or 0
+    info.traffic_purchases = traffic_purchase_items
+    return info
 
 
 async def _sync_subscription_to_panel(db: AsyncSession, user: User, subscription: Subscription) -> dict:
@@ -198,12 +236,16 @@ async def _sync_subscription_to_panel(db: AsyncSession, user: User, subscription
             full_name=user.full_name,
             username=user.username,
             telegram_id=user.telegram_id,
+            email=user.email,
+            user_id=user.id,
         )
 
         description = settings.format_remnawave_user_description(
             full_name=user.full_name,
             username=user.username,
             telegram_id=user.telegram_id,
+            email=user.email,
+            user_id=user.id,
         )
 
         hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
@@ -213,9 +255,25 @@ async def _sync_subscription_to_panel(db: AsyncSession, user: User, subscription
         async with service.get_api_client() as api:
             panel_uuid = user.remnawave_uuid
 
-            # Try to find existing user
+            # Try to find existing user by UUID first
+            if panel_uuid:
+                existing_user = await api.get_user_by_uuid(panel_uuid)
+                if not existing_user:
+                    logger.warning(f'User {user.id} has stale remnawave_uuid {panel_uuid}, clearing')
+                    panel_uuid = None
+                    user.remnawave_uuid = None
+
+            # Fallback: search by telegram_id
             if not panel_uuid and user.telegram_id:
                 existing_users = await api.get_user_by_telegram_id(user.telegram_id)
+                if existing_users:
+                    panel_uuid = existing_users[0].uuid
+                    user.remnawave_uuid = panel_uuid
+                    changes['remnawave_uuid_discovered'] = panel_uuid
+
+            # Fallback: search by email (for OAuth users without telegram_id)
+            if not panel_uuid and user.email:
+                existing_users = await api.get_user_by_email(user.email)
                 if existing_users:
                     panel_uuid = existing_users[0].uuid
                     user.remnawave_uuid = panel_uuid
@@ -256,6 +314,7 @@ async def _sync_subscription_to_panel(db: AsyncSession, user: User, subscription
                     'traffic_limit_bytes': traffic_limit_bytes,
                     'traffic_limit_strategy': TrafficLimitStrategy.MONTH,
                     'telegram_id': user.telegram_id,
+                    'email': user.email,
                     'description': description,
                     'active_internal_squads': subscription.connected_squads or [],
                 }
@@ -612,15 +671,30 @@ async def get_user_panel_info(
         from app.services.remnawave_service import RemnaWaveService
 
         service = RemnaWaveService()
-        if not service.is_configured or not user.telegram_id:
+        if not service.is_configured:
             return UserPanelInfoResponse(found=False)
 
         async with service.get_api_client() as api:
-            panel_users = await api.get_user_by_telegram_id(user.telegram_id)
-            if not panel_users:
-                return UserPanelInfoResponse(found=False)
+            panel_user = None
 
-            panel_user = panel_users[0]
+            # Try by UUID first (works for all users including OAuth)
+            if user.remnawave_uuid:
+                panel_user = await api.get_user_by_uuid(user.remnawave_uuid)
+
+            # Fallback: search by telegram_id
+            if not panel_user and user.telegram_id:
+                panel_users = await api.get_user_by_telegram_id(user.telegram_id)
+                if panel_users:
+                    panel_user = panel_users[0]
+
+            # Fallback: search by email (OAuth users)
+            if not panel_user and user.email:
+                panel_users_by_email = await api.get_user_by_email(user.email)
+                if panel_users_by_email:
+                    panel_user = panel_users_by_email[0]
+
+            if not panel_user:
+                return UserPanelInfoResponse(found=False)
 
             # Resolve last connected node name via accessible nodes (lighter than get_all_nodes)
             last_node_name = None
@@ -1060,6 +1134,113 @@ async def update_user_subscription(
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
+    if request.action == 'add_traffic':
+        if not request.traffic_gb:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='traffic_gb parameter is required for add_traffic action',
+            )
+
+        from app.database.crud.subscription import add_subscription_traffic
+
+        await add_subscription_traffic(db, subscription, request.traffic_gb)
+        await db.commit()
+        await db.refresh(subscription)
+
+        # Sync to Remnawave panel
+        await _sync_subscription_to_panel(db, user, subscription)
+
+        logger.info(f'Admin {admin.id} added {request.traffic_gb} GB traffic for user {user_id}')
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message=f'Added {request.traffic_gb} GB traffic (30 days)',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
+    if request.action == 'remove_traffic':
+        if not request.traffic_purchase_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='traffic_purchase_id parameter is required for remove_traffic action',
+            )
+
+        # Find the traffic purchase
+        tp_query = select(TrafficPurchase).where(
+            TrafficPurchase.id == request.traffic_purchase_id,
+            TrafficPurchase.subscription_id == subscription.id,
+        )
+        tp_result = await db.execute(tp_query)
+        traffic_purchase = tp_result.scalar_one_or_none()
+        if not traffic_purchase:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='Traffic purchase not found',
+            )
+
+        removed_gb = traffic_purchase.traffic_gb
+
+        # Decrement counters
+        subscription.traffic_limit_gb = max(0, subscription.traffic_limit_gb - removed_gb)
+        current_purchased = getattr(subscription, 'purchased_traffic_gb', 0) or 0
+        subscription.purchased_traffic_gb = max(0, current_purchased - removed_gb)
+
+        # Delete the purchase record
+        await db.delete(traffic_purchase)
+
+        # Recalculate traffic_reset_at from remaining active purchases
+        now = datetime.utcnow()
+        remaining_query = select(TrafficPurchase).where(
+            TrafficPurchase.subscription_id == subscription.id,
+            TrafficPurchase.expires_at > now,
+            TrafficPurchase.id != request.traffic_purchase_id,
+        )
+        remaining_result = await db.execute(remaining_query)
+        remaining_purchases = remaining_result.scalars().all()
+
+        if remaining_purchases:
+            subscription.traffic_reset_at = min(p.expires_at for p in remaining_purchases)
+        else:
+            subscription.traffic_reset_at = None
+
+        await db.commit()
+        await db.refresh(subscription)
+
+        # Sync to Remnawave panel
+        await _sync_subscription_to_panel(db, user, subscription)
+
+        logger.info(
+            f'Admin {admin.id} removed traffic purchase {request.traffic_purchase_id} ({removed_gb} GB) for user {user_id}'
+        )
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message=f'Removed {removed_gb} GB traffic package',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
+    if request.action == 'set_device_limit':
+        if request.device_limit is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='device_limit parameter is required for set_device_limit action',
+            )
+
+        subscription.device_limit = request.device_limit
+        await db.commit()
+        await db.refresh(subscription)
+
+        # Sync to Remnawave panel
+        await _sync_subscription_to_panel(db, user, subscription)
+
+        logger.info(f'Admin {admin.id} set device limit to {request.device_limit} for user {user_id}')
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message=f'Device limit set to {request.device_limit}',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f'Unknown action: {request.action}',
@@ -1140,6 +1321,11 @@ async def get_user_available_tariffs(
                 price_per_day_kopeks=tariff.price_per_day_kopeks,
                 min_days=tariff.min_days,
                 max_days=tariff.max_days,
+                device_price_kopeks=tariff.device_price_kopeks,
+                max_device_limit=tariff.max_device_limit,
+                traffic_topup_enabled=tariff.traffic_topup_enabled,
+                traffic_topup_packages=tariff.traffic_topup_packages or {},
+                max_topup_traffic_gb=tariff.max_topup_traffic_gb,
                 is_available=is_available,
                 requires_promo_group=requires_promo_group,
             )
@@ -1324,6 +1510,173 @@ async def update_user_promo_group(
         promo_group_name=promo_group_name,
         message='Promo group updated',
     )
+
+
+# === Referral Commission ===
+
+
+@router.post('/{user_id}/referral-commission', response_model=UpdateReferralCommissionResponse)
+async def update_user_referral_commission(
+    user_id: int,
+    request: UpdateReferralCommissionRequest,
+    admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update user's individual referral commission percentage."""
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='User not found',
+        )
+
+    old_commission = user.referral_commission_percent
+    user.referral_commission_percent = request.commission_percent
+    user.updated_at = datetime.utcnow()
+    await db.commit()
+
+    logger.info(
+        f'Admin {admin.id} changed referral commission for user {user_id}: {old_commission} -> {request.commission_percent}'
+    )
+
+    return UpdateReferralCommissionResponse(
+        success=True,
+        old_commission_percent=old_commission,
+        new_commission_percent=request.commission_percent,
+        message='Referral commission updated',
+    )
+
+
+# === Devices ===
+
+
+@router.get('/{user_id}/devices', response_model=UserDevicesResponse)
+async def get_user_devices(
+    user_id: int,
+    admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get user devices from Remnawave panel."""
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    if not user.remnawave_uuid:
+        return UserDevicesResponse()
+
+    try:
+        from app.services.remnawave_service import RemnaWaveService
+
+        service = RemnaWaveService()
+        if not service.is_configured:
+            return UserDevicesResponse()
+
+        async with service.get_api_client() as api:
+            response = await api.get_user_devices(user.remnawave_uuid)
+
+            devices = []
+            for d in response.get('devices', []):
+                hwid = d.get('hwid') or d.get('deviceId') or d.get('id')
+                if not hwid:
+                    continue
+                devices.append(
+                    DeviceInfo(
+                        hwid=hwid,
+                        platform=d.get('platform') or d.get('platformType') or '',
+                        device_model=d.get('deviceModel') or d.get('model') or d.get('name') or '',
+                        created_at=d.get('updatedAt') or d.get('lastSeen') or d.get('createdAt'),
+                    )
+                )
+
+            device_limit = 0
+            if user.subscription:
+                device_limit = user.subscription.device_limit or 0
+
+            return UserDevicesResponse(
+                devices=devices,
+                total=response.get('total', len(devices)),
+                device_limit=device_limit,
+            )
+
+    except Exception as e:
+        logger.error(f'Error fetching devices for user {user_id}: {e}')
+        return UserDevicesResponse()
+
+
+@router.delete('/{user_id}/devices/{hwid}', response_model=DeleteDeviceResponse)
+async def delete_user_device(
+    user_id: int,
+    hwid: str,
+    admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Delete a single device for user."""
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    if not user.remnawave_uuid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='User has no panel account')
+
+    try:
+        from app.services.remnawave_service import RemnaWaveService
+
+        service = RemnaWaveService()
+        async with service.get_api_client() as api:
+            success = await api.remove_device(user.remnawave_uuid, hwid)
+
+        if success:
+            logger.info(f'Admin {admin.id} deleted device {hwid} for user {user_id}')
+            return DeleteDeviceResponse(success=True, message='Device deleted', deleted_hwid=hwid)
+        return DeleteDeviceResponse(success=False, message='Failed to delete device')
+
+    except Exception as e:
+        logger.error(f'Error deleting device {hwid} for user {user_id}: {e}')
+        return DeleteDeviceResponse(success=False, message=str(e))
+
+
+@router.delete('/{user_id}/devices', response_model=ResetDevicesResponse)
+async def reset_user_devices(
+    user_id: int,
+    admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Reset all devices for user."""
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    if not user.remnawave_uuid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='User has no panel account')
+
+    try:
+        from app.services.remnawave_service import RemnaWaveService
+
+        service = RemnaWaveService()
+        async with service.get_api_client() as api:
+            devices_info = await api.get_user_devices(user.remnawave_uuid)
+            devices = devices_info.get('devices', [])
+            total = len(devices)
+
+            if total == 0:
+                return ResetDevicesResponse(success=True, message='No devices to reset', deleted_count=0)
+
+            deleted = 0
+            for d in devices:
+                device_hwid = d.get('hwid') or d.get('deviceId') or d.get('id')
+                if device_hwid:
+                    try:
+                        await api.remove_device(user.remnawave_uuid, device_hwid)
+                        deleted += 1
+                    except Exception:
+                        pass
+
+        logger.info(f'Admin {admin.id} reset devices for user {user_id}: {deleted}/{total}')
+        return ResetDevicesResponse(success=True, message=f'Deleted {deleted}/{total} devices', deleted_count=deleted)
+
+    except Exception as e:
+        logger.error(f'Error resetting devices for user {user_id}: {e}')
+        return ResetDevicesResponse(success=False, message=str(e))
 
 
 # === Delete User ===
@@ -1754,11 +2107,27 @@ async def get_user_sync_status(
         from app.services.remnawave_service import RemnaWaveService
 
         service = RemnaWaveService()
-        if service.is_configured and user.telegram_id:
+        if service.is_configured:
             async with service.get_api_client() as api:
-                panel_users = await api.get_user_by_telegram_id(user.telegram_id)
-                if panel_users:
-                    panel_user = panel_users[0]
+                panel_user = None
+
+                # Try by UUID first (works for all users including OAuth)
+                if user.remnawave_uuid:
+                    panel_user = await api.get_user_by_uuid(user.remnawave_uuid)
+
+                # Fallback: search by telegram_id
+                if not panel_user and user.telegram_id:
+                    panel_users = await api.get_user_by_telegram_id(user.telegram_id)
+                    if panel_users:
+                        panel_user = panel_users[0]
+
+                # Fallback: search by email (OAuth users)
+                if not panel_user and user.email:
+                    panel_users_by_email = await api.get_user_by_email(user.email)
+                    if panel_users_by_email:
+                        panel_user = panel_users_by_email[0]
+
+                if panel_user:
                     panel_found = True
                     panel_status = panel_user.status.value if panel_user.status else None
                     panel_expire_at = panel_user.expire_at
@@ -1884,26 +2253,29 @@ async def sync_user_from_panel(
         errors = []
         panel_info = None
 
-        # Email-only users cannot be synced from panel by telegram_id
-        if not user.telegram_id:
-            return SyncFromPanelResponse(
-                success=False,
-                message='Cannot sync email-only user',
-                errors=["Email-only users don't have telegram_id for panel lookup"],
-            )
-
         async with service.get_api_client() as api:
-            # Find user in panel
-            panel_users = await api.get_user_by_telegram_id(user.telegram_id)
+            # Find user in panel: UUID → telegram_id → email
+            panel_user = None
 
-            if not panel_users:
+            if user.remnawave_uuid:
+                panel_user = await api.get_user_by_uuid(user.remnawave_uuid)
+
+            if not panel_user and user.telegram_id:
+                panel_users = await api.get_user_by_telegram_id(user.telegram_id)
+                if panel_users:
+                    panel_user = panel_users[0]
+
+            if not panel_user and user.email:
+                panel_users_by_email = await api.get_user_by_email(user.email)
+                if panel_users_by_email:
+                    panel_user = panel_users_by_email[0]
+
+            if not panel_user:
                 return SyncFromPanelResponse(
                     success=False,
                     message='User not found in panel',
-                    errors=['No user with this telegram_id found in Remnawave panel'],
+                    errors=['No user found in Remnawave panel by UUID, telegram_id, or email'],
                 )
-
-            panel_user = panel_users[0]
 
             # Build panel info
             active_squads = []
@@ -2113,21 +2485,41 @@ async def sync_user_to_panel(
             full_name=user.full_name,
             username=user.username,
             telegram_id=user.telegram_id,
+            email=user.email,
+            user_id=user.id,
         )
 
         description = settings.format_remnawave_user_description(
             full_name=user.full_name,
             username=user.username,
             telegram_id=user.telegram_id,
+            email=user.email,
+            user_id=user.id,
         )
 
         hwid_limit = resolve_hwid_device_limit_for_payload(sub)
         traffic_limit_bytes = sub.traffic_limit_gb * (1024**3) if sub.traffic_limit_gb > 0 else 0
 
         async with service.get_api_client() as api:
-            # Try to find existing user in panel
+            # Validate existing UUID
+            if panel_uuid:
+                existing_user = await api.get_user_by_uuid(panel_uuid)
+                if not existing_user:
+                    logger.warning(f'User {user.id} has stale remnawave_uuid {panel_uuid}, clearing')
+                    panel_uuid = None
+                    user.remnawave_uuid = None
+
+            # Fallback: search by telegram_id
             if not panel_uuid and user.telegram_id:
                 existing_users = await api.get_user_by_telegram_id(user.telegram_id)
+                if existing_users:
+                    panel_uuid = existing_users[0].uuid
+                    user.remnawave_uuid = panel_uuid
+                    changes['remnawave_uuid_discovered'] = panel_uuid
+
+            # Fallback: search by email (OAuth users)
+            if not panel_uuid and user.email:
+                existing_users = await api.get_user_by_email(user.email)
                 if existing_users:
                     panel_uuid = existing_users[0].uuid
                     user.remnawave_uuid = panel_uuid
@@ -2178,6 +2570,7 @@ async def sync_user_to_panel(
                     'traffic_limit_bytes': traffic_limit_bytes,
                     'traffic_limit_strategy': TrafficLimitStrategy.MONTH,
                     'telegram_id': user.telegram_id,
+                    'email': user.email,
                     'description': description,
                     'active_internal_squads': sub.connected_squads or [],
                 }

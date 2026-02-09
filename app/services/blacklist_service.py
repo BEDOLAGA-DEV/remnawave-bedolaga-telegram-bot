@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 
 import aiohttp
@@ -27,6 +28,9 @@ class BlacklistService:
         interval_hours = self.get_blacklist_update_interval_hours()
         self.update_interval = timedelta(hours=interval_hours)
         self.lock = asyncio.Lock()  # Блокировка для предотвращения одновременных обновлений
+        # Кэш результатов проверки: {telegram_id: (is_blacklisted, reason, timestamp)}
+        self._check_cache: dict[int, tuple[bool, str | None, float]] = {}
+        self._cache_ttl = 300  # 5 минут
 
     def is_blacklist_check_enabled(self) -> bool:
         """Проверяет, включена ли проверка черного списка"""
@@ -117,6 +121,7 @@ class BlacklistService:
 
                 self.blacklist_data = blacklist_data
                 self.last_update = datetime.utcnow()
+                self._check_cache.clear()
                 logger.info(f'Черный список успешно обновлен. Найдено {len(blacklist_data)} записей')
                 return True
 
@@ -141,9 +146,17 @@ class BlacklistService:
         if not self.is_blacklist_check_enabled():
             return False, None
 
+        # Проверяем кэш
+        now = time.monotonic()
+        cached = self._check_cache.get(telegram_id)
+        if cached is not None:
+            is_bl, reason, ts = cached
+            if now - ts < self._cache_ttl:
+                return is_bl, reason
+
         # Проверяем, является ли пользователь администратором и нужно ли его игнорировать
         if self.should_ignore_admins() and self.is_admin(telegram_id):
-            logger.info(f'Пользователь {telegram_id} является администратором, игнорируем проверку черного списка')
+            self._check_cache[telegram_id] = (False, None, now)
             return False, None
 
         # Если черный список пуст или устарел, обновляем его
@@ -156,6 +169,7 @@ class BlacklistService:
         for bl_id, bl_username, bl_reason in self.blacklist_data:
             if bl_id == telegram_id:
                 logger.info(f'Пользователь {telegram_id} найден в черном списке по ID: {bl_reason}')
+                self._check_cache[telegram_id] = (True, bl_reason, now)
                 return True, bl_reason
 
         # Проверяем по username, если он передан
@@ -166,8 +180,10 @@ class BlacklistService:
                     logger.info(
                         f'Пользователь {username} ({telegram_id}) найден в черном списке по username: {bl_reason}'
                     )
+                    self._check_cache[telegram_id] = (True, bl_reason, now)
                     return True, bl_reason
 
+        self._check_cache[telegram_id] = (False, None, now)
         return False, None
 
     async def get_all_blacklisted_users(self) -> list[tuple[int, str, str]]:

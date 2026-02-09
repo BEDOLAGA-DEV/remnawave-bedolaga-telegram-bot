@@ -151,19 +151,20 @@ class RemnaWaveService:
         elif not api_key:
             self._config_error = 'REMNAWAVE_API_KEY не настроен'
 
-        self.api: RemnaWaveAPI | None
-        if self._config_error:
-            self.api = None
-        else:
-            self.api = RemnaWaveAPI(
-                base_url=base_url,
-                api_key=api_key,
-                secret_key=auth_params.get('secret_key'),
-                username=auth_params.get('username'),
-                password=auth_params.get('password'),
-                caddy_token=auth_params.get('caddy_token'),
-                auth_type=auth_params.get('auth_type') or 'api_key',
-            )
+        # Сохраняем параметры для создания новых экземпляров API клиента
+        # (каждый вызов get_api_client создаёт свой экземпляр, чтобы
+        # параллельные корутины не перезаписывали друг другу aiohttp-сессию)
+        self._api_kwargs: dict | None = None
+        if not self._config_error:
+            self._api_kwargs = {
+                'base_url': base_url,
+                'api_key': api_key,
+                'secret_key': auth_params.get('secret_key'),
+                'username': auth_params.get('username'),
+                'password': auth_params.get('password'),
+                'caddy_token': auth_params.get('caddy_token'),
+                'auth_type': auth_params.get('auth_type') or 'api_key',
+            }
 
     @property
     def is_configured(self) -> bool:
@@ -174,7 +175,7 @@ class RemnaWaveService:
         return self._config_error
 
     def _ensure_configured(self) -> None:
-        if not self.is_configured or self.api is None:
+        if not self.is_configured or self._api_kwargs is None:
             raise RemnaWaveConfigurationError(self._config_error or 'RemnaWave API не настроен')
 
     def _ensure_user_remnawave_uuid(
@@ -228,8 +229,9 @@ class RemnaWaveService:
     @asynccontextmanager
     async def get_api_client(self):
         self._ensure_configured()
-        assert self.api is not None
-        async with self.api as api:
+        assert self._api_kwargs is not None
+        api = RemnaWaveAPI(**self._api_kwargs)
+        async with api:
             yield api
 
     def _now_utc(self) -> datetime:
@@ -1439,12 +1441,14 @@ class RemnaWaveService:
 
                 # Используем один API клиент для всех операций сброса HWID
                 hwid_api_client = None
+                hwid_api_cm = None
                 try:
-                    hwid_api_client = self.get_api_client()
-                    await hwid_api_client.__aenter__()
+                    hwid_api_cm = self.get_api_client()
+                    hwid_api_client = await hwid_api_cm.__aenter__()
                 except Exception as api_init_error:
                     logger.warning(f'⚠️ Не удалось создать API клиент для сброса HWID: {api_init_error}')
                     hwid_api_client = None
+                    hwid_api_cm = None
 
                 try:
                     for telegram_id, db_user in users_to_deactivate:
@@ -1565,9 +1569,9 @@ class RemnaWaveService:
 
                 finally:
                     # Закрываем API клиент
-                    if hwid_api_client:
+                    if hwid_api_cm:
                         try:
-                            await hwid_api_client.__aexit__(None, None, None)
+                            await hwid_api_cm.__aexit__(None, None, None)
                         except Exception:
                             pass
 
@@ -1857,6 +1861,8 @@ class RemnaWaveService:
                                     full_name=user.full_name,
                                     username=user.username,
                                     telegram_id=user.telegram_id,
+                                    email=user.email,
+                                    user_id=user.id,
                                 )
 
                                 create_kwargs = dict(
@@ -1890,6 +1896,15 @@ class RemnaWaveService:
                                     if existing_users:
                                         panel_uuid = existing_users[0].uuid
                                         logger.debug(f'Найден пользователь {user.telegram_id} в панели: {panel_uuid}')
+
+                                # Fallback: поиск по email (для OAuth юзеров без telegram_id)
+                                if not panel_uuid and user.email:
+                                    existing_users = await api.get_user_by_email(user.email)
+                                    if existing_users:
+                                        panel_uuid = existing_users[0].uuid
+                                        logger.debug(
+                                            f'Найден пользователь {user.email} в панели по email: {panel_uuid}'
+                                        )
 
                                 if panel_uuid:
                                     update_kwargs = dict(

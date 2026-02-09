@@ -82,16 +82,18 @@ class VersionService:
         return 'UNKNOW'
 
     def _get_current_version(self) -> str:
-        import os
+        try:
+            from pathlib import Path
 
-        current = os.getenv('VERSION', '').strip()
-
-        if current:
-            if '-' in current and current.startswith('v'):
-                base_version = current.split('-')[0]
-                if base_version.count('.') == 2:
-                    return base_version
-            return current
+            pyproject_path = Path(__file__).resolve().parents[2] / 'pyproject.toml'
+            if pyproject_path.exists():
+                for line in pyproject_path.read_text().splitlines():
+                    if line.strip().startswith('version'):
+                        ver = line.split('=', 1)[1].strip().strip('"').strip("'")
+                        if ver:
+                            return ver
+        except Exception:
+            pass
 
         return 'UNKNOW'
 

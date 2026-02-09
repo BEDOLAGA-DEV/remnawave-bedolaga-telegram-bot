@@ -1328,6 +1328,27 @@ class YooKassaPaymentMixin:
             )
             return None
 
+        # Verify user exists before creating FK-linked record
+        try:
+            from app.database.crud.user import get_user_by_id
+
+            user = await get_user_by_id(db, user_id)
+            if not user:
+                logger.warning(
+                    'Webhook YooKassa %s: user_id=%s не найден в БД, пропускаем восстановление платежа',
+                    yookassa_payment_id,
+                    user_id,
+                )
+                return None
+        except Exception as e:
+            logger.warning(
+                'Webhook YooKassa %s: не удалось проверить user_id=%s: %s',
+                yookassa_payment_id,
+                user_id,
+                e,
+            )
+            return None
+
         amount_info = event_object.get('amount') or {}
         amount_value = amount_info.get('value')
         currency = (amount_info.get('currency') or 'RUB').upper()

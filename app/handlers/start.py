@@ -3,7 +3,7 @@ from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.enums import ChatMemberStatus
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -776,12 +776,11 @@ async def process_rules_accept(callback: types.CallbackQuery, state: FSMContext,
 
             try:
                 await callback.message.edit_text(rules_required_text, reply_markup=get_rules_keyboard(language))
-            except Exception as e:
-                logger.error(f'Ошибка при показе сообщения об отклонении правил: {e}')
-                try:
-                    await callback.message.edit_text(rules_required_text, reply_markup=get_rules_keyboard(language))
-                except:
-                    pass
+            except TelegramBadRequest as e:
+                if 'message is not modified' in str(e):
+                    pass  # Сообщение уже содержит нужный текст
+                else:
+                    logger.error(f'Ошибка при показе сообщения об отклонении правил: {e}')
 
         logger.info(f'✅ Правила обработаны для пользователя {callback.from_user.id}')
 

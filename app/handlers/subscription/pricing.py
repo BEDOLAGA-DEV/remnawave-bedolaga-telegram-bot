@@ -24,6 +24,10 @@ async def _prepare_subscription_summary(
     texts,
 ) -> tuple[str, dict[str, Any]]:
     summary_data = dict(data)
+
+    if 'period_days' not in summary_data:
+        raise KeyError('period_days missing from subscription data — FSM state likely expired')
+
     countries = await _get_available_countries(db_user.promo_group_id)
 
     months_in_period = calculate_months_from_days(summary_data['period_days'])

@@ -5,7 +5,6 @@
 """
 
 import logging
-import os
 from datetime import datetime
 from typing import Final
 
@@ -24,7 +23,6 @@ from app.utils.timezone import format_local_datetime
 logger = logging.getLogger(__name__)
 
 # Константы
-VERSION_ENV_VAR: Final[str] = 'VERSION'
 DEFAULT_VERSION: Final[str] = 'dev'
 DEFAULT_AUTH_TYPE: Final[str] = 'api_key'
 
@@ -70,10 +68,20 @@ class StartupNotificationService:
         self.enabled = getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False)
 
     def _get_version(self) -> str:
-        """Получает версию из переменной окружения VERSION."""
-        version = os.getenv(VERSION_ENV_VAR, '').strip()
-        if version:
-            return version
+        """Получает версию из pyproject.toml."""
+        try:
+            from pathlib import Path
+
+            pyproject_path = Path(__file__).resolve().parents[2] / 'pyproject.toml'
+            if pyproject_path.exists():
+                for line in pyproject_path.read_text().splitlines():
+                    if line.strip().startswith('version'):
+                        ver = line.split('=', 1)[1].strip().strip('"').strip("'")
+                        if ver:
+                            return ver
+        except Exception:
+            pass
+
         return DEFAULT_VERSION
 
     async def _get_users_count(self) -> int:

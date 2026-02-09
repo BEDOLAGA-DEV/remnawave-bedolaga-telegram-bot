@@ -524,8 +524,8 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 if success:
                     return JSONResponse({'status': 'ok'})
 
-                order_id = payload.get('order_id', 'unknown')
-                logger.error('Wata webhook processing failed: order_id=%s', order_id)
+                order_id = payload.get('orderId') or payload.get('order_id') or 'unknown'
+                logger.error('Wata webhook processing failed: order_id=%s, payload=%s', order_id, payload)
                 return JSONResponse(
                     {'status': 'error', 'reason': 'not_processed'},
                     status_code=status.HTTP_400_BAD_REQUEST,

@@ -1402,6 +1402,11 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
 
     prepared_cart_data = dict(cart_data)
 
+    if 'period_days' not in prepared_cart_data:
+        await callback.answer('❌ Корзина повреждена. Оформите подписку заново.', show_alert=True)
+        await user_cart_service.delete_user_cart(db_user.id)
+        return
+
     if not settings.is_devices_selection_enabled():
         try:
             from .pricing import _prepare_subscription_summary

@@ -12,20 +12,22 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BufferedInputFile
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.database.models import Subscription, User
+from app.database.models import Subscription, Transaction, TransactionType, User
 from app.services.remnawave_service import RemnaWaveService
 
 from ..dependencies import get_cabinet_db, get_current_admin_user
 from ..schemas.traffic import (
     ExportCsvRequest,
     ExportCsvResponse,
+    TrafficEnrichmentResponse,
     TrafficNodeInfo,
     TrafficUsageResponse,
+    UserTrafficEnrichment,
     UserTrafficItem,
 )
 
@@ -44,6 +46,7 @@ _cache_lock = asyncio.Lock()
 
 # Valid sort fields for the GET endpoint
 _SORT_FIELDS = frozenset({'total_bytes', 'full_name', 'tariff_name', 'device_limit', 'traffic_limit_gb'})
+_ENRICHMENT_SORT_FIELDS = frozenset({'connected', 'total_spent', 'sub_start', 'sub_end', 'last_node'})
 
 
 def _get_status(sub) -> str | None:
@@ -186,9 +189,14 @@ def _build_traffic_items(
 
         full_name = user.full_name
         username = user.username
+        email = user.email
 
         if search_lower:
-            if search_lower not in (full_name or '').lower() and search_lower not in (username or '').lower():
+            if (
+                search_lower not in (full_name or '').lower()
+                and search_lower not in (username or '').lower()
+                and search_lower not in (email or '').lower()
+            ):
                 continue
 
         sub = user.subscription
@@ -223,6 +231,7 @@ def _build_traffic_items(
                 user_id=user.id,
                 telegram_id=user.telegram_id,
                 username=username,
+                email=email,
                 full_name=full_name,
                 tariff_name=tariff_name,
                 subscription_status=subscription_status,
@@ -322,14 +331,30 @@ async def get_traffic_usage(
         if not node_filter:
             node_filter = None  # No valid nodes matched, treat as "all nodes"
 
-    # Validate sort_by: allow known fields + 'node_<uuid>' for dynamic node columns
+    # Validate sort_by: allow known fields + enrichment fields + 'node_<uuid>'
     is_node_sort = sort_by.startswith('node_') and sort_by[5:] in all_node_uuids
-    if sort_by not in _SORT_FIELDS and not is_node_sort:
+    is_enrichment_sort = sort_by in _ENRICHMENT_SORT_FIELDS
+    if sort_by not in _SORT_FIELDS and not is_node_sort and not is_enrichment_sort:
         sort_by = 'total_bytes'
 
+    # For enrichment sort, build items unsorted then sort by enrichment field
+    effective_sort = 'total_bytes' if is_enrichment_sort else sort_by
     items = _build_traffic_items(
-        user_traffic, user_map, nodes_info, search, sort_by, sort_desc, tariff_filter, status_filter, node_filter
+        user_traffic, user_map, nodes_info, search, effective_sort, sort_desc, tariff_filter, status_filter, node_filter
     )
+
+    if is_enrichment_sort:
+        enrichment_data = await _build_enrichment(db, user_map)
+        enr_key_map = {
+            'connected': lambda e: e.devices_connected,
+            'total_spent': lambda e: e.total_spent_kopeks,
+            'sub_start': lambda e: e.subscription_start_date or '',
+            'sub_end': lambda e: e.subscription_end_date or '',
+            'last_node': lambda e: e.last_node_name or '',
+        }
+        key_fn = enr_key_map[sort_by]
+        empty = UserTrafficEnrichment()
+        items.sort(key=lambda x: key_fn(enrichment_data.get(x.user_id, empty)), reverse=sort_desc)
 
     total = len(items)
     paginated = items[offset : offset + limit]
@@ -344,6 +369,156 @@ async def get_traffic_usage(
         available_tariffs=available_tariffs,
         available_statuses=available_statuses,
     )
+
+
+# ============== Enrichment endpoint ==============
+
+_enrichment_cache: dict[str, tuple[float, dict[int, UserTrafficEnrichment]]] = {}
+_ENRICHMENT_CACHE_TTL = 300  # 5 minutes
+_enrichment_lock = asyncio.Lock()
+
+
+async def _get_bulk_spending(db: AsyncSession, user_ids: list[int]) -> dict[int, int]:
+    """Get total spent kopeks for multiple users in a single query."""
+    if not user_ids:
+        return {}
+    result = await db.execute(
+        select(Transaction.user_id, func.coalesce(func.sum(Transaction.amount_kopeks), 0))
+        .where(
+            and_(
+                Transaction.user_id.in_(user_ids),
+                Transaction.is_completed.is_(True),
+                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+            )
+        )
+        .group_by(Transaction.user_id)
+    )
+    return {row[0]: int(row[1]) for row in result.all()}
+
+
+async def _build_enrichment(db: AsyncSession, user_map: dict[str, User]) -> dict[int, UserTrafficEnrichment]:
+    """Build enrichment data for all users: devices, spending, dates, last node."""
+    uuid_to_user_id: dict[str, int] = {}
+    for uuid, user in user_map.items():
+        uuid_to_user_id[uuid] = user.id
+
+    service = RemnaWaveService()
+    devices_by_user: dict[int, int] = {}
+    last_node_uuid_by_user: dict[int, str] = {}
+    node_uuid_to_name: dict[str, str] = {}
+
+    if service.is_configured:
+        async with service.get_api_client() as api:
+            # 3 bulk calls: nodes + users (paginated) + devices
+            try:
+                nodes_list = await api.get_all_nodes()
+            except Exception:
+                logger.warning('Failed to fetch nodes for enrichment', exc_info=True)
+                nodes_list = []
+
+            for node in nodes_list:
+                node_uuid_to_name[node.uuid] = node.name
+
+            # Fetch all panel users (paginated) for last connected node
+            panel_users = []
+            try:
+                first_page = await api.get_all_users(start=0, size=500)
+                panel_users.extend(first_page['users'])
+                total_panel = first_page['total']
+
+                if total_panel > 500:
+                    remaining_tasks = [
+                        api.get_all_users(start=offset, size=500) for offset in range(500, total_panel, 500)
+                    ]
+                    pages = await asyncio.gather(*remaining_tasks, return_exceptions=True)
+                    for page in pages:
+                        if isinstance(page, dict):
+                            panel_users.extend(page['users'])
+            except Exception:
+                logger.warning('Failed to fetch panel users for enrichment', exc_info=True)
+
+            for pu in panel_users:
+                uid = uuid_to_user_id.get(pu.uuid)
+                if uid is None:
+                    continue
+                if pu.user_traffic and pu.user_traffic.last_connected_node_uuid:
+                    last_node_uuid_by_user[uid] = pu.user_traffic.last_connected_node_uuid
+
+            # Bulk device fetch — single API call (paginated with start/size)
+            try:
+                devices_data = await api.get_all_hwid_devices()
+                for device in devices_data.get('devices', []):
+                    user_uuid = device.get('userUuid', '')
+                    uid = uuid_to_user_id.get(user_uuid)
+                    if uid is not None:
+                        devices_by_user[uid] = devices_by_user.get(uid, 0) + 1
+            except Exception:
+                logger.warning('Failed to fetch bulk devices for enrichment', exc_info=True)
+
+    # Bulk spending stats
+    all_user_ids = [u.id for u in user_map.values()]
+    spending_map = await _get_bulk_spending(db, all_user_ids)
+
+    # Build enrichment data
+    enrichment: dict[int, UserTrafficEnrichment] = {}
+    for uuid, user in user_map.items():
+        uid = user.id
+        sub = user.subscription
+
+        start_date = None
+        end_date = None
+        if sub:
+            if sub.start_date:
+                start_date = sub.start_date.isoformat()
+            if sub.end_date:
+                end_date = sub.end_date.isoformat()
+
+        last_node_name = None
+        last_uuid = last_node_uuid_by_user.get(uid)
+        if last_uuid:
+            last_node_name = node_uuid_to_name.get(last_uuid)
+
+        enrichment[uid] = UserTrafficEnrichment(
+            devices_connected=devices_by_user.get(uid, 0),
+            total_spent_kopeks=spending_map.get(uid, 0),
+            subscription_start_date=start_date,
+            subscription_end_date=end_date,
+            last_node_name=last_node_name,
+        )
+
+    return enrichment
+
+
+@router.get('/enrichment', response_model=TrafficEnrichmentResponse)
+async def get_traffic_enrichment(
+    admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Return enrichment data: device counts, spending, dates, last node."""
+    cache_key = 'enrichment'
+    now = time.time()
+
+    cached = _enrichment_cache.get(cache_key)
+    if cached and (now - cached[0]) < _ENRICHMENT_CACHE_TTL:
+        return TrafficEnrichmentResponse(data=cached[1])
+
+    async with _enrichment_lock:
+        now = time.time()
+        cached = _enrichment_cache.get(cache_key)
+        if cached and (now - cached[0]) < _ENRICHMENT_CACHE_TTL:
+            return TrafficEnrichmentResponse(data=cached[1])
+
+        user_map = await _load_user_map(db)
+        enrichment = await _build_enrichment(db, user_map)
+
+        _enrichment_cache[cache_key] = (now, enrichment)
+
+        # Evict expired
+        expired = [k for k, (ts, _) in _enrichment_cache.items() if (now - ts) >= _ENRICHMENT_CACHE_TTL]
+        for k in expired:
+            del _enrichment_cache[k]
+
+        return TrafficEnrichmentResponse(data=enrichment)
 
 
 @router.post('/export-csv', response_model=ExportCsvResponse)
@@ -386,6 +561,7 @@ async def export_traffic_csv(
 
     user_map = await _load_user_map(db)
     user_traffic, nodes_info = await _aggregate_traffic(start_str, end_str, list(user_map.keys()))
+    enrichment = await _build_enrichment(db, user_map)
 
     # Parse filters
     tariff_filter: set[str] | None = None
@@ -434,12 +610,21 @@ async def export_traffic_csv(
             'User ID': item.user_id,
             'Telegram ID': item.telegram_id or '',
             'Username': item.username or '',
+            'Email': item.email or '',
             'Full Name': item.full_name,
             'Tariff': item.tariff_name or '',
             'Status': item.subscription_status or '',
             'Traffic Limit (GB)': item.traffic_limit_gb,
-            'Devices': item.device_limit,
+            'Device Limit': item.device_limit,
         }
+        # Enrichment columns
+        enr = enrichment.get(item.user_id)
+        row['Connected Devices'] = enr.devices_connected if enr else 0
+        row['Total Spent (RUB)'] = round(enr.total_spent_kopeks / 100, 2) if enr else 0
+        row['Sub Start'] = enr.subscription_start_date or '' if enr else ''
+        row['Sub End'] = enr.subscription_end_date or '' if enr else ''
+        row['Last Node'] = enr.last_node_name or '' if enr else ''
+
         for node in csv_nodes:
             row[f'{node.node_name} (bytes)'] = item.node_traffic.get(node.node_uuid, 0)
         row['Total (bytes)'] = item.total_bytes

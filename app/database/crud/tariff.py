@@ -492,8 +492,8 @@ async def reorder_tariffs(
 async def sync_default_tariff_from_config(db: AsyncSession) -> Tariff | None:
     """
     Синхронизирует дефолтный тариф из конфига (.env) в БД.
-    Создаёт тариф "Стандартный" если в БД нет тарифов.
-    Обновляет цены существующего тарифа если он есть.
+    Создаёт тариф "Стандартный" только если в БД нет тарифов.
+    Существующий тариф НЕ перезаписывается — админ управляет им через кабинет.
 
     Returns:
         Tariff или None если не требуется синхронизация
@@ -519,13 +519,11 @@ async def sync_default_tariff_from_config(db: AsyncSession) -> Tariff | None:
     existing_tariff = result.scalar_one_or_none()
 
     if existing_tariff:
-        # Обновляем цены существующего тарифа
-        existing_tariff.period_prices = period_prices
-        existing_tariff.traffic_limit_gb = settings.DEFAULT_TRAFFIC_LIMIT_GB
-        existing_tariff.device_limit = settings.DEFAULT_DEVICE_LIMIT
-        await db.commit()
-        await db.refresh(existing_tariff)
-        logger.info("Обновлён дефолтный тариф 'Стандартный' из конфига")
+        # Тариф уже существует — НЕ перезаписываем настройки из конфига.
+        # Админ управляет тарифом через кабинет, синхронизация не нужна.
+        logger.info(
+            "Дефолтный тариф 'Стандартный' (id=%s) уже существует, пропускаем sync из конфига", existing_tariff.id
+        )
         return existing_tariff
 
     if tariff_count == 0:
@@ -571,21 +569,26 @@ async def load_period_prices_from_db(db: AsyncSession) -> None:
         )
         tariff = result.scalar_one_or_none()
 
-        if tariff and tariff.period_prices:
-            # Преобразуем строковые ключи в int
-            period_prices = {int(days): int(price) for days, price in tariff.period_prices.items() if int(price) > 0}
-
-            if period_prices:
-                set_period_prices_from_db(period_prices)
-                logger.info(
-                    "Загружены периоды из тарифа '%s': %s",
-                    tariff.name,
-                    {f'{d}д': f'{p // 100}₽' for d, p in period_prices.items()},
-                )
-            else:
-                logger.warning("Тариф '%s' не имеет активных периодов", tariff.name)
-        else:
+        if not tariff:
             logger.info('Активные тарифы не найдены, используются цены из .env')
+            return
+
+        if not tariff.period_prices:
+            logger.warning("Тариф '%s' (id=%s) найден, но period_prices пуст", tariff.name, tariff.id)
+            return
+
+        # Преобразуем строковые ключи в int
+        period_prices = {int(days): int(price) for days, price in tariff.period_prices.items() if int(price) > 0}
+
+        if period_prices:
+            set_period_prices_from_db(period_prices)
+            logger.info(
+                "Загружены периоды из тарифа '%s': %s",
+                tariff.name,
+                {f'{d}д': f'{p // 100}₽' for d, p in period_prices.items()},
+            )
+        else:
+            logger.warning("Тариф '%s' не имеет активных периодов (все цены = 0)", tariff.name)
 
     except Exception as e:
         logger.error('Ошибка загрузки периодов из БД: %s', e)

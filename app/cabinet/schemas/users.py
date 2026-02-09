@@ -39,6 +39,17 @@ class SortByEnum(str, Enum):
 # === User Subscription Info ===
 
 
+class TrafficPurchaseItem(BaseModel):
+    """Individual traffic purchase record."""
+
+    id: int
+    traffic_gb: int
+    expires_at: datetime
+    created_at: datetime
+    days_remaining: int
+    is_expired: bool
+
+
 class UserSubscriptionInfo(BaseModel):
     """User subscription information."""
 
@@ -55,6 +66,8 @@ class UserSubscriptionInfo(BaseModel):
     autopay_enabled: bool = False
     is_active: bool = False
     days_remaining: int = 0
+    purchased_traffic_gb: int = 0
+    traffic_purchases: list[TrafficPurchaseItem] = []
 
 
 class UserPromoGroupInfo(BaseModel):
@@ -285,6 +298,12 @@ class UpdateSubscriptionRequest(BaseModel):
     # For toggle_autopay
     autopay_enabled: bool | None = Field(None, description='Enable/disable autopay')
 
+    # For add_traffic action
+    traffic_gb: int | None = Field(None, ge=1, description='Traffic GB to add')
+
+    # For remove_traffic action
+    traffic_purchase_id: int | None = Field(None, description='Traffic purchase ID to remove')
+
     # For create new subscription
     is_trial: bool | None = Field(None, description='Is trial subscription')
     device_limit: int | None = Field(None, ge=1, description='Device limit')
@@ -346,6 +365,56 @@ class UpdatePromoGroupResponse(BaseModel):
     new_promo_group_id: int | None = None
     promo_group_name: str | None = None
     message: str
+
+
+class UpdateReferralCommissionRequest(BaseModel):
+    """Request to update user referral commission percent."""
+
+    commission_percent: int | None = Field(
+        None, ge=0, le=100, description='Referral commission percent (null for default)'
+    )
+
+
+class UpdateReferralCommissionResponse(BaseModel):
+    """Response after referral commission update."""
+
+    success: bool
+    old_commission_percent: int | None = None
+    new_commission_percent: int | None = None
+    message: str
+
+
+class DeviceInfo(BaseModel):
+    """Individual device info."""
+
+    hwid: str
+    platform: str = ''
+    device_model: str = ''
+    created_at: str | None = None
+
+
+class UserDevicesResponse(BaseModel):
+    """User devices from panel."""
+
+    devices: list[DeviceInfo] = []
+    total: int = 0
+    device_limit: int = 0
+
+
+class DeleteDeviceResponse(BaseModel):
+    """Response after device deletion."""
+
+    success: bool
+    message: str
+    deleted_hwid: str | None = None
+
+
+class ResetDevicesResponse(BaseModel):
+    """Response after resetting all devices."""
+
+    success: bool
+    message: str
+    deleted_count: int = 0
 
 
 class DeleteUserRequest(BaseModel):
@@ -440,6 +509,15 @@ class UserAvailableTariffItem(BaseModel):
     price_per_day_kopeks: int = 0
     min_days: int = 1
     max_days: int = 365
+
+    # Device limits
+    device_price_kopeks: int | None = None
+    max_device_limit: int | None = None
+
+    # Traffic topup
+    traffic_topup_enabled: bool = False
+    traffic_topup_packages: dict[str, int] = {}
+    max_topup_traffic_gb: int = 0
 
     # Access info
     is_available: bool = True  # Available for this user's promo group

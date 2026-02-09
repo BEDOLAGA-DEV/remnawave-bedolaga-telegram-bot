@@ -13,6 +13,7 @@ class UserTrafficItem(BaseModel):
     user_id: int
     telegram_id: int | None
     username: str | None
+    email: str | None
     full_name: str
     tariff_name: str | None
     subscription_status: str | None
@@ -31,6 +32,18 @@ class TrafficUsageResponse(BaseModel):
     period_days: int
     available_tariffs: list[str]
     available_statuses: list[str]
+
+
+class UserTrafficEnrichment(BaseModel):
+    devices_connected: int = 0
+    total_spent_kopeks: int = 0
+    subscription_start_date: str | None = None
+    subscription_end_date: str | None = None
+    last_node_name: str | None = None
+
+
+class TrafficEnrichmentResponse(BaseModel):
+    data: dict[int, UserTrafficEnrichment]
 
 
 class ExportCsvRequest(BaseModel):
