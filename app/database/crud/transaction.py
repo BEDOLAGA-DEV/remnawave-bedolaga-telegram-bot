@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -106,6 +107,70 @@ async def create_transaction(
             )
 
     return transaction
+
+
+async def create_transaction_idempotent(
+    db: AsyncSession,
+    user_id: int,
+    type: TransactionType,
+    amount_kopeks: int,
+    description: str,
+    payment_method: PaymentMethod,
+    external_id: str,
+    is_completed: bool = True,
+) -> tuple[Transaction, bool]:
+    """Создаёт транзакцию идемпотентно — защита от дублирования при race condition webhooks.
+
+    Если транзакция с таким external_id и payment_method уже существует,
+    возвращает существующую транзакцию вместо создания дубликата.
+
+    Returns:
+        tuple[Transaction, bool]: (транзакция, created) — created=True если создана новая, False если вернули существующую
+    """
+    # Сначала проверим, нет ли уже такой транзакции
+    existing = await get_transaction_by_external_id(db, external_id, payment_method)
+    if existing:
+        logger.info(
+            '⚠️ Транзакция с external_id=%s payment_method=%s уже существует (id=%s), пропускаем дубликат',
+            external_id,
+            payment_method.value,
+            existing.id,
+        )
+        return existing, False
+
+    try:
+        transaction = await create_transaction(
+            db=db,
+            user_id=user_id,
+            type=type,
+            amount_kopeks=amount_kopeks,
+            description=description,
+            payment_method=payment_method,
+            external_id=external_id,
+            is_completed=is_completed,
+        )
+        return transaction, True
+    except IntegrityError as e:
+        # Race condition — между проверкой и созданием другой webhook успел создать транзакцию
+        await db.rollback()
+        logger.warning(
+            '⚠️ Race condition при создании транзакции external_id=%s: %s',
+            external_id,
+            e,
+        )
+        # Возвращаем существующую транзакцию
+        existing = await get_transaction_by_external_id(db, external_id, payment_method)
+        if existing:
+            return existing, False
+        # Если транзакции всё ещё нет — IntegrityError был по другой причине
+        logger.error(
+            '❌ IntegrityError при создании транзакции, но дубликат не найден. external_id=%s, payment_method=%s',
+            external_id,
+            payment_method.value,
+        )
+        raise ValueError(
+            f'Не удалось создать транзакцию: IntegrityError, но дубликат не найден (external_id={external_id})'
+        ) from e
 
 
 async def get_transaction_by_id(db: AsyncSession, transaction_id: int) -> Transaction | None:

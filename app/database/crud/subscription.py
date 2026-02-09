@@ -327,6 +327,7 @@ async def extend_subscription(
     traffic_limit_gb: int | None = None,
     device_limit: int | None = None,
     connected_squads: list[str] | None = None,
+    auto_commit: bool = True,
 ) -> Subscription:
     """Продлевает подписку на указанное количество дней.
 
@@ -338,8 +339,12 @@ async def extend_subscription(
         traffic_limit_gb: Лимит трафика ГБ (опционально, для режима тарифов)
         device_limit: Лимит устройств (опционально, для режима тарифов)
         connected_squads: Список UUID сквадов (опционально, для режима тарифов)
+        auto_commit: Автоматический коммит (default: True). Установите False для управления транзакцией извне.
     """
     current_time = datetime.utcnow()
+
+    # ВАЖНО: Сохраняем старый tariff_id ДО любых изменений для корректной обработки смены тарифа
+    original_tariff_id = subscription.tariff_id
 
     logger.info(f'🔄 Продление подписки {subscription.id} на {days} дней')
     logger.info(
@@ -348,11 +353,11 @@ async def extend_subscription(
 
     # Определяем, происходит ли СМЕНА тарифа (а не продление того же)
     is_tariff_change = (
-        tariff_id is not None and subscription.tariff_id is not None and tariff_id != subscription.tariff_id
+        tariff_id is not None and original_tariff_id is not None and tariff_id != original_tariff_id
     )
 
     if is_tariff_change:
-        logger.info(f'🔄 Обнаружена СМЕНА тарифа: {subscription.tariff_id} → {tariff_id}')
+        logger.info(f'🔄 Обнаружена СМЕНА тарифа: {original_tariff_id} → {tariff_id}')
 
     # Бонусные дни от триала - добавляются ТОЛЬКО когда подписка истекла
     # и мы начинаем отсчёт с текущей даты. НЕ начисляются при смене тарифа.
@@ -464,16 +469,24 @@ async def extend_subscription(
 
     # Обработка daily полей при смене тарифа
     if is_tariff_change and tariff_id is not None:
-        # Получаем информацию о новом тарифе для проверки is_daily
+        # Получаем информацию о новом и старом тарифах для проверки is_daily
         from app.database.crud.tariff import get_tariff_by_id
 
         new_tariff = await get_tariff_by_id(db, tariff_id)
+        new_is_daily = new_tariff and getattr(new_tariff, 'is_daily', False)
+
+        # Проверяем был ли старый тариф суточным (по тарифу или по наличию daily полей)
+        # ВАЖНО: используем original_tariff_id, а не subscription.tariff_id (он уже изменён выше!)
+        old_tariff = None
+        if original_tariff_id:
+            old_tariff = await get_tariff_by_id(db, original_tariff_id)
         old_was_daily = (
-            getattr(subscription, 'is_daily_paused', False)
+            (old_tariff and getattr(old_tariff, 'is_daily', False))
+            or getattr(subscription, 'is_daily_paused', False)
             or getattr(subscription, 'last_daily_charge_at', None) is not None
         )
 
-        if new_tariff and getattr(new_tariff, 'is_daily', False):
+        if new_is_daily:
             # Переход на суточный тариф - сбрасываем флаги
             subscription.is_daily_paused = False
             subscription.last_daily_charge_at = None  # Будет установлено при первом списании
@@ -498,8 +511,9 @@ async def extend_subscription(
 
     subscription.updated_at = current_time
 
-    await db.commit()
-    await db.refresh(subscription)
+    if auto_commit:
+        await db.commit()
+        await db.refresh(subscription)
     await clear_notifications(db, subscription.id)
 
     logger.info(f'✅ Подписка продлена до: {subscription.end_date}')

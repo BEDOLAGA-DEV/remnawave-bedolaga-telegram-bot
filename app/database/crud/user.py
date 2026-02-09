@@ -495,6 +495,7 @@ async def subtract_user_balance(
     payment_method: PaymentMethod | None = None,
     *,
     consume_promo_offer: bool = False,
+    auto_commit: bool = True,
 ) -> bool:
     user_id_display = user.telegram_id or user.email or f'#{user.id}'
     logger.info('💸 ОТЛАДКА subtract_user_balance:')
@@ -554,8 +555,9 @@ async def subtract_user_balance(
 
         user.updated_at = datetime.utcnow()
 
-        await db.commit()
-        await db.refresh(user)
+        if auto_commit:
+            await db.commit()
+            await db.refresh(user)
 
         if create_transaction:
             from app.database.crud.transaction import (
