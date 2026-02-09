@@ -1864,7 +1864,7 @@ async def required_sub_channel_check(
                     reply_markup=keyboard,
                     parse_mode='HTML',
                 )
-                update_logo_file_id(msg_.photo[-1].file_id);
+                update_logo_file_id(msg_.photo[-1].file_id)
             else:
                 await bot.send_message(
                     chat_id=query.from_user.id,
@@ -1959,7 +1959,7 @@ async def required_sub_channel_check(
                             reply_markup=keyboard,
                             parse_mode='HTML',
                         )
-                        update_logo_file_id(msg_.photo[-1].file_id);
+                        update_logo_file_id(msg_.photo[-1].file_id)
                     else:
                         await bot.send_message(
                             chat_id=query.from_user.id,
@@ -1991,7 +1991,7 @@ async def required_sub_channel_check(
                         caption=rules_text,
                         reply_markup=get_rules_keyboard(language),
                     )
-                    update_logo_file_id(msg_.photo[-1].file_id);
+                    update_logo_file_id(msg_.photo[-1].file_id)
                 else:
                     await bot.send_message(
                         chat_id=query.from_user.id,

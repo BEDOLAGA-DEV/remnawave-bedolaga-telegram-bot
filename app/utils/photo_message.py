@@ -97,7 +97,7 @@ async def edit_or_answer_photo(
                     reply_markup=keyboard,
                     parse_mode=resolved_parse_mode,
                 )
-                update_logo_file_id(msg_.photo[-1].file_id);
+                update_logo_file_id(msg_.photo[-1].file_id)
             else:
                 await callback.message.answer(
                     caption,

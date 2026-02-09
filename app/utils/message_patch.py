@@ -127,7 +127,7 @@ async def _answer_with_photo(self: Message, text: str = None, **kwargs):
         try:
             # Отправляем caption как есть; при ошибке парсинга ниже сработает фоллбек
             msg_ = await self.answer_photo(get_logo_file(), caption=text, **kwargs);
-            update_logo_file_id(msg_.photo[-1].file_id);
+            update_logo_file_id(msg_.photo[-1].file_id)
             return msg_;
         except TelegramBadRequest as error:
             if is_topic_required_error(error):
