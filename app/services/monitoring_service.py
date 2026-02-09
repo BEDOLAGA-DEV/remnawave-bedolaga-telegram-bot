@@ -115,8 +115,8 @@ class MonitoringService:
                     reply_markup=reply_markup,
                     parse_mode=parse_mode,
                 )
-                update_logo_file_id(msg.photo[-1].file_id);
-                return msg;
+                update_logo_file_id(msg.photo[-1].file_id)
+                return msg
             except TelegramBadRequest as exc:
                 logger.warning(
                     'Не удалось отправить сообщение с логотипом пользователю %s: %s. Отправляем текстовое сообщение.',

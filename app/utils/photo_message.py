@@ -25,11 +25,11 @@ RETRY_DELAY = 0.5
 def _resolve_media(message: types.Message) -> tuple[str | FSInputFile, bool]:
     # Если сообщение недоступно, возвращаем логотип по умолчанию
     if isinstance(message, InaccessibleMessage):
-        return get_logo_file(), False;
+        return get_logo_file(), False
     # Всегда используем логотип если включен режим логотипа,
     # кроме специальных случаев (QR сообщения)
     if settings.ENABLE_LOGO_MODE and not is_qr_message(message):
-        return get_logo_file(), False;
+        return get_logo_file(), False
     # Только если режим логотипа выключен, используем фото из сообщения
     if message.photo:
         return message.photo[-1].file_id, True
