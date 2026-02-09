@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 RETRY_DELAY = 0.5
 
+
 def _resolve_media(message: types.Message) -> tuple[str | FSInputFile, bool]:
     # Если сообщение недоступно, возвращаем логотип по умолчанию
     if isinstance(message, InaccessibleMessage):

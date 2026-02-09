@@ -1831,7 +1831,6 @@ async def required_sub_channel_check(
 
             from app.utils.message_patch import get_logo_file, update_logo_file_id
 
-
             is_admin = settings.is_admin(user.telegram_id)
             is_moderator = (not is_admin) and SupportSettingsService.is_moderator(user.telegram_id)
 
@@ -1926,7 +1925,6 @@ async def required_sub_channel_check(
 
                     from app.utils.message_patch import get_logo_file, update_logo_file_id
 
-
                     is_admin = settings.is_admin(user.telegram_id)
                     is_moderator = (not is_admin) and SupportSettingsService.is_moderator(user.telegram_id)
 
@@ -1980,7 +1978,6 @@ async def required_sub_channel_check(
                     await state.set_state(RegistrationStates.waiting_for_referral_code)
             else:
                 from app.utils.message_patch import get_logo_file, update_logo_file_id
-
 
                 rules_text = await get_rules(language)
 

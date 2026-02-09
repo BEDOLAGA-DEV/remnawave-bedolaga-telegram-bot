@@ -7,10 +7,11 @@ from aiogram.types import FSInputFile, InaccessibleMessage, InputMediaPhoto, Mes
 from app.config import settings
 from app.localization.texts import get_texts
 
-
 LOGO_PATH = Path(settings.LOGO_FILE)
 
 LOGO_FILE_ID: str | None = None
+
+
 def get_logo_file() -> FSInputFile | str:
     global LOGO_FILE_ID
     if LOGO_FILE_ID:
@@ -18,12 +19,14 @@ def get_logo_file() -> FSInputFile | str:
 
     return FSInputFile(LOGO_PATH)
 
+
 def update_logo_file_id(file_id_or_fs: str | FSInputFile):
     global LOGO_FILE_ID
     if isinstance(file_id_or_fs, FSInputFile):
         return
 
     LOGO_FILE_ID = file_id_or_fs
+
 
 _PRIVACY_RESTRICTED_CODE = 'BUTTON_USER_PRIVACY_RESTRICTED'
 _TOPIC_REQUIRED_ERRORS = (
