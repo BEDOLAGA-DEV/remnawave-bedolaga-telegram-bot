@@ -36,6 +36,7 @@ EMAIL_AUTH_ENABLED_KEY = 'CABINET_EMAIL_AUTH_ENABLED'  # Stores "true" or "false
 YANDEX_METRIKA_ID_KEY = 'CABINET_YANDEX_METRIKA_ID'  # Stores counter ID (numeric string)
 GOOGLE_ADS_ID_KEY = 'CABINET_GOOGLE_ADS_ID'  # Stores conversion ID (e.g. "AW-123456789")
 GOOGLE_ADS_LABEL_KEY = 'CABINET_GOOGLE_ADS_LABEL'  # Stores conversion label (alphanumeric)
+LITE_MODE_ENABLED_KEY = 'CABINET_LITE_MODE_ENABLED'  # Stores "true" or "false"
 
 # Allowed image types
 ALLOWED_CONTENT_TYPES = {'image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'}
@@ -140,6 +141,18 @@ class EmailAuthEnabledResponse(BaseModel):
 
 class EmailAuthEnabledUpdate(BaseModel):
     """Request to update email auth setting."""
+
+    enabled: bool
+
+
+class LiteModeEnabledResponse(BaseModel):
+    """Lite mode enabled setting."""
+
+    enabled: bool = False
+
+
+class LiteModeEnabledUpdate(BaseModel):
+    """Request to update lite mode setting."""
 
     enabled: bool
 
@@ -718,3 +731,39 @@ async def update_analytics_counters(
         google_ads_id=google_id,
         google_ads_label=google_label,
     )
+
+
+# ============ Lite Mode Routes ============
+
+
+@router.get('/lite-mode', response_model=LiteModeEnabledResponse)
+async def get_lite_mode_enabled(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """
+    Get lite mode enabled setting.
+    This is a public endpoint - no authentication required.
+    When enabled, shows simplified dashboard with minimal features.
+    """
+    lite_mode_value = await get_setting_value(db, LITE_MODE_ENABLED_KEY)
+
+    if lite_mode_value is not None:
+        enabled = lite_mode_value.lower() == 'true'
+        return LiteModeEnabledResponse(enabled=enabled)
+
+    # Default: disabled
+    return LiteModeEnabledResponse(enabled=False)
+
+
+@router.patch('/lite-mode', response_model=LiteModeEnabledResponse)
+async def update_lite_mode_enabled(
+    payload: LiteModeEnabledUpdate,
+    admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update lite mode enabled setting. Admin only."""
+    await set_setting_value(db, LITE_MODE_ENABLED_KEY, str(payload.enabled).lower())
+
+    logger.info(f'Admin {admin.telegram_id} set lite mode enabled: {payload.enabled}')
+
+    return LiteModeEnabledResponse(enabled=payload.enabled)
