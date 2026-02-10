@@ -5,6 +5,8 @@ import signal
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv('/app/.env') # From dockerfile, always constant, won't raise an error on file missing, safe for users that run it outside of docker
 
 sys.path.append(str(Path(__file__).parent))
 
