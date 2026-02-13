@@ -54,7 +54,6 @@ class PaymentMethodResponse(BaseModel):
     id: str
     name: str
     description: str | None = None
-    currency: str = 'RUB'
     min_amount_kopeks: int
     max_amount_kopeks: int
     is_available: bool = True

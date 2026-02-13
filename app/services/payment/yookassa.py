@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
-from app.services.payment_method_config_service import get_effective_method_currency
 from app.services.subscription_auto_purchase_service import (
     auto_activate_subscription_after_topup,
     auto_purchase_saved_cart_after_topup,
@@ -110,7 +109,6 @@ class YooKassaPaymentMixin:
 
         try:
             amount_rubles = amount_kopeks / 100
-            currency = await get_effective_method_currency(db, 'yookassa')
 
             payment_metadata = metadata.copy() if metadata else {}
 
@@ -138,7 +136,7 @@ class YooKassaPaymentMixin:
 
             yookassa_response = await self.yookassa_service.create_payment(
                 amount=amount_rubles,
-                currency=currency,
+                currency='RUB',
                 description=description,
                 metadata=payment_metadata,
                 receipt_email=receipt_email,
@@ -163,7 +161,7 @@ class YooKassaPaymentMixin:
                 user_id=user_id,
                 yookassa_payment_id=yookassa_response['id'],
                 amount_kopeks=amount_kopeks,
-                currency=currency,
+                currency='RUB',
                 description=description,
                 status=yookassa_response['status'],
                 confirmation_url=yookassa_response.get('confirmation_url'),
@@ -174,10 +172,9 @@ class YooKassaPaymentMixin:
             )
 
             logger.info(
-                'Создан платеж YooKassa %s на %s %s для пользователя %s',
+                'Создан платеж YooKassa %s на %s₽ для пользователя %s',
                 yookassa_response['id'],
                 amount_rubles,
-                currency,
                 user_id,
             )
 
@@ -214,7 +211,6 @@ class YooKassaPaymentMixin:
 
         try:
             amount_rubles = amount_kopeks / 100
-            currency = await get_effective_method_currency(db, 'yookassa_sbp')
 
             payment_metadata = metadata.copy() if metadata else {}
 
@@ -242,7 +238,7 @@ class YooKassaPaymentMixin:
 
             yookassa_response = await self.yookassa_service.create_sbp_payment(
                 amount=amount_rubles,
-                currency=currency,
+                currency='RUB',
                 description=description,
                 metadata=payment_metadata,
                 receipt_email=receipt_email,
@@ -261,7 +257,7 @@ class YooKassaPaymentMixin:
                 user_id=user_id,
                 yookassa_payment_id=yookassa_response['id'],
                 amount_kopeks=amount_kopeks,
-                currency=currency,
+                currency='RUB',
                 description=description,
                 status=yookassa_response['status'],
                 confirmation_url=yookassa_response.get('confirmation_url'),  # Используем confirmation URL
@@ -272,10 +268,9 @@ class YooKassaPaymentMixin:
             )
 
             logger.info(
-                'Создан платеж YooKassa СБП %s на %s %s для пользователя %s',
+                'Создан платеж YooKassa СБП %s на %s₽ для пользователя %s',
                 yookassa_response['id'],
                 amount_rubles,
-                currency,
                 user_id,
             )
 

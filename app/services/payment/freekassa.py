@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
-from app.services.payment_method_config_service import get_effective_method_currency
 from app.services.freekassa_service import freekassa_service
 from app.services.subscription_auto_purchase_service import (
     auto_activate_subscription_after_topup,
@@ -73,7 +72,7 @@ class FreekassaPaymentMixin:
         # Генерируем уникальный order_id
         order_id = f'fk_{user_id}_{uuid.uuid4().hex[:12]}'
         amount_rubles = amount_kopeks / 100
-        currency = await get_effective_method_currency(db, 'freekassa')
+        currency = settings.FREEKASSA_CURRENCY
 
         # Срок действия платежа
         expires_at = datetime.utcnow() + timedelta(seconds=settings.FREEKASSA_PAYMENT_TIMEOUT_SECONDS)

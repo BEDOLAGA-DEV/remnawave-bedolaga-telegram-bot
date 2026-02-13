@@ -43,8 +43,6 @@ class PaymentMethodConfigResponse(BaseModel):
     available_sub_options: list[SubOptionInfo] | None = None
     min_amount_kopeks: int | None = None
     max_amount_kopeks: int | None = None
-    currency: str | None = None
-    default_currency: str
     default_min_amount_kopeks: int
     default_max_amount_kopeks: int
     user_type_filter: str
@@ -65,7 +63,6 @@ class PaymentMethodConfigUpdateRequest(BaseModel):
     sub_options: dict | None = None
     min_amount_kopeks: int | None = Field(default=None, ge=0)
     max_amount_kopeks: int | None = Field(default=None, ge=0)
-    currency: str | None = Field(default=None, pattern=r'^[A-Za-z0-9]{2,10}$')
     user_type_filter: str | None = Field(default=None, pattern='^(all|telegram|email)$')
     first_topup_filter: str | None = Field(default=None, pattern='^(any|yes|no)$')
     promo_group_filter_mode: str | None = Field(default=None, pattern='^(all|selected)$')
@@ -74,7 +71,6 @@ class PaymentMethodConfigUpdateRequest(BaseModel):
     reset_display_name: bool = False
     reset_min_amount: bool = False
     reset_max_amount: bool = False
-    reset_currency: bool = False
 
 
 class SortOrderRequest(BaseModel):
@@ -111,8 +107,6 @@ def _enrich_config(config, defaults: dict) -> PaymentMethodConfigResponse:
         available_sub_options=available_sub_options,
         min_amount_kopeks=config.min_amount_kopeks,
         max_amount_kopeks=config.max_amount_kopeks,
-        currency=config.currency,
-        default_currency=(method_def.get('default_currency') or 'RUB').upper(),
         default_min_amount_kopeks=method_def.get('default_min', 1000),
         default_max_amount_kopeks=method_def.get('default_max', 10000000),
         user_type_filter=config.user_type_filter,
@@ -209,11 +203,6 @@ async def update_payment_method(
         data['max_amount_kopeks'] = None
     elif request.max_amount_kopeks is not None:
         data['max_amount_kopeks'] = request.max_amount_kopeks
-
-    if request.reset_currency:
-        data['currency'] = None
-    elif request.currency is not None:
-        data['currency'] = request.currency.strip().upper() or None
 
     if request.user_type_filter is not None:
         data['user_type_filter'] = request.user_type_filter

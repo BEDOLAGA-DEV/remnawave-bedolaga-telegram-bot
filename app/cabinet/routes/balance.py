@@ -3,7 +3,6 @@
 import logging
 import math
 import time
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.user import get_user_by_id
 from app.database.models import PaymentMethod, Transaction, User
-from app.services.payment_method_config_service import get_enabled_methods_for_user, get_method_currency_map
+from app.external.cryptobot import CryptoBotService
+from app.services.payment_method_config_service import get_enabled_methods_for_user
 from app.services.payment_service import PaymentService
 from app.services.payment_verification_service import (
     SUPPORTED_MANUAL_CHECK_METHODS,
@@ -22,11 +22,6 @@ from app.services.payment_verification_service import (
     list_recent_pending_payments,
     method_display_name,
     run_manual_check,
-)
-from app.utils.cryptobot_helpers import (
-    compute_cryptobot_limits,
-    format_amount_with_currency,
-    get_usd_to_base_rate,
 )
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
@@ -48,11 +43,6 @@ from ..schemas.balance import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/balance', tags=['Cabinet Balance'])
-
-# Aliases for shared helpers (keep call-sites unchanged where possible)
-_format_amount_with_currency = format_amount_with_currency
-_get_usd_to_rub_rate = get_usd_to_base_rate
-_compute_cryptobot_limits = compute_cryptobot_limits
 
 
 @router.get('', response_model=BalanceResponse)
@@ -211,7 +201,6 @@ async def get_payment_methods(
                 id=method_id,
                 name=method_data['name'],
                 description=None,
-                currency=(method_data.get('currency') or 'RUB').upper(),
                 min_amount_kopeks=method_data['min_amount_kopeks'],
                 max_amount_kopeks=method_data['max_amount_kopeks'],
                 is_available=True,
@@ -238,19 +227,17 @@ async def create_stars_invoice(
             detail='Telegram Stars payments are not enabled',
         )
 
-    stars_currency = (await get_method_currency_map(db, ['stars'])).get('stars', 'RUB')
-
     # Validate amount
     if request.amount_kopeks < 100:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Minimum amount is {_format_amount_with_currency(100, stars_currency)}',
+            detail='Minimum amount is 1.00 RUB',
         )
 
     if request.amount_kopeks > 1000000:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Maximum amount is {_format_amount_with_currency(1000000, stars_currency)}',
+            detail='Maximum amount is 10,000.00 RUB',
         )
 
     # Calculate Stars amount
@@ -280,10 +267,7 @@ async def create_stars_invoice(
                 api_url,
                 json={
                     'title': 'Пополнение баланса VPN',
-                    'description': (
-                        f'Пополнение баланса на '
-                        f'{_format_amount_with_currency(request.amount_kopeks, stars_currency)} ({stars_amount} ⭐)'
-                    ),
+                    'description': f'Пополнение баланса на {amount_rubles:.2f} ₽ ({stars_amount} ⭐)',
                     'payload': payload,
                     'provider_token': '',  # Empty for Stars
                     'currency': 'XTR',
@@ -341,13 +325,13 @@ async def create_topup(
     if request.amount_kopeks < method.min_amount_kopeks:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Minimum amount is {_format_amount_with_currency(method.min_amount_kopeks, method.currency)}',
+            detail=f'Minimum amount is {method.min_amount_kopeks / 100:.2f} RUB',
         )
 
     if request.amount_kopeks > method.max_amount_kopeks:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Maximum amount is {_format_amount_with_currency(method.max_amount_kopeks, method.currency)}',
+            detail=f'Maximum amount is {method.max_amount_kopeks / 100:.2f} RUB',
         )
 
     amount_rubles = request.amount_kopeks / 100
@@ -368,7 +352,7 @@ async def create_topup(
             option = (request.payment_option or '').strip().lower()
             # Use description with telegram_id for tax receipts
             description = settings.get_balance_payment_description(
-                request.amount_kopeks, telegram_user_id=user.telegram_id, currency=method.currency
+                request.amount_kopeks, telegram_user_id=user.telegram_id
             )
             if option == 'sbp':
                 result = await payment_service.create_yookassa_sbp_payment(
@@ -397,43 +381,13 @@ async def create_topup(
                 )
 
         elif request.payment_method == 'cryptobot':
-            rate = await _get_usd_to_rub_rate()
-            min_amount_kopeks, max_amount_kopeks = _compute_cryptobot_limits(rate)
-            if request.amount_kopeks < min_amount_kopeks:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f'Minimum amount is {_format_amount_with_currency(min_amount_kopeks, method.currency)}',
-                )
-            if request.amount_kopeks > max_amount_kopeks:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f'Maximum amount is {_format_amount_with_currency(max_amount_kopeks, method.currency)}',
-                )
-
-            try:
-                amount_usd = float(
-                    (Decimal(request.amount_kopeks) / Decimal(100) / Decimal(str(rate))).quantize(
-                        Decimal('0.01'),
-                        rounding=ROUND_HALF_UP,
-                    )
-                )
-            except (InvalidOperation, ValueError):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Unable to convert amount to USD',
-                )
-
-            payment_service = PaymentService()
-            result = await payment_service.create_cryptobot_payment(
-                db=db,
-                user_id=user.id,
-                amount_usd=amount_usd,
-                asset=settings.CRYPTOBOT_DEFAULT_ASSET,
-                description=settings.get_balance_payment_description(
-                    request.amount_kopeks,
-                    telegram_user_id=user.telegram_id,
-                    currency=method.currency,
-                ),
+            cryptobot_service = CryptoBotService()
+            # Convert RUB to USDT (approximate)
+            usdt_amount = amount_rubles / 100  # Approximate rate
+            result = await cryptobot_service.create_invoice(
+                amount=usdt_amount,
+                asset='USDT',
+                description=f'Balance top-up {amount_rubles:.2f} RUB',
                 payload=f'cabinet_topup_{user.id}_{request.amount_kopeks}',
             )
             if result:
@@ -442,8 +396,9 @@ async def create_topup(
                     result.get('web_app_invoice_url')
                     or result.get('mini_app_invoice_url')
                     or result.get('bot_invoice_url')
+                    or result.get('pay_url')
                 )
-                payment_id = str(result.get('invoice_id') or result.get('local_payment_id') or 'pending')
+                payment_id = str(result.get('invoice_id'))
             else:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -494,7 +449,7 @@ async def create_topup(
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, currency=method.currency
+                    request.amount_kopeks, telegram_user_id=user.telegram_id
                 ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_method_code=method_code,
@@ -521,7 +476,7 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks, currency=method.currency),
+                description=settings.get_balance_payment_description(request.amount_kopeks),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
 
@@ -546,7 +501,7 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks, currency=method.currency),
+                description=settings.get_balance_payment_description(request.amount_kopeks),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
 
@@ -577,7 +532,7 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks, currency=method.currency),
+                description=settings.get_balance_payment_description(request.amount_kopeks),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_method=provider_method,
             )
@@ -618,7 +573,7 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks, currency=method.currency),
+                description=settings.get_balance_payment_description(request.amount_kopeks),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
 
@@ -643,7 +598,7 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks, currency=method.currency),
+                description=settings.get_balance_payment_description(request.amount_kopeks),
                 telegram_id=user.telegram_id,
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
@@ -669,7 +624,7 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks, currency=method.currency),
+                description=settings.get_balance_payment_description(request.amount_kopeks),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
 
@@ -694,7 +649,7 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks, currency=method.currency),
+                description=settings.get_balance_payment_description(request.amount_kopeks),
                 email=getattr(user, 'email', None),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )

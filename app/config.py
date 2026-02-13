@@ -355,7 +355,6 @@ class Settings(BaseSettings):
     PAYMENT_SERVICE_NAME: str = 'Интернет-сервис'
     PAYMENT_BALANCE_TEMPLATE: str = '{service_name} - {description}'
     PAYMENT_SUBSCRIPTION_TEMPLATE: str = '{service_name} - {description}'
-    BASE_CURRENCY: str = 'RUB'
 
     CRYPTOBOT_ENABLED: bool = False
     CRYPTOBOT_DISPLAY_NAME: str = 'CryptoBot'
@@ -1237,39 +1236,7 @@ class Settings(BaseSettings):
     def is_language_selection_enabled(self) -> bool:
         return bool(getattr(self, 'LANGUAGE_SELECTION_ENABLED', True))
 
-    @staticmethod
-    def normalize_currency(currency: str | None, fallback: str = 'RUB') -> str:
-        value = (currency or '').strip().upper()
-        fallback_value = (fallback or 'RUB').strip().upper() or 'RUB'
-        return value or fallback_value
-
-    def get_default_currency(self) -> str:
-        return self.normalize_currency(self.BASE_CURRENCY, 'RUB')
-
-    @staticmethod
-    def _is_prefix_currency(currency: str) -> bool:
-        return currency in {'USD', 'EUR', 'GBP', 'JPY', 'CNY'}
-
-    def get_currency_unit(self, currency: str | None = None) -> str:
-        code = self.normalize_currency(currency, self.get_default_currency())
-        return {
-            'RUB': '₽',
-            'USD': '$',
-            'EUR': '€',
-            'GBP': '£',
-            'JPY': '¥',
-            'CNY': '¥',
-            'KZT': '₸',
-            'UAH': '₴',
-            'TRY': '₺',
-        }.get(code, code)
-
-    def format_price(
-        self,
-        price_kopeks: int,
-        round_kopeks: bool | None = None,
-        currency: str | None = None,
-    ) -> str:
+    def format_price(self, price_kopeks: int, round_kopeks: bool | None = None) -> str:
         """
         Форматирует цену в копейках для отображения пользователю.
 
@@ -1277,7 +1244,6 @@ class Settings(BaseSettings):
             price_kopeks: Сумма в копейках
             round_kopeks: Если True, округляет копейки (≤50 вниз, >50 вверх).
                          Если None, использует настройку PRICE_ROUNDING_ENABLED.
-            currency: Код валюты для форматирования (если None, используется BASE_CURRENCY)
 
         Returns:
             Отформатированная строка цены (например, "150 ₽")
@@ -1285,29 +1251,22 @@ class Settings(BaseSettings):
         # Используем настройку если не передано явно
         should_round = round_kopeks if round_kopeks is not None else self.PRICE_ROUNDING_ENABLED
 
+        sign = '-' if price_kopeks < 0 else ''
         abs_kopeks = abs(price_kopeks)
-        major_units, minor_units = divmod(abs_kopeks, 100)
-        is_negative = price_kopeks < 0
-        currency_code = self.normalize_currency(currency, self.get_default_currency())
-        currency_unit = self.get_currency_unit(currency_code)
+        rubles, kopeks = divmod(abs_kopeks, 100)
 
         if should_round:
             # Округление: ≤50 коп вниз, >50 коп вверх
-            if minor_units > 50:
-                major_units += 1
-            amount_label = f'{major_units}'
-        else:
-            # Без округления - показываем точное значение
-            if minor_units:
-                amount_label = f'{major_units}.{minor_units:02d}'.rstrip('0').rstrip('.')
-            else:
-                amount_label = f'{major_units}'
+            if kopeks > 50:
+                rubles += 1
+            return f'{sign}{rubles} ₽'
 
-        sign = '-' if is_negative else ''
-        if self._is_prefix_currency(currency_code):
-            return f'{sign}{currency_unit}{amount_label}'
+        # Без округления - показываем точное значение
+        if kopeks:
+            value = f'{sign}{rubles}.{kopeks:02d}'.rstrip('0').rstrip('.')
+            return f'{value} ₽'
 
-        return f'{sign}{amount_label} {currency_unit}'
+        return f'{sign}{rubles} ₽'
 
     def get_reports_chat_id(self) -> str | None:
         if self.ADMIN_REPORTS_CHAT_ID:
@@ -2114,11 +2073,9 @@ class Settings(BaseSettings):
         except (ValueError, AttributeError):
             return [30, 60, 90, 180, 360]
 
-    def get_balance_payment_description(
-        self, amount_kopeks: int, telegram_user_id: int | None = None, currency: str | None = None
-    ) -> str:
+    def get_balance_payment_description(self, amount_kopeks: int, telegram_user_id: int | None = None) -> str:
         # Базовое описание
-        description = f'{self.PAYMENT_BALANCE_DESCRIPTION} на {self.format_price(amount_kopeks, currency=currency)}'
+        description = f'{self.PAYMENT_BALANCE_DESCRIPTION} на {self.format_price(amount_kopeks)}'
 
         # Если передан user_id, добавляем его
         if telegram_user_id is not None:

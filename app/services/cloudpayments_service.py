@@ -110,7 +110,6 @@ class CloudPaymentsService:
         invoice_id: str,
         description: str | None = None,
         email: str | None = None,
-        currency: str | None = None,
         success_redirect_url: str | None = None,
         fail_redirect_url: str | None = None,
     ) -> str:
@@ -124,7 +123,6 @@ class CloudPaymentsService:
             invoice_id: Unique invoice ID for this payment
             description: Payment description
             email: User's email (optional)
-            currency: Currency code for provider request
             success_redirect_url: Redirect URL after successful payment
             fail_redirect_url: Redirect URL after failed payment
 
@@ -140,7 +138,7 @@ class CloudPaymentsService:
         # AccountId uses user_id for consistency (works for both Telegram and email users)
         payload: dict[str, Any] = {
             'Amount': amount,
-            'Currency': settings.normalize_currency(currency, settings.CLOUDPAYMENTS_CURRENCY),
+            'Currency': settings.CLOUDPAYMENTS_CURRENCY,
             'Description': description or settings.CLOUDPAYMENTS_DESCRIPTION,
             'AccountId': str(user_id),
             'InvoiceId': invoice_id,
@@ -339,7 +337,7 @@ class CloudPaymentsService:
         return {
             'transaction_id': int(form_data.get('TransactionId', 0)),
             'amount': float(form_data.get('Amount', 0)),
-            'currency': form_data.get('Currency', settings.CLOUDPAYMENTS_CURRENCY),
+            'currency': form_data.get('Currency', 'RUB'),
             'invoice_id': form_data.get('InvoiceId', ''),
             'account_id': form_data.get('AccountId', ''),
             'token': form_data.get('Token'),

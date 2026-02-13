@@ -2695,8 +2695,6 @@ class PaymentMethodConfig(Base):
     # Переопределение мин/макс сумм (null = из env)
     min_amount_kopeks = Column(Integer, nullable=True)
     max_amount_kopeks = Column(Integer, nullable=True)
-    # Переопределение валюты метода (null = из env/default)
-    currency = Column(String(10), nullable=True)
 
     # --- Условия отображения ---
 

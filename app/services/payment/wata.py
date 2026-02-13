@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
-from app.services.payment_method_config_service import get_effective_method_currency
 from app.services.subscription_auto_purchase_service import (
     auto_activate_subscription_after_topup,
     auto_purchase_saved_cart_after_topup,
@@ -113,12 +112,11 @@ class WataPaymentMixin:
             logger.debug('Не удалось получить данные пользователя для описания WATA: %s', error)
 
         order_id = f'wata_{user_id}_{uuid.uuid4().hex[:12]}'
-        currency = await get_effective_method_currency(db, 'wata')
 
         try:
             response = await self.wata_service.create_payment_link(  # type: ignore[union-attr]
                 amount_kopeks=amount_kopeks,
-                currency=currency,
+                currency='RUB',
                 description=description,
                 order_id=order_id,
             )
@@ -153,7 +151,7 @@ class WataPaymentMixin:
             user_id=user_id,
             payment_link_id=payment_link_id,
             amount_kopeks=amount_kopeks,
-            currency=currency,
+            currency='RUB',
             description=description,
             status=status,
             type_=response.get('type'),
@@ -167,10 +165,9 @@ class WataPaymentMixin:
         )
 
         logger.info(
-            'Создан WATA платеж %s на %s %s для пользователя %s',
+            'Создан WATA платеж %s на %s₽ для пользователя %s',
             payment_link_id,
             amount_kopeks / 100,
-            currency,
             user_id,
         )
 

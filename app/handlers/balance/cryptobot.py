@@ -10,14 +10,10 @@ from app.keyboards.inline import get_back_keyboard
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
-from app.utils.cryptobot_helpers import CRYPTOBOT_FALLBACK_RATE, compute_cryptobot_limits
 from app.utils.decorators import error_handler
 
 
 logger = logging.getLogger(__name__)
-
-_CRYPTOBOT_FALLBACK_RATE = CRYPTOBOT_FALLBACK_RATE
-_compute_cryptobot_limits = compute_cryptobot_limits
 
 
 @error_handler
@@ -47,27 +43,23 @@ async def start_cryptobot_payment(callback: types.CallbackQuery, db_user: User, 
 
     from app.utils.currency_converter import currency_converter
 
-    base_currency = settings.get_default_currency()
     try:
         current_rate = await currency_converter.get_usd_to_rub_rate()
-        rate_text = f'💱 Текущий курс: 1 USD = {current_rate:.2f} {base_currency}'
+        rate_text = f'💱 Текущий курс: 1 USD = {current_rate:.2f} ₽'
     except Exception as e:
         logger.warning(f'Не удалось получить курс валют: {e}')
-        current_rate = _CRYPTOBOT_FALLBACK_RATE
-        rate_text = f'💱 Курс: 1 USD ≈ {current_rate:.0f} {base_currency}'
+        current_rate = 95.0
+        rate_text = f'💱 Курс: 1 USD ≈ {current_rate:.0f} ₽'
 
     available_assets = settings.get_cryptobot_assets()
     assets_text = ', '.join(available_assets)
-    min_amount_kopeks, max_amount_kopeks = _compute_cryptobot_limits(current_rate)
-    min_amount_label = settings.format_price(min_amount_kopeks)
-    max_amount_label = settings.format_price(max_amount_kopeks)
 
     # Формируем текст сообщения в зависимости от настройки
     if settings.is_quick_amount_buttons_enabled():
         message_text = (
             f'🪙 <b>Пополнение криптовалютой</b>\n\n'
             f'Выберите сумму пополнения или введите вручную сумму '
-            f'от {min_amount_label} до {max_amount_label}:\n\n'
+            f'от 100 до 100,000 ₽:\n\n'
             f'💰 Доступные активы: {assets_text}\n'
             f'⚡ Мгновенное зачисление на баланс\n'
             f'🔒 Безопасная оплата через CryptoBot\n\n'
@@ -77,7 +69,7 @@ async def start_cryptobot_payment(callback: types.CallbackQuery, db_user: User, 
     else:
         message_text = (
             f'🪙 <b>Пополнение криптовалютой</b>\n\n'
-            f'Введите сумму для пополнения от {min_amount_label} до {max_amount_label}:\n\n'
+            f'Введите сумму для пополнения от 100 до 100,000 ₽:\n\n'
             f'💰 Доступные активы: {assets_text}\n'
             f'⚡ Мгновенное зачисление на баланс\n'
             f'🔒 Безопасная оплата через CryptoBot\n\n'
@@ -139,6 +131,16 @@ async def process_cryptobot_payment_amount(
         await message.answer('❌ Оплата криптовалютой временно недоступна')
         return
 
+    amount_rubles = amount_kopeks / 100
+
+    if amount_rubles < 100:
+        await message.answer('Минимальная сумма пополнения: 100 ₽')
+        return
+
+    if amount_rubles > 100000:
+        await message.answer('Максимальная сумма пополнения: 100,000 ₽')
+        return
+
     try:
         data = await state.get_data()
         current_rate = data.get('current_rate')
@@ -148,19 +150,6 @@ async def process_cryptobot_payment_amount(
 
             current_rate = await currency_converter.get_usd_to_rub_rate()
 
-        if not current_rate or current_rate <= 0:
-            current_rate = _CRYPTOBOT_FALLBACK_RATE
-
-        min_amount_kopeks, max_amount_kopeks = _compute_cryptobot_limits(float(current_rate))
-        if amount_kopeks < min_amount_kopeks:
-            await message.answer(f'Минимальная сумма пополнения: {settings.format_price(min_amount_kopeks)}')
-            return
-
-        if amount_kopeks > max_amount_kopeks:
-            await message.answer(f'Максимальная сумма пополнения: {settings.format_price(max_amount_kopeks)}')
-            return
-
-        amount_rubles = amount_kopeks / 100
         amount_usd = amount_rubles / current_rate
 
         amount_usd = round(amount_usd, 2)
@@ -180,7 +169,7 @@ async def process_cryptobot_payment_amount(
             user_id=db_user.id,
             amount_usd=amount_usd,
             asset=settings.CRYPTOBOT_DEFAULT_ASSET,
-            description=f'Пополнение баланса на {settings.format_price(amount_kopeks)} ({amount_usd:.2f} USD)',
+            description=f'Пополнение баланса на {amount_rubles:.0f} ₽ ({amount_usd:.2f} USD)',
             payload=f'balance_{db_user.id}_{amount_kopeks}',
         )
 
@@ -233,13 +222,12 @@ async def process_cryptobot_payment_amount(
                     delete_error,
                 )
 
-        base_currency = settings.get_default_currency()
         invoice_message = await message.answer(
             f'🪙 <b>Оплата криптовалютой</b>\n\n'
-            f'💰 Сумма к зачислению: {settings.format_price(amount_kopeks)}\n'
+            f'💰 Сумма к зачислению: {amount_rubles:.0f} ₽\n'
             f'💵 К оплате: {amount_usd:.2f} USD\n'
             f'🪙 Актив: {payment_result["asset"]}\n'
-            f'💱 Курс: 1 USD = {current_rate:.2f} {base_currency}\n'
+            f'💱 Курс: 1 USD = {current_rate:.2f} ₽\n'
             f'🆔 ID платежа: {payment_result["invoice_id"][:8]}...\n\n'
             f'📱 <b>Инструкция:</b>\n'
             f"1. Нажмите кнопку 'Оплатить'\n"
@@ -247,7 +235,7 @@ async def process_cryptobot_payment_amount(
             f'3. Переведите указанную сумму\n'
             f'4. Деньги поступят на баланс автоматически\n\n'
             f'🔒 Оплата проходит через защищенную систему CryptoBot\n'
-            f'⚡ Поддерживаемые активы: {", ".join(settings.get_cryptobot_assets())}\n\n'
+            f'⚡ Поддерживаемые активы: USDT, TON, BTC, ETH\n\n'
             f'❓ Если возникнут проблемы, обратитесь в {settings.get_support_contact_display_html()}',
             reply_markup=keyboard,
             parse_mode='HTML',
@@ -262,7 +250,7 @@ async def process_cryptobot_payment_amount(
 
         logger.info(
             f'Создан CryptoBot платеж для пользователя {db_user.telegram_id}: '
-            f'{settings.format_price(amount_kopeks)} ({amount_usd:.2f} USD), ID: {payment_result["invoice_id"]}'
+            f'{amount_rubles:.0f} ₽ ({amount_usd:.2f} USD), ID: {payment_result["invoice_id"]}'
         )
 
     except Exception as e:

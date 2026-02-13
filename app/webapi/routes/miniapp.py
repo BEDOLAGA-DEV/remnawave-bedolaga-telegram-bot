@@ -59,7 +59,6 @@ from app.database.models import (
 )
 from app.services.faq_service import FaqService
 from app.services.maintenance_service import maintenance_service
-from app.services.payment_method_config_service import get_method_currency_map
 from app.services.payment_service import PaymentService, get_wata_payment_by_link_id
 from app.services.privacy_policy_service import PrivacyPolicyService
 from app.services.promo_offer_service import promo_offer_service
@@ -93,11 +92,7 @@ from app.services.trial_activation_service import (
     rollback_trial_subscription_activation,
 )
 from app.services.tribute_service import TributeService
-from app.utils.cryptobot_helpers import (
-    compute_cryptobot_limits as _compute_cryptobot_limits,
-    format_amount_with_currency as _format_amount_with_currency,
-    get_usd_to_base_rate as _get_usd_to_rub_rate,
-)
+from app.utils.currency_converter import currency_converter
 from app.utils.pricing_utils import (
     apply_percentage_discount,
     calculate_prorated_price,
@@ -223,6 +218,9 @@ def _get_channel_check_bot() -> Bot:
     return _channel_check_bot
 
 
+_CRYPTOBOT_MIN_USD = 1.0
+_CRYPTOBOT_MAX_USD = 1000.0
+_CRYPTOBOT_FALLBACK_RATE = 95.0
 
 
 def _get_tariff_monthly_price(tariff) -> int:
@@ -410,6 +408,23 @@ def _autopay_response_extras(
     if autopay_payload is not None:
         extras['autopaySettings'] = autopay_payload
     return extras
+
+
+async def _get_usd_to_rub_rate() -> float:
+    try:
+        rate = await currency_converter.get_usd_to_rub_rate()
+    except Exception:
+        rate = 0.0
+    if not rate or rate <= 0:
+        rate = _CRYPTOBOT_FALLBACK_RATE
+    return float(rate)
+
+
+def _compute_cryptobot_limits(rate: float) -> tuple[int, int]:
+    min_kopeks = max(1, int(math.ceil(rate * _CRYPTOBOT_MIN_USD * 100)))
+    max_kopeks = int(math.floor(rate * _CRYPTOBOT_MAX_USD * 100))
+    max_kopeks = max(max_kopeks, min_kopeks)
+    return min_kopeks, max_kopeks
 
 
 def _current_request_timestamp() -> str:
@@ -691,7 +706,6 @@ def _build_mulenpay_iframe_config() -> MiniAppPaymentIframeConfig | None:
         return None
 
 
-
 @router.post(
     '/maintenance/status',
     response_model=MiniAppMaintenanceStatusResponse,
@@ -718,23 +732,6 @@ async def get_payment_methods(
     db: AsyncSession = Depends(get_db_session),
 ) -> MiniAppPaymentMethodsResponse:
     _, _ = await _resolve_user_from_init_data(db, payload.init_data)
-    currency_map = await get_method_currency_map(
-        db,
-        [
-            'stars',
-            'yookassa',
-            'yookassa_sbp',
-            'mulenpay',
-            'pal24',
-            'wata',
-            'platega',
-            'cryptobot',
-            'heleket',
-            'cloudpayments',
-            'freekassa',
-            'tribute',
-        ],
-    )
 
     methods: list[MiniAppPaymentMethod] = []
 
@@ -745,7 +742,7 @@ async def get_payment_methods(
                 id='stars',
                 icon='⭐',
                 requires_amount=True,
-                currency=currency_map.get('stars', 'RUB'),
+                currency='RUB',
                 min_amount_kopeks=stars_min_amount,
                 amount_step_kopeks=stars_min_amount,
                 integration_type=MiniAppPaymentIntegrationType.REDIRECT,
@@ -759,7 +756,7 @@ async def get_payment_methods(
                     id='yookassa_sbp',
                     icon='🏦',
                     requires_amount=True,
-                    currency=currency_map.get('yookassa_sbp', 'RUB'),
+                    currency='RUB',
                     min_amount_kopeks=settings.YOOKASSA_MIN_AMOUNT_KOPEKS,
                     max_amount_kopeks=settings.YOOKASSA_MAX_AMOUNT_KOPEKS,
                     integration_type=MiniAppPaymentIntegrationType.REDIRECT,
@@ -771,7 +768,7 @@ async def get_payment_methods(
                 id='yookassa',
                 icon='💳',
                 requires_amount=True,
-                currency=currency_map.get('yookassa', 'RUB'),
+                currency='RUB',
                 min_amount_kopeks=settings.YOOKASSA_MIN_AMOUNT_KOPEKS,
                 max_amount_kopeks=settings.YOOKASSA_MAX_AMOUNT_KOPEKS,
                 integration_type=MiniAppPaymentIntegrationType.REDIRECT,
@@ -789,7 +786,7 @@ async def get_payment_methods(
                 name=settings.get_mulenpay_display_name(),
                 icon='💳',
                 requires_amount=True,
-                currency=currency_map.get('mulenpay', 'RUB'),
+                currency='RUB',
                 min_amount_kopeks=settings.MULENPAY_MIN_AMOUNT_KOPEKS,
                 max_amount_kopeks=settings.MULENPAY_MAX_AMOUNT_KOPEKS,
                 integration_type=mulenpay_integration,
@@ -803,7 +800,7 @@ async def get_payment_methods(
                 id='pal24',
                 icon='🏦',
                 requires_amount=True,
-                currency=currency_map.get('pal24', 'RUB'),
+                currency='RUB',
                 min_amount_kopeks=settings.PAL24_MIN_AMOUNT_KOPEKS,
                 max_amount_kopeks=settings.PAL24_MAX_AMOUNT_KOPEKS,
                 integration_type=MiniAppPaymentIntegrationType.REDIRECT,
@@ -834,7 +831,7 @@ async def get_payment_methods(
                 id='wata',
                 icon='🌊',
                 requires_amount=True,
-                currency=currency_map.get('wata', 'RUB'),
+                currency='RUB',
                 min_amount_kopeks=settings.WATA_MIN_AMOUNT_KOPEKS,
                 max_amount_kopeks=settings.WATA_MAX_AMOUNT_KOPEKS,
                 integration_type=MiniAppPaymentIntegrationType.REDIRECT,
@@ -864,7 +861,7 @@ async def get_payment_methods(
                 id='platega',
                 icon='💳',
                 requires_amount=True,
-                currency=currency_map.get('platega', settings.PLATEGA_CURRENCY),
+                currency=settings.PLATEGA_CURRENCY,
                 min_amount_kopeks=settings.PLATEGA_MIN_AMOUNT_KOPEKS,
                 max_amount_kopeks=settings.PLATEGA_MAX_AMOUNT_KOPEKS,
                 integration_type=MiniAppPaymentIntegrationType.REDIRECT,
@@ -880,7 +877,7 @@ async def get_payment_methods(
                 id='cryptobot',
                 icon='🪙',
                 requires_amount=True,
-                currency=currency_map.get('cryptobot', 'RUB'),
+                currency='RUB',
                 min_amount_kopeks=min_amount_kopeks,
                 max_amount_kopeks=max_amount_kopeks,
                 integration_type=MiniAppPaymentIntegrationType.REDIRECT,
@@ -893,7 +890,7 @@ async def get_payment_methods(
                 id='heleket',
                 icon='🪙',
                 requires_amount=True,
-                currency=currency_map.get('heleket', 'RUB'),
+                currency='RUB',
                 min_amount_kopeks=100 * 100,
                 max_amount_kopeks=100_000 * 100,
                 integration_type=MiniAppPaymentIntegrationType.REDIRECT,
@@ -906,7 +903,7 @@ async def get_payment_methods(
                 id='cloudpayments',
                 icon='💳',
                 requires_amount=True,
-                currency=currency_map.get('cloudpayments', settings.CLOUDPAYMENTS_CURRENCY),
+                currency='RUB',
                 min_amount_kopeks=settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS,
                 max_amount_kopeks=settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS,
                 integration_type=MiniAppPaymentIntegrationType.REDIRECT,
@@ -919,7 +916,7 @@ async def get_payment_methods(
                 id='freekassa',
                 icon='💳',
                 requires_amount=True,
-                currency=currency_map.get('freekassa', settings.FREEKASSA_CURRENCY),
+                currency='RUB',
                 min_amount_kopeks=settings.FREEKASSA_MIN_AMOUNT_KOPEKS,
                 max_amount_kopeks=settings.FREEKASSA_MAX_AMOUNT_KOPEKS,
                 integration_type=MiniAppPaymentIntegrationType.REDIRECT,
@@ -932,7 +929,7 @@ async def get_payment_methods(
                 id='tribute',
                 icon='💎',
                 requires_amount=False,
-                currency=currency_map.get('tribute', 'RUB'),
+                currency='RUB',
                 integration_type=MiniAppPaymentIntegrationType.REDIRECT,
             )
         )
@@ -972,7 +969,6 @@ async def create_payment_link(
             status.HTTP_400_BAD_REQUEST,
             detail='Payment method is required',
         )
-    method_currency = (await get_method_currency_map(db, [method])).get(method, 'RUB')
 
     amount_kopeks = _normalize_amount_kopeks(
         payload.amount_rubles,
@@ -1031,15 +1027,9 @@ async def create_payment_link(
         if amount_kopeks is None or amount_kopeks <= 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount must be positive')
         if amount_kopeks < settings.YOOKASSA_MIN_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount is below minimum ({_format_amount_with_currency(settings.YOOKASSA_MIN_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount is below minimum')
         if amount_kopeks > settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount exceeds maximum ({_format_amount_with_currency(settings.YOOKASSA_MAX_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount exceeds maximum')
 
         payment_service = PaymentService()
         result = await payment_service.create_yookassa_sbp_payment(
@@ -1075,15 +1065,9 @@ async def create_payment_link(
         if amount_kopeks is None or amount_kopeks <= 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount must be positive')
         if amount_kopeks < settings.YOOKASSA_MIN_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount is below minimum ({_format_amount_with_currency(settings.YOOKASSA_MIN_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount is below minimum')
         if amount_kopeks > settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount exceeds maximum ({_format_amount_with_currency(settings.YOOKASSA_MAX_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount exceeds maximum')
 
         payment_service = PaymentService()
         result = await payment_service.create_yookassa_payment(
@@ -1113,15 +1097,9 @@ async def create_payment_link(
         if amount_kopeks is None or amount_kopeks <= 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount must be positive')
         if amount_kopeks < settings.MULENPAY_MIN_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount is below minimum ({_format_amount_with_currency(settings.MULENPAY_MIN_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount is below minimum')
         if amount_kopeks > settings.MULENPAY_MAX_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount exceeds maximum ({_format_amount_with_currency(settings.MULENPAY_MAX_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount exceeds maximum')
 
         payment_service = PaymentService()
         result = await payment_service.create_mulenpay_payment(
@@ -1151,15 +1129,9 @@ async def create_payment_link(
         if amount_kopeks is None or amount_kopeks <= 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount must be positive')
         if amount_kopeks < settings.PLATEGA_MIN_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount is below minimum ({_format_amount_with_currency(settings.PLATEGA_MIN_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount is below minimum')
         if amount_kopeks > settings.PLATEGA_MAX_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount exceeds maximum ({_format_amount_with_currency(settings.PLATEGA_MAX_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount exceeds maximum')
 
         active_methods = settings.get_platega_active_methods()
         method_option = payload.payment_option or str(active_methods[0])
@@ -1205,15 +1177,9 @@ async def create_payment_link(
         if amount_kopeks is None or amount_kopeks <= 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount must be positive')
         if amount_kopeks < settings.WATA_MIN_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount is below minimum ({_format_amount_with_currency(settings.WATA_MIN_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount is below minimum')
         if amount_kopeks > settings.WATA_MAX_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount exceeds maximum ({_format_amount_with_currency(settings.WATA_MAX_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount exceeds maximum')
 
         payment_service = PaymentService()
         result = await payment_service.create_wata_payment(
@@ -1247,15 +1213,9 @@ async def create_payment_link(
         if amount_kopeks is None or amount_kopeks <= 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount must be positive')
         if amount_kopeks < settings.PAL24_MIN_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount is below minimum ({_format_amount_with_currency(settings.PAL24_MIN_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount is below minimum')
         if amount_kopeks > settings.PAL24_MAX_AMOUNT_KOPEKS:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount exceeds maximum ({_format_amount_with_currency(settings.PAL24_MAX_AMOUNT_KOPEKS, method_currency)})',
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount exceeds maximum')
 
         option = (payload.payment_option or '').strip().lower()
         if option not in {'card', 'sbp'}:
@@ -1320,12 +1280,12 @@ async def create_payment_link(
         if amount_kopeks < min_amount_kopeks:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount is below minimum ({_format_amount_with_currency(min_amount_kopeks, method_currency)})',
+                detail=f'Amount is below minimum ({min_amount_kopeks / 100:.2f} RUB)',
             )
         if amount_kopeks > max_amount_kopeks:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount exceeds maximum ({_format_amount_with_currency(max_amount_kopeks, method_currency)})',
+                detail=f'Amount exceeds maximum ({max_amount_kopeks / 100:.2f} RUB)',
             )
 
         try:
@@ -1383,12 +1343,12 @@ async def create_payment_link(
         if amount_kopeks < min_amount_kopeks:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount is below minimum ({_format_amount_with_currency(min_amount_kopeks, method_currency)})',
+                detail=f'Amount is below minimum ({min_amount_kopeks / 100:.2f} RUB)',
             )
         if amount_kopeks > max_amount_kopeks:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail=f'Amount exceeds maximum ({_format_amount_with_currency(max_amount_kopeks, method_currency)})',
+                detail=f'Amount exceeds maximum ({max_amount_kopeks / 100:.2f} RUB)',
             )
 
         payment_service = PaymentService()
@@ -1428,14 +1388,12 @@ async def create_payment_link(
         if amount_kopeks < settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail='Amount is below minimum '
-                f'({_format_amount_with_currency(settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS, method_currency)})',
+                detail=f'Amount is below minimum ({settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS / 100:.2f} RUB)',
             )
         if amount_kopeks > settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail='Amount exceeds maximum '
-                f'({_format_amount_with_currency(settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS, method_currency)})',
+                detail=f'Amount exceeds maximum ({settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS / 100:.2f} RUB)',
             )
 
         payment_service = PaymentService()
@@ -1471,14 +1429,12 @@ async def create_payment_link(
         if amount_kopeks < settings.FREEKASSA_MIN_AMOUNT_KOPEKS:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail='Amount is below minimum '
-                f'({_format_amount_with_currency(settings.FREEKASSA_MIN_AMOUNT_KOPEKS, method_currency)})',
+                detail=f'Amount is below minimum ({settings.FREEKASSA_MIN_AMOUNT_KOPEKS / 100:.2f} RUB)',
             )
         if amount_kopeks > settings.FREEKASSA_MAX_AMOUNT_KOPEKS:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail='Amount exceeds maximum '
-                f'({_format_amount_with_currency(settings.FREEKASSA_MAX_AMOUNT_KOPEKS, method_currency)})',
+                detail=f'Amount exceeds maximum ({settings.FREEKASSA_MAX_AMOUNT_KOPEKS / 100:.2f} RUB)',
             )
 
         payment_service = PaymentService()
@@ -2282,7 +2238,6 @@ async def _resolve_stars_payment_status(
     user: User,
     query: MiniAppPaymentStatusQuery,
 ) -> MiniAppPaymentStatusResult:
-    stars_currency = (await get_method_currency_map(db, ['stars'])).get('stars', 'RUB')
     started_at = _parse_client_timestamp(query.started_at)
     transaction = await _find_recent_deposit(
         db,
@@ -2310,7 +2265,7 @@ async def _resolve_stars_payment_status(
         status='paid',
         is_paid=True,
         amount_kopeks=transaction.amount_kopeks,
-        currency=stars_currency,
+        currency='RUB',
         completed_at=transaction.completed_at or transaction.created_at,
         transaction_id=transaction.id,
         external_id=transaction.external_id,
@@ -2326,7 +2281,6 @@ async def _resolve_tribute_payment_status(
     user: User,
     query: MiniAppPaymentStatusQuery,
 ) -> MiniAppPaymentStatusResult:
-    tribute_currency = (await get_method_currency_map(db, ['tribute'])).get('tribute', 'RUB')
     started_at = _parse_client_timestamp(query.started_at)
     transaction = await _find_recent_deposit(
         db,
@@ -2354,7 +2308,7 @@ async def _resolve_tribute_payment_status(
         status='paid',
         is_paid=True,
         amount_kopeks=transaction.amount_kopeks,
-        currency=tribute_currency,
+        currency='RUB',
         completed_at=transaction.completed_at or transaction.created_at,
         transaction_id=transaction.id,
         external_id=transaction.external_id,
@@ -5571,7 +5525,6 @@ async def submit_subscription_renewal_endpoint(
         if not settings.is_cryptobot_enabled():
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Payment method is unavailable')
 
-        renewal_currency = (await get_method_currency_map(db, ['cryptobot'])).get('cryptobot', 'RUB')
         rate = await _get_usd_to_rub_rate()
         min_amount_kopeks, max_amount_kopeks = _compute_cryptobot_limits(rate)
         if missing_amount < min_amount_kopeks:
@@ -5579,9 +5532,7 @@ async def submit_subscription_renewal_endpoint(
                 status.HTTP_400_BAD_REQUEST,
                 detail={
                     'code': 'amount_below_minimum',
-                    'message': (
-                        f'Amount is below minimum ({_format_amount_with_currency(min_amount_kopeks, renewal_currency)})'
-                    ),
+                    'message': f'Amount is below minimum ({min_amount_kopeks / 100:.2f} RUB)',
                 },
             )
         if missing_amount > max_amount_kopeks:
@@ -5589,9 +5540,7 @@ async def submit_subscription_renewal_endpoint(
                 status.HTTP_400_BAD_REQUEST,
                 detail={
                     'code': 'amount_above_maximum',
-                    'message': (
-                        f'Amount exceeds maximum ({_format_amount_with_currency(max_amount_kopeks, renewal_currency)})'
-                    ),
+                    'message': f'Amount exceeds maximum ({max_amount_kopeks / 100:.2f} RUB)',
                 },
             )
 

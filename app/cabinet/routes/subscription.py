@@ -1194,7 +1194,7 @@ async def activate_trial(
         if user.balance_kopeks < price_kopeks:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Insufficient balance. Need {price_kopeks / 100:.2f} {settings.get_default_currency()}',
+                detail=f'Insufficient balance. Need {price_kopeks / 100:.2f} RUB',
             )
         user.balance_kopeks -= price_kopeks
         logger.info(f'User {user.id} paid {price_kopeks} kopeks for trial activation')
@@ -3191,10 +3191,7 @@ async def update_countries(
     if total_cost > 0 and user.balance_kopeks < total_cost:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=(
-                f'Insufficient balance. Need {total_cost / 100:.2f} {settings.get_default_currency()}, '
-                f'have {user.balance_kopeks / 100:.2f} {settings.get_default_currency()}'
-            ),
+            detail=f'Insufficient balance. Need {total_cost / 100:.2f} RUB, have {user.balance_kopeks / 100:.2f} RUB',
         )
 
     # Deduct balance and update subscription
@@ -4541,7 +4538,7 @@ async def switch_traffic_package(
         if user.balance_kopeks < final_price:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=f'Insufficient balance. Need {final_price / 100:.2f} {settings.get_default_currency()}',
+                detail=f'Insufficient balance. Need {final_price / 100:.2f} RUB',
             )
 
         # Charge balance

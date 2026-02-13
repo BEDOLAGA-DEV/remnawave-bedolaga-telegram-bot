@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
-from app.services.payment_method_config_service import get_effective_method_currency
 from app.services.platega_service import PlategaService
 from app.services.subscription_auto_purchase_service import (
     auto_activate_subscription_after_topup,
@@ -63,13 +62,12 @@ class PlategaPaymentMixin:
         payload_token = f'platega:{correlation_id}'
 
         amount_value = amount_kopeks / 100
-        currency = await get_effective_method_currency(db, 'platega')
 
         try:
             response = await service.create_payment(
                 payment_method=payment_method_code,
                 amount=amount_value,
-                currency=currency,
+                currency=settings.PLATEGA_CURRENCY,
                 description=description,
                 return_url=settings.get_platega_return_url(),
                 failed_url=settings.get_platega_failed_url(),
@@ -100,7 +98,7 @@ class PlategaPaymentMixin:
             db,
             user_id=user_id,
             amount_kopeks=amount_kopeks,
-            currency=currency,
+            currency=settings.PLATEGA_CURRENCY,
             description=description,
             status=status,
             payment_method_code=payment_method_code,
@@ -115,12 +113,11 @@ class PlategaPaymentMixin:
         )
 
         logger.info(
-            'Создан Platega платеж %s для пользователя %s (метод %s, сумма %s %s)',
+            'Создан Platega платеж %s для пользователя %s (метод %s, сумма %s₽)',
             transaction_id or payment.id,
             user_id,
             payment_method_code,
             amount_value,
-            currency,
         )
 
         return {

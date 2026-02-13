@@ -6432,36 +6432,6 @@ async def migrate_cloudpayments_transaction_id_to_bigint() -> bool:
         return False
 
 
-async def ensure_payment_method_config_currency_column() -> bool:
-    """Добавляет колонку currency в payment_method_configs для переопределения валюты метода."""
-    try:
-        table_exists = await check_table_exists('payment_method_configs')
-        if not table_exists:
-            logger.info('ℹ️ Таблица payment_method_configs не существует, пропускаем миграцию currency')
-            return True
-
-        column_exists = await check_column_exists('payment_method_configs', 'currency')
-        if column_exists:
-            logger.info('ℹ️ Колонка payment_method_configs.currency уже существует')
-            return True
-
-        db_type = await get_database_type()
-        async with engine.begin() as conn:
-            if db_type == 'sqlite':
-                await conn.execute(text('ALTER TABLE payment_method_configs ADD COLUMN currency VARCHAR(10) NULL'))
-            elif db_type == 'postgresql':
-                await conn.execute(text('ALTER TABLE payment_method_configs ADD COLUMN currency VARCHAR(10) NULL'))
-            else:  # mysql
-                await conn.execute(text('ALTER TABLE payment_method_configs ADD COLUMN currency VARCHAR(10) NULL'))
-
-        logger.info('✅ Колонка payment_method_configs.currency добавлена')
-        return True
-
-    except Exception as error:
-        logger.error(f'❌ Ошибка добавления payment_method_configs.currency: {error}')
-        return False
-
-
 async def run_universal_migration():
     logger.info('=== НАЧАЛО УНИВЕРСАЛЬНОЙ МИГРАЦИИ ===')
 
@@ -6493,13 +6463,6 @@ async def run_universal_migration():
             logger.info('✅ Таблица system_settings готова')
         else:
             logger.warning('⚠️ Проблемы с таблицей system_settings')
-
-        logger.info('=== ОБНОВЛЕНИЕ СХЕМЫ PAYMENT_METHOD_CONFIGS ===')
-        payment_method_currency_ready = await ensure_payment_method_config_currency_column()
-        if payment_method_currency_ready:
-            logger.info('✅ Колонка payment_method_configs.currency готова')
-        else:
-            logger.warning('⚠️ Проблемы с колонкой payment_method_configs.currency')
 
         logger.info('=== СОЗДАНИЕ ТАБЛИЦЫ WEB_API_TOKENS ===')
         web_api_tokens_ready = await create_web_api_tokens_table()

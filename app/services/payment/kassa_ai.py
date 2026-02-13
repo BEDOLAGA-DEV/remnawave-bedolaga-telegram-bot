@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
-from app.services.payment_method_config_service import get_effective_method_currency
 from app.services.kassa_ai_service import kassa_ai_service
 from app.services.subscription_auto_purchase_service import (
     auto_activate_subscription_after_topup,
@@ -78,7 +77,7 @@ class KassaAiPaymentMixin:
         # Генерируем уникальный order_id с telegram_id для удобного поиска
         order_id = f'k{tg_id}_{uuid.uuid4().hex[:6]}'
         amount_rubles = amount_kopeks / 100
-        currency = await get_effective_method_currency(db, 'kassa_ai')
+        currency = settings.KASSA_AI_CURRENCY
 
         # Срок действия платежа (1 час по умолчанию)
         expires_at = datetime.utcnow() + timedelta(hours=1)
