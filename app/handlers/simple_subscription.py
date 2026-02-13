@@ -40,21 +40,20 @@ async def start_simple_subscription_purchase(
     texts = get_texts(db_user.language)
 
     if not settings.SIMPLE_SUBSCRIPTION_ENABLED:
-        await callback.answer('❌ Простая покупка подписки временно недоступна', show_alert=True)
+        await callback.answer(texts.t('PURCHASE_SIMPLE_UNAVAILABLE_ALERT'), show_alert=True)
         return
 
     # Проверка ограничения на покупку/продление подписки
     if getattr(db_user, 'restriction_subscription', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t('PURCHASE_RESTRICTION_DEFAULT_REASON')
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append([types.InlineKeyboardButton(text=texts.t('USER_RESTRICTION_APPEAL_BUTTON'), url=support_url)])
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Покупка подписки ограничена</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t('USER_RESTRICTION_SUBSCRIPTION_BLOCKED').format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
         await callback.answer()
@@ -205,7 +204,8 @@ async def start_simple_subscription_purchase(
         keyboard_rows = [
             [
                 types.InlineKeyboardButton(
-                    text='✅ Подтвердить покупку', callback_data='simple_subscription_confirm_purchase'
+                    text=texts.t('SUBSCRIPTION_CONFIRM_PURCHASE_BUTTON'),
+                    callback_data='simple_subscription_confirm_purchase',
                 )
             ],
             [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
@@ -231,7 +231,7 @@ async def start_simple_subscription_purchase(
             keyboard_rows.append(
                 [
                     types.InlineKeyboardButton(
-                        text='✅ Оплатить с баланса',
+                        text=texts.t('SIMPLE_SUBSCRIPTION_PAY_BALANCE_BUTTON'),
                         callback_data='simple_subscription_pay_with_balance',
                     )
                 ]
@@ -284,10 +284,16 @@ def _get_simple_subscription_payment_keyboard(language: str) -> types.InlineKeyb
         yookassa_methods = []
         if settings.YOOKASSA_SBP_ENABLED:
             yookassa_methods.append(
-                types.InlineKeyboardButton(text='🏦 YooKassa (СБП)', callback_data='simple_subscription_yookassa_sbp')
+                types.InlineKeyboardButton(
+                    text=texts.t('PAYMENT_SBP_YOOKASSA'),
+                    callback_data='simple_subscription_yookassa_sbp',
+                )
             )
         yookassa_methods.append(
-            types.InlineKeyboardButton(text='💳 YooKassa (Карта)', callback_data='simple_subscription_yookassa')
+            types.InlineKeyboardButton(
+                text=texts.t('PAYMENT_CARD_YOOKASSA'),
+                callback_data='simple_subscription_yookassa',
+            )
         )
         if yookassa_methods:
             keyboard.append(yookassa_methods)
@@ -326,7 +332,7 @@ def _get_simple_subscription_server_label(
     """Возвращает локализованное описание выбранного сервера."""
 
     if subscription_params.get('squad_uuid'):
-        return texts.t('SIMPLE_SUBSCRIPTION_SERVER_SELECTED', 'Выбранный')
+        return texts.t('SIMPLE_SUBSCRIPTION_SERVER_SELECTED')
 
     if resolved_squad_uuid:
         return texts.t(
@@ -334,7 +340,7 @@ def _get_simple_subscription_server_label(
             'Назначен автоматически',
         )
 
-    return texts.t('SIMPLE_SUBSCRIPTION_SERVER_ANY', 'Любой доступный')
+    return texts.t('SIMPLE_SUBSCRIPTION_SERVER_ANY')
 
 
 async def _ensure_simple_subscription_squad_uuid(
@@ -395,7 +401,7 @@ async def handle_simple_subscription_pay_with_balance(
     subscription_params = data.get('subscription_params', {})
 
     if not subscription_params:
-        await callback.answer('❌ Данные подписки устарели. Пожалуйста, начните сначала.', show_alert=True)
+        await callback.answer(texts.t('SIMPLE_SUB_DATA_EXPIRED_ALERT'), show_alert=True)
         return
 
     # Проверяем, имеет ли пользователь активную платную подписку
@@ -406,7 +412,8 @@ async def handle_simple_subscription_pay_with_balance(
     if current_subscription and not getattr(current_subscription, 'is_trial', False) and current_subscription.is_active:
         # У пользователя есть активная платная подписка - требуем подтверждение
         await callback.answer(
-            '⚠️ У вас уже есть активная платная подписка. Пожалуйста, подтвердите покупку.', show_alert=True
+            texts.t('SIMPLE_SUB_ACTIVE_PAID_CONFIRM_ALERT'),
+            show_alert=True,
         )
         return
 
@@ -443,7 +450,7 @@ async def handle_simple_subscription_pay_with_balance(
     user_balance_kopeks = getattr(db_user, 'balance_kopeks', 0)
 
     if user_balance_kopeks < total_required:
-        await callback.answer('❌ Недостаточно средств на балансе для оплаты подписки', show_alert=True)
+        await callback.answer(texts.t('SIMPLE_SUB_INSUFFICIENT_BALANCE_PAYMENT_ALERT'), show_alert=True)
         return
 
     try:
@@ -459,7 +466,7 @@ async def handle_simple_subscription_pay_with_balance(
         )
 
         if not success:
-            await callback.answer('❌ Ошибка списания средств с баланса', show_alert=True)
+            await callback.answer(texts.t('SIMPLE_SUB_BALANCE_DEBIT_ERROR_ALERT'), show_alert=True)
             return
 
         # Проверяем, есть ли у пользователя уже подписка
@@ -518,7 +525,7 @@ async def handle_simple_subscription_pay_with_balance(
                 price_kopeks,
                 f'Возврат средств за неудавшуюся подписку на {subscription_params["period_days"]} дней',
             )
-            await callback.answer('❌ Ошибка создания подписки. Средства возвращены на баланс.', show_alert=True)
+            await callback.answer(texts.t('SIMPLE_SUB_SUBSCRIPTION_CREATE_REFUND_ALERT'), show_alert=True)
             return
 
         # Обновляем баланс пользователя
@@ -573,7 +580,7 @@ async def handle_simple_subscription_pay_with_balance(
 
         connect_mode = settings.CONNECT_BUTTON_MODE
         subscription_link = get_display_subscription_link(subscription)
-        connect_button_text = texts.t('CONNECT_BUTTON', '🔗 Подключиться')
+        connect_button_text = texts.t('CONNECT_BUTTON')
 
         def _fallback_connect_button() -> types.InlineKeyboardButton:
             return types.InlineKeyboardButton(
@@ -631,7 +638,7 @@ async def handle_simple_subscription_pay_with_balance(
         if happ_row:
             keyboard_rows.append(happ_row)
 
-        keyboard_rows.append([types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')])
+        keyboard_rows.append([types.InlineKeyboardButton(text=texts.t('MAIN_MENU_BUTTON'), callback_data='back_to_menu')])
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
@@ -667,7 +674,7 @@ async def handle_simple_subscription_pay_with_balance(
             exc_info=True,
         )
         await callback.answer(
-            '❌ Ошибка оплаты подписки. Попробуйте позже или обратитесь в поддержку.',
+            texts.t('SIMPLE_SUB_PAYMENT_ERROR_ALERT'),
             show_alert=True,
         )
         await state.clear()
@@ -681,8 +688,9 @@ async def handle_simple_subscription_pay_with_balance_disabled(
     db: AsyncSession,
 ):
     """Показывает уведомление, если баланса недостаточно для прямой оплаты."""
+    texts = get_texts(db_user.language)
     await callback.answer(
-        '❌ Недостаточно средств на балансе. Пополните баланс или выберите другой способ оплаты.',
+        texts.t('SIMPLE_SUB_INSUFFICIENT_BALANCE_CHOOSE_METHOD_ALERT'),
         show_alert=True,
     )
 
@@ -701,7 +709,7 @@ async def handle_simple_subscription_other_payment_methods(
     subscription_params = data.get('subscription_params', {})
 
     if not subscription_params:
-        await callback.answer('❌ Данные подписки устарели. Пожалуйста, начните сначала.', show_alert=True)
+        await callback.answer(texts.t('SIMPLE_SUB_DATA_EXPIRED_ALERT'), show_alert=True)
         return
 
     resolved_squad_uuid = await _ensure_simple_subscription_squad_uuid(
@@ -779,7 +787,8 @@ async def handle_simple_subscription_other_payment_methods(
         keyboard_rows.append(
             [
                 types.InlineKeyboardButton(
-                    text='✅ Оплатить с баланса', callback_data='simple_subscription_pay_with_balance'
+                    text=texts.t('SIMPLE_SUBSCRIPTION_PAY_BALANCE_BUTTON'),
+                    callback_data='simple_subscription_pay_with_balance',
                 )
             ]
         )
@@ -806,7 +815,7 @@ async def handle_simple_subscription_payment_method(
     subscription_params = data.get('subscription_params', {})
 
     if not subscription_params:
-        await callback.answer('❌ Данные подписки устарели. Пожалуйста, начните сначала.', show_alert=True)
+        await callback.answer(texts.t('SIMPLE_SUB_DATA_EXPIRED_ALERT'), show_alert=True)
         return
 
     # Проверяем, имеет ли пользователь активную платную подписку
@@ -817,7 +826,7 @@ async def handle_simple_subscription_payment_method(
     if current_subscription and not getattr(current_subscription, 'is_trial', False) and current_subscription.is_active:
         # У пользователя есть активная платная подписка - показываем сообщение
         await callback.answer(
-            '⚠️ У вас уже есть активная платная подписка. Пожалуйста, подтвердите покупку через главное меню.',
+            texts.t('SIMPLE_SUB_ACTIVE_PAID_CONFIRM_MAIN_MENU_ALERT'),
             show_alert=True,
         )
         return
@@ -858,7 +867,7 @@ async def handle_simple_subscription_payment_method(
             )
 
             if not order:
-                await callback.answer('❌ Не удалось подготовить заказ. Попробуйте позже.', show_alert=True)
+                await callback.answer(texts.t('PURCHASE_ORDER_PREPARE_FAILED_ALERT'), show_alert=True)
                 return
 
             stars_count = settings.rubles_to_stars(settings.kopeks_to_rubles(price_kopeks))
@@ -887,11 +896,11 @@ async def handle_simple_subscription_payment_method(
         elif payment_method in ['yookassa', 'yookassa_sbp']:
             # Оплата через YooKassa
             if not settings.is_yookassa_enabled():
-                await callback.answer('❌ Оплата через YooKassa временно недоступна', show_alert=True)
+                await callback.answer(texts.t('SIMPLE_SUB_YOOKASSA_DISABLED_ALERT'), show_alert=True)
                 return
 
             if payment_method == 'yookassa_sbp' and not settings.YOOKASSA_SBP_ENABLED:
-                await callback.answer('❌ Оплата через СБП временно недоступна', show_alert=True)
+                await callback.answer(texts.t('SIMPLE_SUB_YOOKASSA_SBP_DISABLED_ALERT'), show_alert=True)
                 return
 
             # Создаем заказ на подписку
@@ -907,7 +916,7 @@ async def handle_simple_subscription_payment_method(
             )
 
             if not order:
-                await callback.answer('❌ Ошибка создания заказа', show_alert=True)
+                await callback.answer(texts.t('SIMPLE_SUB_ORDER_CREATE_ERROR_ALERT'), show_alert=True)
                 return
 
             # Создаем платеж через YooKassa
@@ -945,7 +954,7 @@ async def handle_simple_subscription_payment_method(
                 )
 
             if not payment_result:
-                await callback.answer('❌ Ошибка создания платежа', show_alert=True)
+                await callback.answer(texts.t('SIMPLE_SUB_PAYMENT_CREATE_ERROR_ALERT'), show_alert=True)
                 return
 
             # Отправляем QR-код и/или ссылку для оплаты
@@ -953,7 +962,7 @@ async def handle_simple_subscription_payment_method(
             qr_confirmation_data = payment_result.get('qr_confirmation_data')
 
             if not confirmation_url and not qr_confirmation_data:
-                await callback.answer('❌ Ошибка получения данных для оплаты', show_alert=True)
+                await callback.answer(texts.t('SIMPLE_SUB_PAYMENT_DATA_ERROR_ALERT'), show_alert=True)
                 return
 
             # Подготовим QR-код для вставки в основное сообщение
@@ -992,18 +1001,26 @@ async def handle_simple_subscription_payment_method(
 
             # Добавляем кнопку оплаты, если доступна ссылка
             if confirmation_url:
-                keyboard_buttons.append([types.InlineKeyboardButton(text='🔗 Перейти к оплате', url=confirmation_url)])
+                keyboard_buttons.append(
+                    [types.InlineKeyboardButton(text=texts.t('SIMPLE_SUB_PAYMENT_GO_TO_PAY_BUTTON'), url=confirmation_url)]
+                )
             else:
                 # Если ссылка недоступна, предлагаем оплатить через ID платежа в приложении банка
                 keyboard_buttons.append(
-                    [types.InlineKeyboardButton(text='📱 Оплатить в приложении банка', callback_data='temp_disabled')]
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('SIMPLE_SUB_PAYMENT_BANK_APP_BUTTON'),
+                            callback_data='temp_disabled',
+                        )
+                    ]
                 )
 
             # Добавляем общие кнопки
             keyboard_buttons.append(
                 [
                     types.InlineKeyboardButton(
-                        text='📊 Проверить статус', callback_data=f'check_yookassa_{payment_result["local_payment_id"]}'
+                        text=texts.t('CHECK_STATUS_BUTTON'),
+                        callback_data=f'check_yookassa_{payment_result["local_payment_id"]}',
                     )
                 ]
             )
@@ -1074,7 +1091,7 @@ async def handle_simple_subscription_payment_method(
         elif payment_method == 'cryptobot':
             # Оплата через CryptoBot
             if not settings.is_cryptobot_enabled():
-                await callback.answer('❌ Оплата через CryptoBot временно недоступна', show_alert=True)
+                await callback.answer(texts.t('SIMPLE_SUB_CRYPTOBOT_DISABLED_ALERT'), show_alert=True)
                 return
 
             amount_rubles = price_kopeks / 100
@@ -1090,11 +1107,9 @@ async def handle_simple_subscription_payment_method(
             min_amount_kopeks, max_amount_kopeks = compute_cryptobot_limits(usd_rate)
             if price_kopeks < min_amount_kopeks or price_kopeks > max_amount_kopeks:
                 await callback.answer(
-                    (
-                        '❌ Сумма должна быть в диапазоне '
-                        f'от {settings.format_price(min_amount_kopeks)} '
-                        f'до {settings.format_price(max_amount_kopeks)} '
-                        'для оплаты через CryptoBot'
+                    texts.t('SIMPLE_SUB_CRYPTOBOT_AMOUNT_RANGE_ALERT').format(
+                        min_amount=settings.format_price(min_amount_kopeks),
+                        max_amount=settings.format_price(max_amount_kopeks),
                     ),
                     show_alert=True,
                 )
@@ -1103,13 +1118,13 @@ async def handle_simple_subscription_payment_method(
             amount_usd = round(amount_rubles / usd_rate, 2)
             if amount_usd < 1:
                 await callback.answer(
-                    '❌ Минимальная сумма для оплаты через CryptoBot — примерно 1 USD',
+                    texts.t('SIMPLE_SUB_CRYPTOBOT_MIN_USD_ALERT'),
                     show_alert=True,
                 )
                 return
             if amount_usd > 1000:
                 await callback.answer(
-                    '❌ Максимальная сумма для оплаты через CryptoBot — 1000 USD',
+                    texts.t('SIMPLE_SUB_CRYPTOBOT_MAX_USD_ALERT'),
                     show_alert=True,
                 )
                 return
@@ -1129,7 +1144,7 @@ async def handle_simple_subscription_payment_method(
 
             if not crypto_result:
                 await callback.answer(
-                    '❌ Ошибка создания платежа через CryptoBot. Попробуйте позже или обратитесь в поддержку.',
+                    texts.t('SIMPLE_SUB_CRYPTOBOT_CREATE_ERROR_ALERT'),
                     show_alert=True,
                 )
                 return
@@ -1142,7 +1157,7 @@ async def handle_simple_subscription_payment_method(
 
             if not payment_url:
                 await callback.answer(
-                    '❌ Не удалось получить ссылку для оплаты. Обратитесь в поддержку.',
+                    texts.t('SIMPLE_SUB_PAYMENT_LINK_ERROR_ALERT'),
                     show_alert=True,
                 )
                 return
@@ -1151,13 +1166,13 @@ async def handle_simple_subscription_payment_method(
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
-                            text='🪙 Оплатить через CryptoBot',
+                            text=texts.t('SIMPLE_SUB_CRYPTOBOT_PAY_BUTTON'),
                             url=payment_url,
                         )
                     ],
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                            text=texts.t('CHECK_STATUS_BUTTON'),
                             callback_data=f'check_simple_cryptobot_{crypto_result["local_payment_id"]}',
                         )
                     ],
@@ -1193,13 +1208,13 @@ async def handle_simple_subscription_payment_method(
 
         elif payment_method == 'heleket':
             if not settings.is_heleket_enabled():
-                await callback.answer('❌ Оплата через Heleket временно недоступна', show_alert=True)
+                await callback.answer(texts.t('SIMPLE_SUB_HELEKET_DISABLED_ALERT'), show_alert=True)
                 return
 
             amount_rubles = price_kopeks / 100
             if amount_rubles < 100 or amount_rubles > 100000:
                 await callback.answer(
-                    '❌ Сумма должна быть от 100 до 100 000 ₽ для оплаты через Heleket',
+                    texts.t('SIMPLE_SUB_HELEKET_AMOUNT_RANGE_ALERT'),
                     show_alert=True,
                 )
                 return
@@ -1217,7 +1232,7 @@ async def handle_simple_subscription_payment_method(
 
             if not heleket_result:
                 await callback.answer(
-                    '❌ Ошибка создания платежа Heleket. Попробуйте позже или обратитесь в поддержку.',
+                    texts.t('SIMPLE_SUB_HELEKET_CREATE_ERROR_ALERT'),
                     show_alert=True,
                 )
                 return
@@ -1225,7 +1240,7 @@ async def handle_simple_subscription_payment_method(
             payment_url = heleket_result.get('payment_url')
             if not payment_url:
                 await callback.answer(
-                    '❌ Не удалось получить ссылку для оплаты Heleket. Обратитесь в поддержку.',
+                    texts.t('SIMPLE_SUB_HELEKET_LINK_ERROR_ALERT'),
                     show_alert=True,
                 )
                 return
@@ -1246,13 +1261,13 @@ async def handle_simple_subscription_payment_method(
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
-                            text='🪙 Оплатить через Heleket',
+                            text=texts.t('SIMPLE_SUB_HELEKET_PAY_BUTTON'),
                             url=payment_url,
                         )
                     ],
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                            text=texts.t('CHECK_STATUS_BUTTON'),
                             callback_data=f'check_simple_heleket_{local_payment_id}',
                         )
                     ],
@@ -1308,14 +1323,17 @@ async def handle_simple_subscription_payment_method(
             mulenpay_name = settings.get_mulenpay_display_name()
             if not settings.is_mulenpay_enabled():
                 await callback.answer(
-                    f'❌ Оплата через {mulenpay_name} временно недоступна',
+                    texts.t('SIMPLE_SUB_PROVIDER_DISABLED_ALERT').format(provider=mulenpay_name),
                     show_alert=True,
                 )
                 return
 
             if price_kopeks < settings.MULENPAY_MIN_AMOUNT_KOPEKS or price_kopeks > settings.MULENPAY_MAX_AMOUNT_KOPEKS:
                 await callback.answer(
-                    f'❌ Сумма для Mulen Pay должна быть в пределах от {settings.format_price(settings.MULENPAY_MIN_AMOUNT_KOPEKS)} до {settings.format_price(settings.MULENPAY_MAX_AMOUNT_KOPEKS)}',
+                    texts.t('SIMPLE_SUB_MULENPAY_AMOUNT_RANGE_ALERT').format(
+                        min_amount=settings.format_price(settings.MULENPAY_MIN_AMOUNT_KOPEKS),
+                        max_amount=settings.format_price(settings.MULENPAY_MAX_AMOUNT_KOPEKS),
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1350,13 +1368,13 @@ async def handle_simple_subscription_payment_method(
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('MULENPAY_PAY_BUTTON', '💳 Оплатить через Mulen Pay'),
+                            text=texts.t('MULENPAY_PAY_BUTTON'),
                             url=payment_url,
                         )
                     ],
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                            text=texts.t('CHECK_STATUS_BUTTON'),
                             callback_data=f'check_simple_mulenpay_{local_payment_id}',
                         )
                     ],
@@ -1398,7 +1416,7 @@ async def handle_simple_subscription_payment_method(
         elif payment_method == 'pal24':
             # Оплата через PayPalych
             if not settings.is_pal24_enabled():
-                await callback.answer('❌ Оплата через PayPalych временно недоступна', show_alert=True)
+                await callback.answer(texts.t('SIMPLE_SUB_PAL24_DISABLED_ALERT'), show_alert=True)
                 return
 
             payment_service = PaymentService(callback.bot)
@@ -1544,7 +1562,7 @@ async def handle_simple_subscription_payment_method(
             keyboard_rows = pay_buttons + [
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                        text=texts.t('CHECK_STATUS_BUTTON'),
                         callback_data=f'check_simple_pal24_{local_payment_id}',
                     )
                 ],
@@ -1573,11 +1591,14 @@ async def handle_simple_subscription_payment_method(
         elif payment_method == 'wata':
             # Оплата через WATA
             if not settings.is_wata_enabled():
-                await callback.answer('❌ Оплата через WATA временно недоступна', show_alert=True)
+                await callback.answer(texts.t('SIMPLE_SUB_WATA_DISABLED_ALERT'), show_alert=True)
                 return
             if price_kopeks < settings.WATA_MIN_AMOUNT_KOPEKS or price_kopeks > settings.WATA_MAX_AMOUNT_KOPEKS:
                 await callback.answer(
-                    f'❌ Сумма для WATA должна быть между {settings.format_price(settings.WATA_MIN_AMOUNT_KOPEKS)} и {settings.format_price(settings.WATA_MAX_AMOUNT_KOPEKS)}.',
+                    texts.t('SIMPLE_SUB_WATA_AMOUNT_RANGE_ALERT').format(
+                        min_amount=settings.format_price(settings.WATA_MIN_AMOUNT_KOPEKS),
+                        max_amount=settings.format_price(settings.WATA_MAX_AMOUNT_KOPEKS),
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1616,13 +1637,13 @@ async def handle_simple_subscription_payment_method(
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('WATA_PAY_BUTTON', '💳 Оплатить через WATA'),
+                            text=texts.t('WATA_PAY_BUTTON'),
                             url=payment_url,
                         )
                     ],
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                            text=texts.t('CHECK_STATUS_BUTTON'),
                             callback_data=f'check_simple_wata_{local_payment_id}',
                         )
                     ],
@@ -1660,12 +1681,13 @@ async def handle_simple_subscription_payment_method(
             return
 
         else:
-            await callback.answer('❌ Неизвестный способ оплаты', show_alert=True)
+            await callback.answer(texts.t('SIMPLE_SUB_UNKNOWN_PAYMENT_METHOD_ALERT'), show_alert=True)
 
     except Exception as e:
         logger.error(f'Ошибка обработки метода оплаты простой подписки: {e}')
         await callback.answer(
-            '❌ Ошибка обработки запроса. Попробуйте позже или обратитесь в поддержку.', show_alert=True
+            texts.t('SIMPLE_SUB_REQUEST_PROCESS_ERROR_ALERT'),
+            show_alert=True,
         )
         await state.clear()
 
@@ -1675,13 +1697,15 @@ async def check_simple_pal24_payment_status(
     callback: types.CallbackQuery,
     db: AsyncSession,
 ):
+    db_user = getattr(callback, 'db_user', None)
+    texts = get_texts(db_user.language if db_user else settings.DEFAULT_LANGUAGE)
     try:
         local_payment_id = int(callback.data.rsplit('_', 1)[-1])
         payment_service = PaymentService(callback.bot)
         status_info = await payment_service.get_pal24_payment_status(db, local_payment_id)
 
         if not status_info:
-            await callback.answer('❌ Платеж не найден', show_alert=True)
+            await callback.answer(texts.t('SIMPLE_SUB_PAYMENT_NOT_FOUND_ALERT'), show_alert=True)
             return
 
         payment = status_info['payment']
@@ -1707,9 +1731,6 @@ async def check_simple_pal24_payment_status(
         card_link = links_info.get('card') or links_meta.get('card') or status_info.get('card_url')
         if not card_link and payment.link_page_url and payment.link_page_url != sbp_link:
             card_link = payment.link_page_url
-
-        db_user = getattr(callback, 'db_user', None)
-        texts = get_texts(db_user.language if db_user else settings.DEFAULT_LANGUAGE)
 
         message_lines = [
             '🏦 Статус платежа PayPalych:',
@@ -1778,7 +1799,7 @@ async def check_simple_pal24_payment_status(
             + [
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                        text=texts.t('CHECK_STATUS_BUTTON'),
                         callback_data=f'check_simple_pal24_{local_payment_id}',
                     )
                 ],
@@ -1795,13 +1816,13 @@ async def check_simple_pal24_payment_status(
             )
         except TelegramBadRequest as error:
             if 'message is not modified' in str(error).lower():
-                await callback.answer(texts.t('CHECK_STATUS_NO_CHANGES', 'Статус не изменился'))
+                await callback.answer(texts.t('CHECK_STATUS_NO_CHANGES'))
             else:
                 raise
 
     except Exception as error:
         logger.error(f'Ошибка проверки статуса PayPalych для простой подписки: {error}')
-        await callback.answer('❌ Ошибка проверки статуса', show_alert=True)
+        await callback.answer(texts.t('SIMPLE_SUB_CHECK_STATUS_ERROR_ALERT'), show_alert=True)
 
 
 @error_handler
@@ -1809,17 +1830,18 @@ async def check_simple_mulenpay_payment_status(
     callback: types.CallbackQuery,
     db: AsyncSession,
 ):
+    default_texts = get_texts(settings.DEFAULT_LANGUAGE)
     try:
         local_payment_id = int(callback.data.rsplit('_', 1)[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(default_texts.t('SIMPLE_SUB_INVALID_PAYMENT_ID_ALERT'), show_alert=True)
         return
 
     payment_service = PaymentService(callback.bot)
     status_info = await payment_service.get_mulenpay_payment_status(db, local_payment_id)
 
     if not status_info:
-        await callback.answer('❌ Платеж не найден', show_alert=True)
+        await callback.answer(default_texts.t('SIMPLE_SUB_PAYMENT_NOT_FOUND_ALERT'), show_alert=True)
         return
 
     payment = status_info['payment']
@@ -1865,7 +1887,7 @@ async def check_simple_mulenpay_payment_status(
         inline_keyboard=[
             [
                 types.InlineKeyboardButton(
-                    text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                    text=texts.t('CHECK_STATUS_BUTTON'),
                     callback_data=f'check_simple_mulenpay_{local_payment_id}',
                 )
             ],
@@ -1886,17 +1908,18 @@ async def check_simple_cryptobot_payment_status(
     callback: types.CallbackQuery,
     db: AsyncSession,
 ):
+    default_texts = get_texts(settings.DEFAULT_LANGUAGE)
     try:
         local_payment_id = int(callback.data.rsplit('_', 1)[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(default_texts.t('SIMPLE_SUB_INVALID_PAYMENT_ID_ALERT'), show_alert=True)
         return
 
     from app.database.crud.cryptobot import get_cryptobot_payment_by_id
 
     payment = await get_cryptobot_payment_by_id(db, local_payment_id)
     if not payment:
-        await callback.answer('❌ Платеж не найден', show_alert=True)
+        await callback.answer(default_texts.t('SIMPLE_SUB_PAYMENT_NOT_FOUND_ALERT'), show_alert=True)
         return
 
     status_labels = {
@@ -1935,7 +1958,7 @@ async def check_simple_cryptobot_payment_status(
         inline_keyboard=[
             [
                 types.InlineKeyboardButton(
-                    text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                    text=texts.t('CHECK_STATUS_BUTTON'),
                     callback_data=f'check_simple_cryptobot_{local_payment_id}',
                 )
             ],
@@ -1956,17 +1979,18 @@ async def check_simple_heleket_payment_status(
     callback: types.CallbackQuery,
     db: AsyncSession,
 ):
+    default_texts = get_texts(settings.DEFAULT_LANGUAGE)
     try:
         local_payment_id = int(callback.data.rsplit('_', 1)[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(default_texts.t('SIMPLE_SUB_INVALID_PAYMENT_ID_ALERT'), show_alert=True)
         return
 
     from app.database.crud.heleket import get_heleket_payment_by_id
 
     payment = await get_heleket_payment_by_id(db, local_payment_id)
     if not payment:
-        await callback.answer('❌ Платеж не найден', show_alert=True)
+        await callback.answer(default_texts.t('SIMPLE_SUB_PAYMENT_NOT_FOUND_ALERT'), show_alert=True)
         return
 
     status_labels = {
@@ -2021,7 +2045,7 @@ async def check_simple_heleket_payment_status(
         inline_keyboard=[
             [
                 types.InlineKeyboardButton(
-                    text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                    text=texts.t('CHECK_STATUS_BUTTON'),
                     callback_data=f'check_simple_heleket_{local_payment_id}',
                 )
             ],
@@ -2042,32 +2066,33 @@ async def check_simple_wata_payment_status(
     callback: types.CallbackQuery,
     db: AsyncSession,
 ):
+    default_texts = get_texts(settings.DEFAULT_LANGUAGE)
     try:
         local_payment_id = int(callback.data.rsplit('_', 1)[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(default_texts.t('SIMPLE_SUB_INVALID_PAYMENT_ID_ALERT'), show_alert=True)
         return
 
     payment_service = PaymentService(callback.bot)
     status_info = await payment_service.get_wata_payment_status(db, local_payment_id)
 
     if not status_info:
-        await callback.answer('❌ Платеж не найден', show_alert=True)
+        await callback.answer(default_texts.t('SIMPLE_SUB_PAYMENT_NOT_FOUND_ALERT'), show_alert=True)
         return
 
     payment = status_info['payment']
     texts = get_texts(settings.DEFAULT_LANGUAGE)
 
     status_labels = {
-        'Opened': ('⏳', texts.t('WATA_STATUS_OPENED', 'Ожидает оплаты')),
-        'Closed': ('⌛', texts.t('WATA_STATUS_CLOSED', 'Обрабатывается')),
-        'Paid': ('✅', texts.t('WATA_STATUS_PAID', 'Оплачен')),
-        'Declined': ('❌', texts.t('WATA_STATUS_DECLINED', 'Отклонен')),
+        'Opened': ('⏳', texts.t('WATA_STATUS_OPENED')),
+        'Closed': ('⌛', texts.t('WATA_STATUS_CLOSED')),
+        'Paid': ('✅', texts.t('WATA_STATUS_PAID')),
+        'Declined': ('❌', texts.t('WATA_STATUS_DECLINED')),
     }
-    emoji, status_text = status_labels.get(payment.status, ('❓', texts.t('WATA_STATUS_UNKNOWN', 'Неизвестно')))
+    emoji, status_text = status_labels.get(payment.status, ('❓', texts.t('WATA_STATUS_UNKNOWN')))
 
     message_lines = [
-        texts.t('WATA_STATUS_TITLE', '💳 <b>Статус платежа WATA</b>'),
+        texts.t('WATA_STATUS_TITLE'),
         '',
         f'🆔 ID: {payment.payment_link_id}',
         f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}',
@@ -2084,7 +2109,7 @@ async def check_simple_wata_payment_status(
         inline_keyboard=[
             [
                 types.InlineKeyboardButton(
-                    text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                    text=texts.t('CHECK_STATUS_BUTTON'),
                     callback_data=f'check_simple_wata_{local_payment_id}',
                 )
             ],
@@ -2114,7 +2139,7 @@ async def confirm_simple_subscription_purchase(
     subscription_params = data.get('subscription_params', {})
 
     if not subscription_params:
-        await callback.answer('❌ Данные подписки устарели. Пожалуйста, начните сначала.', show_alert=True)
+        await callback.answer(texts.t('SIMPLE_SUB_DATA_EXPIRED_ALERT'), show_alert=True)
         return
 
     resolved_squad_uuid = await _ensure_simple_subscription_squad_uuid(
@@ -2150,7 +2175,7 @@ async def confirm_simple_subscription_purchase(
     user_balance_kopeks = getattr(db_user, 'balance_kopeks', 0)
 
     if user_balance_kopeks < total_required:
-        await callback.answer('❌ Недостаточно средств на балансе для оплаты подписки', show_alert=True)
+        await callback.answer(texts.t('SIMPLE_SUB_INSUFFICIENT_BALANCE_PAYMENT_ALERT'), show_alert=True)
         return
 
     try:
@@ -2166,7 +2191,7 @@ async def confirm_simple_subscription_purchase(
         )
 
         if not success:
-            await callback.answer('❌ Ошибка списания средств с баланса', show_alert=True)
+            await callback.answer(texts.t('SIMPLE_SUB_BALANCE_DEBIT_ERROR_ALERT'), show_alert=True)
             return
 
         # Проверяем, есть ли у пользователя уже подписка
@@ -2225,7 +2250,7 @@ async def confirm_simple_subscription_purchase(
                 price_kopeks,
                 f'Возврат средств за неудавшуюся подписку на {subscription_params["period_days"]} дней',
             )
-            await callback.answer('❌ Ошибка создания подписки. Средства возвращены на баланс.', show_alert=True)
+            await callback.answer(texts.t('SIMPLE_SUB_SUBSCRIPTION_CREATE_REFUND_ALERT'), show_alert=True)
             return
 
         # Обновляем баланс пользователя
@@ -2280,7 +2305,7 @@ async def confirm_simple_subscription_purchase(
 
         connect_mode = settings.CONNECT_BUTTON_MODE
         subscription_link = get_display_subscription_link(subscription)
-        connect_button_text = texts.t('CONNECT_BUTTON', '🔗 Подключиться')
+        connect_button_text = texts.t('CONNECT_BUTTON')
 
         def _fallback_connect_button() -> types.InlineKeyboardButton:
             return types.InlineKeyboardButton(
@@ -2338,7 +2363,7 @@ async def confirm_simple_subscription_purchase(
         if happ_row:
             keyboard_rows.append(happ_row)
 
-        keyboard_rows.append([types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')])
+        keyboard_rows.append([types.InlineKeyboardButton(text=texts.t('MAIN_MENU_BUTTON'), callback_data='back_to_menu')])
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
@@ -2374,7 +2399,7 @@ async def confirm_simple_subscription_purchase(
             exc_info=True,
         )
         await callback.answer(
-            '❌ Ошибка оплаты подписки. Попробуйте позже или обратитесь в поддержку.',
+            texts.t('SIMPLE_SUB_PAYMENT_ERROR_ALERT'),
             show_alert=True,
         )
         await state.clear()
