@@ -132,7 +132,8 @@ async def get_button_styles(
                         merged[section]['enabled'] = overrides['enabled']
                     if isinstance(overrides.get('labels'), dict):
                         merged[section]['labels'] = {
-                            k: v for k, v in overrides['labels'].items()
+                            k: v
+                            for k, v in overrides['labels'].items()
                             if isinstance(k, str) and isinstance(v, str) and k in BOT_LOCALES
                         }
         except (json.JSONDecodeError, TypeError):
@@ -150,7 +151,9 @@ async def update_button_styles(
     """Partially update per-section button styles. Admin only."""
     # Load current state
     raw = await _get_setting_value(db, BUTTON_STYLES_KEY)
-    current: dict[str, dict] = {section: {**cfg, 'labels': dict(cfg.get('labels', {}))} for section, cfg in DEFAULT_BUTTON_STYLES.items()}
+    current: dict[str, dict] = {
+        section: {**cfg, 'labels': dict(cfg.get('labels', {}))} for section, cfg in DEFAULT_BUTTON_STYLES.items()
+    }
 
     if raw:
         try:
@@ -165,7 +168,8 @@ async def update_button_styles(
                         current[section]['enabled'] = overrides['enabled']
                     if isinstance(overrides.get('labels'), dict):
                         current[section]['labels'] = {
-                            k: v for k, v in overrides['labels'].items()
+                            k: v
+                            for k, v in overrides['labels'].items()
                             if isinstance(k, str) and isinstance(v, str) and k in BOT_LOCALES
                         }
         except (json.JSONDecodeError, TypeError):

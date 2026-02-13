@@ -108,7 +108,8 @@ async def load_button_styles_cache() -> dict[str, dict]:
                             merged[section]['enabled'] = overrides['enabled']
                         if isinstance(overrides.get('labels'), dict):
                             merged[section]['labels'] = {
-                                k: v for k, v in overrides['labels'].items()
+                                k: v
+                                for k, v in overrides['labels'].items()
                                 if isinstance(k, str) and isinstance(v, str) and k in BOT_LOCALES
                             }
     except Exception:
