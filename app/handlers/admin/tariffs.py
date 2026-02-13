@@ -960,8 +960,6 @@ async def process_tariff_prices(
     state: FSMContext,
 ):
     """Обрабатывает цены тарифа."""
-    texts = get_texts(db_user.language)
-
     prices = _parse_period_prices(message.text.strip())
 
     if not prices:

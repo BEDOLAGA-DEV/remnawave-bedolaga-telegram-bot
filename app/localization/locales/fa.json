@@ -1729,8 +1729,8 @@
   "ADMIN_SQUAD_MIGRATION_CONFIRM_PROMPT": "عملیات را تأیید کنید.",
   "ADMIN_SQUAD_MIGRATION_CONFIRM_SOURCE": "• از: {source}",
   "ADMIN_SQUAD_MIGRATION_CONFIRM_TARGET": "• به: {target}",
-  "ADMIN_SQUAD_MIGRATION_ERROR": "❌ خطا در انتقال: {error}",
-  "ADMIN_SQUAD_MIGRATION_IN_PROGRESS": "⏳ انتقال در حال انجام...\nمنتقل‌شده: {migrated}/{total}",
+  "ADMIN_SQUAD_MIGRATION_ERROR": "❌ انتقال داده نشد (کد: {code}). {details}",
+  "ADMIN_SQUAD_MIGRATION_IN_PROGRESS": "دارم حرکت رو شروع میکنم...",
   "ADMIN_SQUAD_MIGRATION_NEW_BUTTON": "🔁 انتقال جدید",
   "ADMIN_SQUAD_MIGRATION_NO_OPTIONS": "سروری در دسترس نیست. سرور جدید بسازید یا لغو کنید.",
   "ADMIN_SQUAD_MIGRATION_PAGE": "صفحه {page}/{pages}",
@@ -2245,7 +2245,7 @@
   "ADMIN_USER_REFERRALS_DUPLICATES": "تکراری‌ها نادیده گرفته شد: {values}",
   "ADMIN_USER_REFERRALS_EDIT_BUTTON": "✏️ ویرایش ریفرال‌ها",
   "ADMIN_USER_REFERRALS_EDIT_HINT": "✏️ برای تغییر لیست «✏️ ویرایش» بزنید.",
-  "ADMIN_USER_REFERRALS_EDIT_PROMPT": "🤝 <b>ویرایش ریفرال‌ها</b>\n\nلیست جدید ریفرال‌ها (شناسه تلگرام یا نام‌کاربری).\n\n• مقادیر با کاما، فاصله یا خط جدید\n• برای پاک کردن 0 یا 'نه' بفرستید\n\nیا دکمه لغو بزنید.",
+  "ADMIN_USER_REFERRALS_EDIT_PROMPT": "✏️ <b>ویرایش ارجاعات</b>\n\nارسال فهرستی از ارجاع‌ها برای کاربر <b>{name}</b> (ID: <code>{telegram_id}</code>):\n• از TG ID یا @username استفاده کنید\n• مقادیر را می توان با کاما، فاصله یا خطوط جدید از هم جدا کرد\n• برای پاک کردن لیست، 0 یا کلمه \"نه\" را ارسال کنید\n\nیا برای لغو روی دکمه زیر کلیک کنید.",
   "ADMIN_USER_REFERRALS_EMPTY": "هنوز ریفرالی نیست.",
   "ADMIN_USER_REFERRALS_INVALID_ENTRIES": "یافت نشد: {values}",
   "ADMIN_USER_REFERRALS_LIST_HEADER": "<b>لیست ریفرال‌ها:</b>",
@@ -2551,7 +2551,7 @@
   "BACK_TO_SUBSCRIPTION": "⬅️ اشتراک",
   "BACK_TO_SUPPORT": "⬅️ پشتیبانی",
   "BACK_TO_TICKETS": "⬅️ تیکت‌ها",
-  "BALANCE_BUTTON": "💰 موجودی",
+  "BALANCE_BUTTON": "💰 موجودی: {balance}",
   "BALANCE_BUTTON_DEFAULT": "💰 موجودی: {balance}",
   "BALANCE_BUTTON_ZERO": "💰 موجودی: 0 ₽",
   "BALANCE_HISTORY": "📊 تاریخچه عملیات",
@@ -2596,7 +2596,7 @@
   "CART_CLEAR_AND_RETURN_BUTTON": "🗑️ پاک‌سازی سبد و بازگشت",
   "CART_CLEAR_BUTTON": "🗑️ پاک‌سازی سبد",
   "CHANGE_DEVICES_BUTTON": "📱 تغییر دستگاه‌ها",
-  "CHANGE_DEVICES_CONFIRM": "\n    📱 <b>تأیید تغییر</b>\n\n    فعلی: {current_devices} دستگاه\n    جدید: {new_devices} دستگاه\n\n    💰 {cost_text}\n\n    تأیید؟\n",
+  "CHANGE_DEVICES_CONFIRM": "📱 <b>تغییر تایید</b>\n\n    شماره فعلی: {current_devices} دستگاه\n    تعداد جدید: {new_devices} دستگاه\n\n    اقدام: {action}\n    💰 {cost}\n\n    تایید تغییر؟",
   "CHANGE_DEVICES_INFO": "\n    📱 <b>تغییر تعداد دستگاه</b>\n\n    لیمیت فعلی: {current_devices} دستگاه\n\n    تعداد جدید انتخاب کنید:\n",
   "CHANGE_DEVICES_PROMPT": "📱 <b>تغییر تعداد دستگاه</b>\n\nلیمیت فعلی: {current_devices} دستگاه\n\nتعداد جدید انتخاب کنید:",
   "CHANGE_DEVICES_PROMPT_TARIFF": "📱 <b>تغییر تعداد دستگاه</b>\n\nلیمیت فعلی: {current_devices} دستگاه\nقیمت هر دستگاه اضافی: {price}/ماه",
@@ -2846,10 +2846,10 @@
   "MODEM_SHORT_PERIOD_WARNING": "\n⚠️ <b>توجه!</b> فقط <b>{days} روز</b> تا پایان اشتراک مانده.\nپس از تمدید، مودم باید دوباره پرداخت شود!",
   "MODEM_STATUS_DISABLED": "❌ متصل نیست",
   "MODEM_STATUS_ENABLED": "✅ متصل",
-  "MULENPAY_PAYMENT_ERROR": "❌ خطا در پرداخت MulenPay.",
-  "MULENPAY_PAYMENT_INSTRUCTIONS": "💳 <b>پرداخت MulenPay</b>\n\nدکمه زیر بزنید.\n\n💰 مبلغ: {amount}",
-  "MULENPAY_PAY_BUTTON": "💳 پرداخت MulenPay",
-  "MULENPAY_TOPUP_PROMPT": "💳 <b>شارژ MulenPay</b>\n\nمبلغ وارد کنید.\nحداقل: {min_amount}، حداکثر: {max_amount}",
+  "MULENPAY_PAYMENT_ERROR": "❌ خطا در ایجاد پرداخت {mulenpay_name}. لطفاً بعداً دوباره امتحان کنید یا با پشتیبانی تماس بگیرید.",
+  "MULENPAY_PAYMENT_INSTRUCTIONS": "💳 <b>پرداخت از طریق {mulenpay_name_html}</b>\n\n💰 مبلغ: {amount}\n🆔 شناسه پرداخت: {payment_id}\n\n📱 <b>دستورالعمل ها:</b>\n1. روی دکمه «پرداخت از طریق {mulenpay_name}» کلیک کنید\n2. دستورات سیستم پرداخت را دنبال کنید\n3. انتقال را تایید کنید\n4. وجوه به طور خودکار اعتبار خواهد شد\n\n❓ اگر مشکلی دارید، لطفاً با {support} تماس بگیرید",
+  "MULENPAY_PAY_BUTTON": "💳 پرداخت از طریق {mulenpay_name}",
+  "MULENPAY_TOPUP_PROMPT": "💳 <b>پرداخت از طریق {mulenpay_name_html}</b>\n\nمقدار شارژ را از 100 تا 100000 روبل وارد کنید.\nپرداخت از طریق پلت فرم امن {mulenpay_name} انجام می شود.",
   "MY_BALANCE_BUTTON": "💰 موجودی من",
   "MY_SUBSCRIPTION_BUTTON": "📱 اشتراک من",
   "MY_TICKETS_BUTTON": "📋 تیکت‌های من",
@@ -2898,18 +2898,18 @@
   "PAID_TRIAL_YOOKASSA_CARD": "💳 <b>پرداخت کارتی</b>\n\nدکمه زیر بزنید.\n\n💰 مبلغ: {amount}",
   "PAID_TRIAL_YOOKASSA_SBP": "🏦 <b>پرداخت سریع</b>\n\nQR اسکن کنید یا لینک بزنید.\n\n💰 مبلغ: {amount}",
   "PAL24_CARD_PAY_BUTTON": "💳 کارت بانکی",
-  "PAL24_INSTRUCTION_BUTTON": "📋 راهنما",
-  "PAL24_INSTRUCTION_COMPLETE": "4. وجه خودکار واریز می‌شود",
-  "PAL24_INSTRUCTION_CONFIRM": "3. انتقال را تأیید کنید",
-  "PAL24_INSTRUCTION_FOLLOW": "2. مراحل درگاه را دنبال کنید",
+  "PAL24_INSTRUCTION_BUTTON": "{step}. روی دکمه \"{button}\" کلیک کنید",
+  "PAL24_INSTRUCTION_COMPLETE": "{step}. وجوه به صورت خودکار واریز خواهد شد",
+  "PAL24_INSTRUCTION_CONFIRM": "{step}. انتقال را تایید کنید",
+  "PAL24_INSTRUCTION_FOLLOW": "{step}. دستورات سیستم پرداخت را دنبال کنید",
   "PAL24_PAYMENT_ERROR": "❌ خطا در پرداخت Pal24.",
-  "PAL24_PAYMENT_INSTRUCTIONS": "💳 <b>پرداخت Pal24</b>\n\n💰 مبلغ: {amount}\n🆔 شناسه: {payment_id}\n\n📱 <b>راهنما:</b>\n1. دکمه پرداخت بزنید\n2. مراحل درگاه را دنبال کنید\n3. تأیید کنید\n4. وجه خودکار واریز می‌شود\n\n❓ مشکل؟ {support}",
+  "PAL24_PAYMENT_INSTRUCTIONS": "🏦 <b>پرداخت از طریق PayPalych (SBP)</b>\n\n💰 مبلغ: {amount}\n🆔 شناسه حساب: {bill_id}\n\n📱 <b>دستورالعمل ها:</b>\n1. روی دکمه «پرداخت از طریق PayPalych (SBP)» کلیک کنید\n2. دستورات سیستم پرداخت را دنبال کنید\n3. انتقال را تایید کنید\n4. وجوه به طور خودکار اعتبار خواهد شد\n\n❓ اگر مشکلی دارید، لطفاً با {support} تماس بگیرید",
   "PAL24_SBP_PAY_BUTTON": "🏦 پرداخت سریع",
   "PAL24_SELECT_PAYMENT_METHOD": "روش پرداخت PayPalych:",
-  "PAL24_TOPUP_PROMPT": "💳 <b>پرداخت Pal24</b>\n\nمبلغ وارد کنید.\nحداقل: {min_amount}، حداکثر: {max_amount}",
+  "PAL24_TOPUP_PROMPT": "🏦 <b>پرداخت از طریق PayPalych (SBP)</b>\n\nمقدار شارژ را از 100 تا 1000000 روبل وارد کنید.\nپرداخت از طریق سیستم پرداخت سریع PayPalych انجام می شود.",
   "PAUSE_DAILY_BUTTON": "⏸️ توقف اشتراک",
   "PAYMENTS_TEMPORARILY_UNAVAILABLE": "⚠️ پرداخت موقتاً در دسترس نیست",
-  "PAYMENT_CARD_MULENPAY": "💳 کارت (MulenPay)",
+  "PAYMENT_CARD_MULENPAY": "💳 کارت بانکی ({mulenpay_name})",
   "PAYMENT_CARD_PAL24": "💳 کارت (Pal24)",
   "PAYMENT_CARD_TRIBUTE": "💳 کارت (Tribute)",
   "PAYMENT_CARD_WATA": "💳 کارت (WATA)",
@@ -3117,7 +3117,7 @@
   "REFERRAL_EARNING_REASON_COMMISSION_PURCHASE": "💰 کمیسیون خرید",
   "REFERRAL_EARNING_REASON_COMMISSION_TOPUP": "💰 کمیسیون شارژ",
   "REFERRAL_EARNING_REASON_FIRST_TOPUP": "🎉 اولین شارژ",
-  "REFERRAL_INFO": "🤝 <b>دعوت دوستان</b>\n\nلینک دعوت را به اشتراک بگذارید و از هر خرید کمیسیون بگیرید!",
+  "REFERRAL_INFO": "🤝 <b>برنامه ارجاع</b>\n\n👥 <b>دعوت شده:</b> {referrals_count} دوستان\n💰 <b>کسب شده:</b> {earned_amount}\n\n🔗 <b>لینک ارجاع شما:</b>\n<code>{referral_link}</code>\n\n🎫 <b>کد تبلیغاتی شما:</b>\n<code>{referral_code}</code>\n\n💰 <b>شرایط:</b>\n• برای هر دوست: {registration_bonus}\n• درصد شارژها: {commission_percent}%",
   "REFERRAL_INVITE_BONUS": "💎 با اولین شارژ از {minimum} مبلغ {bonus} پاداش دریافت می‌کنی!",
   "REFERRAL_INVITE_CREATED_INSTRUCTION": "دکمه «📤 اشتراک‌گذاری» را بزنید یا متن زیر را کپی کنید:",
   "REFERRAL_INVITE_CREATED_TITLE": "📝 <b>دعوت‌نامه ایجاد شد!</b>",
@@ -3199,7 +3199,7 @@
   "SERVER_STATUS_PAGINATION": "صفحه {current} از {total}",
   "SERVER_STATUS_PREV_PAGE": "⬅️ قبلی",
   "SERVER_STATUS_REFRESH": "🔄 به‌روزرسانی",
-  "SERVER_STATUS_SUMMARY": "📊 خلاصه: {available}/{total} در دسترس",
+  "SERVER_STATUS_SUMMARY": "کل سرورها: {total} (آنلاین: {online}، آفلاین: {offline})",
   "SERVER_STATUS_TITLE": "🌐 <b>وضعیت سرورها</b>",
   "SERVER_STATUS_UNAVAILABLE": "🔴 در دسترس نیست",
   "SERVER_STATUS_UPDATED_AT": "⏱ به‌روزرسانی: {time}",
@@ -3261,7 +3261,7 @@
   "SKIP_BUTTON": "⏭️ رد کردن",
   "STARS_PAYMENT_ENROLLMENT_ERROR": "❌ خطا در واریز. با پشتیبانی تماس بگیرید، پرداخت دستی بررسی می‌شود.",
   "STARS_PAYMENT_PROCESSING_ERROR": "❌ خطای فنی در پردازش. با پشتیبانی تماس بگیرید.",
-  "STARS_PAYMENT_SUCCESS": "✅ پرداخت Stars موفق!",
+  "STARS_PAYMENT_SUCCESS": "🎉 <b>پرداخت با موفقیت انجام شد!</b>\n\n⭐ ستاره های صرف شده: {stars_spent}\n💰 اعتبار برای موجودی: {amount} ₽\n\n🆔 شناسه تراکنش: {transaction_id}...\n\n⚠️ <b>مهم:</b> تکمیل موجودی، اشتراک شما را به‌طور خودکار فعال نمی‌کند. حتما اشتراک خود را جداگانه فعال کنید!\n\n🔄 اگر یک سبد اشتراک ذخیره شده داشته باشید و خرید خودکار فعال باشد، اشتراک پس از تکمیل موجودی شما به صورت خودکار خریداری می شود.\n\nبا تشکر برای دوباره پر کردن! 🚀",
   "STARS_PAYMENT_USER_NOT_FOUND": "❌ کاربر یافت نشد. با پشتیبانی تماس بگیرید.",
   "STARS_PRECHECK_INVALID_PAYLOAD": "خطای اعتبارسنجی. دوباره تلاش کنید.",
   "STARS_PRECHECK_TECHNICAL_ERROR": "خطای فنی. بعداً تلاش کنید.",
@@ -3270,7 +3270,7 @@
   "SUBSCRIPTION_ACTIVE_REQUIRED": "⚠️ اشتراک فعال لازم است",
   "SUBSCRIPTION_ADDITIONAL_STEP_TITLE": "<b>{title}:</b>",
   "SUBSCRIPTION_APPS_PROMPT": "اپلیکیشن مورد نظر:",
-  "SUBSCRIPTION_APPS_TITLE": "📱 <b>اپلیکیشن‌ها</b>",
+  "SUBSCRIPTION_APPS_TITLE": "📱 <b>برنامه های کاربردی برای {device_name}</b>",
   "SUBSCRIPTION_APP_NOT_FOUND": "❌ اپلیکیشن یافت نشد",
   "SUBSCRIPTION_CONFIRM_PURCHASE_BUTTON": "✅ تایید خرید",
   "SUBSCRIPTION_CONNECTED_DEVICES_FOOTER": "</blockquote>",
@@ -3282,7 +3282,7 @@
   "SUBSCRIPTION_CONNECT_LINK_PROMPT": "🔗 لینک اشتراک شما:\n\nلینک را کپی و در اپلیکیشن VPN وارد کنید",
   "SUBSCRIPTION_CONNECT_LINK_SECTION": "🔗 <b>لینک اتصال:</b>\n{subscription_url}",
   "SUBSCRIPTION_CONNECT_MINIAPP_MESSAGE": "📱 <b>اتصال اشتراک</b>\n\n🚀 دکمه زیر بزنید تا اشتراک در مینی‌اپ تلگرام باز شود:",
-  "SUBSCRIPTION_DAILY_OVERVIEW_TEMPLATE": "👤 {full_name}\n💰 موجودی: {balance}\n📱 اشتراک: {status_emoji} {status_display}{warning}{tariff_info_block}\n\n📱 اطلاعات اشتراک\n🎭 نوع: {subscription_type}\n📈 ترافیک: {traffic}\n🌍 سرورها: {servers}\n📱 دستگاه‌ها: {devices}\n🌍 کشورها: {countries}",
+  "SUBSCRIPTION_DAILY_OVERVIEW_TEMPLATE": "👤 {full_name}\n💰 موجودی: {balance}\n📱 اشتراک: {status_emoji} {status_display}{warning}{tariff_info_block}\n\n📱 اطلاعات اشتراک\n🎭 نوع: {subscription_type}\n📈 ترافیک: {traffic}\n🌍 سرورها: {servers}\n📱 دستگاه ها: {devices_used} / {device_limit}",
   "SUBSCRIPTION_DEVICE_APPS_NOT_FOUND": "❌ اپلیکیشنی برای این دستگاه یافت نشد",
   "SUBSCRIPTION_DEVICE_FEATURED_APP": "📋 <b>اپلیکیشن پیشنهادی:</b> {app_name}",
   "SUBSCRIPTION_DEVICE_GUIDE_TITLE": "📱 <b>تنظیم برای {device_name}</b>",
@@ -3292,17 +3292,17 @@
   "SUBSCRIPTION_DEVICE_HOW_TO_STEP4": "4. به سرور متصل شوید",
   "SUBSCRIPTION_DEVICE_HOW_TO_TITLE": "💡 <b>نحوه اتصال:</b>",
   "SUBSCRIPTION_DEVICE_LINK_TITLE": "🔗 <b>لینک اشتراک:</b>",
-  "SUBSCRIPTION_DEVICE_OTHER_APPS": "📱 سایر اپلیکیشن‌ها",
+  "SUBSCRIPTION_DEVICE_OTHER_APPS": "📦 <b>سایر برنامه ها:</b> {app_list}",
   "SUBSCRIPTION_DEVICE_OTHER_APPS_HINT": "دکمه «سایر اپلیکیشن‌ها» بزنید.",
   "SUBSCRIPTION_DEVICE_STEP_ADD_TITLE": "<b>مرحله ۲ - افزودن اشتراک:</b>",
   "SUBSCRIPTION_DEVICE_STEP_CONNECT_TITLE": "<b>مرحله ۳ - اتصال:</b>",
   "SUBSCRIPTION_DEVICE_STEP_INSTALL_TITLE": "<b>مرحله ۱ - نصب:</b>",
   "SUBSCRIPTION_EXPIRED": "❌ <b>اشتراک منقضی شده</b>\n\nبرای ادامه تمدید کنید.",
-  "SUBSCRIPTION_EXPIRED_1D": "❌ اشتراک دیروز منقضی شد. تمدید کنید!",
+  "SUBSCRIPTION_EXPIRED_1D": "⛔ <b>اشتراک به پایان رسید</b>\n\nدسترسی در {end_date} غیرفعال شد. اشتراک خود را تمدید کنید تا دوباره دسترسی کامل داشته باشید.\n\n💎 هزینه تمدید: {price}",
   "SUBSCRIPTION_EXPIRED_SECOND_WAVE": "🔥 <b>تخفیف {percent}% برای تمدید</b>\n\nپیشنهاد را فعال کنید تا تخفیف اضافی بگیرید. با گروه تخفیف جمع شده و تا {expires_at} اعتبار دارد.",
   "SUBSCRIPTION_EXPIRED_THIRD_WAVE": "🎁 <b>تخفیف اختصاصی {percent}%</b>\n\n{trigger_days} روز بدون اشتراک گذشته. برگردید و تخفیف اضافی فعال کنید — با گروه تخفیف جمع شده و تا {expires_at} اعتبار دارد.",
-  "SUBSCRIPTION_EXPIRING": "⏰ اشتراک به‌زودی منقضی می‌شود!",
-  "SUBSCRIPTION_EXPIRING_PAID": "⏰ اشتراک {days} روز دیگر منقضی می‌شود.",
+  "SUBSCRIPTION_EXPIRING": "⚠️ <b> اشتراک منقضی می شود!</b>\n\nاشتراک شما {days} روز دیگر منقضی می شود.\n\nفراموش نکنید که اشتراک خود را تمدید کنید تا دسترسی به سرورها را از دست ندهید.",
+  "SUBSCRIPTION_EXPIRING_PAID": "⚠️ <b> اشتراک در {days_text} منقضی می شود!</b>\n\nاشتراک پولی شما در تاریخ {end_date} منقضی می شود.\n\n💳 <b>پرداخت خودکار:</b> {autopay_status}\n\n{action_text}",
   "SUBSCRIPTION_EXTEND": "🔄 تمدید اشتراک",
   "SUBSCRIPTION_HAPP_CRYPTOLINK_BLOCK": "<blockquote expandable><code>{crypto_link}</code></blockquote>",
   "SUBSCRIPTION_HAPP_LINK_PROMPT": "🔒 لینک اشتراک ایجاد شد. دکمه «اتصال» بزنید تا در Happ باز شود.",
@@ -3312,7 +3312,7 @@
   "SUBSCRIPTION_HAPP_OPEN_TITLE": "🔗 <b>اتصال از طریق Happ</b>",
   "SUBSCRIPTION_IMPORT_INSTRUCTION_PROMPT": "📱 دکمه زیر بزنید تا راهنمای تنظیم VPN روی دستگاه را ببینید",
   "SUBSCRIPTION_IMPORT_LINK_SECTION": "🔗 <b>لینک وارد کردن در اپلیکیشن VPN:</b>\n<code>{subscription_url}",
-  "SUBSCRIPTION_INFO": "ℹ️ اطلاعات اشتراک",
+  "SUBSCRIPTION_INFO": "📱 <b>اطلاعات اشتراک</b>\n\n📊 <b>وضعیت:</b> {status}\n🎭 <b>نوع:</b> {type}\n📅 <b>معتبر تا:</b> {end_date}\n⏰ <b>روز باقی مانده:</b> {days_left}\n\n📈 <b>ترافیک:</b> {traffic_used} / {traffic_limit}\n🌍 <b>سرورها:</b> {countries_count} کشورها\n📱 <b>دستگاه ها:</b> {devices_used} / {devices_limit}\n\n💳 <b>پرداخت خودکار:</b> {autopay_status}",
   "SUBSCRIPTION_LINK_GENERATING_NOTICE": "{purchase_text}\n\nلینک در حال ایجاد است، لطفا چند ثانیه بعد به بخش «اشتراک من» بروید.",
   "SUBSCRIPTION_LINK_HIDDEN_NOTICE": "ℹ️ لینک اشتراک از دکمه‌های زیر یا بخش «اشتراک من» در دسترس است.",
   "SUBSCRIPTION_LINK_HINT": "💡 لینک را در اپلیکیشن VPN وارد کنید",
@@ -3327,7 +3327,7 @@
   "SUBSCRIPTION_NO_ACTIVE_LINK": "⚠ اشتراک فعالی ندارید یا لینک در حال ایجاد است",
   "SUBSCRIPTION_NO_SERVERS": "❌ سروری در دسترس نیست",
   "SUBSCRIPTION_OVERVIEW_DEVICES_LINE": "📱 دستگاه‌ها: {devices_used} / {device_limit}",
-  "SUBSCRIPTION_OVERVIEW_TEMPLATE": "📱 <b>اشتراک شما</b>\n\n📊 وضعیت: {status}\n📅 اعتبار: {expiry}\n📈 ترافیک: {traffic}\n📱 دستگاه‌ها: {devices}\n🌍 سرورها: {servers}",
+  "SUBSCRIPTION_OVERVIEW_TEMPLATE": "👤 {full_name}\n💰 موجودی: {balance}\n📱 اشتراک: {status_emoji} {status_display}{warning}{tariff_info_block}\n\n📱 اطلاعات اشتراک\n🎭 نوع: {subscription_type}\n📅 اعتبار تا: {end_date}\n⏰ باقی مانده: {time_left}\n📈 ترافیک: {traffic}\n🌍 سرورها: {servers}\n📱 دستگاه ها: {devices_used} / {device_limit}",
   "SUBSCRIPTION_PROMO_DISCOUNT_HINT": "⚡ تخفیف اضافی {percent}% فعال شد.\n\nبا سایر تخفیف‌ها جمع می‌شود!",
   "SUBSCRIPTION_PROMO_DISCOUNT_NOTE": "⚡ تخفیف اضافی {percent}%: -{amount}",
   "SUBSCRIPTION_PROMO_DISCOUNT_TIMER": "\n⏳ اعتبار تخفیف: {time_left} <code>{bar}</code>",
@@ -3336,22 +3336,22 @@
   "SUBSCRIPTION_PURCHASED_TRAFFIC_TITLE": "<blockquote>📦 <b>ترافیک خریداری‌شده:</b>\n",
   "SUBSCRIPTION_PURCHASE_ERROR": "خطا در ثبت خرید اشتراک. دوباره تلاش کنید.",
   "SUBSCRIPTION_SETTINGS_BUTTON": "⚙️ تنظیمات",
-  "SUBSCRIPTION_SETTINGS_DEVICES_LINE": "📱 دستگاه‌ها: {devices_used} / {device_limit}",
-  "SUBSCRIPTION_SETTINGS_OVERVIEW": "⚙️ <b>تنظیمات اشتراک</b>",
+  "SUBSCRIPTION_SETTINGS_DEVICES_LINE": "📱 دستگاه ها: {devices_used} / {devices_limit}",
+  "SUBSCRIPTION_SETTINGS_OVERVIEW": "⚙️ <b>تنظیمات اشتراک</b>\n\n📊 <b>پارامترهای فعلی:</b>\n🌐 کشور: {countries_count}\n📈 ترافیک: {traffic_used} / {traffic_limit}\n📱 دستگاه ها: {devices_used} / {devices_limit}\n\nآنچه را که می خواهید تغییر دهید انتخاب کنید:",
   "SUBSCRIPTION_SETTINGS_PAID_ONLY": "⚠️ تنظیمات فقط برای اشتراک پولی",
   "SUBSCRIPTION_SPECIFIC_APP_TITLE": "📱 <b>{app_name} - {device_name}</b>",
   "SUBSCRIPTION_STATUS_ACTIVE": "✅ فعال",
   "SUBSCRIPTION_STATUS_EXPIRED": "❌ منقضی",
   "SUBSCRIPTION_STATUS_TRIAL": "🎁 آزمایشی",
   "SUBSCRIPTION_STATUS_UNKNOWN": "❓ نامشخص",
-  "SUBSCRIPTION_SUMMARY": "📱 <b>خلاصه اشتراک</b>",
+  "SUBSCRIPTION_SUMMARY": "📋 <b>پیکربندی نهایی</b>\n\n📅 <b>دوره:</b> {period} روز\n📈 <b>ترافیک:</b> {traffic}\n🌍 <b>کشورها:</b> {countries}\n📱 <b>دستگاه ها:</b> {devices}\n\n💰 <b>مجموع پرداخت:</b> {total_price}\n\nخرید را تایید کرد؟",
   "SUBSCRIPTION_SUMMARY_PROMO_DISCOUNT": "- پیشنهاد تخفیف: -{amount} ({percent}% اضافی)",
   "SUBSCRIPTION_TIME_LEFT_DAYS": "{days} روز",
   "SUBSCRIPTION_TIME_LEFT_EXPIRED": "منقضی شده",
   "SUBSCRIPTION_TIME_LEFT_HOURS": "{hours} ساعت",
   "SUBSCRIPTION_TIME_LEFT_MINUTES": "{minutes} دقیقه",
   "SUBSCRIPTION_TRAFFIC_LIMITED": "📊 ترافیک: {used}/{limit} گیگ",
-  "SUBSCRIPTION_TRAFFIC_UNLIMITED": "📊 ترافیک: نامحدود",
+  "SUBSCRIPTION_TRAFFIC_UNLIMITED": "∞ (نامحدود) | استفاده شده: {used} گیگابایت",
   "SUBSCRIPTION_TRIAL": "🎁 <b>اشتراک آزمایشی</b>",
   "SUBSCRIPTION_TYPE_PAID": "💎 پولی",
   "SUBSCRIPTION_TYPE_TRIAL": "🎁 آزمایشی",
@@ -3364,7 +3364,7 @@
   "SUB_STATUS_ACTIVE_TOMORROW": "💎 فعال\n⚠️ فردا منقضی می‌شود!",
   "SUB_STATUS_DAILY_ACTIVE": "💎 فعال",
   "SUB_STATUS_DISABLED": "🚫 غیرفعال",
-  "SUB_STATUS_EXPIRED": "❌ منقضی",
+  "SUB_STATUS_EXPIRED": "🔴 منقضی شده\n📅 {end_date}",
   "SUB_STATUS_NONE": "❌ بدون اشتراک",
   "SUB_STATUS_PENDING": "⏳ در انتظار",
   "SUB_STATUS_TRIAL_ACTIVE": "🎁 آزمایشی\n📅 تا {end_date} ({days} روز)",
@@ -3372,14 +3372,14 @@
   "SUB_STATUS_TRIAL_TOMORROW": "🎁 آزمایشی\n⚠️ فردا منقضی می‌شود!",
   "SUCCESS": "✅ موفق",
   "SUPPORT_BUTTON": "🛠️ پشتیبانی",
-  "SUPPORT_INFO": "🛠️ <b>پشتیبانی</b>\n\nبرای کمک با ما تماس بگیرید.",
+  "SUPPORT_INFO": "🛠️ <b>پشتیبانی فنی</b>\n\nبرای هر گونه سوال، لطفا با پشتیبانی ما تماس بگیرید:\n\n👤 {settings.SUPPORT_USERNAME}\n\nما کمک خواهیم کرد:\n• راه اندازی اتصال\n• حل مشکلات فنی  \n• سوالات در مورد پرداخت\n• سوالات دیگر\n\n⏰ زمان پاسخگویی: معمولا در عرض 1-2 ساعت",
   "SUPPORT_TOPUP_CONTACT_BUTTON": "💬 پیام به پشتیبانی",
   "SUPPORT_TOPUP_DISABLED": "شارژ از طریق پشتیبانی غیرفعال است. روش پرداخت دیگری را امتحان کنید.",
   "SUPPORT_TOPUP_INFO_MESSAGE": "🛠️ <b>شارژ از طریق پشتیبانی</b>\n\nبرای شارژ موجودی با پشتیبانی تماس بگیرید:\n{support_contact}\n\nموارد زیر را اعلام کنید:\n• ID: {user_id}\n• مبلغ شارژ\n• روش پرداخت\n\n⏰ زمان پردازش: ۱ تا ۲۴ ساعت\n\n<b>روش‌های موجود:</b>\n• ارز دیجیتال\n• انتقال بانکی\n• سایر سیستم‌های پرداخت",
   "SUSPICIOUS_DISPLAY_NAME_BLOCKED": "🚫 نام نمایشی شما شبیه لینک یا اکانت سرویسی است. لطفاً نام را در تلگرام تغییر دهید و دوباره تلاش کنید.",
   "SWITCH_TRAFFIC_BUTTON": "🔄 تغییر ترافیک",
-  "SWITCH_TRAFFIC_CONFIRM": "تغییر بسته ترافیک؟\n\nبسته جدید: {package}\nهزینه: {cost}",
-  "SWITCH_TRAFFIC_INFO": "📊 <b>تغییر بسته ترافیک</b>",
+  "SWITCH_TRAFFIC_CONFIRM": "🔄 <b>تأیید تغییر ترافیک</b>\n\nمحدودیت فعلی: {current_traffic}\nمحدودیت جدید: {new_traffic}\n\nاقدام: {action}\n💰 {cost}\n\nسوئیچ را تأیید کنید؟",
+  "SWITCH_TRAFFIC_INFO": "🔄 <b>سوئیچ محدودیت ترافیک</b>\n\nمحدودیت فعلی: {current_traffic}\nیک محدودیت ترافیک جدید انتخاب کنید:\n\n💡 <b>مهم:</b>\n• در صورت افزایش - پرداخت اضافی مابه التفاوت متناسب با زمان باقی مانده است\n• در صورت کاهش، وجه مسترد نخواهد شد.\n• شمارشگر ترافیک استفاده شده تنظیم مجدد نمی شود",
   "SWITCH_TRAFFIC_SUCCESS_DECREASE": "\n✅ ترافیک کاهش یافت!\n\n📊 قبلی: {old_traffic} → جدید: {new_traffic}\nℹ️ بازپرداخت ندارد\n",
   "SWITCH_TRAFFIC_SUCCESS_INCREASE": "\n✅ ترافیک افزایش یافت!\n\n📊 قبلی: {old_traffic} → جدید: {new_traffic}\n💰 کسر: {amount}\n",
   "SWITCH_TRAFFIC_TITLE": "📊 <b>تغییر ترافیک</b>",
@@ -3499,7 +3499,7 @@
   "TICKET_CLOSED_NO_REPLY": "🔒 تیکت بسته شده، پاسخ ممکن نیست",
   "TICKET_CLOSE_ERROR": "❌ خطا در بستن تیکت",
   "TICKET_CREATED_DETAILS": "✅ <b>تیکت #{ticket_id} ایجاد شد</b>\n\n📝 عنوان: {title}\n📊 وضعیت: {status_emoji} {status}\n📅 ایجاد: {created_at}\n{attachment_line}",
-  "TICKET_CREATED_SUCCESS": "✅ تیکت ایجاد شد",
+  "TICKET_CREATED_SUCCESS": "✅ بلیط #{ticket_id} با موفقیت ایجاد شد!\n\nسربرگ: {title}\n\nما در اسرع وقت به شما پاسخ خواهیم داد.",
   "TICKET_CREATE_ERROR": "❌ خطا در ایجاد تیکت",
   "TICKET_CREATION_CANCELLED": "❌ ایجاد تیکت لغو شد",
   "TICKET_CREATION_ERROR": "❌ خطا در ایجاد تیکت",
@@ -3518,7 +3518,7 @@
   "TICKET_REPLY_CANCELLED": "❌ پاسخ لغو شد",
   "TICKET_REPLY_ERROR": "❌ خطا در ارسال پاسخ",
   "TICKET_REPLY_INPUT": "💬 پاسخ خود را بنویسید:",
-  "TICKET_REPLY_NOTIFICATION": "💬 پاسخ جدید به تیکت شما",
+  "TICKET_REPLY_NOTIFICATION": "🎫 پاسخی به بلیط #{ticket_id} دریافت کردید\n\n{reply_preview}\n\nبرای رفتن به بلیط روی دکمه زیر کلیک کنید:",
   "TICKET_REPLY_SENT": "✅ پاسخ ارسال شد",
   "TICKET_REPLY_TOO_SHORT": "پاسخ باید حداقل ۵ کاراکتر باشد. دوباره تلاش کنید:",
   "TICKET_STATUS_ANSWERED": "✅ پاسخ داده شده",
@@ -3531,8 +3531,8 @@
   "TICKET_UPDATE_ERROR": "❌ خطا در به‌روزرسانی تیکت",
   "TICKET_VIEW_HEADER": "🎫 تیکت #{ticket_id}\n\n📝 عنوان: {title}\n📊 وضعیت: {status_emoji} {status}\n📅 ایجاد: {created_at}\n\n",
   "TOPUP_BALANCE_BUTTON": "💳 شارژ موجودی",
-  "TOP_UP_AMOUNT": "💰 مبلغ: {amount}",
-  "TOP_UP_METHODS": "💳 روش‌های شارژ",
+  "TOP_UP_AMOUNT": "💳 مقدار شارژ را وارد کنید (به روبل):",
+  "TOP_UP_METHODS": "💳 <b>روش پرداخت را انتخاب کنید</b>\n\nمقدار: {amount}",
   "TOP_UP_STARS": "⭐ Telegram Stars",
   "TOP_UP_TRIBUTE": "💳 شارژ از طریق Tribute",
   "TRAFFIC": "ترافیک",

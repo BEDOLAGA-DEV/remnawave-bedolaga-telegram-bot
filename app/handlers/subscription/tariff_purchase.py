@@ -3379,4 +3379,3 @@ def register_tariff_purchase_handlers(dp: Dispatcher):
     dp.callback_query.register(show_instant_switch_list, F.data == 'instant_switch')
     dp.callback_query.register(preview_instant_switch, F.data.startswith('instant_sw_preview:'))
     dp.callback_query.register(confirm_instant_switch, F.data.startswith('instant_sw_confirm:'))
-    texts = get_texts(db_user.language)
