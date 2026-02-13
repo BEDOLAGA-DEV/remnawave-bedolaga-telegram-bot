@@ -125,11 +125,8 @@ async def _apply_campaign_bonus_if_needed(
 
     if result.bonus_type == 'tariff':
         traffic_text = texts.format_traffic(result.subscription_traffic_gb or 0)
-        return texts.t(
-            'CAMPAIGN_BONUS_TARIFF',
-            "🎁 Вам выдан тариф '{tariff_name}' на {days} дней!\n📊 Трафик: {traffic}\n📱 Устройств: {devices}",
-        ).format(
-            tariff_name=result.tariff_name or 'Подарочный',
+        return texts.t('CAMPAIGN_BONUS_TARIFF').format(
+            tariff_name=result.tariff_name or texts.t('CAMPAIGN_BONUS_DEFAULT_TARIFF_NAME'),
             days=result.tariff_duration_days,
             traffic=traffic_text,
             devices=result.subscription_device_limit,
@@ -169,7 +166,7 @@ async def handle_potential_referral_code(message: types.Message, state: FSMConte
         data['referrer_id'] = referrer.id
         await state.set_data(data)
 
-        await message.answer(texts.t('REFERRAL_CODE_ACCEPTED', '✅ Реферальный код принят!'))
+        await message.answer(texts.t('REFERRAL_CODE_ACCEPTED'))
         logger.info(f'✅ Реферальный код {potential_code} применен для пользователя {message.from_user.id}')
 
         if current_state != RegistrationStates.waiting_for_referral_code.state:
@@ -196,10 +193,7 @@ async def handle_potential_referral_code(message: types.Message, state: FSMConte
         await state.set_data(data)
 
         await message.answer(
-            texts.t(
-                'PROMOCODE_ACCEPTED_WILL_ACTIVATE',
-                '✅ Промокод принят! Он будет активирован после завершения регистрации.',
-            )
+            texts.t('PROMOCODE_ACCEPTED_WILL_ACTIVATE')
         )
         logger.info(f'✅ Промокод {potential_code} сохранен для активации для пользователя {message.from_user.id}')
 
@@ -218,18 +212,13 @@ async def handle_potential_referral_code(message: types.Message, state: FSMConte
 
     # Ни реферальный код, ни промокод не найдены
     await message.answer(
-        texts.t(
-            'REFERRAL_OR_PROMO_CODE_INVALID_HELP',
-            '❌ Неверный реферальный код или промокод.\n\n'
-            '💡 Если у вас есть реферальный код или промокод, убедитесь что он введен правильно.\n'
-            '⏭️ Для продолжения регистрации без кода используйте команду /start',
-        )
+        texts.t('REFERRAL_OR_PROMO_CODE_INVALID_HELP')
     )
     return True
 
 
-def _get_language_prompt_text() -> str:
-    return '🌐 Выберите язык / Choose your language:'
+def _get_language_prompt_text(language: str = DEFAULT_LANGUAGE) -> str:
+    return get_texts(language).t('LANGUAGE_SELECT_PROMPT_INITIAL')
 
 
 async def _prompt_language_selection(message: types.Message, state: FSMContext) -> None:
@@ -279,10 +268,7 @@ async def _continue_registration_after_language(
         else:
             try:
                 await target_message.answer(
-                    texts.t(
-                        'REFERRAL_CODE_QUESTION',
-                        "У вас есть реферальный код? Введите его или нажмите 'Пропустить'",
-                    ),
+                    texts.t('REFERRAL_CODE_QUESTION'),
                     reply_markup=get_referral_code_keyboard(language),
                 )
                 await state.set_state(RegistrationStates.waiting_for_referral_code)
@@ -423,19 +409,13 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
 
         if referral_code and not user.referred_by_id:
             await message.answer(
-                texts.t(
-                    'ALREADY_REGISTERED_REFERRAL',
-                    'ℹ️ Вы уже зарегистрированы в системе. Реферальная ссылка не может быть применена.',
-                )
+                texts.t('ALREADY_REGISTERED_REFERRAL')
             )
 
         if campaign:
             try:
                 await message.answer(
-                    texts.t(
-                        'CAMPAIGN_EXISTING_USERL',
-                        'ℹ️ Эта рекламная ссылка доступна только новым пользователям.',
-                    )
+                    texts.t('CAMPAIGN_EXISTING_USERL')
                 )
             except Exception as e:
                 logger.error(f'Ошибка отправки уведомления о рекламной кампании: {e}')
@@ -582,17 +562,11 @@ async def process_language_selection(
 
         try:
             await callback.message.edit_text(
-                texts.t(
-                    'LANGUAGE_SELECTION_DISABLED',
-                    '⚙️ Выбор языка временно недоступен. Используем язык по умолчанию.',
-                )
+                texts.t('LANGUAGE_SELECTION_DISABLED')
             )
         except Exception:
             await callback.message.answer(
-                texts.t(
-                    'LANGUAGE_SELECTION_DISABLED',
-                    '⚙️ Выбор языка временно недоступен. Используем язык по умолчанию.',
-                )
+                texts.t('LANGUAGE_SELECTION_DISABLED')
             )
 
         await callback.answer()
@@ -631,12 +605,12 @@ async def process_language_selection(
 
     try:
         await callback.message.edit_text(
-            texts.t('LANGUAGE_SELECTED', '🌐 Язык интерфейса обновлен.'),
+            texts.t('LANGUAGE_SELECTED'),
         )
     except Exception as error:
         logger.warning(f'⚠️ LANGUAGE: Не удалось обновить сообщение выбора языка: {error}')
         await callback.message.answer(
-            texts.t('LANGUAGE_SELECTED', '🌐 Язык интерфейса обновлен.'),
+            texts.t('LANGUAGE_SELECTED'),
         )
 
     await callback.answer()
@@ -722,10 +696,7 @@ async def _continue_registration_after_rules(
     else:
         try:
             await callback.message.edit_text(
-                texts.t(
-                    'REFERRAL_CODE_QUESTION',
-                    "У вас есть реферальный код? Введите его или нажмите 'Пропустить'",
-                ),
+                texts.t('REFERRAL_CODE_QUESTION'),
                 reply_markup=get_referral_code_keyboard(language),
             )
             await state.set_state(RegistrationStates.waiting_for_referral_code)
@@ -769,10 +740,7 @@ async def process_rules_accept(callback: types.CallbackQuery, state: FSMContext,
         else:
             logger.info(f'❌ Правила отклонены пользователем {callback.from_user.id}')
 
-            rules_required_text = texts.t(
-                'RULES_REQUIRED',
-                'Для использования бота необходимо принять правила сервиса.',
-            )
+            rules_required_text = texts.t('RULES_REQUIRED')
 
             try:
                 await callback.message.edit_text(rules_required_text, reply_markup=get_rules_keyboard(language))
@@ -787,7 +755,7 @@ async def process_rules_accept(callback: types.CallbackQuery, state: FSMContext,
     except Exception as e:
         logger.error(f'❌ Ошибка обработки правил: {e}', exc_info=True)
         await callback.answer(
-            texts.t('ERROR_TRY_AGAIN', '❌ Произошла ошибка. Попробуйте еще раз.'),
+            texts.t('ERROR_TRY_AGAIN'),
             show_alert=True,
         )
 
@@ -796,10 +764,7 @@ async def process_rules_accept(callback: types.CallbackQuery, state: FSMContext,
             language = data.get('language', language)
             texts = get_texts(language)
             await callback.message.answer(
-                texts.t(
-                    'ERROR_RULES_RETRY',
-                    'Произошла ошибка. Попробуйте принять правила еще раз:',
-                ),
+                texts.t('ERROR_RULES_RETRY'),
                 reply_markup=get_rules_keyboard(language),
             )
             await state.set_state(RegistrationStates.waiting_for_rules_accept)
@@ -835,10 +800,7 @@ async def process_privacy_policy_accept(callback: types.CallbackQuery, state: FS
                 logger.warning(f'⚠️ Не удалось удалить сообщение с политикой конфиденциальности: {e}')
                 try:
                     await callback.message.edit_text(
-                        texts.t(
-                            'PRIVACY_POLICY_ACCEPTED_PROCESSING',
-                            '✅ Политика конфиденциальности принята! Продолжаем регистрацию...',
-                        ),
+                        texts.t('PRIVACY_POLICY_ACCEPTED_PROCESSING'),
                         reply_markup=None,
                     )
                 except Exception:
@@ -866,7 +828,6 @@ async def process_privacy_policy_accept(callback: types.CallbackQuery, state: FS
                         chat_id=callback.from_user.id,
                         text=texts.t(
                             'REFERRAL_CODE_QUESTION',
-                            "У вас есть реферальный код? Введите его или нажмите 'Пропустить'",
                         ),
                         reply_markup=get_referral_code_keyboard(language),
                     )
@@ -878,10 +839,7 @@ async def process_privacy_policy_accept(callback: types.CallbackQuery, state: FS
         else:
             logger.info(f'❌ Политика конфиденциальности отклонена пользователем {callback.from_user.id}')
 
-            privacy_policy_required_text = texts.t(
-                'PRIVACY_POLICY_REQUIRED',
-                'Для использования бота необходимо принять политику конфиденциальности.',
-            )
+            privacy_policy_required_text = texts.t('PRIVACY_POLICY_REQUIRED')
 
             try:
                 await callback.message.edit_text(
@@ -901,7 +859,7 @@ async def process_privacy_policy_accept(callback: types.CallbackQuery, state: FS
     except Exception as e:
         logger.error(f'❌ Ошибка обработки политики конфиденциальности: {e}', exc_info=True)
         await callback.answer(
-            texts.t('ERROR_TRY_AGAIN', '❌ Произошла ошибка. Попробуйте еще раз.'),
+            texts.t('ERROR_TRY_AGAIN'),
             show_alert=True,
         )
 
@@ -910,10 +868,7 @@ async def process_privacy_policy_accept(callback: types.CallbackQuery, state: FS
             language = data.get('language', language)
             texts = get_texts(language)
             await callback.message.answer(
-                texts.t(
-                    'ERROR_PRIVACY_POLICY_RETRY',
-                    'Произошла ошибка. Попробуйте принять политику конфиденциальности еще раз:',
-                ),
+                texts.t('ERROR_PRIVACY_POLICY_RETRY'),
                 reply_markup=get_privacy_policy_keyboard(language),
             )
             await state.set_state(RegistrationStates.waiting_for_privacy_policy_accept)
@@ -935,7 +890,7 @@ async def process_referral_code_input(message: types.Message, state: FSMContext,
     if referrer:
         data['referrer_id'] = referrer.id
         await state.set_data(data)
-        await message.answer(texts.t('REFERRAL_CODE_ACCEPTED', '✅ Реферальный код принят!'))
+        await message.answer(texts.t('REFERRAL_CODE_ACCEPTED'))
         logger.info(f'✅ Реферальный код применен: {code}')
         await complete_registration(message, state, db)
         return
@@ -950,17 +905,14 @@ async def process_referral_code_input(message: types.Message, state: FSMContext,
         data['promocode'] = code
         await state.set_data(data)
         await message.answer(
-            texts.t(
-                'PROMOCODE_ACCEPTED_WILL_ACTIVATE',
-                '✅ Промокод принят! Он будет активирован после завершения регистрации.',
-            )
+            texts.t('PROMOCODE_ACCEPTED_WILL_ACTIVATE')
         )
         logger.info(f'✅ Промокод сохранен для активации: {code}')
         await complete_registration(message, state, db)
         return
 
     # Ни реферальный код, ни промокод не найдены
-    await message.answer(texts.t('REFERRAL_OR_PROMO_CODE_INVALID', '❌ Неверный реферальный код или промокод'))
+    await message.answer(texts.t('REFERRAL_OR_PROMO_CODE_INVALID'))
     logger.info(f'❌ Неверный код (ни реферальный, ни промокод): {code}')
     return
 
@@ -980,7 +932,7 @@ async def process_referral_code_skip(callback: types.CallbackQuery, state: FSMCo
         logger.warning(f'⚠️ Не удалось удалить сообщение с вопросом о реферальном коде: {e}')
         try:
             await callback.message.edit_text(
-                texts.t('REGISTRATION_COMPLETING', '✅ Завершаем регистрацию...'), reply_markup=None
+                texts.t('REGISTRATION_COMPLETING'), reply_markup=None
             )
         except:
             pass
@@ -1000,10 +952,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
         data = await state.get_data() or {}
         if data.get('referral_code') and not existing_user.referred_by_id:
             await callback.message.answer(
-                texts.t(
-                    'ALREADY_REGISTERED_REFERRAL',
-                    'ℹ️ Вы уже зарегистрированы в системе. Реферальная ссылка не может быть применена.',
-                )
+                texts.t('ALREADY_REGISTERED_REFERRAL')
             )
 
         await db.refresh(existing_user, ['subscription'])
@@ -1043,10 +992,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
         except Exception as e:
             logger.error(f'Ошибка при показе главного меню существующему пользователю: {e}')
             await callback.message.answer(
-                texts.t(
-                    'WELCOME_FALLBACK',
-                    'Добро пожаловать, {user_name}!',
-                ).format(user_name=existing_user.full_name)
+                texts.t('WELCOME_FALLBACK').format(user_name=existing_user.full_name)
             )
 
         await state.clear()
@@ -1229,10 +1175,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
         except Exception as e:
             logger.error(f'Ошибка при показе главного меню: {e}')
             await callback.message.answer(
-                texts.t(
-                    'WELCOME_FALLBACK',
-                    'Добро пожаловать, {user_name}!',
-                ).format(user_name=user.full_name)
+                texts.t('WELCOME_FALLBACK').format(user_name=user.full_name)
             )
 
     logger.info(f'✅ Регистрация завершена для пользователя: {user.telegram_id}')
@@ -1250,10 +1193,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
         data = await state.get_data() or {}
         if data.get('referral_code') and not existing_user.referred_by_id:
             await message.answer(
-                texts.t(
-                    'ALREADY_REGISTERED_REFERRAL',
-                    'ℹ️ Вы уже зарегистрированы в системе. Реферальная ссылка не может быть применена.',
-                )
+                texts.t('ALREADY_REGISTERED_REFERRAL')
             )
 
         await db.refresh(existing_user, ['subscription'])
@@ -1293,10 +1233,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
         except Exception as e:
             logger.error(f'Ошибка при показе главного меню существующему пользователю: {e}')
             await message.answer(
-                texts.t(
-                    'WELCOME_FALLBACK',
-                    'Добро пожаловать, {user_name}!',
-                ).format(user_name=existing_user.full_name)
+                texts.t('WELCOME_FALLBACK').format(user_name=existing_user.full_name)
             )
 
         await state.clear()
@@ -1391,7 +1328,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
             if promocode_result['success']:
                 await message.answer(
-                    texts.t('PROMOCODE_ACTIVATED_AT_REGISTRATION', '✅ Промокод активирован!\n\n{description}').format(
+                    texts.t('PROMOCODE_ACTIVATED_AT_REGISTRATION').format(
                         description=promocode_result['description']
                     )
                 )
@@ -1501,10 +1438,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
         except Exception as e:
             logger.error(f'Ошибка при показе главного меню: {e}')
             await message.answer(
-                texts.t(
-                    'WELCOME_FALLBACK',
-                    'Добро пожаловать, {user_name}!',
-                ).format(user_name=user.full_name)
+                texts.t('WELCOME_FALLBACK').format(user_name=user.full_name)
             )
 
     logger.info(f'✅ Регистрация завершена для пользователя: {user.telegram_id}')
@@ -1512,7 +1446,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
 def _get_subscription_status(user, texts):
     if not user or not hasattr(user, 'subscription') or not user.subscription:
-        return texts.t('SUBSCRIPTION_NONE', 'Нет активной подписки')
+        return texts.t('SUBSCRIPTION_NONE')
 
     subscription = user.subscription
     actual_status = getattr(subscription, 'actual_status', None)
@@ -1524,67 +1458,43 @@ def _get_subscription_status(user, texts):
     current_time = datetime.utcnow()
 
     if actual_status == 'disabled':
-        return texts.t('SUB_STATUS_DISABLED', '⚫ Отключена')
+        return texts.t('SUB_STATUS_DISABLED')
 
     if actual_status == 'pending':
-        return texts.t('SUB_STATUS_PENDING', '⏳ Ожидает активации')
+        return texts.t('SUB_STATUS_PENDING')
 
     if actual_status == 'expired' or (end_date and end_date <= current_time):
         if end_date_display:
-            return texts.t(
-                'SUB_STATUS_EXPIRED',
-                '🔴 Истекла\n📅 {end_date}',
-            ).format(end_date=end_date_display)
-        return texts.t('SUBSCRIPTION_STATUS_EXPIRED', '🔴 Истекла')
+            return texts.t('SUB_STATUS_EXPIRED').format(end_date=end_date_display)
+        return texts.t('SUBSCRIPTION_STATUS_EXPIRED')
 
     if not end_date:
-        return texts.t('SUBSCRIPTION_ACTIVE', '✅ Активна')
+        return texts.t('SUBSCRIPTION_ACTIVE')
 
     days_left = (end_date - current_time).days
     is_trial = actual_status == 'trial' or getattr(subscription, 'is_trial', False)
 
     if actual_status not in {'active', 'trial', None} and not is_trial:
-        return texts.t('SUBSCRIPTION_STATUS_UNKNOWN', '❓ Статус неизвестен')
+        return texts.t('SUBSCRIPTION_STATUS_UNKNOWN')
 
     if is_trial:
         if days_left > 1 and end_date_display:
-            return texts.t(
-                'SUB_STATUS_TRIAL_ACTIVE',
-                '🎁 Тестовая подписка\n📅 до {end_date} ({days} дн.)',
-            ).format(end_date=end_date_display, days=days_left)
+            return texts.t('SUB_STATUS_TRIAL_ACTIVE').format(end_date=end_date_display, days=days_left)
         if days_left == 1:
-            return texts.t(
-                'SUB_STATUS_TRIAL_TOMORROW',
-                '🎁 Тестовая подписка\n⚠️ истекает завтра!',
-            )
-        return texts.t(
-            'SUB_STATUS_TRIAL_TODAY',
-            '🎁 Тестовая подписка\n⚠️ истекает сегодня!',
-        )
+            return texts.t('SUB_STATUS_TRIAL_TOMORROW')
+        return texts.t('SUB_STATUS_TRIAL_TODAY')
 
     if days_left > 7 and end_date_display:
-        return texts.t(
-            'SUB_STATUS_ACTIVE_LONG',
-            '💎 Активна\n📅 до {end_date} ({days} дн.)',
-        ).format(end_date=end_date_display, days=days_left)
+        return texts.t('SUB_STATUS_ACTIVE_LONG').format(end_date=end_date_display, days=days_left)
     if days_left > 1:
-        return texts.t(
-            'SUB_STATUS_ACTIVE_FEW_DAYS',
-            '💎 Активна\n⚠️ истекает через {days} дн.',
-        ).format(days=days_left)
+        return texts.t('SUB_STATUS_ACTIVE_FEW_DAYS').format(days=days_left)
     if days_left == 1:
-        return texts.t(
-            'SUB_STATUS_ACTIVE_TOMORROW',
-            '💎 Активна\n⚠️ истекает завтра!',
-        )
-    return texts.t(
-        'SUB_STATUS_ACTIVE_TODAY',
-        '💎 Активна\n⚠️ истекает сегодня!',
-    )
+        return texts.t('SUB_STATUS_ACTIVE_TOMORROW')
+    return texts.t('SUB_STATUS_ACTIVE_TODAY')
 
 
 def _get_subscription_status_simple(texts):
-    return texts.t('SUBSCRIPTION_NONE', 'Нет активной подписки')
+    return texts.t('SUBSCRIPTION_NONE')
 
 
 def _insert_random_message(base_text: str, random_message: str, action_prompt: str) -> str:
@@ -1607,7 +1517,7 @@ def get_referral_code_keyboard(language: str):
     texts = get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=texts.t('REFERRAL_CODE_SKIP', '⭐️ Пропустить'), callback_data='referral_skip')]
+            [InlineKeyboardButton(text=texts.t('REFERRAL_CODE_SKIP'), callback_data='referral_skip')]
         ]
     )
 
@@ -1619,7 +1529,7 @@ async def get_main_menu_text(user, texts, db: AsyncSession):
         user_name=html.escape(user.full_name or ''), subscription_status=_get_subscription_status(user, texts)
     )
 
-    action_prompt = texts.t('MAIN_MENU_ACTION_PROMPT', 'Выберите действие:')
+    action_prompt = texts.t('MAIN_MENU_ACTION_PROMPT')
 
     info_sections: list[str] = []
 
@@ -1668,7 +1578,7 @@ async def get_main_menu_text_simple(user_name, texts, db: AsyncSession):
         user_name=html.escape(user_name or ''), subscription_status=_get_subscription_status_simple(texts)
     )
 
-    action_prompt = texts.t('MAIN_MENU_ACTION_PROMPT', 'Выберите действие:')
+    action_prompt = texts.t('MAIN_MENU_ACTION_PROMPT')
 
     try:
         random_message = await get_random_active_message(db)
@@ -1734,7 +1644,7 @@ async def required_sub_channel_check(
                 pending_start_payload,
             )
             return await query.answer(
-                texts.t('CHANNEL_SUBSCRIBE_REQUIRED_ALERT', '❌ Вы не подписались на канал!'),
+                texts.t('CHANNEL_SUBSCRIBE_REQUIRED_ALERT'),
                 show_alert=True,
             )
 
@@ -1809,7 +1719,7 @@ async def required_sub_channel_check(
                     )
 
         await query.answer(
-            texts.t('CHANNEL_SUBSCRIBE_THANKS', '✅ Спасибо за подписку'),
+            texts.t('CHANNEL_SUBSCRIBE_THANKS'),
             show_alert=True,
         )
 
@@ -1973,7 +1883,6 @@ async def required_sub_channel_check(
                         chat_id=query.from_user.id,
                         text=texts.t(
                             'REFERRAL_CODE_QUESTION',
-                            "У вас есть реферальный код? Введите его или нажмите 'Пропустить'",
                         ),
                         reply_markup=get_referral_code_keyboard(language),
                     )
