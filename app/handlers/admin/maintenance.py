@@ -23,7 +23,7 @@ class MaintenanceStates(StatesGroup):
 @admin_required
 @error_handler
 async def show_maintenance_panel(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
-    get_texts(db_user.language)
+    texts = get_texts(db_user.language)
 
     status_info = maintenance_service.get_status_info()
 
@@ -34,52 +34,62 @@ async def show_maintenance_panel(callback: types.CallbackQuery, db_user: User, d
         panel_status = await rw_service.get_panel_status_summary()
     except Exception as e:
         logger.error(f'Ошибка получения статуса панели: {e}')
-        panel_status = {'description': '❓ Не удалось проверить', 'has_issues': True}
+        panel_status = {'description': texts.t('ADMIN_MAINTENANCE_PANEL_STATUS_UNKNOWN'), 'has_issues': True}
 
     status_emoji = '🔧' if status_info['is_active'] else '✅'
-    status_text = 'Включен' if status_info['is_active'] else 'Выключен'
+    status_text = (
+        texts.t('ADMIN_MAINTENANCE_STATUS_ENABLED')
+        if status_info['is_active']
+        else texts.t('ADMIN_MAINTENANCE_STATUS_DISABLED')
+    )
 
     api_emoji = '✅' if status_info['api_status'] else '❌'
-    api_text = 'Доступно' if status_info['api_status'] else 'Недоступно'
+    api_text = texts.t('ADMIN_MAINTENANCE_API_AVAILABLE') if status_info['api_status'] else texts.t(
+        'ADMIN_MAINTENANCE_API_UNAVAILABLE'
+    )
 
     monitoring_emoji = '🔄' if status_info['monitoring_active'] else '⏹️'
-    monitoring_text = 'Запущен' if status_info['monitoring_active'] else 'Остановлен'
+    monitoring_text = (
+        texts.t('ADMIN_MAINTENANCE_MONITORING_RUNNING')
+        if status_info['monitoring_active']
+        else texts.t('ADMIN_MAINTENANCE_MONITORING_STOPPED')
+    )
 
     enabled_info = ''
     if status_info['is_active'] and status_info['enabled_at']:
         enabled_time = status_info['enabled_at'].strftime('%d.%m.%Y %H:%M:%S')
-        enabled_info = f'\n📅 <b>Включен:</b> {enabled_time}'
+        enabled_info = texts.t('ADMIN_MAINTENANCE_ENABLED_AT_LINE').format(time=enabled_time)
         if status_info['reason']:
-            enabled_info += f'\n📝 <b>Причина:</b> {status_info["reason"]}'
+            enabled_info += texts.t('ADMIN_MAINTENANCE_REASON_LINE').format(reason=status_info['reason'])
 
     last_check_info = ''
     if status_info['last_check']:
         last_check_time = status_info['last_check'].strftime('%H:%M:%S')
-        last_check_info = f'\n🕐 <b>Последняя проверка:</b> {last_check_time}'
+        last_check_info = texts.t('ADMIN_MAINTENANCE_LAST_CHECK_LINE').format(time=last_check_time)
 
     failures_info = ''
     if status_info['consecutive_failures'] > 0:
-        failures_info = f'\n⚠️ <b>Неудачных проверок подряд:</b> {status_info["consecutive_failures"]}'
+        failures_info = texts.t('ADMIN_MAINTENANCE_FAILURES_LINE').format(count=status_info['consecutive_failures'])
 
-    panel_info = f'\n🌐 <b>Панель Remnawave:</b> {panel_status["description"]}'
+    panel_info = texts.t('ADMIN_MAINTENANCE_PANEL_INFO_LINE').format(description=panel_status['description'])
     if panel_status.get('response_time'):
-        panel_info += f'\n⚡ <b>Время отклика:</b> {panel_status["response_time"]}с'
+        panel_info += texts.t('ADMIN_MAINTENANCE_RESPONSE_TIME_LINE').format(seconds=panel_status['response_time'])
 
     message_text = f"""
-🔧 <b>Управление техническими работами</b>
+{texts.t('ADMIN_MAINTENANCE_TITLE')}
 
-{status_emoji} <b>Режим техработ:</b> {status_text}
-{api_emoji} <b>API Remnawave:</b> {api_text}
-{monitoring_emoji} <b>Мониторинг:</b> {monitoring_text}
-🛠️ <b>Автозапуск мониторинга:</b> {'Включен' if status_info['monitoring_configured'] else 'Отключен'}
-⏱️ <b>Интервал проверки:</b> {status_info['check_interval']}с
-🤖 <b>Автовключение:</b> {'Включено' if status_info['auto_enable_configured'] else 'Отключено'}
+{status_emoji} <b>{texts.t('ADMIN_MAINTENANCE_MODE_LABEL')}:</b> {status_text}
+{api_emoji} <b>{texts.t('ADMIN_MAINTENANCE_API_LABEL')}:</b> {api_text}
+{monitoring_emoji} <b>{texts.t('ADMIN_MAINTENANCE_MONITORING_LABEL')}:</b> {monitoring_text}
+🛠️ <b>{texts.t('ADMIN_MAINTENANCE_MONITORING_AUTOSTART_LABEL')}:</b> {texts.t('ADMIN_MAINTENANCE_STATUS_ENABLED') if status_info['monitoring_configured'] else texts.t('ADMIN_MAINTENANCE_STATUS_DISABLED')}
+⏱️ <b>{texts.t('ADMIN_MAINTENANCE_CHECK_INTERVAL_LABEL')}:</b> {status_info['check_interval']}{texts.t('ADMIN_MAINTENANCE_SECONDS_SUFFIX')}
+🤖 <b>{texts.t('ADMIN_MAINTENANCE_AUTO_ENABLE_LABEL')}:</b> {texts.t('ADMIN_MAINTENANCE_AUTO_ENABLE_ON') if status_info['auto_enable_configured'] else texts.t('ADMIN_MAINTENANCE_AUTO_ENABLE_OFF')}
 {panel_info}
 {enabled_info}
 {last_check_info}
 {failures_info}
 
-ℹ️ <i>В режиме техработ обычные пользователи не могут использовать бота. Администраторы имеют полный доступ.</i>
+ℹ️ <i>{texts.t('ADMIN_MAINTENANCE_INFO_NOTE')}</i>
 """
 
     await callback.message.edit_text(
@@ -97,20 +107,21 @@ async def show_maintenance_panel(callback: types.CallbackQuery, db_user: User, d
 @admin_required
 @error_handler
 async def toggle_maintenance_mode(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    texts = get_texts(db_user.language)
     is_active = maintenance_service.is_maintenance_active()
 
     if is_active:
         success = await maintenance_service.disable_maintenance()
         if success:
-            await callback.answer('Режим техработ выключен', show_alert=True)
+            await callback.answer(texts.t('ADMIN_MAINTENANCE_DISABLED_ALERT'), show_alert=True)
         else:
-            await callback.answer('Ошибка выключения режима техработ', show_alert=True)
+            await callback.answer(texts.t('ADMIN_MAINTENANCE_DISABLE_ERROR_ALERT'), show_alert=True)
     else:
         await state.set_state(MaintenanceStates.waiting_for_reason)
         await callback.message.edit_text(
-            '🔧 <b>Включение режима техработ</b>\n\nВведите причину включения техработ или отправьте /skip для пропуска:',
+            texts.t('ADMIN_MAINTENANCE_ENABLE_PROMPT'),
             reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='maintenance_panel')]]
+                inline_keyboard=[[types.InlineKeyboardButton(text=texts.t('ADMIN_CANCEL'), callback_data='maintenance_panel')]]
             ),
         )
 
@@ -120,6 +131,7 @@ async def toggle_maintenance_mode(callback: types.CallbackQuery, db_user: User, 
 @admin_required
 @error_handler
 async def process_maintenance_reason(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
+    texts = get_texts(db_user.language)
     current_state = await state.get_state()
 
     if current_state != MaintenanceStates.waiting_for_reason:
@@ -132,20 +144,20 @@ async def process_maintenance_reason(message: types.Message, db_user: User, db: 
     success = await maintenance_service.enable_maintenance(reason=reason, auto=False)
 
     if success:
-        response_text = 'Режим техработ включен'
+        response_text = texts.t('ADMIN_MAINTENANCE_ENABLED')
         if reason:
-            response_text += f'\nПричина: {reason}'
+            response_text += texts.t('ADMIN_MAINTENANCE_REASON_LINE_PLAIN').format(reason=reason)
     else:
-        response_text = 'Ошибка включения режима техработ'
+        response_text = texts.t('ADMIN_MAINTENANCE_ENABLE_ERROR')
 
     await message.answer(response_text)
     await state.clear()
 
     maintenance_service.get_status_info()
     await message.answer(
-        'Вернуться к панели управления техработами:',
+        texts.t('ADMIN_MAINTENANCE_BACK_TO_PANEL_PROMPT'),
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='🔧 Панель техработ', callback_data='maintenance_panel')]]
+            inline_keyboard=[[types.InlineKeyboardButton(text=texts.t('ADMIN_MAINTENANCE_PANEL_BUTTON'), callback_data='maintenance_panel')]]
         ),
     )
 
@@ -153,14 +165,19 @@ async def process_maintenance_reason(message: types.Message, db_user: User, db: 
 @admin_required
 @error_handler
 async def toggle_monitoring(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     status_info = maintenance_service.get_status_info()
 
     if status_info['monitoring_active']:
         success = await maintenance_service.stop_monitoring()
-        message = 'Мониторинг остановлен' if success else 'Ошибка остановки мониторинга'
+        message = texts.t('ADMIN_MAINTENANCE_MONITORING_STOPPED_ALERT') if success else texts.t(
+            'ADMIN_MAINTENANCE_MONITORING_STOP_ERROR_ALERT'
+        )
     else:
         success = await maintenance_service.start_monitoring()
-        message = 'Мониторинг запущен' if success else 'Ошибка запуска мониторинга'
+        message = texts.t('ADMIN_MAINTENANCE_MONITORING_STARTED_ALERT') if success else texts.t(
+            'ADMIN_MAINTENANCE_MONITORING_START_ERROR_ALERT'
+        )
 
     await callback.answer(message, show_alert=True)
 
@@ -170,15 +187,22 @@ async def toggle_monitoring(callback: types.CallbackQuery, db_user: User, db: As
 @admin_required
 @error_handler
 async def force_api_check(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    await callback.answer('Проверка API...', show_alert=False)
+    texts = get_texts(db_user.language)
+    await callback.answer(texts.t('ADMIN_MAINTENANCE_API_CHECKING_ALERT'), show_alert=False)
 
     check_result = await maintenance_service.force_api_check()
 
     if check_result['success']:
-        status_text = 'доступно' if check_result['api_available'] else 'недоступно'
-        message = f'API {status_text}\nВремя ответа: {check_result["response_time"]}с'
+        status_text = texts.t('ADMIN_MAINTENANCE_API_AVAILABLE_PLAIN') if check_result['api_available'] else texts.t(
+            'ADMIN_MAINTENANCE_API_UNAVAILABLE_PLAIN'
+        )
+        message = texts.t('ADMIN_MAINTENANCE_API_CHECK_RESULT').format(
+            status=status_text, response_time=check_result['response_time']
+        )
     else:
-        message = f'Ошибка проверки: {check_result.get("error", "Неизвестная ошибка")}'
+        message = texts.t('ADMIN_MAINTENANCE_API_CHECK_ERROR').format(
+            error=check_result.get('error', texts.t('ADMIN_MAINTENANCE_UNKNOWN_ERROR'))
+        )
 
     await callback.message.answer(message)
 
@@ -188,7 +212,8 @@ async def force_api_check(callback: types.CallbackQuery, db_user: User, db: Asyn
 @admin_required
 @error_handler
 async def check_panel_status(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    await callback.answer('Проверка статуса панели...', show_alert=False)
+    texts = get_texts(db_user.language)
+    await callback.answer(texts.t('ADMIN_MAINTENANCE_PANEL_CHECKING_ALERT'), show_alert=False)
 
     try:
         from app.services.remnawave_service import RemnaWaveService
@@ -198,61 +223,66 @@ async def check_panel_status(callback: types.CallbackQuery, db_user: User, db: A
         status_data = await rw_service.check_panel_health()
 
         status_text = {
-            'online': '🟢 Панель работает нормально',
-            'offline': '🔴 Панель недоступна',
-            'degraded': '🟡 Панель работает со сбоями',
-        }.get(status_data['status'], '❓ Статус неизвестен')
+            'online': texts.t('ADMIN_MAINTENANCE_PANEL_ONLINE'),
+            'offline': texts.t('ADMIN_MAINTENANCE_PANEL_OFFLINE'),
+            'degraded': texts.t('ADMIN_MAINTENANCE_PANEL_DEGRADED'),
+        }.get(status_data['status'], texts.t('ADMIN_MAINTENANCE_PANEL_UNKNOWN'))
 
         message_parts = [
-            '🌐 <b>Статус панели Remnawave</b>\n',
+            texts.t('ADMIN_MAINTENANCE_PANEL_STATUS_TITLE'),
             f'{status_text}',
-            f'⚡ Время отклика: {status_data.get("response_time", 0)}с',
-            f'👥 Пользователей онлайн: {status_data.get("users_online", 0)}',
-            f'🖥️ Нод онлайн: {status_data.get("nodes_online", 0)}/{status_data.get("total_nodes", 0)}',
+            texts.t('ADMIN_MAINTENANCE_RESPONSE_TIME_SHORT').format(seconds=status_data.get('response_time', 0)),
+            texts.t('ADMIN_MAINTENANCE_USERS_ONLINE_LINE').format(count=status_data.get('users_online', 0)),
+            texts.t('ADMIN_MAINTENANCE_NODES_ONLINE_LINE').format(
+                online=status_data.get('nodes_online', 0), total=status_data.get('total_nodes', 0)
+            ),
         ]
 
         attempts_used = status_data.get('attempts_used')
         if attempts_used:
-            message_parts.append(f'🔁 Попыток проверки: {attempts_used}')
+            message_parts.append(texts.t('ADMIN_MAINTENANCE_ATTEMPTS_USED_LINE').format(count=attempts_used))
 
         if status_data.get('api_error'):
-            message_parts.append(f'❌ Ошибка: {status_data["api_error"][:100]}')
+            message_parts.append(texts.t('ADMIN_MAINTENANCE_ERROR_LINE').format(error=status_data['api_error'][:100]))
 
         message = '\n'.join(message_parts)
 
         await callback.message.answer(message, parse_mode='HTML')
 
     except Exception as e:
-        await callback.message.answer(f'❌ Ошибка проверки статуса: {e!s}')
+        await callback.message.answer(texts.t('ADMIN_MAINTENANCE_STATUS_CHECK_ERROR').format(error=str(e)))
 
 
 @admin_required
 @error_handler
 async def send_manual_notification(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    texts = get_texts(db_user.language)
     await state.set_state(MaintenanceStates.waiting_for_notification_message)
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                types.InlineKeyboardButton(text='🟢 Онлайн', callback_data='manual_notify_online'),
-                types.InlineKeyboardButton(text='🔴 Офлайн', callback_data='manual_notify_offline'),
+                types.InlineKeyboardButton(text=texts.t('ADMIN_MAINTENANCE_NOTIFY_ONLINE_BUTTON'), callback_data='manual_notify_online'),
+                types.InlineKeyboardButton(text=texts.t('ADMIN_MAINTENANCE_NOTIFY_OFFLINE_BUTTON'), callback_data='manual_notify_offline'),
             ],
             [
-                types.InlineKeyboardButton(text='🟡 Проблемы', callback_data='manual_notify_degraded'),
-                types.InlineKeyboardButton(text='🔧 Обслуживание', callback_data='manual_notify_maintenance'),
+                types.InlineKeyboardButton(text=texts.t('ADMIN_MAINTENANCE_NOTIFY_DEGRADED_BUTTON'), callback_data='manual_notify_degraded'),
+                types.InlineKeyboardButton(text=texts.t('ADMIN_MAINTENANCE_NOTIFY_MAINTENANCE_BUTTON'), callback_data='manual_notify_maintenance'),
             ],
-            [types.InlineKeyboardButton(text='❌ Отмена', callback_data='maintenance_panel')],
+            [types.InlineKeyboardButton(text=texts.t('ADMIN_CANCEL'), callback_data='maintenance_panel')],
         ]
     )
 
     await callback.message.edit_text(
-        '📢 <b>Ручная отправка уведомления</b>\n\nВыберите статус для уведомления:', reply_markup=keyboard
+        texts.t('ADMIN_MAINTENANCE_MANUAL_NOTIFY_PROMPT'),
+        reply_markup=keyboard,
     )
 
 
 @admin_required
 @error_handler
 async def handle_manual_notification(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    texts = get_texts(db_user.language)
     status_map = {
         'manual_notify_online': 'online',
         'manual_notify_offline': 'offline',
@@ -262,23 +292,22 @@ async def handle_manual_notification(callback: types.CallbackQuery, db_user: Use
 
     status = status_map.get(callback.data)
     if not status:
-        await callback.answer('Неизвестный статус')
+        await callback.answer(texts.t('ADMIN_MAINTENANCE_UNKNOWN_STATUS'))
         return
 
     await state.update_data(notification_status=status)
 
     status_names = {
-        'online': '🟢 Онлайн',
-        'offline': '🔴 Офлайн',
-        'degraded': '🟡 Проблемы',
-        'maintenance': '🔧 Обслуживание',
+        'online': texts.t('ADMIN_MAINTENANCE_NOTIFY_ONLINE_BUTTON'),
+        'offline': texts.t('ADMIN_MAINTENANCE_NOTIFY_OFFLINE_BUTTON'),
+        'degraded': texts.t('ADMIN_MAINTENANCE_NOTIFY_DEGRADED_BUTTON'),
+        'maintenance': texts.t('ADMIN_MAINTENANCE_NOTIFY_MAINTENANCE_BUTTON'),
     }
 
     await callback.message.edit_text(
-        f'📢 <b>Отправка уведомления: {status_names[status]}</b>\n\n'
-        f'Введите сообщение для уведомления или отправьте /skip для отправки без дополнительного текста:',
+        texts.t('ADMIN_MAINTENANCE_MANUAL_NOTIFY_MESSAGE_PROMPT').format(status=status_names[status]),
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='maintenance_panel')]]
+            inline_keyboard=[[types.InlineKeyboardButton(text=texts.t('ADMIN_CANCEL'), callback_data='maintenance_panel')]]
         ),
     )
 
@@ -286,6 +315,7 @@ async def handle_manual_notification(callback: types.CallbackQuery, db_user: Use
 @admin_required
 @error_handler
 async def process_notification_message(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
+    texts = get_texts(db_user.language)
     current_state = await state.get_state()
 
     if current_state != MaintenanceStates.waiting_for_notification_message:
@@ -295,7 +325,7 @@ async def process_notification_message(message: types.Message, db_user: User, db
     status = data.get('notification_status')
 
     if not status:
-        await message.answer('Ошибка: статус не выбран')
+        await message.answer(texts.t('ADMIN_MAINTENANCE_NOTIFY_STATUS_MISSING'))
         await state.clear()
         return
 
@@ -311,20 +341,20 @@ async def process_notification_message(message: types.Message, db_user: User, db
         success = await rw_service.send_manual_status_notification(message.bot, status, notification_message)
 
         if success:
-            await message.answer('✅ Уведомление отправлено')
+            await message.answer(texts.t('ADMIN_MAINTENANCE_NOTIFY_SENT'))
         else:
-            await message.answer('❌ Ошибка отправки уведомления')
+            await message.answer(texts.t('ADMIN_MAINTENANCE_NOTIFY_SEND_ERROR'))
 
     except Exception as e:
         logger.error(f'Ошибка отправки ручного уведомления: {e}')
-        await message.answer(f'❌ Ошибка: {e!s}')
+        await message.answer(texts.t('ADMIN_MAINTENANCE_ERROR_GENERIC').format(error=str(e)))
 
     await state.clear()
 
     await message.answer(
-        'Вернуться к панели техработ:',
+        texts.t('ADMIN_MAINTENANCE_BACK_TO_PANEL_SHORT'),
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='🔧 Панель техработ', callback_data='maintenance_panel')]]
+            inline_keyboard=[[types.InlineKeyboardButton(text=texts.t('ADMIN_MAINTENANCE_PANEL_BUTTON'), callback_data='maintenance_panel')]]
         ),
     )
 
