@@ -43,6 +43,43 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
+def _snapshot_subscription_state(subscription: Subscription) -> dict[str, Any]:
+    return {
+        'status': subscription.status,
+        'is_trial': subscription.is_trial,
+        'start_date': subscription.start_date,
+        'end_date': subscription.end_date,
+        'traffic_limit_gb': subscription.traffic_limit_gb,
+        'traffic_used_gb': subscription.traffic_used_gb,
+        'purchased_traffic_gb': subscription.purchased_traffic_gb,
+        'traffic_reset_at': subscription.traffic_reset_at,
+        'device_limit': subscription.device_limit,
+        'connected_squads': list(subscription.connected_squads or []),
+        'subscription_url': subscription.subscription_url,
+        'subscription_crypto_link': subscription.subscription_crypto_link,
+        'remnawave_short_uuid': subscription.remnawave_short_uuid,
+        'tariff_id': subscription.tariff_id,
+        'is_daily_paused': getattr(subscription, 'is_daily_paused', False),
+        'last_daily_charge_at': getattr(subscription, 'last_daily_charge_at', None),
+        'updated_at': subscription.updated_at,
+    }
+
+
+async def _restore_subscription_state(
+    db: AsyncSession,
+    subscription_id: int,
+    snapshot: dict[str, Any],
+) -> None:
+    subscription = await _get_subscription(db, subscription_id)
+    for field, value in snapshot.items():
+        if field == 'connected_squads':
+            setattr(subscription, field, list(value or []))
+        else:
+            setattr(subscription, field, value)
+    await db.commit()
+    await db.refresh(subscription)
+
+
 def _serialize_subscription(subscription: Subscription) -> SubscriptionResponse:
     return SubscriptionResponse(
         id=subscription.id,
@@ -263,7 +300,32 @@ async def extend_subscription_endpoint(
     db: AsyncSession = Depends(get_db_session),
 ) -> SubscriptionResponse:
     subscription = await _get_subscription(db, subscription_id)
-    subscription = await extend_subscription(db, subscription, payload.days)
+    previous_state = _snapshot_subscription_state(subscription)
+
+    try:
+        subscription = await extend_subscription(db, subscription, payload.days)
+
+        subscription_service = SubscriptionService()
+        rem_user = await subscription_service.update_remnawave_user(db, subscription, reset_traffic=False)
+        if not rem_user:
+            rem_user = await subscription_service.create_remnawave_user(db, subscription, reset_traffic=False)
+        if not rem_user:
+            raise ValueError('Failed to update user in Remnawave')
+    except HTTPException:
+        raise
+    except Exception as error:
+        try:
+            await _restore_subscription_state(db, subscription_id, previous_state)
+        except Exception:
+            logger.exception(
+                'Failed to rollback subscription %s after Remnawave sync error',
+                subscription_id,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f'Failed to sync with Remnawave: {error!s}',
+        )
+
     subscription = await _get_subscription(db, subscription.id)
     return _serialize_subscription(subscription)
 
