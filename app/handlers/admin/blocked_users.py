@@ -18,6 +18,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import User
+from app.localization.texts import get_texts
 from app.services.blocked_users_service import (
     BlockCheckResult,
     BlockedUserAction,
@@ -146,12 +147,14 @@ class BlockedUsersStates(StatesGroup):
 
 def get_blocked_users_menu_keyboard(
     scan_result: dict[str, Any] | None = None,
+    language: str = 'ru',
 ) -> InlineKeyboardMarkup:
     """Клавиатура главного меню модуля."""
+    texts = get_texts(language)
     buttons = [
         [
             InlineKeyboardButton(
-                text=BlockedUsersText.BUTTON_START_SCAN.value,
+                text=texts.t('ADMIN_BLOCKED_USERS_BUTTON_START_SCAN', BlockedUsersText.BUTTON_START_SCAN.value),
                 callback_data=BlockedUsersCallback.START_SCAN.value,
             )
         ]
@@ -162,7 +165,9 @@ def get_blocked_users_menu_keyboard(
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=BlockedUsersText.BUTTON_VIEW_BLOCKED.value.format(count=blocked_count),
+                    text=texts.t(
+                        'ADMIN_BLOCKED_USERS_BUTTON_VIEW_LIST', BlockedUsersText.BUTTON_VIEW_BLOCKED.value
+                    ).format(count=blocked_count),
                     callback_data=BlockedUsersCallback.VIEW_LIST.value,
                 )
             ]
@@ -171,7 +176,9 @@ def get_blocked_users_menu_keyboard(
     buttons.append(
         [
             InlineKeyboardButton(
-                text=BlockedUsersText.BUTTON_BACK_TO_USERS.value,
+                text=texts.t(
+                    'ADMIN_BLOCKED_USERS_BUTTON_BACK_TO_USERS', BlockedUsersText.BUTTON_BACK_TO_USERS.value
+                ),
                 callback_data='admin_users',
             )
         ]
@@ -184,8 +191,10 @@ def get_blocked_list_keyboard(
     page: int = 1,
     total_pages: int = 1,
     has_blocked: bool = True,
+    language: str = 'ru',
 ) -> InlineKeyboardMarkup:
     """Клавиатура списка заблокированных пользователей."""
+    texts = get_texts(language)
     buttons = []
 
     # Пагинация
@@ -219,23 +228,32 @@ def get_blocked_list_keyboard(
             [
                 [
                     InlineKeyboardButton(
-                        text=BlockedUsersText.BUTTON_DELETE_DB.value,
+                        text=texts.t('ADMIN_BLOCKED_USERS_BUTTON_DELETE_DB', BlockedUsersText.BUTTON_DELETE_DB.value),
                         callback_data=BlockedUsersCallback.ACTION_DELETE_DB.value,
                     ),
                     InlineKeyboardButton(
-                        text=BlockedUsersText.BUTTON_DELETE_REMNAWAVE.value,
+                        text=texts.t(
+                            'ADMIN_BLOCKED_USERS_BUTTON_DELETE_REMNAWAVE',
+                            BlockedUsersText.BUTTON_DELETE_REMNAWAVE.value,
+                        ),
                         callback_data=BlockedUsersCallback.ACTION_DELETE_REMNAWAVE.value,
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=BlockedUsersText.BUTTON_DELETE_BOTH.value,
+                        text=texts.t(
+                            'ADMIN_BLOCKED_USERS_BUTTON_DELETE_BOTH',
+                            BlockedUsersText.BUTTON_DELETE_BOTH.value,
+                        ),
                         callback_data=BlockedUsersCallback.ACTION_DELETE_BOTH.value,
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=BlockedUsersText.BUTTON_MARK_BLOCKED.value,
+                        text=texts.t(
+                            'ADMIN_BLOCKED_USERS_BUTTON_MARK_BLOCKED',
+                            BlockedUsersText.BUTTON_MARK_BLOCKED.value,
+                        ),
                         callback_data=BlockedUsersCallback.ACTION_MARK.value,
                     ),
                 ],
@@ -245,7 +263,7 @@ def get_blocked_list_keyboard(
     buttons.append(
         [
             InlineKeyboardButton(
-                text=BlockedUsersText.BUTTON_BACK.value,
+                text=texts.t('ADMIN_BLOCKED_USERS_BUTTON_BACK', BlockedUsersText.BUTTON_BACK.value),
                 callback_data=BlockedUsersCallback.MENU.value,
             )
         ]
@@ -254,8 +272,9 @@ def get_blocked_list_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_confirm_keyboard(action: BlockedUserAction) -> InlineKeyboardMarkup:
+def get_confirm_keyboard(action: BlockedUserAction, language: str = 'ru') -> InlineKeyboardMarkup:
     """Клавиатура подтверждения действия."""
+    texts = get_texts(language)
     action_map = {
         BlockedUserAction.DELETE_FROM_DB: 'db',
         BlockedUserAction.DELETE_FROM_REMNAWAVE: 'rw',
@@ -267,11 +286,11 @@ def get_confirm_keyboard(action: BlockedUserAction) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=BlockedUsersText.BUTTON_CONFIRM.value,
+                    text=texts.t('ADMIN_BLOCKED_USERS_BUTTON_CONFIRM', BlockedUsersText.BUTTON_CONFIRM.value),
                     callback_data=f'{BlockedUsersCallback.CONFIRM_PREFIX.value}{action_map[action]}',
                 ),
                 InlineKeyboardButton(
-                    text=BlockedUsersText.BUTTON_CANCEL.value,
+                    text=texts.t('ADMIN_BLOCKED_USERS_BUTTON_CANCEL', BlockedUsersText.BUTTON_CANCEL.value),
                     callback_data=BlockedUsersCallback.CANCEL.value,
                 ),
             ]
@@ -292,22 +311,30 @@ async def show_blocked_users_menu(
     state: FSMContext,
 ) -> None:
     """Показывает главное меню модуля заблокированных пользователей."""
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     scan_result = data.get('blocked_users_scan_result')
 
-    text = BlockedUsersText.MENU_TITLE.value + BlockedUsersText.MENU_DESCRIPTION.value
+    text = texts.t('ADMIN_BLOCKED_USERS_MENU_TITLE', BlockedUsersText.MENU_TITLE.value) + texts.t(
+        'ADMIN_BLOCKED_USERS_MENU_DESCRIPTION',
+        BlockedUsersText.MENU_DESCRIPTION.value,
+    )
 
     if scan_result:
-        text += (
-            f'\n\n📊 <b>Последнее сканирование:</b>\n'
-            f'• Заблокированных: {scan_result.get("blocked_count", 0)}\n'
-            f'• Активных: {scan_result.get("active_users", 0)}'
+        text += texts.t(
+            'ADMIN_BLOCKED_USERS_LAST_SCAN_SUMMARY',
+            '\n\n📊 <b>Последнее сканирование:</b>\n'
+            '• Заблокированных: {blocked_count}\n'
+            '• Активных: {active_users}',
+        ).format(
+            blocked_count=scan_result.get('blocked_count', 0),
+            active_users=scan_result.get('active_users', 0),
         )
 
     await callback.message.edit_text(
         text,
         parse_mode=ParseMode.HTML,
-        reply_markup=get_blocked_users_menu_keyboard(scan_result),
+        reply_markup=get_blocked_users_menu_keyboard(scan_result, db_user.language),
     )
     await callback.answer()
 
@@ -322,11 +349,12 @@ async def start_scan(
     bot: Bot,
 ) -> None:
     """Запускает сканирование пользователей."""
+    texts = get_texts(db_user.language)
     await state.set_state(BlockedUsersStates.scanning)
 
     # Отправляем начальное сообщение
     await callback.message.edit_text(
-        BlockedUsersText.SCAN_STARTED.value,
+        texts.t('ADMIN_BLOCKED_USERS_SCAN_STARTED', BlockedUsersText.SCAN_STARTED.value),
         parse_mode=ParseMode.HTML,
     )
 
@@ -342,7 +370,7 @@ async def start_scan(
             percent = int(checked / total * 100) if total > 0 else 0
             try:
                 await callback.message.edit_text(
-                    BlockedUsersText.SCAN_PROGRESS.value.format(
+                    texts.t('ADMIN_BLOCKED_USERS_SCAN_PROGRESS', BlockedUsersText.SCAN_PROGRESS.value).format(
                         checked=checked,
                         total=total,
                         percent=percent,
@@ -388,9 +416,9 @@ async def start_scan(
 
     # Формируем итоговое сообщение
     if result.blocked_count == 0:
-        text = BlockedUsersText.SCAN_NO_BLOCKED.value
+        text = texts.t('ADMIN_BLOCKED_USERS_SCAN_NO_BLOCKED', BlockedUsersText.SCAN_NO_BLOCKED.value)
     else:
-        text = BlockedUsersText.SCAN_COMPLETE.value.format(
+        text = texts.t('ADMIN_BLOCKED_USERS_SCAN_COMPLETE', BlockedUsersText.SCAN_COMPLETE.value).format(
             total_checked=result.total_checked,
             blocked_count=result.blocked_count,
             active_users=result.active_users,
@@ -402,7 +430,7 @@ async def start_scan(
     await callback.message.edit_text(
         text,
         parse_mode=ParseMode.HTML,
-        reply_markup=get_blocked_users_menu_keyboard(scan_result_dict),
+        reply_markup=get_blocked_users_menu_keyboard(scan_result_dict, db_user.language),
     )
     await callback.answer()
 
@@ -416,11 +444,15 @@ async def show_blocked_list(
     page: int = 1,
 ) -> None:
     """Показывает список заблокированных пользователей."""
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     blocked_list: list[dict[str, Any]] = data.get('blocked_users_list', [])
 
     if not blocked_list:
-        await callback.answer('Нет заблокированных пользователей', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_BLOCKED_USERS_NO_BLOCKED_ALERT', 'Нет заблокированных пользователей'),
+            show_alert=True,
+        )
         return
 
     # Пагинация
@@ -431,12 +463,16 @@ async def show_blocked_list(
     end_idx = start_idx + per_page
     page_users = blocked_list[start_idx:end_idx]
 
-    text = BlockedUsersText.BLOCKED_LIST_TITLE.value.format(count=len(blocked_list))
+    text = texts.t('ADMIN_BLOCKED_USERS_LIST_TITLE', BlockedUsersText.BLOCKED_LIST_TITLE.value).format(
+        count=len(blocked_list)
+    )
 
     for user_data in page_users:
-        name = user_data.get('full_name') or user_data.get('username') or 'Без имени'
+        name = user_data.get('full_name') or user_data.get('username') or texts.t(
+            'ADMIN_BLOCKED_USERS_NAME_FALLBACK', 'Без имени'
+        )
         telegram_id = user_data.get('telegram_id', '?')
-        text += BlockedUsersText.BLOCKED_USER_ROW.value.format(
+        text += texts.t('ADMIN_BLOCKED_USERS_LIST_ROW', BlockedUsersText.BLOCKED_USER_ROW.value).format(
             name=name,
             telegram_id=telegram_id,
         )
@@ -444,7 +480,7 @@ async def show_blocked_list(
     await callback.message.edit_text(
         text,
         parse_mode=ParseMode.HTML,
-        reply_markup=get_blocked_list_keyboard(page, total_pages, bool(blocked_list)),
+        reply_markup=get_blocked_list_keyboard(page, total_pages, bool(blocked_list), db_user.language),
     )
     await callback.answer()
 
@@ -474,32 +510,56 @@ async def show_action_confirm(
     action: BlockedUserAction,
 ) -> None:
     """Показывает подтверждение действия."""
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     blocked_list = data.get('blocked_users_list', [])
     count = len(blocked_list)
 
     if count == 0:
-        await callback.answer('Нет пользователей для обработки', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_BLOCKED_USERS_NO_USERS_FOR_ACTION_ALERT', 'Нет пользователей для обработки'),
+            show_alert=True,
+        )
         return
 
     await state.set_state(BlockedUsersStates.confirming_action)
     await state.update_data(pending_action=action.value)
 
-    text = BlockedUsersText.CLEANUP_CONFIRM_TITLE.value
+    text = texts.t('ADMIN_BLOCKED_USERS_CLEANUP_CONFIRM_TITLE', BlockedUsersText.CLEANUP_CONFIRM_TITLE.value)
 
     if action == BlockedUserAction.DELETE_FROM_DB:
-        text += BlockedUsersText.CLEANUP_CONFIRM_DELETE_DB.value.format(count=count)
+        text += texts.t(
+            'ADMIN_BLOCKED_USERS_CLEANUP_CONFIRM_DELETE_DB',
+            BlockedUsersText.CLEANUP_CONFIRM_DELETE_DB.value,
+        ).format(
+            count=count
+        )
     elif action == BlockedUserAction.DELETE_FROM_REMNAWAVE:
-        text += BlockedUsersText.CLEANUP_CONFIRM_DELETE_REMNAWAVE.value.format(count=count)
+        text += texts.t(
+            'ADMIN_BLOCKED_USERS_CLEANUP_CONFIRM_DELETE_REMNAWAVE',
+            BlockedUsersText.CLEANUP_CONFIRM_DELETE_REMNAWAVE.value,
+        ).format(
+            count=count
+        )
     elif action == BlockedUserAction.DELETE_BOTH:
-        text += BlockedUsersText.CLEANUP_CONFIRM_DELETE_BOTH.value.format(count=count)
+        text += texts.t(
+            'ADMIN_BLOCKED_USERS_CLEANUP_CONFIRM_DELETE_BOTH',
+            BlockedUsersText.CLEANUP_CONFIRM_DELETE_BOTH.value,
+        ).format(
+            count=count
+        )
     elif action == BlockedUserAction.MARK_AS_BLOCKED:
-        text += BlockedUsersText.CLEANUP_CONFIRM_MARK.value.format(count=count)
+        text += texts.t(
+            'ADMIN_BLOCKED_USERS_CLEANUP_CONFIRM_MARK',
+            BlockedUsersText.CLEANUP_CONFIRM_MARK.value,
+        ).format(
+            count=count
+        )
 
     await callback.message.edit_text(
         text,
         parse_mode=ParseMode.HTML,
-        reply_markup=get_confirm_keyboard(action),
+        reply_markup=get_confirm_keyboard(action, db_user.language),
     )
     await callback.answer()
 
@@ -558,6 +618,7 @@ async def handle_confirm_action(
     bot: Bot,
 ) -> None:
     """Выполняет подтвержденное действие."""
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     blocked_list = data.get('blocked_users_list', [])
 
@@ -572,11 +633,17 @@ async def handle_confirm_action(
     action = action_map.get(action_code)
 
     if not action:
-        await callback.answer('Неизвестное действие', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_BLOCKED_USERS_UNKNOWN_ACTION_ALERT', 'Неизвестное действие'),
+            show_alert=True,
+        )
         return
 
     if not blocked_list:
-        await callback.answer('Нет пользователей для обработки', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_BLOCKED_USERS_NO_USERS_FOR_ACTION_ALERT', 'Нет пользователей для обработки'),
+            show_alert=True,
+        )
         return
 
     await state.set_state(BlockedUsersStates.processing_cleanup)
@@ -604,7 +671,7 @@ async def handle_confirm_action(
             last_update_time = now
             try:
                 await callback.message.edit_text(
-                    BlockedUsersText.CLEANUP_PROGRESS.value.format(
+                    texts.t('ADMIN_BLOCKED_USERS_CLEANUP_PROGRESS', BlockedUsersText.CLEANUP_PROGRESS.value).format(
                         processed=processed,
                         total=total_count,
                     ),
@@ -630,7 +697,7 @@ async def handle_confirm_action(
     await state.set_state(None)
 
     # Показываем результат
-    text = BlockedUsersText.CLEANUP_COMPLETE.value.format(
+    text = texts.t('ADMIN_BLOCKED_USERS_CLEANUP_COMPLETE', BlockedUsersText.CLEANUP_COMPLETE.value).format(
         deleted_db=result.deleted_from_db,
         deleted_remnawave=result.deleted_from_remnawave,
         marked=result.marked_as_blocked,
@@ -640,7 +707,7 @@ async def handle_confirm_action(
     await callback.message.edit_text(
         text,
         parse_mode=ParseMode.HTML,
-        reply_markup=get_blocked_users_menu_keyboard(),
+        reply_markup=get_blocked_users_menu_keyboard(language=db_user.language),
     )
 
     logger.info(
