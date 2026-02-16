@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.13.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.13.0...v3.13.1) (2026-02-16)
+
+
+### Bug Fixes
+
+* **oauth:** migrate vk login to vk id pkce flow ([15a22bf](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/15a22bfb1a3a4ba6573a4865086e4b54064ed5e8))
+
 ## [3.13.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.12.1...v3.13.0) (2026-02-16)
 
 
