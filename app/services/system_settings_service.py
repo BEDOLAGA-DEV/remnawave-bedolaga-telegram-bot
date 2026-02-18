@@ -483,6 +483,119 @@ class BotConfigurationService:
     }
 
     SETTING_HINTS: dict[str, dict[str, str]] = {
+        # ===== DATABASE =====
+        'DATABASE_MODE': {
+            'description': 'Режим базы данных: auto — автовыбор (PostgreSQL в Docker, SQLite локально), postgresql — принудительно PostgreSQL, sqlite — принудительно SQLite.',
+            'format': 'Выберите режим.',
+            'example': 'auto | postgresql | sqlite',
+        },
+        # ===== CORE =====
+        'BOT_USERNAME': {
+            'description': 'Username бота без символа @. Автоопределяется при запуске.',
+            'format': 'Строка без символа @.',
+            'example': 'my_vpn_bot',
+        },
+        'SUPPORT_USERNAME': {
+            'description': (
+                'Ссылка на поддержку. Может быть Telegram username (например, @support) '
+                'или полный URL (например, https://t.me/support_bot).'
+            ),
+            'format': 'Username с @ или полный URL.',
+            'example': '@my_support или https://t.me/support_bot',
+        },
+        # ===== SUPPORT =====
+        'SUPPORT_MENU_ENABLED': {
+            'description': 'Показывать меню поддержки в интерфейсе бота.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'SUPPORT_SYSTEM_MODE': {
+            'description': (
+                'Режим системы поддержки: tickets — только тикеты, '
+                'contact — только контакт поддержки, both — оба варианта.'
+            ),
+            'format': 'Выберите один из режимов.',
+            'example': 'tickets | contact | both',
+        },
+        'SUPPORT_TICKET_SLA_ENABLED': {
+            'description': 'Включить SLA для тикетов поддержки (напоминания о просроченных тикетах).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'SUPPORT_TICKET_SLA_MINUTES, SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES',
+        },
+        'SUPPORT_TICKET_SLA_MINUTES': {
+            'description': 'Лимит времени для ответа модераторов на тикет в минутах.',
+            'format': 'Целое число от 1 до 1440.',
+            'example': '5',
+            'warning': 'Слишком низкое значение может вызвать частые напоминания, слишком высокое — ухудшить SLA.',
+            'dependencies': 'SUPPORT_TICKET_SLA_ENABLED, SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES',
+        },
+        'SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS': {
+            'description': 'Интервал проверки SLA тикетов в секундах.',
+            'format': 'Целое число секунд (int).',
+            'example': '300',
+            'dependencies': 'SUPPORT_TICKET_SLA_ENABLED',
+        },
+        'SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES': {
+            'description': 'Кулдаун между напоминаниями SLA в минутах.',
+            'format': 'Целое число минут (int).',
+            'example': '30',
+            'dependencies': 'SUPPORT_TICKET_SLA_ENABLED',
+        },
+        # ===== LOCALIZATION =====
+        'DEFAULT_LANGUAGE': {
+            'description': 'Язык по умолчанию для новых пользователей.',
+            'format': 'Код языка (ru, en, ua, zh, fa).',
+            'example': 'ru',
+        },
+        'AVAILABLE_LANGUAGES': {
+            'description': 'Доступные языки интерфейса через запятую.',
+            'format': 'Коды языков через запятую.',
+            'example': 'ru,en,ua,zh,fa',
+        },
+        'LANGUAGE_SELECTION_ENABLED': {
+            'description': 'Включить выбор языка при старте и кнопку в меню.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        # ===== CHANNEL =====
+        'CHANNEL_SUB_ID': {
+            'description': 'ID канала для проверки подписки. Для закрытых каналов используйте префикс -100.',
+            'format': 'ID канала (число).',
+            'example': '-1001234567890',
+        },
+        'CHANNEL_LINK': {
+            'description': 'Ссылка на канал для кнопки подписки.',
+            'format': 'URL или t.me ссылка.',
+            'example': 'https://t.me/my_channel',
+        },
+        'CHANNEL_IS_REQUIRED_SUB': {
+            'description': 'Требовать обязательную подписку на канал для использования бота.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'warning': 'При включении пользователи без подписки не смогут использовать бота.',
+            'dependencies': 'CHANNEL_SUB_ID, CHANNEL_LINK',
+        },
+        'CHANNEL_DISABLE_TRIAL_ON_UNSUBSCRIBE': {
+            'description': 'Отключать триальные подписки при отписке от канала.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'CHANNEL_IS_REQUIRED_SUB',
+        },
+        'CHANNEL_REQUIRED_FOR_ALL': {
+            'description': 'Требовать подписку на канал для ВСЕХ пользователей (включая платных).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'warning': 'При включении даже платные пользователи должны быть подписаны на канал.',
+            'dependencies': 'CHANNEL_IS_REQUIRED_SUB',
+        },
+        # ===== TIMEZONE =====
+        'TIMEZONE': {
+            'description': 'Часовой пояс для отображения времени и расписаний.',
+            'format': 'Идентификатор часового пояса (например, Europe/Moscow, UTC).',
+            'example': 'Europe/Moscow',
+        },
+        # ===== SALES_MODE =====
         'SALES_MODE': {
             'description': (
                 'Режим продажи подписок. '
@@ -490,7 +603,7 @@ class BotConfigurationService:
                 '«Тарифы» — готовые тарифные планы из кабинета с серверами и лимитами.'
             ),
             'format': 'Выберите один из доступных режимов.',
-            'example': 'tariffs',
+            'example': 'classic | tariffs',
             'warning': (
                 'При смене режима логика покупки подписки полностью меняется. '
                 'В режиме «Тарифы» пользователи выбирают готовый тарифный план.'
@@ -505,10 +618,197 @@ class BotConfigurationService:
             'warning': 'При включении без Shop ID и Secret Key пользователи увидят ошибки при оплате.',
             'dependencies': 'YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, YOOKASSA_RETURN_URL',
         },
+        'YOOKASSA_SHOP_ID': {
+            'description': 'Идентификатор магазина в YooKassa.',
+            'format': 'Строка из личного кабинета YooKassa.',
+            'example': '123456',
+            'dependencies': 'YOOKASSA_ENABLED',
+        },
+        'YOOKASSA_SECRET_KEY': {
+            'description': 'Секретный ключ магазина YooKassa.',
+            'format': 'Строка из личного кабинета YooKassa.',
+            'example': 'test_...',
+            'warning': 'Храните ключ в секрете. Не публикуйте в открытых источниках.',
+            'dependencies': 'YOOKASSA_ENABLED',
+        },
+        'YOOKASSA_RETURN_URL': {
+            'description': 'URL для возврата пользователя после оплаты.',
+            'format': 'Полный URL с https.',
+            'example': 'https://your-domain.com/payment-success',
+            'dependencies': 'YOOKASSA_ENABLED',
+        },
+        'YOOKASSA_SBP_ENABLED': {
+            'description': 'Включить оплату через СБП (Систему быстрых платежей) в YooKassa.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'warning': 'Требует активации СБП в личном кабинете YooKassa.',
+            'dependencies': 'YOOKASSA_ENABLED',
+        },
+        'YOOKASSA_VAT_CODE': {
+            'description': (
+                'Код НДС для чеков: 1 — не облагается, 2 — 0%, 3 — 10%, 4 — 20%, '
+                '5 — 10/110, 6 — 20/120, 7 — 5%, 8 — 7%, 9 — 5/105, 10 — 7/107, 11 — 22%, 12 — 22/122.'
+            ),
+            'format': 'Число от 1 до 12.',
+            'example': '1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12',
+            'dependencies': 'YOOKASSA_ENABLED',
+        },
+        'YOOKASSA_PAYMENT_MODE': {
+            'description': 'Способ расчёта: full_payment — полная оплата, partial_payment — частичная, advance — аванс, full_prepayment — полная предоплата, partial_prepayment — частичная предоплата, credit — кредит, credit_payment — погашение кредита.',
+            'format': 'Выберите из списка.',
+            'example': 'full_payment | partial_payment | advance | full_prepayment | partial_prepayment | credit | credit_payment',
+            'dependencies': 'YOOKASSA_ENABLED',
+        },
+        'YOOKASSA_PAYMENT_SUBJECT': {
+            'description': 'Предмет расчёта: commodity — товар, excise — подакцизный, job — работа, service — услуга, gambling_bet — ставка, gambling_prize — выигрыш, lottery — лотерея, lottery_prize — приз, intellectual_activity — интеллектуальная деятельность, payment — платеж, agent_commission — комиссия агента, composite — композитный, another — другое.',
+            'format': 'Выберите из списка.',
+            'example': 'commodity | excise | job | service | gambling_bet | gambling_prize | lottery | lottery_prize | intellectual_activity | payment | agent_commission | composite | another',
+            'dependencies': 'YOOKASSA_ENABLED',
+        },
+        'YOOKASSA_MIN_AMOUNT_KOPEKS': {
+            'description': 'Минимальная сумма пополнения через YooKassa в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '5000',
+            'dependencies': 'YOOKASSA_ENABLED',
+        },
+        'YOOKASSA_MAX_AMOUNT_KOPEKS': {
+            'description': 'Максимальная сумма пополнения через YooKassa в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '1000000',
+            'dependencies': 'YOOKASSA_ENABLED',
+        },
+        'YOOKASSA_QUICK_AMOUNT_SELECTION_ENABLED': {
+            'description': 'Показывать кнопки быстрого выбора суммы пополнения.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'YOOKASSA_ENABLED',
+        },
+        # ===== PAYMENT GENERAL =====
+        'PAYMENT_SERVICE_NAME': {
+            'description': 'Название сервиса в описании платежей.',
+            'format': 'Строка (str).',
+            'example': 'Интернет-сервис',
+            'warning': 'Используется в чеках и описаниях платежей. Избегайте слов-триггеров для платёжных систем.',
+        },
+        'PAYMENT_BALANCE_DESCRIPTION': {
+            'description': 'Описание пополнения баланса в платёжных системах.',
+            'format': 'Строка (str).',
+            'example': 'Пополнение баланса',
+        },
+        'PAYMENT_SUBSCRIPTION_DESCRIPTION': {
+            'description': 'Описание оплаты подписки в платёжных системах.',
+            'format': 'Строка (str).',
+            'example': 'Оплата подписки',
+        },
+        'PAYMENT_BALANCE_TEMPLATE': {
+            'description': 'Шаблон описания пополнения. Плейсхолдеры: {service_name}, {description}.',
+            'format': 'Строка с плейсхолдерами.',
+            'example': '{service_name} - {description}',
+        },
+        'PAYMENT_SUBSCRIPTION_TEMPLATE': {
+            'description': 'Шаблон описания подписки. Плейсхолдеры: {service_name}, {description}.',
+            'format': 'Строка с плейсхолдерами.',
+            'example': '{service_name} - {description}',
+        },
+        'DISABLE_TOPUP_BUTTONS': {
+            'description': 'Отключить кнопки выбора суммы пополнения (оставить только ручной ввод).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'SUPPORT_TOPUP_ENABLED': {
+            'description': 'Разрешить пополнение баланса через поддержку.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        # ===== SUBSCRIPTIONS_CORE =====
+        'DEFAULT_DEVICE_LIMIT': {
+            'description': 'Количество устройств по умолчанию при покупке платной подписки.',
+            'format': 'Целое число от 1.',
+            'example': '3',
+        },
+        'MAX_DEVICES_LIMIT': {
+            'description': 'Максимум устройств, доступных к покупке. 0 = без лимита.',
+            'format': 'Целое число (int).',
+            'example': '15',
+        },
+        'PRICE_PER_DEVICE': {
+            'description': 'Цена за дополнительное устройство в копейках. DEFAULT_DEVICE_LIMIT устройств идёт бесплатно.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '10000',
+        },
+        'DEVICES_SELECTION_ENABLED': {
+            'description': 'Разрешает пользователям выбирать количество устройств при покупке и продлении подписки.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'warning': 'При отключении пользователи не смогут докупать устройства из интерфейса бота.',
+        },
+        'DEVICES_SELECTION_DISABLED_AMOUNT': {
+            'description': (
+                'Лимит устройств, который автоматически назначается, когда выбор количества устройств выключен. '
+                'Значение 0 отключает назначение устройств.'
+            ),
+            'format': 'Целое число от 0 и выше.',
+            'example': '3',
+            'warning': 'При 0 RemnaWave не получит лимит устройств, пользователям не показываются цифры в интерфейсе.',
+        },
+        'BASE_SUBSCRIPTION_PRICE': {
+            'description': 'Базовая цена подписки в копейках (добавляется к стоимости периода).',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '100',
+        },
+        # ===== PERIODS =====
+        'AVAILABLE_SUBSCRIPTION_PERIODS': {
+            'description': 'Доступные периоды подписки в днях через запятую.',
+            'format': 'Числа через запятую.',
+            'example': '30,90,180,360',
+        },
+        'AVAILABLE_RENEWAL_PERIODS': {
+            'description': 'Доступные периоды продления в днях через запятую.',
+            'format': 'Числа через запятую.',
+            'example': '30,90,180',
+        },
+        # ===== SUBSCRIPTION_PRICES =====
+        'PRICE_14_DAYS': {
+            'description': 'Цена подписки на 14 дней в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '7000',
+        },
+        'PRICE_30_DAYS': {
+            'description': 'Цена подписки на 30 дней в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '10000',
+        },
+        'PRICE_60_DAYS': {
+            'description': 'Цена подписки на 60 дней в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '18000',
+        },
+        'PRICE_90_DAYS': {
+            'description': 'Цена подписки на 90 дней в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '25000',
+        },
+        'PRICE_180_DAYS': {
+            'description': 'Цена подписки на 180 дней в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '45000',
+        },
+        'PRICE_360_DAYS': {
+            'description': 'Цена подписки на 360 дней в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '80000',
+        },
+        'PAID_SUBSCRIPTION_USER_TAG': {
+            'description': ('Тег, который бот ставит пользователю при покупке платной подписки в панели RemnaWave.'),
+            'format': 'До 16 символов: заглавные A-Z, цифры и подчёркивание.',
+            'example': 'PAID_USER',
+            'warning': 'Если тег не задан или невалиден, существующий тег не будет изменён.',
+            'dependencies': 'Оплата подписки и интеграция с RemnaWave',
+        },
         'SIMPLE_SUBSCRIPTION_ENABLED': {
             'description': 'Показывает в меню пункт с быстрой покупкой подписки.',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
             'warning': 'Если остались не настроенные параметры, предложение может вести себя некорректно.',
         },
         'SIMPLE_SUBSCRIPTION_PERIOD_DAYS': {
@@ -536,34 +836,317 @@ class BotConfigurationService:
             'example': 'd4aa2b8c-9a36-4f31-93a2-6f07dad05fba',
             'warning': 'Убедитесь, что выбранный сквад активен и доступен для подписки.',
         },
-        'DEVICES_SELECTION_ENABLED': {
-            'description': 'Разрешает пользователям выбирать количество устройств при покупке и продлении подписки.',
-            'format': 'Булево значение.',
-            'example': 'false',
-            'warning': 'При отключении пользователи не смогут докупать устройства из интерфейса бота.',
-        },
-        'DEVICES_SELECTION_DISABLED_AMOUNT': {
+        # ===== TRAFFIC =====
+        'TRAFFIC_SELECTION_MODE': {
             'description': (
-                'Лимит устройств, который автоматически назначается, когда выбор количества устройств выключен. '
-                'Значение 0 отключает назначение устройств.'
+                'Режим выбора трафика: selectable — пользователь выбирает пакет, '
+                'fixed — фиксированный лимит без выбора, fixed_with_topup — фиксированный с докупкой.'
             ),
-            'format': 'Целое число от 0 и выше.',
+            'format': 'Выберите один из режимов.',
+            'example': 'selectable | fixed | fixed_with_topup',
+            'warning': 'В режиме fixed пользователи не смогут выбирать и докупать трафик.',
+        },
+        'FIXED_TRAFFIC_LIMIT_GB': {
+            'description': 'Фиксированный лимит трафика в ГБ (для режимов fixed и fixed_with_topup). 0 = безлимит.',
+            'format': 'Целое число ГБ (int).',
+            'example': '100',
+            'dependencies': 'TRAFFIC_SELECTION_MODE=fixed или fixed_with_topup',
+        },
+        'DEFAULT_TRAFFIC_LIMIT_GB': {
+            'description': 'Лимит трафика по умолчанию для подписок из админки.',
+            'format': 'Целое число ГБ (int).',
+            'example': '100',
+        },
+        'DEFAULT_TRAFFIC_RESET_STRATEGY': {
+            'description': 'Стратегия сброса трафика: NO_RESET — без сброса, DAY — ежедневно, WEEK — еженедельно, MONTH — ежемесячно.',
+            'format': 'Выберите из списка.',
+            'example': 'NO_RESET | DAY | WEEK | MONTH',
+        },
+        'RESET_TRAFFIC_ON_PAYMENT': {
+            'description': 'Сбрасывать трафик при каждой оплате подписки.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'TRAFFIC_TOPUP_ENABLED': {
+            'description': 'Включить функцию докупки трафика к существующей подписке.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'BUY_TRAFFIC_BUTTON_VISIBLE': {
+            'description': 'Показывать кнопку "Докупить трафик" в меню.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        # ===== TRAFFIC_PACKAGES =====
+        'TRAFFIC_PACKAGES_CONFIG': {
+            'description': (
+                'Конфигурация пакетов трафика. Формат: гб:цена_в_копейках:enabled через запятую. '
+                '0 ГБ = безлимит.'
+            ),
+            'format': 'Строка формата: 5:2000:true,10:3500:true,0:20000:true',
+            'example': '5:2000:true,10:3500:true,25:7000:true,100:15000:true,0:20000:true',
+            'warning': 'Некорректный формат будет проигнорирован.',
+        },
+        'TRAFFIC_TOPUP_PACKAGES_CONFIG': {
+            'description': 'Отдельные пакеты для докупки трафика. Если пусто — используется TRAFFIC_PACKAGES_CONFIG.',
+            'format': 'Формат как TRAFFIC_PACKAGES_CONFIG.',
+            'example': '10:5000:true,25:10000:true,50:15000:true',
+        },
+        'TRAFFIC_RESET_PRICE_MODE': {
+            'description': (
+                'Режим расчёта цены сброса трафика: period — фиксированная цена, '
+                'traffic — по текущему пакету, traffic_with_purchased — базовый + докупленный (рекомендуется).'
+            ),
+            'format': 'Выберите режим.',
+            'example': 'traffic_with_purchased',
+            'warning': 'Режим period может привести к абьюзу, если базовая цена низкая.',
+        },
+        'TRAFFIC_RESET_BASE_PRICE': {
+            'description': 'Базовая цена сброса трафика в копейках. 0 = использовать PRICE_30_DAYS.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '500',
+        },
+        # ===== TRIAL =====
+        'TRIAL_DURATION_DAYS': {
+            'description': 'Длительность пробной подписки в днях.',
+            'format': 'Целое число дней (int).',
             'example': '3',
-            'warning': 'При 0 RemnaWave не получит лимит устройств, пользователям не показываются цифры в интерфейсе.',
+        },
+        'TRIAL_TRAFFIC_LIMIT_GB': {
+            'description': 'Лимит трафика для триала в ГБ.',
+            'format': 'Целое число ГБ (int).',
+            'example': '10',
+        },
+        'TRIAL_DEVICE_LIMIT': {
+            'description': 'Количество устройств для пробной подписки.',
+            'format': 'Целое число (int).',
+            'example': '1',
+        },
+        'TRIAL_PAYMENT_ENABLED': {
+            'description': 'Включить платный триал (требует оплату для активации пробного периода).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'TRIAL_ACTIVATION_PRICE',
+        },
+        'TRIAL_ACTIVATION_PRICE': {
+            'description': 'Цена активации триала в копейках. 0 = бесплатный триал.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '3500',
+            'dependencies': 'TRIAL_PAYMENT_ENABLED=true',
+        },
+        'TRIAL_TARIFF_ID': {
+            'description': (
+                'ID тарифа для триала в режиме тарифов. 0 = использовать стандартные настройки. '
+                'Параметры триала берутся из тарифа (traffic_limit_gb, device_limit, allowed_squads).'
+            ),
+            'format': 'Целое число (ID тарифа).',
+            'example': '2',
+            'dependencies': 'SALES_MODE=tariffs',
+        },
+        'TRIAL_ADD_REMAINING_DAYS_TO_PAID': {
+            'description': 'Добавлять оставшиеся дни триала при покупке платной подписки.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'TRIAL_USER_TAG': {
+            'description': (
+                'Тег, который бот передаст пользователю при активации триальной подписки в панели RemnaWave.'
+            ),
+            'format': 'До 16 символов: заглавные A-Z, цифры и подчёркивание.',
+            'example': 'TRIAL_USER',
+            'warning': 'Неверный формат будет проигнорирован при создании пользователя.',
+            'dependencies': 'Активация триала и включенная интеграция с RemnaWave',
+        },
+        'TRIAL_WARNING_HOURS': {
+            'description': 'За сколько часов до окончания отправлять предупреждение о завершении триала.',
+            'format': 'Целое число часов (int).',
+            'example': '24',
+        },
+        'TRIAL_DISABLED_FOR': {
+            'description': (
+                'Отключить триал для определённых типов пользователей: none — доступен всем, '
+                'email — отключён для email-пользователей, telegram — для Telegram, all — для всех.'
+            ),
+            'format': 'Выберите из списка.',
+            'example': 'none | email | telegram | all',
+        },
+        # ===== REFERRAL =====
+        'REFERRAL_PROGRAM_ENABLED': {
+            'description': 'Включить реферальную программу.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'REFERRAL_MINIMUM_TOPUP_KOPEKS': {
+            'description': 'Минимальное пополнение для активации реферального бонуса в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '10000',
+        },
+        'REFERRAL_FIRST_TOPUP_BONUS_KOPEKS': {
+            'description': 'Бонус рефералу при первом пополнении в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '10000',
+        },
+        'REFERRAL_INVITER_BONUS_KOPEKS': {
+            'description': 'Бонус пригласившему при первом пополнении реферала в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '10000',
+        },
+        'REFERRAL_COMMISSION_PERCENT': {
+            'description': 'Процент комиссии с пополнений рефералов.',
+            'format': 'Целое число от 0 до 100.',
+            'example': '25',
+        },
+        'REFERRAL_NOTIFICATIONS_ENABLED': {
+            'description': 'Включить уведомления о реферальных начислениях.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'REFERRAL_NOTIFICATION_RETRY_ATTEMPTS': {
+            'description': 'Количество попыток отправки уведомления о реферальном бонусе.',
+            'format': 'Целое число (int).',
+            'example': '3',
+        },
+        'REFERRAL_WITHDRAWAL_ENABLED': {
+            'description': 'Включить возможность вывода реферального баланса.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS': {
+            'description': 'Минимальная сумма вывода реферального баланса в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '50000',
+            'dependencies': 'REFERRAL_WITHDRAWAL_ENABLED',
+        },
+        'REFERRAL_WITHDRAWAL_COOLDOWN_DAYS': {
+            'description': 'Интервал между запросами на вывод в днях.',
+            'format': 'Целое число дней (int).',
+            'example': '30',
+            'dependencies': 'REFERRAL_WITHDRAWAL_ENABLED',
+        },
+        'REFERRAL_WITHDRAWAL_ONLY_REFERRAL_BALANCE': {
+            'description': 'Выводить только реферальный баланс (true) или весь баланс (false).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'REFERRAL_WITHDRAWAL_ENABLED',
+        },
+        # ===== AUTOPAY =====
+        'ENABLE_AUTOPAY': {
+            'description': 'Глобально включить функцию автопродления подписок.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'AUTOPAY_WARNING_DAYS': {
+            'description': 'Дни до окончания подписки для отправки предупреждений (через запятую).',
+            'format': 'Числа через запятую.',
+            'example': '3,1',
+        },
+        'DEFAULT_AUTOPAY_ENABLED': {
+            'description': 'Включить автопродление для новых пользователей по умолчанию.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'ENABLE_AUTOPAY',
+        },
+        'DEFAULT_AUTOPAY_DAYS_BEFORE': {
+            'description': 'За сколько дней до окончания автоматически продлевать.',
+            'format': 'Целое число дней (int).',
+            'example': '3',
+            'dependencies': 'ENABLE_AUTOPAY',
+        },
+        'MIN_BALANCE_FOR_AUTOPAY_KOPEKS': {
+            'description': 'Минимальный баланс для автопродления в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '10000',
+            'dependencies': 'ENABLE_AUTOPAY',
+        },
+        'SUBSCRIPTION_RENEWAL_BALANCE_THRESHOLD_KOPEKS': {
+            'description': 'Порог баланса для фильтра «готовы к продлению» в копейках.',
+            'format': 'Целое число в копейках (int). 100 = 1₽.',
+            'example': '20000',
         },
         'CRYPTOBOT_ENABLED': {
             'description': 'Разрешает принимать криптоплатежи через CryptoBot.',
-            'format': 'Булево значение.',
+            'format': 'Булево значение (bool).',
             'example': 'Включите после указания токена API и секрета вебхука.',
             'warning': 'Пустой токен или неверный вебхук приведут к отказам платежей.',
             'dependencies': 'CRYPTOBOT_API_TOKEN, CRYPTOBOT_WEBHOOK_SECRET',
+        },
+        'CRYPTOBOT_API_TOKEN': {
+            'description': 'API токен CryptoBot из @CryptoBot.',
+            'format': 'Строка токена.',
+            'example': '123456789:AAzQcZWQqQAbsfgPnOLr4FHC8Doa4L7KryC',
+            'dependencies': 'CRYPTOBOT_ENABLED',
+        },
+        'CRYPTOBOT_WEBHOOK_SECRET': {
+            'description': 'Секрет для проверки подписи вебхуков CryptoBot.',
+            'format': 'Строка (str).',
+            'example': 'your_webhook_secret_here',
+            'dependencies': 'CRYPTOBOT_ENABLED',
+        },
+        'CRYPTOBOT_TESTNET': {
+            'description': 'Использовать тестовую сеть CryptoBot.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'CRYPTOBOT_ENABLED',
+        },
+        'CRYPTOBOT_DEFAULT_ASSET': {
+            'description': 'Криптовалюта по умолчанию.',
+            'format': 'Код криптовалюты.',
+            'example': 'USDT',
+            'dependencies': 'CRYPTOBOT_ENABLED',
+        },
+        'CRYPTOBOT_ASSETS': {
+            'description': 'Доступные криптовалюты через запятую.',
+            'format': 'Коды через запятую.',
+            'example': 'USDT,TON,BTC,ETH',
+            'dependencies': 'CRYPTOBOT_ENABLED',
+        },
+        'CRYPTOBOT_INVOICE_EXPIRES_HOURS': {
+            'description': 'Время жизни счёта в часах.',
+            'format': 'Целое число часов (int).',
+            'example': '24',
+            'dependencies': 'CRYPTOBOT_ENABLED',
+        },
+        # ===== NOTIFICATIONS =====
+        'ENABLE_NOTIFICATIONS': {
+            'description': 'Включить отправку уведомлений пользователям (об истечении подписки, предупреждения и т.д.).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'NOTIFICATION_RETRY_ATTEMPTS': {
+            'description': 'Количество попыток повторной отправки уведомления при ошибке.',
+            'format': 'Целое число (int).',
+            'example': '3',
+        },
+        'NOTIFICATION_CACHE_HOURS': {
+            'description': 'Время кэширования уведомлений в часах (защита от дублирования).',
+            'format': 'Целое число часов (int).',
+            'example': '24',
+        },
+        # ===== ADMIN_NOTIFICATIONS =====
+        'ADMIN_NOTIFICATIONS_ENABLED': {
+            'description': 'Включить отправку уведомлений администраторам о событиях бота.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'ADMIN_NOTIFICATIONS_CHAT_ID',
+        },
+        'ADMIN_NOTIFICATIONS_CHAT_ID': {
+            'description': 'ID чата/канала для уведомлений. Для закрытых каналов используйте префикс -100.',
+            'format': 'ID чата (число).',
+            'example': '-1001234567890',
+            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED',
+        },
+        'ADMIN_NOTIFICATIONS_TOPIC_ID': {
+            'description': 'ID топика для уведомлений (для форумов/групп с топиками).',
+            'format': 'Целое число или пусто.',
+            'example': '123',
+            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED',
         },
         'PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED': {
             'description': (
                 'Запускает фоновую проверку ожидающих пополнений и повторно обращается '
                 'к платёжным провайдерам без участия администратора.'
             ),
-            'format': 'Булево значение.',
+            'format': 'Булево значение (bool).',
             'example': 'Включено, чтобы автоматически перепроверять зависшие платежи.',
             'warning': 'Требует активных интеграций YooKassa, {mulenpay_name}, PayPalych, WATA или CryptoBot.',
         },
@@ -576,8 +1159,8 @@ class BotConfigurationService:
         },
         'BASE_PROMO_GROUP_PERIOD_DISCOUNTS_ENABLED': {
             'description': ('Включает применение базовых скидок на периоды подписок в групповых промо.'),
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
             'warning': 'Скидки применяются только если указаны корректные пары периодов и процентов.',
         },
         'BASE_PROMO_GROUP_PERIOD_DISCOUNTS': {
@@ -590,39 +1173,16 @@ class BotConfigurationService:
             'description': (
                 'При достаточном балансе автоматически оформляет сохранённую подписку сразу после пополнения.'
             ),
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
             'warning': ('Используйте с осторожностью: средства будут списаны мгновенно, если корзина найдена.'),
         },
         'SUPPORT_TICKET_SLA_MINUTES': {
             'description': 'Лимит времени для ответа модераторов на тикет в минутах.',
-            'format': 'Целое число от 1 до 1440.',
-            'example': '5',
+            'format': 'Целое число от 1 до 1440 (int).',
+            'example': '5 | 15 | 30 | 60',
             'warning': 'Слишком низкое значение может вызвать частые напоминания, слишком высокое — ухудшить SLA.',
             'dependencies': 'SUPPORT_TICKET_SLA_ENABLED, SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES',
-        },
-        'MAINTENANCE_MODE': {
-            'description': 'Переводит бота в режим технического обслуживания и скрывает действия для пользователей.',
-            'format': 'Булево значение.',
-            'example': 'Включено на время плановых работ.',
-            'warning': 'Не забудьте отключить после завершения работ, иначе бот останется недоступен.',
-            'dependencies': 'MAINTENANCE_MESSAGE, MAINTENANCE_CHECK_INTERVAL',
-        },
-        'MAINTENANCE_MONITORING_ENABLED': {
-            'description': ('Управляет автоматическим запуском мониторинга панели Remnawave при старте бота.'),
-            'format': 'Булево значение.',
-            'example': 'false',
-            'warning': ('При отключении мониторинг можно запустить вручную из панели администратора.'),
-            'dependencies': 'MAINTENANCE_CHECK_INTERVAL',
-        },
-        'MAINTENANCE_RETRY_ATTEMPTS': {
-            'description': ('Сколько раз повторять проверку панели Remnawave перед фиксацией недоступности.'),
-            'format': 'Целое число не меньше 1.',
-            'example': '3',
-            'warning': (
-                'Большие значения увеличивают время реакции на реальные сбои, но помогают избежать ложных срабатываний.'
-            ),
-            'dependencies': 'MAINTENANCE_CHECK_INTERVAL',
         },
         'DISPLAY_NAME_BANNED_KEYWORDS': {
             'description': (
@@ -633,6 +1193,188 @@ class BotConfigurationService:
             'warning': 'Слишком агрессивные фильтры могут блокировать добросовестных пользователей.',
             'dependencies': 'Фильтр отображаемых имен',
         },
+        # ===== INTERFACE =====
+        'MAIN_MENU_MODE': {
+            'description': (
+                'Режим главного меню: default — классический (все кнопки внутри Telegram), '
+                'cabinet — режим с MiniApp кабинетом.'
+            ),
+            'format': 'Выберите режим.',
+            'example': 'default | cabinet',
+            'dependencies': 'MINIAPP_CUSTOM_URL для режима cabinet',
+        },
+        'CABINET_BUTTON_STYLE': {
+            'description': 'Стиль кнопок в режиме Cabinet (Bot API 9.4): primary — синий, success — зелёный, danger — красный, пусто — по секциям.',
+            'format': 'Выберите стиль или оставьте пустым для авто.',
+            'example': '(пусто) | primary | success | danger',
+            'dependencies': 'MAIN_MENU_MODE=cabinet',
+        },
+        'PRICE_ROUNDING_ENABLED': {
+            'description': 'Округление цен при отображении (≤50 коп вниз, >50 коп вверх).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        # ===== INTERFACE_BRANDING =====
+        'ENABLE_LOGO_MODE': {
+            'description': 'Показывать логотип в сообщениях бота.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'LOGO_FILE': {
+            'description': 'Путь к файлу логотипа.',
+            'format': 'Имя файла в корне проекта.',
+            'example': 'vpn_logo.png',
+            'dependencies': 'ENABLE_LOGO_MODE',
+        },
+        # ===== INTERFACE_SUBSCRIPTION =====
+        'HIDE_SUBSCRIPTION_LINK': {
+            'description': 'Скрыть ссылку подключения в информации о подписке.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'DISABLE_WEB_PAGE_PREVIEW': {
+            'description': 'Отключить превью ссылок в сообщениях бота.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        # ===== CONNECT_BUTTON =====
+        'CONNECT_BUTTON_MODE': {
+            'description': (
+                'Режим кнопки «Подключиться»: guide — гайд, miniapp_subscription — MiniApp подписка, '
+                'miniapp_custom — кастомный URL, link — прямая ссылка, happ_cryptolink — Happ CryptoLink.'
+            ),
+            'format': 'Выберите режим.',
+            'example': 'guide | miniapp_subscription | miniapp_custom | link | happ_cryptolink',
+        },
+        'MINIAPP_CUSTOM_URL': {
+            'description': 'Кастомный URL для MiniApp (обязателен при CONNECT_BUTTON_MODE=miniapp_custom).',
+            'format': 'Полный URL с https.',
+            'example': 'https://app.example.com',
+            'dependencies': 'CONNECT_BUTTON_MODE=miniapp_custom',
+        },
+        # ===== MINIAPP =====
+        'MINIAPP_PURCHASE_URL': {
+            'description': 'URL страницы покупки в MiniApp.',
+            'format': 'Полный URL с https.',
+            'example': 'https://app.example.com/buy',
+        },
+        'MINIAPP_STATIC_PATH': {
+            'description': 'Путь к статическим файлам MiniApp.',
+            'format': 'Относительный путь.',
+            'example': 'miniapp',
+        },
+        'MINIAPP_SERVICE_NAME_EN': {
+            'description': 'Название сервиса в MiniApp на английском.',
+            'format': 'Строка (str).',
+            'example': 'My VPN Service',
+        },
+        'MINIAPP_SERVICE_NAME_RU': {
+            'description': 'Название сервиса в MiniApp на русском.',
+            'format': 'Строка (str).',
+            'example': 'Мой VPN Сервис',
+        },
+        'MINIAPP_SERVICE_DESCRIPTION_EN': {
+            'description': 'Описание сервиса в MiniApp на английском.',
+            'format': 'Строка (str).',
+            'example': 'Secure & Fast Connection',
+        },
+        'MINIAPP_SERVICE_DESCRIPTION_RU': {
+            'description': 'Описание сервиса в MiniApp на русском.',
+            'format': 'Строка (str).',
+            'example': 'Безопасное и быстрое подключение',
+        },
+        'MINIAPP_TICKETS_ENABLED': {
+            'description': 'Включить раздел тикетов в MiniApp.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'MINIAPP_SUPPORT_TYPE': {
+            'description': 'Тип поддержки в MiniApp: tickets — тикеты, profile — профиль, url — кастомный URL.',
+            'format': 'Выберите тип.',
+            'example': 'tickets | profile | url',
+        },
+        'MINIAPP_SUPPORT_URL': {
+            'description': 'Кастомный URL для поддержки в MiniApp (при MINIAPP_SUPPORT_TYPE=url).',
+            'format': 'Полный URL.',
+            'example': 'https://support.example.com',
+            'dependencies': 'MINIAPP_SUPPORT_TYPE=url',
+        },
+        'CABINET_REMNA_SUB_CONFIG': {
+            'description': (
+                'UUID конфигурации страницы подписки из RemnaWave. '
+                'Позволяет синхронизировать список приложений напрямую из панели.'
+            ),
+            'format': 'UUID конфигурации из раздела Subscription Page Configs в RemnaWave.',
+            'example': 'd4aa2b8c-9a36-4f31-93a2-6f07dad05fba',
+            'warning': 'Убедитесь, что конфигурация существует в панели и содержит нужные приложения.',
+            'dependencies': 'Настроенное подключение к RemnaWave API',
+        },
+        # ===== HAPP =====
+        'CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED': {
+            'description': 'Показывать кнопки скачивания Happ в режиме happ_cryptolink.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'CONNECT_BUTTON_MODE=happ_cryptolink',
+        },
+        'HAPP_CRYPTOLINK_REDIRECT_TEMPLATE': {
+            'description': 'Шаблон URL для редиректа Happ (т.к. ссылки happ:// не поддерживаются Telegram).',
+            'format': 'URL с параметром redirect_to=',
+            'example': 'https://sub.domain.com/redirect/?redirect_to=',
+            'warning': 'Без этой ссылки кнопка «Подключиться» не будет работать.',
+            'dependencies': 'CONNECT_BUTTON_MODE=happ_cryptolink',
+        },
+        'HAPP_DOWNLOAD_LINK_IOS': {
+            'description': 'Ссылка на скачивание Happ для iOS.',
+            'format': 'URL App Store.',
+            'example': 'https://apps.apple.com/app/happ',
+            'dependencies': 'CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED',
+        },
+        'HAPP_DOWNLOAD_LINK_ANDROID': {
+            'description': 'Ссылка на скачивание Happ для Android.',
+            'format': 'URL Google Play или APK.',
+            'example': 'https://play.google.com/store/apps/details?id=happ',
+            'dependencies': 'CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED',
+        },
+        'HAPP_DOWNLOAD_LINK_MACOS': {
+            'description': 'Ссылка на скачивание Happ для macOS.',
+            'format': 'URL.',
+            'example': 'https://github.com/happ/releases/macos',
+            'dependencies': 'CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED',
+        },
+        'HAPP_DOWNLOAD_LINK_WINDOWS': {
+            'description': 'Ссылка на скачивание Happ для Windows.',
+            'format': 'URL.',
+            'example': 'https://github.com/happ/releases/windows',
+            'dependencies': 'CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED',
+        },
+        'HAPP_DOWNLOAD_LINK_PC': {
+            'description': 'Универсальная ссылка для ПК (если MACOS и WINDOWS не заданы отдельно).',
+            'format': 'URL.',
+            'example': 'https://github.com/happ/releases',
+            'dependencies': 'CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED',
+        },
+        # ===== SKIP =====
+        'SKIP_RULES_ACCEPT': {
+            'description': 'Пропустить принятие правил при старте бота.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'SKIP_REFERRAL_CODE': {
+            'description': 'Пропустить запрос реферального кода при регистрации.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        # ===== ADDITIONAL =====
+        'APP_CONFIG_PATH': {
+            'description': 'Путь к конфигурации приложений (app-config.json).',
+            'format': 'Относительный или абсолютный путь.',
+            'example': 'app-config.json',
+        },
+        'ENABLE_DEEP_LINKS': {
+            'description': 'Включить deep links для бота.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
         'REMNAWAVE_API_URL': {
             'description': 'Базовый адрес панели RemnaWave, с которой синхронизируется бот.',
             'format': 'Полный URL вида https://panel.example.com.',
@@ -640,9 +1382,42 @@ class BotConfigurationService:
             'warning': 'Недоступный адрес приведет к ошибкам при управлении VPN-учетками.',
             'dependencies': 'REMNAWAVE_API_KEY или REMNAWAVE_USERNAME/REMNAWAVE_PASSWORD',
         },
+        'REMNAWAVE_API_KEY': {
+            'description': 'API ключ для авторизации в панели RemnaWave.',
+            'format': 'Строка ключа из панели.',
+            'example': 'your_api_key_here',
+            'dependencies': 'REMNAWAVE_AUTH_TYPE=api_key',
+        },
+        'REMNAWAVE_AUTH_TYPE': {
+            'description': 'Тип авторизации в панели: api_key — API ключ, basic_auth — Basic Auth с логином и паролем.',
+            'format': 'Выберите тип.',
+            'example': 'api_key | basic_auth',
+        },
+        'REMNAWAVE_USERNAME': {
+            'description': 'Имя пользователя для Basic Auth в панели.',
+            'format': 'Строка (str).',
+            'example': 'admin',
+            'dependencies': 'REMNAWAVE_AUTH_TYPE=basic_auth',
+        },
+        'REMNAWAVE_PASSWORD': {
+            'description': 'Пароль для Basic Auth в панели.',
+            'format': 'Строка (str).',
+            'example': 'password',
+            'dependencies': 'REMNAWAVE_AUTH_TYPE=basic_auth',
+        },
+        'REMNAWAVE_SECRET_KEY': {
+            'description': 'Секретный ключ (для панелей установленных скриптом eGames). Формат: XXXXXXX:DDDDDDDD.',
+            'format': 'Строка (str).',
+            'example': 'ABC1234:99887766',
+        },
+        'REMNAWAVE_USER_DELETE_MODE': {
+            'description': 'Режим удаления пользователей из панели: delete — полностью удалить, disable — только деактивировать.',
+            'format': 'Выберите режим.',
+            'example': 'delete | disable',
+        },
         'REMNAWAVE_AUTO_SYNC_ENABLED': {
             'description': 'Автоматически запускает синхронизацию пользователей и серверов с панелью RemnaWave.',
-            'format': 'Булево значение.',
+            'format': 'Булево значение (bool).',
             'example': 'Включено при корректно настроенных API-ключах.',
             'warning': 'При включении без расписания синхронизация не будет выполнена.',
             'dependencies': 'REMNAWAVE_AUTO_SYNC_TIMES',
@@ -676,6 +1451,277 @@ class BotConfigurationService:
                 'Если результат пустой, используется user_{telegram_id}.'
             ),
         },
+        # ===== REMNAWAVE_WEBHOOK =====
+        'REMNAWAVE_WEBHOOK_ENABLED': {
+            'description': 'Включить приём вебхуков от панели RemnaWave (real-time события).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'REMNAWAVE_WEBHOOK_SECRET (минимум 32 символа)',
+        },
+        'REMNAWAVE_WEBHOOK_PATH': {
+            'description': 'Путь для приёма вебхуков от RemnaWave.',
+            'format': 'Путь начинающийся с /.',
+            'example': '/remnawave-webhook',
+            'dependencies': 'REMNAWAVE_WEBHOOK_ENABLED',
+        },
+        'REMNAWAVE_WEBHOOK_SECRET': {
+            'description': 'Общий секрет для подписи HMAC-SHA256 (минимум 32 символа).',
+            'format': 'Строка минимум 32 символа. Сгенерируйте: openssl rand -hex 32',
+            'example': 'your_32_char_or_longer_secret_here',
+            'warning': 'Этот же секрет указывается в панели RemnaWave при создании вебхука.',
+            'dependencies': 'REMNAWAVE_WEBHOOK_ENABLED',
+        },
+        # ===== SERVER_STATUS =====
+        'SERVER_STATUS_MODE': {
+            'description': (
+                'Режим отображения статуса серверов: disabled — отключено, '
+                'external_link — внешняя ссылка, external_link_miniapp — MiniApp, xray — XrayChecker.'
+            ),
+            'format': 'Выберите режим.',
+            'example': 'disabled | external_link | external_link_miniapp | xray',
+        },
+        'SERVER_STATUS_EXTERNAL_URL': {
+            'description': 'URL внешнего мониторинга (для режимов external_link и external_link_miniapp).',
+            'format': 'Полный URL.',
+            'example': 'https://status.example.com',
+            'dependencies': 'SERVER_STATUS_MODE=external_link или external_link_miniapp',
+        },
+        'SERVER_STATUS_METRICS_URL': {
+            'description': 'URL метрик XrayChecker (для режима xray).',
+            'format': 'Полный URL.',
+            'example': 'https://xray.example.com/metrics',
+            'dependencies': 'SERVER_STATUS_MODE=xray',
+        },
+        'SERVER_STATUS_METRICS_USERNAME': {
+            'description': 'Имя пользователя для Basic Auth к метрикам.',
+            'format': 'Строка (str).',
+            'example': 'admin',
+            'dependencies': 'SERVER_STATUS_MODE=xray',
+        },
+        'SERVER_STATUS_METRICS_PASSWORD': {
+            'description': 'Пароль для Basic Auth к метрикам.',
+            'format': 'Строка (str).',
+            'example': 'password',
+            'dependencies': 'SERVER_STATUS_MODE=xray',
+        },
+        'SERVER_STATUS_METRICS_VERIFY_SSL': {
+            'description': 'Проверять SSL сертификат при запросе метрик.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'SERVER_STATUS_MODE=xray',
+        },
+        'SERVER_STATUS_REQUEST_TIMEOUT': {
+            'description': 'Таймаут запроса к метрикам в секундах.',
+            'format': 'Целое число секунд (int).',
+            'example': '10',
+            'dependencies': 'SERVER_STATUS_MODE=xray',
+        },
+        'SERVER_STATUS_ITEMS_PER_PAGE': {
+            'description': 'Количество серверов на странице в режиме интеграции.',
+            'format': 'Целое число (int).',
+            'example': '10',
+            'dependencies': 'SERVER_STATUS_MODE=xray',
+        },
+        # ===== MONITORING =====
+        'MONITORING_INTERVAL': {
+            'description': 'Интервал мониторинга в секундах.',
+            'format': 'Целое число секунд (int).',
+            'example': '60',
+        },
+        'MONITORING_LOGS_RETENTION_DAYS': {
+            'description': 'Время хранения логов мониторинга в днях.',
+            'format': 'Целое число дней (int).',
+            'example': '30',
+        },
+        # ===== TRAFFIC MONITORING =====
+        'TRAFFIC_MONITORING_ENABLED': {
+            'description': 'Включить мониторинг трафика пользователей.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'Redis, TRAFFIC_MONITORING_INTERVAL_HOURS',
+        },
+        'TRAFFIC_THRESHOLD_GB_PER_DAY': {
+            'description': 'Порог трафика в ГБ за сутки для уведомлений.',
+            'format': 'Число с плавающей точкой (float).',
+            'example': '10.0 | 50.0 | 100.5',
+        },
+        'TRAFFIC_MONITORING_INTERVAL_HOURS': {
+            'description': 'Интервал проверки трафика в часах.',
+            'format': 'Целое число (int).',
+            'example': '24',
+        },
+        'TRAFFIC_FAST_CHECK_ENABLED': {
+            'description': 'Включить быструю проверку трафика.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'TRAFFIC_FAST_CHECK_INTERVAL_MINUTES, TRAFFIC_FAST_CHECK_THRESHOLD_GB',
+        },
+        'TRAFFIC_FAST_CHECK_INTERVAL_MINUTES': {
+            'description': 'Интервал быстрой проверки трафика в минутах.',
+            'format': 'Целое число (int).',
+            'example': '10',
+            'dependencies': 'TRAFFIC_FAST_CHECK_ENABLED',
+        },
+        'TRAFFIC_FAST_CHECK_THRESHOLD_GB': {
+            'description': 'Порог дельты трафика в ГБ для быстрой проверки.',
+            'format': 'Число с плавающей точкой (float).',
+            'example': '5.0 | 10.0 | 25.5',
+            'dependencies': 'TRAFFIC_FAST_CHECK_ENABLED',
+        },
+        'TRAFFIC_DAILY_CHECK_ENABLED': {
+            'description': 'Включить суточную проверку трафика.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'TRAFFIC_DAILY_CHECK_TIME, TRAFFIC_DAILY_THRESHOLD_GB',
+        },
+        'TRAFFIC_DAILY_CHECK_TIME': {
+            'description': 'Время суточной проверки трафика (UTC).',
+            'format': 'Строка времени HH:MM.',
+            'example': '00:00 | 03:00 | 12:00',
+            'dependencies': 'TRAFFIC_DAILY_CHECK_ENABLED',
+        },
+        'TRAFFIC_DAILY_THRESHOLD_GB': {
+            'description': 'Порог суточного трафика в ГБ для уведомления.',
+            'format': 'Число с плавающей точкой (float).',
+            'example': '50.0 | 100.0 | 250.5',
+            'dependencies': 'TRAFFIC_DAILY_CHECK_ENABLED',
+        },
+        'TRAFFIC_MONITORED_NODES': {
+            'description': 'UUID нод для мониторинга через запятую. Пусто = все ноды.',
+            'format': 'Строка UUID через запятую или пусто.',
+            'example': 'uuid1,uuid2,uuid3',
+        },
+        'TRAFFIC_IGNORED_NODES': {
+            'description': 'UUID нод для исключения из мониторинга.',
+            'format': 'Строка UUID через запятую.',
+            'example': 'uuid1,uuid2',
+        },
+        'TRAFFIC_EXCLUDED_USER_UUIDS': {
+            'description': 'UUID пользователей для исключения из мониторинга.',
+            'format': 'Строка UUID через запятую.',
+            'example': 'uuid1,uuid2',
+        },
+        'TRAFFIC_CHECK_BATCH_SIZE': {
+            'description': 'Размер батча для получения пользователей.',
+            'format': 'Целое число (int).',
+            'example': '1000',
+        },
+        'TRAFFIC_CHECK_CONCURRENCY': {
+            'description': 'Количество параллельных запросов.',
+            'format': 'Целое число (int).',
+            'example': '10',
+        },
+        'TRAFFIC_NOTIFICATION_COOLDOWN_MINUTES': {
+            'description': 'Кулдаун уведомлений по одному пользователю.',
+            'format': 'Целое число минут (int).',
+            'example': '60',
+        },
+        'TRAFFIC_SNAPSHOT_TTL_HOURS': {
+            'description': 'TTL для snapshot трафика в Redis.',
+            'format': 'Целое число часов (int).',
+            'example': '24',
+        },
+        'SUSPICIOUS_NOTIFICATIONS_TOPIC_ID': {
+            'description': 'ID топика для уведомлений о подозрительном трафике.',
+            'format': 'Целое число или пусто (int | None).',
+            'example': '123',
+        },
+        'INACTIVE_USER_DELETE_MONTHS': {
+            'description': 'Через сколько месяцев неактивности удалять пользователей.',
+            'format': 'Целое число месяцев (int).',
+            'example': '3',
+        },
+        # ===== MAINTENANCE =====
+        'MAINTENANCE_MODE': {
+            'description': 'Переводит бота в режим технического обслуживания и скрывает действия для пользователей.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'warning': 'Не забудьте отключить после завершения работ, иначе бот останется недоступен.',
+            'dependencies': 'MAINTENANCE_MESSAGE, MAINTENANCE_CHECK_INTERVAL',
+        },
+        'MAINTENANCE_MESSAGE': {
+            'description': 'Сообщение для пользователей в режиме техработ.',
+            'format': 'Строка (str).',
+            'example': 'Сервис временно недоступен. Попробуйте через 30 минут.',
+        },
+        'MAINTENANCE_CHECK_INTERVAL': {
+            'description': 'Интервал проверки доступности панели в секундах.',
+            'format': 'Целое число секунд (int).',
+            'example': '30 | 60 | 120',
+        },
+        'MAINTENANCE_AUTO_ENABLE': {
+            'description': 'Автоматически включать режим техработ при недоступности панели.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'MAINTENANCE_MONITORING_ENABLED': {
+            'description': 'Управляет автоматическим запуском мониторинга панели Remnawave при старте бота.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'warning': 'При отключении мониторинг можно запустить вручную из панели администратора.',
+            'dependencies': 'MAINTENANCE_CHECK_INTERVAL',
+        },
+        'MAINTENANCE_RETRY_ATTEMPTS': {
+            'description': 'Сколько раз повторять проверку панели Remnawave перед фиксацией недоступности.',
+            'format': 'Целое число (int) не меньше 1.',
+            'example': '1 | 3 | 5',
+            'warning': 'Большие значения увеличивают время реакции на реальные сбои, но помогают избежать ложных срабатываний.',
+            'dependencies': 'MAINTENANCE_CHECK_INTERVAL',
+        },
+        # ===== BACKUP =====
+        'BACKUP_AUTO_ENABLED': {
+            'description': 'Включить автоматическое резервное копирование базы данных.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'BACKUP_INTERVAL_HOURS': {
+            'description': 'Интервал между бэкапами в часах.',
+            'format': 'Целое число часов (int).',
+            'example': '24',
+            'dependencies': 'BACKUP_AUTO_ENABLED',
+        },
+        'BACKUP_TIME': {
+            'description': 'Время создания бэкапа (формат HH:MM).',
+            'format': 'Время HH:MM.',
+            'example': '03:00',
+            'dependencies': 'BACKUP_AUTO_ENABLED',
+        },
+        'BACKUP_MAX_KEEP': {
+            'description': 'Максимальное количество хранимых бэкапов.',
+            'format': 'Целое число (int).',
+            'example': '7',
+            'dependencies': 'BACKUP_AUTO_ENABLED',
+        },
+        'BACKUP_COMPRESSION': {
+            'description': 'Сжимать бэкапы.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'BACKUP_AUTO_ENABLED',
+        },
+        'BACKUP_INCLUDE_LOGS': {
+            'description': 'Включать логи в бэкап.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'BACKUP_AUTO_ENABLED',
+        },
+        'BACKUP_LOCATION': {
+            'description': 'Путь для хранения бэкапов.',
+            'format': 'Абсолютный или относительный путь.',
+            'example': '/app/data/backups',
+            'dependencies': 'BACKUP_AUTO_ENABLED',
+        },
+        'BACKUP_SEND_ENABLED': {
+            'description': 'Отправлять бэкапы в Telegram канал.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'BACKUP_SEND_CHAT_ID',
+        },
+        'BACKUP_SEND_CHAT_ID': {
+            'description': 'ID канала для отправки бэкапов.',
+            'format': 'ID чата (число).',
+            'example': '-1001234567890',
+            'dependencies': 'BACKUP_SEND_ENABLED',
+        },
         'EXTERNAL_ADMIN_TOKEN': {
             'description': 'Приватный токен, который использует внешняя админка для проверки запросов.',
             'format': 'Значение генерируется автоматически из username бота и его токена и доступно только для чтения.',
@@ -690,197 +1736,661 @@ class BotConfigurationService:
             'warning': 'Несовпадение ID блокирует обновление токена, предотвращая его подмену на другом боте.',
             'dependencies': 'Результат вызова getMe() в Telegram Bot API',
         },
-        'TRIAL_USER_TAG': {
-            'description': (
-                'Тег, который бот передаст пользователю при активации триальной подписки в панели RemnaWave.'
-            ),
-            'format': 'До 16 символов: заглавные A-Z, цифры и подчёркивание.',
-            'example': 'TRIAL_USER',
-            'warning': 'Неверный формат будет проигнорирован при создании пользователя.',
-            'dependencies': 'Активация триала и включенная интеграция с RemnaWave',
+        # ===== WEB_API =====
+        'WEB_API_ENABLED': {
+            'description': 'Включить Web API для внешних интеграций.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
-        'PAID_SUBSCRIPTION_USER_TAG': {
-            'description': ('Тег, который бот ставит пользователю при покупке платной подписки в панели RemnaWave.'),
-            'format': 'До 16 символов: заглавные A-Z, цифры и подчёркивание.',
-            'example': 'PAID_USER',
-            'warning': 'Если тег не задан или невалиден, существующий тег не будет изменён.',
-            'dependencies': 'Оплата подписки и интеграция с RemnaWave',
+        'WEB_API_HOST': {
+            'description': 'Хост для прослушивания Web API.',
+            'format': 'IP адрес.',
+            'example': '0.0.0.0',
+            'dependencies': 'WEB_API_ENABLED',
         },
-        'CABINET_REMNA_SUB_CONFIG': {
-            'description': (
-                'UUID конфигурации страницы подписки из RemnaWave. '
-                'Позволяет синхронизировать список приложений напрямую из панели.'
-            ),
-            'format': 'UUID конфигурации из раздела Subscription Page Configs в RemnaWave.',
-            'example': 'd4aa2b8c-9a36-4f31-93a2-6f07dad05fba',
-            'warning': 'Убедитесь, что конфигурация существует в панели и содержит нужные приложения.',
-            'dependencies': 'Настроенное подключение к RemnaWave API',
+        'WEB_API_PORT': {
+            'description': 'Порт для Web API.',
+            'format': 'Целое число (int).',
+            'example': '8080',
+            'dependencies': 'WEB_API_ENABLED',
         },
-        'TRAFFIC_MONITORING_ENABLED': {
-            'description': (
-                'Включает автоматический мониторинг трафика пользователей. '
-                'Система отслеживает изменения трафика (дельту) и сохраняет snapshot в Redis. '
-                'При превышении порогов отправляются уведомления пользователям и админам.'
-            ),
-            'format': 'Булево значение.',
-            'example': 'true',
-            'warning': (
-                'Требует настроенного подключения к Redis. '
-                'При включении будет запущен фоновый мониторинг трафика по расписанию.'
-            ),
-            'dependencies': 'Redis, TRAFFIC_MONITORING_INTERVAL_HOURS, TRAFFIC_SNAPSHOT_TTL_HOURS',
+        'WEB_API_WORKERS': {
+            'description': 'Количество воркеров Web API.',
+            'format': 'Целое число (int).',
+            'example': '1',
+            'dependencies': 'WEB_API_ENABLED',
         },
-        'TRAFFIC_MONITORING_INTERVAL_HOURS': {
-            'description': (
-                'Интервал проверки трафика в часах. '
-                'Каждые N часов система проверяет трафик всех активных пользователей и сравнивает с предыдущим snapshot.'
-            ),
-            'format': 'Целое число часов (минимум 1).',
-            'example': '24',
-            'warning': (
-                'Слишком маленький интервал может создать большую нагрузку на RemnaWave API. '
-                'Рекомендуется 24 часа для ежедневного мониторинга.'
-            ),
-            'dependencies': 'TRAFFIC_MONITORING_ENABLED',
+        'WEB_API_ALLOWED_ORIGINS': {
+            'description': 'Разрешённые origins для CORS через запятую. * = все.',
+            'format': 'Строка origins через запятую.',
+            'example': '*',
+            'dependencies': 'WEB_API_ENABLED',
         },
-        'TRAFFIC_MONITORED_NODES': {
-            'description': (
-                'Список UUID нод для мониторинга трафика через запятую. '
-                'Если пусто - мониторятся все ноды. '
-                'Позволяет ограничить мониторинг только определенными серверами.'
-            ),
-            'format': 'UUID через запятую или пусто для всех нод.',
-            'example': 'd4aa2b8c-9a36-4f31-93a2-6f07dad05fba, a1b2c3d4-5678-90ab-cdef-1234567890ab',
-            'warning': 'UUID должны существовать в RemnaWave, иначе мониторинг не будет работать.',
-            'dependencies': 'TRAFFIC_MONITORING_ENABLED',
+        'WEB_API_DOCS_ENABLED': {
+            'description': 'Включить Swagger/OpenAPI документацию.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'WEB_API_ENABLED',
         },
-        'TRAFFIC_SNAPSHOT_TTL_HOURS': {
-            'description': (
-                'Время жизни (TTL) snapshot трафика в Redis в часах. '
-                'Snapshot используется для вычисления дельты (изменения трафика) между проверками. '
-                'После истечения TTL snapshot удаляется и создается новый.'
-            ),
-            'format': 'Целое число часов (минимум 1).',
-            'example': '24',
-            'warning': (
-                'TTL должен быть >= интервала мониторинга. '
-                'Если TTL меньше интервала, snapshot будет удален до следующей проверки.'
-            ),
-            'dependencies': 'TRAFFIC_MONITORING_ENABLED, Redis',
+        'WEB_API_TITLE': {
+            'description': 'Название API для документации.',
+            'format': 'Строка (str).',
+            'example': 'Remnawave Bot Admin API',
+            'dependencies': 'WEB_API_ENABLED, WEB_API_DOCS_ENABLED',
         },
-        'TRAFFIC_FAST_CHECK_ENABLED': {
-            'description': (
-                'Включает быструю проверку трафика. '
-                'Система сравнивает текущий трафик со snapshot и уведомляет о превышениях дельты.'
-            ),
-            'format': 'Булево значение.',
-            'example': 'true',
-            'warning': 'Требует Redis для хранения snapshot. При отключении проверки не выполняются.',
-            'dependencies': 'Redis, TRAFFIC_FAST_CHECK_INTERVAL_MINUTES, TRAFFIC_FAST_CHECK_THRESHOLD_GB',
+        'WEB_API_VERSION': {
+            'description': 'Версия API для документации.',
+            'format': 'Строка версии.',
+            'example': '1.0.0',
+            'dependencies': 'WEB_API_ENABLED',
         },
-        'TRAFFIC_FAST_CHECK_INTERVAL_MINUTES': {
-            'description': 'Интервал быстрой проверки трафика в минутах.',
-            'format': 'Целое число минут (минимум 1).',
-            'example': '10',
-            'warning': 'Слишком малый интервал создаёт нагрузку на Remnawave API.',
-            'dependencies': 'TRAFFIC_FAST_CHECK_ENABLED',
+        'WEB_API_DEFAULT_TOKEN': {
+            'description': 'Токен по умолчанию для начальной настройки.',
+            'format': 'Строка токена.',
+            'example': 'your_bootstrap_token',
+            'dependencies': 'WEB_API_ENABLED',
         },
-        'TRAFFIC_FAST_CHECK_THRESHOLD_GB': {
-            'description': 'Порог дельты трафика в ГБ для быстрой проверки. При превышении отправляется уведомление.',
-            'format': 'Число с плавающей точкой.',
-            'example': '5.0',
-            'warning': 'Слишком низкий порог приведёт к частым уведомлениям.',
-            'dependencies': 'TRAFFIC_FAST_CHECK_ENABLED',
+        'WEB_API_DEFAULT_TOKEN_NAME': {
+            'description': 'Название токена по умолчанию.',
+            'format': 'Строка (str).',
+            'example': 'Bootstrap Token',
+            'dependencies': 'WEB_API_ENABLED',
         },
-        'TRAFFIC_DAILY_CHECK_ENABLED': {
-            'description': 'Включает суточную проверку трафика через bandwidth-stats API.',
-            'format': 'Булево значение.',
-            'example': 'true',
-            'warning': 'Проверка выполняется в указанное время (TRAFFIC_DAILY_CHECK_TIME).',
-            'dependencies': 'TRAFFIC_DAILY_CHECK_TIME, TRAFFIC_DAILY_THRESHOLD_GB',
+        'WEB_API_REQUEST_LOGGING': {
+            'description': 'Логировать запросы к Web API.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'WEB_API_ENABLED',
         },
-        'TRAFFIC_DAILY_CHECK_TIME': {
-            'description': 'Время суточной проверки трафика в формате HH:MM (UTC).',
-            'format': 'Строка времени HH:MM.',
+        # ===== WEBHOOK (бот) =====
+        'BOT_RUN_MODE': {
+            'description': 'Режим работы бота: polling — long polling (опрос серверов Telegram), webhook — приём вебхуков от Telegram.',
+            'format': 'Выберите режим.',
+            'example': 'polling | webhook',
+        },
+        'WEBHOOK_URL': {
+            'description': 'Базовый URL для вебхуков бота.',
+            'format': 'Полный URL с https.',
+            'example': 'https://your-domain.com',
+            'dependencies': 'BOT_RUN_MODE=webhook',
+        },
+        'WEBHOOK_PATH': {
+            'description': 'Путь для вебхука бота.',
+            'format': 'Путь начинающийся с /.',
+            'example': '/webhook',
+            'dependencies': 'BOT_RUN_MODE=webhook',
+        },
+        'WEBHOOK_SECRET_TOKEN': {
+            'description': 'Секретный токен для проверки вебхуков.',
+            'format': 'Строка (str).',
+            'example': 'your_secret_token',
+            'dependencies': 'BOT_RUN_MODE=webhook',
+        },
+        'WEBHOOK_DROP_PENDING_UPDATES': {
+            'description': 'Удалять накопившиеся обновления при старте.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'BOT_RUN_MODE=webhook',
+        },
+        'WEBHOOK_MAX_QUEUE_SIZE': {
+            'description': 'Максимальный размер очереди обновлений.',
+            'format': 'Целое число (int).',
+            'example': '1024',
+            'dependencies': 'BOT_RUN_MODE=webhook',
+        },
+        'WEBHOOK_WORKERS': {
+            'description': 'Количество воркеров для обработки вебхуков.',
+            'format': 'Целое число (int).',
+            'example': '4',
+            'dependencies': 'BOT_RUN_MODE=webhook',
+        },
+        # ===== LOG =====
+        'LOG_LEVEL': {
+            'description': 'Уровень логирования: DEBUG — отладка, INFO — информация, WARNING — предупреждения, ERROR — ошибки, CRITICAL — критические.',
+            'format': 'Выберите уровень.',
+            'example': 'DEBUG | INFO | WARNING | ERROR | CRITICAL',
+        },
+        'LOG_FILE': {
+            'description': 'Путь к файлу логов.',
+            'format': 'Путь к файлу.',
+            'example': 'logs/bot.log',
+        },
+        'LOG_COLORS': {
+            'description': 'ANSI-цвета в консоли (true — цветной вывод, false — plain-text).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'LOG_ROTATION_ENABLED': {
+            'description': 'Включить новую систему ротации логов.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'LOG_ROTATION_TIME': {
+            'description': 'Время ротации логов (формат HH:MM).',
+            'format': 'Время HH:MM.',
             'example': '00:00',
-            'warning': 'Время указывается в UTC.',
-            'dependencies': 'TRAFFIC_DAILY_CHECK_ENABLED',
+            'dependencies': 'LOG_ROTATION_ENABLED',
         },
-        'TRAFFIC_DAILY_THRESHOLD_GB': {
-            'description': 'Порог суточного трафика в ГБ. При превышении за 24 часа отправляется уведомление.',
-            'format': 'Число с плавающей точкой.',
-            'example': '50.0',
-            'warning': 'Учитывается весь трафик за последние 24 часа.',
-            'dependencies': 'TRAFFIC_DAILY_CHECK_ENABLED',
+        'LOG_ROTATION_KEEP_DAYS': {
+            'description': 'Хранить архивы логов N дней.',
+            'format': 'Целое число дней (int).',
+            'example': '7',
+            'dependencies': 'LOG_ROTATION_ENABLED',
         },
-        'TRAFFIC_NOTIFICATION_COOLDOWN_MINUTES': {
-            'description': 'Кулдаун уведомлений по одному пользователю в минутах.',
-            'format': 'Целое число минут.',
-            'example': '60',
-            'warning': 'Защита от спама уведомлениями по одному и тому же пользователю.',
+        'LOG_ROTATION_COMPRESS': {
+            'description': 'Сжимать архивы логов (gzip).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'LOG_ROTATION_ENABLED',
+        },
+        'LOG_ROTATION_SEND_TO_TELEGRAM': {
+            'description': 'Отправлять архивы логов в Telegram канал.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'LOG_ROTATION_ENABLED',
+        },
+        # ===== DEBUG =====
+        'DEBUG': {
+            'description': 'Включить режим отладки.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'warning': 'В продакшене рекомендуется выключить для производительности.',
+        },
+        # ===== TELEGRAM STARS =====
+        'TELEGRAM_STARS_ENABLED': {
+            'description': 'Включить оплату через Telegram Stars.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'TELEGRAM_STARS_RATE_RUB': {
+            'description': 'Курс Telegram Stars к рублю (сколько рублей за 1 звезду).',
+            'format': 'Число с плавающей точкой (float).',
+            'example': '1.79 (1 звезда = 1.79 ₽)',
+            'dependencies': 'TELEGRAM_STARS_ENABLED',
+        },
+        'TELEGRAM_STARS_DISPLAY_NAME': {
+            'description': 'Название кнопки Telegram Stars в интерфейсе.',
+            'format': 'Строка (str).',
+            'example': 'Telegram Stars',
+            'dependencies': 'TELEGRAM_STARS_ENABLED',
+        },
+        # ===== TRIBUTE =====
+        'TRIBUTE_ENABLED': {
+            'description': 'Включить интеграцию с Tribute.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'TRIBUTE_API_KEY, TRIBUTE_DONATE_LINK',
+        },
+        'TRIBUTE_API_KEY': {
+            'description': 'API ключ Tribute.',
+            'format': 'Строка (str).',
+            'example': 'your_api_key',
+            'dependencies': 'TRIBUTE_ENABLED',
+        },
+        'TRIBUTE_DONATE_LINK': {
+            'description': 'Ссылка на страницу доната Tribute.',
+            'format': 'URL.',
+            'example': 'https://donate.tribute.app/your_link',
+            'dependencies': 'TRIBUTE_ENABLED',
+        },
+        # ===== HELEKET =====
+        'HELEKET_ENABLED': {
+            'description': 'Включить криптоплатежи через Heleket.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'HELEKET_MERCHANT_ID, HELEKET_API_KEY',
+        },
+        'HELEKET_MERCHANT_ID': {
+            'description': 'Идентификатор мерчанта Heleket.',
+            'format': 'Строка (str).',
+            'example': 'your_merchant_id',
+            'dependencies': 'HELEKET_ENABLED',
+        },
+        'HELEKET_API_KEY': {
+            'description': 'API ключ Heleket.',
+            'format': 'Строка (str).',
+            'example': 'your_api_key',
+            'dependencies': 'HELEKET_ENABLED',
+        },
+        'HELEKET_DEFAULT_CURRENCY': {
+            'description': 'Криптовалюта по умолчанию для Heleket.',
+            'format': 'Код валюты.',
+            'example': 'USDT',
+            'dependencies': 'HELEKET_ENABLED',
+        },
+        'HELEKET_MARKUP_PERCENT': {
+            'description': 'Наценка на криптоплатежи в процентах.',
+            'format': 'Число с плавающей точкой (float).',
+            'example': '0.0 | 5.0 | 10.5',
+            'dependencies': 'HELEKET_ENABLED',
+        },
+        # ===== MULENPAY =====
+        'MULENPAY_ENABLED': {
+            'description': 'Включить платежи через MulenPay.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'MULENPAY_API_KEY, MULENPAY_SECRET_KEY, MULENPAY_SHOP_ID',
+        },
+        'MULENPAY_API_KEY': {
+            'description': 'API ключ MulenPay.',
+            'format': 'Строка (str).',
+            'example': 'your_api_key',
+            'dependencies': 'MULENPAY_ENABLED',
+        },
+        'MULENPAY_SECRET_KEY': {
+            'description': 'Секретный ключ MulenPay.',
+            'format': 'Строка (str).',
+            'example': 'your_secret_key',
+            'dependencies': 'MULENPAY_ENABLED',
+        },
+        'MULENPAY_SHOP_ID': {
+            'description': 'ID магазина MulenPay.',
+            'format': 'Целое число (int).',
+            'example': '123',
+            'dependencies': 'MULENPAY_ENABLED',
+        },
+        'MULENPAY_DISPLAY_NAME': {
+            'description': 'Название кнопки MulenPay в интерфейсе.',
+            'format': 'Строка (str).',
+            'example': 'Mulen Pay',
+            'dependencies': 'MULENPAY_ENABLED',
+        },
+        'MULENPAY_MIN_AMOUNT_KOPEKS': {
+            'description': 'Минимальная сумма через MulenPay в копейках.',
+            'format': 'Целое число (int).',
+            'example': '10000',
+            'dependencies': 'MULENPAY_ENABLED',
+        },
+        'MULENPAY_MAX_AMOUNT_KOPEKS': {
+            'description': 'Максимальная сумма через MulenPay в копейках.',
+            'format': 'Целое число (int).',
+            'example': '10000000',
+            'dependencies': 'MULENPAY_ENABLED',
+        },
+        'MULENPAY_LANGUAGE': {
+            'description': 'Язык интерфейса оплаты MulenPay.',
+            'format': 'Выберите язык.',
+            'example': 'ru | en',
+            'dependencies': 'MULENPAY_ENABLED',
+        },
+        # ===== PAL24 =====
+        'PAL24_ENABLED': {
+            'description': 'Включить платежи через PAL24 (PayPalych).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'PAL24_API_TOKEN, PAL24_SHOP_ID',
+        },
+        'PAL24_API_TOKEN': {
+            'description': 'API токен PAL24.',
+            'format': 'Строка (str).',
+            'example': 'your_api_token',
+            'dependencies': 'PAL24_ENABLED',
+        },
+        'PAL24_SHOP_ID': {
+            'description': 'ID магазина PAL24.',
+            'format': 'Строка (str).',
+            'example': 'your_shop_id',
+            'dependencies': 'PAL24_ENABLED',
+        },
+        'PAL24_SIGNATURE_TOKEN': {
+            'description': 'Токен подписи PAL24.',
+            'format': 'Строка (str).',
+            'example': 'your_signature_token',
+            'dependencies': 'PAL24_ENABLED',
+        },
+        'PAL24_SBP_BUTTON_VISIBLE': {
+            'description': 'Показывать кнопку СБП в PAL24.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'PAL24_ENABLED',
+        },
+        'PAL24_CARD_BUTTON_VISIBLE': {
+            'description': 'Показывать кнопку оплаты картой в PAL24.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'PAL24_ENABLED',
+        },
+        'PAL24_MIN_AMOUNT_KOPEKS': {
+            'description': 'Минимальная сумма через PAL24 в копейках.',
+            'format': 'Целое число (int).',
+            'example': '10000',
+            'dependencies': 'PAL24_ENABLED',
+        },
+        'PAL24_MAX_AMOUNT_KOPEKS': {
+            'description': 'Максимальная сумма через PAL24 в копейках.',
+            'format': 'Целое число (int).',
+            'example': '100000000',
+            'dependencies': 'PAL24_ENABLED',
+        },
+        # ===== WATA =====
+        'WATA_ENABLED': {
+            'description': 'Включить платежи через Wata.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'WATA_ACCESS_TOKEN, WATA_TERMINAL_PUBLIC_ID',
+        },
+        'WATA_ACCESS_TOKEN': {
+            'description': 'Токен доступа Wata.',
+            'format': 'Строка (str).',
+            'example': 'your_access_token',
+            'dependencies': 'WATA_ENABLED',
+        },
+        'WATA_TERMINAL_PUBLIC_ID': {
+            'description': 'Публичный ID терминала Wata.',
+            'format': 'Строка (str).',
+            'example': 'your_terminal_id',
+            'dependencies': 'WATA_ENABLED',
+        },
+        'WATA_PAYMENT_TYPE': {
+            'description': 'Тип платежа Wata: card — только карта, sbp — только СБП, all — все способы.',
+            'format': 'Выберите тип.',
+            'example': 'card | sbp | all',
+            'dependencies': 'WATA_ENABLED',
+        },
+        'WATA_MIN_AMOUNT_KOPEKS': {
+            'description': 'Минимальная сумма через Wata в копейках.',
+            'format': 'Целое число (int).',
+            'example': '10000',
+            'dependencies': 'WATA_ENABLED',
+        },
+        'WATA_MAX_AMOUNT_KOPEKS': {
+            'description': 'Максимальная сумма через Wata в копейках.',
+            'format': 'Целое число (int).',
+            'example': '10000000',
+            'dependencies': 'WATA_ENABLED',
+        },
+        # ===== CLOUDPAYMENTS =====
+        'CLOUDPAYMENTS_ENABLED': {
+            'description': 'Включить платежи через CloudPayments.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'CLOUDPAYMENTS_PUBLIC_ID, CLOUDPAYMENTS_API_SECRET',
+        },
+        'CLOUDPAYMENTS_PUBLIC_ID': {
+            'description': 'Public ID CloudPayments.',
+            'format': 'Строка (str).',
+            'example': 'your_public_id',
+            'dependencies': 'CLOUDPAYMENTS_ENABLED',
+        },
+        'CLOUDPAYMENTS_API_SECRET': {
+            'description': 'API Secret CloudPayments.',
+            'format': 'Строка (str).',
+            'example': 'your_api_secret',
+            'dependencies': 'CLOUDPAYMENTS_ENABLED',
+        },
+        'CLOUDPAYMENTS_SKIN': {
+            'description': 'Скин виджета CloudPayments: mini — минимальный, classic — классический, modern — современный.',
+            'format': 'Выберите скин.',
+            'example': 'mini | classic | modern',
+            'dependencies': 'CLOUDPAYMENTS_ENABLED',
+        },
+        'CLOUDPAYMENTS_TEST_MODE': {
+            'description': 'Тестовый режим CloudPayments.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'CLOUDPAYMENTS_ENABLED',
+        },
+        # ===== FREEKASSA =====
+        'FREEKASSA_ENABLED': {
+            'description': 'Включить платежи через Freekassa.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'FREEKASSA_SHOP_ID, FREEKASSA_API_KEY, FREEKASSA_SECRET_WORD_1, FREEKASSA_SECRET_WORD_2',
+        },
+        'FREEKASSA_SHOP_ID': {
+            'description': 'ID магазина Freekassa.',
+            'format': 'Целое число (int).',
+            'example': '123456',
+            'dependencies': 'FREEKASSA_ENABLED',
+        },
+        'FREEKASSA_API_KEY': {
+            'description': 'API ключ Freekassa.',
+            'format': 'Строка (str).',
+            'example': 'your_api_key',
+            'dependencies': 'FREEKASSA_ENABLED',
+        },
+        'FREEKASSA_SECRET_WORD_1': {
+            'description': 'Секретное слово 1 Freekassa (для формы оплаты).',
+            'format': 'Строка (str).',
+            'example': 'your_secret_1',
+            'dependencies': 'FREEKASSA_ENABLED',
+        },
+        'FREEKASSA_SECRET_WORD_2': {
+            'description': 'Секретное слово 2 Freekassa (для webhook).',
+            'format': 'Строка (str).',
+            'example': 'your_secret_2',
+            'dependencies': 'FREEKASSA_ENABLED',
+        },
+        'FREEKASSA_PAYMENT_SYSTEM_ID': {
+            'description': 'Способ оплаты Freekassa: пусто = форма выбора, 42 = обычный СБП, 44 = NSPK СБП.',
+            'format': 'Целое число или пусто.',
+            'example': '44',
+            'dependencies': 'FREEKASSA_ENABLED',
+        },
+        'FREEKASSA_USE_API': {
+            'description': 'Использовать API для создания заказов (обязательно для NSPK СБП).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'FREEKASSA_ENABLED',
+        },
+        # ===== KASSA_AI =====
+        'KASSA_AI_ENABLED': {
+            'description': 'Включить платежи через KassaAI (api.fk.life).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'KASSA_AI_SHOP_ID, KASSA_AI_API_KEY, KASSA_AI_SECRET_WORD_2',
+        },
+        'KASSA_AI_SHOP_ID': {
+            'description': 'ID магазина KassaAI.',
+            'format': 'Целое число (int).',
+            'example': '123456',
+            'dependencies': 'KASSA_AI_ENABLED',
+        },
+        'KASSA_AI_API_KEY': {
+            'description': 'API ключ KassaAI.',
+            'format': 'Строка (str).',
+            'example': 'your_api_key',
+            'dependencies': 'KASSA_AI_ENABLED',
+        },
+        'KASSA_AI_SECRET_WORD_2': {
+            'description': 'Секретное слово 2 KassaAI (для webhook).',
+            'format': 'Строка (str).',
+            'example': 'your_secret',
+            'dependencies': 'KASSA_AI_ENABLED',
+        },
+        'KASSA_AI_PAYMENT_SYSTEM_ID': {
+            'description': 'Способ оплаты KassaAI: 44 = СБП (QR), 36 = Карты РФ, 43 = SberPay.',
+            'format': 'Целое число (int).',
+            'example': '44',
+            'dependencies': 'KASSA_AI_ENABLED',
+        },
+        # ===== PLATEGA =====
+        'PLATEGA_ENABLED': {
+            'description': 'Включить платежи через Platega.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'PLATEGA_MERCHANT_ID, PLATEGA_SECRET',
+        },
+        'PLATEGA_MERCHANT_ID': {
+            'description': 'Merchant ID Platega.',
+            'format': 'Строка (str).',
+            'example': 'your_merchant_id',
+            'dependencies': 'PLATEGA_ENABLED',
+        },
+        'PLATEGA_SECRET': {
+            'description': 'Секрет Platega.',
+            'format': 'Строка (str).',
+            'example': 'your_secret',
+            'dependencies': 'PLATEGA_ENABLED',
+        },
+        'PLATEGA_ACTIVE_METHODS': {
+            'description': 'Активные методы оплаты Platega: 2-СБП, 10-Карты RUB, 11-Банковские, 12-Международные, 13-Крипто.',
+            'format': 'Числа через запятую.',
+            'example': '2,10,11,12,13',
+            'dependencies': 'PLATEGA_ENABLED',
+        },
+        'PLATEGA_DISPLAY_NAME': {
+            'description': 'Название кнопки Platega в интерфейсе.',
+            'format': 'Строка (str).',
+            'example': 'Platega',
+            'dependencies': 'PLATEGA_ENABLED',
+        },
+        # ===== NALOGO =====
+        'NALOGO_ENABLED': {
+            'description': 'Включить автоматическую отправку чеков в налоговую (NaloGO).',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'NALOGO_INN, NALOGO_PASSWORD',
+        },
+        'NALOGO_INN': {
+            'description': 'ИНН самозанятого для NaloGO.',
+            'format': 'Строка из 12 цифр.',
+            'example': '123456789012',
+            'dependencies': 'NALOGO_ENABLED',
+        },
+        'NALOGO_PASSWORD': {
+            'description': 'Пароль от личного кабинета налоговой.',
+            'format': 'Строка (str).',
+            'example': 'your_password',
+            'dependencies': 'NALOGO_ENABLED',
+        },
+        'NALOGO_QUEUE_CHECK_INTERVAL': {
+            'description': 'Интервал проверки очереди чеков в секундах.',
+            'format': 'Целое число секунд (int).',
+            'example': '300',
+            'dependencies': 'NALOGO_ENABLED',
+        },
+        'NALOGO_QUEUE_MAX_ATTEMPTS': {
+            'description': 'Максимум попыток отправки одного чека.',
+            'format': 'Целое число (int).',
+            'example': '10',
+            'dependencies': 'NALOGO_ENABLED',
+        },
+        # ===== CONTESTS =====
+        'CONTESTS_ENABLED': {
+            'description': 'Включить конкурсную систему.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'CONTESTS_BUTTON_VISIBLE': {
+            'description': 'Показывать кнопку конкурсов в меню.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'CONTESTS_ENABLED',
+        },
+        # ===== BLACKLIST =====
+        'BLACKLIST_CHECK_ENABLED': {
+            'description': 'Включить проверку пользователей по чёрному списку.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'BLACKLIST_GITHUB_URL',
+        },
+        'BLACKLIST_GITHUB_URL': {
+            'description': 'URL к файлу чёрного списка на GitHub.',
+            'format': 'URL raw файла.',
+            'example': 'https://raw.githubusercontent.com/.../blacklist.txt',
+            'dependencies': 'BLACKLIST_CHECK_ENABLED',
+        },
+        'BLACKLIST_UPDATE_INTERVAL_HOURS': {
+            'description': 'Интервал обновления чёрного списка в часах.',
+            'format': 'Целое число часов (int).',
+            'example': '24',
+            'dependencies': 'BLACKLIST_CHECK_ENABLED',
+        },
+        'BLACKLIST_IGNORE_ADMINS': {
+            'description': 'Игнорировать администраторов при проверке чёрного списка.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'dependencies': 'BLACKLIST_CHECK_ENABLED',
+        },
+        'DISPOSABLE_EMAIL_CHECK_ENABLED': {
+            'description': 'Включить проверку на одноразовые email при регистрации.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        # ===== AUTO_PURCHASE =====
+        'AUTO_PURCHASE_AFTER_TOPUP_ENABLED': {
+            'description': (
+                'При достаточном балансе автоматически оформляет сохранённую подписку сразу после пополнения.'
+            ),
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+            'warning': ('Используйте с осторожностью: средства будут списаны мгновенно, если корзина найдена.'),
+        },
+        # ===== ACTIVATE_BUTTON =====
+        'ACTIVATE_BUTTON_VISIBLE': {
+            'description': 'Показывать кнопку активации.',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
+        },
+        'ACTIVATE_BUTTON_TEXT': {
+            'description': 'Текст кнопки активации.',
+            'format': 'Строка (str).',
+            'example': 'активировать',
+            'dependencies': 'ACTIVATE_BUTTON_VISIBLE',
         },
         'WEBHOOK_NOTIFY_USER_ENABLED': {
             'description': (
                 'Глобальный переключатель уведомлений пользователям от вебхуков RemnaWave. '
                 'При выключении ни одно уведомление не отправляется, независимо от остальных настроек.'
             ),
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
         'WEBHOOK_NOTIFY_SUB_STATUS': {
             'description': 'Уведомления об отключении и активации подписки администратором.',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
         'WEBHOOK_NOTIFY_SUB_EXPIRED': {
             'description': 'Уведомления об истечении подписки.',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
         'WEBHOOK_NOTIFY_SUB_EXPIRING': {
             'description': 'Предупреждения о скором истечении подписки (72ч, 48ч, 24ч до окончания).',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
         'WEBHOOK_NOTIFY_SUB_LIMITED': {
             'description': 'Уведомление при достижении лимита трафика.',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
         'WEBHOOK_NOTIFY_TRAFFIC_RESET': {
             'description': 'Уведомление о сбросе счётчика трафика.',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
         'WEBHOOK_NOTIFY_SUB_DELETED': {
             'description': 'Уведомление при удалении пользователя из панели.',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
         'WEBHOOK_NOTIFY_SUB_REVOKED': {
             'description': 'Уведомление при обновлении ключей подписки (revoke).',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
         'WEBHOOK_NOTIFY_FIRST_CONNECTED': {
             'description': 'Уведомление при первом подключении к VPN.',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
         'WEBHOOK_NOTIFY_NOT_CONNECTED': {
             'description': 'Напоминание, что пользователь ещё не подключился к VPN.',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
         'WEBHOOK_NOTIFY_BANDWIDTH_THRESHOLD': {
             'description': 'Предупреждение при приближении к лимиту трафика (порог в %).',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
         'WEBHOOK_NOTIFY_DEVICES': {
             'description': 'Уведомления о подключении и отключении устройств.',
-            'format': 'Булево значение.',
-            'example': 'true',
+            'format': 'Булево значение (bool).',
+            'example': 'true | false',
         },
     }
 
