@@ -900,6 +900,7 @@ class BotConfigurationService:
 
     @classmethod
     def _is_env_override(cls, key: str) -> bool:
+        """Ключ задан в окружении при старте — не перезаписываем из БД."""
         return key in cls._env_override_keys
 
     @classmethod
