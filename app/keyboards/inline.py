@@ -450,9 +450,9 @@ def _build_cabinet_main_menu_keyboard(
             )
         paired.append(_cabinet_button(balance_text, '/balance', 'menu_balance'))
 
-    # Referrals (if enabled)
+    # Referrals (Партнерка) — всегда показываем кнопку; при выключенной программе раздел сам покажет сообщение
     ref_cfg = cached_styles.get('referral', {})
-    if settings.is_referral_program_enabled() and ref_cfg.get('enabled', True):
+    if ref_cfg.get('enabled', True):
         ref_text = ref_cfg.get('labels', {}).get(language, '') or texts.MENU_REFERRALS
         paired.append(_cabinet_button(ref_text, '/referral', 'menu_referrals'))
 
@@ -470,11 +470,11 @@ def _build_cabinet_main_menu_keyboard(
         sup_text = sup_cfg.get('labels', {}).get(language, '') or texts.MENU_SUPPORT
         paired.append(_cabinet_button(sup_text, '/support', 'menu_support'))
 
-    # Info
-    info_cfg = cached_styles.get('info', {})
-    if info_cfg.get('enabled', True):
-        info_text = info_cfg.get('labels', {}).get(language, '') or texts.t('MENU_INFO', 'ℹ️ Инфо')
-        paired.append(_cabinet_button(info_text, '/info', 'menu_info'))
+    # Info (Инфо) — скрыто по дизайну
+    # info_cfg = cached_styles.get('info', {})
+    # if info_cfg.get('enabled', True):
+    #     info_text = info_cfg.get('labels', {}).get(language, '') or texts.t('MENU_INFO', 'ℹ️ Инфо')
+    #     paired.append(_cabinet_button(info_text, '/info', 'menu_info'))
 
     # Language selection (stays as callback — not a cabinet section)
     if settings.is_language_selection_enabled():
@@ -634,12 +634,11 @@ def get_main_menu_keyboard(
         and not getattr(current_subscription, 'is_trial', False)
         and getattr(current_subscription, 'is_active', False)
     )
+    # Простая покупка — скрыта по дизайну
+    # simple_purchase_button = None
+    # if settings.SIMPLE_SUBSCRIPTION_ENABLED:
+    #     simple_purchase_button = InlineKeyboardButton(...)
     simple_purchase_button = None
-    if settings.SIMPLE_SUBSCRIPTION_ENABLED:
-        simple_purchase_button = InlineKeyboardButton(
-            text=texts.MENU_SIMPLE_SUBSCRIPTION,
-            callback_data='simple_subscription_purchase',
-        )
 
     subscription_buttons: list[InlineKeyboardButton] = []
 
@@ -651,8 +650,8 @@ def get_main_menu_keyboard(
 
     if subscription_buttons:
         paired_buttons.extend(subscription_buttons)
-    if simple_purchase_button:
-        paired_buttons.append(simple_purchase_button)
+    # if simple_purchase_button:
+    #     paired_buttons.append(simple_purchase_button)
 
     if show_resume_checkout or has_saved_cart:
         resume_callback = 'return_to_saved_cart' if has_saved_cart else 'subscription_resume_checkout'
@@ -671,9 +670,8 @@ def get_main_menu_keyboard(
     # Добавляем кнопки промокода и рефералов, учитывая настройки
     paired_buttons.append(InlineKeyboardButton(text=texts.MENU_PROMOCODE, callback_data='menu_promocode'))
 
-    # Добавляем кнопку рефералов, только если программа включена
-    if settings.is_referral_program_enabled():
-        paired_buttons.append(InlineKeyboardButton(text=texts.MENU_REFERRALS, callback_data='menu_referrals'))
+    # Добавляем кнопку Партнерка (всегда; при выключенной программе раздел покажет сообщение)
+    paired_buttons.append(InlineKeyboardButton(text=texts.MENU_REFERRALS, callback_data='menu_referrals'))
 
     # Добавляем кнопку конкурсов
     if settings.CONTESTS_ENABLED and settings.CONTESTS_BUTTON_VISIBLE:
@@ -695,12 +693,8 @@ def get_main_menu_keyboard(
     if settings.ACTIVATE_BUTTON_VISIBLE:
         paired_buttons.append(InlineKeyboardButton(text=settings.ACTIVATE_BUTTON_TEXT, callback_data='activate_button'))
 
-    paired_buttons.append(
-        InlineKeyboardButton(
-            text=texts.t('MENU_INFO', 'ℹ️ Инфо'),
-            callback_data='menu_info',
-        )
-    )
+    # Инфо скрыто по дизайну
+    # paired_buttons.append(InlineKeyboardButton(text=texts.t('MENU_INFO', 'ℹ️ Инфо'), callback_data='menu_info'))
 
     if settings.is_language_selection_enabled():
         paired_buttons.append(InlineKeyboardButton(text=texts.MENU_LANGUAGE, callback_data='menu_language'))

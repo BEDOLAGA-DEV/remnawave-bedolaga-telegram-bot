@@ -155,13 +155,14 @@ class Settings(BaseSettings):
     SERVER_STATUS_ITEMS_PER_PAGE: int = 10
 
     BASE_SUBSCRIPTION_PRICE: int = 50000
-    AVAILABLE_SUBSCRIPTION_PERIODS: str = '14,30,60,90,180,360'
-    AVAILABLE_RENEWAL_PERIODS: str = '30,90,180'
-    PRICE_14_DAYS: int = 50000
+    # Только нужные периоды (14, 60, 180 отключены — не заданы в .env или цена 0)
+    AVAILABLE_SUBSCRIPTION_PERIODS: str = '30,90,360'
+    AVAILABLE_RENEWAL_PERIODS: str = '30,90,360'
+    PRICE_14_DAYS: int = 0   # 0 = период скрыт
     PRICE_30_DAYS: int = 99000
-    PRICE_60_DAYS: int = 189000
+    PRICE_60_DAYS: int = 0   # 0 = период скрыт
     PRICE_90_DAYS: int = 269000
-    PRICE_180_DAYS: int = 499000
+    PRICE_180_DAYS: int = 0  # 0 = период скрыт
     PRICE_360_DAYS: int = 899000
     PAID_SUBSCRIPTION_USER_TAG: str | None = None
 
@@ -1210,7 +1211,7 @@ class Settings(BaseSettings):
         return self.YOOKASSA_QUICK_AMOUNT_SELECTION_ENABLED and not self.DISABLE_TOPUP_BUTTONS
 
     def get_available_languages(self) -> list[str]:
-        defaults = ['ru', 'en', 'ua', 'zh', 'fa']
+        defaults = ['ru', 'en']
 
         try:
             langs = self.AVAILABLE_LANGUAGES
@@ -1944,7 +1945,7 @@ class Settings(BaseSettings):
         try:
             periods_str = self.AVAILABLE_SUBSCRIPTION_PERIODS
             if not periods_str or not periods_str.strip():
-                allowed_periods = {14, 30, 60, 90, 180, 360}
+                allowed_periods = {30, 90, 360}
             else:
                 allowed_periods = set()
                 for period_str in periods_str.split(','):
@@ -1952,13 +1953,11 @@ class Settings(BaseSettings):
                     if period_str:
                         allowed_periods.add(int(period_str))
         except (ValueError, AttributeError):
-            allowed_periods = {14, 30, 60, 90, 180, 360}
+            allowed_periods = {30, 90, 360}
 
-        # Возвращаем только разрешённые периоды (без фильтрации по цене,
-        # т.к. в режиме classic цена складывается из серверов/трафика/устройств)
+        # Возвращаем только разрешённые периоды
         periods = sorted(allowed_periods)
-
-        return periods if periods else [30, 90, 180]
+        return periods if periods else [30, 90, 360]
 
     def get_available_renewal_periods(self) -> list[int]:
         """
@@ -1970,7 +1969,7 @@ class Settings(BaseSettings):
         try:
             periods_str = self.AVAILABLE_RENEWAL_PERIODS
             if not periods_str or not periods_str.strip():
-                allowed_periods = {30, 60, 90, 180, 360}
+                allowed_periods = {30, 90, 360}
             else:
                 allowed_periods = set()
                 for period_str in periods_str.split(','):
@@ -1978,12 +1977,10 @@ class Settings(BaseSettings):
                     if period_str:
                         allowed_periods.add(int(period_str))
         except (ValueError, AttributeError):
-            allowed_periods = {30, 60, 90, 180, 360}
+            allowed_periods = {30, 90, 360}
 
-        # Возвращаем только разрешённые периоды (без фильтрации по цене)
         periods = sorted(allowed_periods)
-
-        return periods if periods else [30, 90, 180]
+        return periods if periods else [30, 90, 360]
 
     def get_configured_subscription_periods(self) -> list[int]:
         """
@@ -2590,13 +2587,16 @@ def refresh_period_prices() -> None:
     PERIOD_PRICES.clear()
 
     if _DB_PERIOD_PRICES:
-        # Используем цены из БД
-        PERIOD_PRICES.update(_DB_PERIOD_PRICES)
-    else:
-        # Fallback на .env
+        # Используем цены из БД (только периоды с ценой > 0)
         PERIOD_PRICES.update(
-            {days: getattr(settings, field_name, 0) for days, field_name in _PERIOD_PRICE_FIELDS.items()}
+            {d: p for d, p in _DB_PERIOD_PRICES.items() if p and int(p) > 0}
         )
+    else:
+        # Fallback на .env — только периоды с ценой > 0 (остальные скрыты)
+        for days, field_name in _PERIOD_PRICE_FIELDS.items():
+            price = getattr(settings, field_name, 0) or 0
+            if int(price) > 0:
+                PERIOD_PRICES[days] = int(price)
 
 
 PERIOD_PRICES: dict[int, int] = {}

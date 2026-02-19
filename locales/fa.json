@@ -1,0 +1,1739 @@
+{
+    "ACCESS_DENIED": "❌ دسترسی غیرمجاز",
+    "ADDON_INSUFFICIENT_FUNDS_MESSAGE": "⚠️ <b>موجودی ناکافی</b>\n\nهزینه: {required}\nموجودی: {balance}\nکسری: {missing}\n\nروش شارژ را انتخاب کنید.",
+    "ADD_COUNTRIES_BUTTON": "🌐 افزودن کشور",
+    "ADD_TRAFFIC_PROMPT": "📈 <b>افزودن ترافیک</b>\n\nمحدودیت فعلی: {current_traffic}\nترافیک اضافی را انتخاب کنید:",
+    "BUY_TRAFFIC_BUTTON": "📈 خرید ترافیک",
+    "ADMIN_BACK_TO_ADMIN": "⬅️ بازگشت به پنل",
+    "ADMIN_BACK_TO_LIST": "⬅️ بازگشت به لیست",
+    "ADMIN_BACK_TO_MAIN": "🏠 منوی اصلی",
+    "ADMIN_BACK_TO_MONITORING": "⬅️ بازگشت به مانیتورینگ",
+    "ADMIN_BACK_TO_SQUADS": "⬅️ بازگشت به اسکوادها",
+    "ADMIN_BROADCAST_ADD_DOCUMENT": "📄 افزودن سند",
+    "ADMIN_BROADCAST_ADD_PHOTO": "📷 افزودن عکس",
+    "ADMIN_BROADCAST_ADD_VIDEO": "🎥 افزودن ویدیو",
+    "ADMIN_BROADCAST_BUTTON_BALANCE": "💰 شارژ موجودی",
+    "ADMIN_BROADCAST_BUTTON_CONNECT": "🔗 اتصال",
+    "ADMIN_BROADCAST_BUTTON_HOME": "🏠 صفحه اصلی",
+    "ADMIN_BROADCAST_BUTTON_PROMOCODE": "🎫 کد تخفیف",
+    "ADMIN_BROADCAST_BUTTON_REFERRALS": "🤝 دعوت دوستان",
+    "ADMIN_BROADCAST_BUTTON_SUBSCRIPTION": "📱 اشتراک",
+    "ADMIN_BROADCAST_BUTTON_SUPPORT": "🛠️ پشتیبانی",
+    "ADMIN_BROADCAST_CHANGE_MEDIA": "🖼️ تغییر مدیا",
+    "ADMIN_BROADCAST_NO_MEDIA": "⏭️ بدون مدیا",
+    "ADMIN_BROADCAST_REPLACE_MEDIA": "🔄 جایگزینی مدیا",
+    "ADMIN_BROADCAST_SKIP_MEDIA": "⏭️ رد کردن مدیا",
+    "ADMIN_BROADCAST_TARGET_ACTIVE": "📱 دارای اشتراک",
+    "ADMIN_BROADCAST_TARGET_ACTIVE_ZERO": "🧊 فعال ۰ گیگ",
+    "ADMIN_BROADCAST_TARGET_ALL": "👥 همه",
+    "ADMIN_BROADCAST_TARGET_EXPIRED": "🔚 منقضی‌شده",
+    "ADMIN_BROADCAST_TARGET_EXPIRING": "⏰ در حال انقضا",
+    "ADMIN_BROADCAST_TARGET_NO_SUB": "❌ بدون اشتراک",
+    "ADMIN_BROADCAST_TARGET_TRIAL": "🎁 آزمایشی",
+    "ADMIN_BROADCAST_TARGET_TRIAL_ZERO": "🥶 آزمایشی ۰ گیگ",
+    "ADMIN_BROADCAST_USE_MEDIA": "✅ استفاده از این مدیا",
+    "ADMIN_CAMPAIGNS": "📣 کمپین‌های تبلیغاتی",
+    "ADMIN_CAMPAIGNS_CREATE": "➕ ایجاد",
+    "ADMIN_CAMPAIGNS_GENERAL_STATS": "📊 آمار کلی",
+    "ADMIN_CAMPAIGNS_LIST": "📋 لیست کمپین‌ها",
+    "ADMIN_CAMPAIGN_BONUS_BALANCE": "💰 پاداش موجودی",
+    "ADMIN_CAMPAIGN_BONUS_SUBSCRIPTION": "📱 پاداش اشتراک",
+    "ADMIN_CAMPAIGN_DELETE": "🗑️ حذف",
+    "ADMIN_CAMPAIGN_DEVICES": "📱 دستگاه‌ها",
+    "ADMIN_CAMPAIGN_DISABLE": "🔴 غیرفعال",
+    "ADMIN_CAMPAIGN_DURATION": "📅 مدت",
+    "ADMIN_CAMPAIGN_EDIT": "✏️ ویرایش",
+    "ADMIN_CAMPAIGN_EDIT_NAME": "✏️ نام",
+    "ADMIN_CAMPAIGN_EDIT_START": "🔗 پارامتر",
+    "ADMIN_CAMPAIGN_ENABLE": "🟢 فعال",
+    "ADMIN_CAMPAIGN_SERVERS": "🌍 سرورها",
+    "ADMIN_CAMPAIGN_STATS": "📊 آمار",
+    "ADMIN_CAMPAIGN_TRAFFIC": "🌐 ترافیک",
+    "ADMIN_CONTESTS": "🏆 مسابقات",
+    "ADMIN_CONTESTS_CREATE": "➕ مسابقه جدید",
+    "ADMIN_CONTESTS_DISABLED": "مسابقات از طریق متغیر محیطی CONTESTS_ENABLED غیرفعال شده.",
+    "ADMIN_CONTESTS_LIST": "📋 مسابقات فعلی",
+    "ADMIN_CONTESTS_REFERRAL": "🤝 مسابقات ریفرال",
+    "ADMIN_CONTESTS_DAILY": "📆 مسابقات روزانه",
+    "ADMIN_CONTESTS_COMING_SOON": "به‌زودی اضافه می‌شود.",
+    "ADMIN_CONTESTS_LIST_HEADER": "🏆 <b>مسابقات</b>\n",
+    "ADMIN_CONTESTS_EMPTY": "هنوز مسابقه‌ای ایجاد نشده.",
+    "ADMIN_CONTESTS_TITLE": "🏆 <b>مسابقات</b>\n\nیک عملیات انتخاب کنید:",
+    "ADMIN_CONTEST_MODE_PAID": "💳 ریفرال با خرید",
+    "ADMIN_CONTEST_MODE_REGISTERED": "🧑‍🤝‍🧑 فقط ریفرال",
+    "ADMIN_CONTEST_MODE_PROMPT": "شرط امتیاز: ریفرال باید اشتراک بخرد یا ثبت‌نام کافیست.",
+    "ADMIN_CONTEST_ENTER_TITLE": "نام مسابقه را وارد کنید:",
+    "ADMIN_CONTEST_ENTER_DESCRIPTION": "توضیحات مسابقه (یا '-' برای رد کردن):",
+    "ADMIN_CONTEST_ENTER_PRIZE": "جوایز مسابقه (یا '-' برای رد کردن):",
+    "ADMIN_CONTEST_ENTER_START": "تاریخ و ساعت شروع (dd.mm.yyyy hh:mm):",
+    "ADMIN_CONTEST_ENTER_END": "تاریخ و ساعت پایان (dd.mm.yyyy hh:mm):",
+    "ADMIN_CONTEST_ENTER_DAILY_TIME": "ساعت ارسال خلاصه روزانه؟ فرمت HH:MM (مثلاً 12:00 یا 12:00,18:00)",
+    "ADMIN_CONTEST_INVALID_DATE": "تاریخ نامعتبر. فرمت: 01.06.2024 12:00",
+    "ADMIN_CONTEST_INVALID_TIME": "ساعت نامعتبر. فرمت: 12:00",
+    "ADMIN_CONTEST_END_BEFORE_START": "تاریخ پایان باید بعد از شروع باشد.",
+    "ADMIN_CONTEST_CREATED": "مسابقه ایجاد شد!",
+    "ADMIN_CONTEST_PRIZE": "جایزه: {prize}",
+    "ADMIN_CONTEST_LAST_DAILY": "آخرین خلاصه: {date}",
+    "ADMIN_CONTEST_STATUS_ACTIVE": "🟢 فعال",
+    "ADMIN_CONTEST_STATUS_INACTIVE": "⚪️ غیرفعال",
+    "ADMIN_CONTEST_TOTAL_EVENTS": "امتیازها: <b>{count}</b>",
+    "ADMIN_CONTEST_LEADERBOARD_TITLE": "📊 برترین‌ها:",
+    "ADMIN_CONTEST_LEADERBOARD": "📊 رتبه‌بندی",
+    "ADMIN_CONTEST_ENABLE": "▶️ شروع",
+    "ADMIN_CONTEST_DISABLE": "⏸️ توقف",
+    "ADMIN_CONTEST_START_MANUAL": "🧪 شروع دستی",
+    "ADMIN_CONTEST_EDIT_SUMMARY_TIMES": "🕒 خلاصه روزانه",
+    "ADMIN_CONTEST_DELETE": "🗑 حذف",
+    "ADMIN_CONTEST_DELETE_RESTRICT": "فقط مسابقات پایان‌یافته قابل حذف هستند.",
+    "ADMIN_CONTEST_DELETED": "مسابقه حذف شد.",
+    "ADMIN_CONTEST_NOT_FOUND": "مسابقه یافت نشد.",
+    "ADMIN_CONTEST_EMPTY_LEADERBOARD": "هنوز شرکت‌کننده‌ای نیست.",
+    "ADMIN_DAILY_CONTESTS_TITLE": "📆 مسابقات روزانه",
+    "ADMIN_EDIT_PRIZE": "🏅 جایزه (روز)",
+    "ADMIN_EDIT_MAX_WINNERS": "👥 برندگان",
+    "ADMIN_EDIT_ATTEMPTS": "🔁 تلاش‌ها",
+    "ADMIN_EDIT_TIMES": "⏰ راند/روز",
+    "ADMIN_EDIT_SCHEDULE": "🕒 زمان‌بندی",
+    "ADMIN_EDIT_COOLDOWN": "⌛ مدت",
+    "ADMIN_EDIT_PAYLOAD": "🧩 Payload",
+    "ADMIN_CONTEST_FIELD_PROMPT": "مقدار جدید برای {label}:",
+    "ADMIN_CONTEST_START_NOW": "شروع راند الان",
+    "ADMIN_RESET_ATTEMPTS": "🔄 بازنشانی تلاش‌ها",
+    "ADMIN_CLOSE_ROUND": "❌ بستن راند",
+    "ADMIN_ROUND_STARTED": "راند شروع شد",
+    "ADMIN_UPDATED": "به‌روز شد",
+    "ADMIN_INVALID_NUMBER": "عدد نامعتبر",
+    "ADMIN_INVALID_JSON": "JSON نامعتبر",
+    "CONTEST_MENU_TITLE": "🎲 <b>بازی‌ها</b>\nیک بازی انتخاب کنید:",
+    "CONTESTS_BUTTON": "🎲 مسابقات",
+    "CONTEST_EMPTY": "فعلاً بازی‌ای نیست",
+    "CONTEST_NOT_ELIGIBLE": "بازی‌ها فقط با اشتراک فعال یا آزمایشی در دسترس است.",
+    "CONTEST_ROUND_FINISHED": "راند تمام شده یا در دسترس نیست.",
+    "CONTEST_ALREADY_PLAYED": "شما قبلاً در این راند شرکت کرده‌اید.",
+    "CONTEST_UNKNOWN": "این نوع مسابقه پشتیبانی نمی‌شود.",
+    "CONTEST_QUEST_PROMPT": "یکی از گره‌های ۳×۳ را انتخاب کن:",
+    "CONTEST_LOCKS_PROMPT": "دکمه هک‌شده را بین قفل‌ها پیدا کن:",
+    "CONTEST_SERVER_PROMPT": "یک سرور انتخاب کن:",
+    "CONTEST_CIPHER_PROMPT": "رمزگشایی کن: {q}",
+    "CONTEST_EMOJI_PROMPT": "سرویس رو از ایموجی حدس بزن: {q}",
+    "CONTEST_ANAGRAM_PROMPT": "کلمه بساز: {letters}",
+    "CONTEST_BLITZ_PROMPT": "⚡️ بلیتز! «من اینجام!» رو بزن",
+    "CONTEST_BLITZ_BUTTON": "من اینجام!",
+    "CONTEST_WIN": "🎉 بردی! ",
+    "CONTEST_LOSE": "اشتباه بود، راند بعدی دوباره تلاش کن.",
+    "CONTEST_PRIZE_GRANTED": "پاداش {days} روز اضافه شد!",
+    "ADMIN_CANCEL": "❌ لغو",
+    "ADMIN_COMMUNICATIONS_MENU_MESSAGES": "📢 پیام‌های منو",
+    "ADMIN_COMMUNICATIONS_PROMO_OFFERS": "🎯 پیشنهادات تبلیغاتی",
+    "ADMIN_COMMUNICATIONS_SUBMENU_DESCRIPTION": "مدیریت ارسال پیام و متون رابط:",
+    "ADMIN_COMMUNICATIONS_SUBMENU_TITLE": "📨 **ارتباطات**\n\n",
+    "ADMIN_COMMUNICATIONS_WELCOME_TEXT": "👋 متن خوش‌آمدگویی",
+    "ADMIN_CONTINUE": "✅ ادامه",
+    "ADMIN_CRITERIA_ACTIVE_TODAY": "⚡ فعال امروز",
+    "ADMIN_CRITERIA_DIRECT": "🎯 ثبت‌نام مستقیم",
+    "ADMIN_CRITERIA_INACTIVE_MONTH": "💤 غیرفعال +۳۰ روز",
+    "ADMIN_CRITERIA_INACTIVE_WEEK": "💤 غیرفعال +۷ روز",
+    "ADMIN_CRITERIA_MONTH": "📅 ماه اخیر",
+    "ADMIN_CRITERIA_PROMOCODES": "🎫 استفاده از کد تخفیف",
+    "ADMIN_CRITERIA_REFERRALS": "🤝 از طریق ریفرال",
+    "ADMIN_CRITERIA_TODAY": "📅 امروز",
+    "ADMIN_CRITERIA_WEEK": "📅 هفته اخیر",
+    "ADMIN_FAQ_ACTION_PROMPT": "عملیات را انتخاب کنید:",
+    "ADMIN_FAQ_ADD_PAGE_BUTTON": "➕ افزودن صفحه",
+    "ADMIN_FAQ_BACK_TO_LIST": "⬅️ تنظیمات FAQ",
+    "ADMIN_FAQ_CANCEL_BUTTON": "⬅️ لغو",
+    "ADMIN_FAQ_CONTENT_EMPTY": "❌ متن نمی‌تواند خالی باشد.",
+    "ADMIN_FAQ_CONTENT_TOO_LONG": "❌ متن خیلی طولانی است. حداکثر ۶۰۰۰ کاراکتر.",
+    "ADMIN_FAQ_CONTENT_UPDATED": "✅ متن صفحه به‌روز شد.",
+    "ADMIN_FAQ_DESCRIPTION": "FAQ در بخش «اطلاعات» نمایش داده می‌شود.",
+    "ADMIN_FAQ_DISABLED_ALERT": "🚫 FAQ غیرفعال شد.",
+    "ADMIN_FAQ_DISABLE_BUTTON": "🚫 غیرفعال کردن",
+    "ADMIN_FAQ_EDIT_CONTENT_BUTTON": "📝 ویرایش متن",
+    "ADMIN_FAQ_EDIT_TITLE_BUTTON": "✏️ ویرایش عنوان",
+    "ADMIN_FAQ_ENABLED_ALERT": "✅ FAQ فعال شد.",
+    "ADMIN_FAQ_ENABLE_BUTTON": "✅ فعال کردن",
+    "ADMIN_FAQ_ENTER_CONTENT": "محتوای صفحه FAQ را ارسال کنید. HTML مجاز است.",
+    "ADMIN_FAQ_ENTER_TITLE": "عنوان صفحه جدید FAQ:",
+    "ADMIN_FAQ_HEADER": "❓ <b>FAQ</b>",
+    "ADMIN_FAQ_HTML_ERROR": "❌ خطا در HTML: {error}",
+    "ADMIN_FAQ_HTML_HELP": "ℹ️ راهنمای HTML",
+    "ADMIN_FAQ_LANGUAGE": "زبان: <code>{lang}</code>",
+    "ADMIN_FAQ_PAGES_EMPTY": "هنوز صفحه‌ای ایجاد نشده.",
+    "ADMIN_FAQ_PAGES_OVERVIEW": "<b>لیست صفحات:</b>\n{items}",
+    "ADMIN_FAQ_PAGE_CREATED": "✅ صفحه FAQ ایجاد شد.",
+    "ADMIN_FAQ_PAGE_DELETED": "🗑️ صفحه حذف شد.",
+    "ADMIN_FAQ_PAGE_DELETE_BUTTON": "🗑️ حذف",
+    "ADMIN_FAQ_PAGE_DISABLED_ALERT": "🚫 صفحه غیرفعال شد.",
+    "ADMIN_FAQ_PAGE_DISABLE_BUTTON": "🚫 غیرفعال کردن صفحه",
+    "ADMIN_FAQ_PAGE_ENABLED_ALERT": "✅ صفحه فعال شد.",
+    "ADMIN_FAQ_PAGE_ENABLE_BUTTON": "✅ فعال کردن صفحه",
+    "ADMIN_FAQ_PAGE_HEADER": "📄 <b>صفحه FAQ</b>",
+    "ADMIN_FAQ_PAGE_MOVE_DOWN": "⬇️ پایین‌تر",
+    "ADMIN_FAQ_PAGE_MOVE_UP": "⬆️ بالاتر",
+    "ADMIN_FAQ_PAGE_NOT_FOUND": "⚠️ صفحه یافت نشد.",
+    "ADMIN_FAQ_PAGE_PREVIEW": "<b>پیش‌نمایش:</b>\n{content}",
+    "ADMIN_FAQ_PAGE_PREVIEW_EMPTY": "متن هنوز تنظیم نشده.",
+    "ADMIN_FAQ_PAGE_REORDERED": "✅ ترتیب به‌روز شد.",
+    "ADMIN_FAQ_PAGE_STATS": "تعداد صفحات: {total}",
+    "ADMIN_FAQ_PAGE_STATUS": "وضعیت: {status}",
+    "ADMIN_FAQ_PAGE_STATUS_ACTIVE": "✅ فعال",
+    "ADMIN_FAQ_PAGE_STATUS_INACTIVE": "🚫 غیرفعال",
+    "ADMIN_FAQ_PAGE_TITLE": "<b>عنوان:</b> {title}",
+    "ADMIN_FAQ_PAGE_UPDATED": "به‌روزرسانی: {timestamp}",
+    "ADMIN_FAQ_STATUS_DISABLED": "⚠️ نمایش FAQ غیرفعال است.",
+    "ADMIN_FAQ_STATUS_EMPTY": "⚠️ FAQ هنوز تنظیم نشده.",
+    "ADMIN_FAQ_STATUS_ENABLED": "✅ FAQ فعال. صفحات فعال: {count}.",
+    "ADMIN_FAQ_STATUS_ENABLED_EMPTY": "⚠️ FAQ فعال است اما صفحه فعالی ندارد.",
+    "ADMIN_FAQ_TITLE_EMPTY": "❌ عنوان نمی‌تواند خالی باشد.",
+    "ADMIN_FAQ_TITLE_TOO_LONG": "❌ عنوان خیلی طولانی است. حداکثر ۲۵۵ کاراکتر.",
+    "ADMIN_FAQ_TITLE_UPDATED": "✅ عنوان به‌روز شد.",
+    "ADMIN_FAQ_UNEXPECTED_STATE": "⚠️ وضعیت بازنشانی شد.",
+    "ADMIN_HISTORY_REFRESH": "🔄 به‌روزرسانی",
+    "ADMIN_MAINTENANCE_CHECK_API": "🔍 بررسی API",
+    "ADMIN_MAINTENANCE_DISABLE": "🟢 غیرفعال کردن تعمیرات",
+    "ADMIN_MAINTENANCE_ENABLE": "🔧 فعال کردن تعمیرات",
+    "ADMIN_MAINTENANCE_PANEL_STATUS": "🌐 وضعیت پنل",
+    "ADMIN_MAINTENANCE_SEND_NOTIFICATION": "📢 ارسال اعلان",
+    "ADMIN_MAINTENANCE_START_MONITORING": "▶️ شروع مانیتورینگ",
+    "ADMIN_MAINTENANCE_STOP_MONITORING": "⏹️ توقف مانیتورینگ",
+    "ADMIN_MAIN_MENU": "🏠 منوی اصلی",
+    "ADMIN_MAIN_MESSAGES": "📨 پیام‌ها",
+    "ADMIN_MAIN_PRICING": "💰 قیمت‌ها",
+    "ADMIN_MAIN_PROMO_STATS": "💰 کدها/آمار",
+    "ADMIN_MAIN_SERVERS": "🌐 سرورها",
+    "ADMIN_MAIN_SETTINGS": "⚙️ تنظیمات",
+    "ADMIN_MAIN_SUPPORT": "🛟 پشتیبانی",
+    "ADMIN_MAIN_SYSTEM": "🛠️ سیستم",
+    "ADMIN_MAIN_TARIFFS": "📦 تعرفه‌ها",
+    "ADMIN_MAIN_TRIALS": "🧪 آزمایشی",
+    "ADMIN_MAIN_PAYMENTS": "💳 شارژها",
+    "ADMIN_MAIN_USERS_SUBSCRIPTIONS": "👥 کاربران/اشتراک‌ها",
+    "ADMIN_MESSAGES": "📨 ارسال پیام",
+    "ADMIN_MESSAGES_ALL_USERS": "📨 به همه کاربران",
+    "ADMIN_MESSAGES_BY_CRITERIA": "🔍 بر اساس معیار",
+    "ADMIN_MESSAGES_BY_SUBSCRIPTIONS": "🎯 بر اساس اشتراک",
+    "ADMIN_MESSAGES_HISTORY": "📋 تاریخچه",
+    "ADMIN_PINNED_MESSAGE": "📌 پیام سنجاق‌شده",
+    "ADMIN_PINNED_MESSAGE_UPDATE": "✏️ به‌روزرسانی",
+    "ADMIN_PINNED_MESSAGE_DELETE": "🗑️ حذف و غیرفعال",
+    "ADMIN_PINNED_POSITION_BEFORE": "⬆️ نمایش قبل از منو",
+    "ADMIN_PINNED_POSITION_AFTER": "⬇️ نمایش بعد از منو",
+    "ADMIN_PINNED_START_EVERY_TIME": "🔁 نمایش در هر /start",
+    "ADMIN_PINNED_START_ONCE": "🚫 فقط یک‌بار نمایش",
+    "ADMIN_PINNED_NO_CONTENT": "❌ متن یا مدیا خوانده نشد، دوباره تلاش کنید.",
+    "ADMIN_PINNED_SAVING": "📌 پیام ذخیره شد. در حال ارسال و سنجاق کردن...",
+    "ADMIN_PINNED_UPDATED": "✅ <b>پیام سنجاق‌شده به‌روز شد</b>\n\n👥 دریافت‌کنندگان: {total}\n✅ ارسال‌شده: {sent}\n⚠️ خطا: {failed}",
+    "ADMIN_PINNED_SAVED_ASK_BROADCAST": "📌 <b>پیام ذخیره شد!</b>\n\nروش ارسال را انتخاب کنید:\n\n• <b>ارسال الان</b> — به همه کاربران فعال ارسال و سنجاق می‌شود\n• <b>فقط در /start</b> — کاربران در اجرای بعدی ربات می‌بینند",
+    "ADMIN_PINNED_SAVED_NO_BROADCAST": "✅ <b>پیام سنجاق‌شده ذخیره شد</b>\n\nارسال انجام نشد. کاربران در /start بعدی پیام را می‌بینند.",
+    "ADMIN_PINNED_BROADCAST_NOW": "📨 ارسال الان به همه",
+    "ADMIN_PINNED_BROADCAST_ON_START": "⏳ فقط در /start",
+    "ADMIN_MONITORING": "🔍 مانیتورینگ",
+    "ADMIN_MONITORING_ALL_LOGS": "📋 همه لاگ‌ها",
+    "ADMIN_MONITORING_AUTOPAY_SETTINGS": "💳 تنظیمات پرداخت خودکار",
+    "ADMIN_MONITORING_AUTO_CLEANUP": "🧹 پاکسازی خودکار لاگ",
+    "ADMIN_MONITORING_BACK_TO_LOGS": "⬅️ لیست لاگ‌ها",
+    "ADMIN_MONITORING_CHECK_NOW": "🔄 بررسی الان",
+    "ADMIN_MONITORING_CLEAR": "🗑️ پاکسازی",
+    "ADMIN_MONITORING_CLEAR_ALL": "🗑️ پاکسازی همه لاگ‌ها",
+    "ADMIN_MONITORING_CLEAR_OLD": "🗑️ پاکسازی قدیمی‌ها",
+    "ADMIN_MONITORING_CONFIRM_CLEAR": "✅ بله، پاک شود",
+    "ADMIN_MONITORING_DELETE_LOG": "🗑️ حذف این لاگ",
+    "ADMIN_MONITORING_FILTER_AUTOPAY": "💳 پرداخت خودکار",
+    "ADMIN_MONITORING_FILTER_CYCLES": "🔄 چرخه‌های مانیتورینگ",
+    "ADMIN_MONITORING_FILTER_ERRORS": "❌ خطاها",
+    "ADMIN_MONITORING_FILTER_SUCCESS": "✅ موفق",
+    "ADMIN_MONITORING_FORCE_CHECK": "🔄 بررسی اجباری",
+    "ADMIN_MONITORING_LOGS": "📋 لاگ‌ها",
+    "ADMIN_MONITORING_NOTIFICATIONS": "🔔 اعلان‌ها",
+    "ADMIN_MONITORING_RESTART": "🔄 راه‌اندازی مجدد",
+    "ADMIN_MONITORING_SETTINGS": "⚙️ تنظیمات مانیتورینگ",
+    "ADMIN_MONITORING_SETTINGS_BUTTON": "⚙️ تنظیمات",
+    "ADMIN_MONITORING_SET_INTERVAL": "⏱️ فاصله بررسی",
+    "ADMIN_MONITORING_START": "▶️ شروع",
+    "ADMIN_MONITORING_STATISTICS": "📊 آمار",
+    "ADMIN_MONITORING_STATUS": "📊 وضعیت",
+    "ADMIN_MONITORING_STOP": "⏸️ توقف",
+    "ADMIN_MONITORING_STOP_HARD": "⏹️ توقف",
+    "ADMIN_MONITORING_TEST_NOTIFICATIONS": "🧪 تست اعلان‌ها",
+    "ADMIN_PAYMENTS_TITLE": "💳 <b>بررسی شارژها</b>",
+    "ADMIN_PAYMENTS_DESCRIPTION": "لیست فاکتورهای ۲۴ ساعت اخیر در انتظار پرداخت.",
+    "ADMIN_PAYMENTS_NOTICE": "فقط فاکتورهای کمتر از ۲۴ ساعت با وضعیت انتظار قابل بررسی هستند.",
+    "ADMIN_TRIALS_TITLE": "🧪 مدیریت آزمایشی‌ها",
+    "ADMIN_TRIALS_STATS": "• کل استفاده‌شده: {used}\n• فعال الان: {active}\n• قابل بازنشانی: {resettable}",
+    "ADMIN_TRIALS_RESET_BUTTON": "♻️ بازنشانی همه آزمایشی‌ها",
+    "ADMIN_TRIALS_RESET_RESULT": "♻️ {reset_count} آزمایشی بازنشانی شد.\n\n• کل استفاده‌شده: {used}\n• فعال الان: {active}\n• قابل بازنشانی: {resettable}",
+    "ADMIN_TRIALS_RESET_TOAST": "✅ بازنشانی انجام شد",
+    "ADMIN_PAYMENTS_EMPTY": "فاکتوری در انتظار پرداخت در ۲۴ ساعت اخیر یافت نشد.",
+    "ADMIN_PAYMENTS_ITEM_DETAILS": "📄 #{number}",
+    "ADMIN_PAYMENT_STATUS_PENDING": "در انتظار پرداخت",
+    "ADMIN_PAYMENT_STATUS_PROCESSING": "در حال پردازش",
+    "ADMIN_PAYMENT_STATUS_PAID": "پرداخت شده",
+    "ADMIN_PAYMENT_STATUS_FAILED": "خطا",
+    "ADMIN_PAYMENT_STATUS_CANCELED": "لغو شده",
+    "ADMIN_PAYMENT_STATUS_UNKNOWN": "وضعیت نامشخص",
+    "ADMIN_PAYMENT_STATUS_ON_HOLD": "معلق",
+    "ADMIN_PAYMENT_STATUS_EXPIRED": "منقضی",
+    "ADMIN_PAYMENT_DETAILS_TITLE": "💳 <b>جزئیات پرداخت</b>",
+    "ADMIN_PAYMENT_AMOUNT": "مبلغ",
+    "ADMIN_PAYMENT_CREATED": "ایجاد شده",
+    "ADMIN_PAYMENT_EXPIRES": "انقضا",
+    "ADMIN_PAYMENT_GATEWAY_STATUS": "وضعیت درگاه",
+    "ADMIN_PAYMENT_GATEWAY_METHOD": "روش پرداخت",
+    "ADMIN_PAYMENT_GATEWAY_AMOUNT": "مبلغ درگاه",
+    "ADMIN_PAYMENT_GATEWAY_ACCOUNT": "حساب پرداخت‌کننده",
+    "ADMIN_PAYMENT_GATEWAY_ID": "شناسه درگاه",
+    "ADMIN_PAYMENT_PAYER_AMOUNT": "پرداخت‌شده",
+    "ADMIN_PAYMENT_CRYPTO_AMOUNT": "مبلغ رمزارز",
+    "ADMIN_PAYMENT_HAS_LINK": "🔗 لینک پرداخت در دکمه بالا موجود است.",
+    "ADMIN_PAYMENT_OPEN_LINK": "🔗 باز کردن لینک",
+    "ADMIN_PAYMENT_CHECK_BUTTON": "🔁 بررسی وضعیت",
+    "ADMIN_PAYMENT_CHECK_HINT": "ℹ️ بررسی دستی وضعیت ممکن است.",
+    "ADMIN_PAYMENT_CHECK_NOT_AVAILABLE": "بررسی دستی برای این فاکتور ممکن نیست.",
+    "ADMIN_PAYMENT_CHECK_FAILED": "به‌روزرسانی وضعیت پرداخت ناموفق بود.",
+    "ADMIN_PAYMENT_CHECK_SUCCESS": "وضعیت به‌روز شد: {status}",
+    "ADMIN_PAYMENT_CHECK_NO_CHANGES": "وضعیت پس از بررسی تغییر نکرد.",
+    "ADMIN_PAYMENT_NOT_FOUND": "پرداخت یافت نشد.",
+    "ADMIN_NODE_DISABLE": "⏸️ غیرفعال",
+    "ADMIN_NODE_ENABLE": "▶️ فعال",
+    "ADMIN_NODE_RESTART": "🔄 راه‌اندازی مجدد",
+    "ADMIN_NODE_STATS": "📊 آمار",
+    "ADMIN_PANEL": "\n⚙️ <b>پنل مدیریت</b>\n\nبخش مورد نظر را انتخاب کنید:\n",
+    "ADMIN_PERIOD_ALL": "📅 همه زمان‌ها",
+    "ADMIN_PERIOD_MONTH": "📅 ماه",
+    "ADMIN_PERIOD_TODAY": "📅 امروز",
+    "ADMIN_PERIOD_WEEK": "📅 هفته",
+    "ADMIN_PERIOD_YESTERDAY": "📅 دیروز",
+    "ADMIN_PRICING_BUTTON_CORE": "⚙️ محدودیت‌های پایه",
+    "ADMIN_PRICING_BUTTON_EXTRA": "➕ اضافی",
+    "ADMIN_PRICING_BUTTON_PERIODS": "🗓 دوره‌های اشتراک",
+    "ADMIN_PRICING_BUTTON_PERIOD_OPTIONS": "🗓 دوره‌های موجود",
+    "ADMIN_PRICING_BUTTON_TRAFFIC": "📦 بسته‌های ترافیک",
+    "ADMIN_PRICING_BUTTON_TRAFFIC_OPTIONS": "🚦 نمایش بسته‌ها",
+    "ADMIN_PRICING_BUTTON_TRIAL": "🎁 دوره آزمایشی",
+    "ADMIN_PRICING_CHOICE_ALREADY": "این مقدار قبلاً فعال است.",
+    "ADMIN_PRICING_CHOICE_UPDATED": "انتخاب شد: {label}",
+    "ADMIN_PRICING_EDIT_CANCEL": "❌ لغو",
+    "ADMIN_PRICING_EDIT_CANCELLED": "تغییرات لغو شد.",
+    "ADMIN_PRICING_EDIT_CANCEL_HINT": "برای بازگشت بدون تغییر «لغو» بنویسید.",
+    "ADMIN_PRICING_EDIT_CURRENT": "مقدار فعلی",
+    "ADMIN_PRICING_EDIT_EXPIRED": "جلسه ویرایش منقضی شد.",
+    "ADMIN_PRICING_EDIT_INVALID": "قیمت نامعتبر. عدد وارد کنید (مثلاً 990 یا 990.50).",
+    "ADMIN_PRICING_EDIT_PROMPT": "قیمت جدید را وارد کنید (مثلاً 990 یا 990.50). برای رایگان 0 وارد کنید.",
+    "ADMIN_PRICING_EDIT_SUCCESS": "قیمت {item} به‌روز شد: {price}",
+    "ADMIN_PRICING_EDIT_TARGET": "تعرفه فعلی",
+    "ADMIN_PRICING_EDIT_TITLE": "تغییر قیمت",
+    "ADMIN_PRICING_MENU_DESCRIPTION": "دسترسی سریع به تعرفه‌ها، بسته‌های ترافیک و خدمات اضافی.",
+    "ADMIN_PRICING_MENU_PROMPT": "بخش مورد نظر برای ویرایش:",
+    "ADMIN_PRICING_MENU_SUMMARY": "خلاصه:",
+    "ADMIN_PRICING_MENU_SUMMARY_CORE": "• محدودیت‌های پایه: {summary}",
+    "ADMIN_PRICING_MENU_SUMMARY_EXTRA": "• اضافی: {summary}",
+    "ADMIN_PRICING_MENU_SUMMARY_PERIODS": "• دوره‌ها: {summary}",
+    "ADMIN_PRICING_MENU_SUMMARY_PERIOD_OPTIONS": "• دوره‌های موجود: {summary}",
+    "ADMIN_PRICING_MENU_SUMMARY_TRAFFIC": "• ترافیک: {summary}",
+    "ADMIN_PRICING_MENU_SUMMARY_TRIAL": "• آزمایشی: {summary}",
+    "ADMIN_PRICING_MENU_TITLE": "مدیریت قیمت‌ها",
+    "ADMIN_PRICING_PERIOD_DISABLED": "دوره غیرفعال شد.",
+    "ADMIN_PRICING_PERIOD_ENABLED": "دوره فعال شد.",
+    "ADMIN_PRICING_PERIOD_MIN": "حداقل یک دوره باید فعال باشد.",
+    "ADMIN_PRICING_SECTION_CORE_TITLE": "⚙️ محدودیت‌های پایه",
+    "ADMIN_PRICING_SECTION_CURRENT": "مقادیر فعلی:",
+    "ADMIN_PRICING_SECTION_EMPTY": "مقداری موجود نیست.",
+    "ADMIN_PRICING_SECTION_EXTRA_TITLE": "➕ گزینه‌های اضافی",
+    "ADMIN_PRICING_SECTION_PERIODS_TITLE": "🗓 دوره‌های اشتراک",
+    "ADMIN_PRICING_SECTION_PERIOD_OPTIONS_PROMPT": "روی دوره کلیک کنید تا فعال/غیرفعال شود.",
+    "ADMIN_PRICING_SECTION_PERIOD_OPTIONS_RENEW": "دوره‌های تمدید فعال: {items}",
+    "ADMIN_PRICING_SECTION_PERIOD_OPTIONS_SUB": "دوره‌های اشتراک فعال: {items}",
+    "ADMIN_PRICING_SECTION_PERIOD_OPTIONS_TITLE": "🗓 دوره‌های موجود",
+    "ADMIN_PRICING_SECTION_PROMPT": "چه چیزی تغییر کند:",
+    "ADMIN_PRICING_SECTION_SETTINGS_GENERIC": "⚙️ تنظیمات",
+    "ADMIN_PRICING_SECTION_TRAFFIC_OPTIONS_ACTIVE": "بسته‌های فعال: {items}",
+    "ADMIN_PRICING_SECTION_TRAFFIC_OPTIONS_NONE": "بسته فعالی نیست.",
+    "ADMIN_PRICING_SECTION_TRAFFIC_OPTIONS_PROMPT": "روی بسته کلیک کنید تا فعال/غیرفعال شود.",
+    "ADMIN_PRICING_SECTION_TRAFFIC_OPTIONS_TITLE": "🚦 نمایش بسته‌های ترافیک",
+    "ADMIN_PRICING_SECTION_TRAFFIC_TITLE": "📦 بسته‌های ترافیک",
+    "ADMIN_PRICING_SECTION_TRIAL_TITLE": "🎁 دوره آزمایشی",
+    "ADMIN_PRICING_SETTING_CANCEL_HINT": "برای بازگشت بدون تغییر «لغو» بنویسید.",
+    "ADMIN_PRICING_SETTING_CURRENT": "مقدار فعلی",
+    "ADMIN_PRICING_SETTING_EDIT_TITLE": "تنظیم پارامتر",
+    "ADMIN_PRICING_SETTING_EDIT_WITH_VALUE": "✏️ {label} • {value}",
+    "ADMIN_PRICING_SETTING_EXAMPLE": "مثال",
+    "ADMIN_PRICING_SETTING_FORMAT": "فرمت ورودی",
+    "ADMIN_PRICING_SETTING_INVALID": "به‌روزرسانی پارامتر ناموفق. فرمت مقدار را بررسی کنید.",
+    "ADMIN_PRICING_SETTING_PARAMETER": "پارامتر",
+    "ADMIN_PRICING_SETTING_PROMPT": "مقدار جدید را ارسال کنید یا «لغو» بنویسید. برای پاک کردن none بنویسید.",
+    "ADMIN_PRICING_SETTING_SUCCESS": "پارامتر {label} به‌روز شد: {value}",
+    "ADMIN_PRICING_SETTING_TOGGLE_STATEFUL": "{icon} {label}",
+    "ADMIN_PRICING_SETTING_WARNING": "مهم",
+    "ADMIN_PRICING_SUMMARY_EMPTY": "—",
+    "ADMIN_PRICING_TRAFFIC_PACKAGE_DISABLED": "بسته غیرفعال شد.",
+    "ADMIN_PRICING_TRAFFIC_PACKAGE_ENABLED": "بسته فعال شد.",
+    "ADMIN_PRICING_TRAFFIC_PACKAGE_MIN": "حداقل یک بسته باید فعال باشد.",
+    "ADMIN_PRIVACY_POLICY_ACTION_PROMPT": "عملیات را انتخاب کنید:",
+    "ADMIN_PRIVACY_POLICY_BACK_BUTTON": "⬅️ تنظیمات حریم خصوصی",
+    "ADMIN_PRIVACY_POLICY_CANCEL": "❌ لغو",
+    "ADMIN_PRIVACY_POLICY_CURRENT_PREVIEW": "متن فعلی (پیش‌نمایش):",
+    "ADMIN_PRIVACY_POLICY_DESCRIPTION": "سیاست حریم خصوصی در بخش «اطلاعات» نمایش داده می‌شود.",
+    "ADMIN_PRIVACY_POLICY_DISABLED": "🚫 سیاست غیرفعال",
+    "ADMIN_PRIVACY_POLICY_DISABLE_BUTTON": "🚫 غیرفعال کردن",
+    "ADMIN_PRIVACY_POLICY_EDIT_BUTTON": "✏️ ویرایش متن",
+    "ADMIN_PRIVACY_POLICY_EDIT_HINT": "از /html_help برای راهنمای تگ‌ها استفاده کنید.",
+    "ADMIN_PRIVACY_POLICY_EDIT_PROMPT": "متن جدید سیاست حریم خصوصی را ارسال کنید. HTML مجاز است.",
+    "ADMIN_PRIVACY_POLICY_EDIT_TITLE": "ویرایش سیاست",
+    "ADMIN_PRIVACY_POLICY_ENABLED": "✅ سیاست فعال",
+    "ADMIN_PRIVACY_POLICY_ENABLE_BUTTON": "✅ فعال کردن",
+    "ADMIN_PRIVACY_POLICY_HEADER": "🛡️ <b>سیاست حریم خصوصی</b>",
+    "ADMIN_PRIVACY_POLICY_HTML_ERROR": "❌ خطا در HTML: {error}",
+    "ADMIN_PRIVACY_POLICY_HTML_HELP": "ℹ️ راهنمای HTML",
+    "ADMIN_PRIVACY_POLICY_LANGUAGE": "زبان: <code>{lang}</code>",
+    "ADMIN_PRIVACY_POLICY_PREVIEW_EMPTY": "متن هنوز تنظیم نشده.",
+    "ADMIN_PRIVACY_POLICY_PREVIEW_EMPTY_ALERT": "متن سیاست هنوز تنظیم نشده.",
+    "ADMIN_PRIVACY_POLICY_PREVIEW_TITLE": "<b>پیش‌نمایش متن:</b>",
+    "ADMIN_PRIVACY_POLICY_RETURN_TO_EDIT": "⬅️ بازگشت به ویرایش",
+    "ADMIN_PRIVACY_POLICY_SAVED": "✅ سیاست حریم خصوصی به‌روز شد.",
+    "ADMIN_PRIVACY_POLICY_STATUS_DISABLED": "⚠️ نمایش سیاست غیرفعال یا متن موجود نیست.",
+    "ADMIN_PRIVACY_POLICY_STATUS_ENABLED": "✅ سیاست فعال و برای کاربران نمایش داده می‌شود.",
+    "ADMIN_PRIVACY_POLICY_STATUS_ENABLED_EMPTY": "⚠️ سیاست فعال است اما متن خالی است — کاربران آن را نمی‌بینند.",
+    "ADMIN_PRIVACY_POLICY_TOO_LONG": "❌ متن سیاست خیلی طولانی است. حداکثر ۴۰۰۰ کاراکتر.",
+    "ADMIN_PRIVACY_POLICY_UPDATED_AT": "آخرین به‌روزرسانی: {timestamp}",
+    "ADMIN_PRIVACY_POLICY_VIEW_BUTTON": "👀 مشاهده متن فعلی",
+    "ADMIN_PRIVACY_POLICY_VIEW_TITLE": "👀 <b>متن فعلی سیاست</b>",
+    "ADMIN_PRIVACY_POLICY_VIEW_TRUNCATED": "\n\n⚠️ متن برای نمایش کوتاه شده. نسخه کامل در منو برای کاربران نمایش داده می‌شود.",
+    "ADMIN_PROMOCODES": "🎫 کدهای تخفیف",
+    "ADMIN_PROMOCODES_ALL": "🎫 همه کدها",
+    "ADMIN_PROMOCODES_CREATE": "➕ ایجاد",
+    "ADMIN_PROMOCODES_GENERAL_STATS": "📊 آمار کلی",
+    "ADMIN_PROMOCODE_DELETE": "🗑️ حذف",
+    "ADMIN_PROMOCODE_EDIT": "✏️ ویرایش",
+    "ADMIN_PROMOCODE_STATS": "📊 آمار",
+    "ADMIN_PROMOCODE_TOGGLE": "🔄 وضعیت",
+    "ADMIN_PROMOCODE_TYPE_BALANCE": "💰 موجودی",
+    "ADMIN_PROMOCODE_TYPE_DAYS": "📅 روزهای اشتراک",
+    "ADMIN_PROMOCODE_TYPE_TRIAL": "🎁 آزمایشی",
+    "ADMIN_PROMOCODE_TYPE_PROMO_GROUP": "🏷️ گروه تخفیف",
+    "ADMIN_PROMOCODE_TYPE_DISCOUNT": "💸 تخفیف یک‌باره",
+    "ADMIN_PROMO_GROUPS": "💳 گروه‌های تخفیف",
+    "ADMIN_PROMO_GROUPS_DEFAULT_LABEL": " (پایه)",
+    "ADMIN_PROMO_GROUPS_EMPTY": "گروه تخفیفی یافت نشد.",
+    "ADMIN_PROMO_GROUPS_MEMBERS_COUNT": "اعضا: {count}",
+    "ADMIN_PROMO_GROUPS_SUMMARY": "کل گروه‌ها: {count}\nکل اعضا: {members}",
+    "ADMIN_PROMO_GROUPS_TITLE": "💳 <b>گروه‌های تخفیف</b>",
+    "ADMIN_PROMO_GROUP_ADDON_DISCOUNT_DISABLED": "🧩 تخفیف خدمات اضافی: <b>غیرفعال</b>",
+    "ADMIN_PROMO_GROUP_ADDON_DISCOUNT_ENABLED": "🧩 تخفیف خدمات اضافی: <b>فعال</b>",
+    "ADMIN_PROMO_GROUP_ADDON_DISCOUNT_UPDATED_DISABLED": "🧩 تخفیف خرید خدمات اضافی <b>غیرفعال</b> شد.",
+    "ADMIN_PROMO_GROUP_ADDON_DISCOUNT_UPDATED_ENABLED": "🧩 تخفیف خرید خدمات اضافی <b>فعال</b> شد.",
+    "ADMIN_PROMO_GROUP_AUTO_ASSIGN_DISABLED": "اختصاص خودکار بر اساس هزینه: غیرفعال",
+    "ADMIN_PROMO_GROUP_AUTO_ASSIGN_LINE": "اختصاص خودکار بر اساس هزینه: از {amount}",
+    "ADMIN_PROMO_GROUP_CREATED": "گروه تخفیف «{name}» ایجاد شد.",
+    "ADMIN_PROMO_GROUP_CREATED_BACK_BUTTON": "↩️ گروه‌های تخفیف",
+    "ADMIN_PROMO_GROUP_CREATE_AUTO_ASSIGN_PROMPT": "مبلغ کل هزینه برای اختصاص خودکار را وارد کنید. برای غیرفعال 0 بفرستید.",
+    "ADMIN_PROMO_GROUP_CREATE_DEVICES_PROMPT": "تخفیف دستگاه‌ها (0-100):",
+    "ADMIN_PROMO_GROUP_CREATE_NAME_PROMPT": "نام گروه تخفیف جدید:",
+    "ADMIN_PROMO_GROUP_CREATE_PERIOD_PROMPT": "تخفیف دوره‌ها (مثلاً 30:10, 90:15). بدون تخفیف 0 بفرستید.",
+    "ADMIN_PROMO_GROUP_CREATE_SERVERS_PROMPT": "تخفیف سرورها (0-100):",
+    "ADMIN_PROMO_GROUP_CREATE_TRAFFIC_PROMPT": "تخفیف ترافیک (0-100):",
+    "ADMIN_PROMO_GROUP_DELETED": "گروه تخفیف «{name}» حذف شد.",
+    "ADMIN_PROMO_GROUP_DELETE_BUTTON": "🗑️ حذف",
+    "ADMIN_PROMO_GROUP_DELETE_CONFIRM": "گروه «{name}» حذف شود؟ همه کاربران به گروه پایه منتقل می‌شوند.",
+    "ADMIN_PROMO_GROUP_DELETE_FORBIDDEN": "گروه پایه قابل حذف نیست.",
+    "ADMIN_PROMO_GROUP_DETAILS_DEFAULT": "این گروه پایه است.",
+    "ADMIN_PROMO_GROUP_DETAILS_MEMBERS": "اعضا: {count}",
+    "ADMIN_PROMO_GROUP_DETAILS_TITLE": "💳 <b>گروه تخفیف:</b> {name}",
+    "ADMIN_PROMO_GROUP_DISCOUNTS_HEADER": "💸 تخفیف‌های گروه:",
+    "ADMIN_PROMO_GROUP_DISCOUNT_LINE_DEVICES": "• دستگاه‌ها: {percent}%",
+    "ADMIN_PROMO_GROUP_DISCOUNT_LINE_SERVERS": "• سرورها: {percent}%",
+    "ADMIN_PROMO_GROUP_DISCOUNT_LINE_TRAFFIC": "• ترافیک: {percent}%",
+    "ADMIN_PROMO_GROUP_EDIT_AUTO_ASSIGN_PROMPT": "مبلغ هزینه برای اختصاص خودکار. مقدار فعلی: {current}.",
+    "ADMIN_PROMO_GROUP_EDIT_BUTTON": "✏️ ویرایش",
+    "ADMIN_PROMO_GROUP_EDIT_DEVICES_PROMPT": "تخفیف جدید دستگاه‌ها (0-100):",
+    "ADMIN_PROMO_GROUP_EDIT_FIELD_AUTO_ASSIGN": "🤖 اختصاص خودکار",
+    "ADMIN_PROMO_GROUP_EDIT_FIELD_DEVICES": "📱 تخفیف دستگاه‌ها",
+    "ADMIN_PROMO_GROUP_EDIT_FIELD_NAME": "✏️ تغییر نام",
+    "ADMIN_PROMO_GROUP_EDIT_FIELD_PERIODS": "⏳ تخفیف دوره‌ها",
+    "ADMIN_PROMO_GROUP_EDIT_FIELD_SERVERS": "🖥 تخفیف سرورها",
+    "ADMIN_PROMO_GROUP_EDIT_FIELD_TRAFFIC": "🌐 تخفیف ترافیک",
+    "ADMIN_PROMO_GROUP_EDIT_MENU_HINT": "پارامتر مورد نظر برای تغییر:",
+    "ADMIN_PROMO_GROUP_EDIT_MENU_TITLE": "✏️ تنظیمات گروه «{name}»",
+    "ADMIN_PROMO_GROUP_EDIT_NAME_PROMPT": "نام جدید گروه (فعلی: {name}):",
+    "ADMIN_PROMO_GROUP_EDIT_PERIOD_PROMPT": "تخفیف جدید دوره‌ها (فعلی: {current}). بدون تخفیف 0 بفرستید.",
+    "ADMIN_PROMO_GROUP_EDIT_SERVERS_PROMPT": "تخفیف جدید سرورها (0-100):",
+    "ADMIN_PROMO_GROUP_EDIT_TRAFFIC_PROMPT": "تخفیف جدید ترافیک (0-100):",
+    "ADMIN_PROMO_GROUP_INVALID_AUTO_ASSIGN": "عدد مثبت وارد کنید یا 0 برای غیرفعال.",
+    "ADMIN_PROMO_GROUP_INVALID_NAME": "نام نمی‌تواند خالی باشد.",
+    "ADMIN_PROMO_GROUP_INVALID_PERCENT": "عدد بین 0 تا 100 وارد کنید.",
+    "ADMIN_PROMO_GROUP_INVALID_PERIOD_DISCOUNTS": "جفت‌های دوره:تخفیف با کاما وارد کنید، مثلاً 30:10, 90:15 یا 0.",
+    "ADMIN_PROMO_GROUP_MEMBERS_BUTTON": "👥 اعضا",
+    "ADMIN_PROMO_GROUP_MEMBERS_EMPTY": "هنوز عضوی در این گروه نیست.",
+    "ADMIN_PROMO_GROUP_MEMBERS_TITLE": "👥 اعضای گروه {name}",
+    "ADMIN_PROMO_GROUP_PERIOD_DISCOUNTS_HEADER": "⏳ تخفیف دوره‌ها:",
+    "ADMIN_PROMO_GROUP_TOGGLE_ADDON_DISCOUNT_DISABLE": "🧩 غیرفعال کردن تخفیف خدمات اضافی",
+    "ADMIN_PROMO_GROUP_TOGGLE_ADDON_DISCOUNT_ENABLE": "🧩 فعال کردن تخفیف خدمات اضافی",
+    "ADMIN_PROMO_GROUP_UPDATED": "گروه «{name}» به‌روز شد.",
+    "ADMIN_PROMO_GROUP_PRIORITY_LINE": "🎯 اولویت: {priority}",
+    "ADMIN_PROMO_GROUP_CREATE_PRIORITY_PROMPT": "اولویت گروه (0 = پایه، بیشتر = اولویت بالاتر):",
+    "ADMIN_PROMO_GROUP_EDIT_PRIORITY_PROMPT": "اولویت جدید (فعلی: {current}):",
+    "ADMIN_PROMO_GROUP_EDIT_FIELD_PRIORITY": "🎯 اولویت",
+    "ADMIN_PROMO_GROUP_INVALID_PRIORITY": "❌ اولویت باید عدد صحیح مثبت باشد",
+    "ADMIN_USER_PROMO_GROUPS_PRIMARY": "⭐ اصلی: {name} (اولویت: {priority})",
+    "ADMIN_USER_PROMO_GROUPS_ADDITIONAL": "گروه‌های اضافی:",
+    "ADMIN_USER_PROMO_GROUPS_NONE": "کاربر گروه تخفیفی ندارد",
+    "ADMIN_USER_PROMO_GROUP_ADDED": "✅ گروه «{name}» اضافه شد",
+    "ADMIN_USER_PROMO_GROUP_REMOVED": "🗑 گروه «{name}» حذف شد",
+    "ADMIN_USER_PROMO_GROUP_CANNOT_REMOVE_LAST": "❌ حذف آخرین گروه تخفیف ممکن نیست",
+    "ADMIN_PROMO_OFFERS_TITLE": "🎯 <b>پیشنهادات تبلیغاتی</b>\n\nپیشنهاد مورد نظر را انتخاب کنید:",
+    "ADMIN_PROMO_OFFER_ACTIVE_DURATION": "تخفیف پس از فعال‌سازی {hours} ساعت اعتبار دارد.",
+    "ADMIN_PROMO_OFFER_ALLOWED": "دسته‌های موجود:",
+    "ADMIN_PROMO_OFFER_BACK_TO_LIST": "⬅️ پیشنهادات تبلیغاتی",
+    "ADMIN_PROMO_OFFER_BACK_TO_TEMPLATE": "↩️ بازگشت به پیشنهاد",
+    "ADMIN_PROMO_OFFER_CTA_BUY": "خرید اشتراک",
+    "ADMIN_PROMO_OFFER_CTA_EXTEND": "تمدید اشتراک",
+    "ADMIN_PROMO_OFFER_DISCOUNT": "تخفیف اضافی: {percent}% (با سایر تخفیف‌ها جمع می‌شود)",
+    "ADMIN_PROMO_OFFER_EXTEND": "تخفیف تمدید",
+    "ADMIN_PROMO_OFFER_LOGS": "📜 لاگ عملیات",
+    "ADMIN_PROMO_OFFER_LOGS_ACTION_CLAIMED": "پذیرفته شد",
+    "ADMIN_PROMO_OFFER_LOGS_ACTION_CONSUMED": "استفاده شد",
+    "ADMIN_PROMO_OFFER_LOGS_ACTION_DISABLED": "غیرفعال شد",
+    "ADMIN_PROMO_OFFER_LOGS_AMOUNT": "💰 مبلغ: {amount}",
+    "ADMIN_PROMO_OFFER_LOGS_DESCRIPTION": "📝 {description}",
+    "ADMIN_PROMO_OFFER_LOGS_EFFECT_DISCOUNT": "💸 تخفیف",
+    "ADMIN_PROMO_OFFER_LOGS_EFFECT_TEST": "🧪 دسترسی آزمایشی",
+    "ADMIN_PROMO_OFFER_LOGS_EMPTY_BODY": "هنوز رکوردی نیست.",
+    "ADMIN_PROMO_OFFER_LOGS_NEW_SQUADS": "🌍 سرورهای جدید: {squads}",
+    "ADMIN_PROMO_OFFER_LOGS_PAGINATION": "صفحه {page}/{total}",
+    "ADMIN_PROMO_OFFER_LOGS_PERCENT": "📉 تخفیف: {percent}%",
+    "ADMIN_PROMO_OFFER_LOGS_REASON_AUTOPAY": "🤖 اعمال شده در تمدید خودکار",
+    "ADMIN_PROMO_OFFER_LOGS_REASON_EXPIRED": "⏳ پیشنهاد منقضی شد",
+    "ADMIN_PROMO_OFFER_LOGS_REASON_GENERIC": "ℹ️ عملیات: {reason}",
+    "ADMIN_PROMO_OFFER_LOGS_REASON_MANUAL": "💳 کسر شده در پرداخت دستی",
+    "ADMIN_PROMO_OFFER_LOGS_REASON_TEST_EXPIRED": "⏳ دسترسی آزمایشی غیرفعال شد",
+    "ADMIN_PROMO_OFFER_LOGS_SOURCE": "🏷 منبع: {source}",
+    "ADMIN_PROMO_OFFER_LOGS_SQUAD": "🌍 سرور: {squad}",
+    "ADMIN_PROMO_OFFER_LOGS_TITLE": "📜 <b>لاگ عملیات پیشنهادات</b>",
+    "ADMIN_PROMO_OFFER_LOGS_UNKNOWN_USER": "کاربر ناشناس",
+    "ADMIN_PROMO_OFFER_LOGS_USER": "👤 {user}",
+    "ADMIN_PROMO_OFFER_NO_SQUADS_AVAILABLE": "❌ سرور موجودی یافت نشد.",
+    "ADMIN_PROMO_OFFER_NO_USERS": "کاربر مناسبی یافت نشد.",
+    "ADMIN_PROMO_OFFER_PREVIEW": "پیش‌نمایش:",
+    "ADMIN_PROMO_OFFER_PROMPT_ACTIVE_DURATION": "مدت اعتبار تخفیف فعال‌شده (ساعت):",
+    "ADMIN_PROMO_OFFER_PROMPT_BUTTON": "متن جدید دکمه:",
+    "ADMIN_PROMO_OFFER_PROMPT_DISCOUNT": "درصد تخفیف:",
+    "ADMIN_PROMO_OFFER_PROMPT_DURATION": "مدت دسترسی آزمایشی (ساعت):",
+    "ADMIN_PROMO_OFFER_PROMPT_MESSAGE": "متن جدید پیشنهاد:",
+    "ADMIN_PROMO_OFFER_PROMPT_VALID": "مدت اعتبار (ساعت):",
+    "ADMIN_PROMO_OFFER_PURCHASE": "تخفیف خرید",
+    "ADMIN_PROMO_OFFER_RESULT": "📬 ارسال تمام شد\nارسال‌شده: {sent}\nخطا: {failed}",
+    "ADMIN_PROMO_OFFER_SELECTED_SQUAD": "سرور فعلی: {name}",
+    "ADMIN_PROMO_OFFER_SELECTED_SQUAD_EMPTY": "سرور فعلی: انتخاب نشده",
+    "ADMIN_PROMO_OFFER_SELECTED_SQUAD_UUID": "سرور فعلی: {uuid}",
+    "ADMIN_PROMO_OFFER_SELECT_SQUAD_BACK": "↩️ بازگشت",
+    "ADMIN_PROMO_OFFER_SELECT_SQUAD_CLEAR": "🗑 پاک کردن",
+    "ADMIN_PROMO_OFFER_SELECT_SQUAD_CLEARED": "✅ سرور پاک شد",
+    "ADMIN_PROMO_OFFER_SELECT_SQUAD_HINT": "سرور دسترسی آزمایشی را از لیست انتخاب کنید.",
+    "ADMIN_PROMO_OFFER_SELECT_SQUAD_NOT_FOUND": "❌ سرور یافت نشد",
+    "ADMIN_PROMO_OFFER_SELECT_SQUAD_PAGE": "صفحه {page}/{total}",
+    "ADMIN_PROMO_OFFER_SELECT_SQUAD_TITLE": "🌍 <b>انتخاب سرور</b>",
+    "ADMIN_PROMO_OFFER_SELECT_SQUAD_UPDATED": "✅ سرور به‌روز شد",
+    "ADMIN_PROMO_OFFER_SENDING": "شروع ارسال...",
+    "ADMIN_PROMO_OFFER_SEND_USER": "👤 ارسال به کاربر",
+    "ADMIN_PROMO_OFFER_SEND_USER_ACTIVE_DISCOUNT": "💸 تخفیف فعال: {percent}%",
+    "ADMIN_PROMO_OFFER_SEND_USER_ACTIVE_DISCOUNT_LEFT": " (تا {date}، {time} مانده)",
+    "ADMIN_PROMO_OFFER_SEND_USER_ACTIVE_DISCOUNT_NONE": "💸 تخفیف فعالی نیست",
+    "ADMIN_PROMO_OFFER_SEND_USER_ACTIVE_DISCOUNT_SOURCE": " — منبع: {source}",
+    "ADMIN_PROMO_OFFER_SEND_USER_ACTIVE_DISCOUNT_UNTIL": " (تا {date})",
+    "ADMIN_PROMO_OFFER_SEND_USER_ACTIVE_OFFERS": "📨 پیشنهادات فعال:",
+    "ADMIN_PROMO_OFFER_SEND_USER_BACK_TO_LIST": "⬅️ لیست کاربران",
+    "ADMIN_PROMO_OFFER_SEND_USER_BACK_TO_PROFILE": "👤 پروفایل کاربر",
+    "ADMIN_PROMO_OFFER_SEND_USER_BACK_TO_SEGMENTS": "↩️ انتخاب دسته",
+    "ADMIN_PROMO_OFFER_SEND_USER_BALANCE": "موجودی: {amount}",
+    "ADMIN_PROMO_OFFER_SEND_USER_EMPTY": "کاربر مناسبی یافت نشد. جستجو را تغییر دهید.",
+    "ADMIN_PROMO_OFFER_SEND_USER_EMPTY_RESULT": "ارسال انجام نشد",
+    "ADMIN_PROMO_OFFER_SEND_USER_HINT": "کاربر برای ارسال پیشنهاد انتخاب کنید.",
+    "ADMIN_PROMO_OFFER_SEND_USER_NO_ACTIVE_OFFERS": "📨 پیشنهاد فعالی نیست",
+    "ADMIN_PROMO_OFFER_SEND_USER_NO_SUBSCRIPTION": "💳 اشتراک ندارد",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_ACTIVE_DURATION": "  پس از فعال‌سازی: {duration}",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_BONUS": "+{bonus}%",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_EXPIRES": "  انقضا: {expires}",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_ITEM": "• {description} (تا {expires})",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_ITEM_HEADER": "• {description}",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_NO_EXPIRY": "بدون محدودیت",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_PERCENT": "{percent}%",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_STATS_ACCEPTED": "پذیرفته: {count}",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_STATS_ACTIVE": "فعال الان: {count}",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_STATS_HEADER": "📊 آمار پیشنهادات",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_STATS_PENDING": "در انتظار: {count}",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_STATS_TOTAL": "کل ارسال‌شده: {count}",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_STATUS": "  وضعیت: {status}",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_STATUS_ACCEPTED": "✅ پذیرفته شد",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_STATUS_PENDING": "⏳ در انتظار",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_TEST": "دسترسی آزمایشی",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_TIME_LEFT": "  باقی‌مانده: {time}",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_TIME_LEFT_EXPIRED": "منقضی",
+    "ADMIN_PROMO_OFFER_SEND_USER_OFFER_TOTAL_DURATION": "  کل اعتبار: {duration}",
+    "ADMIN_PROMO_OFFER_SEND_USER_PROFILE": "👤 <b>{name}</b>",
+    "ADMIN_PROMO_OFFER_SEND_USER_RESET": "❌ بازنشانی جستجو",
+    "ADMIN_PROMO_OFFER_SEND_USER_SEARCH": "🔍 جستجو",
+    "ADMIN_PROMO_OFFER_SEND_USER_SEARCH_PROMPT": "نام، نام‌کاربری یا ID کاربر:",
+    "ADMIN_PROMO_OFFER_SEND_USER_SEARCH_QUERY": "🔍 جستجو: <b>{query}</b>",
+    "ADMIN_PROMO_OFFER_SEND_USER_SEND_BUTTON": "📬 ارسال پیشنهاد",
+    "ADMIN_PROMO_OFFER_SEND_USER_SKIPPED": "رد شده: {skipped} (قبلاً دسترسی دارد)",
+    "ADMIN_PROMO_OFFER_SEND_USER_STATUS": "وضعیت: {status}",
+    "ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION": "💳 <b>اشتراک</b>",
+    "ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION_END": "انقضا: {date}",
+    "ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION_END_UNKNOWN": "مشخص نشده",
+    "ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION_SQUADS": "سرورهای متصل: {count}",
+    "ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION_STATUS": "وضعیت: {status}",
+    "ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION_TRAFFIC": "ترافیک: {used}/{limit} گیگ",
+    "ADMIN_PROMO_OFFER_SEND_USER_SUMMARY_TITLE": "📬 ارسال به {name}",
+    "ADMIN_PROMO_OFFER_SEND_USER_TELEGRAM": "🆔 <code>{telegram_id}</code>",
+    "ADMIN_PROMO_OFFER_SEND_USER_TEMPLATE_ACTIVE_DURATION": "پس از فعال‌سازی {hours} ساعت اعتبار دارد.",
+    "ADMIN_PROMO_OFFER_SEND_USER_TEMPLATE_DISCOUNT": "تخفیف: {percent}%",
+    "ADMIN_PROMO_OFFER_SEND_USER_TEMPLATE_HEADER": "📨 <b>پیشنهاد انتخاب‌شده</b>",
+    "ADMIN_PROMO_OFFER_SEND_USER_TEMPLATE_TEST_DURATION": "دسترسی آزمایشی: {hours} ساعت",
+    "ADMIN_PROMO_OFFER_SEND_USER_TEMPLATE_TYPE": "نوع: {label}",
+    "ADMIN_PROMO_OFFER_SEND_USER_TEMPLATE_VALID": "اعتبار: {hours} ساعت",
+    "ADMIN_PROMO_OFFER_SEND_USER_TEST_ACCESS": "🧪 دسترسی‌های آزمایشی فعال:",
+    "ADMIN_PROMO_OFFER_SEND_USER_TEST_ACCESS_ITEM": "• {squad} (تا {expires})",
+    "ADMIN_PROMO_OFFER_SEND_USER_TITLE": "👤 <b>ارسال به کاربر</b>",
+    "ADMIN_PROMO_OFFER_SEND_USER_USERNAME": "🔗 @{username}",
+    "ADMIN_PROMO_OFFER_SKIPPED": "رد شده: {skipped} (قبلاً دسترسی دارد)",
+    "ADMIN_PROMO_OFFER_STACKABLE_NOTE": "تخفیف یک‌بار اعمال و به گروه تخفیف اضافه می‌شود.",
+    "ADMIN_PROMO_OFFER_TEST_ACCESS": "سرورهای آزمایشی",
+    "ADMIN_PROMO_OFFER_TEST_DURATION": "دسترسی: {hours} ساعت",
+    "ADMIN_PROMO_OFFER_TEST_SQUADS": "سرورها: {squads}",
+    "ADMIN_PROMO_OFFER_TEST_SQUADS_EMPTY": "سرورها: مشخص نشده",
+    "ADMIN_PROMO_OFFER_TEST_SQUAD_NAME": "سرور: {name}",
+    "ADMIN_PROMO_OFFER_TYPE": "نوع: {label}",
+    "ADMIN_PROMO_OFFER_VALID": "اعتبار: {hours} ساعت",
+    "ADMIN_PROMO_SUBMENU_TITLE": "💰 **کدها و آمار**",
+    "ADMIN_PUBLIC_OFFER_ACTION_PROMPT": "عملیات را انتخاب کنید:",
+    "ADMIN_PUBLIC_OFFER_BACK_BUTTON": "⬅️ تنظیمات شرایط",
+    "ADMIN_PUBLIC_OFFER_CANCEL": "❌ لغو",
+    "ADMIN_PUBLIC_OFFER_CURRENT_PREVIEW": "متن فعلی (پیش‌نمایش):",
+    "ADMIN_PUBLIC_OFFER_DESCRIPTION": "شرایط استفاده در بخش «اطلاعات» نمایش داده می‌شود.",
+    "ADMIN_PUBLIC_OFFER_DISABLED": "🚫 شرایط غیرفعال",
+    "ADMIN_PUBLIC_OFFER_DISABLE_BUTTON": "🚫 غیرفعال کردن نمایش",
+    "ADMIN_PUBLIC_OFFER_EDIT_BUTTON": "✏️ ویرایش متن",
+    "ADMIN_PUBLIC_OFFER_EDIT_CANCELLED": "ویرایش شرایط لغو شد.",
+    "ADMIN_PUBLIC_OFFER_EDIT_HINT": "از /html_help برای راهنمای تگ‌ها استفاده کنید.",
+    "ADMIN_PUBLIC_OFFER_EDIT_PROMPT": "متن جدید شرایط استفاده را ارسال کنید. HTML مجاز است.",
+    "ADMIN_PUBLIC_OFFER_EDIT_TITLE": "ویرایش شرایط",
+    "ADMIN_PUBLIC_OFFER_ENABLED": "✅ شرایط فعال",
+    "ADMIN_PUBLIC_OFFER_ENABLE_BUTTON": "✅ فعال کردن نمایش",
+    "ADMIN_PUBLIC_OFFER_HEADER": "📄 <b>شرایط استفاده</b>",
+    "ADMIN_PUBLIC_OFFER_HTML_ERROR": "❌ خطا در HTML: {error}",
+    "ADMIN_PUBLIC_OFFER_HTML_HELP": "ℹ️ راهنمای HTML",
+    "ADMIN_PUBLIC_OFFER_LANGUAGE": "زبان: <code>{lang}</code>",
+    "ADMIN_PUBLIC_OFFER_PREVIEW_EMPTY": "متن هنوز تنظیم نشده.",
+    "ADMIN_PUBLIC_OFFER_PREVIEW_EMPTY_ALERT": "متن شرایط هنوز تنظیم نشده.",
+    "ADMIN_PUBLIC_OFFER_PREVIEW_TITLE": "<b>پیش‌نمایش متن:</b>",
+    "ADMIN_PUBLIC_OFFER_RETURN_TO_EDIT": "⬅️ بازگشت به ویرایش",
+    "ADMIN_PUBLIC_OFFER_SAVED": "✅ شرایط استفاده به‌روز شد.",
+    "ADMIN_PUBLIC_OFFER_STATUS_DISABLED": "⚠️ نمایش شرایط غیرفعال یا متن موجود نیست.",
+    "ADMIN_PUBLIC_OFFER_STATUS_ENABLED": "✅ شرایط فعال و برای کاربران نمایش داده می‌شود.",
+    "ADMIN_PUBLIC_OFFER_STATUS_ENABLED_EMPTY": "⚠️ شرایط فعال اما متن خالی — کاربران نمی‌بینند.",
+    "ADMIN_PUBLIC_OFFER_TOO_LONG": "❌ متن شرایط خیلی طولانی. حداکثر ۴۰۰۰ کاراکتر.",
+    "ADMIN_PUBLIC_OFFER_UPDATED_AT": "آخرین به‌روزرسانی: {timestamp}",
+    "ADMIN_PUBLIC_OFFER_VIEW_BUTTON": "👀 مشاهده متن فعلی",
+    "ADMIN_PUBLIC_OFFER_VIEW_TITLE": "👀 <b>متن فعلی شرایط</b>",
+    "ADMIN_PUBLIC_OFFER_VIEW_TRUNCATED": "\n\n⚠️ متن برای نمایش کوتاه شده. نسخه کامل در منو برای کاربران نمایش داده می‌شود.",
+    "ADMIN_REFERRALS": "🤝 دعوت دوستان",
+    "ADMIN_REFRESH": "🔄 به‌روزرسانی",
+    "ADMIN_REMNAWAVE": "🖥️ Remnawave",
+    "ADMIN_REMNAWAVE_MANAGE_NODES": "🖥️ مدیریت نودها",
+    "ADMIN_REMNAWAVE_MANAGE_SQUADS": "🌐 مدیریت سرورها",
+    "ADMIN_REMNAWAVE_MIGRATION": "🚚 انتقال",
+    "ADMIN_REMNAWAVE_SYNC": "🔄 همگام‌سازی",
+    "ADMIN_REMNAWAVE_SYSTEM_STATS": "📊 آمار سیستم",
+    "ADMIN_REMNAWAVE_TRAFFIC": "📈 ترافیک",
+    "ADMIN_REPORTS": "📊 گزارش‌ها",
+    "ADMIN_REPORTS_LAST_MONTH": "📅 ماه اخیر",
+    "ADMIN_REPORTS_LAST_WEEK": "🗓️ هفته اخیر",
+    "ADMIN_REPORTS_PREVIOUS_DAY": "📆 دیروز",
+    "ADMIN_RULES": "📋 قوانین",
+    "ADMIN_SERVERS_ADD": "➕ افزودن سرور",
+    "ADMIN_SERVERS_LIST": "📋 لیست سرورها",
+    "ADMIN_SERVERS_STATS": "📊 آمار",
+    "ADMIN_SERVERS_SYNC": "🔄 همگام‌سازی",
+    "ADMIN_SERVER_DELETE": "🗑️ حذف",
+    "ADMIN_SERVER_DISABLE": "❌ غیرفعال",
+    "ADMIN_SERVER_EDIT_COUNTRY": "🌍 کشور",
+    "ADMIN_SERVER_EDIT_DESCRIPTION": "📝 توضیحات",
+    "ADMIN_SERVER_EDIT_LIMIT": "👥 محدودیت",
+    "ADMIN_SERVER_EDIT_NAME": "✏️ نام",
+    "ADMIN_SERVER_EDIT_PRICE": "💰 قیمت",
+    "ADMIN_SERVER_ENABLE": "✅ فعال",
+    "ADMIN_SETTINGS_BOT_CONFIG": "🧩 پیکربندی ربات",
+    "ADMIN_SETTINGS_FAQ": "❓ سوالات متداول",
+    "ADMIN_SETTINGS_MAINTENANCE": "🔧 تعمیرات",
+    "ADMIN_SETTINGS_PRIVACY_POLICY": "🛡️ حریم خصوصی",
+    "ADMIN_SETTINGS_PUBLIC_OFFER": "📄 شرایط استفاده",
+    "ADMIN_SETTINGS_SUBMENU_DESCRIPTION": "مدیریت Remnawave، مانیتورینگ و تنظیمات:",
+    "ADMIN_SETTINGS_SUBMENU_TITLE": "⚙️ **تنظیمات سیستم**",
+    "ADMIN_SETTINGS_TARIFFS": "📦 تعرفه‌ها",
+    "ADMIN_SQUAD_ADD_ALL": "👥 افزودن همه کاربران",
+    "ADMIN_SQUAD_DELETE": "🗑️ حذف سرور",
+    "ADMIN_SQUAD_EDIT": "✏️ ویرایش",
+    "ADMIN_SQUAD_EDIT_INBOUNDS": "🔧 ویرایش اینباندها",
+    "ADMIN_SQUAD_MIGRATION_API_ERROR": "❌ Remnawave API تنظیم نشده: {error}",
+    "ADMIN_SQUAD_MIGRATION_BACK_BUTTON": "⬅️ Remnawave",
+    "ADMIN_SQUAD_MIGRATION_CANCELLED": "انتقال لغو شد.",
+    "ADMIN_SQUAD_MIGRATION_CHANGE_TARGET": "🔄 تغییر سرور مقصد",
+    "ADMIN_SQUAD_MIGRATION_CONFIRM_BUTTON": "✅ تأیید انتقال",
+    "ADMIN_SQUAD_MIGRATION_CONFIRM_COUNT": "• کاربران برای انتقال: {count}",
+    "ADMIN_SQUAD_MIGRATION_CONFIRM_DETAILS": "پارامترهای انتقال را بررسی کنید:",
+    "ADMIN_SQUAD_MIGRATION_CONFIRM_PROMPT": "عملیات را تأیید کنید.",
+    "ADMIN_SQUAD_MIGRATION_CONFIRM_SOURCE": "• از: {source}",
+    "ADMIN_SQUAD_MIGRATION_CONFIRM_TARGET": "• به: {target}",
+    "ADMIN_SQUAD_MIGRATION_ERROR": "❌ خطا در انتقال: {error}",
+    "ADMIN_SQUAD_MIGRATION_IN_PROGRESS": "⏳ انتقال در حال انجام...\nمنتقل‌شده: {migrated}/{total}",
+    "ADMIN_SQUAD_MIGRATION_NEW_BUTTON": "🔁 انتقال جدید",
+    "ADMIN_SQUAD_MIGRATION_NO_OPTIONS": "سروری در دسترس نیست. سرور جدید بسازید یا لغو کنید.",
+    "ADMIN_SQUAD_MIGRATION_PAGE": "صفحه {page}/{pages}",
+    "ADMIN_SQUAD_MIGRATION_PAGE_HINT": "صفحه فعلی.",
+    "ADMIN_SQUAD_MIGRATION_RESULT_PANEL_FAILED": "به‌روزرسانی پنل ناموفق: {count}",
+    "ADMIN_SQUAD_MIGRATION_RESULT_PANEL_UPDATED": "به‌روز شده در پنل: {count}",
+    "ADMIN_SQUAD_MIGRATION_RESULT_TOTAL": "اشتراک‌های یافت‌شده: {count}",
+    "ADMIN_SQUAD_MIGRATION_RESULT_UPDATED": "منتقل‌شده: {count}",
+    "ADMIN_SQUAD_MIGRATION_SAME_SQUAD": "نمی‌توان همان سرور را انتخاب کرد.",
+    "ADMIN_SQUAD_MIGRATION_SELECTED_SOURCE": "مبدأ: {source}",
+    "ADMIN_SQUAD_MIGRATION_SELECT_SOURCE": "سرور مبدأ انتخاب کنید:",
+    "ADMIN_SQUAD_MIGRATION_SELECT_TARGET": "سرور مقصد انتخاب کنید:",
+    "ADMIN_SQUAD_MIGRATION_SERVER_LABEL": "{name} — 👥 {users} ({status})",
+    "ADMIN_SQUAD_MIGRATION_SQUAD_BUTTON": "🌍 {name} — 👥 {users} ({status})",
+    "ADMIN_SQUAD_MIGRATION_SQUAD_NOT_FOUND": "سرور یافت نشد یا در دسترس نیست.",
+    "ADMIN_SQUAD_MIGRATION_STATUS_AVAILABLE": "✅ در دسترس",
+    "ADMIN_SQUAD_MIGRATION_STATUS_AVAILABLE_SHORT": "✅",
+    "ADMIN_SQUAD_MIGRATION_STATUS_UNAVAILABLE": "🚫 در دسترس نیست",
+    "ADMIN_SQUAD_MIGRATION_STATUS_UNAVAILABLE_SHORT": "🚫",
+    "ADMIN_SQUAD_MIGRATION_SUCCESS_TITLE": "✅ انتقال تمام شد",
+    "ADMIN_SQUAD_MIGRATION_TARGET_EMPTY": "سرور دیگری برای انتقال نیست.",
+    "ADMIN_SQUAD_MIGRATION_TITLE": "🚚 <b>انتقال سرورها</b>",
+    "ADMIN_SQUAD_REMOVE_ALL": "❌ حذف همه کاربران",
+    "ADMIN_SQUAD_RENAME": "✏️ تغییر نام",
+    "ADMIN_STATISTICS": "📊 آمار",
+    "ADMIN_STATS_BUTTON": "📊 آمار",
+    "ADMIN_STATS_REFERRALS": "🤝 دعوت دوستان",
+    "ADMIN_STATS_REVENUE": "💰 درآمدها",
+    "ADMIN_STATS_SUBSCRIPTIONS": "📱 اشتراک‌ها",
+    "ADMIN_STATS_SUMMARY": "📊 خلاصه کلی",
+    "ADMIN_STATS_USERS": "👥 کاربران",
+    "ADMIN_SUBMENU_SELECT_SECTION": "بخش مورد نظر:",
+    "ADMIN_SUBSCRIPTIONS": "📱 اشتراک‌ها",
+    "ADMIN_SUBSCRIPTIONS_ALL": "📱 همه اشتراک‌ها",
+    "ADMIN_SUBSCRIPTIONS_COUNTRIES": "🌍 مدیریت کشورها",
+    "ADMIN_SUBSCRIPTIONS_EXPIRING": "⏰ در حال انقضا",
+    "ADMIN_SUBSCRIPTIONS_PRICING": "⚙️ تنظیمات قیمت",
+    "ADMIN_SUPPORT_ASSIGN_MODERATOR_PROMPT": "🧑‍⚖️ <b>انتصاب مدیر</b>\n\nشناسه تلگرام (عدد) ارسال کنید",
+    "ADMIN_SUPPORT_AUDIT": "🧾 بازرسی مدیران",
+    "ADMIN_CLOSE_ALL_OPEN_TICKETS": "🔒 بستن همه باز",
+    "ADMIN_CLOSE_ALL_OPEN_TICKETS_EMPTY": "ℹ️ تیکت بازی نیست.",
+    "ADMIN_CLOSE_ALL_OPEN_TICKETS_SUCCESS": "✅ تیکت‌های بسته‌شده: {count}",
+    "ADMIN_SUPPORT_AUDIT_ACTION_BLOCK_PERM": "مسدودسازی (دائم)",
+    "ADMIN_SUPPORT_AUDIT_ACTION_BLOCK_TIMED": "مسدودسازی (موقت)",
+    "ADMIN_SUPPORT_AUDIT_ACTION_CLOSE_ALL_TICKETS": "بستن دسته‌جمعی تیکت‌ها",
+    "ADMIN_SUPPORT_AUDIT_ACTION_CLOSE_TICKET": "بستن تیکت",
+    "ADMIN_SUPPORT_AUDIT_ACTION_UNBLOCK": "رفع مسدودیت",
+    "ADMIN_SUPPORT_AUDIT_EMPTY": "هنوز خالی",
+    "ADMIN_SUPPORT_AUDIT_ROLE_ADMIN": "ادمین",
+    "ADMIN_SUPPORT_AUDIT_ROLE_MODERATOR": "مدیر",
+    "ADMIN_SUPPORT_AUDIT_TITLE": "🧾 <b>بازرسی مدیران</b>",
+    "ADMIN_SUPPORT_DESCRIPTION_SENT": "متن ارسال شد",
+    "ADMIN_SUPPORT_DESCRIPTION_UPDATED": "✅ توضیحات به‌روز شد.",
+    "ADMIN_SUPPORT_EDIT_DESCRIPTION_CONTACT_HINT": "در صورت نیاز اضافه کنید.",
+    "ADMIN_SUPPORT_EDIT_DESCRIPTION_CONTACT_TITLE": "<b>مخاطب حالت «تماس»</b>",
+    "ADMIN_SUPPORT_EDIT_DESCRIPTION_CURRENT": "توضیحات فعلی:",
+    "ADMIN_SUPPORT_EDIT_DESCRIPTION_TITLE": "📝 <b>ویرایش توضیحات پشتیبانی</b>",
+    "ADMIN_SUPPORT_INVALID_TELEGRAM_ID": "❌ شناسه تلگرام معتبر وارد کنید",
+    "ADMIN_SUPPORT_MESSAGE_DELETED": "پیام حذف شد",
+    "ADMIN_SUPPORT_MODERATION_DESCRIPTION": "دسترسی به تیکت‌ها.",
+    "ADMIN_SUPPORT_MODERATION_TITLE": "🧑‍⚖️ <b>مدیریت پشتیبانی</b>",
+    "ADMIN_SUPPORT_MODERATORS_EMPTY": "لیست خالی",
+    "ADMIN_SUPPORT_MODERATORS_TITLE": "🧑‍⚖️ <b>مدیران</b>",
+    "ADMIN_SUPPORT_MODERATOR_ADDED_FAIL": "❌ انتصاب مدیر ناموفق",
+    "ADMIN_SUPPORT_MODERATOR_ADDED_SUCCESS": "✅ کاربر {tid} مدیر شد",
+    "ADMIN_SUPPORT_MODERATOR_REMOVED_FAIL": "❌ حذف مدیر ناموفق",
+    "ADMIN_SUPPORT_MODERATOR_REMOVED_SUCCESS": "✅ مدیر {tid} حذف شد",
+    "ADMIN_SUPPORT_REMOVE_MODERATOR_PROMPT": "🧑‍⚖️ <b>حذف مدیر</b>\n\nشناسه تلگرام (عدد) ارسال کنید",
+    "ADMIN_SUPPORT_SEND_DESCRIPTION": "📨 ارسال متن",
+    "ADMIN_SUPPORT_SETTINGS": "🛟 تنظیمات پشتیبانی",
+    "ADMIN_SUPPORT_SETTINGS_ADD_MODERATOR": "➕ انتصاب مدیر",
+    "ADMIN_SUPPORT_SETTINGS_ADMIN_NOTIFICATIONS": "اعلان‌های ادمین",
+    "ADMIN_SUPPORT_SETTINGS_DESCRIPTION": "حالت کار و نمایش در منو:",
+    "ADMIN_SUPPORT_SETTINGS_EDIT_DESCRIPTION": "📝 ویرایش توضیحات",
+    "ADMIN_SUPPORT_SETTINGS_MENU_LABEL": "بخش «پشتیبانی» در منو",
+    "ADMIN_SUPPORT_SETTINGS_MODERATORS_COUNT": "🧑‍⚖️ مدیران: {count}",
+    "ADMIN_SUPPORT_SETTINGS_MODE_BOTH": "هر دو",
+    "ADMIN_SUPPORT_SETTINGS_MODE_CONTACT": "تماس",
+    "ADMIN_SUPPORT_SETTINGS_MODE_TICKETS": "تیکت‌ها",
+    "ADMIN_SUPPORT_SETTINGS_REMOVE_MODERATOR": "➖ حذف مدیر",
+    "ADMIN_SUPPORT_SETTINGS_SLA_LABEL": "SLA",
+    "ADMIN_SUPPORT_SETTINGS_SLA_TIME": "⏳ SLA: {minutes} دقیقه",
+    "ADMIN_SUPPORT_SETTINGS_STATUS_DISABLED": "غیرفعال",
+    "ADMIN_SUPPORT_SETTINGS_STATUS_ENABLED": "فعال",
+    "ADMIN_SUPPORT_SETTINGS_TITLE": "🛟 <b>تنظیمات پشتیبانی</b>",
+    "ADMIN_SUPPORT_SETTINGS_USER_NOTIFICATIONS": "اعلان‌های کاربر",
+    "ADMIN_SUPPORT_SLA_INVALID": "❌ عدد معتبر وارد کنید (1-1440)",
+    "ADMIN_SUPPORT_SLA_SAVED": "✅ SLA ذخیره شد",
+    "ADMIN_SUPPORT_SLA_SETUP_PROMPT": "⏳ <b>تنظیم SLA</b>\n\nدقیقه انتظار پاسخ (عدد > 0):",
+    "ADMIN_SUPPORT_SUBMENU_DESCRIPTION": "مدیریت تیکت‌ها و پشتیبانی:",
+    "ADMIN_SUPPORT_SUBMENU_DESCRIPTION_MODERATOR": "دسترسی به تیکت‌ها.",
+    "ADMIN_SUPPORT_SUBMENU_TITLE": "🛟 **پشتیبانی**\n\n",
+    "ADMIN_SUPPORT_TICKETS": "🎫 تیکت‌های پشتیبانی",
+    "ADMIN_SYNC_BACK": "⬅️ همگام‌سازی",
+    "ADMIN_SYNC_TO_PANEL": "⬆️ همگام‌سازی با پنل",
+    "ADMIN_SYNC_CLEANUP": "🧹 پاکسازی",
+    "ADMIN_SYNC_CONFIRM": "✅ تأیید",
+    "ADMIN_SYNC_FULL": "🔄 همگام‌سازی کامل",
+    "ADMIN_SYNC_ONLY_NEW": "🆕 فقط جدیدها",
+    "ADMIN_SYNC_RECOMMENDATIONS": "💡 پیشنهادات",
+    "ADMIN_SYNC_RETRY": "🔄 تکرار",
+    "ADMIN_SYNC_UPDATE": "📈 به‌روزرسانی",
+    "ADMIN_SYNC_VALIDATE": "🔍 اعتبارسنجی",
+    "ADMIN_SYSTEM_BACKUPS": "🗄️ پشتیبان‌گیری",
+    "ADMIN_SYSTEM_LOGS": "🧾 لاگ‌ها",
+    "ADMIN_SYSTEM_SUBMENU_DESCRIPTION": "گزارش‌ها، به‌روزرسانی، لاگ‌ها، پشتیبان‌گیری و عملیات سیستم:",
+    "ADMIN_SYSTEM_SUBMENU_TITLE": "🛠️ **عملیات سیستم**\n\n",
+    "ADMIN_SYSTEM_UPDATES": "📄 به‌روزرسانی‌ها",
+    "ADMIN_TICKETS_TITLE": "🎫 همه تیکت‌های پشتیبانی:",
+    "ADMIN_TICKETS_TITLE_CLOSED": "🎫 تیکت‌های بسته پشتیبانی:",
+    "ADMIN_TICKETS_TITLE_OPEN": "🎫 تیکت‌های باز پشتیبانی:",
+    "ADMIN_TICKET_REPLY_INPUT": "پاسخ پشتیبانی را وارد کنید:",
+    "ADMIN_TICKET_REPLY_SENT": "✅ پاسخ ارسال شد!",
+    "ADMIN_USERS": "👥 کاربران",
+    "ADMIN_USERS_ALL": "👥 همه کاربران",
+    "ADMIN_USERS_FILTERS": "⚙️ فیلترها",
+    "ADMIN_USERS_FILTER_ACTIVITY": "🕒 بر اساس فعالیت",
+    "ADMIN_USERS_FILTER_BALANCE": "💰 بر اساس موجودی",
+    "ADMIN_USERS_FILTER_RENEW_READY": "♻️ آماده تمدید",
+    "ADMIN_USERS_FILTER_RENEW_READY_TITLE": "♻️ کاربران آماده تمدید",
+    "ADMIN_USERS_FILTER_RENEW_READY_DESC": "اشتراک منقضی با موجودی {amount} یا بیشتر.",
+    "ADMIN_USERS_FILTER_RENEW_READY_EMPTY": "کاربری با این فیلتر یافت نشد.",
+    "ADMIN_USERS_FILTER_POTENTIAL_CUSTOMERS": "💰 مشتریان بالقوه",
+    "ADMIN_USERS_FILTER_POTENTIAL_CUSTOMERS_TITLE": "💰 مشتریان بالقوه",
+    "ADMIN_USERS_FILTER_POTENTIAL_CUSTOMERS_DESC": "بدون اشتراک ولی موجودی کافی.",
+    "ADMIN_USERS_FILTER_POTENTIAL_CUSTOMERS_EMPTY": "کاربر بدون اشتراک با موجودی کافی نیست.",
+    "ADMIN_USERS_FILTER_CAMPAIGN": "📢 بر اساس کمپین",
+    "ADMIN_USERS_FILTER_PURCHASES": "🛒 بر اساس خرید",
+    "ADMIN_USERS_FILTER_SPENDING": "💳 بر اساس هزینه",
+    "ADMIN_USERS_FILTER_TRAFFIC": "📶 بر اساس ترافیک",
+    "ADMIN_USERS_INACTIVE": "🗑️ غیرفعال‌ها",
+    "ADMIN_USERS_SEARCH": "🔍 جستجو",
+    "ADMIN_USERS_SUBMENU_TITLE": "👥 **مدیریت کاربران و اشتراک‌ها**\n",
+    "ADMIN_USER_ALREADY_DELETED": "❌ کاربر حذف شده",
+    "ADMIN_USER_BALANCE": "💰 موجودی",
+    "ADMIN_USER_BLOCK": "🚫 مسدود کردن",
+    "ADMIN_USER_DELETE": "🗑️ حذف",
+    "ADMIN_USER_LAST_ACTIVITY_UNKNOWN": "نامشخص",
+    "ADMIN_USER_MANAGEMENT_PROFILE": "👤 <b>مدیریت کاربر</b>\n\n<b>اطلاعات اصلی:</b>\n• نام: {name}\n• ID: <code>{telegram_id}</code>\n• نام‌کاربری: @{username}\n• ثبت‌نام: {registered_at}\n• آخرین فعالیت: {last_activity}\n• وضعیت: {status}\n• موجودی: {balance}\n• ریفرال‌ها: {referrals_count}",
+    "ADMIN_USER_MANAGEMENT_PROMO_GROUP": "<b>گروه تخفیف:</b>\n• نام: {name}\n• تخفیف سرور: {server_discount}%\n• تخفیف ترافیک: {traffic_discount}%\n• تخفیف دستگاه: {device_discount}%",
+    "ADMIN_USER_MANAGEMENT_PROMO_GROUP_NONE": "<b>گروه تخفیف:</b> تعیین نشده",
+    "ADMIN_USER_MANAGEMENT_SUBSCRIPTION": "<b>اشتراک:</b>\n• نوع: {type}\n• وضعیت: {status}\n• تا: {end_date}\n• ترافیک: {traffic}\n• دستگاه‌ها: {devices}\n• کشورها: {countries}",
+    "ADMIN_USER_MANAGEMENT_SUBSCRIPTION_NONE": "<b>اشتراک:</b> ندارد",
+    "ADMIN_USER_PROMO_GROUP_ALREADY": "ℹ️ کاربر قبلاً در این گروه است.",
+    "ADMIN_USER_PROMO_GROUP_BACK": "⬅️ بازگشت به کاربر",
+    "ADMIN_USER_PROMO_GROUP_BUTTON": "👥 گروه تخفیف",
+    "ADMIN_USER_REFERRALS_BUTTON": "🤝 ریفرال‌ها",
+    "ADMIN_USER_REFERRALS_TITLE": "🤝 <b>ریفرال‌های کاربر</b>",
+    "ADMIN_USER_REFERRALS_SUMMARY": "👤 {name} (ID: <code>{telegram_id}</code>)\n👥 کل ریفرال‌ها: {count}",
+    "ADMIN_USER_REFERRAL_COMMISSION_DEFAULT": "• درصد کمیسیون: {percent}% (پیش‌فرض)",
+    "ADMIN_USER_REFERRAL_COMMISSION_CUSTOM": "• درصد اختصاصی: {percent}% (پیش‌فرض: {default_percent}%)",
+    "ADMIN_USER_REFERRAL_COMMISSION_EDIT_BUTTON": "📈 تغییر درصد",
+    "ADMIN_USER_REFERRAL_COMMISSION_PROMPT": "📈 <b>درصد کمیسیون ریفرال</b>\n\nفعلی: {current}%\nپیش‌فرض: {default}%\n\nمقدار جدید (0-100) یا 'استاندارد':",
+    "ADMIN_USER_REFERRAL_COMMISSION_RESET_BUTTON": "♻️ بازنشانی به پیش‌فرض",
+    "ADMIN_USER_REFERRAL_COMMISSION_UPDATED": "✅ درصد به‌روز شد: {percent}%",
+    "ADMIN_USER_REFERRAL_COMMISSION_INVALID": "❌ عدد 0 تا 100 یا 'استاندارد' وارد کنید",
+    "ADMIN_USER_REFERRALS_LIST_HEADER": "<b>لیست ریفرال‌ها:</b>",
+    "ADMIN_USER_REFERRALS_LIST_ITEM": "• {name} (ID: <code>{telegram_id}</code>{username_part})",
+    "ADMIN_USER_REFERRALS_LIST_TRUNCATED": "• … و {count} ریفرال دیگر",
+    "ADMIN_USER_REFERRALS_EMPTY": "هنوز ریفرالی نیست.",
+    "ADMIN_USER_REFERRALS_EDIT_HINT": "✏️ برای تغییر لیست «✏️ ویرایش» بزنید.",
+    "ADMIN_USER_REFERRALS_EDIT_BUTTON": "✏️ ویرایش ریفرال‌ها",
+    "ADMIN_USER_REFERRALS_EDIT_PROMPT": "🤝 <b>ویرایش ریفرال‌ها</b>\n\nلیست جدید ریفرال‌ها (شناسه تلگرام یا نام‌کاربری).\n\n• مقادیر با کاما، فاصله یا خط جدید\n• برای پاک کردن 0 یا 'نه' بفرستید\n\nیا دکمه لغو بزنید.",
+    "ADMIN_USER_REFERRALS_STATE_LOST": "❌ شناسایی کاربر ناموفق. از ابتدا شروع کنید.",
+    "ADMIN_USER_REFERRALS_NO_VALID": "❌ هیچ کاربری یافت نشد.",
+    "ADMIN_USER_REFERRALS_INVALID_ENTRIES": "یافت نشد: {values}",
+    "ADMIN_USER_REFERRALS_SELF_SKIPPED": "مقادیر خود کاربر رد شد: {values}",
+    "ADMIN_USER_REFERRALS_DUPLICATES": "تکراری‌ها نادیده گرفته شد: {values}",
+    "ADMIN_USER_REFERRALS_UPDATE_ERROR": "❌ به‌روزرسانی ریفرال‌ها ناموفق.",
+    "ADMIN_USER_REFERRALS_UPDATED": "✅ لیست ریفرال‌ها به‌روز شد.",
+    "ADMIN_USER_REFERRALS_UPDATED_TOTAL": "• لیست فعلی: {total}",
+    "ADMIN_USER_REFERRALS_UPDATED_ADDED": "• اضافه‌شده: {count}",
+    "ADMIN_USER_REFERRALS_UPDATED_REMOVED": "• حذف‌شده: {count}",
+    "ADMIN_USER_PROMO_GROUP_CURRENT": "گروه فعلی: {name}",
+    "ADMIN_USER_PROMO_GROUP_CURRENT_NONE": "گروه فعلی: تعیین نشده",
+    "ADMIN_USER_PROMO_GROUP_DISCOUNTS": "تخفیف‌ها — سرور: {servers}%، ترافیک: {traffic}%، دستگاه: {devices}%",
+    "ADMIN_USER_PROMO_GROUP_DISCOUNTS_NONE": "تخفیفی تعیین نشده.",
+    "ADMIN_USER_PROMO_GROUP_ERROR": "❌ به‌روزرسانی گروه تخفیف ناموفق.",
+    "ADMIN_USER_PROMO_GROUP_SELECT": "گروه تخفیف انتخاب کنید:",
+    "ADMIN_USER_PROMO_GROUP_TITLE": "👥 <b>گروه تخفیف کاربر</b>",
+    "ADMIN_USER_PROMO_GROUP_UPDATED": "✅ گروه تخفیف به‌روز شد: «{name}»",
+    "ADMIN_USER_STATISTICS": "📊 آمار",
+    "ADMIN_USER_STATUS_ACTIVE": "✅ فعال",
+    "ADMIN_USER_STATUS_BLOCKED": "🚫 مسدود",
+    "ADMIN_USER_STATUS_DELETED": "🗑️ حذف‌شده",
+    "ADMIN_USER_STATUS_UNKNOWN": "❓ نامشخص",
+    "ADMIN_USER_SUBSCRIPTION_SETTINGS": "📱 اشتراک و تنظیمات",
+    "ADMIN_USER_SUBSCRIPTION_STATUS_ACTIVE": "✅ فعال",
+    "ADMIN_USER_SUBSCRIPTION_STATUS_INACTIVE": "❌ غیرفعال",
+    "ADMIN_USER_SUBSCRIPTION_TYPE_PAID": "💎 پولی",
+    "ADMIN_USER_SUBSCRIPTION_TYPE_TRIAL": "🎁 آزمایشی",
+    "ADMIN_USER_TRAFFIC_USAGE": "{used}/{limit} گیگ",
+    "ADMIN_USER_TRANSACTIONS": "📋 تراکنش‌ها",
+    "ADMIN_USER_SEND_MESSAGE": "✉️ ارسال پیام",
+    "ADMIN_USER_SEND_MESSAGE_PROMPT": "✉️ <b>ارسال پیام به کاربر</b>\n\nمتن پیام را وارد کنید.\nبرای لغو /cancel بزنید.",
+    "ADMIN_USER_SEND_MESSAGE_SUCCESS": "✅ پیام ارسال شد",
+    "ADMIN_USER_SEND_MESSAGE_FORBIDDEN": "⚠️ کاربر ربات را مسدود کرده.",
+    "ADMIN_USER_SEND_MESSAGE_BAD_REQUEST": "❌ تلگرام پیام را رد کرد. متن را بررسی کنید.",
+    "ADMIN_USER_SEND_MESSAGE_ERROR": "❌ ارسال پیام ناموفق.",
+    "ADMIN_USER_SEND_MESSAGE_ERROR_NOT_FOUND": "❌ کاربر یافت نشد",
+    "ADMIN_USER_SEND_MESSAGE_EMPTY": "❌ پیام غیرخالی وارد کنید",
+    "ADMIN_USER_UNBLOCK": "✅ رفع مسدودیت",
+    "ADMIN_USER_USERNAME_NOT_SET": "تنظیم نشده",
+    "ADMIN_WELCOME_DISABLE": "🔴 غیرفعال",
+    "ADMIN_WELCOME_EDIT": "📝 ویرایش متن",
+    "ADMIN_WELCOME_ENABLE": "🟢 فعال",
+    "ADMIN_WELCOME_HTML": "🏷️ فرمت HTML",
+    "ADMIN_WELCOME_PLACEHOLDERS": "💡 متغیرها",
+    "ADMIN_WELCOME_PREVIEW": "👁️ پیش‌نمایش",
+    "ADMIN_WELCOME_RESET": "🔄 بازنشانی",
+    "ADMIN_WELCOME_SHOW": "👁️ نمایش فعلی",
+    "ALREADY_REGISTERED_REFERRAL": "ℹ️ شما قبلاً ثبت‌نام کرده‌اید. لینک دعوت قابل اعمال نیست.",
+    "ATTACHMENTS_SENT": "✅ پیوست‌ها ارسال شد.",
+    "AUTOPAY_BUTTON": "💳 پرداخت خودکار",
+    "AUTOPAY_DAYS_SET": "✅ {days} روز تنظیم شد!",
+    "AUTOPAY_DISABLED_TEXT": "غیرفعال - فراموش نکنید دستی تمدید کنید!",
+    "AUTOPAY_ENABLED_TEXT": "فعال - اشتراک خودکار تمدید می‌شود",
+    "AUTOPAY_FAILED": "\n❌ <b>خطای پرداخت خودکار</b>\n\nکسر وجه ناموفق.\nموجودی: {balance}\nمورد نیاز: {required}\n\nموجودی را شارژ و دستی تمدید کنید.\n",
+    "AUTOPAY_MENU_TEXT": "💳 <b>پرداخت خودکار</b>\n\n📊 <b>وضعیت:</b> {status}\n⏰ <b>کسر:</b> {days} روز قبل از انقضا\n\nعملیات:",
+    "AUTOPAY_SELECT_DAYS_PROMPT": "⏰ چند روز قبل از انقضا کسر شود:",
+    "AUTOPAY_SET_DAYS_BUTTON": "⚙️ تنظیم روزها",
+    "AUTOPAY_STATUS_DISABLED": "غیرفعال",
+    "AUTOPAY_STATUS_ENABLED": "فعال",
+    "AUTOPAY_SUCCESS": "\n✅ <b>پرداخت خودکار انجام شد</b>\n\nاشتراک {days} روز تمدید شد.\nکسر: {amount}\n",
+    "AUTOPAY_TOGGLE_SUCCESS": "✅ پرداخت خودکار {status}!",
+    "BACK": "⬅️ قبلی",
+    "BACK_BUTTON": "◀️ بازگشت",
+    "BACK_TO_MAIN_MENU_BUTTON": "⬅️ منوی اصلی",
+    "BACK_TO_MENU": "🏠 منوی اصلی",
+    "BACK_TO_OPEN_TICKETS": "🔴 تیکت‌های باز",
+    "BACK_TO_SUBSCRIPTION": "⬅️ اشتراک",
+    "BACK_TO_SUPPORT": "⬅️ پشتیبانی",
+    "BACK_TO_TICKETS": "⬅️ تیکت‌ها",
+    "BALANCE_BUTTON": "💰 موجودی",
+    "BALANCE_BUTTON_DEFAULT": "💰 موجودی: {balance}",
+    "BALANCE_BUTTON_ZERO": "💰 موجودی: 0 ₽",
+    "BALANCE_HISTORY": "📊 تاریخچه عملیات",
+    "BALANCE_INFO": "\n💰 <b>موجودی: {balance}</b>\n\nعملیات:\n",
+    "BALANCE_SUPPORT_REQUEST": "🛠️ درخواست از پشتیبانی",
+    "BALANCE_TOPUP": "💳 شارژ موجودی",
+    "BALANCE_TOPUP_CART_REMINDER_DETAILED": "\n💡 <b>شارژ موجودی لازم است</b>\n\nسبد خرید شما {total_amount} است ولی موجودی کافی نیست.\n\nلطفاً موجودی را شارژ کنید.\n",
+    "AUTO_PURCHASE_SUBSCRIPTION_SUCCESS": "✅ اشتراک {period} پس از شارژ خودکار فعال شد.",
+    "AUTO_PURCHASE_SUBSCRIPTION_EXTENDED": "✅ اشتراک خودکار {period} تمدید شد.",
+    "AUTO_PURCHASE_SUBSCRIPTION_EXTENDED_DETAILS": "⏰ انقضای جدید: {date}.",
+    "AUTO_PURCHASE_SUBSCRIPTION_HINT": "به بخش «اشتراک من» بروید برای لینک و راهنما.",
+    "BALANCE_TOP_UP": "💳 شارژ",
+    "BLOCK_BY_TIME": "⏳ مسدود موقت",
+    "BLOCK_FOREVER": "🚫 مسدود کردن",
+    "BUY_SUBSCRIPTION_START": "\n💎 <b>تنظیم اشتراک</b>\n\nاشتراک را مطابق نیاز تنظیم کنید.\n\nابتدا دوره انتخاب کنید:\n",
+    "CAMPAIGN_BONUS_BALANCE": "🎉 {amount} بابت ثبت‌نام از کمپین «{name}» دریافت کردید!",
+    "CAMPAIGN_BONUS_SUBSCRIPTION": "🎉 اشتراک {days} روزه (ترافیک: {traffic}، دستگاه: {devices}) از کمپین «{name}» فعال شد!",
+    "CAMPAIGN_EXISTING_USER": "ℹ️ این لینک فقط برای کاربران جدید است.",
+    "CAMPAIGN_EXISTING_USERL": "ℹ️ این لینک فقط برای کاربران جدید است.",
+    "CANCEL": "❌ لغو",
+    "CANCEL_REPLY": "❌ لغو پاسخ",
+    "CANCEL_TICKET_CREATION": "❌ لغو ایجاد تیکت",
+    "CHANGE_DEVICES_BUTTON": "📱 تغییر دستگاه‌ها",
+    "CHANGE_DEVICES_CONFIRM": "\n    📱 <b>تأیید تغییر</b>\n\n    فعلی: {current_devices} دستگاه\n    جدید: {new_devices} دستگاه\n\n    💰 {cost_text}\n\n    تأیید؟\n",
+    "CHANGE_DEVICES_INFO": "\n    📱 <b>تغییر تعداد دستگاه</b>\n\n    لیمیت فعلی: {current_devices} دستگاه\n\n    تعداد جدید انتخاب کنید:\n",
+    "CHANGE_DEVICES_PROMPT": "📱 <b>تغییر تعداد دستگاه</b>\n\nلیمیت فعلی: {current_devices} دستگاه\n\nتعداد جدید انتخاب کنید:",
+    "CHANGE_DEVICES_PROMPT_TARIFF": "📱 <b>تغییر تعداد دستگاه</b>\n\nلیمیت فعلی: {current_devices} دستگاه\nقیمت هر دستگاه اضافی: {price}/ماه",
+    "CHANGE_DEVICES_SUCCESS_DECREASE": "\n    ✅ تعداد دستگاه کاهش یافت!\n\n    📱 قبلی: {old_count} → جدید: {new_count}\n",
+    "CHANGE_DEVICES_SUCCESS_INCREASE": "\n    ✅ تعداد دستگاه افزایش یافت!\n\n    📱 قبلی: {old_count} → جدید: {new_count}\n    💰 کسر: {amount}\n",
+    "CHANGE_DEVICES_TITLE": "📱 تغییر تعداد دستگاه",
+    "CHANGE_TARIFF_BUTTON": "📦 تعرفه",
+    "CHANNEL_CHECK_BUTTON": "✅ عضو شدم",
+    "CHANNEL_REQUIRED_TEXT": "🔒 برای استفاده از ربات در کانال خبری عضو شوید، سپس دکمه زیر بزنید.",
+    "CHANNEL_SUBSCRIBE_BUTTON": "📢 عضویت در کانال",
+    "CHANNEL_SUBSCRIBE_REQUIRED_ALERT": "❌ هنوز عضو کانال نشده‌اید!",
+    "CHANNEL_SUBSCRIBE_THANKS": "✅ ممنون از عضویت",
+    "CHECK_STATUS_BUTTON": "📊 بررسی وضعیت",
+    "CHECK_STATUS_NO_CHANGES": "وضعیت تغییر نکرده",
+    "CHOOSE_ANOTHER_DEVICE": "📱 انتخاب دستگاه دیگر",
+    "CLOSED_TICKETS": "🟢 بسته‌شده",
+    "CLOSED_TICKETS_HEADER": "🟢 تیکت‌های بسته",
+    "CLOSED_TICKETS_TITLE": "🟢 تیکت‌های بسته:",
+    "CLOSE_NOTIFICATION": "❌ بستن اعلان",
+    "CLOSE_TICKET": "🔒 بستن تیکت",
+    "CONFIRM": "✅ تأیید",
+    "CONFIRM_CHANGE_BUTTON": "✅ تأیید تغییر",
+    "CONNECT_BUTTON": "🔗 اتصال",
+    "CONTACT_SUPPORT": "📞 پشتیبانی",
+    "CONTACT_SUPPORT_BUTTON": "💬 تماس با پشتیبانی",
+    "CONTINUE": "➡️ ادامه",
+    "CONTINUE_BUTTON": "✅ ادامه",
+    "COPY_SUBSCRIPTION_LINK": "📋 کپی لینک اشتراک",
+    "COUNTRY_CHANGES_ACTIVE_COUNT": "🌐 <b>کشورهای فعال:</b> {count}",
+    "COUNTRY_CHANGES_ADDED_HEADER": "➕ <b>کشورهای اضافه‌شده:</b>\n",
+    "COUNTRY_CHANGES_CHARGED": "💰 کسر: {amount} ({months} ماه)",
+    "COUNTRY_CHANGES_DISCOUNT_INFO": " (تخفیف {percent}%: -{amount})",
+    "COUNTRY_CHANGES_NOT_FOUND": "⚠️ تغییری یافت نشد",
+    "COUNTRY_CHANGES_REMOVED_HEADER": "➖ <b>کشورهای قطع‌شده:</b>\n",
+    "COUNTRY_CHANGES_REMOVED_WARNING": "ℹ️ اتصال مجدد پولی خواهد بود",
+    "COUNTRY_CHANGES_SUCCESS_HEADER": "✅ <b>کشورها به‌روز شد!</b>\n\n",
+    "COUNTRIES_MINIMUM_REQUIRED": "❌ نمی‌توان همه کشورها را قطع کرد. حداقل یک کشور باید متصل باشد.",
+    "COUNTRY_MANAGEMENT_NONE": "کشور متصلی نیست",
+    "COUNTRY_MANAGEMENT_PROMPT": "🌍 <b>مدیریت کشورهای اشتراک</b>\n\n📋 <b>کشورهای فعلی ({current_count}):</b>\n{current_list}\n\n💡 <b>راهنما:</b>\n✅ - متصل\n➕ - اضافه می‌شود (پولی)\n➖ - قطع می‌شود (رایگان)\n⚪ - انتخاب نشده\n\n⚠️ <b>توجه:</b> اتصال مجدد کشورهای قطع‌شده پولی است!",
+    "COUNTRY_MANAGEMENT_UNAVAILABLE": "ℹ️ مدیریت سرورها در دسترس نیست - فقط یک سرور موجود است",
+    "COUNTRY_NOT_AVAILABLE_PROMOGROUP": "❌ سرور برای گروه تخفیف شما در دسترس نیست",
+    "CREATE_INVITE": "📝 ایجاد دعوت‌نامه",
+    "CREATE_INVITE_BUTTON": "📝 ایجاد دعوت‌نامه",
+    "CREATE_TICKET_BUTTON": "🎫 ایجاد تیکت",
+    "CUSTOM_MINIAPP_URL_NOT_SET": "⚠ لینک مینی‌اپ تنظیم نشده",
+    "DELETE_MESSAGE": "🗑 حذف",
+    "DEVICES_INSUFFICIENT_BALANCE": "⚠️ موجودی ناکافی!\nمورد نیاز: {required} ({months} ماه)\nموجودی: {balance}",
+    "DEVICES_LIMIT_EXCEEDED": "⚠️ حداکثر دستگاه ({limit}) رد شده",
+    "DEVICES_MINIMUM_LIMIT": "⚠️ حداقل دستگاه: {limit}",
+    "DEVICES_NO_CHANGE": "ℹ️ تعداد دستگاه تغییر نکرد",
+    "DEVICE_CHANGE_ACTION_DECREASE": "کاهش به {count}",
+    "DEVICE_CHANGE_ACTION_INCREASE": "افزایش به {count}",
+    "DEVICE_CHANGE_CHARGED": "💰 کسر شد: {amount}",
+    "DEVICE_CHANGE_CONFIRMATION": "📱 <b>تأیید تغییر</b>\n\nفعلی: {current} دستگاه\nجدید: {new} دستگاه\n\nعملیات: {action}\n💰 {cost}\n\nتأیید؟",
+    "DEVICE_CHANGE_DECREASE_SUCCESS": "✅ تعداد دستگاه کاهش یافت!\n",
+    "DEVICE_CHANGE_DISCOUNT_INFO": " (تخفیف {percent}%: -{amount})",
+    "DEVICE_CHANGE_EXTRA_COST": "هزینه اضافی: {amount} ({period})",
+    "DEVICE_CHANGE_FREE": "رایگان",
+    "DEVICE_CHANGE_INCREASE_SUCCESS": "✅ تعداد دستگاه افزایش یافت!\n",
+    "DEVICE_CHANGE_NO_REFUND": "بازپرداخت ندارد",
+    "DEVICE_CHANGE_NO_REFUND_INFO": "ℹ️ بازپرداخت ندارد",
+    "DEVICE_CHANGE_RESULT_LINE": "📱 قبلی: {old} → جدید: {new}\n",
+    "DEVICES_INVALID_REQUEST": "❌ درخواست نامعتبر",
+    "DEVICES_INVALID_COUNT": "❌ تعداد نامعتبر",
+    "DEVICES_SELECTION_DISABLED": "⚠️ انتخاب دستگاه در دسترس نیست",
+    "DEVICE_CONNECTION_HELP": "❓ راهنمای اتصال مجدد",
+    "DEVICE_FETCH_ERROR": "❌ خطا در دریافت دستگاه‌ها",
+    "DEVICE_FETCH_INFO_ERROR": "❌ خطا در دریافت اطلاعات",
+    "DEVICE_GUIDE_ANDROID": "🤖 Android",
+    "DEVICE_GUIDE_ANDROID_TV": "📺 Android TV",
+    "DEVICE_GUIDE_APPLE_TV": "📺 Apple TV",
+    "DEVICE_GUIDE_IOS": "📱 iOS (iPhone/iPad)",
+    "DEVICE_GUIDE_MAC": "🎯 macOS",
+    "DEVICE_GUIDE_WINDOWS": "💻 Windows",
+    "DEVICE_LIST_FETCH_ERROR": "❌ خطا در دریافت لیست",
+    "DEVICE_MANAGEMENT_ACTIONS": "\n💡 <b>عملیات:</b>\n• دستگاه برای بازنشانی انتخاب کنید\n• یا همه را بازنشانی کنید",
+    "DEVICE_MANAGEMENT_CONNECTED_HEADER": "<b>دستگاه‌های متصل:</b>\n",
+    "DEVICE_MANAGEMENT_LIST_ITEM": "• {device}\n",
+    "DEVICE_MANAGEMENT_OVERVIEW": "🔄 <b>مدیریت دستگاه‌ها</b>\n\n📊 متصل: {total} دستگاه\n📄 صفحه {page} از {pages}\n",
+    "DEVICE_NONE_CONNECTED": "ℹ️ دستگاه متصلی ندارید",
+    "DEVICE_PAGE_LOAD_ERROR": "❌ خطا در بارگذاری صفحه",
+    "DEVICE_RESET_ALL_DONE": "ℹ️ همه دستگاه‌ها بازنشانی شد",
+    "DEVICE_RESET_ALL_FAILED_MESSAGE": "❌ <b>بازنشانی ناموفق</b>\n\nبعداً تلاش کنید.\nکل: {total}",
+    "DEVICE_RESET_ALL_SUCCESS_MESSAGE": "✅ <b>همه دستگاه‌ها بازنشانی شد!</b>\n\n🔄 بازنشانی: {count} دستگاه\n📱 اکنون دوباره متصل کنید\n\n💡 از لینک «اشتراک من» استفاده کنید",
+    "DEVICE_RESET_ERROR": "❌ خطا در بازنشانی دستگاه",
+    "DEVICE_RESET_ID_FAILED": "❌ دریافت شناسه ناموفق",
+    "DEVICE_RESET_INVALID_REQUEST": "❌ درخواست نامعتبر",
+    "DEVICE_RESET_NOT_FOUND": "❌ دستگاه یافت نشد",
+    "DEVICE_RESET_PARSE_ERROR": "❌ خطا در پردازش",
+    "DEVICE_RESET_PARTIAL_MESSAGE": "⚠️ <b>بازنشانی ناقص</b>\n\n✅ حذف: {success}\n❌ ناموفق: {failed}\n\nدوباره تلاش کنید.",
+    "DEVICE_RESET_SUCCESS": "✅ دستگاه {device} بازنشانی شد!",
+    "DEVICE_UUID_NOT_FOUND": "❌ UUID یافت نشد",
+    "DISABLE_BUTTON": "❌ غیرفعال",
+    "DISCOUNT_BONUS_DESCRIPTION": "تخفیف تمدید اشتراک",
+    "DISCOUNT_CLAIM_ALREADY": "ℹ️ تخفیف قبلاً فعال شده.",
+    "DISCOUNT_CLAIM_ERROR": "❌ فعال‌سازی تخفیف ناموفق.",
+    "DISCOUNT_CLAIM_EXPIRED": "⚠️ پیشنهاد منقضی شده.",
+    "DISCOUNT_CLAIM_NOT_FOUND": "❌ پیشنهاد یافت نشد.",
+    "DISCOUNT_CLAIM_SUCCESS": "🎉 <b>تخفیف {percent}% فعال شد!</b>\n\nبا سایر تخفیف‌ها جمع و در پرداخت بعدی اعمال می‌شود.",
+    "ENABLE_BUTTON": "✅ فعال",
+    "ENTER_BLOCK_MINUTES": "دقیقه مسدودسازی (مثلاً 15):",
+    "ERROR": "❌ خطایی رخ داد",
+    "ERROR_RULES_RETRY": "خطا رخ داد. قوانین را دوباره بپذیرید:",
+    "ERROR_TRY_AGAIN": "❌ خطا رخ داد. دوباره تلاش کنید.",
+    "FAQ_BACK_TO_LIST": "⬅️ لیست سوالات",
+    "FAQ_HEADER": "❓ <b>FAQ</b>",
+    "FAQ_NOT_AVAILABLE": "سوالات متداول موقتاً در دسترس نیست.",
+    "FAQ_PAGES_PROMPT": "سوال را انتخاب کنید:",
+    "FAQ_PAGE_EMPTY": "متن هنوز اضافه نشده.",
+    "FAQ_PAGE_FOOTER": "صفحه {current} از {total}",
+    "FAQ_PAGE_NOT_AVAILABLE": "این صفحه در دسترس نیست.",
+    "FAQ_PAGE_TITLE": "<b>{title}</b>",
+    "FAQ_PAGE_UNTITLED": "بدون عنوان",
+    "FREEKASSA_ENTER_AMOUNT": "💳 <b>شارژ از طریق {name}</b>\n\nمبلغ وارد کنید.\n\nحداقل: {min_amount}\nحداکثر: {max_amount}",
+    "GO_TO_BALANCE_TOP_UP": "💳 شارژ موجودی",
+    "HAPP_DOWNLOAD_BUTTON": "⬇️ دانلود Happ",
+    "HAPP_DOWNLOAD_LINK_MESSAGE": "⬇️ Happ برای {platform} دانلود کنید:",
+    "HAPP_DOWNLOAD_LINK_NOT_SET": "❌ لینک این دستگاه تنظیم نشده",
+    "HAPP_DOWNLOAD_OPEN_LINK": "🔗 باز کردن لینک",
+    "HAPP_DOWNLOAD_PROMPT": "📥 <b>دانلود Happ</b>\nدستگاه انتخاب کنید:",
+    "HAPP_PLATFORM_ANDROID": "🤖 Android",
+    "HAPP_PLATFORM_IOS": "🍎 iOS",
+    "HAPP_PLATFORM_MACOS": "🖥️ Mac OS",
+    "HAPP_PLATFORM_PC": "💻 کامپیوتر",
+    "HAPP_PLATFORM_WINDOWS": "💻 Windows",
+    "INSUFFICIENT_BALANCE": "❌ موجودی ناکافی.\n    \n    <b>موجودی را {amount} شارژ و دوباره تلاش کنید.</b>\n    ",
+    "INVALID_AMOUNT": "❌ مبلغ نامعتبر",
+    "LANGUAGE_PROMPT": "🌐 زبان رابط را انتخاب کنید:",
+    "LANGUAGE_SELECTED": "🌐 زبان رابط انتخاب شد: <b>فارسی</b>",
+    "LANGUAGE_SELECTION_DISABLED": "⚙️ انتخاب زبان موقتاً در دسترس نیست. زبان پیش‌فرض استفاده می‌شود.",
+    "LOADING": "⏳ بارگذاری...",
+    "MAINTENANCE_MODE_ACTIVE": "\n🔧 تعمیرات فنی!\n\nسرویس موقتاً در دسترس نیست. در حال بهبود کیفیت خدمات هستیم.\n\n⏰ زمان تقریبی اتمام: نامشخص\n🔄 بعداً تلاش کنید\n\nبابت ناراحتی عذرخواهی می‌کنیم.\n",
+    "MAINTENANCE_MODE_API_ERROR": "\n🔧 تعمیرات فنی!\n\nسرویس به دلیل مشکل اتصال به سرورها موقتاً در دسترس نیست.\n\n⏰ در حال رفع مشکل هستیم. چند دقیقه بعد تلاش کنید.\n\n🔄 آخرین بررسی: {last_check}\n",
+    "MAIN_MENU": "👤 <b>{user_name}</b>\n    \n📱 <b>اشتراک:</b> {subscription_status}\n\nعملیات:\n",
+    "MAIN_MENU_ACTION_PROMPT": "عملیات را انتخاب کنید:",
+    "MAIN_MENU_BUTTON": "🏠 منوی اصلی",
+    "MAIN_MENU_TEST_ACCESS_HEADER": "🧪 سرورهای آزمایشی فعال: {servers}",
+    "MAIN_MENU_TEST_ACCESS_TIMER": "⏳ اعتبار دسترسی: {time_left}\n<code>{bar}</code>",
+    "MANAGE_DEVICES_BUTTON": "🔧 مدیریت دستگاه‌ها",
+    "MARK_AS_ANSWERED": "✅ علامت پاسخ‌داده‌شده",
+    "MENU_ADMIN": "⚙️ پنل ادمین",
+    "MENU_BALANCE": "💰 موجودی",
+    "MENU_BUY_SUBSCRIPTION": "💎 خرید اشتراک",
+    "MENU_EXTEND_SUBSCRIPTION": "⏰ تمدید اشتراک",
+    "MENU_FAQ": "❓ سوالات متداول",
+    "MENU_INFO": "ℹ️ اطلاعات",
+    "MENU_INFO_HEADER": "ℹ️ <b>اطلاعات</b>",
+    "MENU_INFO_PROMPT": "بخش انتخاب کنید:",
+    "MENU_LANGUAGE": "🌐 زبان",
+    "MENU_PRIVACY_POLICY": "🛡️ حریم خصوصی",
+    "MENU_PROFILE": "👤 حساب کاربری",
+    "MENU_PROFILE_UNAVAILABLE": "❗️ حساب کاربری موقتاً در دسترس نیست.",
+    "MENU_PROMOCODE": "🎫 کد تخفیف",
+    "MENU_PROMO_GROUPS_INFO": "🎯 تخفیف بر اساس هزینه",
+    "MENU_PUBLIC_OFFER": "📄 شرایط استفاده",
+    "MENU_REFERRALS": "🤝 دعوت دوستان",
+    "MENU_RULES": "📋 قوانین سرویس",
+    "MENU_SERVER_STATUS": "📊 وضعیت سرورها",
+    "MENU_SUBSCRIPTION": "📱 اشتراک من",
+    "MENU_SUPPORT": "🛠️ پشتیبانی",
+    "MENU_TRIAL": "🧪 اشتراک آزمایشی",
+    "MINIAPP_PURCHASE_BREAKDOWN_BASE": "پلن پایه",
+    "MINIAPP_PURCHASE_BREAKDOWN_DEVICES": "دستگاه‌ها",
+    "MINIAPP_PURCHASE_BREAKDOWN_DISCOUNT_NOTE": "تخفیف: -{amount} ({percent}%)",
+    "MINIAPP_PURCHASE_BREAKDOWN_PROMO": "تخفیف تبلیغاتی",
+    "MINIAPP_PURCHASE_BREAKDOWN_SERVERS": "سرورها",
+    "MINIAPP_PURCHASE_BREAKDOWN_TRAFFIC": "ترافیک",
+    "MINIAPP_PURCHASE_DISCOUNT_DEVICES": "تخفیف دستگاه: -{amount} ({percent}%)",
+    "MINIAPP_PURCHASE_DISCOUNT_PERIOD": "تخفیف دوره: -{amount} ({percent}%)",
+    "MINIAPP_PURCHASE_DISCOUNT_PROMO": "پیشنهاد تخفیف: -{amount} ({percent}%)",
+    "MINIAPP_PURCHASE_DISCOUNT_SERVERS": "تخفیف سرور: -{amount} ({percent}%)",
+    "MINIAPP_PURCHASE_DISCOUNT_TRAFFIC": "تخفیف ترافیک: -{amount} ({percent}%)",
+    "MINIAPP_PURCHASE_STATUS_INSUFFICIENT": "موجودی ناکافی",
+    "MINIAPP_PURCHASE_SUMMARY_DISCOUNT": "صرفه‌جویی {amount}",
+    "MULENPAY_PAYMENT_ERROR": "❌ خطا در پرداخت MulenPay.",
+    "MULENPAY_PAYMENT_INSTRUCTIONS": "💳 <b>پرداخت MulenPay</b>\n\nدکمه زیر بزنید.\n\n💰 مبلغ: {amount}",
+    "MULENPAY_PAY_BUTTON": "💳 پرداخت MulenPay",
+    "MULENPAY_TOPUP_PROMPT": "💳 <b>شارژ MulenPay</b>\n\nمبلغ وارد کنید.\nحداقل: {min_amount}، حداکثر: {max_amount}",
+    "MY_BALANCE_BUTTON": "💰 موجودی من",
+    "MY_SUBSCRIPTION_BUTTON": "📱 اشتراک من",
+    "MY_TICKETS_BUTTON": "📋 تیکت‌های من",
+    "MY_TICKETS_TITLE": "📋 <b>تیکت‌های من</b>",
+    "NO": "❌ خیر",
+    "NOTIFICATION_CLOSED": "🔒 تیکت بسته شد",
+    "NOTIFICATION_VALUE_INVALID": "❌ مقدار نامعتبر",
+    "NOTIFICATION_VALUE_UPDATED": "✅ مقدار به‌روز شد",
+    "NOTIFY_PROMPT_SECOND_HOURS": "ساعت اعتبار تخفیف (1-168):",
+    "NOTIFY_PROMPT_SECOND_PERCENT": "درصد تخفیف اعلان ۲-۳ روزه (0-100):",
+    "NOTIFY_PROMPT_THIRD_DAYS": "چند روز پس از انقضا پیشنهاد ارسال شود؟ (حداقل 2):",
+    "NOTIFY_PROMPT_THIRD_HOURS": "ساعت اعتبار تخفیف (1-168):",
+    "NOTIFY_PROMPT_THIRD_PERCENT": "درصد تخفیف پیشنهاد دیرهنگام (0-100):",
+    "NO_ATTACHMENTS": "پیوستی نیست",
+    "NO_CLOSED_TICKETS": "تیکت بسته‌ای نیست.",
+    "NO_SERVERS_AVAILABLE": "❌ سروری موجود نیست",
+    "NO_TICKETS": "تیکتی نیست.",
+    "NO_TICKETS_ADMIN": "تیکتی نیست.",
+    "NO_TRAFFIC_PACKAGES": "بسته ترافیکی موجود نیست.",
+    "OPEN_TICKETS": "📋 تیکت‌های باز",
+    "OPEN_TICKETS_HEADER": "📋 <b>تیکت‌های باز</b>",
+    "OPERATION_CANCELLED": "❌ عملیات لغو شد",
+    "OTHER_APPS_BUTTON": "📱 سایر اپلیکیشن‌ها",
+    "PAGINATION_NEXT": "➡️",
+    "PAGINATION_PREV": "⬅️",
+    "PAID_FEATURE_ONLY": "⚠️ فقط برای اشتراک پولی",
+    "PAID_FEATURE_ONLY_SHORT": "⚠ فقط برای اشتراک پولی",
+    "PAL24_CARD_PAY_BUTTON": "💳 کارت بانکی",
+    "PAL24_INSTRUCTION_BUTTON": "📋 راهنما",
+    "PAL24_INSTRUCTION_COMPLETE": "4. وجه خودکار واریز می‌شود",
+    "PAL24_INSTRUCTION_CONFIRM": "3. انتقال را تأیید کنید",
+    "PAL24_INSTRUCTION_FOLLOW": "2. مراحل درگاه را دنبال کنید",
+    "PAL24_PAYMENT_ERROR": "❌ خطا در پرداخت Pal24.",
+    "PAL24_PAYMENT_INSTRUCTIONS": "💳 <b>پرداخت Pal24</b>\n\n💰 مبلغ: {amount}\n🆔 شناسه: {payment_id}\n\n📱 <b>راهنما:</b>\n1. دکمه پرداخت بزنید\n2. مراحل درگاه را دنبال کنید\n3. تأیید کنید\n4. وجه خودکار واریز می‌شود\n\n❓ مشکل؟ {support}",
+    "PAL24_SBP_PAY_BUTTON": "🏦 پرداخت سریع",
+    "PAL24_SELECT_PAYMENT_METHOD": "روش پرداخت PayPalych:",
+    "PAL24_TOPUP_PROMPT": "💳 <b>پرداخت Pal24</b>\n\nمبلغ وارد کنید.\nحداقل: {min_amount}، حداکثر: {max_amount}",
+    "PAYMENTS_TEMPORARILY_UNAVAILABLE": "⚠️ پرداخت موقتاً در دسترس نیست",
+    "PAYMENT_CARD_MULENPAY": "💳 کارت (MulenPay)",
+    "PAYMENT_CARD_PAL24": "💳 کارت (Pal24)",
+    "PAYMENT_CARD_TRIBUTE": "💳 کارت (Tribute)",
+    "PAYMENT_CARD_WATA": "💳 کارت (WATA)",
+    "PAYMENT_CARD_YOOKASSA": "💳 کارت (YooKassa)",
+    "PAYMENT_PLATEGA": "💳 Platega",
+    "PAYMENT_CHARGE_ERROR": "❌ خطا در کسر وجه",
+    "PAYMENT_CREATE_ERROR": "❌ خطا در ایجاد پرداخت",
+    "PAYMENT_CRYPTOBOT": "🪙 رمزارز (CryptoBot)",
+    "PAYMENT_HELEKET": "🪙 رمزارز (Heleket)",
+    "HELEKET_PAYMENT_ALREADY_PAID": "✅ پرداخت قبلاً واریز شده",
+    "HELEKET_PAYMENT_SUCCESS": "✅ پرداخت به موجودی واریز شد",
+    "HELEKET_STATUS_CHECK": "⏳ در انتظار پرداخت",
+    "HELEKET_STATUS_PROCESS": "⚙️ پرداخت در حال پردازش",
+    "HELEKET_STATUS_CONFIRM_CHECK": "⛓ در انتظار تأیید شبکه",
+    "HELEKET_STATUS_WRONG_AMOUNT": "❗️ مبلغ اشتباه پرداخت شده",
+    "HELEKET_STATUS_WRONG_AMOUNT_WAITING": "❗️ مبلغ ناکافی، در انتظار تکمیل",
+    "HELEKET_STATUS_PAID_OVER": "✅ پرداخت واریز شد (اضافه‌پرداخت)",
+    "HELEKET_STATUS_PAID": "✅ پرداخت واریز شد",
+    "HELEKET_STATUS_CANCEL": "🚫 پرداخت لغو شد",
+    "HELEKET_STATUS_FAIL": "❌ خطا در پرداخت",
+    "HELEKET_STATUS_SYSTEM_FAIL": "❌ خطای سیستمی Heleket",
+    "HELEKET_STATUS_REFUND_PROCESS": "↩️ بازگشت وجه در حال پردازش",
+    "HELEKET_STATUS_REFUND_FAIL": "⚠️ خطا در بازگشت وجه",
+    "HELEKET_STATUS_REFUND_PAID": "✅ بازگشت وجه انجام شد",
+    "HELEKET_STATUS_LOCKED": "🔒 وجه مسدود شده",
+    "HELEKET_STATUS_UNKNOWN": "ℹ️ وضعیت پرداخت: {status}",
+    "PAYMENT_METHODS_FOOTER": "روش مورد نظر:",
+    "PAYMENT_METHODS_ONLY_SUPPORT": "💳 <b>روش‌های شارژ</b>\n\n⚠️ روش‌های خودکار موقتاً در دسترس نیست.\nبرای شارژ با پشتیبانی تماس بگیرید.\n\nروش شارژ:",
+    "PAYMENT_METHODS_PROMPT": "روش پرداخت:",
+    "PAYMENT_METHODS_TITLE": "💳 <b>روش‌های پرداخت</b>",
+    "PAYMENT_METHODS_UNAVAILABLE_ALERT": "⚠️ روش‌های خودکار موقتاً در دسترس نیست. برای شارژ با پشتیبانی تماس بگیرید.",
+    "PAYMENT_METHOD_CRYPTOBOT_DESCRIPTION": "از طریق CryptoBot",
+    "PAYMENT_METHOD_CRYPTOBOT_NAME": "🪙 <b>رمزارز</b>",
+    "PAYMENT_METHOD_MULENPAY_DESCRIPTION": "از طریق {mulenpay_name}",
+    "PAYMENT_METHOD_MULENPAY_NAME": "💳 <b>کارت بانکی ({mulenpay_name})</b>",
+    "PAYMENT_METHOD_PLATEGA_DESCRIPTION": "از طریق {platega_name} (کارت + پرداخت سریع)",
+    "PAYMENT_METHOD_PLATEGA_NAME": "💳 <b>کارت بانکی ({platega_name})</b>",
+    "PAYMENT_METHOD_STARS_DESCRIPTION": "سریع و راحت",
+    "PAYMENT_METHOD_STARS_NAME": "⭐ <b>Telegram Stars</b>",
+    "PAYMENT_METHOD_SUPPORT_DESCRIPTION": "روش‌های دیگر",
+    "PAYMENT_METHOD_SUPPORT_NAME": "🛠️ <b>از طریق پشتیبانی</b>",
+    "PAYMENT_METHOD_TRIBUTE_DESCRIPTION": "از طریق Tribute",
+    "PAYMENT_METHOD_TRIBUTE_NAME": "💳 <b>کارت بانکی</b>",
+    "PAYMENT_METHOD_HELEKET_DESCRIPTION": "از طریق Heleket",
+    "PAYMENT_METHOD_HELEKET_NAME": "🪙 <b>رمزارز (Heleket)</b>",
+    "PAYMENT_METHOD_YOOKASSA_DESCRIPTION": "از طریق YooKassa",
+    "PAYMENT_METHOD_YOOKASSA_NAME": "💳 <b>کارت بانکی</b>",
+    "PAYMENT_METHOD_YOOKASSA_SBP_DESCRIPTION": "از طریق سیستم پرداخت سریع YooKassa",
+    "PAYMENT_METHOD_YOOKASSA_SBP_NAME": "🏦 <b>پرداخت سریع (YooKassa)</b>",
+    "PAYMENT_METHOD_WATA_DESCRIPTION": "از طریق WATA",
+    "PAYMENT_METHOD_WATA_NAME": "💳 <b>کارت بانکی (WATA)</b>",
+    "PAYMENT_HELEKET_MARKUP_LABEL": "هزینه اضافی ارائه‌دهنده",
+    "PAYMENT_HELEKET_DISCOUNT_LABEL": "تخفیف ارائه‌دهنده",
+    "PAYMENT_RETURN_HOME_BUTTON": "🏠 صفحه اصلی",
+    "PAYMENT_SBP_YOOKASSA": "🏬 پرداخت سریع (YooKassa)",
+    "PAYMENT_TELEGRAM_STARS": "⭐ Telegram Stars",
+    "PAYMENT_VIA_SUPPORT": "🛠️ از طریق پشتیبانی",
+    "PLATEGA_TOPUP_PROMPT": "💳 <b>پرداخت از طریق Platega ({method_name})</b>\n\nمبلغ شارژ از {min_amount} تا {max_amount} وارد کنید.\nپرداخت از طریق Platega انجام می‌شود.",
+    "PLATEGA_SELECT_PAYMENT_METHOD": "روش پرداخت Platega را انتخاب کنید:",
+    "PLATEGA_TEMPORARILY_UNAVAILABLE": "❌ پرداخت Platega موقتاً در دسترس نیست",
+    "PLATEGA_METHODS_NOT_CONFIGURED": "⚠️ روش پرداختی در Platega موجود نیست",
+    "PLATEGA_METHOD_SELECTION_REQUIRED": "⚠️ ابتدا روش پرداخت Platega را انتخاب کنید",
+    "PLATEGA_AMOUNT_TOO_LOW": "حداقل مبلغ پرداخت Platega: {amount}",
+    "PLATEGA_AMOUNT_TOO_HIGH": "حداکثر مبلغ پرداخت Platega: {amount}",
+    "PLATEGA_PAYMENT_ERROR": "❌ خطا در ایجاد پرداخت Platega. بعداً تلاش کنید یا با پشتیبانی تماس بگیرید.",
+    "PLATEGA_PAYMENT_INSTRUCTIONS": "💳 <b>پرداخت از طریق Platega ({method})</b>\n\n💰 مبلغ: {amount}\n🆔 شناسه تراکنش: {transaction}\n\n📱 <b>راهنما:</b>\n1. دکمه «پرداخت» را بزنید\n2. مراحل درگاه پرداخت را دنبال کنید\n3. انتقال را تأیید کنید\n4. مبلغ خودکار واریز می‌شود\n\n❓ در صورت مشکل با {support} تماس بگیرید",
+    "PLATEGA_PAY_BUTTON": "💳 پرداخت از طریق {method}",
+    "PLATEGA_PAYMENT_ALREADY_CONFIRMED": "✅ پرداخت قبلاً واریز شده",
+    "PLATEGA_PAYMENT_STATUS": "وضعیت فعلی پرداخت: {status}",
+    "PAY_NOW_BUTTON": "💳 پرداخت",
+    "PAY_WITH_COINS_BUTTON": "🪙 پرداخت",
+    "PENDING_CANCEL_BUTTON": "⌛ لغو",
+    "PERIOD_14_DAYS": "📅 ۱۴ روز - {settings.format_price(settings.PRICE_14_DAYS)}",
+    "PERIOD_180_DAYS": "📅 ۱۸۰ روز - {settings.format_price(settings.PRICE_180_DAYS)}",
+    "PERIOD_30_DAYS": "📅 ۳۰ روز - {settings.format_price(settings.PRICE_30_DAYS)}",
+    "PERIOD_360_DAYS": "📅 ۳۶۰ روز - {settings.format_price(settings.PRICE_360_DAYS)}",
+    "PERIOD_60_DAYS": "📅 ۶۰ روز - {settings.format_price(settings.PRICE_60_DAYS)}",
+    "PERIOD_90_DAYS": "📅 ۹۰ روز - {settings.format_price(settings.PRICE_90_DAYS)}",
+    "POST_REGISTRATION_TRIAL_BUTTON": "🚀 اتصال رایگان 🚀",
+    "PRIVACY_POLICY_EMPTY_ALERT": "سیاست حریم خصوصی هنوز تکمیل نشده.",
+    "PRIVACY_POLICY_HEADER": "🛡️ <b>سیاست حریم خصوصی</b>",
+    "PRIVACY_POLICY_NOT_AVAILABLE": "سیاست حریم خصوصی موقتاً در دسترس نیست.",
+    "PRIVACY_POLICY_PAGE_INFO": "صفحه {current} از {total}",
+    "PRIVACY_RESTRICTED_BUTTON_HINT": "⚠️ <b>تلگرام به دلیل تنظیمات حریم خصوصی شما اجازه درخواست مخاطب را نمی‌دهد.</b>\n\nارسال مخاطب را در تنظیمات تلگرام فعال کنید یا اطلاعات را دستی ارسال کنید.",
+    "PROMOCODE_EMPTY_INPUT": "❌ کد تخفیف معتبر وارد کنید",
+    "PROMOCODE_ENTER": "🎫 کد تخفیف را وارد کنید:",
+    "PROMOCODE_EXPIRED": "❌ کد تخفیف منقضی شده",
+    "PROMOCODE_INVALID": "❌ کد تخفیف نامعتبر",
+    "PROMOCODE_SUCCESS": "🎉 کد تخفیف فعال شد! {description}",
+    "PROMOCODE_USED": "❌ کد تخفیف قبلاً استفاده شده",
+    "PROMOCODE_ACTIVE_DISCOUNT_EXISTS": "❌ شما قبلاً تخفیف فعال دارید. ابتدا آن را استفاده کنید.",
+    "PROMO_GROUPS_INFO_CURRENT_LEVEL": "🏆 سطح فعلی: {name}",
+    "PROMO_GROUPS_INFO_EMPTY": "گروه‌های تخفیف خودکار هنوز تنظیم نشده.",
+    "PROMO_GROUPS_INFO_HEADER": "🎯 <b>تخفیف بر اساس هزینه</b>",
+    "PROMO_GROUPS_INFO_LEVELS_HEADER": "📋 سطوح خودکار:",
+    "PROMO_GROUPS_INFO_LEVEL_LINE": "{status} <b>{name}</b> — از {amount}",
+    "PROMO_GROUPS_INFO_MAX_LEVEL": "🏆 شما به بالاترین سطح تخفیف رسیده‌اید!",
+    "PROMO_GROUPS_INFO_NEXT_LEVEL": "📈 تا سطح «{name}»: {amount} مانده",
+    "PROMO_GROUPS_INFO_NO_LEVEL": "🏆 سطح فعلی: هنوز کسب نشده",
+    "PROMO_GROUPS_INFO_TOTAL_SPENT": "💰 هزینه در ربات: {amount}",
+    "PROMO_GROUP_DISCOUNTS_HEADER": "🎁 <b>تخفیف‌های گروه شما</b>",
+    "PROMO_GROUP_DISCOUNT_DEVICES": "📱 دستگاه اضافی: {percent}%",
+    "PROMO_GROUP_DISCOUNT_SERVERS": "🌍 سرورها: {percent}%",
+    "PROMO_GROUP_DISCOUNT_TRAFFIC": "📊 ترافیک: {percent}%",
+    "PROMO_GROUP_PERIOD_DISCOUNTS_HEADER": "⏳ تخفیف دوره‌های طولانی:",
+    "PROMO_GROUP_PERIOD_DISCOUNT_ITEM": "{period} — {percent}%",
+    "PROMO_OFFER_CLOSE": "❌ بستن",
+    "PUBLIC_OFFER_EMPTY_ALERT": "شرایط استفاده هنوز تکمیل نشده.",
+    "PUBLIC_OFFER_HEADER": "📄 <b>شرایط استفاده</b>",
+    "PUBLIC_OFFER_NOT_AVAILABLE": "شرایط استفاده موقتاً در دسترس نیست.",
+    "PUBLIC_OFFER_PAGE_INFO": "صفحه {current} از {total}",
+    "REFERRAL_ANALYTICS_BUTTON": "📊 تحلیل",
+    "REFERRAL_ANALYTICS_EARNINGS_HEADER": "💰 <b>درآمد بر اساس دوره:</b>",
+    "REFERRAL_ANALYTICS_EARNINGS_MONTH": "• ماه: {amount}",
+    "REFERRAL_ANALYTICS_EARNINGS_QUARTER": "• سه‌ماهه: {amount}",
+    "REFERRAL_ANALYTICS_EARNINGS_TODAY": "• امروز: {amount}",
+    "REFERRAL_ANALYTICS_EARNINGS_WEEK": "• هفته: {amount}",
+    "REFERRAL_ANALYTICS_FOOTER": "📈 شبکه دعوت خود را گسترش دهید!",
+    "REFERRAL_ANALYTICS_TITLE": "📊 <b>تحلیل دعوت‌ها</b>",
+    "REFERRAL_ANALYTICS_TOP_ITEM": "{index}. {name}: {amount} ({count} واریز)",
+    "REFERRAL_ANALYTICS_TOP_TITLE": "🏆 <b>برترین {count} دعوت‌شده:</b>",
+    "REFERRAL_CODE_ACCEPTED": "✅ کد دعوت پذیرفته شد!",
+    "REFERRAL_CODE_APPLIED": "🎁 کد دعوت اعمال شد! پس از اولین خرید پاداش دریافت می‌کنید.",
+    "REFERRAL_CODE_INVALID": "❌ کد دعوت نامعتبر",
+    "REFERRAL_CODE_INVALID_HELP": "❌ کد دعوت نامعتبر.\n\n💡 اگر کد دعوت دارید، از صحت آن مطمئن شوید.\n⏭️ برای ادامه ثبت‌نام بدون کد از /start استفاده کنید",
+    "REFERRAL_CODE_QUESTION": "\n🤝 <b>کد دعوت یا کد تخفیف دارید؟</b>\n\nاگر کد تخفیف یا لینک دعوت از دوستتان دارید، الان وارد کنید!\n\nکد را وارد کنید یا «رد کردن» بزنید:\n",
+    "REFERRAL_OR_PROMO_CODE_INVALID": "❌ کد دعوت یا تخفیف نامعتبر",
+    "REFERRAL_OR_PROMO_CODE_INVALID_HELP": "❌ کد دعوت یا تخفیف نامعتبر.\n\n💡 از صحت کد مطمئن شوید.\n⏭️ برای ادامه بدون کد از /start استفاده کنید",
+    "PROMOCODE_ACTIVATED_AT_REGISTRATION": "✅ کد تخفیف فعال شد!\n\n{description}",
+    "PROMOCODE_ACCEPTED_WILL_ACTIVATE": "✅ کد تخفیف پذیرفته شد! پس از تکمیل ثبت‌نام فعال می‌شود.",
+    "REFERRAL_CODE_SKIP": "⏭️ رد کردن",
+    "REFERRAL_CODE_TITLE": "🆔 <b>کد شما:</b> <code>{code}</code>",
+    "REFERRAL_EARNINGS_BY_TYPE_HEADER": "📈 <b>درآمد بر اساس نوع:</b>",
+    "REFERRAL_EARNINGS_FIRST_TOPUPS": "• پاداش اولین شارژ: <b>{count}</b> ({amount})",
+    "REFERRAL_EARNINGS_PURCHASES": "• کمیسیون خرید: <b>{count}</b> ({amount})",
+    "REFERRAL_EARNINGS_TOPUPS": "• کمیسیون شارژ: <b>{count}</b> ({amount})",
+    "REFERRAL_EARNING_REASON_COMMISSION_PURCHASE": "💰 کمیسیون خرید",
+    "REFERRAL_EARNING_REASON_COMMISSION_TOPUP": "💰 کمیسیون شارژ",
+    "REFERRAL_EARNING_REASON_FIRST_TOPUP": "🎉 اولین شارژ",
+    "REFERRAL_INFO": "🤝 <b>دعوت دوستان</b>\n\nلینک دعوت را به اشتراک بگذارید و از هر خرید کمیسیون بگیرید!",
+    "REFERRAL_INVITE_BONUS": "💎 با اولین شارژ از {minimum} مبلغ {bonus} پاداش دریافت می‌کنی!",
+    "REFERRAL_INVITE_CREATED_INSTRUCTION": "دکمه «📤 اشتراک‌گذاری» را بزنید یا متن زیر را کپی کنید:",
+    "REFERRAL_INVITE_CREATED_TITLE": "📝 <b>دعوت‌نامه ایجاد شد!</b>",
+    "REFERRAL_INVITE_FEATURE_FAST": "🚀 اتصال سریع",
+    "REFERRAL_INVITE_FEATURE_SECURE": "🔒 امنیت بالا",
+    "REFERRAL_INVITE_FEATURE_SERVERS": "🌍 سرورهای سراسر جهان",
+    "REFERRAL_INVITE_FOOTER": "📢 دوستان را دعوت کنید و درآمد کسب کنید!",
+    "REFERRAL_INVITE_LINK_PROMPT": "👇 از لینک زیر استفاده کن:",
+    "REFERRAL_INVITE_MESSAGE": "\n🎯 <b>دعوت به سرویس VPN</b>\n\nسلام! به سرویس VPN عالی دعوتت می‌کنم!\n\n🎁 با لینک من پاداش بگیر: {bonus}\n\n🔗 لینک: {link}\n🎫 یا کد: {code}\n\n💪 سریع، امن، مقرون‌به‌صرفه!\n",
+    "REFERRAL_INVITE_TITLE": "🎉 به سرویس VPN بپیوند!",
+    "REFERRAL_LINK_CAPTION": "🔗 لینک دعوت شما:\n{link}",
+    "REFERRAL_LINK_TITLE": "🔗 <b>لینک دعوت شما:</b>",
+    "REFERRAL_LIST_BUTTON": "👥 لیست دعوت‌شدگان",
+    "REFERRAL_LIST_EMPTY": "📋 هنوز دعوت‌شده‌ای ندارید.\n\nلینک دعوت خود را به اشتراک بگذارید!",
+    "REFERRAL_LIST_HEADER": "👥 <b>دعوت‌شدگان شما</b> (صفحه {current}/{total})",
+    "REFERRAL_LIST_ITEM_ACTIVITY": "   🕐 فعالیت: {days} روز پیش",
+    "REFERRAL_LIST_ITEM_ACTIVITY_LONG_AGO": "   🕐 فعالیت: مدت‌ها پیش",
+    "REFERRAL_LIST_ITEM_EARNED": "   💎 درآمد از او: {amount}",
+    "REFERRAL_LIST_ITEM_HEADER": "{index}. {status} <b>{name}</b>",
+    "REFERRAL_LIST_ITEM_REGISTERED": "   📅 ثبت‌نام: {days} روز پیش",
+    "REFERRAL_LIST_ITEM_TOPUPS": "   {emoji} شارژها: {count}",
+    "REFERRAL_LIST_NEXT_PAGE": "بعدی ➡️",
+    "REFERRAL_LIST_PREV_PAGE": "⬅️ قبلی",
+    "REFERRAL_PROGRAM_TITLE": "👥 <b>برنامه دعوت</b>",
+    "REFERRAL_RECENT_EARNINGS_HEADER": "💰 <b>آخرین واریزها:</b>",
+    "REFERRAL_RECENT_EARNINGS_ITEM": "• {reason}: <b>{amount}</b> از {referral_name}",
+    "REFERRAL_REWARDS_HEADER": "🎁 <b>نحوه عملکرد پاداش‌ها:</b>",
+    "REFERRAL_REWARD_COMMISSION": "• کمیسیون از هر شارژ دعوت‌شده: <b>{percent}%</b>",
+    "REFERRAL_REWARD_INVITER": "• پاداش اولین شارژ دعوت‌شده: <b>{bonus}</b>",
+    "REFERRAL_REWARD_NEW_USER": "• کاربر جدید دریافت می‌کند: <b>{bonus}</b> با اولین شارژ از <b>{minimum}</b>",
+    "REFERRAL_SHARE_BUTTON": "📤 اشتراک‌گذاری",
+    "REFERRAL_STATS_ACTIVE": "• دعوت‌شدگان فعال: <b>{count}</b>",
+    "REFERRAL_STATS_CONVERSION": "• نرخ تبدیل: <b>{rate}%</b>",
+    "REFERRAL_STATS_FIRST_TOPUPS": "• اولین شارژ انجام داده: <b>{count}</b>",
+    "REFERRAL_STATS_HEADER": "📊 <b>آمار شما:</b>",
+    "REFERRAL_STATS_INVITED": "• کاربران دعوت‌شده: <b>{count}</b>",
+    "REFERRAL_STATS_MONTH_EARNED": "• ماه اخیر: <b>{amount}</b>",
+    "REFERRAL_STATS_TOTAL_EARNED": "• کل درآمد: <b>{amount}</b>",
+    "REGISTRATION_COMPLETING": "✅ در حال تکمیل ثبت‌نام...",
+    "REPLY_TO_TICKET": "💬 پاسخ",
+    "REPORT_CLOSE": "❌ بستن",
+    "REPORT_CLOSED": "✅ گزارش بسته شد.",
+    "REPORT_CLOSE_ERROR": "❌ بستن گزارش ناموفق بود.",
+    "RESET_ALL_DEVICES_BUTTON": "🔄 بازنشانی همه دستگاه‌ها",
+    "RESET_DEVICE_CONFIRM_BUTTON": "✅ بله، بازنشانی این دستگاه",
+    "RESET_TRAFFIC_BUTTON": "🔄 بازنشانی ترافیک",
+    "NO_SAVED_SUBSCRIPTION_ORDER": "❗️ سفارش ذخیره‌شده یافت نشد.",
+    "RETURN_TO_SUBSCRIPTION_CHECKOUT": "⬅️ بازگشت به خرید اشتراک",
+    "RULES_ACCEPT": "✅ می‌پذیرم",
+    "RULES_ACCEPTED_PROCESSING": "✅ قوانین پذیرفته شد. در حال پردازش...",
+    "RULES_DECLINE": "❌ نمی‌پذیرم",
+    "RULES_HEADER": "📋 <b>قوانین سرویس</b>",
+    "PRIVACY_POLICY_ACCEPT": "✅ می‌پذیرم",
+    "PRIVACY_POLICY_DECLINE": "❌ نمی‌پذیرم",
+    "PRIVACY_POLICY_REQUIRED": "📋 لطفاً حریم خصوصی را بپذیرید:",
+    "PRIVACY_POLICY_ACCEPTED_PROCESSING": "✅ حریم خصوصی پذیرفته شد! ادامه ثبت‌نام...",
+    "ERROR_PRIVACY_POLICY_RETRY": "خطا رخ داد. حریم خصوصی را دوباره بپذیرید:",
+    "RULES_REQUIRED": "📋 لطفاً قوانین را بپذیرید:",
+    "RULES_TEXT_DEFAULT": "📋 <b>قوانین استفاده</b>\n\nبا استفاده از سرویس، شرایط زیر را می‌پذیرید.",
+    "PRIVACY_POLICY_TEXT_DEFAULT": "🔒 <b>سیاست حریم خصوصی</b>\n\nما متعهد به حفاظت از حریم خصوصی و داده‌های شما هستیم.\n\n<b>جمع‌آوری داده:</b>\n• فقط اطلاعات ضروری جمع‌آوری می‌شود\n• داده‌ها فقط برای ارائه سرویس استفاده می‌شود\n\n<b>حفاظت:</b>\n• داده‌ها رمزنگاری شده\n• به اشخاص ثالث منتقل نمی‌شود",
+    "SELECT_COUNTRIES": "🌍 سرور انتخاب کنید:",
+    "SELECT_DEVICES": "📱 تعداد دستگاه:",
+    "SELECT_PERIOD": "📅 دوره انتخاب کنید:",
+    "SELECT_TRAFFIC": "📊 بسته ترافیک:",
+    "SENDING_ATTACHMENTS": "📎 ارسال پیوست‌ها...",
+    "SEND_CONTACT_BUTTON": "📞 ارسال مخاطب",
+    "SEND_LOCATION_BUTTON": "📍 ارسال موقعیت",
+    "SERVER_STATUS_AVAILABLE": "🟢 در دسترس",
+    "SERVER_STATUS_ERROR_SHORT": "دریافت داده ناموفق",
+    "SERVER_STATUS_LATENCY": "{latency} میلی‌ثانیه",
+    "SERVER_STATUS_LATENCY_UNKNOWN": "بدون داده",
+    "SERVER_STATUS_NEXT_PAGE": "بعدی ➡️",
+    "SERVER_STATUS_NOT_CONFIGURED": "قابلیت در دسترس نیست.",
+    "SERVER_STATUS_NO_SERVERS": "سروری موجود نیست.",
+    "SERVER_STATUS_OFFLINE": "🔴 آفلاین",
+    "SERVER_STATUS_PAGINATION": "صفحه {current} از {total}",
+    "SERVER_STATUS_PREV_PAGE": "⬅️ قبلی",
+    "SERVER_STATUS_REFRESH": "🔄 به‌روزرسانی",
+    "SERVER_STATUS_SUMMARY": "📊 خلاصه: {available}/{total} در دسترس",
+    "SERVER_STATUS_TITLE": "🌐 <b>وضعیت سرورها</b>",
+    "SERVER_STATUS_UNAVAILABLE": "🔴 در دسترس نیست",
+    "SERVER_STATUS_UPDATED_AT": "⏱ به‌روزرسانی: {time}",
+    "SHOW_QR_BUTTON": "📱 نمایش QR",
+    "SHOW_SUBSCRIPTION_LINK": "🔗 لینک اشتراک",
+    "SKIP_BUTTON": "⏭️ رد کردن",
+    "STARS_PAYMENT_ENROLLMENT_ERROR": "❌ خطا در واریز. با پشتیبانی تماس بگیرید، پرداخت دستی بررسی می‌شود.",
+    "STARS_PAYMENT_PROCESSING_ERROR": "❌ خطای فنی در پردازش. با پشتیبانی تماس بگیرید.",
+    "STARS_PAYMENT_SUCCESS": "✅ پرداخت Stars موفق!",
+    "STARS_PAYMENT_USER_NOT_FOUND": "❌ کاربر یافت نشد. با پشتیبانی تماس بگیرید.",
+    "STARS_PRECHECK_INVALID_PAYLOAD": "خطای اعتبارسنجی. دوباره تلاش کنید.",
+    "STARS_PRECHECK_TECHNICAL_ERROR": "خطای فنی. بعداً تلاش کنید.",
+    "STARS_PRECHECK_USER_NOT_FOUND": "کاربر یافت نشد. با پشتیبانی تماس بگیرید.",
+    "SUBSCRIPTION_ACTIVE": "📱 <b>اشتراک فعال</b>",
+    "SUBSCRIPTION_ACTIVE_REQUIRED": "⚠️ اشتراک فعال لازم است",
+    "SUBSCRIPTION_ADDITIONAL_STEP_TITLE": "<b>{title}:</b>",
+    "SUBSCRIPTION_APPS_PROMPT": "اپلیکیشن مورد نظر:",
+    "SUBSCRIPTION_APPS_TITLE": "📱 <b>اپلیکیشن‌ها</b>",
+    "SUBSCRIPTION_APP_NOT_FOUND": "❌ اپلیکیشن یافت نشد",
+    "SUBSCRIPTION_CONNECTED_DEVICES_FOOTER": "</blockquote>",
+    "SUBSCRIPTION_CONNECTED_DEVICES_TITLE": "<blockquote>📱 <b>دستگاه‌های متصل:</b>\n",
+    "SUBSCRIPTION_CONNECT_CUSTOM_MESSAGE": "🚀 <b>اتصال اشتراک</b>\n\n📱 دکمه زیر بزنید تا اپلیکیشن باز شود:",
+    "SUBSCRIPTION_CONNECT_DEVICE_MESSAGE": "📱 <b>اتصال اشتراک</b>\n\n🔗 <b>لینک اشتراک:</b>\n<code>{subscription_url}</code>\n\n💡 <b>دستگاه خود را انتخاب کنید</b> برای راهنمای تنظیم:",
+    "SUBSCRIPTION_CONNECT_DEVICE_MESSAGE_HIDDEN": "📱 <b>اتصال اشتراک</b>\n\nℹ️ لینک از دکمه‌های زیر یا «اشتراک من» در دسترس است.\n\n💡 <b>دستگاه خود را انتخاب کنید</b> برای راهنما:",
+    "SUBSCRIPTION_CONNECT_LINK_MESSAGE": "🚀 <b>اتصال اشتراک</b>\n\n🔗 دکمه زیر بزنید تا لینک اشتراک باز شود:",
+    "SUBSCRIPTION_CONNECT_LINK_PROMPT": "🔗 لینک اشتراک شما:\n\nلینک را کپی و در اپلیکیشن VPN وارد کنید",
+    "SUBSCRIPTION_CONNECT_LINK_SECTION": "🔗 <b>لینک اتصال:</b>\n{subscription_url}",
+    "SUBSCRIPTION_CONNECT_MINIAPP_MESSAGE": "📱 <b>اتصال اشتراک</b>\n\n🚀 دکمه زیر بزنید تا اشتراک در مینی‌اپ تلگرام باز شود:",
+    "SUBSCRIPTION_DEVICE_APPS_NOT_FOUND": "❌ اپلیکیشنی برای این دستگاه یافت نشد",
+    "SUBSCRIPTION_DEVICE_FEATURED_APP": "📋 <b>اپلیکیشن پیشنهادی:</b> {app_name}",
+    "SUBSCRIPTION_DEVICE_GUIDE_TITLE": "📱 <b>تنظیم برای {device_name}</b>",
+    "SUBSCRIPTION_DEVICE_HOW_TO_STEP1": "1. اپلیکیشن را از لینک بالا نصب کنید",
+    "SUBSCRIPTION_DEVICE_HOW_TO_STEP2": "2. دکمه «اتصال» زیر بزنید",
+    "SUBSCRIPTION_DEVICE_HOW_TO_STEP3": "3. اپلیکیشن را باز و لینک را وارد کنید",
+    "SUBSCRIPTION_DEVICE_HOW_TO_STEP4": "4. به سرور متصل شوید",
+    "SUBSCRIPTION_DEVICE_HOW_TO_TITLE": "💡 <b>نحوه اتصال:</b>",
+    "SUBSCRIPTION_DEVICE_LINK_TITLE": "🔗 <b>لینک اشتراک:</b>",
+    "SUBSCRIPTION_DEVICE_OTHER_APPS": "📱 سایر اپلیکیشن‌ها",
+    "SUBSCRIPTION_DEVICE_OTHER_APPS_HINT": "دکمه «سایر اپلیکیشن‌ها» بزنید.",
+    "SUBSCRIPTION_DEVICE_STEP_ADD_TITLE": "<b>مرحله ۲ - افزودن اشتراک:</b>",
+    "SUBSCRIPTION_DEVICE_STEP_CONNECT_TITLE": "<b>مرحله ۳ - اتصال:</b>",
+    "SUBSCRIPTION_DEVICE_STEP_INSTALL_TITLE": "<b>مرحله ۱ - نصب:</b>",
+    "SUBSCRIPTION_EXPIRED": "❌ <b>اشتراک منقضی شده</b>\n\nبرای ادامه تمدید کنید.",
+    "SUBSCRIPTION_EXPIRED_1D": "❌ اشتراک دیروز منقضی شد. تمدید کنید!",
+    "SUBSCRIPTION_EXPIRED_SECOND_WAVE": "🔥 <b>تخفیف {percent}% برای تمدید</b>\n\nپیشنهاد را فعال کنید تا تخفیف اضافی بگیرید. با گروه تخفیف جمع شده و تا {expires_at} اعتبار دارد.",
+    "SUBSCRIPTION_EXPIRED_THIRD_WAVE": "🎁 <b>تخفیف اختصاصی {percent}%</b>\n\n{trigger_days} روز بدون اشتراک گذشته. برگردید و تخفیف اضافی فعال کنید — با گروه تخفیف جمع شده و تا {expires_at} اعتبار دارد.",
+    "SUBSCRIPTION_EXPIRING": "⏰ اشتراک به‌زودی منقضی می‌شود!",
+    "SUBSCRIPTION_EXPIRING_PAID": "⏰ اشتراک {days} روز دیگر منقضی می‌شود.",
+    "SUBSCRIPTION_EXTEND": "🔄 تمدید اشتراک",
+    "SUBSCRIPTION_HAPP_CRYPTOLINK_BLOCK": "<blockquote expandable><code>{crypto_link}</code></blockquote>",
+    "SUBSCRIPTION_HAPP_LINK_PROMPT": "🔒 لینک اشتراک ایجاد شد. دکمه «اتصال» بزنید تا در Happ باز شود.",
+    "SUBSCRIPTION_HAPP_OPEN_BUTTON_HINT": "▶️ دکمه «اتصال» بزنید تا Happ باز شده و اشتراک خودکار اضافه شود.",
+    "SUBSCRIPTION_HAPP_OPEN_HINT": "💡 اگر لینک خودکار باز نشد، دستی کپی کنید:",
+    "SUBSCRIPTION_HAPP_OPEN_LINK": "<a href=\"{subscription_link}\">🔓 باز کردن لینک در Happ</a>",
+    "SUBSCRIPTION_HAPP_OPEN_TITLE": "🔗 <b>اتصال از طریق Happ</b>",
+    "SUBSCRIPTION_IMPORT_INSTRUCTION_PROMPT": "📱 دکمه زیر بزنید تا راهنمای تنظیم VPN روی دستگاه را ببینید",
+    "SUBSCRIPTION_IMPORT_LINK_SECTION": "🔗 <b>لینک وارد کردن در اپلیکیشن VPN:</b>\n<code>{subscription_url}</code>",
+    "SUBSCRIPTION_INFO": "\n📱 <b>اطلاعات اشتراک</b>\n\n📊 <b>وضعیت:</b> {status}\n🎭 <b>نوع:</b> {type}\n📅 <b>اعتبار تا:</b> {end_date}\n⏰ <b>روزهای باقی‌مانده:</b> {days_left}\n\n📈 <b>ترافیک:</b> {traffic_used} / {traffic_limit}\n🌍 <b>سرورها:</b> {countries_count} کشور\n📱 <b>دستگاه‌ها:</b> {devices_used} / {devices_limit}\n\n💳 <b>پرداخت خودکار:</b> {autopay_status}\n",
+    "SUBSCRIPTION_LINK_GENERATING_NOTICE": "{purchase_text}\n\nلینک در حال ایجاد است. چند ثانیه بعد به «اشتراک من» بروید.",
+    "SUBSCRIPTION_LINK_HIDDEN_NOTICE": "ℹ️ لینک اشتراک از دکمه‌های زیر یا بخش «اشتراک من» در دسترس است.",
+    "SUBSCRIPTION_LINK_HINT": "💡 لینک را در اپلیکیشن VPN وارد کنید",
+    "SUBSCRIPTION_LINK_STEP1": "1️⃣ لینک زیر را کپی کنید",
+    "SUBSCRIPTION_LINK_STEP2": "2️⃣ اپلیکیشن VPN را باز کنید",
+    "SUBSCRIPTION_LINK_STEP3": "3️⃣ لینک را وارد کنید",
+    "SUBSCRIPTION_LINK_STEP4": "4️⃣ اتصال برقرار شد!",
+    "SUBSCRIPTION_LINK_UNAVAILABLE": "⚠️ لینک در دسترس نیست",
+    "SUBSCRIPTION_LINK_USAGE_TITLE": "📱 <b>نحوه استفاده:</b>",
+    "SUBSCRIPTION_NONE": "❌ اشتراکی ندارید",
+    "SUBSCRIPTION_NOT_FOUND": "❌ اشتراک یافت نشد",
+    "SUBSCRIPTION_NO_ACTIVE_LINK": "⚠ اشتراک فعالی ندارید یا لینک در حال ایجاد است",
+    "SUBSCRIPTION_NO_SERVERS": "❌ سروری در دسترس نیست",
+    "SUBSCRIPTION_OVERVIEW_TEMPLATE": "📱 <b>اشتراک شما</b>\n\n📊 وضعیت: {status}\n📅 اعتبار: {expiry}\n📈 ترافیک: {traffic}\n📱 دستگاه‌ها: {devices}\n🌍 سرورها: {servers}",
+    "SUBSCRIPTION_DAILY_OVERVIEW_TEMPLATE": "👤 {full_name}\n💰 موجودی: {balance}\n📱 اشتراک: {status_emoji} {status_display}{warning}{tariff_info_block}\n\n📱 اطلاعات اشتراک\n🎭 نوع: {subscription_type}\n📈 ترافیک: {traffic}\n🌍 سرورها: {servers}\n📱 دستگاه‌ها: {devices}\n🌍 کشورها: {countries}",
+    "SUBSCRIPTION_PROMO_DISCOUNT_HINT": "⚡ تخفیف اضافی {percent}% فعال شد.\n\nبا سایر تخفیف‌ها جمع می‌شود!",
+    "SUBSCRIPTION_PROMO_DISCOUNT_NOTE": "⚡ تخفیف اضافی {percent}%: -{amount}",
+    "SUBSCRIPTION_PROMO_DISCOUNT_TIMER": "\n⏳ اعتبار تخفیف: {time_left} <code>{bar}</code>",
+    "SUBSCRIPTION_PURCHASED": "🎉 اشتراک خریداری شد!",
+    "SUBSCRIPTION_SETTINGS_BUTTON": "⚙️ تنظیمات",
+    "SUBSCRIPTION_SETTINGS_OVERVIEW": "⚙️ <b>تنظیمات اشتراک</b>",
+    "SUBSCRIPTION_SETTINGS_PAID_ONLY": "⚠️ تنظیمات فقط برای اشتراک پولی",
+    "SUBSCRIPTION_SPECIFIC_APP_TITLE": "📱 <b>{app_name} - {device_name}</b>",
+    "SUBSCRIPTION_STATUS_ACTIVE": "✅ فعال",
+    "SUBSCRIPTION_STATUS_EXPIRED": "❌ منقضی",
+    "SUBSCRIPTION_STATUS_TRIAL": "🎁 آزمایشی",
+    "SUBSCRIPTION_STATUS_UNKNOWN": "❓ نامشخص",
+    "SUBSCRIPTION_SUMMARY": "📱 <b>خلاصه اشتراک</b>",
+    "SUBSCRIPTION_SUMMARY_PROMO_DISCOUNT": "- پیشنهاد تخفیف: -{amount} ({percent}% اضافی)",
+    "SUBSCRIPTION_TIME_LEFT_DAYS": "{days} روز",
+    "SUBSCRIPTION_TIME_LEFT_EXPIRED": "منقضی شده",
+    "SUBSCRIPTION_TIME_LEFT_HOURS": "{hours} ساعت",
+    "SUBSCRIPTION_TIME_LEFT_MINUTES": "{minutes} دقیقه",
+    "SUBSCRIPTION_TRAFFIC_LIMITED": "📊 ترافیک: {used}/{limit} گیگ",
+    "SUBSCRIPTION_TRAFFIC_UNLIMITED": "📊 ترافیک: نامحدود",
+    "SUBSCRIPTION_TRIAL": "🎁 <b>اشتراک آزمایشی</b>",
+    "SUBSCRIPTION_TYPE_PAID": "💎 پولی",
+    "SUBSCRIPTION_TYPE_TRIAL": "🎁 آزمایشی",
+    "SUBSCRIPTION_WARNING_MINUTES": "⏰ اشتراک چند دقیقه دیگر منقضی می‌شود!",
+    "SUBSCRIPTION_WARNING_TODAY": "⏰ اشتراک امروز منقضی می‌شود!",
+    "SUBSCRIPTION_WARNING_TOMORROW": "⏰ اشتراک فردا منقضی می‌شود.",
+    "SUB_STATUS_ACTIVE_FEW_DAYS": "💎 فعال\n⚠️ {days} روز تا انقضا",
+    "SUB_STATUS_ACTIVE_LONG": "💎 فعال\n📅 تا {end_date} ({days} روز)",
+    "SUB_STATUS_ACTIVE_TODAY": "💎 فعال\n⚠️ امروز منقضی می‌شود!",
+    "SUB_STATUS_ACTIVE_TOMORROW": "💎 فعال\n⚠️ فردا منقضی می‌شود!",
+    "SUB_STATUS_DAILY_ACTIVE": "💎 فعال",
+    "SUB_STATUS_EXPIRED": "❌ منقضی",
+    "SUB_STATUS_DISABLED": "🚫 غیرفعال",
+    "SUB_STATUS_PENDING": "⏳ در انتظار",
+    "SUB_STATUS_NONE": "❌ بدون اشتراک",
+    "SUB_STATUS_TRIAL_ACTIVE": "🎁 آزمایشی\n📅 تا {end_date} ({days} روز)",
+    "SUB_STATUS_TRIAL_TODAY": "🎁 آزمایشی\n⚠️ امروز منقضی می‌شود!",
+    "SUB_STATUS_TRIAL_TOMORROW": "🎁 آزمایشی\n⚠️ فردا منقضی می‌شود!",
+    "SUCCESS": "✅ موفق",
+    "SUPPORT_BUTTON": "🛠️ پشتیبانی",
+    "SUPPORT_INFO": "🛠️ <b>پشتیبانی</b>\n\nبرای کمک با ما تماس بگیرید.",
+    "SUSPICIOUS_DISPLAY_NAME_BLOCKED": "🚫 نام نمایشی شما شبیه لینک یا اکانت سرویسی است. لطفاً نام را در تلگرام تغییر دهید و دوباره تلاش کنید.",
+    "SWITCH_TRAFFIC_BUTTON": "🔄 تغییر ترافیک",
+    "SWITCH_TRAFFIC_CONFIRM": "تغییر بسته ترافیک؟\n\nبسته جدید: {package}\nهزینه: {cost}",
+    "SWITCH_TRAFFIC_INFO": "📊 <b>تغییر بسته ترافیک</b>",
+    "SWITCH_TRAFFIC_SUCCESS_DECREASE": "\n✅ ترافیک کاهش یافت!\n\n📊 قبلی: {old_traffic} → جدید: {new_traffic}\nℹ️ بازپرداخت ندارد\n",
+    "SWITCH_TRAFFIC_SUCCESS_INCREASE": "\n✅ ترافیک افزایش یافت!\n\n📊 قبلی: {old_traffic} → جدید: {new_traffic}\n💰 کسر: {amount}\n",
+    "SWITCH_TRAFFIC_TITLE": "📊 <b>تغییر ترافیک</b>",
+    "TEST_ACCESS_ACTIVATED_MESSAGE": "🎉 سرورهای آزمایشی متصل شد! دسترسی تا {expires_at} فعال است.",
+    "TEST_ACCESS_ACTIVATED_POPUP": "✅ دسترسی فعال شد!",
+    "TEST_ACCESS_ALREADY_CONNECTED": "ℹ️ این سرور قبلاً به اشتراک شما متصل است.",
+    "TEST_ACCESS_NO_SQUADS": "❌ لیست سرورهای آزمایشی یافت نشد. با ادمین تماس بگیرید.",
+    "TEST_ACCESS_NO_SUBSCRIPTION": "❌ اشتراک فعال لازم است",
+    "TEST_ACCESS_REMNAWAVE_ERROR": "❌ خطا در فعال‌سازی دسترسی آزمایشی",
+    "TEST_ACCESS_UNKNOWN_ERROR": "❌ خطای ناشناخته",
+    "TICKET_ALREADY_OPEN": "⚠️ تیکت بازی دارید",
+    "TICKET_ATTACHMENTS": "📎 پیوست‌ها",
+    "TICKET_CLOSED": "🔒 تیکت بسته شده",
+    "TICKET_CLOSED_NO_REPLY": "🔒 تیکت بسته شده، پاسخ ممکن نیست",
+    "TICKET_CLOSE_ERROR": "❌ خطا در بستن تیکت",
+    "TICKET_CREATED_SUCCESS": "✅ تیکت ایجاد شد",
+    "TICKET_CREATE_ERROR": "❌ خطا در ایجاد تیکت",
+    "TICKET_CREATION_CANCELLED": "❌ ایجاد تیکت لغو شد",
+    "TICKET_CREATION_ERROR": "❌ خطا در ایجاد تیکت",
+    "TICKET_MARKED_ANSWERED": "✅ تیکت پاسخ داده شد",
+    "TICKET_MESSAGE_INPUT": "💬 پیام خود را بنویسید:",
+    "TICKET_MESSAGE_TOO_SHORT": "پیام باید حداقل ۱۰ کاراکتر باشد. دوباره تلاش کنید:",
+    "TICKET_NOT_FOUND": "❌ تیکت یافت نشد",
+    "TICKET_PRIORITY_HIGH": "🔴 بالا",
+    "TICKET_PRIORITY_LOW": "🟢 پایین",
+    "TICKET_PRIORITY_NORMAL": "🟡 معمولی",
+    "TICKET_PRIORITY_SELECT": "اولویت تیکت:",
+    "TICKET_PRIORITY_URGENT": "🔴 فوری",
+    "TICKET_REPLY_CANCELLED": "❌ پاسخ لغو شد",
+    "TICKET_REPLY_ERROR": "❌ خطا در ارسال پاسخ",
+    "TICKET_REPLY_INPUT": "💬 پاسخ خود را بنویسید:",
+    "TICKET_REPLY_NOTIFICATION": "💬 پاسخ جدید به تیکت شما",
+    "TICKET_REPLY_SENT": "✅ پاسخ ارسال شد",
+    "TICKET_REPLY_TOO_SHORT": "پاسخ باید حداقل ۵ کاراکتر باشد. دوباره تلاش کنید:",
+    "TICKET_STATUS_ANSWERED": "✅ پاسخ داده شده",
+    "TICKET_STATUS_CLOSED": "🔒 بسته",
+    "TICKET_STATUS_OPEN": "📋 باز",
+    "TICKET_STATUS_PENDING": "⏳ در انتظار",
+    "TICKET_TITLE_INPUT": "📝 عنوان تیکت:",
+    "TICKET_TITLE_TOO_LONG": "❌ عنوان خیلی طولانی",
+    "TICKET_TITLE_TOO_SHORT": "❌ عنوان خیلی کوتاه",
+    "TICKET_UPDATE_ERROR": "❌ خطا در به‌روزرسانی تیکت",
+    "TOPUP_BALANCE_BUTTON": "💳 شارژ موجودی",
+    "TOP_UP_AMOUNT": "💰 مبلغ: {amount}",
+    "TOP_UP_METHODS": "💳 روش‌های شارژ",
+    "TOP_UP_STARS": "⭐ Telegram Stars",
+    "TOP_UP_TRIBUTE": "💳 شارژ از طریق Tribute",
+    "TRAFFIC_100GB": "📊 ۱۰۰ گیگ - {settings.format_price(settings.PRICE_TRAFFIC_100GB)}",
+    "TRAFFIC_10GB": "📊 ۱۰ گیگ - {settings.format_price(settings.PRICE_TRAFFIC_10GB)}",
+    "TRAFFIC_250GB": "📊 ۲۵۰ گیگ - {settings.format_price(settings.PRICE_TRAFFIC_250GB)}",
+    "TRAFFIC_25GB": "📊 ۲۵ گیگ - {settings.format_price(settings.PRICE_TRAFFIC_25GB)}",
+    "TRAFFIC_50GB": "📊 ۵۰ گیگ - {settings.format_price(settings.PRICE_TRAFFIC_50GB)}",
+    "TRAFFIC_5GB": "📊 ۵ گیگ - {settings.format_price(settings.PRICE_TRAFFIC_5GB)}",
+    "TRAFFIC_ALREADY_UNLIMITED": "⚠ ترافیک شما نامحدود است",
+    "TRAFFIC_FIXED_MODE": "⚠️ ترافیک ثابت و غیرقابل تغییر است",
+    "TRAFFIC_TOPUP_DISABLED": "⚠️ خرید ترافیک غیرفعال است",
+    "TRAFFIC_INSUFFICIENT_BALANCE": "⚠️ موجودی ناکافی!\nمورد نیاز: {required} ({months} ماه)\nموجودی: {balance}",
+    "TRAFFIC_NO_CHANGE": "ℹ️ ترافیک تغییر نکرد",
+    "TRAFFIC_PACKAGES_NOT_CONFIGURED": "⚠️ بسته‌های ترافیک تنظیم نشده",
+    "TRAFFIC_UNLIMITED": "📊 نامحدود - {settings.format_price(settings.PRICE_TRAFFIC_UNLIMITED)}",
+    "TRAFFIC_UNLIMITED_SHORT": "نامحدود",
+    "TRIAL_ACTIVATED": "🎉 اشتراک آزمایشی فعال شد!",
+    "TRIAL_ACTIVATE_BUTTON": "🎁 فعال‌سازی",
+    "TRIAL_ALREADY_USED": "❌ آزمایشی قبلاً استفاده شده",
+    "TRIAL_AVAILABLE": "\n🎁 <b>اشتراک آزمایشی</b>\n\nمی‌توانید اشتراک آزمایشی دریافت کنید{price_line}:\n\n⏰ <b>دوره:</b> {days} روز\n📈 <b>ترافیک:</b> {traffic}{devices_line}\n🌍 <b>سرور:</b> {server_name}\n\nفعال شود؟\n",
+    "TRIAL_AVAILABLE_DEVICES_LINE": "\n📱 <b>دستگاه‌ها:</b> {devices} عدد",
+    "TRIAL_PAYMENT_PRICE_LINE": "\n💳 <b>هزینه فعال‌سازی:</b> {price}",
+    "TRIAL_PAYMENT_INSUFFICIENT_FUNDS": "⚠️ موجودی ناکافی.\nمورد نیاز: {required}\nموجودی: {balance}\nکسری: {missing}\n\nموجودی را شارژ و دوباره تلاش کنید.",
+    "TRIAL_PAYMENT_FAILED": "کسر وجه برای آزمایشی ناموفق. بعداً تلاش کنید.",
+    "TRIAL_PROVISIONING_FAILED": "فعال‌سازی آزمایشی ناموفق. وجه بازگشت داده شد. بعداً تلاش کنید.",
+    "TRIAL_ROLLBACK_FAILED": "لغو آزمایشی پس از خطا ناموفق. با پشتیبانی تماس بگیرید.",
+    "TRIAL_REFUND_FAILED": "بازگشت وجه آزمایشی ناموفق. فوراً با پشتیبانی تماس بگیرید.",
+    "TRIAL_PAYMENT_DESCRIPTION": "پرداخت اشتراک آزمایشی",
+    "TRIAL_REFUND_DESCRIPTION": "بازگشت وجه به دلیل خطا در فعال‌سازی آزمایشی",
+    "TRIAL_ACTIVATION_ERROR": "❌ خطا در فعال‌سازی آزمایشی. وجه به موجودی بازگردانده شد.",
+    "TRIAL_PAYMENT_CHARGED_NOTE": "💳 از موجودی شما {amount} کسر شد.",
+    "TRIAL_CHANNEL_UNSUBSCRIBED": "\n🚫 <b>دسترسی متوقف شد</b>\n\nعضویت شما در کانال یافت نشد، آزمایشی غیرفعال شد.\n\nعضو شوید و «{check_button}» بزنید.",
+    "TRIAL_ENDING_SOON": "\n🎁 <b>آزمایشی به‌زودی تمام می‌شود!</b>\n\nچند ساعت تا انقضا مانده.\n\n💎 <b>بدون VPN نمانید!</b>\n\n🔥 <b>پیشنهاد ویژه:</b>\n• ۳۰ روز فقط {price}\n• ترافیک نامحدود\n• همه سرورها\n• سرعت تا ۱ گیگ\n\n⚡️ قبل از پایان اقدام کنید!\n",
+    "TRIAL_INACTIVE_1H": "⏳ <b>یک ساعت گذشت و اتصال برقرار نشده</b>\n\nراهنما را ببینید. آماده کمک هستیم!",
+    "TRIAL_INACTIVE_24H": "⏳ <b>یک روز گذشته و ترافیکی نبوده</b>\n\nراهنما را ببینید یا با پشتیبانی تماس بگیرید!",
+    "TRIAL_SERVER_DEFAULT_NAME": "🎯 سرور آزمایشی",
+    "TRIAL_SERVER_RANDOM_POOL": "🎲 تصادفی از {count} سرور",
+    "PAID_TRIAL_HEADER": "🎁 <b>دوره آزمایشی</b>",
+    "PAID_TRIAL_SELECT_PAYMENT": "روش پرداخت مناسب انتخاب کنید:",
+    "PAID_TRIAL_CAN_PAY_BALANCE": "می‌توانید آزمایشی را از موجودی پرداخت یا روش دیگر انتخاب کنید.",
+    "PAID_TRIAL_PAYMENT_DESC": "اشتراک آزمایشی {days} روزه",
+    "PAID_TRIAL_INVOICE_TITLE": "اشتراک آزمایشی {days} روزه",
+    "PAID_TRIAL_STARS_LABEL": "اشتراک آزمایشی",
+    "PAID_TRIAL_STARS_WAITING": "⭐ برای پرداخت آزمایشی دکمه پرداخت در پیام بالا بزنید.\n\nپس از پرداخت موفق اشتراک خودکار فعال می‌شود.",
+    "PAID_TRIAL_YOOKASSA_SBP": "🏦 <b>پرداخت سریع</b>\n\nQR اسکن کنید یا لینک بزنید.\n\n💰 مبلغ: {amount}",
+    "PAID_TRIAL_YOOKASSA_CARD": "💳 <b>پرداخت کارتی</b>\n\nدکمه زیر بزنید.\n\n💰 مبلغ: {amount}",
+    "PAID_TRIAL_CRYPTOBOT": "🪙 <b>پرداخت CryptoBot</b>\n\nدکمه زیر بزنید.\n\n💰 مبلغ: {amount}",
+    "PAID_TRIAL_HELEKET": "🪙 <b>پرداخت Heleket</b>\n\nدکمه زیر بزنید.\n\n💰 مبلغ: {amount}",
+    "PAID_TRIAL_MULENPAY": "💳 <b>پرداخت {name}</b>\n\nدکمه زیر بزنید.\n\n💰 مبلغ: {amount}",
+    "PAID_TRIAL_PAL24": "💳 <b>پرداخت PayPalych</b>\n\nدکمه زیر بزنید.\n\n💰 مبلغ: {amount}",
+    "PAID_TRIAL_WATA": "💳 <b>پرداخت WATA</b>\n\nدکمه زیر بزنید.\n\n💰 مبلغ: {amount}",
+    "PAID_TRIAL_PAY_BALANCE": "💳 پرداخت از موجودی",
+    "PAID_TRIAL_BALANCE_SUCCESS": "✅ آزمایشی با موفقیت پرداخت شد!\n\nفعال‌سازی...",
+    "PERIOD": "دوره",
+    "TRAFFIC": "ترافیک",
+    "DEVICES": "دستگاه‌ها",
+    "PRICE": "قیمت",
+    "YOUR_BALANCE": "موجودی شما",
+    "UNBLOCK": "✅ رفع مسدودیت",
+    "UNKNOWN_CALLBACK_ALERT": "❓ دستور ناشناخته. دوباره تلاش کنید.",
+    "UNKNOWN_COMMAND_MESSAGE": "❓ دستور ناشناخته. از دکمه‌های منو استفاده کنید.",
+    "USER_BLOCKED_FOREVER": "شما برای تماس با پشتیبانی مسدود شده‌اید.",
+    "USER_BLOCKED_UNTIL": "شما تا {time} مسدود هستید",
+    "USER_NOT_FOUND": "❌ کاربر یافت نشد",
+    "VIEW_CLOSED_TICKETS": "🟢 تیکت‌های بسته",
+    "VIEW_TICKET": "👁️ مشاهده تیکت",
+    "WATA_AMOUNT_TOO_HIGH": "حداکثر مبلغ: {amount}",
+    "WATA_AMOUNT_TOO_LOW": "حداقل مبلغ: {amount}",
+    "WATA_PAYMENT_ERROR": "❌ خطا در پرداخت WATA. بعداً تلاش کنید.",
+    "WATA_PAYMENT_INSTRUCTIONS": "💳 <b>پرداخت WATA</b>\n\n💰 مبلغ: {amount}\n🆔 شناسه: {payment_id}\n\n📱 <b>راهنما:</b>\n1. دکمه پرداخت بزنید\n2. مراحل درگاه را دنبال کنید\n3. تأیید کنید\n4. وجه خودکار واریز می‌شود\n\n❓ مشکل؟ {support}",
+    "WATA_PAY_BUTTON": "💳 پرداخت WATA",
+    "WATA_STATUS_CLOSED": "در حال پردازش",
+    "WATA_STATUS_DECLINED": "رد شده",
+    "WATA_STATUS_OPENED": "در انتظار پرداخت",
+    "WATA_STATUS_PAID": "پرداخت شده",
+    "WATA_STATUS_TITLE": "💳 <b>وضعیت پرداخت WATA</b>",
+    "WATA_STATUS_UNKNOWN": "نامشخص",
+    "WATA_TOPUP_PROMPT": "💳 <b>پرداخت WATA</b>\n\nمبلغ وارد کنید.\nحداقل: {min_amount}، حداکثر: {max_amount}",
+    "WELCOME": "\n🎉 <b>به سرویس VPN خوش آمدید!</b>\n\nسرویس ما دسترسی سریع و امن به اینترنت بدون محدودیت فراهم می‌کند.\n\n🔐 <b>مزایا:</b>\n• سرعت بالا\n• سرورهای متعدد\n• حفاظت از داده‌ها\n• پشتیبانی ۲۴ ساعته\n\nزبان رابط را انتخاب کنید:\n",
+    "WELCOME_FALLBACK": "خوش آمدید، {user_name}!",
+    "YES": "✅ بله",
+    "SIMPLE_SUBSCRIPTION_TRIAL_NOTICE_ACTIVE": "ℹ️ اشتراک آزمایشی فعال دارید. {days} روز اعتبار دارد. پس از خرید دوره پولی اضافه می‌شود.",
+    "SIMPLE_SUBSCRIPTION_TRIAL_NOTICE_TRIAL": "ℹ️ اشتراک آزمایشی دارید. {days} روز تا انقضا. خرید جدید خودکار تمدید می‌کند.",
+    "SIMPLE_SUBSCRIPTION_SERVER_ANY": "هر سرور موجود",
+    "SIMPLE_SUBSCRIPTION_SERVER_SELECTED": "✅ سرور: {name}",
+    "SIMPLE_SUBSCRIPTION_SERVER_ASSIGNED": "خودکار تعیین شده",
+    "MENU_SIMPLE_SUBSCRIPTION": "⚡ خرید ساده",
+    "ADMIN_COMMUNICATIONS_POLLS": "🗳️ نظرسنجی‌ها",
+    "ADMIN_POLLS_CREATE": "➕ ایجاد نظرسنجی",
+    "ADMIN_POLLS_REWARD_ENABLED": "پاداش: {amount}",
+    "ADMIN_POLLS_REWARD_DISABLED": "پاداش غیرفعال",
+    "ADMIN_POLLS_SEND": "📤 ارسال",
+    "ADMIN_POLLS_STATS": "📊 آمار",
+    "ADMIN_POLLS_DELETE": "🗑️ حذف",
+    "ADMIN_POLLS_BACK": "⬅️ بازگشت به لیست",
+    "ADMIN_POLLS_CUSTOM_TARGET": "⚙️ بر اساس معیار",
+    "ADMIN_POLLS_SEND_CONFIRM_BUTTON": "✅ ارسال",
+    "ADMIN_POLLS_LIST_TITLE": "🗳️ <b>نظرسنجی‌ها</b>",
+    "ADMIN_POLLS_LIST_EMPTY": "هنوز نظرسنجی‌ای نیست.",
+    "ADMIN_POLLS_QUESTIONS_COUNT": "سوالات: {count}",
+    "ADMIN_POLLS_CREATION_TITLE_PROMPT": "🗳️ <b>ایجاد نظرسنجی</b>\n\nعنوان نظرسنجی:",
+    "ADMIN_POLLS_CREATION_CANCELLED": "❌ ایجاد نظرسنجی لغو شد.",
+    "ADMIN_POLLS_CREATION_DESCRIPTION_PROMPT": "توضیحات نظرسنجی. HTML مجاز.\nبرای رد کردن /skip بفرستید.",
+    "ADMIN_POLLS_CREATION_DESCRIPTION_SKIPPED": "توضیحات رد شد.",
+    "ADMIN_POLLS_CREATION_INVALID_HTML": "❌ خطا در HTML: {error}",
+    "ADMIN_POLLS_CREATION_REWARD_PROMPT": "مبلغ پاداش وارد کنید. برای غیرفعال 0 بفرستید.",
+    "ADMIN_POLLS_CREATION_REWARD_INVALID": "❌ مبلغ نامعتبر. دوباره تلاش کنید.",
+    "ADMIN_POLLS_CREATION_QUESTION_PROMPT": "سوال و گزینه‌ها را وارد کنید.\nهر خط یک گزینه.\nخط اول متن سوال.\nبعد از اتمام /done بفرستید.",
+    "ADMIN_POLLS_CREATION_NEEDS_QUESTION": "❌ حداقل یک سوال اضافه کنید.",
+    "ADMIN_POLLS_CREATION_FINISHED": "✅ نظرسنجی «{title}» ایجاد شد. سوالات: {count}. {reward}",
+    "ADMIN_POLLS_CREATION_MIN_OPTIONS": "❌ یک سوال و حداقل دو گزینه لازم است.",
+    "ADMIN_POLLS_CREATION_ADDED_QUESTION": "سوال اضافه شد: «{question}». سوال بعدی یا /done بفرستید.",
+    "ADMIN_POLLS_QUESTION_LIST_HEADER": "<b>سوالات:</b>",
+    "ADMIN_POLLS_OPTION_BULLET": "   • {option}",
+    "ADMIN_POLLS_SEND_CHOOSE_TARGET": "🎯 مخاطبان ارسال نظرسنجی:",
+    "ADMIN_POLLS_CUSTOM_PROMPT": "معیار اضافی مخاطبان:",
+    "ADMIN_POLLS_SEND_CONFIRM": "📤 ارسال نظرسنجی «{title}» به «{audience}»؟ کاربران: {count}",
+    "ADMIN_POLLS_SENDING": "📤 در حال ارسال نظرسنجی...",
+    "ADMIN_POLLS_SEND_RESULT": "📤 ارسال تمام شد\nموفق: {sent}\nخطا: {failed}\nرد شده: {skipped}\nکل: {total}",
+    "ADMIN_POLLS_STATS_HEADER": "📊 <b>آمار نظرسنجی</b>",
+    "ADMIN_POLLS_STATS_OVERVIEW": "کل دعوت‌شده: {total}\nتکمیل‌شده: {completed}\nپاداش پرداخت‌شده: {reward}",
+    "ADMIN_POLLS_STATS_OPTION_LINE": "• {option}: {count}",
+    "ADMIN_POLLS_CONFIRM_DELETE": "آیا نظرسنجی «{title}» حذف شود؟",
+    "ADMIN_POLLS_DELETED": "🗑️ نظرسنجی حذف شد.",
+    "POLL_INVITATION_REWARD": "🎁 با شرکت {amount} پاداش می‌گیرید.",
+    "POLL_INVITATION_START": "دکمه زیر را برای شرکت در نظرسنجی بزنید.",
+    "POLL_START_BUTTON": "📝 شرکت در نظرسنجی",
+    "POLL_QUESTION_HEADER": "<b>سوال {current}/{total}</b>",
+    "POLL_ALREADY_COMPLETED": "شما قبلاً در این نظرسنجی شرکت کرده‌اید.",
+    "POLL_EMPTY": "نظرسنجی فعلاً در دسترس نیست.",
+    "POLL_ERROR": "پردازش نظرسنجی ناموفق. بعداً تلاش کنید.",
+    "POLL_COMPLETED": "🙏 ممنون از شرکت در نظرسنجی!",
+    "POLL_REWARD_GRANTED": "پاداش {amount} به موجودی شما اضافه شد.",
+    "ADMIN_USERS_BULK_BAN": "🛑 بن دسته‌جمعی",
+    "ADMIN_USERS_BLACKLIST": "🔐 لیست سیاه",
+    "ADMIN_USERS_BLOCKED_CHECK": "🔒 مسدودکنندگان ربات",
+    "CONTEST_START_ANNOUNCEMENT": "بازی شروع می‌شود",
+    "CONTEST_PRIZE": "جایزه",
+    "DAYS": "روز اشتراک",
+    "CONTEST_WINNERS": "برندگان",
+    "CONTEST_ATTEMPTS": "تلاش/کاربر",
+    "CONTEST_ELIGIBILITY": "فقط با اشتراک فعال یا آزمایشی می‌توانید شرکت کنید",
+    "REMINDER": "یادآوری",
+    "CONTEST_REMINDER_TEXT": "فراموش نکنید در مسابقات شرکت کنید",
+    "MODEM_BUTTON": "📡 مودم",
+    "MODEM_ENABLE_BUTTON": "✅ اتصال مودم",
+    "MODEM_DISABLE_BUTTON": "❌ قطع مودم",
+    "MODEM_CONFIRM_BUTTON": "✅ تأیید اتصال",
+    "MODEM_STATUS_ENABLED": "✅ متصل",
+    "MODEM_STATUS_DISABLED": "❌ متصل نیست",
+    "MODEM_PAID_ONLY": "⚠️ مودم فقط برای اشتراک‌های پولی",
+    "MODEM_DISABLED": "⚠️ قابلیت مودم غیرفعال است",
+    "MODEM_ALREADY_ENABLED": "ℹ️ مودم قبلاً متصل است",
+    "MODEM_NOT_ENABLED": "ℹ️ مودم متصل نیست",
+    "MODEM_INFO_ENABLED": "📡 <b>مودم</b>\n\nوضعیت: {status}\n\nمودم به اشتراک شما متصل است.\nهزینه ماهانه: {price}\n\nبا قطع مودم بازپرداخت انجام نمی‌شود.",
+    "MODEM_INFO_DISABLED": "📡 <b>مودم</b>\n\nوضعیت: {status}\n\nمودم را به اشتراک خود متصل کنید.\nهزینه ماهانه: {price}\n\nبا اتصال مودم یک دستگاه اضافی اضافه می‌شود.",
+    "MODEM_INSUFFICIENT_FUNDS": "⚠️ <b>موجودی ناکافی</b>\n\nهزینه اتصال مودم: {required}\nموجودی: {balance}\nکسری: {missing}\n\nروش شارژ را انتخاب کنید.",
+    "MODEM_CONFIRM_ENABLE": "📡 <b>تأیید اتصال مودم</b>\n\nهزینه: {price} (برای {months} ماه)\n\nبا اتصال مودم:\n• یک دستگاه اضافی به اشتراک اضافه می‌شود\n• هزینه ماهانه {monthly_price} افزایش می‌یابد\n\nتأیید اتصال؟",
+    "MODEM_ENABLED_SUCCESS": "✅ <b>مودم با موفقیت متصل شد!</b>\n\n📡 مودم فعال شد\n📱 دستگاه مودم اضافه شد\n",
+    "MODEM_CHARGED": "💰 کسر شد: {amount}",
+    "MODEM_DISABLED_SUCCESS": "✅ <b>مودم قطع شد</b>\n\n📡 مودم غیرفعال شد\nℹ️ بازپرداخت انجام نمی‌شود",
+    "MODEM_PERIOD_INFO": "\n📅 مودم تا: <b>{end_date}</b> ({days} روز)",
+    "MODEM_SHORT_PERIOD_WARNING": "\n⚠️ <b>توجه!</b> فقط <b>{days} روز</b> تا پایان اشتراک مانده.\nپس از تمدید، مودم باید دوباره پرداخت شود!",
+    "MODEM_PERIOD_NOTE": "\nℹ️ تا پایان اشتراک: <b>{days} روز</b>\nپس از تمدید مودم باید دوباره پرداخت شود.",
+    "MODEM_PRICE_WITH_DISCOUNT": "هزینه: <s>{base_price}</s> <b>{final_price}</b> (برای {months} ماه)\n🎁 تخفیف {discount}%: -{discount_amount}",
+    "MODEM_PRICE_NO_DISCOUNT": "هزینه: {price} (برای {months} ماه)",
+    "MODEM_CONFIRM_ENABLE_BASE": "📡 <b>تأیید اتصال مودم</b>\n\n{price_text}\n\nبا اتصال مودم:\n• یک دستگاه اضافی اضافه می‌شود\n• هزینه ماهانه {monthly_price} افزایش می‌یابد\n\nتأیید اتصال؟",
+    "ADMIN_USER_RESTRICTIONS": "⚠️ محدود کردن",
+    "USER_RESTRICTION_TOPUP_BLOCKED": "🚫 <b>شارژ محدود شده</b>\n\n{reason}\n\nاگر فکر می‌کنید اشتباه است، می‌توانید اعتراض کنید.",
+    "USER_RESTRICTION_SUBSCRIPTION_BLOCKED": "🚫 <b>خرید/تمدید اشتراک محدود شده</b>\n\n{reason}\n\nاگر فکر می‌کنید اشتباه است، می‌توانید اعتراض کنید.",
+    "USER_RESTRICTION_APPEAL_BUTTON": "🆘 اعتراض",
+    "PAUSE_DAILY_BUTTON": "⏸️ توقف اشتراک",
+    "RESUME_DAILY_BUTTON": "▶️ ازسرگیری اشتراک",
+    "DAILY_SWITCH_WARNING": "⚠️ <b>توجه!</b> {days} روز اشتراک باقی مانده.\nبا تغییر به تعرفه روزانه از دست می‌روند!",
+    "DAILY_SUBSCRIPTION_PAUSED": "⏸️ اشتراک متوقف شد",
+    "DAILY_SUBSCRIPTION_RESUMED": "▶️ اشتراک از سر گرفته شد!",
+    "WEBHOOK_SUB_EXPIRED": "❌ <b>اشتراک منقضی شد</b>\n\nاشتراک شما به پایان رسیده است. برای بازیابی دسترسی VPN تمدید کنید.",
+    "WEBHOOK_SUB_DISABLED": "🚫 <b>اشتراک غیرفعال شد</b>\n\nاشتراک شما توسط مدیر غیرفعال شده است.",
+    "WEBHOOK_SUB_ENABLED": "✅ <b>اشتراک فعال شد</b>\n\nاشتراک شما دوباره فعال است. از استفاده لذت ببرید!",
+    "WEBHOOK_SUB_LIMITED": "⚠️ <b>محدودیت ترافیک</b>\n\nشما تمام ترافیک موجود را مصرف کرده‌اید. ترافیک اضافی بخرید یا منتظر بازنشانی باشید.",
+    "WEBHOOK_SUB_TRAFFIC_RESET": "🔄 <b>ترافیک بازنشانی شد</b>\n\nترافیک شما بازنشانی شد. محدودیت کامل دوباره در دسترس است.",
+    "WEBHOOK_SUB_DELETED": "🗑️ <b>اشتراک حذف شد</b>\n\nاشتراک شما از پنل حذف شده است.",
+    "WEBHOOK_SUB_REVOKED": "🔑 <b>کلید اشتراک به‌روز شد</b>\n\nاطلاعات اتصال شما به‌روز شده است. از لینک جدید برای اتصال استفاده کنید.",
+    "WEBHOOK_SUB_EXPIRES_72H": "⏳ <b>اشتراک تا ۳ روز دیگر منقضی می‌شود</b>\n\nفراموش نکنید اشتراک خود را تمدید کنید.",
+    "WEBHOOK_SUB_EXPIRES_48H": "⏳ <b>اشتراک تا ۲ روز دیگر منقضی می‌شود</b>\n\nاشتراک خود را زودتر تمدید کنید تا دسترسی VPN حفظ شود.",
+    "WEBHOOK_SUB_EXPIRES_24H": "🔴 <b>اشتراک فردا منقضی می‌شود!</b>\n\nکمتر از ۲۴ ساعت باقی مانده. همین الان تمدید کنید.",
+    "WEBHOOK_SUB_EXPIRED_24H_AGO": "💤 <b>اشتراک دیروز منقضی شد</b>\n\nاشتراک شما به پایان رسیده. همین الان تمدید کنید تا دسترسی VPN بازگردد.",
+    "WEBHOOK_SUB_FIRST_CONNECTED": "🎉 <b>اولین اتصال!</b>\n\nشما برای اولین بار به VPN متصل شدید. خوش آمدید!",
+    "WEBHOOK_SUB_BANDWIDTH_THRESHOLD": "📊 <b>{percent}% ترافیک مصرف شد</b>\n\nبخش قابل توجهی از ترافیک خود را مصرف کرده‌اید. مصرف خود را زیر نظر داشته باشید.",
+    "WEBHOOK_RENEW_BUTTON": "🔄 تمدید اشتراک",
+    "WEBHOOK_USER_NOT_CONNECTED": "📡 <b>هنوز متصل نشده‌اید</b>\n\nاشتراک شما فعال است اما هنوز اتصال VPN برقرار نشده. برای شروع استفاده متصل شوید.",
+    "WEBHOOK_DEVICE_ADDED": "📱 <b>دستگاه جدید</b>\n\nدستگاه جدیدی به اشتراک شما اضافه شد: <code>{device}</code>",
+    "WEBHOOK_DEVICE_DELETED": "📱 <b>دستگاه حذف شد</b>\n\nدستگاهی از اشتراک شما حذف شد: <code>{device}</code>",
+    "WEBHOOK_CLOSE_BUTTON": "✖️ بستن"
+}
