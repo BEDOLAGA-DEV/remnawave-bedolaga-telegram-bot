@@ -626,6 +626,27 @@ async def register_email_standalone(
             detail='Disposable email addresses are not allowed',
         )
 
+    # Check email domain blacklist
+    if settings.is_email_domain_blocked(request.email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'email_domain_blocked',
+                'params': {'message': 'This email domain is not allowed'},
+            },
+        )
+
+    # Check email domain whitelist
+    if not settings.is_email_domain_allowed(request.email):
+        allowed = settings.get_email_allowed_domains()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'email_domain_not_allowed',
+                'params': {'domains': ', '.join(sorted(allowed)), 'message': 'This email service is not supported. Use: ' + ', '.join(sorted(allowed))},
+            },
+        )
+
     # Проверить что email не занят
     existing = await db.execute(select(User).where(User.email == request.email))
     if existing.scalar_one_or_none():
