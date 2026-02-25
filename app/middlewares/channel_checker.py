@@ -169,8 +169,13 @@ class ChannelCheckerMiddleware(BaseMiddleware):
                 await self._capture_start_payload(state, event, bot)
 
                 if isinstance(event, CallbackQuery) and event.data == 'sub_channel_check':
+                    user_language = DEFAULT_LANGUAGE
+                    if event.from_user and event.from_user.language_code:
+                        user_language = event.from_user.language_code.split('-')[0]
+                    texts = get_texts(user_language)
                     await event.answer(
-                        '❌ Вы еще не подписались на канал! Подпишитесь и попробуйте снова.', show_alert=True
+                        texts.t('CHANNEL_SUBSCRIBE_REQUIRED_ALERT', '❌ Вы не подписались на канал!'),
+                        show_alert=True,
                     )
                     return None
 

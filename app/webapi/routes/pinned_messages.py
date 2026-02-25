@@ -11,6 +11,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.localization.texts import get_texts
 from app.database.models import PinnedMessage
 from app.services.pinned_message_service import (
     broadcast_pinned_message,
@@ -108,7 +109,13 @@ async def get_pinned_message(
     result = await db.execute(select(PinnedMessage).where(PinnedMessage.id == message_id))
     msg = result.scalar_one_or_none()
     if not msg:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Pinned message not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t(
+                'WEBAPI_PINNED_MESSAGES_NOT_FOUND',
+                'Pinned message not found',
+            ),
+        )
     return _serialize_pinned_message(msg)
 
 
@@ -130,7 +137,13 @@ async def create_pinned_message(
     """
     content = payload.content.strip()
     if not content and not payload.media:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Either content or media must be provided')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_PINNED_MESSAGES_CONTENT_OR_MEDIA_REQUIRED',
+                'Either content or media must be provided',
+            ),
+        )
 
     media_type = payload.media.type if payload.media else None
     media_file_id = payload.media.file_id if payload.media else None
@@ -177,7 +190,13 @@ async def update_pinned_message(
     result = await db.execute(select(PinnedMessage).where(PinnedMessage.id == message_id))
     msg = result.scalar_one_or_none()
     if not msg:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Pinned message not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t(
+                'WEBAPI_PINNED_MESSAGES_NOT_FOUND',
+                'Pinned message not found',
+            ),
+        )
 
     if payload.content is not None:
         from app.utils.validators import sanitize_html, validate_html_tags
@@ -190,7 +209,13 @@ async def update_pinned_message(
 
     if payload.media is not None:
         if payload.media.type not in ('photo', 'video'):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Only photo or video media types are supported')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=get_texts('ru').t(
+                    'WEBAPI_PINNED_MESSAGES_ONLY_PHOTO_OR_VIDEO_SUPPORTED',
+                    'Only photo or video media types are supported',
+                ),
+            )
         msg.media_type = payload.media.type
         msg.media_file_id = payload.media.file_id
 
@@ -223,7 +248,13 @@ async def update_pinned_message_settings(
     result = await db.execute(select(PinnedMessage).where(PinnedMessage.id == message_id))
     msg = result.scalar_one_or_none()
     if not msg:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Pinned message not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t(
+                'WEBAPI_PINNED_MESSAGES_NOT_FOUND',
+                'Pinned message not found',
+            ),
+        )
 
     if payload.send_before_menu is not None:
         msg.send_before_menu = payload.send_before_menu
@@ -257,7 +288,13 @@ async def activate_pinned_message(
     result = await db.execute(select(PinnedMessage).where(PinnedMessage.id == message_id))
     msg = result.scalar_one_or_none()
     if not msg:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Pinned message not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t(
+                'WEBAPI_PINNED_MESSAGES_NOT_FOUND',
+                'Pinned message not found',
+            ),
+        )
 
     # Деактивируем все активные
     await db.execute(
@@ -299,7 +336,13 @@ async def broadcast_message(
     result = await db.execute(select(PinnedMessage).where(PinnedMessage.id == message_id))
     msg = result.scalar_one_or_none()
     if not msg:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Pinned message not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t(
+                'WEBAPI_PINNED_MESSAGES_NOT_FOUND',
+                'Pinned message not found',
+            ),
+        )
 
     sent_count, failed_count = await broadcast_pinned_message(_get_bot(), db, msg)
 
@@ -359,7 +402,13 @@ async def delete_pinned_message(
     result = await db.execute(select(PinnedMessage).where(PinnedMessage.id == message_id))
     msg = result.scalar_one_or_none()
     if not msg:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Pinned message not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t(
+                'WEBAPI_PINNED_MESSAGES_NOT_FOUND',
+                'Pinned message not found',
+            ),
+        )
 
     await db.delete(msg)
     await db.commit()

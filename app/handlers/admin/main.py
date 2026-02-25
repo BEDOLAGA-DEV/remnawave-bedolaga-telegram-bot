@@ -223,7 +223,11 @@ async def show_support_audit(callback: types.CallbackQuery, db_user: User, db: A
                 )
             elif log.action == 'close_all_tickets' and 'count' in details:
                 extra = f' ({details["count"]})'
-            actor_id_display = log.actor_telegram_id or f'user#{log.actor_user_id}' if log.actor_user_id else 'unknown'
+            actor_id_display = (
+                log.actor_telegram_id or f'{texts.t("ADMIN_SUPPORT_AUDIT_ACTOR_USER_PREFIX", "user#")}{log.actor_user_id}'
+                if log.actor_user_id
+                else texts.t('ADMIN_SUPPORT_AUDIT_ACTOR_UNKNOWN', 'unknown')
+            )
             lines.append(f'{ts} • {role} <code>{actor_id_display}</code> — {action_text}{ticket_part}{extra}')
 
     # keyboard with pagination

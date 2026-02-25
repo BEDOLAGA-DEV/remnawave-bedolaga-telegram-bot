@@ -10,6 +10,7 @@ from app.database.crud.server_squad import (
     count_active_users_for_squad,
     get_server_squad_by_uuid,
 )
+from app.localization.texts import get_texts
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.remnawave import (
@@ -57,27 +58,40 @@ else:
 router = APIRouter()
 
 
+
 def _get_service() -> RemnaWaveServiceType:
+    texts = get_texts('ru')
     if RemnaWaveService is None:  # pragma: no cover - зависимость не доступна
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='RemnaWave сервис недоступен',
+            detail=texts.t(
+                'WEBAPI_REMNAWAVE_SERVICE_UNAVAILABLE',
+                'RemnaWave сервис недоступен',
+            ),
         )
 
     return RemnaWaveService()
 
 
 def _ensure_service_configured(service: RemnaWaveServiceType) -> None:
+    texts = get_texts('ru')
     if RemnaWaveService is None:  # pragma: no cover - зависимость не доступна
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='RemnaWave сервис недоступен',
+            detail=texts.t(
+                'WEBAPI_REMNAWAVE_SERVICE_UNAVAILABLE',
+                'RemnaWave сервис недоступен',
+            ),
         )
 
     if not service.is_configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=service.configuration_error or 'RemnaWave API не настроен',
+            detail=service.configuration_error
+            or texts.t(
+                'WEBAPI_REMNAWAVE_API_NOT_CONFIGURED',
+                'RemnaWave API не настроен',
+            ),
         )
 
 
@@ -147,12 +161,19 @@ async def get_remnawave_status(
 async def get_system_statistics(
     _: Any = Security(require_api_token),
 ) -> RemnaWaveSystemStatsResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     stats = await service.get_system_statistics()
     if not stats or 'system' not in stats:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, 'Не удалось получить статистику RemnaWave')
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            texts.t(
+                'WEBAPI_REMNAWAVE_SYSTEM_STATS_UNAVAILABLE',
+                'Не удалось получить статистику RemnaWave',
+            ),
+        )
 
     stats['last_updated'] = _parse_last_updated(stats.get('last_updated'))
     return RemnaWaveSystemStatsResponse(**stats)
@@ -184,12 +205,16 @@ async def get_node_details(
     node_uuid: str,
     _: Any = Security(require_api_token),
 ) -> RemnaWaveNode:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     node = await service.get_node_details(node_uuid)
     if not node:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Нода не найдена')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_REMNAWAVE_NODE_NOT_FOUND', 'Нода не найдена'),
+        )
     return _serialize_node(node)
 
 
@@ -198,12 +223,19 @@ async def get_node_statistics(
     node_uuid: str,
     _: Any = Security(require_api_token),
 ) -> RemnaWaveNodeStatisticsResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     stats = await service.get_node_statistics(node_uuid)
     if not stats or not stats.get('node'):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Не удалось получить информацию по ноде')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t(
+                'WEBAPI_REMNAWAVE_NODE_INFO_NOT_FOUND',
+                'Не удалось получить информацию по ноде',
+            ),
+        )
 
     node_data = _serialize_node(stats['node'])
     usage_history = stats.get('usage_history') or []
@@ -225,6 +257,7 @@ async def get_node_usage_range(
     end: datetime | None = Query(default=None),
     _: Any = Security(require_api_token),
 ) -> RemnaWaveNodeUsageResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
@@ -232,7 +265,10 @@ async def get_node_usage_range(
     start_dt = start or (end_dt - timedelta(days=7))
 
     if start_dt >= end_dt:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Некорректный диапазон дат')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            texts.t('WEBAPI_REMNAWAVE_INVALID_DATE_RANGE', 'Некорректный диапазон дат'),
+        )
 
     usage = await service.get_node_user_usage_by_range(node_uuid, start_dt, end_dt)
     return RemnaWaveNodeUsageResponse(items=usage or [])
@@ -244,6 +280,7 @@ async def manage_node(
     payload: RemnaWaveNodeActionRequest,
     _: Any = Security(require_api_token),
 ) -> RemnaWaveNodeActionResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
@@ -251,13 +288,13 @@ async def manage_node(
     detail = None
     if success:
         if payload.action == 'enable':
-            detail = 'Нода включена'
+            detail = texts.t('WEBAPI_REMNAWAVE_NODE_ACTION_ENABLED', 'Нода включена')
         elif payload.action == 'disable':
-            detail = 'Нода отключена'
+            detail = texts.t('WEBAPI_REMNAWAVE_NODE_ACTION_DISABLED', 'Нода отключена')
         elif payload.action == 'restart':
-            detail = 'Команда перезапуска отправлена'
+            detail = texts.t('WEBAPI_REMNAWAVE_NODE_ACTION_RESTART_SENT', 'Команда перезапуска отправлена')
     else:
-        detail = 'Не удалось выполнить действие'
+        detail = texts.t('WEBAPI_REMNAWAVE_NODE_ACTION_FAILED', 'Не удалось выполнить действие')
 
     return RemnaWaveNodeActionResponse(success=success, detail=detail)
 
@@ -266,11 +303,16 @@ async def manage_node(
 async def restart_all_nodes(
     _: Any = Security(require_api_token),
 ) -> RemnaWaveNodeActionResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     success = await service.restart_all_nodes()
-    detail = 'Команда перезапуска отправлена' if success else 'Не удалось перезапустить ноды'
+    detail = (
+        texts.t('WEBAPI_REMNAWAVE_RESTART_ALL_SENT', 'Команда перезапуска отправлена')
+        if success
+        else texts.t('WEBAPI_REMNAWAVE_RESTART_ALL_FAILED', 'Не удалось перезапустить ноды')
+    )
     return RemnaWaveNodeActionResponse(success=success, detail=detail)
 
 
@@ -291,12 +333,16 @@ async def get_squad_details(
     squad_uuid: str,
     _: Any = Security(require_api_token),
 ) -> RemnaWaveSquad:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     squad = await service.get_squad_details(squad_uuid)
     if not squad:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Сквад не найден')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_REMNAWAVE_SQUAD_NOT_FOUND', 'Сквад не найден'),
+        )
     return RemnaWaveSquad(**squad)
 
 
@@ -305,13 +351,18 @@ async def create_squad(
     payload: RemnaWaveSquadCreateRequest,
     _: Any = Security(require_api_token),
 ) -> RemnaWaveOperationResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     squad_uuid = await service.create_squad(payload.name, payload.inbound_uuids)
 
     success = squad_uuid is not None
-    detail = 'Сквад успешно создан' if success else 'Не удалось создать сквад'
+    detail = (
+        texts.t('WEBAPI_REMNAWAVE_SQUAD_CREATE_SUCCESS', 'Сквад успешно создан')
+        if success
+        else texts.t('WEBAPI_REMNAWAVE_SQUAD_CREATE_FAILED', 'Не удалось создать сквад')
+    )
     data = {'uuid': squad_uuid} if success else None
 
     return RemnaWaveOperationResponse(success=success, detail=detail, data=data)
@@ -323,11 +374,12 @@ async def update_squad(
     payload: RemnaWaveSquadUpdateRequest,
     _: Any = Security(require_api_token),
 ) -> RemnaWaveOperationResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     success = False
-    detail = 'Необходимо указать новые данные'
+    detail = texts.t('WEBAPI_REMNAWAVE_SQUAD_UPDATE_DATA_REQUIRED', 'Необходимо указать новые данные')
 
     if payload.name is not None or payload.inbound_uuids is not None:
         success = await service.update_squad(
@@ -335,7 +387,11 @@ async def update_squad(
             name=payload.name,
             inbounds=payload.inbound_uuids,
         )
-        detail = 'Сквад обновлен' if success else 'Не удалось обновить сквад'
+        detail = (
+            texts.t('WEBAPI_REMNAWAVE_SQUAD_UPDATE_SUCCESS', 'Сквад обновлен')
+            if success
+            else texts.t('WEBAPI_REMNAWAVE_SQUAD_UPDATE_FAILED', 'Не удалось обновить сквад')
+        )
 
     return RemnaWaveOperationResponse(success=success, detail=detail)
 
@@ -346,32 +402,59 @@ async def squad_actions(
     payload: RemnaWaveSquadActionRequest,
     _: Any = Security(require_api_token),
 ) -> RemnaWaveOperationResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     action = payload.action
     success = False
-    detail = 'Неизвестное действие'
+    detail = texts.t('WEBAPI_REMNAWAVE_UNKNOWN_ACTION', 'Неизвестное действие')
 
     if action == 'add_all_users':
         success = await service.add_all_users_to_squad(squad_uuid)
-        detail = 'Пользователи добавлены' if success else 'Не удалось добавить пользователей'
+        detail = (
+            texts.t('WEBAPI_REMNAWAVE_USERS_ADD_SUCCESS', 'Пользователи добавлены')
+            if success
+            else texts.t('WEBAPI_REMNAWAVE_USERS_ADD_FAILED', 'Не удалось добавить пользователей')
+        )
     elif action == 'remove_all_users':
         success = await service.remove_all_users_from_squad(squad_uuid)
-        detail = 'Пользователи удалены' if success else 'Не удалось удалить пользователей'
+        detail = (
+            texts.t('WEBAPI_REMNAWAVE_USERS_REMOVE_SUCCESS', 'Пользователи удалены')
+            if success
+            else texts.t('WEBAPI_REMNAWAVE_USERS_REMOVE_FAILED', 'Не удалось удалить пользователей')
+        )
     elif action == 'delete':
         success = await service.delete_squad(squad_uuid)
-        detail = 'Сквад удален' if success else 'Не удалось удалить сквад'
+        detail = (
+            texts.t('WEBAPI_REMNAWAVE_SQUAD_DELETE_SUCCESS', 'Сквад удален')
+            if success
+            else texts.t('WEBAPI_REMNAWAVE_SQUAD_DELETE_FAILED', 'Не удалось удалить сквад')
+        )
     elif action == 'rename':
         if not payload.name:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Необходимо указать новое имя')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                texts.t('WEBAPI_REMNAWAVE_SQUAD_RENAME_REQUIRED', 'Необходимо указать новое имя'),
+            )
         success = await service.rename_squad(squad_uuid, payload.name)
-        detail = 'Сквад переименован' if success else 'Не удалось переименовать сквад'
+        detail = (
+            texts.t('WEBAPI_REMNAWAVE_SQUAD_RENAME_SUCCESS', 'Сквад переименован')
+            if success
+            else texts.t('WEBAPI_REMNAWAVE_SQUAD_RENAME_FAILED', 'Не удалось переименовать сквад')
+        )
     elif action == 'update_inbounds':
         if not payload.inbound_uuids:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Необходимо указать inbound_uuids')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                texts.t('WEBAPI_REMNAWAVE_INBOUNDS_REQUIRED', 'Необходимо указать inbound_uuids'),
+            )
         success = await service.update_squad_inbounds(squad_uuid, payload.inbound_uuids)
-        detail = 'Инбаунды обновлены' if success else 'Не удалось обновить инбаунды'
+        detail = (
+            texts.t('WEBAPI_REMNAWAVE_INBOUNDS_UPDATE_SUCCESS', 'Инбаунды обновлены')
+            if success
+            else texts.t('WEBAPI_REMNAWAVE_INBOUNDS_UPDATE_FAILED', 'Не удалось обновить инбаунды')
+        )
 
     return RemnaWaveOperationResponse(success=success, detail=detail)
 
@@ -392,12 +475,16 @@ async def get_user_traffic(
     telegram_id: int,
     _: Any = Security(require_api_token),
 ) -> RemnaWaveUserTrafficResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     stats = await service.get_user_traffic_stats(telegram_id)
     if not stats:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Пользователь не найден в RemnaWave')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_REMNAWAVE_USER_NOT_FOUND', 'Пользователь не найден в RemnaWave'),
+        )
 
     return RemnaWaveUserTrafficResponse(telegram_id=telegram_id, **stats)
 
@@ -408,12 +495,16 @@ async def preview_squad_migration(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> RemnaWaveSquadMigrationPreviewResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     squad = await get_server_squad_by_uuid(db, squad_uuid)
     if not squad:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Сквад не найден')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_REMNAWAVE_SQUAD_NOT_FOUND', 'Сквад не найден'),
+        )
 
     users_to_migrate = await count_active_users_for_squad(db, squad_uuid)
 
@@ -432,12 +523,13 @@ async def sync_from_panel(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> RemnaWaveGenericSyncResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     try:
         stats = await service.sync_users_from_panel(db, payload.mode)
-        detail = 'Синхронизация из панели выполнена'
+        detail = texts.t('WEBAPI_REMNAWAVE_SYNC_FROM_PANEL_SUCCESS', 'Синхронизация из панели выполнена')
         return RemnaWaveGenericSyncResponse(success=True, detail=detail, data=stats)
     except Exception as exc:  # pragma: no cover - точный тип зависит от импорта
         if RemnaWaveConfigurationError and isinstance(exc, RemnaWaveConfigurationError):
@@ -450,11 +542,12 @@ async def sync_to_panel(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> RemnaWaveGenericSyncResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     stats = await service.sync_users_to_panel(db)
-    detail = 'Синхронизация в панель выполнена'
+    detail = texts.t('WEBAPI_REMNAWAVE_SYNC_TO_PANEL_SUCCESS', 'Синхронизация в панель выполнена')
     return RemnaWaveGenericSyncResponse(success=True, detail=detail, data=stats)
 
 
@@ -463,11 +556,12 @@ async def validate_and_fix_subscriptions(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> RemnaWaveGenericSyncResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     stats = await service.validate_and_fix_subscriptions(db)
-    detail = 'Подписки проверены'
+    detail = texts.t('WEBAPI_REMNAWAVE_SUBSCRIPTIONS_VALIDATED', 'Подписки проверены')
     return RemnaWaveGenericSyncResponse(success=True, detail=detail, data=stats)
 
 
@@ -476,11 +570,12 @@ async def cleanup_orphaned_subscriptions(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> RemnaWaveGenericSyncResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     stats = await service.cleanup_orphaned_subscriptions(db)
-    detail = 'Очистка завершена'
+    detail = texts.t('WEBAPI_REMNAWAVE_SUBSCRIPTIONS_CLEANUP_DONE', 'Очистка завершена')
     return RemnaWaveGenericSyncResponse(success=True, detail=detail, data=stats)
 
 
@@ -489,11 +584,15 @@ async def sync_subscription_statuses(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> RemnaWaveGenericSyncResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     stats = await service.sync_subscription_statuses(db)
-    detail = 'Статусы подписок синхронизированы'
+    detail = texts.t(
+        'WEBAPI_REMNAWAVE_SUBSCRIPTIONS_STATUSES_SYNCED',
+        'Статусы подписок синхронизированы',
+    )
     return RemnaWaveGenericSyncResponse(success=True, detail=detail, data=stats)
 
 
@@ -502,11 +601,12 @@ async def get_sync_recommendations(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> RemnaWaveGenericSyncResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
     data = await service.get_sync_recommendations(db)
-    detail = 'Рекомендации получены'
+    detail = texts.t('WEBAPI_REMNAWAVE_SYNC_RECOMMENDATIONS_RECEIVED', 'Рекомендации получены')
     return RemnaWaveGenericSyncResponse(success=True, detail=detail, data=data)
 
 
@@ -516,6 +616,7 @@ async def migrate_squad(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> RemnaWaveSquadMigrationResponse:
+    texts = get_texts('ru')
     service = _get_service()
     _ensure_service_configured(service)
 
@@ -523,15 +624,33 @@ async def migrate_squad(
     target_uuid = payload.target_uuid.strip()
 
     if source_uuid == target_uuid:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Источник и назначение совпадают')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            texts.t(
+                'WEBAPI_REMNAWAVE_MIGRATION_SAME_SOURCE_TARGET',
+                'Источник и назначение совпадают',
+            ),
+        )
 
     source = await get_server_squad_by_uuid(db, source_uuid)
     if not source:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Сквад-источник не найден')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t(
+                'WEBAPI_REMNAWAVE_MIGRATION_SOURCE_NOT_FOUND',
+                'Сквад-источник не найден',
+            ),
+        )
 
     target = await get_server_squad_by_uuid(db, target_uuid)
     if not target:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Сквад-назначение не найден')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t(
+                'WEBAPI_REMNAWAVE_MIGRATION_TARGET_NOT_FOUND',
+                'Сквад-назначение не найден',
+            ),
+        )
 
     try:
         result = await service.migrate_squad_users(
@@ -543,7 +662,10 @@ async def migrate_squad(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
     if not result.get('success'):
-        detail = result.get('message') or 'Не удалось выполнить переезд'
+        detail = result.get('message') or texts.t(
+            'WEBAPI_REMNAWAVE_MIGRATION_FAILED',
+            'Не удалось выполнить переезд',
+        )
         return RemnaWaveSquadMigrationResponse(
             success=False,
             detail=detail,
@@ -561,5 +683,8 @@ async def migrate_squad(
         target_added=result.get('target_added', 0),
     )
 
-    detail = result.get('message') or 'Переезд выполнен'
+    detail = result.get('message') or texts.t(
+        'WEBAPI_REMNAWAVE_MIGRATION_SUCCESS',
+        'Переезд выполнен',
+    )
     return RemnaWaveSquadMigrationResponse(success=True, detail=detail, data=stats)

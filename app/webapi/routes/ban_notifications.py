@@ -8,6 +8,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.localization.texts import get_texts
 from app.services.ban_notification_service import ban_notification_service
 from app.webapi.dependencies import get_db_session, require_api_token
 from app.webapi.schemas.ban_notifications import (
@@ -35,6 +36,7 @@ async def send_ban_notification(
     db: AsyncSession = Depends(get_db_session),
     _token=Depends(require_api_token),
 ) -> BanNotificationResponse:
+    texts = get_texts('ru')
     """
     Отправить уведомление пользователю от ban системы
 
@@ -57,7 +59,10 @@ async def send_ban_notification(
             if request.ip_count is None or request.limit is None or request.ban_minutes is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Для типа 'punishment' требуются поля: ip_count, limit, ban_minutes",
+                    detail=texts.t(
+                        'WEBAPI_BAN_NOTIFICATIONS_PUNISHMENT_FIELDS_REQUIRED',
+                        "Для типа 'punishment' требуются поля: ip_count, limit, ban_minutes",
+                    ),
                 )
 
             success, message, telegram_id = await ban_notification_service.send_punishment_notification(
@@ -80,7 +85,11 @@ async def send_ban_notification(
         elif request.notification_type == 'warning':
             if not request.warning_message:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST, detail="Для типа 'warning' требуется поле: warning_message"
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=texts.t(
+                        'WEBAPI_BAN_NOTIFICATIONS_WARNING_MESSAGE_REQUIRED',
+                        "Для типа 'warning' требуется поле: warning_message",
+                    ),
                 )
 
             success, message, telegram_id = await ban_notification_service.send_warning_notification(
@@ -94,7 +103,10 @@ async def send_ban_notification(
             if request.ban_minutes is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Для типа 'network_wifi' требуется поле: ban_minutes",
+                    detail=texts.t(
+                        'WEBAPI_BAN_NOTIFICATIONS_NETWORK_WIFI_BAN_MINUTES_REQUIRED',
+                        "Для типа 'network_wifi' требуется поле: ban_minutes",
+                    ),
                 )
 
             success, message, telegram_id = await ban_notification_service.send_network_wifi_notification(
@@ -110,7 +122,10 @@ async def send_ban_notification(
             if request.ban_minutes is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Для типа 'network_mobile' требуется поле: ban_minutes",
+                    detail=texts.t(
+                        'WEBAPI_BAN_NOTIFICATIONS_NETWORK_MOBILE_BAN_MINUTES_REQUIRED',
+                        "Для типа 'network_mobile' требуется поле: ban_minutes",
+                    ),
                 )
 
             success, message, telegram_id = await ban_notification_service.send_network_mobile_notification(
@@ -125,7 +140,10 @@ async def send_ban_notification(
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Неизвестный тип уведомления: {request.notification_type}',
+                detail=texts.t(
+                    'WEBAPI_BAN_NOTIFICATIONS_UNKNOWN_NOTIFICATION_TYPE',
+                    'Неизвестный тип уведомления: {notification_type}',
+                ).format(notification_type=request.notification_type),
             )
 
         return BanNotificationResponse(success=success, message=message, telegram_id=telegram_id, sent=success)
@@ -133,6 +151,11 @@ async def send_ban_notification(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception('Ошибка при отправке уведомления', error=e)(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f'Внутренняя ошибка сервера: {e!s}'
+        logger.exception('Ошибка при отправке уведомления', error=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=texts.t(
+                'WEBAPI_BAN_NOTIFICATIONS_INTERNAL_SERVER_ERROR_DETAIL',
+                'Внутренняя ошибка сервера: {error}',
+            ).format(error=f'{e!s}'),
         )

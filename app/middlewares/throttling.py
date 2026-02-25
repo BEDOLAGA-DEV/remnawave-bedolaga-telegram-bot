@@ -7,6 +7,8 @@ from aiogram import BaseMiddleware
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
+from app.localization.loader import DEFAULT_LANGUAGE
+from app.localization.texts import get_texts
 
 logger = structlog.get_logger(__name__)
 
@@ -45,6 +47,11 @@ class ThrottlingMiddleware(BaseMiddleware):
         if not user_id:
             return await handler(event, data)
 
+        language = DEFAULT_LANGUAGE
+        if isinstance(event, (Message, CallbackQuery)) and event.from_user and event.from_user.language_code:
+            language = event.from_user.language_code.split('-')[0]
+        texts = get_texts(language)
+
         now = time.time()
 
         # --- /start burst rate-limit ---
@@ -63,7 +70,12 @@ class ThrottlingMiddleware(BaseMiddleware):
                     start_max_calls=self.start_max_calls,
                 )
                 try:
-                    await event.answer(f'⏳ Слишком много запросов. Попробуйте через {cooldown} сек.')
+                    await event.answer(
+                        texts.t(
+                            'THROTTLING_START_RATE_LIMIT',
+                            '⏳ Слишком много запросов. Попробуйте через {cooldown} сек.',
+                        ).format(cooldown=cooldown)
+                    )
                 except Exception:
                     pass
                 self.start_buckets[user_id] = timestamps
@@ -95,11 +107,22 @@ class ThrottlingMiddleware(BaseMiddleware):
                 if is_ticket_state:
                     return None
                 # В остальных случаях — явный блок
-                await event.answer('⏳ Пожалуйста, не отправляйте сообщения так часто!')
+                await event.answer(
+                    texts.t(
+                        'THROTTLING_MESSAGE_RATE_LIMIT',
+                        '⏳ Пожалуйста, не отправляйте сообщения так часто!',
+                    )
+                )
                 return None
             # Для callback допустим краткое уведомление
             if isinstance(event, CallbackQuery):
-                await event.answer('⏳ Слишком быстро! Подождите немного.', show_alert=True)
+                await event.answer(
+                    texts.t(
+                        'THROTTLING_CALLBACK_RATE_LIMIT',
+                        '⏳ Слишком быстро! Подождите немного.',
+                    ),
+                    show_alert=True,
+                )
                 return None
 
         self.user_buckets[user_id] = now

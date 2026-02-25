@@ -126,7 +126,7 @@ class PaymentCommonMixin:
         keyboard_rows.append(
             [
                 build_miniapp_or_callback_button(
-                    text='💰 Мой баланс',
+                    text=texts.t('MY_BALANCE_BUTTON', '💰 Мой баланс'),
                     callback_data='menu_balance',
                 )
             ]
@@ -134,7 +134,7 @@ class PaymentCommonMixin:
         keyboard_rows.append(
             [
                 InlineKeyboardButton(
-                    text='🏠 Главное меню',
+                    text=texts.t('MAIN_MENU_BUTTON', '🏠 Главное меню'),
                     callback_data='back_to_menu',
                 )
             ]
@@ -187,21 +187,29 @@ class PaymentCommonMixin:
             user,
             db=db,
         )
+        texts = get_texts(getattr(user_snapshot, 'language', 'ru') if user_snapshot else 'ru')
 
         try:
-            payment_method = payment_method_title or 'Банковская карта (YooKassa)'
+            payment_method = payment_method_title or texts.t(
+                'PAYMENT_COMMON_DEFAULT_METHOD_YOOKASSA',
+                'Банковская карта (YooKassa)',
+            )
 
             # Стандартное сообщение с полной клавиатурой
             keyboard = await self.build_topup_success_keyboard(user_snapshot)
-            message = (
+            message = texts.t(
+                'PAYMENT_COMMON_TOPUP_SUCCESS_NOTIFICATION',
                 '✅ <b>Платеж успешно завершен!</b>\n\n'
-                f'💰 Сумма: {settings.format_price(amount_kopeks)}\n'
-                f'💳 Способ: {payment_method}\n\n'
+                '💰 Сумма: {amount}\n'
+                '💳 Способ: {payment_method}\n\n'
                 'Средства зачислены на ваш баланс!\n\n'
                 '⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. '
                 'Обязательно активируйте подписку отдельно!\n\n'
-                f'🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
-                f'подписка будет приобретена автоматически после пополнения баланса.'
+                '🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
+                'подписка будет приобретена автоматически после пополнения баланса.',
+            ).format(
+                amount=settings.format_price(amount_kopeks),
+                payment_method=payment_method,
             )
 
             await self.bot.send_message(

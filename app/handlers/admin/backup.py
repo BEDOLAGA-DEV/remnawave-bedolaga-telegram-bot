@@ -362,7 +362,10 @@ async def manage_backup_file(callback: types.CallbackQuery, db_user: User, db: A
         tables_count=backup_info.get('tables_count', '?'),
         total_records=total_records,
         compression_yes_no=compression_yes_no,
-        database_type=backup_info.get('database_type', 'unknown'),
+        database_type=backup_info.get(
+            'database_type',
+            texts.t('ADMIN_BACKUP_UNKNOWN_DATABASE_TYPE', 'unknown'),
+        ),
     )
 
     if backup_info.get('error'):

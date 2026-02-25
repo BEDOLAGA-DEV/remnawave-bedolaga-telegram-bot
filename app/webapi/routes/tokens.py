@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.localization.texts import get_texts
 from app.database.crud.web_api_token import (
     delete_token,
     get_token_by_id,
@@ -71,7 +72,10 @@ async def revoke_token(
 ) -> TokenResponse:
     token = await get_token_by_id(db, token_id)
     if not token:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Token not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_TOKENS_NOT_FOUND', 'Token not found'),
+        )
 
     await web_api_token_service.revoke_token(db, token)
     await db.commit()
@@ -86,7 +90,10 @@ async def activate_token(
 ) -> TokenResponse:
     token = await get_token_by_id(db, token_id)
     if not token:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Token not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_TOKENS_NOT_FOUND', 'Token not found'),
+        )
 
     await web_api_token_service.activate_token(db, token)
     await db.commit()
@@ -101,7 +108,10 @@ async def delete_token_endpoint(
 ) -> Response:
     token = await get_token_by_id(db, token_id)
     if not token:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Token not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_TOKENS_NOT_FOUND', 'Token not found'),
+        )
 
     await delete_token(db, token)
     await db.commit()

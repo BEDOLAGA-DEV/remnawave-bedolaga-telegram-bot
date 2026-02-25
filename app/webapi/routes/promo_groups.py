@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.localization.texts import get_texts
 from app.database.crud.promo_group import (
     count_promo_group_members,
     count_promo_groups,
@@ -88,7 +89,10 @@ async def get_promo_group(
 ) -> PromoGroupResponse:
     group = await get_promo_group_by_id(db, group_id)
     if not group:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo group not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_PROMO_GROUPS_NOT_FOUND', 'Promo group not found'),
+        )
 
     members_count = await count_promo_group_members(db, group_id)
     return _serialize(group, members_count=members_count)
@@ -121,7 +125,10 @@ async def create_promo_group_endpoint(
         await db.rollback()
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'Promo group with this name already exists',
+            detail=get_texts('ru').t(
+                'WEBAPI_PROMO_GROUPS_NAME_ALREADY_EXISTS',
+                'Promo group with this name already exists',
+            ),
         ) from exc
     return _serialize(group, members_count=0)
 
@@ -139,7 +146,10 @@ async def update_promo_group_endpoint(
 ) -> PromoGroupResponse:
     group = await get_promo_group_by_id(db, group_id)
     if not group:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo group not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_PROMO_GROUPS_NOT_FOUND', 'Promo group not found'),
+        )
 
     try:
         group = await update_promo_group(
@@ -158,7 +168,10 @@ async def update_promo_group_endpoint(
         await db.rollback()
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'Promo group with this name already exists',
+            detail=get_texts('ru').t(
+                'WEBAPI_PROMO_GROUPS_NAME_ALREADY_EXISTS',
+                'Promo group with this name already exists',
+            ),
         ) from exc
     members_count = await count_promo_group_members(db, group_id)
     return _serialize(group, members_count=members_count)
@@ -172,10 +185,19 @@ async def delete_promo_group_endpoint(
 ) -> Response:
     group = await get_promo_group_by_id(db, group_id)
     if not group:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo group not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_PROMO_GROUPS_NOT_FOUND', 'Promo group not found'),
+        )
 
     success = await delete_promo_group(db, group)
     if not success:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Cannot delete default promo group')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_PROMO_GROUPS_CANNOT_DELETE_DEFAULT',
+                'Cannot delete default promo group',
+            ),
+        )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

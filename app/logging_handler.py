@@ -32,6 +32,8 @@ from typing import Any, Final
 
 from aiogram import Bot
 
+from app.config import settings
+from app.localization.texts import get_texts
 
 # Constants
 RECENT_HASHES_MAX_SIZE: Final[int] = 256
@@ -225,6 +227,7 @@ class TelegramNotifierProcessor:
         try:
             # Lazy import to avoid circular dependencies at startup
             from app.middlewares.global_error import send_error_to_admin_chat
+            texts = get_texts(getattr(settings, 'DEFAULT_LANGUAGE', 'ru') or 'ru')
 
             # Build a pseudo-Exception from the event_dict
             error = _make_event_dict_error(event_dict)
@@ -233,13 +236,25 @@ class TelegramNotifierProcessor:
             context_parts: list[str] = []
             logger_name = event_dict.get('logger', '')
             if logger_name:
-                context_parts.append(f'Logger: {logger_name}')
+                context_parts.append(
+                    texts.t(
+                        'LOGGING_HANDLER_CONTEXT_LOGGER_LINE',
+                        'Logger: {logger_name}',
+                    ).format(logger_name=logger_name)
+                )
             user_id = event_dict.get('user_id')
             username = event_dict.get('username')
             if user_id:
-                user_str = f'User: {user_id}'
                 if username:
-                    user_str += f' (@{username})'
+                    user_str = texts.t(
+                        'LOGGING_HANDLER_CONTEXT_USER_WITH_USERNAME_LINE',
+                        'User: {user_id} (@{username})',
+                    ).format(user_id=user_id, username=username)
+                else:
+                    user_str = texts.t(
+                        'LOGGING_HANDLER_CONTEXT_USER_LINE',
+                        'User: {user_id}',
+                    ).format(user_id=user_id)
                 context_parts.append(user_str)
 
             context = '\n'.join(context_parts)

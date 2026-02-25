@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.localization.texts import get_texts
 from app.database.crud.user_message import (
     create_user_message,
     delete_user_message,
@@ -98,7 +99,10 @@ async def update_user_message_endpoint(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
 
     if not message:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User message not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_USER_MESSAGES_NOT_FOUND', 'User message not found'),
+        )
 
     return _serialize(message)
 
@@ -112,7 +116,10 @@ async def toggle_user_message_endpoint(
     message = await toggle_user_message_status(db, message_id)
 
     if not message:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User message not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_USER_MESSAGES_NOT_FOUND', 'User message not found'),
+        )
 
     return _serialize(message)
 
@@ -125,7 +132,10 @@ async def delete_user_message_endpoint(
 ) -> Response:
     message = await get_user_message_by_id(db, message_id)
     if not message:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User message not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_USER_MESSAGES_NOT_FOUND', 'User message not found'),
+        )
 
     await delete_user_message(db, message_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

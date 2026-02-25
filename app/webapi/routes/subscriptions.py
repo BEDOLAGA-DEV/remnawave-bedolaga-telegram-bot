@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.localization.texts import get_texts
 from app.database.crud.server_squad import get_random_trial_squad_uuid
 from app.database.crud.subscription import (
     add_subscription_devices,
@@ -91,7 +92,10 @@ async def _get_subscription(db: AsyncSession, subscription_id: int) -> Subscript
     )
     subscription = result.scalar_one_or_none()
     if not subscription:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Subscription not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_SUBSCRIPTIONS_NOT_FOUND', 'Subscription not found'),
+        )
     return subscription
 
 
@@ -138,7 +142,13 @@ async def create_subscription(
 ) -> SubscriptionResponse:
     existing = await get_subscription_by_user_id(db, payload.user_id)
     if existing and not payload.replace_existing:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'User already has a subscription')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_SUBSCRIPTIONS_USER_ALREADY_HAS_A_SUBSCRIPTION',
+                'User already has a subscription',
+            ),
+        )
 
     forced_devices = None
     if not settings.is_devices_selection_enabled():
@@ -180,7 +190,13 @@ async def create_subscription(
                 )
         else:
             if payload.duration_days is None:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'duration_days is required for paid subscriptions')
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=get_texts('ru').t(
+                        'WEBAPI_SUBSCRIPTIONS_DURATION_DAYS_IS_REQUIRED_FOR_PAID_SUBSCRIPTIONS',
+                        'duration_days is required for paid subscriptions',
+                    ),
+                )
             device_limit = payload.device_limit
             if device_limit is None:
                 if forced_devices is not None:
@@ -224,7 +240,11 @@ async def create_subscription(
         except Exception:
             logger.exception('Rollback failed after error', e=e)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f'Failed to sync with Remnawave: {e!s}'
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=get_texts('ru').t(
+                'WEBAPI_SUBSCRIPTIONS_FAILED_TO_SYNC_WITH_REMNAWAVE',
+                'Failed to sync with Remnawave: {error}',
+            ).format(error=str(e)),
         )
 
     subscription = await _get_subscription(db, subscription.id)
@@ -278,7 +298,13 @@ async def add_subscription_squad_endpoint(
     db: AsyncSession = Depends(get_db_session),
 ) -> SubscriptionResponse:
     if not payload.squad_uuid:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'squad_uuid is required')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_SUBSCRIPTIONS_SQUAD_UUID_IS_REQUIRED',
+                'squad_uuid is required',
+            ),
+        )
 
     subscription = await _get_subscription(db, subscription_id)
     subscription = await add_subscription_squad(db, subscription, payload.squad_uuid)

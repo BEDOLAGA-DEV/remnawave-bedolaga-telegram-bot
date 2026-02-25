@@ -422,10 +422,16 @@ async def handle_cloudpayments_quick_amount(
         if len(parts) >= 3:
             amount_kopeks = int(parts[2])
         else:
-            await callback.answer('Invalid callback data', show_alert=True)
+            await callback.answer(
+                texts.t('CLOUDPAYMENTS_INVALID_CALLBACK_DATA', '❌ Некорректные данные платежа'),
+                show_alert=True,
+            )
             return
     except (ValueError, IndexError):
-        await callback.answer('Invalid amount', show_alert=True)
+        await callback.answer(
+            texts.t('CLOUDPAYMENTS_INVALID_AMOUNT_ALERT', '❌ Некорректная сумма'),
+            show_alert=True,
+        )
         return
 
     amount_rub = amount_kopeks / 100

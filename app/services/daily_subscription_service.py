@@ -144,7 +144,11 @@ class DailySubscriptionService:
             return 'suspended'
 
         # Списываем средства
-        description = f'Суточная оплата тарифа «{tariff.name}»'
+        texts = get_texts(getattr(user, 'language', 'ru'))
+        description = texts.t(
+            'DAILY_SUBSCRIPTION_SERVICE_CHARGE_DESCRIPTION',
+            'Суточная оплата тарифа «{tariff_name}»',
+        ).format(tariff_name=tariff.name)
 
         try:
             deducted = await subtract_user_balance(
@@ -207,15 +211,19 @@ class DailySubscriptionService:
 
     async def _notify_daily_charge(self, user, subscription, amount_kopeks: int):
         """Уведомляет пользователя о суточном списании."""
-        get_texts(getattr(user, 'language', 'ru'))
+        texts = get_texts(getattr(user, 'language', 'ru'))
         amount_rubles = amount_kopeks / 100
         balance_rubles = user.balance_kopeks / 100
 
-        message = (
-            f'💳 <b>Суточное списание</b>\n\n'
-            f'Списано: {amount_rubles:.2f} ₽\n'
-            f'Остаток баланса: {balance_rubles:.2f} ₽\n\n'
-            f'Следующее списание через 24 часа.'
+        message = texts.t(
+            'DAILY_SUBSCRIPTION_SERVICE_DAILY_CHARGE_MESSAGE',
+            '💳 <b>Суточное списание</b>\n\n'
+            'Списано: {amount} ₽\n'
+            'Остаток баланса: {balance} ₽\n\n'
+            'Следующее списание через 24 часа.',
+        ).format(
+            amount=f'{amount_rubles:.2f}',
+            balance=f'{balance_rubles:.2f}',
         )
 
         # Use unified notification delivery service
@@ -234,22 +242,31 @@ class DailySubscriptionService:
         """Уведомляет пользователя о недостатке средств."""
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        get_texts(getattr(user, 'language', 'ru'))
+        texts = get_texts(getattr(user, 'language', 'ru'))
         required_rubles = required_amount / 100
         balance_rubles = user.balance_kopeks / 100
 
-        message = (
-            f'⚠️ <b>Подписка приостановлена</b>\n\n'
-            f'Недостаточно средств для суточной оплаты.\n\n'
-            f'Требуется: {required_rubles:.2f} ₽\n'
-            f'Баланс: {balance_rubles:.2f} ₽\n\n'
-            f'Пополните баланс, чтобы возобновить подписку.'
+        message = texts.t(
+            'DAILY_SUBSCRIPTION_SERVICE_INSUFFICIENT_BALANCE_MESSAGE',
+            '⚠️ <b>Подписка приостановлена</b>\n\n'
+            'Недостаточно средств для суточной оплаты.\n\n'
+            'Требуется: {required_amount} ₽\n'
+            'Баланс: {current_balance} ₽\n\n'
+            'Пополните баланс, чтобы возобновить подписку.',
+        ).format(
+            required_amount=f'{required_rubles:.2f}',
+            current_balance=f'{balance_rubles:.2f}',
         )
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='menu_balance')],
-                [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                [InlineKeyboardButton(text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'), callback_data='menu_balance')],
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'),
+                        callback_data='menu_subscription',
+                    )
+                ],
             ]
         )
 
@@ -451,12 +468,17 @@ class DailySubscriptionService:
 
     async def _notify_traffic_reset(self, user: User, subscription: Subscription, reset_gb: int):
         """Уведомляет пользователя о сбросе докупленного трафика."""
-        message = (
-            f'ℹ️ <b>Сброс докупленного трафика</b>\n\n'
-            f'Ваш докупленный трафик ({reset_gb} ГБ) был сброшен, '
-            f'так как прошло 30 дней с момента первой докупки.\n\n'
-            f'Текущий лимит трафика: {subscription.traffic_limit_gb} ГБ\n\n'
-            f'Вы можете докупить трафик снова в любое время.'
+        texts = get_texts(getattr(user, 'language', 'ru'))
+        message = texts.t(
+            'DAILY_SUBSCRIPTION_SERVICE_TRAFFIC_RESET_MESSAGE',
+            'ℹ️ <b>Сброс докупленного трафика</b>\n\n'
+            'Ваш докупленный трафик ({reset_gb} ГБ) был сброшен, '
+            'так как прошло 30 дней с момента первой докупки.\n\n'
+            'Текущий лимит трафика: {current_limit_gb} ГБ\n\n'
+            'Вы можете докупить трафик снова в любое время.',
+        ).format(
+            reset_gb=reset_gb,
+            current_limit_gb=subscription.traffic_limit_gb,
         )
 
         context = {

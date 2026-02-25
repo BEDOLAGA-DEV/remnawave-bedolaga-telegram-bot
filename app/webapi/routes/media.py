@@ -21,6 +21,7 @@ from fastapi import (
 )
 
 from app.config import settings
+from app.localization.texts import get_texts
 
 from ..dependencies import require_api_token
 from ..schemas.media import MediaUploadResponse
@@ -43,9 +44,13 @@ def _resolve_target_chat_id() -> int:
     if admin_ids:
         return admin_ids[0]
 
+    texts = get_texts('ru')
     raise HTTPException(
         status.HTTP_500_INTERNAL_SERVER_ERROR,
-        'Не настроен чат для загрузки файлов (ADMIN_NOTIFICATIONS_CHAT_ID или ADMIN_IDS)',
+        texts.t(
+            'WEBAPI_MEDIA_UPLOAD_CHAT_NOT_CONFIGURED',
+            'Не настроен чат для загрузки файлов (ADMIN_NOTIFICATIONS_CHAT_ID или ADMIN_IDS)',
+        ),
     )
 
 
@@ -61,13 +66,20 @@ async def upload_media(
     media_type: str = Form('document', description='Тип файла: photo, video или document'),
     caption: str | None = Form(None, description='Необязательная подпись к файлу'),
 ) -> MediaUploadResponse:
+    texts = get_texts('ru')
     media_type_normalized = (media_type or '').strip().lower()
     if media_type_normalized not in ALLOWED_MEDIA_TYPES:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Unsupported media type')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            texts.t('WEBAPI_MEDIA_UNSUPPORTED_MEDIA_TYPE', 'Unsupported media type'),
+        )
 
     file_bytes = await file.read()
     if not file_bytes:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'File is empty')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            texts.t('WEBAPI_MEDIA_FILE_IS_EMPTY', 'File is empty'),
+        )
 
     target_chat_id = _resolve_target_chat_id()
     upload = BufferedInputFile(file_bytes, filename=file.filename or 'upload')
@@ -111,7 +123,10 @@ async def upload_media(
         raise
     except Exception as error:
         logger.error('Failed to upload media', error=error)
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, 'Failed to upload media') from error
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            texts.t('WEBAPI_MEDIA_FAILED_TO_UPLOAD', 'Failed to upload media'),
+        ) from error
     finally:
         await bot.session.close()
 
@@ -121,6 +136,7 @@ async def download_media(
     file_id: str,
     _: Any = Security(require_api_token),
 ) -> Response:
+    texts = get_texts('ru')
     bot = Bot(
         token=settings.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
@@ -129,7 +145,10 @@ async def download_media(
     try:
         file = await bot.get_file(file_id)
         if not file.file_path:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, 'Media file not found')
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                texts.t('WEBAPI_MEDIA_FILE_NOT_FOUND', 'Media file not found'),
+            )
 
         buffer = await bot.download_file(file.file_path)
 
@@ -152,6 +171,9 @@ async def download_media(
         raise
     except Exception as error:  # pragma: no cover - неожиданные ошибки загрузки файла
         logger.error('Failed to download media', file_id=file_id, error=error)
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, 'Failed to download media') from error
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            texts.t('WEBAPI_MEDIA_FAILED_TO_DOWNLOAD', 'Failed to download media'),
+        ) from error
     finally:
         await bot.session.close()
