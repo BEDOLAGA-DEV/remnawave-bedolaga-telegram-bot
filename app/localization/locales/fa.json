@@ -824,7 +824,7 @@
     "ADMIN_USER_BLOCK": "🚫 مسدود کردن",
     "ADMIN_USER_DELETE": "🗑️ حذف",
     "ADMIN_USER_LAST_ACTIVITY_UNKNOWN": "نامشخص",
-    "ADMIN_USER_MANAGEMENT_PROFILE": "👤 <b>مدیریت کاربر</b>\n\n<b>اطلاعات اصلی:</b>\n• نام: {name}\n• ID: <code>{telegram_id}</code>\n• نام‌کاربری: @{username}\n• ثبت‌نام: {registered_at}\n• آخرین فعالیت: {last_activity}\n• وضعیت: {status}\n• موجودی: {balance}\n• ریفرال‌ها: {referrals_count}",
+    "ADMIN_USER_MANAGEMENT_PROFILE": "👤 <b>مدیریت کاربر</b>\n\n<b>اطلاعات اصلی:</b>\n• نام: {name}\n• ID: <code>{telegram_id}</code>\n• نام کاربری: {username}\n• وضعیت: {status}\n• زبان: {language}\n\n<b>مالی:</b>\n• موجودی: {balance}\n• تراکنش‌ها: {transactions}\n\n<b>فعالیت:</b>\n• ثبت‌نام: {registration}\n• آخرین فعالیت: {last_activity}\n• روزهای از ثبت‌نام: {registration_days}",
     "ADMIN_USER_MANAGEMENT_PROMO_GROUP": "<b>گروه تخفیف:</b>\n• نام: {name}\n• تخفیف سرور: {server_discount}%\n• تخفیف ترافیک: {traffic_discount}%\n• تخفیف دستگاه: {device_discount}%",
     "ADMIN_USER_MANAGEMENT_PROMO_GROUP_NONE": "<b>گروه تخفیف:</b> تعیین نشده",
     "ADMIN_USER_MANAGEMENT_SUBSCRIPTION": "<b>اشتراک:</b>\n• نوع: {type}\n• وضعیت: {status}\n• تا: {end_date}\n• ترافیک: {traffic}\n• دستگاه‌ها: {devices}\n• کشورها: {countries}",

@@ -325,19 +325,31 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
                 # Формируем блок информации о тарифе
                 is_daily = getattr(tariff, 'is_daily', False)
-                tariff_type_str = '🔄 Суточный' if is_daily else '📅 Периодный'
+                tariff_type_str = (
+                    texts.t('SUBSCRIPTION_TARIFF_TYPE_DAILY', '🔄 Суточный')
+                    if is_daily
+                    else texts.t('SUBSCRIPTION_TARIFF_TYPE_PERIODIC', '📅 Периодный')
+                )
 
                 tariff_info_lines = [
                     f'<b>📦 {tariff.name}</b>',
-                    f'Тип: {tariff_type_str}',
-                    f'Трафик: {tariff.traffic_limit_gb} ГБ' if tariff.traffic_limit_gb > 0 else 'Трафик: ∞ Безлимит',
-                    f'Устройства: {tariff.device_limit}',
+                    f'{texts.t("SUBSCRIPTION_TARIFF_TYPE_LABEL", "Тип")}: {tariff_type_str}',
+                    (
+                        f'{texts.t("TRAFFIC", "Трафик")}: {texts.format_traffic(tariff.traffic_limit_gb)}'
+                        if tariff.traffic_limit_gb > 0
+                        else texts.t('SUBSCRIPTION_TARIFF_TRAFFIC_UNLIMITED', 'Трафик: ∞ Безлимит')
+                    ),
+                    f'{texts.t("DEVICES", "Устройства")}: {tariff.device_limit}',
                 ]
 
                 if is_daily:
                     # Для суточного тарифа показываем цену и прогресс-бар
                     daily_price = getattr(tariff, 'daily_price_kopeks', 0) / 100
-                    tariff_info_lines.append(f'Цена: {daily_price:.2f} ₽/день')
+                    tariff_info_lines.append(
+                        texts.t('SUBSCRIPTION_TARIFF_DAILY_PRICE', 'Цена: {price} ₽/день').format(
+                            price=f'{daily_price:.2f}'
+                        )
+                    )
 
                     # Прогресс-бар до следующего списания
                     last_charge = getattr(subscription, 'last_daily_charge_at', None)
@@ -345,7 +357,9 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
                     if is_paused:
                         tariff_info_lines.append('')
-                        tariff_info_lines.append('⏸️ <b>Подписка приостановлена</b>')
+                        tariff_info_lines.append(
+                            texts.t('SUBSCRIPTION_DAILY_STATUS_PAUSED', '⏸️ <b>Подписка приостановлена</b>')
+                        )
                         # Показываем оставшееся время даже при паузе
                         if last_charge:
                             next_charge = last_charge + timedelta(hours=24)
@@ -354,8 +368,15 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
                                 time_until = next_charge - now
                                 hours_left = time_until.seconds // 3600
                                 minutes_left = (time_until.seconds % 3600) // 60
-                                tariff_info_lines.append(f'⏳ Осталось: {hours_left}ч {minutes_left}мин')
-                                tariff_info_lines.append('💤 Списание приостановлено')
+                                tariff_info_lines.append(
+                                    texts.t('SUBSCRIPTION_DAILY_TIME_LEFT', '⏳ Осталось: {hours}ч {minutes}мин').format(
+                                        hours=hours_left,
+                                        minutes=minutes_left,
+                                    )
+                                )
+                                tariff_info_lines.append(
+                                    texts.t('SUBSCRIPTION_DAILY_CHARGE_PAUSED', '💤 Списание приостановлено')
+                                )
                     elif last_charge:
                         next_charge = last_charge + timedelta(hours=24)
                         now = datetime.now(UTC)
@@ -377,11 +398,18 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
                             progress_bar = '▓' * filled + '░' * empty
 
                             tariff_info_lines.append('')
-                            tariff_info_lines.append(f'⏳ До списания: {hours_left}ч {minutes_left}мин')
+                            tariff_info_lines.append(
+                                texts.t('SUBSCRIPTION_DAILY_UNTIL_CHARGE', '⏳ До списания: {hours}ч {minutes}мин').format(
+                                    hours=hours_left,
+                                    minutes=minutes_left,
+                                )
+                            )
                             tariff_info_lines.append(f'[{progress_bar}] {percent:.0f}%')
                     else:
                         tariff_info_lines.append('')
-                        tariff_info_lines.append('⏳ Первое списание скоро')
+                        tariff_info_lines.append(
+                            texts.t('SUBSCRIPTION_DAILY_FIRST_CHARGE_SOON', '⏳ Первое списание скоро')
+                        )
 
                 tariff_info_block = '\n<blockquote expandable>' + '\n'.join(tariff_info_lines) + '</blockquote>'
 
@@ -423,7 +451,7 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
     if not show_devices:
         message_template = message_template.replace(
-            '\n📱 Устройства: {devices_used} / {device_limit}',
+            texts.t('SUBSCRIPTION_OVERVIEW_DEVICES_LINE', '\n📱 Устройства: {devices_used} / {device_limit}'),
             '',
         )
 
@@ -503,16 +531,30 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
                 # Формируем текст о времени
                 if days_remaining == 0:
-                    time_text = 'истекает сегодня'
+                    time_text = texts.t('SUBSCRIPTION_PURCHASED_TRAFFIC_EXPIRES_TODAY', 'истекает сегодня')
                 elif days_remaining == 1:
-                    time_text = 'остался 1 день'
+                    time_text = texts.t('SUBSCRIPTION_PURCHASED_TRAFFIC_ONE_DAY_LEFT', 'остался 1 день')
                 elif days_remaining < 5:
-                    time_text = f'осталось {days_remaining} дня'
+                    time_text = texts.t('SUBSCRIPTION_PURCHASED_TRAFFIC_FEW_DAYS_LEFT', 'осталось {days} дня').format(
+                        days=days_remaining
+                    )
                 else:
-                    time_text = f'осталось {days_remaining} дней'
+                    time_text = texts.t('SUBSCRIPTION_PURCHASED_TRAFFIC_DAYS_LEFT', 'осталось {days} дней').format(
+                        days=days_remaining
+                    )
 
-                message += f'• {purchase.traffic_gb} ГБ — {time_text}\n'
-                message += f'  {bar} {progress_percent:.0f}% | до {expire_date}\n'
+                message += texts.t('SUBSCRIPTION_PURCHASED_TRAFFIC_ITEM_LINE', '• {traffic} ГБ — {time_text}\n').format(
+                    traffic=purchase.traffic_gb,
+                    time_text=time_text,
+                )
+                message += texts.t(
+                    'SUBSCRIPTION_PURCHASED_TRAFFIC_PROGRESS_LINE',
+                    '  {bar} {percent:.0f}% | до {expire_date}\n',
+                ).format(
+                    bar=bar,
+                    percent=progress_percent,
+                    expire_date=expire_date,
+                )
 
             message += texts.t('SUBSCRIPTION_PURCHASED_TRAFFIC_FOOTER', '</blockquote>')
 
@@ -686,7 +728,12 @@ def _get_trial_payment_keyboard(language: str, can_pay_from_balance: bool = Fals
     # Кнопка оплаты с баланса (если хватает средств)
     if can_pay_from_balance:
         keyboard.append(
-            [types.InlineKeyboardButton(text='✅ Оплатить с баланса', callback_data='trial_pay_with_balance')]
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('PAID_TRIAL_PAY_BALANCE', '✅ Оплатить с баланса'),
+                    callback_data='trial_pay_with_balance',
+                )
+            ]
         )
 
     # Добавляем доступные методы оплаты
@@ -697,10 +744,16 @@ def _get_trial_payment_keyboard(language: str, can_pay_from_balance: bool = Fals
         yookassa_methods = []
         if settings.YOOKASSA_SBP_ENABLED:
             yookassa_methods.append(
-                types.InlineKeyboardButton(text='🏦 YooKassa (СБП)', callback_data='trial_payment_yookassa_sbp')
+                types.InlineKeyboardButton(
+                    text=texts.t('PAID_TRIAL_YOOKASSA_SBP_BUTTON', '🏦 YooKassa (СБП)'),
+                    callback_data='trial_payment_yookassa_sbp',
+                )
             )
         yookassa_methods.append(
-            types.InlineKeyboardButton(text='💳 YooKassa (Карта)', callback_data='trial_payment_yookassa')
+            types.InlineKeyboardButton(
+                text=texts.t('PAID_TRIAL_YOOKASSA_CARD_BUTTON', '💳 YooKassa (Карта)'),
+                callback_data='trial_payment_yookassa',
+            )
         )
         if yookassa_methods:
             keyboard.append(yookassa_methods)
@@ -740,16 +793,28 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
 
     # Проверка ограничения на покупку/продление подписки
     if getattr(db_user, 'restriction_subscription', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT',
+            'Действие ограничено администратором',
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'),
+                        url=support_url,
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Активация подписки ограничена</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_SUBSCRIPTION_BLOCKED',
+                '🚫 <b>Покупка/продление подписки ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
         await callback.answer()
@@ -788,7 +853,11 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
         user_balance_kopeks = getattr(db_user, 'balance_kopeks', 0) or 0
         can_pay_from_balance = user_balance_kopeks >= trial_price_kopeks
 
-        traffic_label = 'Безлимит' if settings.TRIAL_TRAFFIC_LIMIT_GB == 0 else f'{settings.TRIAL_TRAFFIC_LIMIT_GB} ГБ'
+        traffic_label = (
+            texts.t('TRAFFIC_UNLIMITED_SHORT', 'Безлимит')
+            if settings.TRIAL_TRAFFIC_LIMIT_GB == 0
+            else texts.format_traffic(settings.TRIAL_TRAFFIC_LIMIT_GB)
+        )
 
         message_lines = [
             texts.t('PAID_TRIAL_HEADER', '⚡ <b>Пробная подписка</b>'),
@@ -884,7 +953,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
             charged_amount = await charge_trial_activation_if_required(
                 db,
                 db_user,
-                description='Активация триала через бота',
+                description=texts.t('TRIAL_PAYMENT_DESCRIPTION', 'Оплата пробной подписки'),
             )
         except TrialPaymentInsufficientFunds as error:
             rollback_success = await rollback_trial_subscription_activation(db, subscription)
@@ -960,7 +1029,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                 db_user,
                 subscription,
                 charged_amount,
-                refund_description='Возврат оплаты за активацию триала через бота',
+                refund_description=texts.t('TRIAL_REFUND_DESCRIPTION', 'Возврат за неудачную активацию триала'),
             )
             if not revert_result.subscription_rolled_back:
                 failure_text = texts.t(
@@ -995,7 +1064,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                 db_user,
                 subscription,
                 charged_amount,
-                refund_description='Возврат оплаты за активацию триала через бота',
+                refund_description=texts.t('TRIAL_REFUND_DESCRIPTION', 'Возврат за неудачную активацию триала'),
             )
             if not revert_result.subscription_rolled_back:
                 failure_text = texts.t(
@@ -1196,7 +1265,10 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                 parse_mode='HTML',
             )
         else:
-            trial_success_text = f"{texts.TRIAL_ACTIVATED}\n\n⚠️ Ссылка генерируется, попробуйте перейти в раздел 'Моя подписка' через несколько секунд."
+            trial_success_text = texts.t(
+                'SUBSCRIPTION_LINK_GENERATING_NOTICE',
+                "{purchase_text}\n\nСсылка генерируется, перейдите в раздел 'Моя подписка' через несколько секунд.",
+            ).format(purchase_text=texts.TRIAL_ACTIVATED)
             trial_success_text += payment_note
             await callback.message.edit_text(
                 trial_success_text,
@@ -1215,7 +1287,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                 db_user,
                 subscription,
                 charged_amount,
-                refund_description='Возврат оплаты за активацию триала через бота',
+                refund_description=texts.t('TRIAL_REFUND_DESCRIPTION', 'Возврат за неудачную активацию триала'),
             )
             if not revert_result.subscription_rolled_back:
                 failure_text = texts.t(
@@ -1356,12 +1428,20 @@ async def save_cart_and_redirect_to_topup(
     await user_cart_service.save_user_cart(db_user.id, cart_data)
 
     await callback.message.edit_text(
-        f'💰 Недостаточно средств для оформления подписки\n\n'
-        f'Требуется: {texts.format_price(missing_amount)}\n'
-        f'У вас: {texts.format_price(db_user.balance_kopeks)}\n\n'
-        f'🛒 Ваша корзина сохранена!\n'
-        f'После пополнения баланса вы сможете вернуться к оформлению подписки.\n\n'
-        f'Выберите способ пополнения:',
+        texts.t(
+            'SUBSCRIPTION_CART_SAVED_TOPUP_MESSAGE',
+            (
+                '💰 Недостаточно средств для оформления подписки\n\n'
+                'Требуется: {required}\n'
+                'У вас: {balance}\n\n'
+                '🛒 Ваша корзина сохранена!\n'
+                'После пополнения баланса вы сможете вернуться к оформлению подписки.\n\n'
+                'Выберите способ пополнения:'
+            ),
+        ).format(
+            required=texts.format_price(missing_amount),
+            balance=texts.format_price(db_user.balance_kopeks),
+        ),
         reply_markup=get_payment_methods_keyboard_with_cart(
             db_user.language,
             missing_amount,
@@ -1371,14 +1451,17 @@ async def save_cart_and_redirect_to_topup(
 
 
 async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
+
     # Получаем данные корзины из Redis
     cart_data = await user_cart_service.get_user_cart(db_user.id)
 
     if not cart_data:
-        await callback.answer('❌ Сохраненная корзина не найдена', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_SAVED_CART_NOT_FOUND', '❌ Сохраненная корзина не найдена'),
+            show_alert=True,
+        )
         return
-
-    texts = get_texts(db_user.language)
 
     # Проверяем режим корзины - если это тарифная корзина, перенаправляем на соответствующий обработчик
     cart_mode = cart_data.get('cart_mode')
@@ -1399,7 +1482,10 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
     prepared_cart_data = dict(cart_data)
 
     if 'period_days' not in prepared_cart_data:
-        await callback.answer('❌ Корзина повреждена. Оформите подписку заново.', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_SAVED_CART_CORRUPTED', '❌ Корзина повреждена. Оформите подписку заново.'),
+            show_alert=True,
+        )
         await user_cart_service.delete_user_cart(db_user.id)
         return
 
@@ -1453,10 +1539,20 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
             missing_amount,
         )
         insufficient_text = (
-            f'❌ Все еще недостаточно средств\n\n'
-            f'Требуется: {texts.format_price(total_price)}\n'
-            f'У вас: {texts.format_price(db_user.balance_kopeks)}\n'
-            f'Не хватает: {texts.format_price(missing_amount)}'
+            texts.t(
+                'ADDON_INSUFFICIENT_FUNDS_MESSAGE',
+                (
+                    '⚠️ <b>Недостаточно средств</b>\n\n'
+                    'Стоимость услуги: {required}\n'
+                    'На балансе: {balance}\n'
+                    'Не хватает: {missing}\n\n'
+                    'Выберите способ пополнения. Сумма подставится автоматически.'
+                ),
+            ).format(
+                required=texts.format_price(total_price),
+                balance=texts.format_price(db_user.balance_kopeks),
+                missing=texts.format_price(missing_amount),
+            )
         )
 
         if _message_needs_update(callback.message, insufficient_text, insufficient_keyboard):
@@ -1465,7 +1561,9 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
                 reply_markup=insufficient_keyboard,
             )
         else:
-            await callback.answer('ℹ️ Пополните баланс, чтобы завершить оформление.')
+            await callback.answer(
+                texts.t('SUBSCRIPTION_CART_TOPUP_REQUIRED_ALERT', 'ℹ️ Пополните баланс, чтобы завершить оформление.')
+            )
         return
 
     countries = await _get_available_countries(db_user.promo_group_id)
@@ -1483,30 +1581,46 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
         traffic_value = prepared_cart_data.get('traffic_gb')
         if traffic_value is None:
             traffic_value = settings.get_fixed_traffic_limit()
-        traffic_display = 'Безлимитный' if traffic_value == 0 else f'{traffic_value} ГБ'
+        traffic_display = (
+            texts.t('SUBSCRIPTION_TRAFFIC_DISPLAY_UNLIMITED', 'Безлимитный')
+            if traffic_value == 0
+            else texts.format_traffic(traffic_value)
+        )
     else:
         traffic_value = prepared_cart_data.get('traffic_gb', 0) or 0
-        traffic_display = 'Безлимитный' if traffic_value == 0 else f'{traffic_value} ГБ'
+        traffic_display = (
+            texts.t('SUBSCRIPTION_TRAFFIC_DISPLAY_UNLIMITED', 'Безлимитный')
+            if traffic_value == 0
+            else texts.format_traffic(traffic_value)
+        )
 
     summary_lines = [
-        '🛒 Восстановленная корзина',
+        texts.t('SUBSCRIPTION_RESTORED_CART_TITLE', '🛒 Восстановленная корзина'),
         '',
-        f'📅 Период: {period_display}',
-        f'📊 Трафик: {traffic_display}',
-        f'🌍 Страны: {", ".join(selected_countries_names)}',
+        texts.t('SUBSCRIPTION_RESTORED_CART_PERIOD_LINE', '📅 Период: {period}').format(period=period_display),
+        texts.t('SUBSCRIPTION_RESTORED_CART_TRAFFIC_LINE', '📊 Трафик: {traffic}').format(traffic=traffic_display),
+        texts.t('SUBSCRIPTION_RESTORED_CART_COUNTRIES_LINE', '🌍 Страны: {countries}').format(
+            countries=', '.join(selected_countries_names)
+        ),
     ]
 
     if settings.is_devices_selection_enabled():
         devices_value = prepared_cart_data.get('devices')
         if devices_value is not None:
-            summary_lines.append(f'📱 Устройства: {devices_value}')
+            summary_lines.append(
+                texts.t('SUBSCRIPTION_RESTORED_CART_DEVICES_LINE', '📱 Устройства: {devices}').format(
+                    devices=devices_value
+                )
+            )
 
     summary_lines.extend(
         [
             '',
-            f'💎 Общая стоимость: {texts.format_price(total_price)}',
+            texts.t('SUBSCRIPTION_RESTORED_CART_TOTAL_LINE', '💎 Общая стоимость: {total}').format(
+                total=texts.format_price(total_price)
+            ),
             '',
-            'Подтверждаете покупку?',
+            texts.t('SUBSCRIPTION_RESTORED_CART_CONFIRM', 'Подтверждаете покупку?'),
         ]
     )
 
@@ -1521,7 +1635,7 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
     if _message_needs_update(callback.message, summary_text, confirm_keyboard):
         await callback.message.edit_text(summary_text, reply_markup=confirm_keyboard, parse_mode='HTML')
 
-    await callback.answer('✅ Корзина восстановлена!')
+    await callback.answer(texts.t('SUBSCRIPTION_CART_RESTORED_ALERT', '✅ Корзина восстановлена!'))
 
 
 async def handle_extend_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
@@ -1534,7 +1648,10 @@ async def handle_extend_subscription(callback: types.CallbackQuery, db_user: Use
     subscription = db_user.subscription
 
     if not subscription or subscription.is_trial:
-        await callback.answer('⚠ Продление доступно только для платных подписок', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_EXTEND_PAID_ONLY', '⚠ Продление доступно только для платных подписок'),
+            show_alert=True,
+        )
         return
 
     # В режиме тарифов проверяем наличие tariff_id
@@ -1556,13 +1673,23 @@ async def handle_extend_subscription(callback: types.CallbackQuery, db_user: Use
             return
         # У подписки нет тарифа - предлагаем выбрать тариф
         await callback.message.edit_text(
-            '📦 <b>Выберите тариф для продления</b>\n\n'
-            'Ваша текущая подписка была создана до введения тарифов.\n'
-            'Для продления необходимо выбрать один из доступных тарифов.\n\n'
-            '⚠️ Ваша текущая подписка продолжит действовать до окончания срока.',
+            texts.t(
+                'SUBSCRIPTION_EXTEND_SELECT_TARIFF',
+                (
+                    '📦 <b>Выберите тариф для продления</b>\n\n'
+                    'Ваша текущая подписка была создана до введения тарифов.\n'
+                    'Для продления необходимо выбрать один из доступных тарифов.\n\n'
+                    '⚠️ Ваша текущая подписка продолжит действовать до окончания срока.'
+                ),
+            ),
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='📦 Выбрать тариф', callback_data='tariff_switch')],
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('SUBSCRIPTION_EXTEND_SELECT_TARIFF_BUTTON', '📦 Выбрать тариф'),
+                            callback_data='tariff_switch',
+                        )
+                    ],
                     [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
                 ]
             ),
@@ -1653,7 +1780,10 @@ async def handle_extend_subscription(callback: types.CallbackQuery, db_user: Use
             continue
 
     if not renewal_prices:
-        await callback.answer('⚠ Нет доступных периодов для продления', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_EXTEND_NO_PERIODS', '⚠ Нет доступных периодов для продления'),
+            show_alert=True,
+        )
         return
 
     prices_text = ''
@@ -1699,22 +1829,30 @@ async def handle_extend_subscription(callback: types.CallbackQuery, db_user: Use
     )
 
     renewal_lines = [
-        '⏰ Продление подписки',
+        texts.t('SUBSCRIPTION_EXTEND_TITLE', '⏰ Продление подписки'),
         '',
-        f'Осталось дней: {subscription.days_left}',
+        texts.t('SUBSCRIPTION_EXTEND_DAYS_LEFT_LINE', 'Осталось дней: {days}').format(days=subscription.days_left),
         '',
-        '<b>Ваша текущая конфигурация:</b>',
-        f'🌍 Серверов: {len(subscription.connected_squads)}',
-        f'📊 Трафик: {texts.format_traffic(subscription.traffic_limit_gb)}',
+        texts.t('SUBSCRIPTION_EXTEND_CURRENT_CONFIG_TITLE', '<b>Ваша текущая конфигурация:</b>'),
+        texts.t('SUBSCRIPTION_EXTEND_SERVERS_LINE', '🌍 Серверов: {count}').format(
+            count=len(subscription.connected_squads)
+        ),
+        texts.t('SUBSCRIPTION_EXTEND_TRAFFIC_LINE', '📊 Трафик: {traffic}').format(
+            traffic=texts.format_traffic(subscription.traffic_limit_gb)
+        ),
     ]
 
     if settings.is_devices_selection_enabled():
-        renewal_lines.append(f'📱 Устройств: {subscription.device_limit}')
+        renewal_lines.append(
+            texts.t('SUBSCRIPTION_EXTEND_DEVICES_LINE', '📱 Устройств: {devices}').format(
+                devices=subscription.device_limit
+            )
+        )
 
     renewal_lines.extend(
         [
             '',
-            '<b>Выберите период продления:</b>',
+            texts.t('SUBSCRIPTION_EXTEND_CHOOSE_PERIOD', '<b>Выберите период продления:</b>'),
             prices_text.rstrip(),
             '',
         ]
@@ -1734,7 +1872,10 @@ async def handle_extend_subscription(callback: types.CallbackQuery, db_user: Use
     if promo_offer_hint:
         message_text += f'{promo_offer_hint}\n\n'
 
-    message_text += '💡 <i>Цена включает все ваши текущие серверы и настройки</i>'
+    message_text += texts.t(
+        'SUBSCRIPTION_EXTEND_PRICE_INCLUDE_NOTE',
+        '💡 <i>Цена включает все ваши текущие серверы и настройки</i>',
+    )
 
     await callback.message.edit_text(
         message_text,
@@ -1760,7 +1901,7 @@ async def confirm_extend_subscription(callback: types.CallbackQuery, db_user: Us
     subscription = db_user.subscription
 
     if not subscription:
-        await callback.answer('⚠ У вас нет активной подписки', show_alert=True)
+        await callback.answer(texts.t('NO_SUBSCRIPTION_ERROR', '❌ У вас нет активной подписки'), show_alert=True)
         return
 
     months_in_period = calculate_months_from_days(days)
@@ -1851,7 +1992,10 @@ async def confirm_extend_subscription(callback: types.CallbackQuery, db_user: Us
 
         if not is_valid:
             logger.error('Ошибка в расчете цены продления для пользователя', telegram_id=db_user.telegram_id)
-            await callback.answer('Ошибка расчета цены. Обратитесь в поддержку.', show_alert=True)
+            await callback.answer(
+                texts.t('SUBSCRIPTION_EXTEND_PRICE_CALC_ERROR', 'Ошибка расчета цены. Обратитесь в поддержку.'),
+                show_alert=True,
+            )
             return
 
         logger.info(
@@ -1904,7 +2048,10 @@ async def confirm_extend_subscription(callback: types.CallbackQuery, db_user: Us
 
     except Exception as e:
         logger.error('⚠ ОШИБКА РАСЧЕТА ЦЕНЫ', error=e)
-        await callback.answer('⚠ Ошибка расчета стоимости', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_EXTEND_COST_CALC_ERROR', '⚠ Ошибка расчета стоимости'),
+            show_alert=True,
+        )
         return
 
     if db_user.balance_kopeks < price:
@@ -1935,7 +2082,10 @@ async def confirm_extend_subscription(callback: types.CallbackQuery, db_user: Us
             'saved_cart': True,
             'missing_amount': missing_kopeks,
             'return_to_cart': True,
-            'description': f'Продление подписки на {days} дней',
+            'description': texts.t(
+                'CRYPTOBOT_RENEWAL_DESCRIPTION',
+                'Продление подписки на {period_days} дней',
+            ).format(period_days=days),
             'consume_promo_offer': bool(promo_component['discount'] > 0),
         }
 
@@ -1958,12 +2108,15 @@ async def confirm_extend_subscription(callback: types.CallbackQuery, db_user: Us
             db,
             db_user,
             price,
-            f'Продление подписки на {days} дней',
+            texts.t(
+                'CRYPTOBOT_RENEWAL_DESCRIPTION',
+                'Продление подписки на {period_days} дней',
+            ).format(period_days=days),
             consume_promo_offer=promo_component['discount'] > 0,
         )
 
         if not success:
-            await callback.answer('⚠ Ошибка списания средств', show_alert=True)
+            await callback.answer(texts.t('PAYMENT_CHARGE_ERROR', '⚠ Ошибка списания средств'), show_alert=True)
             return
 
         current_time = datetime.now(UTC)
@@ -2027,7 +2180,7 @@ async def confirm_extend_subscription(callback: types.CallbackQuery, db_user: Us
                 db,
                 subscription,
                 reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
-                reset_reason='продление подписки',
+                reset_reason=texts.t('SUBSCRIPTION_RESET_REASON_RENEWAL', 'продление подписки'),
             )
             if remnawave_result:
                 logger.info('✅ RemnaWave обновлен успешно')
@@ -2041,7 +2194,13 @@ async def confirm_extend_subscription(callback: types.CallbackQuery, db_user: Us
             user_id=db_user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=price,
-            description=f'Продление подписки на {days} дней ({months_in_period} мес)',
+            description=texts.t(
+                'SUBSCRIPTION_RENEWAL_DESCRIPTION_WITH_MONTHS',
+                'Продление подписки на {period_days} дней ({months} мес)',
+            ).format(
+                period_days=days,
+                months=months_in_period,
+            ),
         )
 
         try:
@@ -2059,22 +2218,32 @@ async def confirm_extend_subscription(callback: types.CallbackQuery, db_user: Us
         except Exception as e:
             logger.error('Ошибка отправки уведомления о продлении', error=e)
 
-        success_message = (
-            '✅ Подписка успешно продлена!\n\n'
-            f'⏰ Добавлено: {days} дней\n'
-            f'Действует до: {format_local_datetime(refreshed_end_date, "%d.%m.%Y %H:%M")}\n\n'
-            f'💰 Списано: {texts.format_price(price)}'
+        success_message = texts.t(
+            'SUBSCRIPTION_EXTEND_SUCCESS_MESSAGE',
+            '✅ Подписка успешно продлена!\n\n⏰ Добавлено: {days} дней\nДействует до: {end_date}\n\n💰 Списано: {amount}',
+        ).format(
+            days=days,
+            end_date=format_local_datetime(refreshed_end_date, '%d.%m.%Y %H:%M'),
+            amount=texts.format_price(price),
         )
 
         # Добавляем уведомление о сбросе трафика
         if traffic_was_reset:
             fixed_limit = settings.get_fixed_traffic_limit()
-            success_message += f'\n\n📊 Трафик сброшен до {fixed_limit} ГБ'
+            success_message += '\n\n' + texts.t(
+                'SUBSCRIPTION_EXTEND_TRAFFIC_RESET_NOTE',
+                '📊 Трафик сброшен до {traffic}',
+            ).format(
+                traffic=texts.format_traffic(fixed_limit)
+            )
 
         if promo_component['discount'] > 0:
-            success_message += (
-                f' (включая доп. скидку {promo_component["percent"]}%:'
-                f' -{texts.format_price(promo_component["discount"])})'
+            success_message += texts.t(
+                'SUBSCRIPTION_EXTEND_PROMO_DISCOUNT_NOTE',
+                ' (включая доп. скидку {percent}%: -{discount})',
+            ).format(
+                percent=promo_component['percent'],
+                discount=texts.format_price(promo_component['discount']),
             )
 
         await callback.message.edit_text(success_message, reply_markup=get_back_keyboard(db_user.language))
@@ -2093,7 +2262,10 @@ async def confirm_extend_subscription(callback: types.CallbackQuery, db_user: Us
         logger.error('TRACEBACK', format_exc=traceback.format_exc())
 
         await callback.message.edit_text(
-            '⚠ Произошла ошибка при продлении подписки. Обратитесь в поддержку.',
+            texts.t(
+                'SUBSCRIPTION_EXTEND_GENERIC_ERROR',
+                '⚠ Произошла ошибка при продлении подписки. Обратитесь в поддержку.',
+            ),
             reply_markup=get_back_keyboard(db_user.language),
         )
 
@@ -2128,7 +2300,10 @@ async def select_period(callback: types.CallbackQuery, state: FSMContext, db_use
         available_packages = [pkg for pkg in settings.get_traffic_packages() if pkg['enabled']]
 
         if not available_packages:
-            await callback.answer('⚠️ Пакеты трафика не настроены', show_alert=True)
+            await callback.answer(
+                texts.t('TRAFFIC_PACKAGES_NOT_CONFIGURED', '⚠️ Пакеты трафика не настроены'),
+                show_alert=True,
+            )
             return
 
         await callback.message.edit_text(
@@ -2233,7 +2408,8 @@ async def select_devices(callback: types.CallbackQuery, state: FSMContext, db_us
 
 async def devices_continue(callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession):
     if callback.data != 'devices_continue':
-        await callback.answer('⚠️ Некорректный запрос', show_alert=True)
+        texts = get_texts(db_user.language)
+        await callback.answer(texts.t('BALANCE_INVALID_REQUEST_ALERT', '❌ Некорректный запрос'), show_alert=True)
         return
 
     if await present_subscription_summary(callback, state, db_user):
@@ -2243,17 +2419,31 @@ async def devices_continue(callback: types.CallbackQuery, state: FSMContext, db_
 async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession):
     # Проверка ограничения на покупку/продление подписки
     if getattr(db_user, 'restriction_subscription', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
         texts = get_texts(db_user.language)
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT',
+            'Действие ограничено администратором',
+        )
+        restriction_message = texts.t(
+            'USER_RESTRICTION_SUBSCRIPTION_BLOCKED',
+            '🚫 <b>Покупка/продление подписки ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+        ).format(reason=reason)
+
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'),
+                        url=support_url,
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Покупка/продление подписки ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            restriction_message,
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
         await callback.answer()
@@ -2443,7 +2633,10 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 price_difference=price_difference / 100,
                 max_allowed_increase=max_allowed_increase / 100,
             )
-            await callback.answer('Цена изменилась. Пожалуйста, начните оформление заново.', show_alert=True)
+            await callback.answer(
+                texts.t('SUBSCRIPTION_PRICE_CHANGED_RESTART', 'Цена изменилась. Пожалуйста, начните оформление заново.'),
+                show_alert=True,
+            )
             return
         if price_difference > 100:  # допуск 1₽
             logger.warning(
@@ -2543,7 +2736,12 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
             db,
             db_user,
             final_price,
-            f'Покупка подписки на {data["period_days"]} дней',
+            texts.t(
+                'SUBSCRIPTION_PURCHASE_DESCRIPTION',
+                'Покупка подписки на {period_days} дней',
+            ).format(
+                period_days=data['period_days'],
+            ),
             consume_promo_offer=promo_offer_discount_value > 0,
         )
 
@@ -2739,14 +2937,14 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 db,
                 subscription,
                 reset_traffic=True,
-                reset_reason='покупка подписки',
+                reset_reason=texts.t('SUBSCRIPTION_RESET_REASON_PURCHASE', 'покупка подписки'),
             )
         else:
             remnawave_user = await subscription_service.create_remnawave_user(
                 db,
                 subscription,
                 reset_traffic=True,
-                reset_reason='покупка подписки',
+                reset_reason=texts.t('SUBSCRIPTION_RESET_REASON_PURCHASE', 'покупка подписки'),
             )
 
         if not remnawave_user:
@@ -2755,7 +2953,10 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 db,
                 subscription,
                 reset_traffic=True,
-                reset_reason='покупка подписки (повторная попытка)',
+                reset_reason=texts.t(
+                    'SUBSCRIPTION_RESET_REASON_PURCHASE_RETRY',
+                    'покупка подписки (повторная попытка)',
+                ),
             )
 
         transaction = await create_transaction(
@@ -2763,7 +2964,13 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
             user_id=db_user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=final_price,
-            description=f'Подписка на {period_days} дней ({months_in_period} мес)',
+            description=texts.t(
+                'SUBSCRIPTION_PURCHASE_DESCRIPTION_WITH_MONTHS',
+                'Подписка на {period_days} дней ({months} мес)',
+            ).format(
+                period_days=period_days,
+                months=months_in_period,
+            ),
         )
 
         try:
@@ -3086,7 +3293,7 @@ async def handle_subscription_settings(callback: types.CallbackQuery, db_user: U
 
     if not show_devices:
         settings_template = settings_template.replace(
-            '\n📱 Устройства: {devices_used} / {devices_limit}',
+            texts.t('SUBSCRIPTION_SETTINGS_DEVICES_LINE', '\n📱 Устройства: {devices_used} / {devices_limit}'),
             '',
         )
 
@@ -3113,6 +3320,8 @@ async def handle_subscription_settings(callback: types.CallbackQuery, db_user: U
 
 
 async def clear_saved_cart(callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
+
     # Очищаем как FSM, так и Redis
     await state.clear()
     await user_cart_service.delete_user_cart(db_user.id)
@@ -3121,7 +3330,7 @@ async def clear_saved_cart(callback: types.CallbackQuery, state: FSMContext, db_
 
     await show_main_menu(callback, db_user, db)
 
-    await callback.answer('🗑️ Корзина очищена')
+    await callback.answer(texts.t('SUBSCRIPTION_CART_CLEARED_ALERT', '🗑️ Корзина очищена'))
 
 
 # ============== ХЕНДЛЕР ПАУЗЫ СУТОЧНОЙ ПОДПИСКИ ==============
@@ -3167,7 +3376,9 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
             await callback.answer(
                 texts.t(
                     'INSUFFICIENT_BALANCE_FOR_RESUME',
-                    f'❌ Недостаточно средств для возобновления. Требуется: {settings.format_price(daily_price)}',
+                    '❌ Недостаточно средств для возобновления. Требуется: {required}',
+                ).format(
+                    required=settings.format_price(daily_price),
                 ),
                 show_alert=True,
             )
@@ -3235,7 +3446,7 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
 
     trial_price_kopeks = get_trial_activation_charge_amount()
     if trial_price_kopeks <= 0:
-        await callback.answer('❌ Ошибка: триал бесплатный', show_alert=True)
+        await callback.answer(texts.t('PAID_TRIAL_FREE_TRIAL_ERROR', '❌ Ошибка: триал бесплатный'), show_alert=True)
         return
 
     user_balance_kopeks = getattr(db_user, 'balance_kopeks', 0) or 0
@@ -3407,7 +3618,10 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
                 parse_mode='HTML',
             )
         else:
-            trial_success_text = f"{texts.TRIAL_ACTIVATED}\n\n⚠️ Ссылка генерируется, попробуйте перейти в раздел 'Моя подписка' через несколько секунд."
+            trial_success_text = texts.t(
+                'SUBSCRIPTION_LINK_GENERATING_NOTICE',
+                "{purchase_text}\n\nСсылка генерируется, перейдите в раздел 'Моя подписка' через несколько секунд.",
+            ).format(purchase_text=texts.TRIAL_ACTIVATED)
             trial_success_text += payment_note
 
             await callback.message.edit_text(
@@ -3581,7 +3795,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
 
     trial_price_kopeks = get_trial_activation_charge_amount()
     if trial_price_kopeks <= 0:
-        await callback.answer('❌ Ошибка: триал бесплатный', show_alert=True)
+        await callback.answer(texts.t('PAID_TRIAL_FREE_TRIAL_ERROR', '❌ Ошибка: триал бесплатный'), show_alert=True)
         return
 
     # Определяем метод оплаты
@@ -3608,10 +3822,17 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
         )
 
         if not pending_subscription:
-            await callback.answer('❌ Не удалось подготовить заказ. Попробуйте позже.', show_alert=True)
+            await callback.answer(
+                texts.t('PAID_TRIAL_ORDER_PREPARE_ERROR', '❌ Не удалось подготовить заказ. Попробуйте позже.'),
+                show_alert=True,
+            )
             return
 
-        traffic_label = 'Безлимит' if settings.TRIAL_TRAFFIC_LIMIT_GB == 0 else f'{settings.TRIAL_TRAFFIC_LIMIT_GB} ГБ'
+        traffic_label = (
+            texts.t('TRAFFIC_UNLIMITED_SHORT', 'Безлимит')
+            if settings.TRIAL_TRAFFIC_LIMIT_GB == 0
+            else texts.format_traffic(settings.TRIAL_TRAFFIC_LIMIT_GB)
+        )
 
         if payment_method == 'stars':
             # Оплата через Telegram Stars
@@ -3662,7 +3883,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             )
 
             if not payment_result or not payment_result.get('confirmation_url'):
-                await callback.answer('❌ Не удалось создать платеж. Попробуйте позже.', show_alert=True)
+                await callback.answer(
+                    texts.t('PAYMENT_CREATE_ERROR', '❌ Не удалось создать платёж. Попробуйте позже.'),
+                    show_alert=True,
+                )
                 return
 
             qr_url = payment_result.get('qr_code_url') or payment_result.get('confirmation_url')
@@ -3676,7 +3900,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 ).format(amount=settings.format_price(trial_price_kopeks)),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='💳 Оплатить', url=qr_url)],
+                        [InlineKeyboardButton(text=texts.t('PAY_NOW_BUTTON', '💳 Оплатить'), url=qr_url)],
                         [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
                     ]
                 ),
@@ -3700,7 +3924,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             )
 
             if not payment_result or not payment_result.get('confirmation_url'):
-                await callback.answer('❌ Не удалось создать платеж. Попробуйте позже.', show_alert=True)
+                await callback.answer(
+                    texts.t('PAYMENT_CREATE_ERROR', '❌ Не удалось создать платёж. Попробуйте позже.'),
+                    show_alert=True,
+                )
                 return
 
             await callback.message.edit_text(
@@ -3710,7 +3937,12 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 ).format(amount=settings.format_price(trial_price_kopeks)),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='💳 Оплатить', url=payment_result['confirmation_url'])],
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('PAY_NOW_BUTTON', '💳 Оплатить'),
+                                url=payment_result['confirmation_url'],
+                            )
+                        ],
                         [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
                     ]
                 ),
@@ -3755,7 +3987,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             )
 
             if not payment_result or not payment_url:
-                await callback.answer('❌ Не удалось создать платеж. Попробуйте позже.', show_alert=True)
+                await callback.answer(
+                    texts.t('PAYMENT_CREATE_ERROR', '❌ Не удалось создать платёж. Попробуйте позже.'),
+                    show_alert=True,
+                )
                 return
 
             await callback.message.edit_text(
@@ -3767,7 +4002,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 ).format(amount=settings.format_price(trial_price_kopeks)),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='🪙 Оплатить', url=payment_url)],
+                        [InlineKeyboardButton(text=texts.t('PAY_NOW_BUTTON', '💳 Оплатить'), url=payment_url)],
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
@@ -3793,7 +4028,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             )
 
             if not payment_result or not payment_result.get('payment_url'):
-                await callback.answer('❌ Не удалось создать платеж. Попробуйте позже.', show_alert=True)
+                await callback.answer(
+                    texts.t('PAYMENT_CREATE_ERROR', '❌ Не удалось создать платёж. Попробуйте позже.'),
+                    show_alert=True,
+                )
                 return
 
             await callback.message.edit_text(
@@ -3805,7 +4043,12 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 ).format(amount=settings.format_price(trial_price_kopeks)),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='🪙 Оплатить', url=payment_result['payment_url'])],
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('PAY_NOW_BUTTON', '💳 Оплатить'),
+                                url=payment_result['payment_url'],
+                            )
+                        ],
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
@@ -3831,7 +4074,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             )
 
             if not payment_result or not payment_result.get('payment_url'):
-                await callback.answer('❌ Не удалось создать платеж. Попробуйте позже.', show_alert=True)
+                await callback.answer(
+                    texts.t('PAYMENT_CREATE_ERROR', '❌ Не удалось создать платёж. Попробуйте позже.'),
+                    show_alert=True,
+                )
                 return
 
             mulenpay_name = settings.get_mulenpay_display_name()
@@ -3842,7 +4088,12 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 ).format(name=mulenpay_name, amount=settings.format_price(trial_price_kopeks)),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='💳 Оплатить', url=payment_result['payment_url'])],
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('PAY_NOW_BUTTON', '💳 Оплатить'),
+                                url=payment_result['payment_url'],
+                            )
+                        ],
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
@@ -3868,7 +4119,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             )
 
             if not payment_result or not payment_result.get('payment_url'):
-                await callback.answer('❌ Не удалось создать платеж. Попробуйте позже.', show_alert=True)
+                await callback.answer(
+                    texts.t('PAYMENT_CREATE_ERROR', '❌ Не удалось создать платёж. Попробуйте позже.'),
+                    show_alert=True,
+                )
                 return
 
             await callback.message.edit_text(
@@ -3880,7 +4134,12 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 ).format(amount=settings.format_price(trial_price_kopeks)),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='💳 Оплатить', url=payment_result['payment_url'])],
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('PAY_NOW_BUTTON', '💳 Оплатить'),
+                                url=payment_result['payment_url'],
+                            )
+                        ],
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
@@ -3906,7 +4165,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             )
 
             if not payment_result or not payment_result.get('payment_url'):
-                await callback.answer('❌ Не удалось создать платеж. Попробуйте позже.', show_alert=True)
+                await callback.answer(
+                    texts.t('PAYMENT_CREATE_ERROR', '❌ Не удалось создать платёж. Попробуйте позже.'),
+                    show_alert=True,
+                )
                 return
 
             await callback.message.edit_text(
@@ -3916,7 +4178,12 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 ).format(amount=settings.format_price(trial_price_kopeks)),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='💳 Оплатить', url=payment_result['payment_url'])],
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('PAY_NOW_BUTTON', '💳 Оплатить'),
+                                url=payment_result['payment_url'],
+                            )
+                        ],
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
@@ -3933,7 +4200,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             # Оплата через Platega
             active_methods = settings.get_platega_active_methods()
             if not active_methods:
-                await callback.answer('❌ Platega не настроена', show_alert=True)
+                await callback.answer(
+                    texts.t('PLATEGA_METHODS_NOT_CONFIGURED', '⚠️ На стороне Platega нет доступных методов оплаты'),
+                    show_alert=True,
+                )
                 return
 
             # Используем первый активный метод
@@ -3951,7 +4221,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             )
 
             if not payment_result or not payment_result.get('redirect_url'):
-                await callback.answer('❌ Не удалось создать платеж. Попробуйте позже.', show_alert=True)
+                await callback.answer(
+                    texts.t('PAYMENT_CREATE_ERROR', '❌ Не удалось создать платёж. Попробуйте позже.'),
+                    show_alert=True,
+                )
                 return
 
             platega_name = settings.get_platega_display_name()
@@ -3964,7 +4237,12 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 ).format(provider=platega_name, amount=settings.format_price(trial_price_kopeks)),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='💳 Оплатить', url=payment_result['redirect_url'])],
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('PAY_NOW_BUTTON', '💳 Оплатить'),
+                                url=payment_result['redirect_url'],
+                            )
+                        ],
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
@@ -3978,14 +4256,22 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             )
 
         else:
-            await callback.answer(f'❌ Неизвестный метод оплаты: {payment_method}', show_alert=True)
+            await callback.answer(
+                texts.t('TRIAL_UNKNOWN_PAYMENT_METHOD', '❌ Неизвестный метод оплаты: {method}').format(
+                    method=payment_method
+                ),
+                show_alert=True,
+            )
             return
 
         await callback.answer()
 
     except Exception as error:
         logger.error('Error processing trial payment method', payment_method=payment_method, error=error)
-        await callback.answer('❌ Произошла ошибка при создании платежа. Попробуйте позже.', show_alert=True)
+        await callback.answer(
+            texts.t('PAYMENT_CREATE_ERROR', '❌ Не удалось создать платёж. Попробуйте позже.'),
+            show_alert=True,
+        )
 
 
 def register_handlers(dp: Dispatcher):
@@ -4158,7 +4444,10 @@ async def handle_simple_subscription_purchase(
     texts = get_texts(db_user.language)
 
     if not settings.SIMPLE_SUBSCRIPTION_ENABLED:
-        await callback.answer('❌ Простая покупка подписки временно недоступна', show_alert=True)
+        await callback.answer(
+            texts.t('SIMPLE_SUBSCRIPTION_DISABLED', '❌ Простая покупка подписки временно недоступна'),
+            show_alert=True,
+        )
         return
 
     # Определяем ограничение по устройствам для текущего режима
@@ -4220,29 +4509,53 @@ async def handle_simple_subscription_purchase(
         price_breakdown_5=price_breakdown.get('total_discount', 0),
     )
     traffic_text = (
-        'Безлимит' if subscription_params['traffic_limit_gb'] == 0 else f'{subscription_params["traffic_limit_gb"]} ГБ'
+        texts.t('TRAFFIC_UNLIMITED_SHORT', 'Безлимит')
+        if subscription_params['traffic_limit_gb'] == 0
+        else texts.format_traffic(subscription_params['traffic_limit_gb'])
     )
 
     if user_balance_kopeks >= price_kopeks:
         # Если баланс достаточный, предлагаем оплатить с баланса
         simple_lines = [
-            '⚡ <b>Простая покупка подписки</b>',
+            texts.t('SIMPLE_SUBSCRIPTION_TITLE', '⚡ <b>Простая покупка подписки</b>'),
             '',
-            f'📅 Период: {subscription_params["period_days"]} дней',
+            texts.t('SIMPLE_SUBSCRIPTION_PERIOD_LINE', '📅 Период: {days} дней').format(
+                days=subscription_params['period_days']
+            ),
         ]
 
         if settings.is_devices_selection_enabled():
-            simple_lines.append(f'📱 Устройства: {subscription_params["device_limit"]}')
+            simple_lines.append(
+                texts.t('SIMPLE_SUBSCRIPTION_DEVICES_LINE', '📱 Устройства: {devices}').format(
+                    devices=subscription_params['device_limit']
+                )
+            )
 
         simple_lines.extend(
             [
-                f'📊 Трафик: {traffic_text}',
-                f'🌍 Сервер: {"Любой доступный" if not subscription_params["squad_uuid"] else "Выбранный"}',
+                texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_LINE', '📊 Трафик: {traffic}').format(traffic=traffic_text),
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_SERVER_LINE',
+                    '🌍 Сервер: {server}',
+                ).format(
+                    server=(
+                        texts.t('SIMPLE_SUBSCRIPTION_SERVER_ANY', 'Любой доступный')
+                        if not subscription_params['squad_uuid']
+                        else texts.t('SIMPLE_SUBSCRIPTION_SERVER_SELECTED', 'Выбранный')
+                    )
+                ),
                 '',
-                f'💰 Стоимость: {settings.format_price(price_kopeks)}',
-                f'💳 Ваш баланс: {settings.format_price(user_balance_kopeks)}',
+                texts.t('SIMPLE_SUBSCRIPTION_PRICE_LINE', '💰 Стоимость: {price}').format(
+                    price=settings.format_price(price_kopeks)
+                ),
+                texts.t('SIMPLE_SUBSCRIPTION_BALANCE_LINE', '💳 Ваш баланс: {balance}').format(
+                    balance=settings.format_price(user_balance_kopeks)
+                ),
                 '',
-                'Вы можете оплатить подписку с баланса или выбрать другой способ оплаты.',
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_CAN_PAY_BALANCE',
+                    'Вы можете оплатить подписку с баланса или выбрать другой способ оплаты.',
+                ),
             ]
         )
 
@@ -4252,12 +4565,17 @@ async def handle_simple_subscription_purchase(
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text='✅ Оплатить с баланса', callback_data='simple_subscription_pay_with_balance'
+                        text=texts.t('SIMPLE_SUBSCRIPTION_PAY_BALANCE_BUTTON', '✅ Оплатить с баланса'),
+                        callback_data='simple_subscription_pay_with_balance',
                     )
                 ],
                 [
                     types.InlineKeyboardButton(
-                        text='💳 Другие способы оплаты', callback_data='simple_subscription_other_payment_methods'
+                        text=texts.t(
+                            'SIMPLE_SUBSCRIPTION_OTHER_PAYMENT_METHODS_BUTTON',
+                            '💳 Другие способы оплаты',
+                        ),
+                        callback_data='simple_subscription_other_payment_methods',
                     )
                 ],
                 [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
@@ -4266,23 +4584,42 @@ async def handle_simple_subscription_purchase(
     else:
         # Если баланс недостаточный, предлагаем внешние способы оплаты
         simple_lines = [
-            '⚡ <b>Простая покупка подписки</b>',
+            texts.t('SIMPLE_SUBSCRIPTION_TITLE', '⚡ <b>Простая покупка подписки</b>'),
             '',
-            f'📅 Период: {subscription_params["period_days"]} дней',
+            texts.t('SIMPLE_SUBSCRIPTION_PERIOD_LINE', '📅 Период: {days} дней').format(
+                days=subscription_params['period_days']
+            ),
         ]
 
         if settings.is_devices_selection_enabled():
-            simple_lines.append(f'📱 Устройства: {subscription_params["device_limit"]}')
+            simple_lines.append(
+                texts.t('SIMPLE_SUBSCRIPTION_DEVICES_LINE', '📱 Устройства: {devices}').format(
+                    devices=subscription_params['device_limit']
+                )
+            )
 
         simple_lines.extend(
             [
-                f'📊 Трафик: {traffic_text}',
-                f'🌍 Сервер: {"Любой доступный" if not subscription_params["squad_uuid"] else "Выбранный"}',
+                texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_LINE', '📊 Трафик: {traffic}').format(traffic=traffic_text),
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_SERVER_LINE',
+                    '🌍 Сервер: {server}',
+                ).format(
+                    server=(
+                        texts.t('SIMPLE_SUBSCRIPTION_SERVER_ANY', 'Любой доступный')
+                        if not subscription_params['squad_uuid']
+                        else texts.t('SIMPLE_SUBSCRIPTION_SERVER_SELECTED', 'Выбранный')
+                    )
+                ),
                 '',
-                f'💰 Стоимость: {settings.format_price(price_kopeks)}',
-                f'💳 Ваш баланс: {settings.format_price(user_balance_kopeks)}',
+                texts.t('SIMPLE_SUBSCRIPTION_PRICE_LINE', '💰 Стоимость: {price}').format(
+                    price=settings.format_price(price_kopeks)
+                ),
+                texts.t('SIMPLE_SUBSCRIPTION_BALANCE_LINE', '💳 Ваш баланс: {balance}').format(
+                    balance=settings.format_price(user_balance_kopeks)
+                ),
                 '',
-                'Выберите способ оплаты:',
+                texts.t('SIMPLE_SUBSCRIPTION_CHOOSE_PAYMENT', 'Выберите способ оплаты:'),
             ]
         )
 
@@ -4369,7 +4706,10 @@ async def _extend_existing_subscription(
             'saved_cart': True,
             'missing_amount': missing_kopeks,
             'return_to_cart': True,
-            'description': f'Продление подписки на {period_days} дней',
+            'description': texts.t(
+                'CRYPTOBOT_RENEWAL_DESCRIPTION',
+                'Продление подписки на {period_days} дней',
+            ).format(period_days=period_days),
             'device_limit': device_limit,
             'traffic_limit_gb': traffic_limit_gb,
             'squad_uuid': squad_uuid,
@@ -4393,12 +4733,15 @@ async def _extend_existing_subscription(
         db,
         db_user,
         price_kopeks,
-        f'Продление подписки на {period_days} дней',
+        texts.t(
+            'CRYPTOBOT_RENEWAL_DESCRIPTION',
+            'Продление подписки на {period_days} дней',
+        ).format(period_days=period_days),
         consume_promo_offer=False,  # Простая покупка не использует промо-скидки
     )
 
     if not success:
-        await callback.answer('⚠ Ошибка списания средств', show_alert=True)
+        await callback.answer(texts.t('PAYMENT_CHARGE_ERROR', '⚠ Ошибка списания средств'), show_alert=True)
         return
 
     # Обновляем параметры подписки
@@ -4451,7 +4794,7 @@ async def _extend_existing_subscription(
             db,
             current_subscription,
             reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
-            reset_reason='продление подписки',
+            reset_reason=texts.t('SUBSCRIPTION_RESET_REASON_RENEWAL', 'продление подписки'),
         )
         if remnawave_result:
             logger.info('✅ RemnaWave обновлен успешно')
@@ -4466,7 +4809,10 @@ async def _extend_existing_subscription(
         user_id=db_user.id,
         type=TransactionType.SUBSCRIPTION_PAYMENT,
         amount_kopeks=price_kopeks,
-        description=f'Продление подписки на {period_days} дней',
+        description=texts.t(
+            'CRYPTOBOT_RENEWAL_DESCRIPTION',
+            'Продление подписки на {period_days} дней',
+        ).format(period_days=period_days),
     )
 
     # Отправляем уведомление админу
@@ -4486,16 +4832,21 @@ async def _extend_existing_subscription(
         logger.error('Ошибка отправки уведомления о продлении', error=e)
 
     # Отправляем сообщение пользователю
-    success_message = (
-        '✅ Подписка успешно продлена!\n\n'
-        f'⏰ Добавлено: {period_days} дней\n'
-        f'Действует до: {format_local_datetime(new_end_date, "%d.%m.%Y %H:%M")}\n\n'
-        f'💰 Списано: {texts.format_price(price_kopeks)}'
+    success_message = texts.t(
+        'SUBSCRIPTION_EXTEND_SUCCESS_MESSAGE',
+        '✅ Подписка успешно продлена!\n\n⏰ Добавлено: {days} дней\nДействует до: {end_date}\n\n💰 Списано: {amount}',
+    ).format(
+        days=period_days,
+        end_date=format_local_datetime(new_end_date, '%d.%m.%Y %H:%M'),
+        amount=texts.format_price(price_kopeks),
     )
 
     # Если это была триальная подписка, добавляем информацию о преобразовании
     if current_subscription.is_trial:
-        success_message += '\n🎯 Триальная подписка преобразована в платную'
+        success_message += '\n' + texts.t(
+            'SUBSCRIPTION_EXTEND_TRIAL_CONVERTED_NOTE',
+            '🎯 Триальная подписка преобразована в платную',
+        )
 
     await callback.message.edit_text(success_message, reply_markup=get_back_keyboard(db_user.language))
 

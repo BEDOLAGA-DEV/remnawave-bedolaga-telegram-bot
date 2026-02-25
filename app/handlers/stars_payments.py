@@ -33,7 +33,10 @@ async def _handle_wheel_spin_payment(
 
         if not config.is_enabled:
             await message.answer(
-                '❌ Колесо удачи временно недоступно. Звезды будут возвращены.',
+                texts.t(
+                    'STARS_WHEEL_DISABLED_REFUND_MESSAGE',
+                    '❌ Колесо удачи временно недоступно. Звезды будут возвращены.',
+                ),
             )
             return False
 
@@ -43,7 +46,10 @@ async def _handle_wheel_spin_payment(
 
         if not prizes:
             await message.answer(
-                '❌ Призы не настроены. Обратитесь в поддержку.',
+                texts.t(
+                    'STARS_WHEEL_PRIZES_NOT_CONFIGURED',
+                    '❌ Призы не настроены. Обратитесь в поддержку.',
+                ),
             )
             return False
 
@@ -101,10 +107,18 @@ async def _handle_wheel_spin_payment(
 
         emoji = selected_prize.emoji or '🎁'
         await message.answer(
-            f'🎰 <b>Колесо удачи!</b>\n\n'
-            f'{emoji} <b>{selected_prize.display_name}</b>\n\n'
-            f'{prize_message}\n\n'
-            f'⭐ Потрачено: {stars_amount} Stars',
+            texts.t(
+                'STARS_WHEEL_RESULT_MESSAGE',
+                '🎰 <b>Колесо удачи!</b>\n\n'
+                '{emoji} <b>{prize_name}</b>\n\n'
+                '{prize_message}\n\n'
+                '⭐ Потрачено: {stars_amount} Stars',
+            ).format(
+                emoji=emoji,
+                prize_name=selected_prize.display_name,
+                prize_message=prize_message,
+                stars_amount=stars_amount,
+            ),
             parse_mode='HTML',
         )
 
@@ -119,7 +133,10 @@ async def _handle_wheel_spin_payment(
     except Exception as e:
         logger.error('Ошибка обработки wheel spin payment', error=e, exc_info=True)
         await message.answer(
-            '❌ Произошла ошибка при обработке спина. Обратитесь в поддержку.',
+            texts.t(
+                'STARS_WHEEL_PROCESSING_ERROR',
+                '❌ Произошла ошибка при обработке спина. Обратитесь в поддержку.',
+            ),
         )
         return False
 
@@ -145,7 +162,10 @@ async def _handle_trial_payment(
         if len(parts) < 2:
             logger.error('Невалидный trial payload', payload=payload)
             await message.answer(
-                '❌ Ошибка: неверный формат платежа. Обратитесь в поддержку.',
+                texts.t(
+                    'STARS_TRIAL_INVALID_PAYLOAD_FORMAT',
+                    '❌ Ошибка: неверный формат платежа. Обратитесь в поддержку.',
+                ),
             )
             return False
 
@@ -154,7 +174,10 @@ async def _handle_trial_payment(
         except ValueError:
             logger.error('Невалидный subscription_id в trial payload', payload=payload)
             await message.answer(
-                '❌ Ошибка: неверный ID подписки. Обратитесь в поддержку.',
+                texts.t(
+                    'STARS_TRIAL_INVALID_SUBSCRIPTION_ID',
+                    '❌ Ошибка: неверный ID подписки. Обратитесь в поддержку.',
+                ),
             )
             return False
 
@@ -198,7 +221,10 @@ async def _handle_trial_payment(
                 transaction_type=TransactionType.REFUND,
             )
             await message.answer(
-                '❌ Не удалось активировать пробную подписку. Средства возвращены на баланс.',
+                texts.t(
+                    'STARS_TRIAL_ACTIVATION_FAILED_REFUNDED',
+                    '❌ Не удалось активировать пробную подписку. Средства возвращены на баланс.',
+                ),
             )
             return False
 
@@ -227,11 +253,18 @@ async def _handle_trial_payment(
 
         # Отправляем сообщение пользователю
         await message.answer(
-            f'🎉 <b>Пробная подписка активирована!</b>\n\n'
-            f'⭐ Потрачено: {stars_amount} Stars\n'
-            f'📅 Период: {settings.TRIAL_DURATION_DAYS} дней\n'
-            f'📱 Устройств: {subscription.device_limit}\n\n'
-            f'Используйте меню для подключения к VPN.',
+            texts.t(
+                'STARS_TRIAL_ACTIVATED_MESSAGE',
+                '🎉 <b>Пробная подписка активирована!</b>\n\n'
+                '⭐ Потрачено: {stars_amount} Stars\n'
+                '📅 Период: {days} дней\n'
+                '📱 Устройств: {devices}\n\n'
+                'Используйте меню для подключения к VPN.',
+            ).format(
+                stars_amount=stars_amount,
+                days=settings.TRIAL_DURATION_DAYS,
+                devices=subscription.device_limit,
+            ),
             parse_mode='HTML',
         )
 
@@ -246,7 +279,10 @@ async def _handle_trial_payment(
     except Exception as e:
         logger.error('Ошибка обработки trial payment', error=e, exc_info=True)
         await message.answer(
-            '❌ Произошла ошибка при активации пробной подписки. Обратитесь в поддержку.',
+            texts.t(
+                'STARS_TRIAL_ACTIVATION_ERROR',
+                '❌ Произошла ошибка при активации пробной подписки. Обратитесь в поддержку.',
+            ),
         )
         return False
 

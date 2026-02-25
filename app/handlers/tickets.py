@@ -257,14 +257,21 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
         texts = get_texts(db_user.language)
         # Ограничим длину подтверждения чтобы не упереться в лимиты
         safe_title = title if len(title) <= 200 else (title[:197] + '...')
-        creation_text = (
-            f'✅ <b>Тикет #{ticket.id} создан</b>\n\n'
-            f'📝 Заголовок: {safe_title}\n'
-            f'📊 Статус: {ticket.status_emoji} '
-            f'{texts.t("TICKET_STATUS_OPEN", "Открыт")}\n'
-            f'📅 Создан: {format_local_datetime(ticket.created_at, "%d.%m.%Y %H:%M")}\n'
-            + ('📎 Вложение: фото\n' if media_type == 'photo' else '')
-        )
+        creation_lines = [
+            texts.t('TICKET_CREATED_HEADER', '✅ <b>Тикет #{ticket_id} создан</b>').format(ticket_id=ticket.id),
+            '',
+            texts.t('TICKET_CREATED_TITLE_LINE', '📝 Заголовок: {title}').format(title=safe_title),
+            texts.t('TICKET_CREATED_STATUS_LINE', '📊 Статус: {status_emoji} {status}').format(
+                status_emoji=ticket.status_emoji,
+                status=texts.t('TICKET_STATUS_OPEN', 'Открыт'),
+            ),
+            texts.t('TICKET_CREATED_CREATED_AT_LINE', '📅 Создан: {created_at}').format(
+                created_at=format_local_datetime(ticket.created_at, '%d.%m.%Y %H:%M')
+            ),
+        ]
+        if media_type == 'photo':
+            creation_lines.append(texts.t('TICKET_CREATED_ATTACHMENT_LINE', '📎 Вложение: фото'))
+        creation_text = '\n'.join(creation_lines)
 
         data_prompt = await state.get_data()
         prompt_chat_id = data_prompt.get('prompt_chat_id')
@@ -541,19 +548,36 @@ async def view_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSes
     }.get(ticket.status, ticket.status)
 
     header = (
-        f'🎫 Тикет #{ticket.id}\n\n'
-        f'📝 Заголовок: {ticket.title}\n'
-        f'📊 Статус: {ticket.status_emoji} {status_text}\n'
-        f'📅 Создан: {format_local_datetime(ticket.created_at, "%d.%m.%Y %H:%M")}\n\n'
+        texts.t('ADMIN_TICKET_VIEW_HEADER', '🎫 Тикет #{ticket_id}\n\n').format(ticket_id=ticket.id)
+        + texts.t('ADMIN_TICKET_VIEW_TITLE_LINE', '📝 Заголовок: {title}\n').format(title=ticket.title)
+        + texts.t('ADMIN_TICKET_VIEW_STATUS_LINE', '📊 Статус: {status_emoji} {status_text}\n').format(
+            status_emoji=ticket.status_emoji,
+            status_text=status_text,
+        )
+        + texts.t('ADMIN_TICKET_VIEW_CREATED_LINE', '📅 Создан: {created_at}\n\n').format(
+            created_at=format_local_datetime(ticket.created_at, '%d.%m.%Y %H:%M')
+        )
     )
     message_blocks: list[str] = []
     if ticket.messages:
-        message_blocks.append(f'💬 Сообщения ({len(ticket.messages)}):\n\n')
+        message_blocks.append(
+            texts.t('ADMIN_TICKET_VIEW_MESSAGES_HEADER', '💬 Сообщения ({count}):\n\n').format(
+                count=len(ticket.messages)
+            )
+        )
         for msg in ticket.messages:
-            sender = '👤 Вы' if msg.is_user_message else '🛠️ Поддержка'
-            block = f'{sender} ({format_local_datetime(msg.created_at, "%d.%m %H:%M")}):\n{msg.message_text}\n\n'
+            sender = (
+                texts.t('TICKET_MESSAGE_SENDER_USER_LABEL', '👤 Вы')
+                if msg.is_user_message
+                else texts.t('ADMIN_TICKET_MESSAGE_SENDER_SUPPORT', '🛠️ Поддержка')
+            )
+            block = texts.t('TICKET_MESSAGE_BLOCK', '{sender} ({created_at}):\n{text}\n\n').format(
+                sender=sender,
+                created_at=format_local_datetime(msg.created_at, '%d.%m %H:%M'),
+                text=msg.message_text,
+            )
             if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) == 'photo':
-                block += '📎 Вложение: фото\n\n'
+                block += texts.t('ADMIN_TICKET_MESSAGE_ATTACHMENT_PHOTO', '📎 Вложение: фото\n\n')
             message_blocks.append(block)
     pages = _split_text_into_pages(header, message_blocks, max_len=3500)
     total_pages = len(pages)
@@ -997,7 +1021,8 @@ async def notify_admins_about_new_ticket(ticket: Ticket, db: AsyncSession):
             )
             return
 
-        get_texts(settings.DEFAULT_LANGUAGE)
+        # Получаем язык для локализации уведомления админам
+        texts = get_texts(settings.DEFAULT_LANGUAGE)
         title = (ticket.title or '').strip()
         if len(title) > 60:
             title = title[:57] + '...'
@@ -1006,29 +1031,28 @@ async def notify_admins_about_new_ticket(ticket: Ticket, db: AsyncSession):
             user = await get_user_by_id(db, ticket.user_id)
         except Exception:
             user = None
-        full_name = user.full_name if user else 'Unknown'
+        full_name = user.full_name if user else texts.t('ADMIN_TICKET_UNKNOWN_USER_NAME', 'Unknown')
         telegram_id_display = (user.telegram_id or user.email or f'#{user.id}') if user else '—'
-        username_display = (user.username or 'отсутствует') if user else 'отсутствует'
+        username_display = (
+            user.username if user and user.username else texts.t('ADMIN_TICKET_USERNAME_MISSING', 'отсутствует')
+        )
 
-        # Загружаем первое сообщение для получения медиа и превью текста
-        first_message = await TicketMessageCRUD.get_first_message(db, ticket.id)
-        media_file_id = None
-        media_type = None
-        message_preview = ''
-        if first_message:
-            media_file_id = first_message.media_file_id if first_message.has_media else None
-            media_type = first_message.media_type if first_message.has_media else None
-            msg_text = (first_message.message_text or '').strip()
-            if msg_text:
-                message_preview = msg_text[:200] + '...' if len(msg_text) > 200 else msg_text
-
-        notification_text = (
-            f'🎫 <b>НОВЫЙ ТИКЕТ</b>\n\n'
-            f'🆔 <b>ID:</b> <code>{ticket.id}</code>\n'
-            f'👤 <b>Пользователь:</b> {full_name}\n'
-            f'🆔 <b>ID:</b> <code>{telegram_id_display}</code>\n'
-            f'📱 <b>Username:</b> @{username_display}\n'
-            f'📝 <b>Заголовок:</b> {title or "—"}\n'
+        notification_text = texts.t(
+            'ADMIN_TICKET_NEW_NOTIFICATION',
+            '🎫 <b>НОВЫЙ ТИКЕТ</b>\n\n'
+            '🆔 <b>ID:</b> <code>{ticket_id}</code>\n'
+            '👤 <b>Пользователь:</b> {full_name}\n'
+            '🆔 <b>ID:</b> <code>{telegram_id}</code>\n'
+            '📱 <b>Username:</b> @{username}\n'
+            '📝 <b>Заголовок:</b> {title}\n'
+            '📅 <b>Создан:</b> {created_at}\n',
+        ).format(
+            ticket_id=ticket.id,
+            full_name=full_name,
+            telegram_id=telegram_id_display,
+            username=username_display,
+            title=title or '—',
+            created_at=format_local_datetime(ticket.created_at, '%d.%m.%Y %H:%M'),
         )
 
         if message_preview:
@@ -1068,6 +1092,7 @@ async def notify_admins_about_ticket_reply(
             logger.info('Admin notifications disabled. Reply to ticket #', ticket_id=ticket.id)
             return
 
+        texts = get_texts(settings.DEFAULT_LANGUAGE)
         title = (ticket.title or '').strip()
         if len(title) > 60:
             title = title[:57] + '...'
@@ -1076,20 +1101,30 @@ async def notify_admins_about_ticket_reply(
             user = await get_user_by_id(db, ticket.user_id)
         except Exception:
             user = None
-        full_name = user.full_name if user else 'Unknown'
+        full_name = user.full_name if user else texts.t('ADMIN_TICKET_UNKNOWN_USER_NAME', 'Unknown')
         telegram_id_display = (user.telegram_id or user.email or f'#{user.id}') if user else '—'
-        username_display = (user.username or 'отсутствует') if user else 'отсутствует'
+        username_display = (
+            user.username if user and user.username else texts.t('ADMIN_TICKET_USERNAME_MISSING', 'отсутствует')
+        )
 
         reply_preview = reply_text[:200] + '...' if len(reply_text) > 200 else reply_text
 
-        notification_text = (
-            f'💬 <b>ОТВЕТ НА ТИКЕТ</b>\n\n'
-            f'🆔 <b>ID тикета:</b> <code>{ticket.id}</code>\n'
-            f'📝 <b>Заголовок:</b> {title or "—"}\n'
-            f'👤 <b>Пользователь:</b> {full_name}\n'
-            f'🆔 <b>ID:</b> <code>{telegram_id_display}</code>\n'
-            f'📱 <b>Username:</b> @{username_display}\n\n'
-            f'📩 <b>Сообщение:</b>\n{reply_preview}\n'
+        notification_text = texts.t(
+            'ADMIN_TICKET_REPLY_NOTIFICATION',
+            '💬 <b>ОТВЕТ НА ТИКЕТ</b>\n\n'
+            '🆔 <b>ID тикета:</b> <code>{ticket_id}</code>\n'
+            '📝 <b>Заголовок:</b> {title}\n'
+            '👤 <b>Пользователь:</b> {full_name}\n'
+            '🆔 <b>ID:</b> <code>{telegram_id}</code>\n'
+            '📱 <b>Username:</b> @{username}\n\n'
+            '📩 <b>Сообщение:</b>\n{reply_preview}\n',
+        ).format(
+            ticket_id=ticket.id,
+            title=title or '—',
+            full_name=full_name,
+            telegram_id=telegram_id_display,
+            username=username_display,
+            reply_preview=reply_preview,
         )
 
         from app.services.maintenance_service import maintenance_service

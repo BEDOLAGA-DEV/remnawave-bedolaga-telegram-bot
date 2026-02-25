@@ -911,10 +911,11 @@ async def show_poll_details(
     db_user: User,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     poll_id = int(callback.data.split(':')[1])
     poll = await get_poll_by_id(db, poll_id)
     if not poll:
-        await callback.answer('❌ Опрос не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_POLLS_NOT_FOUND', '❌ Опрос не найден'), show_alert=True)
         return
 
     text = await _render_poll_details(poll, db_user.language)
@@ -933,13 +934,13 @@ async def start_poll_send(
     db_user: User,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     poll_id = int(callback.data.split(':')[1])
     poll = await get_poll_by_id(db, poll_id)
     if not poll:
-        await callback.answer('❌ Опрос не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_POLLS_NOT_FOUND', '❌ Опрос не найден'), show_alert=True)
         return
 
-    texts = get_texts(db_user.language)
     await callback.message.edit_text(
         texts.t('ADMIN_POLLS_SEND_CHOOSE_TARGET', '🎯 Выберите аудиторию для отправки опроса:'),
         reply_markup=_build_target_keyboard(poll.id, db_user.language),
@@ -974,13 +975,13 @@ async def _show_send_confirmation(
     target: str,
     user_count: int,
 ):
+    texts = get_texts(db_user.language)
     poll = await get_poll_by_id(db, poll_id)
     if not poll:
-        await callback.answer('❌ Опрос не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_POLLS_NOT_FOUND', '❌ Опрос не найден'), show_alert=True)
         return
 
     audience_name = get_target_display_name(target)
-    texts = get_texts(db_user.language)
     confirmation_text = texts.t(
         'ADMIN_POLLS_SEND_CONFIRM',
         '📤 Отправить опрос «{title}» аудитории «{audience}»? Пользователей: {count}',
@@ -1031,13 +1032,14 @@ async def confirm_poll_send(
     db_user: User,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     _, payload = callback.data.split(':', 1)
     poll_id_str, target = payload.split(':', 1)
     poll_id = int(poll_id_str)
 
     poll = await get_poll_by_id(db, poll_id)
     if not poll:
-        await callback.answer('❌ Опрос не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_POLLS_NOT_FOUND', '❌ Опрос не найден'), show_alert=True)
         return
 
     poll_id_value = poll.id
@@ -1076,14 +1078,14 @@ async def show_poll_stats(
     db_user: User,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     poll_id = int(callback.data.split(':')[1])
     poll = await get_poll_by_id(db, poll_id)
     if not poll:
-        await callback.answer('❌ Опрос не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_POLLS_NOT_FOUND', '❌ Опрос не найден'), show_alert=True)
         return
 
     stats = await get_poll_statistics(db, poll_id)
-    texts = get_texts(db_user.language)
 
     reward_sum = settings.format_price(stats['reward_sum_kopeks'])
     lines = [texts.t('ADMIN_POLLS_STATS_HEADER', '📊 <b>Статистика опроса</b>'), '']
@@ -1124,13 +1126,13 @@ async def confirm_poll_delete(
     db_user: User,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     poll_id = int(callback.data.split(':')[1])
     poll = await get_poll_by_id(db, poll_id)
     if not poll:
-        await callback.answer('❌ Опрос не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_POLLS_NOT_FOUND', '❌ Опрос не найден'), show_alert=True)
         return
 
-    texts = get_texts(db_user.language)
     await callback.message.edit_text(
         texts.t(
             'ADMIN_POLLS_CONFIRM_DELETE',
@@ -1174,7 +1176,7 @@ async def delete_poll_handler(
             reply_markup=_build_polls_keyboard(await list_polls(db), db_user.language),
         )
     else:
-        await callback.answer('❌ Опрос не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_POLLS_NOT_FOUND', '❌ Опрос не найден'), show_alert=True)
         return
 
     await callback.answer()

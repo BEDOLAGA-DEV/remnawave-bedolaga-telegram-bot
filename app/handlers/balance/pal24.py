@@ -262,44 +262,58 @@ async def start_pal24_payment(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT', 'Действие ограничено администратором'
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'),
+                        url=support_url,
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
         await callback.answer()
         return
 
     if not settings.is_pal24_enabled():
-        await callback.answer('❌ Оплата через PayPalych временно недоступна', show_alert=True)
+        await callback.answer(
+            texts.t('PAL24_NOT_AVAILABLE', '❌ Оплата через PayPalych временно недоступна'),
+            show_alert=True,
+        )
         return
 
     # Формируем текст сообщения в зависимости от доступных способов оплаты
     if settings.is_pal24_sbp_button_visible() and settings.is_pal24_card_button_visible():
-        payment_methods_text = 'СБП и банковской картой'
+        payment_methods_text = texts.t('PAL24_TOPUP_METHODS_SBP_AND_CARD', 'СБП и банковской картой')
     elif settings.is_pal24_sbp_button_visible():
-        payment_methods_text = 'СБП'
+        payment_methods_text = texts.t('PAL24_TOPUP_METHODS_SBP', 'СБП')
     elif settings.is_pal24_card_button_visible():
-        payment_methods_text = 'банковской картой'
+        payment_methods_text = texts.t('PAL24_TOPUP_METHODS_CARD', 'банковской картой')
     else:
         # Если обе кнопки отключены, используем общий текст
-        payment_methods_text = 'доступными способами'
+        payment_methods_text = texts.t('PAL24_TOPUP_METHODS_FALLBACK', 'доступными способами')
 
     message_text = texts.t(
         'PAL24_TOPUP_PROMPT',
         (
-            f'🏦 <b>Оплата через PayPalych ({payment_methods_text})</b>\n\n'
+            '🏦 <b>Оплата через PayPalych ({payment_methods_text})</b>\n\n'
             'Введите сумму для пополнения от 100 до 1 000 000 ₽.\n'
-            f'Оплата проходит через PayPalych ({payment_methods_text}).'
+            'Оплата проходит через PayPalych ({payment_methods_text}).'
         ),
-    )
+    ).format(payment_methods_text=payment_methods_text)
 
     keyboard = get_back_keyboard(db_user.language)
 
@@ -337,16 +351,27 @@ async def process_pal24_payment_amount(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT', 'Действие ограничено администратором'
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'),
+                        url=support_url,
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await message.answer(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
             parse_mode='HTML',
         )
@@ -354,17 +379,27 @@ async def process_pal24_payment_amount(
         return
 
     if not settings.is_pal24_enabled():
-        await message.answer('❌ Оплата через PayPalych временно недоступна')
+        await message.answer(texts.t('PAL24_NOT_AVAILABLE', '❌ Оплата через PayPalych временно недоступна'))
         return
 
     if amount_kopeks < settings.PAL24_MIN_AMOUNT_KOPEKS:
         min_rubles = settings.PAL24_MIN_AMOUNT_KOPEKS / 100
-        await message.answer(f'❌ Минимальная сумма для оплаты через PayPalych: {min_rubles:.0f} ₽')
+        await message.answer(
+            texts.t(
+                'PAL24_MIN_AMOUNT_ERROR',
+                '❌ Минимальная сумма для оплаты через PayPalych: {min_amount} ₽',
+            ).format(min_amount=f'{min_rubles:.0f}')
+        )
         return
 
     if amount_kopeks > settings.PAL24_MAX_AMOUNT_KOPEKS:
         max_rubles = settings.PAL24_MAX_AMOUNT_KOPEKS / 100
-        await message.answer(f'❌ Максимальная сумма для оплаты через PayPalych: {max_rubles:,.0f} ₽'.replace(',', ' '))
+        await message.answer(
+            texts.t(
+                'PAL24_MAX_AMOUNT_ERROR',
+                '❌ Максимальная сумма для оплаты через PayPalych: {max_amount} ₽',
+            ).format(max_amount=f'{max_rubles:,.0f}'.replace(',', ' '))
+        )
         return
 
     available_methods = _get_available_pal24_methods()
@@ -473,27 +508,34 @@ async def check_pal24_payment_status(
     callback: types.CallbackQuery,
     db: AsyncSession,
 ):
+    texts = get_texts('ru')
     try:
+        db_user = getattr(callback, 'db_user', None)
+        texts = get_texts(db_user.language if db_user else 'ru') if db_user else get_texts('ru')
+
         local_payment_id = int(callback.data.split('_')[-1])
         payment_service = PaymentService(callback.bot)
         status_info = await payment_service.get_pal24_payment_status(db, local_payment_id)
 
         if not status_info:
-            await callback.answer('❌ Платеж не найден', show_alert=True)
+            await callback.answer(
+                texts.t('PAL24_PAYMENT_NOT_FOUND_ALERT', '❌ Платеж не найден'),
+                show_alert=True,
+            )
             return
 
         payment = status_info['payment']
 
         status_labels = {
-            'NEW': ('⏳', 'Ожидает оплаты'),
-            'PROCESS': ('⌛', 'Обрабатывается'),
-            'SUCCESS': ('✅', 'Оплачен'),
-            'FAIL': ('❌', 'Отменен'),
-            'UNDERPAID': ('⚠️', 'Недоплата'),
-            'OVERPAID': ('⚠️', 'Переплата'),
+            'NEW': ('⏳', texts.t('PAL24_STATUS_NEW', 'Ожидает оплаты')),
+            'PROCESS': ('⌛', texts.t('PAL24_STATUS_PROCESS', 'Обрабатывается')),
+            'SUCCESS': ('✅', texts.t('PAL24_STATUS_SUCCESS', 'Оплачен')),
+            'FAIL': ('❌', texts.t('PAL24_STATUS_FAIL', 'Отменен')),
+            'UNDERPAID': ('⚠️', texts.t('PAL24_STATUS_UNDERPAID', 'Недоплата')),
+            'OVERPAID': ('⚠️', texts.t('PAL24_STATUS_OVERPAID', 'Переплата')),
         }
 
-        emoji, status_text = status_labels.get(payment.status, ('❓', 'Неизвестно'))
+        emoji, status_text = status_labels.get(payment.status, ('❓', texts.t('PAL24_STATUS_UNKNOWN', 'Неизвестно')))
 
         metadata = payment.metadata_json or {}
         links_meta = metadata.get('links') if isinstance(metadata, dict) else None
@@ -563,35 +605,55 @@ async def check_pal24_payment_status(
             card_link = payment.link_page_url
 
         message_lines = [
-            '🏦 Статус платежа PayPalych:',
+            texts.t('PAL24_STATUS_MESSAGE_TITLE', '🏦 Статус платежа PayPalych:'),
             '',
-            f'🆔 ID счета: {payment.bill_id}',
-            f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}',
-            f'📊 Статус: {emoji} {status_text}',
-            f'📅 Создан: {payment.created_at.strftime("%d.%m.%Y %H:%M")}',
+            texts.t('PAL24_STATUS_BILL_ID_LINE', '🆔 ID счета: {bill_id}').format(bill_id=payment.bill_id),
+            texts.t('PAL24_STATUS_AMOUNT_LINE', '💰 Сумма: {amount}').format(
+                amount=settings.format_price(payment.amount_kopeks)
+            ),
+            texts.t('PAL24_STATUS_STATE_LINE', '📊 Статус: {emoji} {status_text}').format(
+                emoji=emoji,
+                status_text=status_text,
+            ),
+            texts.t('PAL24_STATUS_CREATED_AT_LINE', '📅 Создан: {created_at}').format(
+                created_at=payment.created_at.strftime('%d.%m.%Y %H:%M')
+            ),
         ]
 
         if payment.is_paid:
             message_lines.append('')
-            message_lines.append('✅ Платеж успешно завершен! Средства уже на балансе.')
+            message_lines.append(
+                texts.t(
+                    'PAL24_STATUS_PAID_NOTE',
+                    '✅ Платеж успешно завершен! Средства уже на балансе.',
+                )
+            )
         elif payment.status in {'NEW', 'PROCESS'}:
             message_lines.append('')
-            message_lines.append('⏳ Платеж еще не завершен. Оплатите счет и проверьте статус позже.')
+            message_lines.append(
+                texts.t(
+                    'PAL24_STATUS_PENDING_NOTE',
+                    '⏳ Платеж еще не завершен. Оплатите счет и проверьте статус позже.',
+                )
+            )
             if sbp_link:
                 message_lines.append('')
-                message_lines.append(f'🏦 СБП: {sbp_link}')
+                message_lines.append(texts.t('PAL24_STATUS_SBP_LINK_LINE', '🏦 СБП: {sbp_link}').format(sbp_link=sbp_link))
             if card_link and card_link != sbp_link:
-                message_lines.append(f'💳 Банковская карта: {card_link}')
+                message_lines.append(
+                    texts.t(
+                        'PAL24_STATUS_CARD_LINK_LINE',
+                        '💳 Банковская карта: {card_link}',
+                    ).format(card_link=card_link)
+                )
         elif payment.status in {'FAIL', 'UNDERPAID', 'OVERPAID'}:
             message_lines.append('')
             message_lines.append(
-                f'❌ Платеж не завершен корректно. Обратитесь в {settings.get_support_contact_display()}'
+                texts.t(
+                    'PAL24_STATUS_FAILED_NOTE',
+                    '❌ Платеж не завершен корректно. Обратитесь в {support}',
+                ).format(support=settings.get_support_contact_display())
             )
-
-        from app.localization.texts import get_texts
-
-        db_user = getattr(callback, 'db_user', None)
-        texts = get_texts(db_user.language if db_user else 'ru') if db_user else get_texts('ru')
 
         pay_rows: list[list[types.InlineKeyboardButton]] = []
 
@@ -656,4 +718,7 @@ async def check_pal24_payment_status(
 
     except Exception as e:
         logger.error('Ошибка проверки статуса PayPalych', error=e)
-        await callback.answer('❌ Ошибка проверки статуса', show_alert=True)
+        await callback.answer(
+            texts.t('PAL24_STATUS_CHECK_ERROR', '❌ Ошибка проверки статуса'),
+            show_alert=True,
+        )

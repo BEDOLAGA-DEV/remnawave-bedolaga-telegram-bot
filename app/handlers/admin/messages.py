@@ -1,6 +1,6 @@
 import asyncio
 import html
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 import structlog
 from aiogram import Dispatcher, F, types
@@ -134,7 +134,6 @@ async def _persist_broadcast_result(
     sent_count: int,
     failed_count: int,
     status: str,
-    blocked_count: int = 0,
 ) -> None:
     """
     Сохраняет результаты рассылки в НОВОЙ сессии.
@@ -148,9 +147,8 @@ async def _persist_broadcast_result(
         sent_count: Количество успешно отправленных сообщений
         failed_count: Количество неудачных отправок
         status: Финальный статус рассылки ('completed', 'partial', 'failed')
-        blocked_count: Количество пользователей, заблокировавших бота
     """
-    completed_at = datetime.now(UTC)
+    completed_at = datetime.utcnow()
     max_retries = 3
     retry_delay = 1.0
 
@@ -166,17 +164,15 @@ async def _persist_broadcast_result(
 
                 broadcast_history.sent_count = sent_count
                 broadcast_history.failed_count = failed_count
-                broadcast_history.blocked_count = blocked_count
                 broadcast_history.status = status
                 broadcast_history.completed_at = completed_at
                 await session.commit()
 
                 logger.info(
-                    'Результаты рассылки сохранены (id sent failed blocked status=)',
+                    'Результаты рассылки сохранены (id sent failed status=)',
                     broadcast_id=broadcast_id,
                     sent_count=sent_count,
                     failed_count=failed_count,
-                    blocked_count=blocked_count,
                     status=status,
                 )
                 return
@@ -210,18 +206,17 @@ async def _persist_broadcast_result(
 @admin_required
 @error_handler
 async def show_messages_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    text = """
-📨 <b>Управление рассылками</b>
-
-Выберите тип рассылки:
-
-- <b>Всем пользователям</b> - рассылка всем активным пользователям
-- <b>По подпискам</b> - фильтрация по типу подписки
-- <b>По критериям</b> - настраиваемые фильтры
-- <b>История</b> - просмотр предыдущих рассылок
-
-⚠️ Будьте осторожны с массовыми рассылками!
-"""
+    texts = get_texts(db_user.language)
+    text = texts.t(
+        'ADMIN_MESSAGES_MENU_TEXT',
+        '📨 <b>Управление рассылками</b>\n\n'
+        'Выберите тип рассылки:\n\n'
+        '- <b>Всем пользователям</b> - рассылка всем активным пользователям\n'
+        '- <b>По подпискам</b> - фильтрация по типу подписки\n'
+        '- <b>По критериям</b> - настраиваемые фильтры\n'
+        '- <b>История</b> - просмотр предыдущих рассылок\n\n'
+        '⚠️ Будьте осторожны с массовыми рассылками!',
+    )
 
     await safe_edit_or_send_text(
         callback, text, reply_markup=get_admin_messages_keyboard(db_user.language), parse_mode='HTML'
@@ -237,6 +232,7 @@ async def show_pinned_message_menu(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     await state.clear()
     pinned_message = await get_active_pinned_message(db)
 
@@ -246,25 +242,43 @@ async def show_pinned_message_menu(
         timestamp_text = last_updated.strftime('%d.%m.%Y %H:%M') if last_updated else '—'
         media_line = ''
         if pinned_message.media_type:
-            media_label = 'Фото' if pinned_message.media_type == 'photo' else 'Видео'
-            media_line = f'📎 Медиа: {media_label}\n'
-        position_line = '⬆️ Отправлять перед меню' if pinned_message.send_before_menu else '⬇️ Отправлять после меню'
-        start_mode_line = (
-            '🔁 При каждом /start' if pinned_message.send_on_every_start else '🚫 Только один раз и при обновлении'
+            media_label = (
+                texts.t('ADMIN_PINNED_MEDIA_PHOTO', 'Фото')
+                if pinned_message.media_type == 'photo'
+                else texts.t('ADMIN_MESSAGES_MEDIA_TYPE_VIDEO', 'Видео')
+            )
+            media_line = texts.t('ADMIN_PINNED_MEDIA_LINE', '📎 Медиа: {media_label}\n').format(media_label=media_label)
+        position_line = (
+            texts.t('ADMIN_PINNED_POSITION_BEFORE', '⬆️ Показать перед меню')
+            if pinned_message.send_before_menu
+            else texts.t('ADMIN_PINNED_POSITION_AFTER', '⬇️ Показать после меню')
         )
-        body = (
+        start_mode_line = (
+            texts.t('ADMIN_PINNED_START_EVERY_TIME', '🔁 Показать при каждом /start')
+            if pinned_message.send_on_every_start
+            else texts.t('ADMIN_PINNED_START_ONCE', '🚫 Показывать только один раз')
+        )
+        updated_line = texts.t('ADMIN_PINNED_UPDATED_AT_LINE', '🕒 Обновлено: {timestamp}').format(
+            timestamp=timestamp_text
+        )
+        body = texts.t(
+            'ADMIN_PINNED_MENU_WITH_CONTENT',
             '📌 <b>Закрепленное сообщение</b>\n\n'
             '📝 Текущий текст:\n'
-            f'<code>{content_preview}</code>\n\n'
-            f'{media_line}'
-            f'{position_line}\n'
-            f'{start_mode_line}\n'
-            f'🕒 Обновлено: {timestamp_text}'
+            '<code>{content}</code>\n\n'
+            '{media_line}{position_line}\n{start_mode_line}\n{updated_line}',
+        ).format(
+            content=content_preview,
+            media_line=media_line,
+            position_line=position_line,
+            start_mode_line=start_mode_line,
+            updated_line=updated_line,
         )
     else:
-        body = (
+        body = texts.t(
+            'ADMIN_PINNED_MENU_EMPTY',
             '📌 <b>Закрепленное сообщение</b>\n\n'
-            'Сообщение не задано. Отправьте новый текст, чтобы разослать и закрепить его у пользователей.'
+            'Сообщение не задано. Отправьте новый текст, чтобы разослать и закрепить его у пользователей.',
         )
 
     await callback.message.edit_text(
@@ -286,13 +300,19 @@ async def prompt_pinned_message_update(
     db_user: User,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     await state.set_state(AdminStates.editing_pinned_message)
     await callback.message.edit_text(
-        '✏️ <b>Новое закрепленное сообщение</b>\n\n'
-        'Пришлите текст, фото или видео, которое нужно закрепить.\n'
-        'Бот отправит его всем активным пользователям, открепит старое и закрепит новое без уведомлений.',
+        texts.t(
+            'ADMIN_PINNED_UPDATE_PROMPT',
+            '✏️ <b>Новое закрепленное сообщение</b>\n\n'
+            'Пришлите текст, фото или видео, которое нужно закрепить.\n'
+            'Бот отправит его всем активным пользователям, открепит старое и закрепит новое без уведомлений.',
+        ),
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_pinned_message')]]
+            inline_keyboard=[
+                [types.InlineKeyboardButton(text=texts.t('ADMIN_CANCEL', '❌ Отмена'), callback_data='admin_pinned_message')]
+            ]
         ),
         parse_mode='HTML',
     )
@@ -307,13 +327,17 @@ async def toggle_pinned_message_position(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     pinned_message = await get_active_pinned_message(db)
     if not pinned_message:
-        await callback.answer('Сначала задайте закрепленное сообщение', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_PINNED_SET_FIRST_ALERT', 'Сначала задайте закрепленное сообщение'),
+            show_alert=True,
+        )
         return
 
     pinned_message.send_before_menu = not pinned_message.send_before_menu
-    pinned_message.updated_at = datetime.now(UTC)
+    pinned_message.updated_at = datetime.utcnow()
     await db.commit()
 
     await show_pinned_message_menu(callback, db_user, db, state)
@@ -327,13 +351,17 @@ async def toggle_pinned_message_start_mode(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     pinned_message = await get_active_pinned_message(db)
     if not pinned_message:
-        await callback.answer('Сначала задайте закрепленное сообщение', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_PINNED_SET_FIRST_ALERT', 'Сначала задайте закрепленное сообщение'),
+            show_alert=True,
+        )
         return
 
     pinned_message.send_on_every_start = not pinned_message.send_on_every_start
-    pinned_message.updated_at = datetime.now(UTC)
+    pinned_message.updated_at = datetime.utcnow()
     await db.commit()
 
     await show_pinned_message_menu(callback, db_user, db, state)
@@ -347,13 +375,21 @@ async def delete_pinned_message(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     pinned_message = await get_active_pinned_message(db)
     if not pinned_message:
-        await callback.answer('Закрепленное сообщение уже отсутствует', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_PINNED_ALREADY_MISSING_ALERT', 'Закрепленное сообщение уже отсутствует'),
+            show_alert=True,
+        )
         return
 
     await callback.message.edit_text(
-        '🗑️ <b>Удаление закрепленного сообщения</b>\n\nПодождите, пока бот открепит сообщение у пользователей...',
+        texts.t(
+            'ADMIN_PINNED_DELETE_IN_PROGRESS',
+            '🗑️ <b>Удаление закрепленного сообщения</b>\n\n'
+            'Подождите, пока бот открепит сообщение у пользователей...',
+        ),
         parse_mode='HTML',
     )
 
@@ -364,7 +400,10 @@ async def delete_pinned_message(
 
     if not deleted:
         await callback.message.edit_text(
-            '❌ Не удалось найти активное закрепленное сообщение для удаления',
+            texts.t(
+                'ADMIN_PINNED_DELETE_NOT_FOUND',
+                '❌ Не удалось найти активное закрепленное сообщение для удаления',
+            ),
             reply_markup=get_admin_messages_keyboard(db_user.language),
             parse_mode='HTML',
         )
@@ -373,11 +412,18 @@ async def delete_pinned_message(
 
     total = unpinned_count + failed_count
     await callback.message.edit_text(
-        '✅ <b>Закрепленное сообщение удалено</b>\n\n'
-        f'👥 Чатов обработано: {total}\n'
-        f'✅ Откреплено: {unpinned_count}\n'
-        f'⚠️ Ошибок: {failed_count}\n\n'
-        'Новое сообщение можно задать кнопкой "Обновить".',
+        texts.t(
+            'ADMIN_PINNED_DELETED_STATS',
+            '✅ <b>Закрепленное сообщение удалено</b>\n\n'
+            '👥 Чатов обработано: {total}\n'
+            '✅ Откреплено: {unpinned_count}\n'
+            '⚠️ Ошибок: {failed_count}\n\n'
+            'Новое сообщение можно задать кнопкой "Обновить".',
+        ).format(
+            total=total,
+            unpinned_count=unpinned_count,
+            failed_count=failed_count,
+        ),
         reply_markup=get_admin_messages_keyboard(db_user.language),
         parse_mode='HTML',
     )
@@ -464,7 +510,7 @@ async def handle_pinned_broadcast_now(
     pinned_message = result.scalar_one_or_none()
 
     if not pinned_message:
-        await callback.answer('❌ Сообщение не найдено', show_alert=True)
+        await callback.answer(texts.t('ADMIN_MESSAGES_NOT_FOUND', '❌ Сообщение не найдено'), show_alert=True)
         await state.clear()
         return
 
@@ -520,8 +566,13 @@ async def handle_pinned_broadcast_skip(
 @admin_required
 @error_handler
 async def show_broadcast_targets(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     await callback.message.edit_text(
-        '🎯 <b>Выбор целевой аудитории</b>\n\nВыберите категорию пользователей для рассылки:',
+        texts.t(
+            'ADMIN_MESSAGES_TARGET_SELECT',
+            '🎯 <b>Выбор целевой аудитории</b>\n\n'
+            'Выберите категорию пользователей для рассылки:',
+        ),
         reply_markup=get_broadcast_target_keyboard(db_user.language),
         parse_mode='HTML',
     )
@@ -532,13 +583,19 @@ async def show_broadcast_targets(callback: types.CallbackQuery, db_user: User, s
 @error_handler
 async def show_tariff_filter(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     """Показывает список тарифов для фильтрации рассылки."""
+    texts = get_texts(db_user.language)
     tariffs = await get_all_tariffs(db, include_inactive=False)
 
     if not tariffs:
         await callback.message.edit_text(
-            '❌ <b>Нет доступных тарифов</b>\n\nСоздайте тарифы в разделе управления тарифами.',
+            texts.t(
+                'ADMIN_MESSAGES_NO_TARIFFS',
+                '❌ <b>Нет доступных тарифов</b>\n\nСоздайте тарифы в разделе управления тарифами.',
+            ),
             reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_msg_by_sub')]]
+                inline_keyboard=[
+                    [types.InlineKeyboardButton(text=texts.t('BACK', '⬅️ Назад'), callback_data='admin_msg_by_sub')]
+                ]
             ),
             parse_mode='HTML',
         )
@@ -561,15 +618,23 @@ async def show_tariff_filter(callback: types.CallbackQuery, db_user: User, db: A
         buttons.append(
             [
                 types.InlineKeyboardButton(
-                    text=f'{tariff.name} ({count} чел.)', callback_data=f'broadcast_tariff_{tariff.id}'
+                    text=texts.t(
+                        'ADMIN_MESSAGES_TARIFF_BUTTON',
+                        '{tariff_name} ({count} чел.)',
+                    ).format(tariff_name=tariff.name, count=count),
+                    callback_data=f'broadcast_tariff_{tariff.id}',
                 )
             ]
         )
 
-    buttons.append([types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_msg_by_sub')])
+    buttons.append([types.InlineKeyboardButton(text=texts.t('BACK', '⬅️ Назад'), callback_data='admin_msg_by_sub')])
 
     await callback.message.edit_text(
-        '📦 <b>Рассылка по тарифу</b>\n\nВыберите тариф для рассылки пользователям с активной подпиской на этот тариф:',
+        texts.t(
+            'ADMIN_MESSAGES_TARIFF_SELECT',
+            '📦 <b>Рассылка по тарифу</b>\n\n'
+            'Выберите тариф для рассылки пользователям с активной подпиской на этот тариф:',
+        ),
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode='HTML',
     )
@@ -579,6 +644,7 @@ async def show_tariff_filter(callback: types.CallbackQuery, db_user: User, db: A
 @admin_required
 @error_handler
 async def show_messages_history(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     page = 1
     if '_page_' in callback.data:
         page = int(callback.data.split('_page_')[1])
@@ -596,15 +662,18 @@ async def show_messages_history(callback: types.CallbackQuery, db_user: User, db
     total_pages = (total_count + limit - 1) // limit
 
     if not broadcasts:
-        text = """
-📋 <b>История рассылок</b>
-
-❌ История рассылок пуста.
-Отправьте первую рассылку, чтобы увидеть её здесь.
-"""
-        keyboard = [[types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_messages')]]
+        text = texts.t(
+            'ADMIN_MESSAGES_HISTORY_EMPTY',
+            '📋 <b>История рассылок</b>\n\n'
+            '❌ История рассылок пуста.\n'
+            'Отправьте первую рассылку, чтобы увидеть её здесь.',
+        )
+        keyboard = [[types.InlineKeyboardButton(text=texts.t('BACK', '⬅️ Назад'), callback_data='admin_messages')]]
     else:
-        text = f'📋 <b>История рассылок</b> (страница {page}/{total_pages})\n\n'
+        text = texts.t(
+            'ADMIN_MESSAGES_HISTORY_HEADER',
+            '📋 <b>История рассылок</b> (страница {page}/{total_pages})\n\n',
+        ).format(page=page, total_pages=total_pages)
 
         for broadcast in broadcasts:
             status_emoji = '✅' if broadcast.status == 'completed' else '❌' if broadcast.status == 'failed' else '⏳'
@@ -620,14 +689,24 @@ async def show_messages_history(callback: types.CallbackQuery, db_user: User, db
 
             message_preview = html.escape(message_preview)
 
-            text += f"""
-{status_emoji} <b>{broadcast.created_at.strftime('%d.%m.%Y %H:%M')}</b>
-📊 Отправлено: {broadcast.sent_count}/{broadcast.total_count} ({success_rate}%)
-🎯 Аудитория: {get_target_name(broadcast.target_type)}
-👤 Админ: {broadcast.admin_name}
-📝 Сообщение: {message_preview}
-━━━━━━━━━━━━━━━━━━━━━━━
-"""
+            text += texts.t(
+                'ADMIN_MESSAGES_HISTORY_ITEM',
+                '{status_emoji} <b>{date}</b>\n'
+                '📊 Отправлено: {sent_count}/{total_count} ({success_rate}%)\n'
+                '🎯 Аудитория: {target_name}\n'
+                '👤 Админ: {admin_name}\n'
+                '📝 Сообщение: {message_preview}\n'
+                '━━━━━━━━━━━━━━━━━━━━━━━\n',
+            ).format(
+                status_emoji=status_emoji,
+                date=broadcast.created_at.strftime('%d.%m.%Y %H:%M'),
+                sent_count=broadcast.sent_count,
+                total_count=broadcast.total_count,
+                success_rate=success_rate,
+                target_name=get_target_name(broadcast.target_type, db_user.language),
+                admin_name=broadcast.admin_name,
+                message_preview=message_preview,
+            )
 
         keyboard = get_broadcast_history_keyboard(page, total_pages, db_user.language).inline_keyboard
 
@@ -640,29 +719,35 @@ async def show_messages_history(callback: types.CallbackQuery, db_user: User, db
 @admin_required
 @error_handler
 async def show_custom_broadcast(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     stats = await get_users_statistics(db)
 
-    text = f"""
-📝 <b>Рассылка по критериям</b>
-
-📊 <b>Доступные фильтры:</b>
-
-👥 <b>По регистрации:</b>
-• Сегодня: {stats['today']} чел.
-• За неделю: {stats['week']} чел.
-• За месяц: {stats['month']} чел.
-
-💼 <b>По активности:</b>
-• Активные сегодня: {stats['active_today']} чел.
-• Неактивные 7+ дней: {stats['inactive_week']} чел.
-• Неактивные 30+ дней: {stats['inactive_month']} чел.
-
-🔗 <b>По источнику:</b>
-• Через рефералов: {stats['referrals']} чел.
-• Прямая регистрация: {stats['direct']} чел.
-
-Выберите критерий для фильтрации:
-"""
+    text = texts.t(
+        'ADMIN_MESSAGES_CUSTOM_FILTERS',
+        '📝 <b>Рассылка по критериям</b>\n\n'
+        '📊 <b>Доступные фильтры:</b>\n\n'
+        '👥 <b>По регистрации:</b>\n'
+        '• Сегодня: {today} чел.\n'
+        '• За неделю: {week} чел.\n'
+        '• За месяц: {month} чел.\n\n'
+        '💼 <b>По активности:</b>\n'
+        '• Активные сегодня: {active_today} чел.\n'
+        '• Неактивные 7+ дней: {inactive_week} чел.\n'
+        '• Неактивные 30+ дней: {inactive_month} чел.\n\n'
+        '🔗 <b>По источнику:</b>\n'
+        '• Через рефералов: {referrals} чел.\n'
+        '• Прямая регистрация: {direct} чел.\n\n'
+        'Выберите критерий для фильтрации:',
+    ).format(
+        today=stats['today'],
+        week=stats['week'],
+        month=stats['month'],
+        active_today=stats['active_today'],
+        inactive_week=stats['inactive_week'],
+        inactive_month=stats['inactive_month'],
+        referrals=stats['referrals'],
+        direct=stats['direct'],
+    )
 
     await callback.message.edit_text(
         text, reply_markup=get_custom_criteria_keyboard(db_user.language), parse_mode='HTML'
@@ -673,31 +758,25 @@ async def show_custom_broadcast(callback: types.CallbackQuery, db_user: User, st
 @admin_required
 @error_handler
 async def select_custom_criteria(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     criteria = callback.data.replace('criteria_', '')
-
-    criteria_names = {
-        'today': 'Зарегистрированные сегодня',
-        'week': 'Зарегистрированные за неделю',
-        'month': 'Зарегистрированные за месяц',
-        'active_today': 'Активные сегодня',
-        'inactive_week': 'Неактивные 7+ дней',
-        'inactive_month': 'Неактивные 30+ дней',
-        'referrals': 'Пришедшие через рефералов',
-        'direct': 'Прямая регистрация',
-    }
+    criteria_name = get_target_name(f'custom_{criteria}', db_user.language)
 
     user_count = await get_custom_users_count(db, criteria)
 
     await state.update_data(broadcast_target=f'custom_{criteria}')
 
     await callback.message.edit_text(
-        f'📨 <b>Создание рассылки</b>\n\n'
-        f'🎯 <b>Критерий:</b> {criteria_names.get(criteria, criteria)}\n'
-        f'👥 <b>Получателей:</b> {user_count}\n\n'
-        f'Введите текст сообщения для рассылки:\n\n'
-        f'<i>Поддерживается HTML разметка</i>',
+        texts.t(
+            'ADMIN_MESSAGES_CREATE_BY_CRITERIA',
+            '📨 <b>Создание рассылки</b>\n\n'
+            '🎯 <b>Критерий:</b> {criteria_name}\n'
+            '👥 <b>Получателей:</b> {user_count}\n\n'
+            'Введите текст сообщения для рассылки:\n\n'
+            '<i>Поддерживается HTML разметка</i>',
+        ).format(criteria_name=criteria_name, user_count=user_count),
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')]]
+            inline_keyboard=[[types.InlineKeyboardButton(text=texts.t('ADMIN_CANCEL', '❌ Отмена'), callback_data='admin_messages')]]
         ),
         parse_mode='HTML',
     )
@@ -709,47 +788,40 @@ async def select_custom_criteria(callback: types.CallbackQuery, db_user: User, s
 @admin_required
 @error_handler
 async def select_broadcast_target(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     raw_target = callback.data[len('broadcast_') :]
     target_aliases = {
         'no_sub': 'no',
     }
     target = target_aliases.get(raw_target, raw_target)
 
-    target_names = {
-        'all': 'Всем пользователям',
-        'active': 'С активной подпиской',
-        'trial': 'С триальной подпиской',
-        'no': 'Без подписки',
-        'expiring': 'С истекающей подпиской',
-        'expired': 'С истекшей подпиской',
-        'active_zero': 'Активная подписка, трафик 0 ГБ',
-        'trial_zero': 'Триальная подписка, трафик 0 ГБ',
-    }
-
     # Обработка фильтра по тарифу
-    target_name = target_names.get(target, target)
+    target_name = get_target_name(target, db_user.language)
     if target.startswith('tariff_'):
         tariff_id = int(target.split('_')[1])
         from app.database.crud.tariff import get_tariff_by_id
 
         tariff = await get_tariff_by_id(db, tariff_id)
         if tariff:
-            target_name = f'Тариф «{tariff.name}»'
+            target_name = texts.t('ADMIN_MESSAGES_TARGET_TARIFF_NAMED', 'Тариф «{name}»').format(name=tariff.name)
         else:
-            target_name = f'Тариф #{tariff_id}'
+            target_name = texts.t('ADMIN_MESSAGES_TARGET_TARIFF_ID', 'Тариф #{tariff_id}').format(tariff_id=tariff_id)
 
     user_count = await get_target_users_count(db, target)
 
     await state.update_data(broadcast_target=target)
 
     await callback.message.edit_text(
-        f'📨 <b>Создание рассылки</b>\n\n'
-        f'🎯 <b>Аудитория:</b> {target_name}\n'
-        f'👥 <b>Получателей:</b> {user_count}\n\n'
-        f'Введите текст сообщения для рассылки:\n\n'
-        f'<i>Поддерживается HTML разметка</i>',
+        texts.t(
+            'ADMIN_MESSAGES_CREATE_BY_TARGET',
+            '📨 <b>Создание рассылки</b>\n\n'
+            '🎯 <b>Аудитория:</b> {target_name}\n'
+            '👥 <b>Получателей:</b> {user_count}\n\n'
+            'Введите текст сообщения для рассылки:\n\n'
+            '<i>Поддерживается HTML разметка</i>',
+        ).format(target_name=target_name, user_count=user_count),
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')]]
+            inline_keyboard=[[types.InlineKeyboardButton(text=texts.t('ADMIN_CANCEL', '❌ Отмена'), callback_data='admin_messages')]]
         ),
         parse_mode='HTML',
     )
@@ -761,19 +833,25 @@ async def select_broadcast_target(callback: types.CallbackQuery, db_user: User, 
 @admin_required
 @error_handler
 async def process_broadcast_message(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     broadcast_text = message.text
 
     if len(broadcast_text) > 4000:
-        await message.answer('❌ Сообщение слишком длинное (максимум 4000 символов)')
+        await message.answer(
+            texts.t('ADMIN_MESSAGES_TEXT_TOO_LONG', '❌ Сообщение слишком длинное (максимум 4000 символов)')
+        )
         return
 
     await state.update_data(broadcast_message=broadcast_text)
 
     await message.answer(
-        '🖼️ <b>Добавление медиафайла</b>\n\n'
-        'Вы можете добавить к сообщению фото, видео или документ.\n'
-        'Или пропустить этот шаг.\n\n'
-        'Выберите тип медиа:',
+        texts.t(
+            'ADMIN_MESSAGES_ADD_MEDIA_PROMPT',
+            '🖼️ <b>Добавление медиафайла</b>\n\n'
+            'Вы можете добавить к сообщению фото, видео или документ.\n'
+            'Или пропустить этот шаг.\n\n'
+            'Выберите тип медиа:',
+        ),
         reply_markup=get_broadcast_media_keyboard(db_user.language),
         parse_mode='HTML',
     )
@@ -782,6 +860,7 @@ async def process_broadcast_message(message: types.Message, db_user: User, state
 @admin_required
 @error_handler
 async def handle_media_selection(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     if callback.data == 'skip_media':
         await state.update_data(has_media=False)
         await show_button_selector_callback(callback, db_user, state)
@@ -790,18 +869,26 @@ async def handle_media_selection(callback: types.CallbackQuery, db_user: User, s
     media_type = callback.data.replace('add_media_', '')
 
     media_instructions = {
-        'photo': '📷 Отправьте фотографию для рассылки:',
-        'video': '🎥 Отправьте видео для рассылки:',
-        'document': '📄 Отправьте документ для рассылки:',
+        'photo': texts.t('ADMIN_MESSAGES_MEDIA_PROMPT_PHOTO', '📷 Отправьте фотографию для рассылки:'),
+        'video': texts.t('ADMIN_MESSAGES_MEDIA_PROMPT_VIDEO', '🎥 Отправьте видео для рассылки:'),
+        'document': texts.t('ADMIN_MESSAGES_MEDIA_PROMPT_DOCUMENT', '📄 Отправьте документ для рассылки:'),
     }
 
     await state.update_data(media_type=media_type, waiting_for_media=True)
 
     instruction_text = (
-        f'{media_instructions.get(media_type, "Отправьте медиафайл:")}\n\n<i>Размер файла не должен превышать 50 МБ</i>'
+        texts.t(
+            'ADMIN_MESSAGES_MEDIA_INSTRUCTION_WITH_LIMIT',
+            '{instruction}\n\n<i>Размер файла не должен превышать 50 МБ</i>',
+        ).format(
+            instruction=media_instructions.get(
+                media_type,
+                texts.t('ADMIN_MESSAGES_MEDIA_PROMPT_DEFAULT', 'Отправьте медиафайл:'),
+            )
+        )
     )
     instruction_keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=texts.t('ADMIN_CANCEL', '❌ Отмена'), callback_data='admin_messages')]]
     )
 
     # Проверяем, является ли текущее сообщение медиа-сообщением
@@ -831,6 +918,7 @@ async def handle_media_selection(callback: types.CallbackQuery, db_user: User, s
 @admin_required
 @error_handler
 async def process_broadcast_media(message: types.Message, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     expected_type = data.get('media_type')
 
@@ -847,7 +935,12 @@ async def process_broadcast_media(message: types.Message, db_user: User, state: 
         media_file_id = message.document.file_id
         media_type = 'document'
     else:
-        await message.answer(f'❌ Пожалуйста, отправьте {expected_type} как указано в инструкции.')
+        await message.answer(
+            texts.t(
+                'ADMIN_MESSAGES_MEDIA_TYPE_MISMATCH',
+                '❌ Пожалуйста, отправьте {expected_type} как указано в инструкции.',
+            ).format(expected_type=expected_type)
+        )
         return
 
     await state.update_data(
@@ -858,16 +951,24 @@ async def process_broadcast_media(message: types.Message, db_user: User, state: 
 
 
 async def show_media_preview(message: types.Message, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     media_type = data.get('media_type')
     media_file_id = data.get('media_file_id')
+    media_type_names = {
+        'photo': texts.t('ADMIN_MESSAGES_MEDIA_TYPE_PHOTO', 'Фотография'),
+        'video': texts.t('ADMIN_MESSAGES_MEDIA_TYPE_VIDEO', 'Видео'),
+        'document': texts.t('ADMIN_MESSAGES_MEDIA_TYPE_DOCUMENT', 'Документ'),
+    }
+    media_type_display = media_type_names.get(media_type, media_type)
 
-    preview_text = (
-        f'🖼️ <b>Медиафайл добавлен</b>\n\n'
-        f'📎 <b>Тип:</b> {media_type}\n'
-        f'✅ Файл сохранен и готов к отправке\n\n'
-        f'Что делать дальше?'
-    )
+    preview_text = texts.t(
+        'ADMIN_MESSAGES_MEDIA_PREVIEW',
+        '🖼️ <b>Медиафайл добавлен</b>\n\n'
+        '📎 <b>Тип:</b> {media_type}\n'
+        '✅ Файл сохранен и готов к отправке\n\n'
+        'Что делать дальше?',
+    ).format(media_type=media_type_display)
 
     # Для предпросмотра рассылки используем оригинальный метод без патчинга логотипа
     # чтобы показать именно загруженное фото
@@ -908,9 +1009,13 @@ async def handle_media_confirmation(callback: types.CallbackQuery, db_user: User
 @admin_required
 @error_handler
 async def handle_change_media(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     await safe_edit_or_send_text(
         callback,
-        '🖼️ <b>Изменение медиафайла</b>\n\nВыберите новый тип медиа:',
+        texts.t(
+            'ADMIN_MESSAGES_CHANGE_MEDIA_PROMPT',
+            '🖼️ <b>Изменение медиафайла</b>\n\nВыберите новый тип медиа:',
+        ),
         reply_markup=get_broadcast_media_keyboard(db_user.language),
         parse_mode='HTML',
     )
@@ -920,6 +1025,7 @@ async def handle_change_media(callback: types.CallbackQuery, db_user: User, stat
 @admin_required
 @error_handler
 async def show_button_selector_callback(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     has_media = data.get('has_media', False)
     selected_buttons = data.get('selected_buttons')
@@ -930,25 +1036,26 @@ async def show_button_selector_callback(callback: types.CallbackQuery, db_user: 
 
     media_info = ''
     if has_media:
-        media_type = data.get('media_type', 'файл')
-        media_info = f'\n🖼️ <b>Медиафайл:</b> {media_type} добавлен'
+        media_type = data.get('media_type', texts.t('ADMIN_MESSAGES_MEDIA_TYPE_FILE', 'файл'))
+        media_info = texts.t(
+            'ADMIN_MESSAGES_BUTTONS_MEDIA_INFO',
+            '\n🖼️ <b>Медиафайл:</b> {media_type} добавлен',
+        ).format(media_type=media_type)
 
-    text = f"""
-📘 <b>Выбор дополнительных кнопок</b>
-
-Выберите кнопки, которые будут добавлены к сообщению рассылки:
-
-💰 <b>Пополнить баланс</b> — откроет методы пополнения
-🤝 <b>Партнерка</b> — откроет реферальную программу
-🎫 <b>Промокод</b> — откроет форму ввода промокода
-🔗 <b>Подключиться</b> — поможет подключить приложение
-📱 <b>Подписка</b> — покажет состояние подписки
-🛠️ <b>Техподдержка</b> — свяжет с поддержкой
-
-🏠 <b>Кнопка "На главную"</b> включена по умолчанию, но вы можете отключить её при необходимости.{media_info}
-
-Выберите нужные кнопки и нажмите "Продолжить":
-"""
+    text = texts.t(
+        'ADMIN_MESSAGES_BUTTONS_SELECTOR_TEXT',
+        '📘 <b>Выбор дополнительных кнопок</b>\n\n'
+        'Выберите кнопки, которые будут добавлены к сообщению рассылки:\n\n'
+        '💰 <b>Пополнить баланс</b> — откроет методы пополнения\n'
+        '🤝 <b>Партнерка</b> — откроет реферальную программу\n'
+        '🎫 <b>Промокод</b> — откроет форму ввода промокода\n'
+        '🔗 <b>Подключиться</b> — поможет подключить приложение\n'
+        '📱 <b>Подписка</b> — покажет состояние подписки\n'
+        '🛠️ <b>Техподдержка</b> — свяжет с поддержкой\n\n'
+        '🏠 <b>Кнопка "На главную"</b> включена по умолчанию, но вы можете отключить её '
+        'при необходимости.{media_info}\n\n'
+        'Выберите нужные кнопки и нажмите "Продолжить":',
+    ).format(media_info=media_info)
 
     keyboard = get_updated_message_buttons_selector_keyboard_with_media(selected_buttons, has_media, db_user.language)
 
@@ -978,6 +1085,7 @@ async def show_button_selector_callback(callback: types.CallbackQuery, db_user: 
 @admin_required
 @error_handler
 async def show_button_selector(message: types.Message, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     selected_buttons = data.get('selected_buttons')
     if selected_buttons is None:
@@ -986,22 +1094,20 @@ async def show_button_selector(message: types.Message, db_user: User, state: FSM
 
     has_media = data.get('has_media', False)
 
-    text = """
-📘 <b>Выбор дополнительных кнопок</b>
-
-Выберите кнопки, которые будут добавлены к сообщению рассылки:
-
-💰 <b>Пополнить баланс</b> — откроет методы пополнения
-🤝 <b>Партнерка</b> — откроет реферальную программу
-🎫 <b>Промокод</b> — откроет форму ввода промокода
-🔗 <b>Подключиться</b> — поможет подключить приложение
-📱 <b>Подписка</b> — покажет состояние подписки
-🛠️ <b>Техподдержка</b> — свяжет с поддержкой
-
-🏠 <b>Кнопка "На главную"</b> включена по умолчанию, но вы можете отключить её при необходимости.
-
-Выберите нужные кнопки и нажмите "Продолжить":
-"""
+    text = texts.t(
+        'ADMIN_MESSAGES_BUTTONS_SELECTOR_TEXT',
+        '📘 <b>Выбор дополнительных кнопок</b>\n\n'
+        'Выберите кнопки, которые будут добавлены к сообщению рассылки:\n\n'
+        '💰 <b>Пополнить баланс</b> — откроет методы пополнения\n'
+        '🤝 <b>Партнерка</b> — откроет реферальную программу\n'
+        '🎫 <b>Промокод</b> — откроет форму ввода промокода\n'
+        '🔗 <b>Подключиться</b> — поможет подключить приложение\n'
+        '📱 <b>Подписка</b> — покажет состояние подписки\n'
+        '🛠️ <b>Техподдержка</b> — свяжет с поддержкой\n\n'
+        '🏠 <b>Кнопка "На главную"</b> включена по умолчанию, но вы можете отключить её '
+        'при необходимости.{media_info}\n\n'
+        'Выберите нужные кнопки и нажмите "Продолжить":',
+    ).format(media_info='')
 
     keyboard = get_updated_message_buttons_selector_keyboard_with_media(selected_buttons, has_media, db_user.language)
 
@@ -1036,6 +1142,7 @@ async def toggle_button_selection(callback: types.CallbackQuery, db_user: User, 
 @admin_required
 @error_handler
 async def confirm_button_selection(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     target = data.get('broadcast_target')
     message_text = data.get('broadcast_message')
@@ -1051,46 +1158,65 @@ async def confirm_button_selection(callback: types.CallbackQuery, db_user: User,
         if not target.startswith('custom_')
         else await get_custom_users_count(db, target.replace('custom_', ''))
     )
-    target_display = get_target_display_name(target)
+    target_display = get_target_display_name(target, db_user.language)
 
     media_info = ''
     if has_media:
-        media_type_names = {'photo': 'Фотография', 'video': 'Видео', 'document': 'Документ'}
-        media_info = f'\n🖼️ <b>Медиафайл:</b> {media_type_names.get(media_type, media_type)}'
+        media_type_names = {
+            'photo': texts.t('ADMIN_MESSAGES_MEDIA_TYPE_PHOTO', 'Фотография'),
+            'video': texts.t('ADMIN_MESSAGES_MEDIA_TYPE_VIDEO', 'Видео'),
+            'document': texts.t('ADMIN_MESSAGES_MEDIA_TYPE_DOCUMENT', 'Документ'),
+        }
+        media_info = texts.t('ADMIN_MESSAGES_PREVIEW_MEDIA_INFO', '\n🖼️ <b>Медиафайл:</b> {media_type}').format(
+            media_type=media_type_names.get(media_type, media_type)
+        )
 
     ordered_keys = [button_key for row in BUTTON_ROWS for button_key in row]
     button_labels = get_broadcast_button_labels(db_user.language)
     selected_names = [button_labels[key] for key in ordered_keys if key in selected_buttons]
     if selected_names:
-        buttons_info = f'\n📘 <b>Кнопки:</b> {", ".join(selected_names)}'
+        buttons_info = texts.t('ADMIN_MESSAGES_PREVIEW_BUTTONS_SELECTED', '\n📘 <b>Кнопки:</b> {buttons}').format(
+            buttons=', '.join(selected_names)
+        )
     else:
-        buttons_info = '\n📘 <b>Кнопки:</b> отсутствуют'
+        buttons_info = texts.t('ADMIN_MESSAGES_PREVIEW_BUTTONS_NONE', '\n📘 <b>Кнопки:</b> отсутствуют')
 
-    preview_text = f"""
-📨 <b>Предварительный просмотр рассылки</b>
-
-🎯 <b>Аудитория:</b> {target_display}
-👥 <b>Получателей:</b> {user_count}
-
-📝 <b>Сообщение:</b>
-{message_text}{media_info}
-
-{buttons_info}
-
-Подтвердить отправку?
-"""
+    preview_text = texts.t(
+        'ADMIN_MESSAGES_PREVIEW_TEXT',
+        '📨 <b>Предварительный просмотр рассылки</b>\n\n'
+        '🎯 <b>Аудитория:</b> {target_display}\n'
+        '👥 <b>Получателей:</b> {user_count}\n\n'
+        '📝 <b>Сообщение:</b>\n'
+        '{message_text}{media_info}\n\n'
+        '{buttons_info}\n\n'
+        'Подтвердить отправку?\n',
+    ).format(
+        target_display=target_display,
+        user_count=user_count,
+        message_text=message_text,
+        media_info=media_info,
+        buttons_info=buttons_info,
+    )
 
     keyboard = [
         [
-            types.InlineKeyboardButton(text='✅ Отправить', callback_data='admin_confirm_broadcast'),
-            types.InlineKeyboardButton(text='📘 Изменить кнопки', callback_data='edit_buttons'),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_POLLS_SEND_CONFIRM_BUTTON', '✅ Отправить'),
+                callback_data='admin_confirm_broadcast',
+            ),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_MESSAGES_PREVIEW_EDIT_BUTTONS_BUTTON', '📘 Изменить кнопки'),
+                callback_data='edit_buttons',
+            ),
         ]
     ]
 
     if has_media:
-        keyboard.append([types.InlineKeyboardButton(text='🖼️ Изменить медиа', callback_data='change_media')])
+        keyboard.append(
+            [types.InlineKeyboardButton(text=texts.t('ADMIN_BROADCAST_CHANGE_MEDIA', '🖼️ Изменить медиа'), callback_data='change_media')]
+        )
 
-    keyboard.append([types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')])
+    keyboard.append([types.InlineKeyboardButton(text=texts.t('ADMIN_CANCEL', '❌ Отмена'), callback_data='admin_messages')])
 
     # Если есть медиа, показываем его с загруженным фото, иначе обычное текстовое сообщение
     if has_media and media_type == 'photo':
@@ -1128,6 +1254,7 @@ async def confirm_button_selection(callback: types.CallbackQuery, db_user: User,
 @admin_required
 @error_handler
 async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     target = data.get('broadcast_target')
     message_text = data.get('broadcast_message')
@@ -1153,7 +1280,10 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
 
     await safe_edit_or_send_text(
         callback,
-        '📨 <b>Подготовка рассылки...</b>\n\n⏳ Загружаю список получателей...',
+        texts.t(
+            'ADMIN_MESSAGES_PREPARING',
+            '📨 <b>Подготовка рассылки...</b>\n\n⏳ Загружаю список получателей...',
+        ),
         reply_markup=None,
         parse_mode='HTML',
     )
@@ -1219,8 +1349,8 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
     # Глобальная пауза при FloodWait — тормозим ВСЕ отправки, а не один слот семафора
     flood_wait_until: float = 0.0
 
-    async def send_single_broadcast(telegram_id: int) -> str:
-        """Отправляет одно сообщение. Возвращает 'sent', 'blocked' или 'failed'."""
+    async def send_single_broadcast(telegram_id: int) -> bool:
+        """Отправляет одно сообщение. Возвращает True при успехе."""
         nonlocal flood_wait_until
 
         for attempt in range(_MAX_SEND_RETRIES):
@@ -1264,7 +1394,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
                         parse_mode='HTML',
                         reply_markup=broadcast_keyboard,
                     )
-                return 'sent'
+                return True
 
             except TelegramRetryAfter as e:
                 # Глобальная пауза — тормозим все корутины
@@ -1280,14 +1410,11 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
                 await asyncio.sleep(wait_seconds)
 
             except TelegramForbiddenError:
-                return 'blocked'
+                return False
 
             except TelegramBadRequest as e:
-                err = str(e).lower()
-                if 'bot was blocked' in err or 'user is deactivated' in err or 'chat not found' in err:
-                    return 'blocked'
                 logger.debug('BadRequest при рассылке пользователю', telegram_id=telegram_id, e=e)
-                return 'failed'
+                return False
 
             except Exception as e:
                 logger.error(
@@ -1300,7 +1427,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
                 if attempt < _MAX_SEND_RETRIES - 1:
                     await asyncio.sleep(0.5 * (attempt + 1))
 
-        return 'failed'
+        return False
 
     # =========================================================================
     # Прогресс-бар в реальном времени (как в сканере заблокированных)
@@ -1315,29 +1442,34 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
         current_failed: int,
         total: int,
         phase: str = 'sending',
-        current_blocked: int = 0,
     ) -> str:
-        processed = current_sent + current_failed + current_blocked
+        processed = current_sent + current_failed
         percent = round(processed / total * 100, 1) if total > 0 else 0
         bar_length = 20
         filled = int(bar_length * processed / total) if total > 0 else 0
         bar = '█' * filled + '░' * (bar_length - filled)
 
         if phase == 'sending':
-            blocked_line = f'• Заблокировали бота: {current_blocked}\n' if current_blocked else ''
-            return (
-                f'📨 <b>Рассылка в процессе...</b>\n\n'
-                f'[{bar}] {percent}%\n\n'
-                f'📊 <b>Прогресс:</b>\n'
-                f'• Отправлено: {current_sent}\n'
-                f'{blocked_line}'
-                f'• Ошибок: {current_failed}\n'
-                f'• Обработано: {processed}/{total}\n\n'
-                f'⏳ Не закрывайте диалог — рассылка продолжается...'
+            return texts.t(
+                'ADMIN_MESSAGES_PROGRESS_TEXT',
+                '📨 <b>Рассылка в процессе...</b>\n\n'
+                '[{bar}] {percent}%\n\n'
+                '📊 <b>Прогресс:</b>\n'
+                '• Отправлено: {current_sent}\n'
+                '• Ошибок: {current_failed}\n'
+                '• Обработано: {processed}/{total}\n\n'
+                '⏳ Не закрывайте диалог — рассылка продолжается...',
+            ).format(
+                bar=bar,
+                percent=percent,
+                current_sent=current_sent,
+                current_failed=current_failed,
+                processed=processed,
+                total=total,
             )
         return ''
 
-    async def _update_progress_message(current_sent: int, current_failed: int, current_blocked: int = 0) -> None:
+    async def _update_progress_message(current_sent: int, current_failed: int) -> None:
         """Безопасно обновляет сообщение с прогрессом."""
         nonlocal last_progress_update, progress_message
         now = asyncio.get_event_loop().time()
@@ -1345,7 +1477,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
             return
         last_progress_update = now
 
-        text = _build_progress_text(current_sent, current_failed, total_recipients, current_blocked=current_blocked)
+        text = _build_progress_text(current_sent, current_failed, total_recipients)
         try:
             await progress_message.edit_text(text, parse_mode='HTML')
         except TelegramRetryAfter as e:
@@ -1367,9 +1499,6 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
     # Первое обновление прогресса
     await _update_progress_message(0, 0)
 
-    blocked_count = 0
-    blocked_telegram_ids: list[int] = []
-
     # =========================================================================
     # Основной цикл рассылки — батчами по _BATCH_SIZE
     # =========================================================================
@@ -1382,13 +1511,10 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
             return_exceptions=True,
         )
 
-        for idx, result in enumerate(results):
-            if isinstance(result, str):
-                if result == 'sent':
+        for result in results:
+            if isinstance(result, bool):
+                if result:
                     sent_count += 1
-                elif result == 'blocked':
-                    blocked_count += 1
-                    blocked_telegram_ids.append(batch[idx])
                 else:
                     failed_count += 1
             elif isinstance(result, Exception):
@@ -1397,7 +1523,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
 
         # Обновляем прогресс каждые _PROGRESS_UPDATE_INTERVAL батчей
         if batch_idx % _PROGRESS_UPDATE_INTERVAL == 0:
-            await _update_progress_message(sent_count, failed_count, blocked_count)
+            await _update_progress_message(sent_count, failed_count)
 
         # Задержка между батчами для соблюдения rate limits
         await asyncio.sleep(_BATCH_DELAY)
@@ -1407,7 +1533,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
     if skipped_email_users > 0:
         logger.info('Пропущено email-only пользователей при рассылке', skipped_email_users=skipped_email_users)
 
-    status = 'completed' if failed_count == 0 and blocked_count == 0 else 'partial'
+    status = 'completed' if failed_count == 0 else 'partial'
 
     # Сохраняем результат в НОВОЙ сессии (старая уже мертва)
     await _persist_broadcast_result(
@@ -1415,26 +1541,44 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
         sent_count=sent_count,
         failed_count=failed_count,
         status=status,
-        blocked_count=blocked_count,
     )
 
     success_rate = round(sent_count / total_users_count * 100, 1) if total_users_count else 0
-    media_info = f'\n🖼️ <b>Медиафайл:</b> {media_type}' if has_media else ''
-    blocked_line = f'• Заблокировали бота: {blocked_count}\n' if blocked_count else ''
+    media_info = (
+        texts.t('ADMIN_MESSAGES_PREVIEW_MEDIA_INFO', '\n🖼️ <b>Медиафайл:</b> {media_type}').format(
+            media_type=media_type
+        )
+        if has_media
+        else ''
+    )
 
-    result_text = (
-        f'✅ <b>Рассылка завершена!</b>\n\n'
-        f'📊 <b>Результат:</b>\n'
-        f'• Отправлено: {sent_count}\n'
-        f'{blocked_line}'
-        f'• Не доставлено: {failed_count}\n'
-        f'• Всего пользователей: {total_users_count}\n'
-        f'• Успешность: {success_rate}%{media_info}\n\n'
-        f'<b>Администратор:</b> {admin_name}'
+    result_text = texts.t(
+        'ADMIN_MESSAGES_RESULT_TEXT',
+        '✅ <b>Рассылка завершена!</b>\n\n'
+        '📊 <b>Результат:</b>\n'
+        '• Отправлено: {sent_count}\n'
+        '• Не доставлено: {failed_count}\n'
+        '• Всего пользователей: {total_users_count}\n'
+        '• Успешность: {success_rate}%{media_info}\n\n'
+        '<b>Администратор:</b> {admin_name}',
+    ).format(
+        sent_count=sent_count,
+        failed_count=failed_count,
+        total_users_count=total_users_count,
+        success_rate=success_rate,
+        media_info=media_info,
+        admin_name=admin_name,
     )
 
     back_keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='📨 К рассылкам', callback_data='admin_messages')]]
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('ADMIN_MESSAGES_BACK_BUTTON', '📨 К рассылкам'),
+                    callback_data='admin_messages',
+                )
+            ]
+        ]
     )
 
     try:
@@ -1468,6 +1612,8 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
 
 async def get_target_users_count(db: AsyncSession, target: str) -> int:
     """Быстрый подсчёт пользователей через SQL COUNT вместо загрузки всех в память."""
+    from datetime import datetime, timedelta
+
     from sqlalchemy import distinct, func as sql_func
 
     base_filter = User.status == UserStatus.ACTIVE.value
@@ -1520,7 +1666,7 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
 
     if target == 'expiring':
         # Истекающие в ближайшие 3 дня
-        now = datetime.now(UTC)
+        now = datetime.utcnow()
         expiry_threshold = now + timedelta(days=3)
         query = (
             select(sql_func.count(distinct(User.id)))
@@ -1537,7 +1683,7 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
 
     if target == 'expiring_subscribers':
         # Истекающие в ближайшие 7 дней
-        now = datetime.now(UTC)
+        now = datetime.utcnow()
         expiry_threshold = now + timedelta(days=7)
         query = (
             select(sql_func.count(distinct(User.id)))
@@ -1554,7 +1700,7 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
 
     if target == 'expired':
         # Истекшие подписки
-        now = datetime.now(UTC)
+        now = datetime.utcnow()
         expired_statuses = [SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value]
         query = (
             select(sql_func.count(distinct(User.id)))
@@ -1573,7 +1719,7 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
 
     if target == 'expired_subscribers':
         # То же что и expired
-        now = datetime.now(UTC)
+        now = datetime.utcnow()
         expired_statuses = [SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value]
         query = (
             select(sql_func.count(distinct(User.id)))
@@ -1651,7 +1797,7 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
 
     # Custom filters — быстрый COUNT вместо загрузки всех пользователей
     if target.startswith('custom_'):
-        now = datetime.now(UTC)
+        now = datetime.utcnow()
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
         criteria = target[len('custom_') :]
 
@@ -1721,7 +1867,7 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         return [sub.user for sub in expiring_subs if sub.user]
 
     if target == 'expired':
-        now = datetime.now(UTC)
+        now = datetime.utcnow()
         expired_statuses = {
             SubscriptionStatus.EXPIRED.value,
             SubscriptionStatus.DISABLED.value,
@@ -1772,7 +1918,7 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         return [sub.user for sub in expiring_subs if sub.user]
 
     if target == 'expired_subscribers':
-        now = datetime.now(UTC)
+        now = datetime.utcnow()
         expired_statuses = {
             SubscriptionStatus.EXPIRED.value,
             SubscriptionStatus.DISABLED.value,
@@ -1799,7 +1945,7 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         ]
 
     if target == 'trial_ending':
-        now = datetime.now(UTC)
+        now = datetime.utcnow()
         in_3_days = now + timedelta(days=3)
         return [
             user
@@ -1811,7 +1957,7 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         ]
 
     if target == 'trial_expired':
-        now = datetime.now(UTC)
+        now = datetime.utcnow()
         return [
             user
             for user in users
@@ -1821,7 +1967,7 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
     if target == 'autopay_failed':
         from app.database.models import SubscriptionEvent
 
-        week_ago = datetime.now(UTC) - timedelta(days=7)
+        week_ago = datetime.utcnow() - timedelta(days=7)
         stmt = (
             select(SubscriptionEvent.user_id)
             .where(
@@ -1843,15 +1989,15 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         ]
 
     if target == 'inactive_30d':
-        threshold = datetime.now(UTC) - timedelta(days=30)
+        threshold = datetime.utcnow() - timedelta(days=30)
         return [user for user in users if user.last_activity and user.last_activity < threshold]
 
     if target == 'inactive_60d':
-        threshold = datetime.now(UTC) - timedelta(days=60)
+        threshold = datetime.utcnow() - timedelta(days=60)
         return [user for user in users if user.last_activity and user.last_activity < threshold]
 
     if target == 'inactive_90d':
-        threshold = datetime.now(UTC) - timedelta(days=90)
+        threshold = datetime.utcnow() - timedelta(days=90)
         return [user for user in users if user.last_activity and user.last_activity < threshold]
 
     # Фильтр по тарифу
@@ -1872,7 +2018,7 @@ async def get_custom_users_count(db: AsyncSession, criteria: str) -> int:
 
 
 async def get_custom_users(db: AsyncSession, criteria: str) -> list:
-    now = datetime.now(UTC)
+    now = datetime.utcnow()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_ago = now - timedelta(days=7)
     month_ago = now - timedelta(days=30)
@@ -1901,7 +2047,7 @@ async def get_custom_users(db: AsyncSession, criteria: str) -> list:
 
 
 async def get_users_statistics(db: AsyncSession) -> dict:
-    now = datetime.now(UTC)
+    now = datetime.utcnow()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_ago = now - timedelta(days=7)
     month_ago = now - timedelta(days=30)
@@ -1954,36 +2100,37 @@ async def get_users_statistics(db: AsyncSession) -> dict:
     return stats
 
 
-def get_target_name(target_type: str) -> str:
+def get_target_name(target_type: str, language: str = 'ru') -> str:
+    texts = get_texts(language)
     names = {
-        'all': 'Всем пользователям',
-        'active': 'С активной подпиской',
-        'trial': 'С триальной подпиской',
-        'no': 'Без подписки',
-        'sub': 'Без подписки',
-        'expiring': 'С истекающей подпиской',
-        'expired': 'С истекшей подпиской',
-        'active_zero': 'Активная подписка, трафик 0 ГБ',
-        'trial_zero': 'Триальная подписка, трафик 0 ГБ',
-        'zero': 'Подписка, трафик 0 ГБ',
-        'custom_today': 'Зарегистрированные сегодня',
-        'custom_week': 'Зарегистрированные за неделю',
-        'custom_month': 'Зарегистрированные за месяц',
-        'custom_active_today': 'Активные сегодня',
-        'custom_inactive_week': 'Неактивные 7+ дней',
-        'custom_inactive_month': 'Неактивные 30+ дней',
-        'custom_referrals': 'Через рефералов',
-        'custom_direct': 'Прямая регистрация',
+        'all': texts.t('ADMIN_MESSAGES_TARGET_NAME_ALL', 'Всем пользователям'),
+        'active': texts.t('ADMIN_MESSAGES_TARGET_NAME_ACTIVE', 'С активной подпиской'),
+        'trial': texts.t('ADMIN_MESSAGES_TARGET_NAME_TRIAL', 'С триальной подпиской'),
+        'no': texts.t('ADMIN_MESSAGES_TARGET_NAME_NO', 'Без подписки'),
+        'sub': texts.t('ADMIN_MESSAGES_TARGET_NAME_NO', 'Без подписки'),
+        'expiring': texts.t('ADMIN_MESSAGES_TARGET_NAME_EXPIRING', 'С истекающей подпиской'),
+        'expired': texts.t('ADMIN_MESSAGES_TARGET_NAME_EXPIRED', 'С истекшей подпиской'),
+        'active_zero': texts.t('ADMIN_MESSAGES_TARGET_NAME_ACTIVE_ZERO', 'Активная подписка, трафик 0 ГБ'),
+        'trial_zero': texts.t('ADMIN_MESSAGES_TARGET_NAME_TRIAL_ZERO', 'Триальная подписка, трафик 0 ГБ'),
+        'zero': texts.t('ADMIN_MESSAGES_TARGET_NAME_ZERO', 'Подписка, трафик 0 ГБ'),
+        'custom_today': texts.t('ADMIN_MESSAGES_TARGET_NAME_CUSTOM_TODAY', 'Зарегистрированные сегодня'),
+        'custom_week': texts.t('ADMIN_MESSAGES_TARGET_NAME_CUSTOM_WEEK', 'Зарегистрированные за неделю'),
+        'custom_month': texts.t('ADMIN_MESSAGES_TARGET_NAME_CUSTOM_MONTH', 'Зарегистрированные за месяц'),
+        'custom_active_today': texts.t('ADMIN_MESSAGES_TARGET_NAME_CUSTOM_ACTIVE_TODAY', 'Активные сегодня'),
+        'custom_inactive_week': texts.t('ADMIN_MESSAGES_TARGET_NAME_CUSTOM_INACTIVE_WEEK', 'Неактивные 7+ дней'),
+        'custom_inactive_month': texts.t('ADMIN_MESSAGES_TARGET_NAME_CUSTOM_INACTIVE_MONTH', 'Неактивные 30+ дней'),
+        'custom_referrals': texts.t('ADMIN_MESSAGES_TARGET_NAME_CUSTOM_REFERRALS', 'Через рефералов'),
+        'custom_direct': texts.t('ADMIN_MESSAGES_TARGET_NAME_CUSTOM_DIRECT', 'Прямая регистрация'),
     }
     # Обработка фильтра по тарифу
     if target_type.startswith('tariff_'):
         tariff_id = target_type.split('_')[1]
-        return f'По тарифу #{tariff_id}'
+        return texts.t('ADMIN_MESSAGES_TARGET_NAME_TARIFF', 'По тарифу #{tariff_id}').format(tariff_id=tariff_id)
     return names.get(target_type, target_type)
 
 
-def get_target_display_name(target: str) -> str:
-    return get_target_name(target)
+def get_target_display_name(target: str, language: str = 'ru') -> str:
+    return get_target_name(target, language)
 
 
 def register_handlers(dp: Dispatcher):

@@ -201,19 +201,31 @@ def _calculate_traffic_reset_price(subscription) -> int:
 async def handle_reset_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     from app.config import settings
 
+    texts = get_texts(db_user.language)
     if settings.is_traffic_topup_blocked():
-        await callback.answer('⚠️ В текущем режиме трафик фиксированный и не может быть сброшен', show_alert=True)
+        await callback.answer(
+            texts.t(
+                'TRAFFIC_RESET_FIXED_MODE_ALERT',
+                '⚠️ В текущем режиме трафик фиксированный и не может быть сброшен',
+            ),
+            show_alert=True,
+        )
         return
 
-    texts = get_texts(db_user.language)
     subscription = db_user.subscription
 
     if not subscription or subscription.is_trial:
-        await callback.answer('⌛ Эта функция доступна только для платных подписок', show_alert=True)
+        await callback.answer(
+            texts.t('TRAFFIC_RESET_PAID_ONLY_ALERT', '⌛ Эта функция доступна только для платных подписок'),
+            show_alert=True,
+        )
         return
 
     if subscription.traffic_limit_gb == 0:
-        await callback.answer('⌛ У вас безлимитный трафик', show_alert=True)
+        await callback.answer(
+            texts.t('TRAFFIC_RESET_ALREADY_UNLIMITED_ALERT', '⌛ У вас безлимитный трафик'),
+            show_alert=True,
+        )
         return
 
     reset_price = _calculate_traffic_reset_price(subscription)
@@ -223,10 +235,14 @@ async def handle_reset_traffic(callback: types.CallbackQuery, db_user: User, db:
     price_info = ''
     if purchased_gb > 0 and settings.get_traffic_reset_price_mode() == 'traffic_with_purchased':
         base_traffic_gb = subscription.traffic_limit_gb - purchased_gb
-        price_info = (
-            f'\n\n💡 <i>Расчет цены:</i>\n'
-            f'• Базовый трафик: {texts.format_traffic(base_traffic_gb)}\n'
-            f'• Докупленный: {texts.format_traffic(purchased_gb)}'
+        price_info = texts.t(
+            'TRAFFIC_RESET_PRICE_INFO_BLOCK',
+            '\n\n💡 <i>Расчет цены:</i>\n'
+            '• Базовый трафик: {base_traffic}\n'
+            '• Докупленный: {purchased_traffic}',
+        ).format(
+            base_traffic=texts.format_traffic(base_traffic_gb),
+            purchased_traffic=texts.format_traffic(purchased_gb),
         )
 
     # Проверяем достаточно ли средств
@@ -234,16 +250,29 @@ async def handle_reset_traffic(callback: types.CallbackQuery, db_user: User, db:
     missing_kopeks = max(0, reset_price - db_user.balance_kopeks)
 
     # Формируем текст о балансе
-    balance_info = f'\n\n💰 На балансе: {texts.format_price(db_user.balance_kopeks)}'
+    balance_info = texts.t('TRAFFIC_RESET_BALANCE_INFO_LINE', '\n\n💰 На балансе: {balance}').format(
+        balance=texts.format_price(db_user.balance_kopeks)
+    )
     if not has_enough_balance:
-        balance_info += f'\n⚠️ Не хватает: {texts.format_price(missing_kopeks)}'
+        balance_info += texts.t('TRAFFIC_RESET_MISSING_INFO_LINE', '\n⚠️ Не хватает: {missing}').format(
+            missing=texts.format_price(missing_kopeks)
+        )
 
     await callback.message.edit_text(
-        f'🔄 <b>Сброс трафика</b>\n\n'
-        f'Использовано: {texts.format_traffic(subscription.traffic_used_gb, is_limit=False)}\n'
-        f'Лимит: {texts.format_traffic(subscription.traffic_limit_gb)}\n\n'
-        f'Стоимость сброса: {texts.format_price(reset_price)}{price_info}{balance_info}\n\n'
-        'После сброса счетчик использованного трафика станет равным 0.',
+        texts.t(
+            'TRAFFIC_RESET_CONFIRM_TEXT',
+            '🔄 <b>Сброс трафика</b>\n\n'
+            'Использовано: {used_traffic}\n'
+            'Лимит: {traffic_limit}\n\n'
+            'Стоимость сброса: {reset_price}{price_info}{balance_info}\n\n'
+            'После сброса счетчик использованного трафика станет равным 0.',
+        ).format(
+            used_traffic=texts.format_traffic(subscription.traffic_used_gb, is_limit=False),
+            traffic_limit=texts.format_traffic(subscription.traffic_limit_gb),
+            reset_price=texts.format_price(reset_price),
+            price_info=price_info,
+            balance_info=balance_info,
+        ),
         reply_markup=get_reset_traffic_confirm_keyboard(
             reset_price,
             db_user.language,
@@ -258,11 +287,14 @@ async def handle_reset_traffic(callback: types.CallbackQuery, db_user: User, db:
 async def confirm_reset_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     from app.config import settings
 
+    texts = get_texts(db_user.language)
     if settings.is_traffic_topup_blocked():
-        await callback.answer('⚠️ В текущем режиме трафик фиксированный', show_alert=True)
+        await callback.answer(
+            texts.t('TRAFFIC_RESET_FIXED_MODE_SHORT_ALERT', '⚠️ В текущем режиме трафик фиксированный'),
+            show_alert=True,
+        )
         return
 
-    texts = get_texts(db_user.language)
     subscription = db_user.subscription
 
     reset_price = _calculate_traffic_reset_price(subscription)
@@ -296,10 +328,18 @@ async def confirm_reset_traffic(callback: types.CallbackQuery, db_user: User, db
         return
 
     try:
-        success = await subtract_user_balance(db, db_user, reset_price, 'Сброс трафика')
+        success = await subtract_user_balance(
+            db,
+            db_user,
+            reset_price,
+            texts.t('TRAFFIC_RESET_BALANCE_DESCRIPTION', 'Сброс трафика'),
+        )
 
         if not success:
-            await callback.answer('⌛ Ошибка списания средств', show_alert=True)
+            await callback.answer(
+                texts.t('TRAFFIC_BALANCE_DEBIT_ERROR_ALERT', '⌛ Ошибка списания средств'),
+                show_alert=True,
+            )
             return
 
         subscription.traffic_used_gb = 0.0
@@ -319,16 +359,19 @@ async def confirm_reset_traffic(callback: types.CallbackQuery, db_user: User, db
             user_id=db_user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=reset_price,
-            description='Сброс трафика',
+            description=texts.t('TRAFFIC_RESET_BALANCE_DESCRIPTION', 'Сброс трафика'),
         )
 
         await db.refresh(db_user)
         await db.refresh(subscription)
 
         await callback.message.edit_text(
-            f'✅ Трафик успешно сброшен!\n\n'
-            f'🔄 Использованный трафик обнулен\n'
-            f'📊 Лимит: {texts.format_traffic(subscription.traffic_limit_gb)}',
+            texts.t(
+                'TRAFFIC_RESET_SUCCESS_TEXT',
+                '✅ Трафик успешно сброшен!\n\n'
+                '🔄 Использованный трафик обнулен\n'
+                '📊 Лимит: {traffic_limit}',
+            ).format(traffic_limit=texts.format_traffic(subscription.traffic_limit_gb)),
             reply_markup=get_back_keyboard(db_user.language),
         )
 
@@ -365,33 +408,63 @@ async def refresh_traffic_config():
 
 async def get_traffic_packages_info() -> str:
     try:
+        texts = get_texts()
         packages = settings.get_traffic_packages()
 
-        info_lines = ['📦 Настроенные пакеты трафика:']
+        info_lines = [texts.t('TRAFFIC_PACKAGES_INFO_TITLE', '📦 Настроенные пакеты трафика:')]
 
         enabled_packages = [pkg for pkg in packages if pkg['enabled']]
         disabled_packages = [pkg for pkg in packages if not pkg['enabled']]
 
         if enabled_packages:
-            info_lines.append('\n✅ Активные:')
+            info_lines.append(texts.t('TRAFFIC_PACKAGES_INFO_ENABLED_TITLE', '\n✅ Активные:'))
             for pkg in enabled_packages:
-                gb_text = '♾️ Безлимит' if pkg['gb'] == 0 else f'{pkg["gb"]} ГБ'
-                info_lines.append(f'   • {gb_text}: {pkg["price"] // 100}₽')
+                gb_text = (
+                    texts.t('TRAFFIC_PACKAGES_INFO_UNLIMITED_SHORT', '♾️ Безлимит')
+                    if pkg['gb'] == 0
+                    else texts.t('SUBSCRIPTION_TRAFFIC_DISPLAY_GB', '{gb} ГБ').format(gb=pkg['gb'])
+                )
+                info_lines.append(
+                    texts.t('TRAFFIC_PACKAGES_INFO_ITEM', '   • {gb_text}: {price}₽').format(
+                        gb_text=gb_text,
+                        price=pkg['price'] // 100,
+                    )
+                )
 
         if disabled_packages:
-            info_lines.append('\n❌ Отключенные:')
+            info_lines.append(texts.t('TRAFFIC_PACKAGES_INFO_DISABLED_TITLE', '\n❌ Отключенные:'))
             for pkg in disabled_packages:
-                gb_text = '♾️ Безлимит' if pkg['gb'] == 0 else f'{pkg["gb"]} ГБ'
-                info_lines.append(f'   • {gb_text}: {pkg["price"] // 100}₽')
+                gb_text = (
+                    texts.t('TRAFFIC_PACKAGES_INFO_UNLIMITED_SHORT', '♾️ Безлимит')
+                    if pkg['gb'] == 0
+                    else texts.t('SUBSCRIPTION_TRAFFIC_DISPLAY_GB', '{gb} ГБ').format(gb=pkg['gb'])
+                )
+                info_lines.append(
+                    texts.t('TRAFFIC_PACKAGES_INFO_ITEM', '   • {gb_text}: {price}₽').format(
+                        gb_text=gb_text,
+                        price=pkg['price'] // 100,
+                    )
+                )
 
-        info_lines.append(f'\n📊 Всего пакетов: {len(packages)}')
-        info_lines.append(f'🟢 Активных: {len(enabled_packages)}')
-        info_lines.append(f'🔴 Отключенных: {len(disabled_packages)}')
+        info_lines.append(
+            texts.t('TRAFFIC_PACKAGES_INFO_TOTAL_LINE', '\n📊 Всего пакетов: {count}').format(count=len(packages))
+        )
+        info_lines.append(
+            texts.t('TRAFFIC_PACKAGES_INFO_ENABLED_COUNT_LINE', '🟢 Активных: {count}').format(
+                count=len(enabled_packages)
+            )
+        )
+        info_lines.append(
+            texts.t('TRAFFIC_PACKAGES_INFO_DISABLED_COUNT_LINE', '🔴 Отключенных: {count}').format(
+                count=len(disabled_packages)
+            )
+        )
 
         return '\n'.join(info_lines)
 
     except Exception as e:
-        return f'⚠️ Ошибка получения информации: {e}'
+        texts = get_texts()
+        return texts.t('TRAFFIC_PACKAGES_INFO_ERROR', '⚠️ Ошибка получения информации: {error}').format(error=e)
 
 
 async def select_traffic(callback: types.CallbackQuery, state: FSMContext, db_user: User):
@@ -459,17 +532,29 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         if tariff and tariff.can_topup_traffic():
             base_price = tariff.get_traffic_topup_price(traffic_gb) or 0
         else:
-            await callback.answer('⚠️ На вашем тарифе докупка трафика недоступна', show_alert=True)
+            await callback.answer(
+                texts.t(
+                    'TARIFF_TRAFFIC_TOPUP_DISABLED',
+                    '⚠️ На вашем тарифе докупка трафика недоступна',
+                ),
+                show_alert=True,
+            )
             return
     else:
         # Стандартный режим
         if settings.is_traffic_topup_blocked():
-            await callback.answer('⚠️ В текущем режиме трафик фиксированный', show_alert=True)
+            await callback.answer(
+                texts.t('TRAFFIC_TOPUP_FIXED_MODE_ALERT', '⚠️ В текущем режиме трафик фиксированный'),
+                show_alert=True,
+            )
             return
         base_price = settings.get_traffic_topup_price(traffic_gb)
 
     if base_price == 0 and traffic_gb != 0:
-        await callback.answer('⚠️ Цена для этого пакета не настроена', show_alert=True)
+        await callback.answer(
+            texts.t('TRAFFIC_TOPUP_PRICE_NOT_CONFIGURED_ALERT', '⚠️ Цена для этого пакета не настроена'),
+            show_alert=True,
+        )
         return
 
     period_hint_days = _get_period_hint_from_subscription(subscription)
@@ -513,7 +598,10 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             'base_price_kopeks': discounted_per_month,
             'discount_percent': discount_result['percent'],
             'source': 'bot',
-            'description': f'Докупка {traffic_gb} ГБ трафика',
+            'description': texts.t(
+                'TRAFFIC_TOPUP_DESCRIPTION',
+                'Докупка {traffic_gb} ГБ трафика',
+            ).format(traffic_gb=traffic_gb),
         }
         try:
             await user_cart_service.save_user_cart(db_user.id, cart_data)
@@ -557,11 +645,16 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             db,
             db_user,
             price,
-            f'Добавление {traffic_gb} ГБ трафика',
+            texts.t('TRAFFIC_TOPUP_BALANCE_DESCRIPTION', 'Добавление {traffic_gb} ГБ трафика').format(
+                traffic_gb=traffic_gb
+            ),
         )
 
         if not success:
-            await callback.answer('⚠️ Ошибка списания средств', show_alert=True)
+            await callback.answer(
+                texts.t('TRAFFIC_BALANCE_DEBIT_ERROR_ALERT', '⌛ Ошибка списания средств'),
+                show_alert=True,
+            )
             return
 
         if traffic_gb == 0:
@@ -586,7 +679,9 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             user_id=db_user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=price,
-            description=f'Добавление {traffic_gb} ГБ трафика',
+            description=texts.t('TRAFFIC_TOPUP_BALANCE_DESCRIPTION', 'Добавление {traffic_gb} ГБ трафика').format(
+                traffic_gb=traffic_gb
+            ),
         )
 
         await db.refresh(db_user)
@@ -603,17 +698,29 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         except Exception as e:
             logger.error('Ошибка отправки уведомления о докупке трафика', error=e)
 
-        success_text = '✅ Трафик успешно добавлен!\n\n'
+        success_text = texts.t('TRAFFIC_TOPUP_SUCCESS_TITLE', '✅ Трафик успешно добавлен!\n\n')
         if traffic_gb == 0:
-            success_text += '🎉 Теперь у вас безлимитный трафик!'
+            success_text += texts.t('TRAFFIC_TOPUP_SUCCESS_UNLIMITED_LINE', '🎉 Теперь у вас безлимитный трафик!')
         else:
-            success_text += f'📈 Добавлено: {traffic_gb} ГБ\n'
-            success_text += f'Новый лимит: {texts.format_traffic(subscription.traffic_limit_gb)}'
+            success_text += texts.t('TRAFFIC_TOPUP_SUCCESS_ADDED_LINE', '📈 Добавлено: {traffic_gb} ГБ\n').format(
+                traffic_gb=traffic_gb
+            )
+            success_text += texts.t('TRAFFIC_TOPUP_SUCCESS_NEW_LIMIT_LINE', 'Новый лимит: {traffic_limit}').format(
+                traffic_limit=texts.format_traffic(subscription.traffic_limit_gb)
+            )
 
         if price > 0:
-            success_text += f'\n💰 Списано: {texts.format_price(price)}'
+            success_text += texts.t('TRAFFIC_TOPUP_SUCCESS_CHARGED_LINE', '\n💰 Списано: {amount}').format(
+                amount=texts.format_price(price)
+            )
             if total_discount_value > 0:
-                success_text += f' (скидка {discount_result["percent"]}%: -{texts.format_price(total_discount_value)})'
+                success_text += texts.t(
+                    'TRAFFIC_TOPUP_SUCCESS_DISCOUNT_SUFFIX',
+                    ' (скидка {percent}%: -{discount_amount})',
+                ).format(
+                    percent=discount_result['percent'],
+                    discount_amount=texts.format_price(total_discount_value),
+                )
 
         await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(db_user.language))
 
@@ -627,8 +734,12 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
 
 
 async def handle_no_traffic_packages(callback: types.CallbackQuery, db_user: User):
+    texts = get_texts(db_user.language)
     await callback.answer(
-        '⚠️ В данный момент нет доступных пакетов трафика. Обратитесь в техподдержку для получения информации.',
+        texts.t(
+            'TRAFFIC_PACKAGES_UNAVAILABLE_ALERT',
+            '⚠️ В данный момент нет доступных пакетов трафика. Обратитесь в техподдержку для получения информации.',
+        ),
         show_alert=True,
     )
 
@@ -636,15 +747,21 @@ async def handle_no_traffic_packages(callback: types.CallbackQuery, db_user: Use
 async def handle_switch_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     from app.config import settings
 
+    texts = get_texts(db_user.language)
     if settings.is_traffic_topup_blocked():
-        await callback.answer('⚠️ В текущем режиме трафик фиксированный', show_alert=True)
+        await callback.answer(
+            texts.t('TRAFFIC_SWITCH_FIXED_MODE_ALERT', '⚠️ В текущем режиме трафик фиксированный'),
+            show_alert=True,
+        )
         return
 
-    texts = get_texts(db_user.language)
     subscription = db_user.subscription
 
     if not subscription or subscription.is_trial:
-        await callback.answer('⚠️ Эта функция доступна только для платных подписок', show_alert=True)
+        await callback.answer(
+            texts.t('TRAFFIC_SWITCH_PAID_ONLY_ALERT', '⚠️ Эта функция доступна только для платных подписок'),
+            show_alert=True,
+        )
         return
 
     # Проверяем настройку тарифа
@@ -653,7 +770,13 @@ async def handle_switch_traffic(callback: types.CallbackQuery, db_user: User, db
 
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
         if tariff and not tariff.allow_traffic_topup:
-            await callback.answer('⚠️ Для вашего тарифа переключение трафика недоступно', show_alert=True)
+            await callback.answer(
+                texts.t(
+                    'TRAFFIC_SWITCH_TARIFF_DISABLED_ALERT',
+                    '⚠️ Для вашего тарифа переключение трафика недоступно',
+                ),
+                show_alert=True,
+            )
             return
 
     current_traffic = subscription.traffic_limit_gb
@@ -671,16 +794,28 @@ async def handle_switch_traffic(callback: types.CallbackQuery, db_user: User, db
     # Показываем информацию о докупленном трафике, если он есть
     purchased_info = ''
     if purchased_traffic > 0:
-        purchased_info = f'\n📦 Базовый пакет: {texts.format_traffic(base_traffic)}\n➕ Докуплено: {texts.format_traffic(purchased_traffic)}'
+        purchased_info = texts.t(
+            'TRAFFIC_SWITCH_PURCHASED_INFO_BLOCK',
+            '\n📦 Базовый пакет: {base_traffic}\n➕ Докуплено: {purchased_traffic}',
+        ).format(
+            base_traffic=texts.format_traffic(base_traffic),
+            purchased_traffic=texts.format_traffic(purchased_traffic),
+        )
 
     await callback.message.edit_text(
-        f'🔄 <b>Переключение лимита трафика</b>\n\n'
-        f'Текущий лимит: {texts.format_traffic(current_traffic)}{purchased_info}\n'
-        f'Выберите новый лимит трафика:\n\n'
-        f'💡 <b>Важно:</b>\n'
-        f'• При увеличении - доплата за разницу\n'
-        f'• При уменьшении - возврат средств не производится\n'
-        f'• Докупленный трафик будет сброшен',
+        texts.t(
+            'TRAFFIC_SWITCH_INFO_WITH_PURCHASED',
+            '🔄 <b>Переключение лимита трафика</b>\n\n'
+            'Текущий лимит: {current_traffic}{purchased_info}\n'
+            'Выберите новый лимит трафика:\n\n'
+            '💡 <b>Важно:</b>\n'
+            '• При увеличении - доплата за разницу\n'
+            '• При уменьшении - возврат средств не производится\n'
+            '• Докупленный трафик будет сброшен',
+        ).format(
+            current_traffic=texts.format_traffic(current_traffic),
+            purchased_info=purchased_info,
+        ),
         reply_markup=get_traffic_switch_keyboard(
             current_traffic,
             db_user.language,
@@ -706,7 +841,10 @@ async def confirm_switch_traffic(callback: types.CallbackQuery, db_user: User, d
     base_traffic = current_traffic - purchased_traffic
 
     if new_traffic_gb == current_traffic:
-        await callback.answer('ℹ️ Лимит трафика не изменился', show_alert=True)
+        await callback.answer(
+            texts.t('TRAFFIC_NO_CHANGE', 'ℹ️ Лимит трафика не изменился'),
+            show_alert=True,
+        )
         return
 
     # Используем базовый трафик для определения текущей цены пакета
@@ -747,7 +885,13 @@ async def confirm_switch_traffic(callback: types.CallbackQuery, db_user: User, d
                     'Выберите способ пополнения. Сумма подставится автоматически.'
                 ),
             ).format(
-                required=f'{texts.format_price(total_price_difference)} (за {months_remaining} мес)',
+                required=texts.t(
+                    'TRAFFIC_SWITCH_REQUIRED_WITH_MONTHS',
+                    '{amount} (за {months} мес)',
+                ).format(
+                    amount=texts.format_price(total_price_difference),
+                    months=months_remaining,
+                ),
                 balance=texts.format_price(db_user.balance_kopeks),
                 missing=texts.format_price(missing_kopeks),
             )
@@ -763,22 +907,44 @@ async def confirm_switch_traffic(callback: types.CallbackQuery, db_user: User, d
             await callback.answer()
             return
 
-        action_text = f'увеличить до {texts.format_traffic(new_traffic_gb)}'
-        cost_text = f'Доплата: {texts.format_price(total_price_difference)} (за {months_remaining} мес)'
+        action_text = texts.t('TRAFFIC_SWITCH_ACTION_INCREASE', 'увеличить до {traffic}').format(
+            traffic=texts.format_traffic(new_traffic_gb)
+        )
+        cost_text = texts.t('TRAFFIC_SWITCH_COST_INCREASE', 'Доплата: {amount} (за {months} мес)').format(
+            amount=texts.format_price(total_price_difference),
+            months=months_remaining,
+        )
         if discount_savings_per_month > 0:
             total_discount_savings = discount_savings_per_month * months_remaining
-            cost_text += f' (скидка {traffic_discount_percent}%: -{texts.format_price(total_discount_savings)})'
+            cost_text += texts.t(
+                'TRAFFIC_SWITCH_COST_DISCOUNT_SUFFIX',
+                ' (скидка {percent}%: -{amount})',
+            ).format(
+                percent=traffic_discount_percent,
+                amount=texts.format_price(total_discount_savings),
+            )
     else:
         total_price_difference = 0
-        action_text = f'уменьшить до {texts.format_traffic(new_traffic_gb)}'
-        cost_text = 'Возврат средств не производится'
+        action_text = texts.t('TRAFFIC_SWITCH_ACTION_DECREASE', 'уменьшить до {traffic}').format(
+            traffic=texts.format_traffic(new_traffic_gb)
+        )
+        cost_text = texts.t('TRAFFIC_SWITCH_NO_REFUND', 'Возврат средств не производится')
 
-    confirm_text = '🔄 <b>Подтверждение переключения трафика</b>\n\n'
-    confirm_text += f'Текущий лимит: {texts.format_traffic(current_traffic)}\n'
-    confirm_text += f'Новый лимит: {texts.format_traffic(new_traffic_gb)}\n\n'
-    confirm_text += f'Действие: {action_text}\n'
-    confirm_text += f'💰 {cost_text}\n\n'
-    confirm_text += 'Подтвердить переключение?'
+    confirm_text = texts.t(
+        'SWITCH_TRAFFIC_CONFIRM',
+        '\n'
+        '🔄 <b>Подтверждение переключения трафика</b>\n\n'
+        'Текущий лимит: {current_traffic}\n'
+        'Новый лимит: {new_traffic}\n\n'
+        'Действие: {action}\n'
+        '💰 {cost}\n\n'
+        'Подтвердить переключение?\n',
+    ).format(
+        current_traffic=texts.format_traffic(current_traffic),
+        new_traffic=texts.format_traffic(new_traffic_gb),
+        action=action_text,
+        cost=cost_text,
+    )
 
     await callback.message.edit_text(
         confirm_text,
@@ -801,11 +967,23 @@ async def execute_switch_traffic(callback: types.CallbackQuery, db_user: User, d
     try:
         if price_difference > 0:
             success = await subtract_user_balance(
-                db, db_user, price_difference, f'Переключение трафика с {current_traffic}GB на {new_traffic_gb}GB'
+                db,
+                db_user,
+                price_difference,
+                texts.t(
+                    'TRAFFIC_SWITCH_BALANCE_DESCRIPTION',
+                    'Переключение трафика с {current_traffic}GB на {new_traffic_gb}GB',
+                ).format(
+                    current_traffic=current_traffic,
+                    new_traffic_gb=new_traffic_gb,
+                ),
             )
 
             if not success:
-                await callback.answer('⚠️ Ошибка списания средств', show_alert=True)
+                await callback.answer(
+                    texts.t('TRAFFIC_BALANCE_DEBIT_ERROR_ALERT', '⌛ Ошибка списания средств'),
+                    show_alert=True,
+                )
                 return
 
             months_remaining = get_remaining_months(subscription.end_date)
@@ -814,7 +992,14 @@ async def execute_switch_traffic(callback: types.CallbackQuery, db_user: User, d
                 user_id=db_user.id,
                 type=TransactionType.SUBSCRIPTION_PAYMENT,
                 amount_kopeks=price_difference,
-                description=f'Переключение трафика с {current_traffic}GB на {new_traffic_gb}GB на {months_remaining} мес',
+                description=texts.t(
+                    'TRAFFIC_SWITCH_TRANSACTION_DESCRIPTION',
+                    'Переключение трафика с {current_traffic}GB на {new_traffic_gb}GB на {months_remaining} мес',
+                ).format(
+                    current_traffic=current_traffic,
+                    new_traffic_gb=new_traffic_gb,
+                    months_remaining=months_remaining,
+                ),
             )
 
         subscription.traffic_limit_gb = new_traffic_gb
@@ -847,16 +1032,29 @@ async def execute_switch_traffic(callback: types.CallbackQuery, db_user: User, d
             logger.error('Ошибка отправки уведомления об изменении трафика', error=e)
 
         if new_traffic_gb > current_traffic:
-            success_text = '✅ Лимит трафика увеличен!\n\n'
-            success_text += f'📊 Было: {texts.format_traffic(current_traffic)} → '
-            success_text += f'Стало: {texts.format_traffic(new_traffic_gb)}\n'
+            success_text = texts.t(
+                'TRAFFIC_SWITCH_SUCCESS_INCREASE_TITLE',
+                '✅ Лимит трафика увеличен!\n\n',
+            )
+            success_text += texts.t(
+                'TRAFFIC_SWITCH_SUCCESS_CHANGE_LINE',
+                '📊 Было: {old_traffic} → Стало: {new_traffic}\n',
+            ).format(
+                old_traffic=texts.format_traffic(current_traffic),
+                new_traffic=texts.format_traffic(new_traffic_gb),
+            )
             if price_difference > 0:
-                success_text += f'💰 Списано: {texts.format_price(price_difference)}'
+                success_text += texts.t('TRAFFIC_TOPUP_SUCCESS_CHARGED_LINE', '💰 Списано: {amount}').format(
+                    amount=texts.format_price(price_difference)
+                )
         elif new_traffic_gb < current_traffic:
-            success_text = '✅ Лимит трафика уменьшен!\n\n'
-            success_text += f'📊 Было: {texts.format_traffic(current_traffic)} → '
-            success_text += f'Стало: {texts.format_traffic(new_traffic_gb)}\n'
-            success_text += 'ℹ️ Возврат средств не производится'
+            success_text = texts.t(
+                'SWITCH_TRAFFIC_SUCCESS_DECREASE',
+                '\n'
+                '✅ Лимит трафика уменьшен!\n\n'
+                '📊 Было: {old_traffic} → Стало: {new_traffic}\n'
+                'ℹ️ Возврат средств не производится\n',
+            ).format(old_traffic=texts.format_traffic(current_traffic), new_traffic=texts.format_traffic(new_traffic_gb))
 
         await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(db_user.language))
 

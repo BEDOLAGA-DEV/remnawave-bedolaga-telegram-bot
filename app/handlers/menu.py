@@ -970,7 +970,10 @@ async def process_language_change(
     }
 
     if normalized_selected not in available_map:
-        await callback.answer('❌ Unsupported language', show_alert=True)
+        await callback.answer(
+            texts.t('LANGUAGE_UNSUPPORTED', '❌ Неподдерживаемый язык'),
+            show_alert=True,
+        )
         return
 
     resolved_language = available_map[normalized_selected].lower()
@@ -1180,7 +1183,10 @@ async def get_main_menu_text(user, texts, db: AsyncSession):
             if tariff:
                 is_daily_tariff = getattr(tariff, 'is_daily', False)
                 # Формируем краткий блок информации о тарифе для главного меню
-                tariff_info_block = f'\n📦 Тариф: {tariff.name}'
+                tariff_info_block = texts.t(
+                    'MAIN_MENU_TARIFF_INFO_BLOCK',
+                    '\n📦 Тариф: {tariff_name}',
+                ).format(tariff_name=tariff.name)
         except Exception as e:
             logger.debug('Не удалось загрузить тариф для главного меню', error=e)
 
@@ -1312,7 +1318,10 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
         )
         missing = min_price - balance
         await callback.answer(
-            texts.t('INSUFFICIENT_FUNDS_DETAILED', f'❌ Недостаточно средств. Не хватает {missing // 100} ₽'),
+            texts.t(
+                'INSUFFICIENT_FUNDS_DETAILED',
+                '❌ Недостаточно средств. Не хватает {missing} ₽',
+            ).format(missing=missing // 100),
             show_alert=True,
         )
         return
@@ -1328,12 +1337,22 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
                 db_user,
                 subscription,
                 pricing,
-                description=f'Автоматическое продление на {best_period} дней',
+                description=texts.t(
+                    'AUTO_RENEWAL_TRANSACTION_DESCRIPTION',
+                    'Автоматическое продление на {period_days} дней',
+                ).format(period_days=best_period),
                 payment_method=PaymentMethod.BALANCE,
             )
 
             await callback.answer(
-                texts.t('ACTIVATION_SUCCESS', f'✅ Подписка продлена на {best_period} дней за {best_price // 100} ₽!'),
+                texts.t(
+                    'ACTIVATION_SUCCESS',
+                    '✅ Подписка {status} на {period_days} дней за {price_rub} ₽!',
+                ).format(
+                    status=texts.t('ACTIVATION_SUCCESS_STATUS_EXTENDED', 'продлена'),
+                    period_days=best_period,
+                    price_rub=best_price // 100,
+                ),
                 show_alert=True,
             )
         else:
@@ -1349,7 +1368,15 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
             )
 
             # Списать баланс правильно
-            await subtract_user_balance(db, db_user, best_price, f'Активация подписки на {best_period} дней')
+            await subtract_user_balance(
+                db,
+                db_user,
+                best_price,
+                texts.t(
+                    'SUBSCRIPTION_ACTIVATION_TRANSACTION_DESCRIPTION',
+                    'Активация подписки на {period_days} дней',
+                ).format(period_days=best_period),
+            )
 
             # Создать пользователя в RemnaWave
             await subscription_service.create_remnawave_user(db, new_subscription)
@@ -1360,13 +1387,21 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
                 user_id=db_user.id,
                 type=TransactionType.SUBSCRIPTION_PAYMENT,
                 amount_kopeks=best_price,
-                description=f'Активация подписки на {best_period} дней',
+                description=texts.t(
+                    'SUBSCRIPTION_ACTIVATION_TRANSACTION_DESCRIPTION',
+                    'Активация подписки на {period_days} дней',
+                ).format(period_days=best_period),
                 payment_method=PaymentMethod.BALANCE,
             )
 
             await callback.answer(
                 texts.t(
-                    'ACTIVATION_SUCCESS', f'✅ Подписка активирована на {best_period} дней за {best_price // 100} ₽!'
+                    'ACTIVATION_SUCCESS',
+                    '✅ Подписка {status} на {period_days} дней за {price_rub} ₽!',
+                ).format(
+                    status=texts.t('ACTIVATION_SUCCESS_STATUS_ACTIVATED', 'активирована'),
+                    period_days=best_period,
+                    price_rub=best_price // 100,
                 ),
                 show_alert=True,
             )

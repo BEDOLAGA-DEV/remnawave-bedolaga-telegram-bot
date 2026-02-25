@@ -323,6 +323,7 @@ class CloudPaymentsPaymentMixin:
                         await self._send_cloudpayments_fail_notification(
                             telegram_id=user.telegram_id,
                             message=card_holder_message,
+                            language=user.language,
                         )
         except Exception as error:
             logger.exception('Ошибка отправки уведомления о неуспешном платеже', error=error)
@@ -390,6 +391,7 @@ class CloudPaymentsPaymentMixin:
         self,
         telegram_id: int,
         message: str,
+        language: str = 'ru',
     ) -> None:
         """Send failure notification to user via Telegram."""
         from aiogram import Bot
@@ -397,13 +399,18 @@ class CloudPaymentsPaymentMixin:
         from aiogram.enums import ParseMode
 
         from app.config import settings
+        from app.localization.texts import get_texts
 
         bot = Bot(
             token=settings.BOT_TOKEN,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
 
-        text = f'❌ <b>Оплата не прошла</b>\n\n{message}'
+        texts = get_texts(language)
+        text = texts.t(
+            'PAYMENT_FAILED_CLOUDPAYMENTS',
+            '❌ <b>Оплата не прошла</b>\n\n{message}',
+        ).format(message=message)
 
         try:
             await bot.send_message(

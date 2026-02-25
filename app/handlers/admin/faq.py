@@ -13,7 +13,6 @@ from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.validators import get_html_help_text, validate_html_tags
 
-
 logger = structlog.get_logger(__name__)
 
 
@@ -27,8 +26,8 @@ def _format_timestamp(value: datetime | None) -> str:
 
 
 async def _build_overview(
-    db_user: User,
-    db: AsyncSession,
+        db_user: User,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
 
@@ -209,9 +208,9 @@ async def _build_overview(
 @admin_required
 @error_handler
 async def show_faq_management(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
+        callback: types.CallbackQuery,
+        db_user: User,
+        db: AsyncSession,
 ):
     overview_text, markup = await _build_overview(db_user, db)
 
@@ -225,9 +224,9 @@ async def show_faq_management(
 @admin_required
 @error_handler
 async def toggle_faq(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
+        callback: types.CallbackQuery,
+        db_user: User,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
     setting = await FaqService.toggle_enabled(db, db_user.language)
@@ -255,10 +254,10 @@ async def toggle_faq(
 @admin_required
 @error_handler
 async def start_create_faq_page(
-    callback: types.CallbackQuery,
-    db_user: User,
-    state: FSMContext,
-    db: AsyncSession,
+        callback: types.CallbackQuery,
+        db_user: User,
+        state: FSMContext,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
 
@@ -290,10 +289,10 @@ async def start_create_faq_page(
 @admin_required
 @error_handler
 async def cancel_faq_creation(
-    callback: types.CallbackQuery,
-    db_user: User,
-    state: FSMContext,
-    db: AsyncSession,
+        callback: types.CallbackQuery,
+        db_user: User,
+        state: FSMContext,
+        db: AsyncSession,
 ):
     await state.clear()
     await show_faq_management(callback, db_user, db)
@@ -302,10 +301,10 @@ async def cancel_faq_creation(
 @admin_required
 @error_handler
 async def process_new_faq_title(
-    message: types.Message,
-    db_user: User,
-    state: FSMContext,
-    db: AsyncSession,
+        message: types.Message,
+        db_user: User,
+        state: FSMContext,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
     title = (message.text or '').strip()
@@ -342,10 +341,10 @@ async def process_new_faq_title(
 @admin_required
 @error_handler
 async def process_new_faq_content(
-    message: types.Message,
-    db_user: User,
-    state: FSMContext,
-    db: AsyncSession,
+        message: types.Message,
+        db_user: User,
+        state: FSMContext,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
     content = message.text or ''
@@ -418,9 +417,9 @@ async def process_new_faq_content(
 @admin_required
 @error_handler
 async def show_faq_page_details(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
+        callback: types.CallbackQuery,
+        db_user: User,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
 
@@ -574,10 +573,10 @@ async def show_faq_page_details(
 @admin_required
 @error_handler
 async def start_edit_faq_title(
-    callback: types.CallbackQuery,
-    db_user: User,
-    state: FSMContext,
-    db: AsyncSession,
+        callback: types.CallbackQuery,
+        db_user: User,
+        state: FSMContext,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
 
@@ -634,10 +633,10 @@ async def start_edit_faq_title(
 @admin_required
 @error_handler
 async def process_edit_faq_title(
-    message: types.Message,
-    db_user: User,
-    state: FSMContext,
-    db: AsyncSession,
+        message: types.Message,
+        db_user: User,
+        state: FSMContext,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
     title = (message.text or '').strip()
@@ -704,10 +703,10 @@ async def process_edit_faq_title(
 @admin_required
 @error_handler
 async def start_edit_faq_content(
-    callback: types.CallbackQuery,
-    db_user: User,
-    state: FSMContext,
-    db: AsyncSession,
+        callback: types.CallbackQuery,
+        db_user: User,
+        state: FSMContext,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
 
@@ -761,10 +760,10 @@ async def start_edit_faq_content(
 @admin_required
 @error_handler
 async def process_edit_faq_content(
-    message: types.Message,
-    db_user: User,
-    state: FSMContext,
-    db: AsyncSession,
+        message: types.Message,
+        db_user: User,
+        state: FSMContext,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
     content = message.text or ''
@@ -841,9 +840,9 @@ async def process_edit_faq_content(
 @admin_required
 @error_handler
 async def toggle_faq_page(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
+        callback: types.CallbackQuery,
+        db_user: User,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
 
@@ -888,9 +887,9 @@ async def toggle_faq_page(
 @admin_required
 @error_handler
 async def delete_faq_page(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
+        callback: types.CallbackQuery,
+        db_user: User,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
 
@@ -943,9 +942,9 @@ async def delete_faq_page(
 @admin_required
 @error_handler
 async def move_faq_page(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
+        callback: types.CallbackQuery,
+        db_user: User,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
 
@@ -1002,10 +1001,10 @@ async def move_faq_page(
 @admin_required
 @error_handler
 async def show_faq_html_help(
-    callback: types.CallbackQuery,
-    db_user: User,
-    state: FSMContext,
-    db: AsyncSession,
+        callback: types.CallbackQuery,
+        db_user: User,
+        state: FSMContext,
+        db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
     help_text = get_html_help_text()

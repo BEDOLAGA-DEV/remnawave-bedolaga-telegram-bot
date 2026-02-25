@@ -33,9 +33,9 @@ def _get_support_settings_keyboard(language: str) -> types.InlineKeyboardMarkup:
     status_enabled = texts.t('ADMIN_SUPPORT_SETTINGS_STATUS_ENABLED', 'Включены')
     status_disabled = texts.t('ADMIN_SUPPORT_SETTINGS_STATUS_DISABLED', 'Отключены')
 
-    def mode_button(label_key: str, default: str, active: bool) -> str:
+    def mode_button(label: str, active: bool) -> str:
         prefix = '🔘' if active else '⚪'
-        return f'{prefix} {texts.t(label_key, default)}'
+        return f'{prefix} {label}'
 
     rows.append(
         [
@@ -52,15 +52,15 @@ def _get_support_settings_keyboard(language: str) -> types.InlineKeyboardMarkup:
     rows.append(
         [
             types.InlineKeyboardButton(
-                text=mode_button('ADMIN_SUPPORT_SETTINGS_MODE_TICKETS', 'Тикеты', mode == 'tickets'),
+                text=mode_button(texts.t('ADMIN_SUPPORT_SETTINGS_MODE_TICKETS', 'Тикеты'), mode == 'tickets'),
                 callback_data='admin_support_mode_tickets',
             ),
             types.InlineKeyboardButton(
-                text=mode_button('ADMIN_SUPPORT_SETTINGS_MODE_CONTACT', 'Контакт', mode == 'contact'),
+                text=mode_button(texts.t('ADMIN_SUPPORT_SETTINGS_MODE_CONTACT', 'Контакт'), mode == 'contact'),
                 callback_data='admin_support_mode_contact',
             ),
             types.InlineKeyboardButton(
-                text=mode_button('ADMIN_SUPPORT_SETTINGS_MODE_BOTH', 'Оба', mode == 'both'),
+                text=mode_button(texts.t('ADMIN_SUPPORT_SETTINGS_MODE_BOTH', 'Оба'), mode == 'both'),
                 callback_data='admin_support_mode_both',
             ),
         ]

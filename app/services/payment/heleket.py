@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
+from app.localization.texts import get_texts
 from app.services.subscription_auto_purchase_service import (
     auto_purchase_saved_cart_after_topup,
 )
@@ -298,15 +299,32 @@ class HeleketPaymentMixin:
             )
             return None
 
+        get_user_by_id = payment_module.get_user_by_id
+        user = await get_user_by_id(db, updated_payment.user_id)
+        if not user:
+            logger.error('Пользователь не найден для Heleket платежа', user_id=updated_payment.user_id)
+            return None
+
+        texts = get_texts(user.language)
+
         transaction = await payment_module.create_transaction(
             db,
             user_id=updated_payment.user_id,
             type=TransactionType.DEPOSIT,
             amount_kopeks=amount_kopeks,
             description=(
-                'Пополнение через Heleket'
+                texts.t(
+                    'HELEKET_TRANSACTION_DESCRIPTION_TOPUP',
+                    'Пополнение через Heleket',
+                )
                 if not updated_payment.payer_currency
-                else (f'Пополнение через Heleket ({updated_payment.payer_amount} {updated_payment.payer_currency})')
+                else texts.t(
+                    'HELEKET_TRANSACTION_DESCRIPTION_TOPUP_WITH_PAYER',
+                    'Пополнение через Heleket ({payer_amount} {payer_currency})',
+                ).format(
+                    payer_amount=updated_payment.payer_amount,
+                    payer_currency=updated_payment.payer_currency,
+                )
             ),
             payment_method=PaymentMethod.HELEKET,
             external_id=updated_payment.uuid,
@@ -321,12 +339,6 @@ class HeleketPaymentMixin:
         )
         if linked_payment:
             updated_payment = linked_payment
-
-        get_user_by_id = payment_module.get_user_by_id
-        user = await get_user_by_id(db, updated_payment.user_id)
-        if not user:
-            logger.error('Пользователь не найден для Heleket платежа', user_id=updated_payment.user_id)
-            return None
 
         old_balance = user.balance_kopeks
         was_first_topup = not user.has_made_first_topup
@@ -359,7 +371,12 @@ class HeleketPaymentMixin:
         user = await get_user_by_id(db, user.id) or user
 
         if getattr(self, 'bot', None):
-            topup_status = '🆕 Первое пополнение' if was_first_topup else '🔄 Пополнение'
+            texts = get_texts(user.language)
+            topup_status = (
+                texts.t('CRYPTOBOT_TOPUP_STATUS_FIRST', '🆕 Первое пополнение')
+                if was_first_topup
+                else texts.t('CRYPTOBOT_TOPUP_STATUS_REPEAT', '🔄 Пополнение')
+            )
             referrer_info = format_referrer_info(user)
             subscription = getattr(user, 'subscription', None)
             promo_group = user.get_primary_promo_group()
@@ -388,19 +405,34 @@ class HeleketPaymentMixin:
 
                     exchange_rate_value = updated_payment.exchange_rate or 0
                     rate_text = (
-                        f'💱 Курс: 1 RUB = {1 / exchange_rate_value:.4f} {updated_payment.payer_currency}'
+                        texts.t(
+                            'HELEKET_TOPUP_SUCCESS_RATE_LINE',
+                            '💱 Курс: 1 RUB = {rate:.4f} {currency}',
+                        ).format(
+                            rate=1 / exchange_rate_value,
+                            currency=updated_payment.payer_currency,
+                        )
                         if exchange_rate_value and updated_payment.payer_currency
                         else None
                     )
 
                     message_lines = [
-                        '✅ <b>Пополнение успешно!</b>',
-                        f'💰 Сумма: {settings.format_price(amount_kopeks)}',
-                        '💳 Способ: Heleket',
+                        texts.t('HELEKET_TOPUP_SUCCESS_TITLE', '✅ <b>Пополнение успешно!</b>'),
+                        texts.t(
+                            'HELEKET_TOPUP_SUCCESS_AMOUNT_LINE',
+                            '💰 Сумма: {amount}',
+                        ).format(amount=settings.format_price(amount_kopeks)),
+                        texts.t('HELEKET_TOPUP_SUCCESS_METHOD_LINE', '💳 Способ: Heleket'),
                     ]
                     if updated_payment.payer_amount and updated_payment.payer_currency:
                         message_lines.append(
-                            f'🪙 Оплата: {updated_payment.payer_amount} {updated_payment.payer_currency}'
+                            texts.t(
+                                'HELEKET_TOPUP_SUCCESS_PAYER_LINE',
+                                '🪙 Оплата: {payer_amount} {payer_currency}',
+                            ).format(
+                                payer_amount=updated_payment.payer_amount,
+                                payer_currency=updated_payment.payer_currency,
+                            )
                         )
                     if rate_text:
                         message_lines.append(rate_text)

@@ -69,7 +69,7 @@ class CryptoBotPaymentMixin:
         user_id: int,
         amount_usd: float,
         asset: str = 'USDT',
-        description: str = 'Пополнение баланса',
+        description: str | None = None,
         payload: str | None = None,
     ) -> dict[str, Any] | None:
         """Создаёт invoice в CryptoBot и сохраняет локальную запись."""
@@ -78,12 +78,17 @@ class CryptoBotPaymentMixin:
             return None
 
         try:
+            from app.localization.texts import get_texts
+
             amount_str = f'{amount_usd:.2f}'
+            description_text = description or get_texts().t(
+                'TRIBUTE_PAYMENT_DESCRIPTION_TOPUP', 'Пополнение баланса'
+            )
 
             invoice_data = await self.cryptobot_service.create_invoice(
                 amount=amount_str,
                 asset=asset,
-                description=description,
+                description=description_text,
                 payload=payload or f'balance_topup_{user_id}_{int(amount_usd * 100)}',
                 expires_in=settings.get_cryptobot_invoice_expires_seconds(),
             )
@@ -101,7 +106,7 @@ class CryptoBotPaymentMixin:
                 amount=amount_str,
                 asset=asset,
                 status='active',
-                description=description,
+                description=description_text,
                 payload=payload,
                 bot_invoice_url=invoice_data.get('bot_invoice_url'),
                 mini_app_invoice_url=invoice_data.get('mini_app_invoice_url'),
@@ -238,15 +243,24 @@ class CryptoBotPaymentMixin:
                     )
                     return False
 
+                from app.localization.texts import get_texts
+
+                payment_user = getattr(updated_payment, 'user', None)
+                payment_texts = get_texts(getattr(payment_user, 'language', 'ru'))
+
                 payment_service_module = import_module('app.services.payment_service')
                 transaction = await payment_service_module.create_transaction(
                     db,
                     user_id=updated_payment.user_id,
                     type=TransactionType.DEPOSIT,
                     amount_kopeks=amount_kopeks,
-                    description=(
-                        'Пополнение через CryptoBot '
-                        f'({updated_payment.amount} {updated_payment.asset} → {amount_rubles_rounded:.2f}₽)'
+                    description=payment_texts.t(
+                        'CRYPTOBOT_TRANSACTION_DESCRIPTION_TOPUP',
+                        'Пополнение через CryptoBot ({amount} {asset} → {rubles:.2f}₽)',
+                    ).format(
+                        amount=updated_payment.amount,
+                        asset=updated_payment.asset,
+                        rubles=amount_rubles_rounded,
                     ),
                     payment_method=PaymentMethod.CRYPTOBOT,
                     external_id=invoice_id,
@@ -268,8 +282,13 @@ class CryptoBotPaymentMixin:
                 user.balance_kopeks += amount_kopeks
                 user.updated_at = datetime.now(UTC)
 
+                texts = get_texts(user.language)
                 referrer_info = format_referrer_info(user)
-                topup_status = '🆕 Первое пополнение' if was_first_topup else '🔄 Пополнение'
+                topup_status = (
+                    texts.t('CRYPTOBOT_TOPUP_STATUS_FIRST', '🆕 Первое пополнение')
+                    if was_first_topup
+                    else texts.t('CRYPTOBOT_TOPUP_STATUS_REPEAT', '🔄 Пополнение')
+                )
 
                 await db.commit()
 
@@ -307,13 +326,20 @@ class CryptoBotPaymentMixin:
 
                     try:
                         keyboard = await self.build_topup_success_keyboard(user)
-                        message_text = (
+                        message_text = texts.t(
+                            'CRYPTOBOT_TOPUP_SUCCESS_MESSAGE',
                             '✅ <b>Пополнение успешно!</b>\n\n'
-                            f'💰 Сумма: {settings.format_price(amount_kopeks)}\n'
-                            f'🪙 Платеж: {updated_payment.amount} {updated_payment.asset}\n'
-                            f'💱 Курс: 1 USD = {conversion_rate:.2f}₽\n'
-                            f'🆔 Транзакция: {invoice_id[:8]}...\n\n'
-                            'Баланс пополнен автоматически!'
+                            '💰 Сумма: {amount}\n'
+                            '🪙 Платеж: {payment_amount} {asset}\n'
+                            '💱 Курс: 1 USD = {conversion_rate:.2f}₽\n'
+                            '🆔 Транзакция: {transaction_id}...\n\n'
+                            'Баланс пополнен автоматически!',
+                        ).format(
+                            amount=settings.format_price(amount_kopeks),
+                            payment_amount=updated_payment.amount,
+                            asset=updated_payment.asset,
+                            conversion_rate=conversion_rate,
+                            transaction_id=invoice_id[:8],
                         )
                         user_notification = _UserNotificationPayload(
                             telegram_id=user.telegram_id,
@@ -353,9 +379,6 @@ class CryptoBotPaymentMixin:
                             has_saved_cart = False
 
                     if has_saved_cart and bot_instance:
-                        from app.localization.texts import get_texts
-
-                        texts = get_texts(user.language)
                         cart_message = texts.BALANCE_TOPUP_CART_REMINDER_DETAILED.format(
                             total_amount=settings.format_price(amount_kopeks)
                         )
@@ -367,19 +390,33 @@ class CryptoBotPaymentMixin:
                                         text=texts.RETURN_TO_SUBSCRIPTION_CHECKOUT, callback_data='return_to_saved_cart'
                                     )
                                 ],
-                                [types.InlineKeyboardButton(text='💰 Мой баланс', callback_data='menu_balance')],
-                                [types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')],
+                                [
+                                    types.InlineKeyboardButton(
+                                        text=texts.t('MY_BALANCE_BUTTON', '💰 Мой баланс'),
+                                        callback_data='menu_balance',
+                                    )
+                                ],
+                                [
+                                    types.InlineKeyboardButton(
+                                        text=texts.t('MAIN_MENU_BUTTON', '🏠 Главное меню'),
+                                        callback_data='back_to_menu',
+                                    )
+                                ],
                             ]
                         )
 
                         saved_cart_notification = _SavedCartNotificationPayload(
                             telegram_id=user.telegram_id,
-                            text=(
-                                f'✅ Баланс пополнен на {settings.format_price(amount_kopeks)}!\n\n'
-                                f'⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. '
-                                f'Обязательно активируйте подписку отдельно!\n\n'
-                                f'🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
-                                f'подписка будет приобретена автоматически после пополнения баланса.\n\n{cart_message}'
+                            text=texts.t(
+                                'CRYPTOBOT_SAVED_CART_REMINDER_MESSAGE',
+                                '✅ Баланс пополнен на {amount}!\n\n'
+                                '⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. '
+                                'Обязательно активируйте подписку отдельно!\n\n'
+                                '🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
+                                'подписка будет приобретена автоматически после пополнения баланса.\n\n{cart_message}',
+                            ).format(
+                                amount=settings.format_price(amount_kopeks),
+                                cart_message=cart_message,
                             ),
                             reply_markup=keyboard,
                             user_id=user.id,
@@ -503,7 +540,12 @@ class CryptoBotPaymentMixin:
             )
             return False
 
-        description = f'Продление подписки на {descriptor.period_days} дней'
+        from app.localization.texts import get_texts
+
+        description = get_texts(user.language).t(
+            'CRYPTOBOT_RENEWAL_DESCRIPTION',
+            'Продление подписки на {period_days} дней',
+        ).format(period_days=descriptor.period_days)
 
         try:
             result = await renewal_service.finalize(

@@ -29,7 +29,7 @@ class FreekassaPaymentMixin:
         *,
         user_id: int,
         amount_kopeks: int,
-        description: str = 'Пополнение баланса',
+        description: str | None = None,
         email: str | None = None,
         language: str = 'ru',
         payment_system_id: int | None = None,
@@ -74,6 +74,9 @@ class FreekassaPaymentMixin:
         order_id = f'fk_{user_id}_{uuid.uuid4().hex[:12]}'
         amount_rubles = amount_kopeks / 100
         currency = settings.FREEKASSA_CURRENCY
+        from app.localization.texts import get_texts
+
+        description_text = description or get_texts(language).t('TRIBUTE_PAYMENT_DESCRIPTION_TOPUP', 'Пополнение баланса')
 
         # Срок действия платежа
         expires_at = datetime.now(UTC) + timedelta(seconds=settings.FREEKASSA_PAYMENT_TIMEOUT_SECONDS)
@@ -82,7 +85,7 @@ class FreekassaPaymentMixin:
         metadata = {
             'user_id': user_id,
             'amount_kopeks': amount_kopeks,
-            'description': description,
+            'description': description_text,
             'language': language,
             'type': 'balance_topup',
             'payment_method': payment_method or 'freekassa',
@@ -124,7 +127,7 @@ class FreekassaPaymentMixin:
                 order_id=order_id,
                 amount_kopeks=amount_kopeks,
                 currency=currency,
-                description=description,
+                description=description_text,
                 payment_url=payment_url,
                 expires_at=expires_at,
                 metadata_json=json.dumps(metadata, ensure_ascii=False),
@@ -270,13 +273,20 @@ class FreekassaPaymentMixin:
             )
             return False
 
+        from app.localization.texts import get_texts
+
+        texts = get_texts(user.language)
+
         # Создаем транзакцию
         transaction = await payment_module.create_transaction(
             db,
             user_id=payment.user_id,
             type=TransactionType.DEPOSIT,
             amount_kopeks=payment.amount_kopeks,
-            description=f'Пополнение через Freekassa (#{intid or payment.order_id})',
+            description=texts.t(
+                'FREEKASSA_TRANSACTION_DESCRIPTION_TOPUP',
+                'Пополнение через Freekassa (#{payment_id})',
+            ).format(payment_id=intid or payment.order_id),
             payment_method=PaymentMethod.FREEKASSA,
             external_id=str(intid) if intid else payment.order_id,
             is_completed=True,
@@ -302,7 +312,11 @@ class FreekassaPaymentMixin:
         promo_group = user.get_primary_promo_group()
         subscription = getattr(user, 'subscription', None)
         referrer_info = format_referrer_info(user)
-        topup_status = 'Первое пополнение' if was_first_topup else 'Пополнение'
+        topup_status = (
+            texts.t('FREEKASSA_TOPUP_STATUS_FIRST', 'Первое пополнение')
+            if was_first_topup
+            else texts.t('FREEKASSA_TOPUP_STATUS_REPEAT', 'Пополнение')
+        )
 
         await db.commit()
 
@@ -360,12 +374,17 @@ class FreekassaPaymentMixin:
                     pass
                 await self.bot.send_message(
                     user.telegram_id,
-                    (
+                    texts.t(
+                        'FREEKASSA_TOPUP_SUCCESS_MESSAGE',
                         '✅ <b>Пополнение успешно!</b>\n\n'
-                        f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}\n'
-                        f'💳 Способ: {display_name}\n'
-                        f'🆔 Транзакция: {transaction.id}\n\n'
-                        'Баланс пополнен автоматически!'
+                        '💰 Сумма: {amount}\n'
+                        '💳 Способ: {method}\n'
+                        '🆔 Транзакция: {transaction_id}\n\n'
+                        'Баланс пополнен автоматически!',
+                    ).format(
+                        amount=settings.format_price(payment.amount_kopeks),
+                        method=display_name,
+                        transaction_id=transaction.id,
                     ),
                     parse_mode='HTML',
                     reply_markup=keyboard,
@@ -401,9 +420,6 @@ class FreekassaPaymentMixin:
                     has_saved_cart = False
 
             if has_saved_cart and getattr(self, 'bot', None) and user.telegram_id:
-                from app.localization.texts import get_texts
-
-                texts = get_texts(user.language)
                 cart_message = texts.t(
                     'BALANCE_TOPUP_CART_REMINDER',
                     'У вас есть незавершенное оформление подписки. Вернуться?',
@@ -422,7 +438,7 @@ class FreekassaPaymentMixin:
                         ],
                         [
                             types.InlineKeyboardButton(
-                                text='🏠 Главное меню',
+                                text=texts.t('MAIN_MENU_BUTTON', '🏠 Главное меню'),
                                 callback_data='back_to_menu',
                             )
                         ],
@@ -431,7 +447,13 @@ class FreekassaPaymentMixin:
 
                 await self.bot.send_message(
                     chat_id=user.telegram_id,
-                    text=(f'✅ Баланс пополнен на {settings.format_price(payment.amount_kopeks)}!\n\n{cart_message}'),
+                    text=texts.t(
+                        'FREEKASSA_SAVED_CART_REMINDER_MESSAGE',
+                        '✅ Баланс пополнен на {amount}!\n\n{cart_message}',
+                    ).format(
+                        amount=settings.format_price(payment.amount_kopeks),
+                        cart_message=cart_message,
+                    ),
                     reply_markup=keyboard,
                 )
         except Exception as error:

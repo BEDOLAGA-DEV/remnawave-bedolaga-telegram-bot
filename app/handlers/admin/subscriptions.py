@@ -10,6 +10,7 @@ from app.database.crud.subscription import (
     get_subscriptions_statistics,
 )
 from app.database.models import User
+from app.localization.texts import get_texts
 from app.utils.decorators import admin_required, error_handler
 from app.utils.formatters import format_datetime
 
@@ -67,35 +68,54 @@ logger = structlog.get_logger(__name__)
 @admin_required
 @error_handler
 async def show_subscriptions_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     stats = await get_subscriptions_statistics(db)
 
-    text = f"""
-📱 <b>Управление подписками</b>
-
-📊 <b>Статистика:</b>
-- Всего: {stats['total_subscriptions']}
-- Активных: {stats['active_subscriptions']}
-- Платных: {stats['paid_subscriptions']}
-- Триальных: {stats['trial_subscriptions']}
-
-📈 <b>Продажи:</b>
-- Сегодня: {stats['purchased_today']}
-- За неделю: {stats['purchased_week']}
-- За месяц: {stats['purchased_month']}
-
-Выберите действие:
-"""
+    text = texts.t(
+        'ADMIN_SUBSCRIPTIONS_MENU_TEXT',
+        '📱 <b>Управление подписками</b>\n\n'
+        '📊 <b>Статистика:</b>\n'
+        '- Всего: {total_subscriptions}\n'
+        '- Активных: {active_subscriptions}\n'
+        '- Платных: {paid_subscriptions}\n'
+        '- Триальных: {trial_subscriptions}\n\n'
+        '📈 <b>Продажи:</b>\n'
+        '- Сегодня: {purchased_today}\n'
+        '- За неделю: {purchased_week}\n'
+        '- За месяц: {purchased_month}\n\n'
+        'Выберите действие:',
+    ).format(
+        total_subscriptions=stats['total_subscriptions'],
+        active_subscriptions=stats['active_subscriptions'],
+        paid_subscriptions=stats['paid_subscriptions'],
+        trial_subscriptions=stats['trial_subscriptions'],
+        purchased_today=stats['purchased_today'],
+        purchased_week=stats['purchased_week'],
+        purchased_month=stats['purchased_month'],
+    )
 
     keyboard = [
         [
-            types.InlineKeyboardButton(text='📋 Список подписок', callback_data='admin_subs_list'),
-            types.InlineKeyboardButton(text='⏰ Истекающие', callback_data='admin_subs_expiring'),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_SUBSCRIPTIONS_LIST_BUTTON', '📋 Список подписок'),
+                callback_data='admin_subs_list',
+            ),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_SUBSCRIPTIONS_EXPIRING', '⏰ Истекающие'),
+                callback_data='admin_subs_expiring',
+            ),
         ],
         [
-            types.InlineKeyboardButton(text='📊 Статистика', callback_data='admin_subs_stats'),
-            types.InlineKeyboardButton(text='🌍 География', callback_data='admin_subs_countries'),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_STATS_BUTTON', '📊 Статистика'),
+                callback_data='admin_subs_stats',
+            ),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_SUBSCRIPTIONS_GEO_BUTTON', '🌍 География'),
+                callback_data='admin_subs_countries',
+            ),
         ],
-        [types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_panel')],
+        [types.InlineKeyboardButton(text=texts.t('BACK', '⬅️ Назад'), callback_data='admin_panel')],
     ]
 
     await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
@@ -105,28 +125,42 @@ async def show_subscriptions_menu(callback: types.CallbackQuery, db_user: User, 
 @admin_required
 @error_handler
 async def show_subscriptions_list(callback: types.CallbackQuery, db_user: User, db: AsyncSession, page: int = 1):
+    texts = get_texts(db_user.language)
     subscriptions, total_count = await get_all_subscriptions(db, page=page, limit=10)
     total_pages = (total_count + 9) // 10
 
     if not subscriptions:
-        text = '📱 <b>Список подписок</b>\n\n❌ Подписки не найдены.'
+        text = texts.t('ADMIN_SUBSCRIPTIONS_LIST_EMPTY', '📱 <b>Список подписок</b>\n\n❌ Подписки не найдены.')
     else:
-        text = '📱 <b>Список подписок</b>\n\n'
-        text += f'📊 Всего: {total_count} | Страница: {page}/{total_pages}\n\n'
+        text = texts.t('ADMIN_SUBSCRIPTIONS_LIST_TITLE', '📱 <b>Список подписок</b>\n\n')
+        text += texts.t(
+            'ADMIN_SERVERS_LIST_META',
+            '📊 Всего: {total} | Страница: {page}/{pages}\n\n',
+        ).format(total=total_count, page=page, pages=total_pages)
 
         for i, sub in enumerate(subscriptions, 1 + (page - 1) * 10):
             user_info = (
                 (f'ID{sub.user.telegram_id}' if sub.user.telegram_id else sub.user.email or f'#{sub.user.id}')
                 if sub.user
-                else 'Неизвестно'
+                else texts.t('SUBSCRIPTION_STATUS_UNKNOWN', 'Неизвестно')
             )
             sub_type = '🎁' if sub.is_trial else '💎'
-            status = '✅ Активна' if sub.is_active else '❌ Неактивна'
+            status = (
+                texts.t('ADMIN_USER_SUBSCRIPTION_STATUS_ACTIVE', '✅ Активна')
+                if sub.is_active
+                else texts.t('ADMIN_USER_SUBSCRIPTION_STATUS_INACTIVE', '❌ Неактивна')
+            )
 
             text += f'{i}. {sub_type} {user_info}\n'
-            text += f'   {status} | До: {format_datetime(sub.end_date)}\n'
+            text += texts.t(
+                'ADMIN_SUBSCRIPTIONS_LIST_END_DATE',
+                '   {status} | До: {end_date}\n',
+            ).format(status=status, end_date=format_datetime(sub.end_date))
             if sub.device_limit > 0:
-                text += f'   📱 Устройств: {sub.device_limit}\n'
+                text += texts.t(
+                    'ADMIN_SUBSCRIPTIONS_LIST_DEVICE_LIMIT',
+                    '   📱 Устройств: {count}\n',
+                ).format(count=sub.device_limit)
             text += '\n'
 
     keyboard = []
@@ -145,8 +179,13 @@ async def show_subscriptions_list(callback: types.CallbackQuery, db_user: User, 
 
     keyboard.extend(
         [
-            [types.InlineKeyboardButton(text='🔄 Обновить', callback_data='admin_subs_list')],
-            [types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_subscriptions')],
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('ADMIN_HISTORY_REFRESH', '🔄 Обновить'),
+                    callback_data='admin_subs_list',
+                )
+            ],
+            [types.InlineKeyboardButton(text=texts.t('BACK', '⬅️ Назад'), callback_data='admin_subscriptions')],
         ]
     )
 
@@ -157,50 +196,64 @@ async def show_subscriptions_list(callback: types.CallbackQuery, db_user: User, 
 @admin_required
 @error_handler
 async def show_expiring_subscriptions(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     expiring_3d = await get_expiring_subscriptions(db, 3)
     expiring_1d = await get_expiring_subscriptions(db, 1)
     expired = await get_expired_subscriptions(db)
 
-    text = f"""
-⏰ <b>Истекающие подписки</b>
-
-📊 <b>Статистика:</b>
-- Истекают через 3 дня: {len(expiring_3d)}
-- Истекают завтра: {len(expiring_1d)}
-- Уже истекли: {len(expired)}
-
-<b>Истекают через 3 дня:</b>
-"""
+    text = texts.t(
+        'ADMIN_SUBSCRIPTIONS_EXPIRING_TEXT',
+        '⏰ <b>Истекающие подписки</b>\n\n'
+        '📊 <b>Статистика:</b>\n'
+        '- Истекают через 3 дня: {expiring_3d}\n'
+        '- Истекают завтра: {expiring_1d}\n'
+        '- Уже истекли: {expired}\n\n'
+        '<b>Истекают через 3 дня:</b>\n',
+    ).format(expiring_3d=len(expiring_3d), expiring_1d=len(expiring_1d), expired=len(expired))
 
     for sub in expiring_3d[:5]:
         user_info = (
             (f'ID{sub.user.telegram_id}' if sub.user.telegram_id else sub.user.email or f'#{sub.user.id}')
             if sub.user
-            else 'Неизвестно'
+            else texts.t('SUBSCRIPTION_STATUS_UNKNOWN', 'Неизвестно')
         )
         sub_type = '🎁' if sub.is_trial else '💎'
         text += f'{sub_type} {user_info} - {format_datetime(sub.end_date)}\n'
 
     if len(expiring_3d) > 5:
-        text += f'... и еще {len(expiring_3d) - 5}\n'
+        text += texts.t('ADMIN_STATS_REVENUE_MORE_DAYS', '... и еще {count} дней').format(
+            count=len(expiring_3d) - 5
+        ) + '\n'
 
-    text += '\n<b>Истекают завтра:</b>\n'
+    text += texts.t('ADMIN_SUBSCRIPTIONS_EXPIRING_TOMORROW', '\n<b>Истекают завтра:</b>\n')
     for sub in expiring_1d[:5]:
         user_info = (
             (f'ID{sub.user.telegram_id}' if sub.user.telegram_id else sub.user.email or f'#{sub.user.id}')
             if sub.user
-            else 'Неизвестно'
+            else texts.t('SUBSCRIPTION_STATUS_UNKNOWN', 'Неизвестно')
         )
         sub_type = '🎁' if sub.is_trial else '💎'
         text += f'{sub_type} {user_info} - {format_datetime(sub.end_date)}\n'
 
     if len(expiring_1d) > 5:
-        text += f'... и еще {len(expiring_1d) - 5}\n'
+        text += texts.t('ADMIN_STATS_REVENUE_MORE_DAYS', '... и еще {count} дней').format(
+            count=len(expiring_1d) - 5
+        ) + '\n'
 
     keyboard = [
-        [types.InlineKeyboardButton(text='📨 Отправить напоминания', callback_data='admin_send_expiry_reminders')],
-        [types.InlineKeyboardButton(text='🔄 Обновить', callback_data='admin_subs_expiring')],
-        [types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_subscriptions')],
+        [
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_SUBSCRIPTIONS_SEND_REMINDERS', '📨 Отправить напоминания'),
+                callback_data='admin_send_expiry_reminders',
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_HISTORY_REFRESH', '🔄 Обновить'),
+                callback_data='admin_subs_expiring',
+            )
+        ],
+        [types.InlineKeyboardButton(text=texts.t('BACK', '⬅️ Назад'), callback_data='admin_subscriptions')],
     ]
 
     await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
@@ -210,38 +263,49 @@ async def show_expiring_subscriptions(callback: types.CallbackQuery, db_user: Us
 @admin_required
 @error_handler
 async def show_subscriptions_stats(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     stats = await get_subscriptions_statistics(db)
 
     expiring_3d = await get_expiring_subscriptions(db, 3)
     expiring_7d = await get_expiring_subscriptions(db, 7)
     expired = await get_expired_subscriptions(db)
 
-    text = f"""
-📊 <b>Детальная статистика подписок</b>
-
-<b>📱 Общая информация:</b>
-• Всего подписок: {stats['total_subscriptions']}
-• Активных: {stats['active_subscriptions']}
-• Неактивных: {stats['total_subscriptions'] - stats['active_subscriptions']}
-
-<b>💎 По типам:</b>
-• Платных: {stats['paid_subscriptions']}
-• Триальных: {stats['trial_subscriptions']}
-
-<b>📈 Продажи:</b>
-• Сегодня: {stats['purchased_today']}
-• За неделю: {stats['purchased_week']}
-• За месяц: {stats['purchased_month']}
-
-<b>⏰ Истечение:</b>
-• Истекают через 3 дня: {len(expiring_3d)}
-• Истекают через 7 дней: {len(expiring_7d)}
-• Уже истекли: {len(expired)}
-
-<b>💰 Конверсия:</b>
-• Из триала в платную: {stats.get('trial_to_paid_conversion', 0)}%
-• Продлений: {stats.get('renewals_count', 0)}
-"""
+    text = texts.t(
+        'ADMIN_SUBSCRIPTIONS_DETAILED_STATS_TEXT',
+        '📊 <b>Детальная статистика подписок</b>\n\n'
+        '<b>📱 Общая информация:</b>\n'
+        '• Всего подписок: {total_subscriptions}\n'
+        '• Активных: {active_subscriptions}\n'
+        '• Неактивных: {inactive_subscriptions}\n\n'
+        '<b>💎 По типам:</b>\n'
+        '• Платных: {paid_subscriptions}\n'
+        '• Триальных: {trial_subscriptions}\n\n'
+        '<b>📈 Продажи:</b>\n'
+        '• Сегодня: {purchased_today}\n'
+        '• За неделю: {purchased_week}\n'
+        '• За месяц: {purchased_month}\n\n'
+        '<b>⏰ Истечение:</b>\n'
+        '• Истекают через 3 дня: {expiring_3d}\n'
+        '• Истекают через 7 дней: {expiring_7d}\n'
+        '• Уже истекли: {expired}\n\n'
+        '<b>💰 Конверсия:</b>\n'
+        '• Из триала в платную: {conversion}%\n'
+        '• Продлений: {renewals_count}',
+    ).format(
+        total_subscriptions=stats['total_subscriptions'],
+        active_subscriptions=stats['active_subscriptions'],
+        inactive_subscriptions=stats['total_subscriptions'] - stats['active_subscriptions'],
+        paid_subscriptions=stats['paid_subscriptions'],
+        trial_subscriptions=stats['trial_subscriptions'],
+        purchased_today=stats['purchased_today'],
+        purchased_week=stats['purchased_week'],
+        purchased_month=stats['purchased_month'],
+        expiring_3d=len(expiring_3d),
+        expiring_7d=len(expiring_7d),
+        expired=len(expired),
+        conversion=stats.get('trial_to_paid_conversion', 0),
+        renewals_count=stats.get('renewals_count', 0),
+    )
 
     keyboard = [
         # [
@@ -249,7 +313,7 @@ async def show_subscriptions_stats(callback: types.CallbackQuery, db_user: User,
         #     types.InlineKeyboardButton(text="📈 Графики", callback_data="admin_subs_charts")
         # ],
         # [types.InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_subs_stats")],
-        [types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_subscriptions')]
+        [types.InlineKeyboardButton(text=texts.t('BACK', '⬅️ Назад'), callback_data='admin_subscriptions')]
     ]
 
     await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
@@ -259,6 +323,7 @@ async def show_subscriptions_stats(callback: types.CallbackQuery, db_user: User,
 @admin_required
 @error_handler
 async def show_countries_management(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     try:
         from app.services.remnawave_service import RemnaWaveService
 
@@ -267,10 +332,10 @@ async def show_countries_management(callback: types.CallbackQuery, db_user: User
         nodes_data = await remnawave_service.get_all_nodes()
         squads_data = await remnawave_service.get_all_squads()
 
-        text = '🌍 <b>Управление странами</b>\n\n'
+        text = texts.t('ADMIN_SUBSCRIPTIONS_COUNTRIES_TEXT', '🌍 <b>Управление странами</b>\n\n')
 
         if nodes_data:
-            text += '<b>Доступные серверы:</b>\n'
+            text += texts.t('ADMIN_SUBSCRIPTIONS_COUNTRIES_AVAILABLE_SERVERS', '<b>Доступные серверы:</b>\n')
             countries = {}
 
             for node in nodes_data:
@@ -286,57 +351,90 @@ async def show_countries_management(callback: types.CallbackQuery, db_user: User
                 total_nodes = len(nodes)
 
                 country_flag = get_country_flag(country)
-                text += f'{country_flag} {country}: {active_nodes}/{total_nodes} серверов\n'
+                text += texts.t(
+                    'ADMIN_SUBSCRIPTIONS_COUNTRIES_SERVERS_LINE',
+                    '{flag} {country}: {active}/{total} серверов\n',
+                ).format(flag=country_flag, country=country, active=active_nodes, total=total_nodes)
 
                 total_users_online = sum(n.get('users_online', 0) or 0 for n in nodes)
                 if total_users_online > 0:
-                    text += f'   👥 Пользователей онлайн: {total_users_online}\n'
+                    text += texts.t(
+                        'ADMIN_SUBSCRIPTIONS_COUNTRIES_ONLINE_USERS_LINE',
+                        '   👥 Пользователей онлайн: {count}\n',
+                    ).format(count=total_users_online)
         else:
-            text += '❌ Не удалось загрузить данные о серверах\n'
+            text += texts.t(
+                'ADMIN_SUBSCRIPTIONS_COUNTRIES_SERVERS_LOAD_ERROR',
+                '❌ Не удалось загрузить данные о серверах\n',
+            )
 
         if squads_data:
-            text += f'\n<b>Всего сквадов:</b> {len(squads_data)}\n'
+            text += texts.t(
+                'ADMIN_SUBSCRIPTIONS_COUNTRIES_TOTAL_SQUADS',
+                '\n<b>Всего сквадов:</b> {count}\n',
+            ).format(count=len(squads_data))
 
             total_members = sum(squad.get('members_count', 0) for squad in squads_data)
-            text += f'<b>Участников в сквадах:</b> {total_members}\n'
+            text += texts.t(
+                'ADMIN_SUBSCRIPTIONS_COUNTRIES_SQUAD_MEMBERS',
+                '<b>Участников в сквадах:</b> {count}\n',
+            ).format(count=total_members)
 
-            text += '\n<b>Сквады:</b>\n'
+            text += texts.t('ADMIN_SUBSCRIPTIONS_COUNTRIES_SQUADS_TITLE', '\n<b>Сквады:</b>\n')
             for squad in squads_data[:5]:
-                name = squad.get('name', 'Неизвестно')
+                name = squad.get('name', texts.t('SUBSCRIPTION_STATUS_UNKNOWN', 'Неизвестно'))
                 members = squad.get('members_count', 0)
                 inbounds = squad.get('inbounds_count', 0)
-                text += f'• {name}: {members} участников, {inbounds} inbound(s)\n'
+                text += texts.t(
+                    'ADMIN_SUBSCRIPTIONS_COUNTRIES_SQUAD_LINE',
+                    '• {name}: {members} участников, {inbounds} inbound(s)\n',
+                ).format(name=name, members=members, inbounds=inbounds)
 
             if len(squads_data) > 5:
-                text += f'... и еще {len(squads_data) - 5} сквадов\n'
+                text += texts.t(
+                    'ADMIN_SUBSCRIPTIONS_COUNTRIES_MORE_SQUADS',
+                    '... и еще {count} сквадов\n',
+                ).format(count=len(squads_data) - 5)
 
         user_stats = await get_users_by_countries(db)
         if user_stats:
-            text += '\n<b>Пользователи по регионам:</b>\n'
+            text += texts.t('ADMIN_SUBSCRIPTIONS_COUNTRIES_USERS_BY_REGIONS', '\n<b>Пользователи по регионам:</b>\n')
             for country, count in user_stats.items():
                 country_flag = get_country_flag(country)
-                text += f'{country_flag} {country}: {count} пользователей\n'
+                text += texts.t(
+                    'ADMIN_SUBSCRIPTIONS_COUNTRIES_USERS_LINE',
+                    '{flag} {country}: {count} пользователей\n',
+                ).format(flag=country_flag, country=country, count=count)
 
     except Exception as e:
         logger.error('Ошибка получения данных о странах', error=e)
-        text = f"""
-🌍 <b>Управление странами</b>
-
-❌ <b>Ошибка загрузки данных</b>
-Не удалось получить информацию о серверах.
-
-Проверьте подключение к RemnaWave API.
-
-<b>Детали ошибки:</b> {e!s}
-"""
+        text = texts.t(
+            'ADMIN_SUBSCRIPTIONS_COUNTRIES_ERROR_TEXT',
+            '🌍 <b>Управление странами</b>\n\n'
+            '❌ <b>Ошибка загрузки данных</b>\n'
+            'Не удалось получить информацию о серверах.\n\n'
+            'Проверьте подключение к RemnaWave API.\n\n'
+            '<b>Детали ошибки:</b> {error}',
+        ).format(error=e)
 
     keyboard = [
-        [types.InlineKeyboardButton(text='🔄 Обновить', callback_data='admin_subs_countries')],
         [
-            types.InlineKeyboardButton(text='📊 Статистика нод', callback_data='admin_rw_nodes'),
-            types.InlineKeyboardButton(text='🔧 Сквады', callback_data='admin_rw_squads'),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_HISTORY_REFRESH', '🔄 Обновить'),
+                callback_data='admin_subs_countries',
+            )
         ],
-        [types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_subscriptions')],
+        [
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_SUBSCRIPTIONS_COUNTRIES_NODES_STATS_BUTTON', '📊 Статистика нод'),
+                callback_data='admin_rw_nodes',
+            ),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_SUBSCRIPTIONS_COUNTRIES_SQUADS_BUTTON', '🔧 Сквады'),
+                callback_data='admin_rw_squads',
+            ),
+        ],
+        [types.InlineKeyboardButton(text=texts.t('BACK', '⬅️ Назад'), callback_data='admin_subscriptions')],
     ]
 
     await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
@@ -346,8 +444,13 @@ async def show_countries_management(callback: types.CallbackQuery, db_user: User
 @admin_required
 @error_handler
 async def send_expiry_reminders(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     await callback.message.edit_text(
-        '📨 Отправка напоминаний...\n\nПодождите, это может занять время.', reply_markup=None
+        texts.t(
+            'ADMIN_SUBSCRIPTIONS_REMINDERS_SENDING',
+            '📨 Отправка напоминаний...\n\nПодождите, это может занять время.',
+        ),
+        reply_markup=None,
     )
 
     expiring_subs = await get_expiring_subscriptions(db, 1)
@@ -363,16 +466,15 @@ async def send_expiry_reminders(callback: types.CallbackQuery, db_user: User, db
                     continue
 
                 days_left = max(1, subscription.days_left)
+                user_texts = get_texts(user.language or db_user.language)
 
-                reminder_text = f"""
-⚠️ <b>Подписка истекает!</b>
-
-Ваша подписка истекает через {days_left} день(а).
-
-Не забудьте продлить подписку, чтобы не потерять доступ к серверам.
-
-💎 Продлить подписку можно в главном меню.
-"""
+                reminder_text = user_texts.t(
+                    'ADMIN_SUBSCRIPTIONS_EXPIRY_REMINDER_TEXT',
+                    '⚠️ <b>Подписка истекает!</b>\n\n'
+                    'Ваша подписка истекает через {days} день(а).\n\n'
+                    'Не забудьте продлить подписку, чтобы не потерять доступ к серверам.\n\n'
+                    '💎 Продлить подписку можно в главном меню.',
+                ).format(days=days_left)
 
                 await callback.bot.send_message(chat_id=user.telegram_id, text=reminder_text)
                 sent_count += 1
@@ -381,9 +483,14 @@ async def send_expiry_reminders(callback: types.CallbackQuery, db_user: User, db
                 logger.error('Ошибка отправки напоминания пользователю', user_id=subscription.user_id, error=e)
 
     await callback.message.edit_text(
-        f'✅ Напоминания отправлены: {sent_count} из {len(expiring_subs)}',
+        texts.t(
+            'ADMIN_SUBSCRIPTIONS_REMINDERS_SENT',
+            '✅ Напоминания отправлены: {sent_count} из {total}',
+        ).format(sent_count=sent_count, total=len(expiring_subs)),
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_subs_expiring')]]
+            inline_keyboard=[
+                [types.InlineKeyboardButton(text=texts.t('BACK', '⬅️ Назад'), callback_data='admin_subs_expiring')]
+            ]
         ),
     )
     await callback.answer()
