@@ -44,6 +44,8 @@ from ..schemas.users import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+POSTGRES_INT4_MIN = -(2**31)
+POSTGRES_INT4_MAX = 2**31 - 1
 
 
 def _serialize_promo_group(group: PromoGroup | None) -> PromoGroupSummary | None:
@@ -123,8 +125,10 @@ def _apply_search_filter(query, search: str):
     ]
 
     if search.isdigit():
-        conditions.append(User.telegram_id == int(search))
-        conditions.append(User.id == int(search))
+        numeric_search = int(search)
+        conditions.append(User.telegram_id == numeric_search)
+        if POSTGRES_INT4_MIN <= numeric_search <= POSTGRES_INT4_MAX:
+            conditions.append(User.id == numeric_search)
 
     return query.where(or_(*conditions))
 

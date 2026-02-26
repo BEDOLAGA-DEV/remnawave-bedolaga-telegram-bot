@@ -28,6 +28,9 @@ from app.utils.validators import sanitize_telegram_name
 
 logger = structlog.get_logger(__name__)
 
+POSTGRES_INT4_MIN = -(2**31)
+POSTGRES_INT4_MAX = 2**31 - 1
+
 
 def _normalize_language_code(language: str | None, fallback: str = 'ru') -> str:
     normalized = (language or '').strip().lower()
@@ -84,6 +87,10 @@ def generate_referral_code() -> str:
 
 
 async def get_user_by_id(db: AsyncSession, user_id: int) -> User | None:
+    # users.id is INTEGER (int4) in PostgreSQL; guard large telegram IDs passed by mistake.
+    if user_id < POSTGRES_INT4_MIN or user_id > POSTGRES_INT4_MAX:
+        return None
+
     result = await db.execute(
         select(User)
         .options(
