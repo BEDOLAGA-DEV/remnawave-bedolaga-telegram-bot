@@ -5110,10 +5110,11 @@ async def _change_subscription_type(db: AsyncSession, user_id: int, new_type: st
         old_type = 'триальной' if subscription.is_trial else 'платной'
         new_type_text = 'триальной' if new_is_trial else 'платной'
 
+        was_trial = subscription.is_trial
         subscription.is_trial = new_is_trial
         subscription.updated_at = datetime.now(UTC)
 
-        if not new_is_trial and subscription.is_trial:
+        if not new_is_trial and was_trial:
             user = await get_user_by_id(db, user_id)
             if user:
                 user.has_had_paid_subscription = True

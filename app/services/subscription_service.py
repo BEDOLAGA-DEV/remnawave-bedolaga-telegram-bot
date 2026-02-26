@@ -253,8 +253,10 @@ class SubscriptionService:
                             email=user.email,
                             user_id=user.id,
                         ),
-                        active_internal_squads=subscription.connected_squads,
                     )
+
+                    if subscription.connected_squads:
+                        update_kwargs['active_internal_squads'] = subscription.connected_squads
 
                     if user_tag is not None:
                         update_kwargs['tag'] = user_tag
@@ -298,8 +300,10 @@ class SubscriptionService:
                             email=user.email,
                             user_id=user.id,
                         ),
-                        active_internal_squads=subscription.connected_squads,
                     )
+
+                    if subscription.connected_squads:
+                        create_kwargs['active_internal_squads'] = subscription.connected_squads
 
                     if user_tag is not None:
                         create_kwargs['tag'] = user_tag
@@ -392,8 +396,10 @@ class SubscriptionService:
                         email=user.email,
                         user_id=user.id,
                     ),
-                    active_internal_squads=subscription.connected_squads,
                 )
+
+                if subscription.connected_squads:
+                    update_kwargs['active_internal_squads'] = subscription.connected_squads
 
                 if user_tag is not None:
                     update_kwargs['tag'] = user_tag

@@ -60,6 +60,7 @@ class WheelConfigResponse(BaseModel):
     can_pay_days: bool = False
     user_balance_kopeks: int = 0
     required_balance_kopeks: int = 0
+    has_subscription: bool = False
 
 
 class SpinAvailabilityResponse(BaseModel):

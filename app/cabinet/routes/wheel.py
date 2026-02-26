@@ -50,6 +50,12 @@ async def get_wheel_config(
     # Проверяем доступность
     availability = await wheel_service.check_availability(db, user)
 
+    # Проверяем наличие подписки
+    from app.database.crud.subscription import get_subscription_by_user_id
+
+    subscription = await get_subscription_by_user_id(db, user.id)
+    has_subscription = subscription is not None and subscription.is_active
+
     prizes_display = [
         WheelPrizeDisplay(
             id=p.id,
@@ -77,6 +83,7 @@ async def get_wheel_config(
         can_pay_days=availability.can_pay_days,
         user_balance_kopeks=availability.user_balance_kopeks,
         required_balance_kopeks=availability.required_balance_kopeks,
+        has_subscription=has_subscription,
     )
 
 
@@ -211,6 +218,16 @@ async def create_stars_invoice(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Оплата Stars не включена',
+        )
+
+    # Проверяем наличие активной подписки
+    from app.database.crud.subscription import get_subscription_by_user_id
+
+    subscription = await get_subscription_by_user_id(db, user.id)
+    if not subscription or not subscription.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Для использования колеса необходима активная подписка',
         )
 
     # Проверяем лимит спинов
