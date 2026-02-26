@@ -16,6 +16,38 @@ from app.config import settings
 
 logger = structlog.get_logger(__name__)
 
+# Email-заглушки для Freekassa API (test@example.com вызывает ошибку OP-SP-7)
+_FALLBACK_EMAILS = [
+    'ivan.petrov@mail.ru',
+    'user.alex@yandex.ru',
+    'sergei.k@gmail.com',
+    'dmitry.v@inbox.ru',
+    'anna.s@bk.ru',
+    'maxim.ivanov@list.ru',
+    'elena.p@rambler.ru',
+    'artem.n@mail.ru',
+    'nikita.z@yandex.ru',
+    'olga.m@gmail.com',
+    'roman.t@inbox.ru',
+    'svetlana.d@bk.ru',
+    'kirill.a@mail.ru',
+    'marina.b@yandex.ru',
+    'pavel.g@list.ru',
+    'tatiana.l@gmail.com',
+    'andrey.f@rambler.ru',
+    'natalia.e@inbox.ru',
+    'vladislav.r@mail.ru',
+    'yulia.h@yandex.ru',
+]
+
+
+def _get_fallback_email() -> str:
+    """Возвращает случайный email-заглушку из списка."""
+    import random
+
+    return random.choice(_FALLBACK_EMAILS)
+
+
 # Кэш для публичного IP
 _cached_public_ip: str | None = None
 _ip_fetch_lock = asyncio.Lock()
@@ -190,7 +222,7 @@ class FreekassaService:
                 # Определяем IP (важно для API запроса) - здесь синхронно, поэтому лучше иметь передачу IP
                 # Если IP не передан, используем fallback
                 target_ip = ip or '185.92.183.173'
-                target_email = email or 'test@example.com'
+                target_email = email or _get_fallback_email()
 
                 params = {
                     'shopId': self.shop_id,
@@ -278,7 +310,7 @@ class FreekassaService:
         # Используем payment_system_id из настроек, если не передан явно
         ps_id = payment_system_id or settings.FREEKASSA_PAYMENT_SYSTEM_ID or 1
 
-        target_email = email or 'test@example.com'
+        target_email = email or _get_fallback_email()
 
         # Определяем публичный IP сервера
         server_ip = ip or await get_public_ip()
