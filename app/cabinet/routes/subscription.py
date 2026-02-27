@@ -261,6 +261,24 @@ async def get_subscription(
         # Return 200 with has_subscription: false instead of 404
         return SubscriptionStatusResponse(has_subscription=False, subscription=None)
 
+    # Fallback: restore subscription URL from panel if missing
+    if not fresh_user.subscription.subscription_url and getattr(fresh_user, 'remnawave_uuid', None):
+        try:
+            service = RemnaWaveService()
+            async with service.get_api_client() as api:
+                rw_user = await api.get_user_by_uuid(fresh_user.remnawave_uuid)
+                if rw_user and rw_user.subscription_url:
+                    fresh_user.subscription.subscription_url = rw_user.subscription_url
+                    if rw_user.happ_crypto_link and not fresh_user.subscription.subscription_crypto_link:
+                        fresh_user.subscription.subscription_crypto_link = rw_user.happ_crypto_link
+                    await db.commit()
+                    logger.info(
+                        'Restored subscription URLs from panel for dashboard',
+                        user_id=fresh_user.id,
+                    )
+        except Exception as e:
+            logger.warning('Failed to fetch subscription URL from panel', error=e)
+
     # Load tariff for daily subscription check and tariff name
     tariff_name = None
     if fresh_user.subscription.tariff_id:
@@ -3204,6 +3222,28 @@ async def get_app_config(
     if user.subscription:
         subscription_url = user.subscription.subscription_url
         subscription_crypto_link = user.subscription.subscription_crypto_link
+
+    # Fallback: if subscription URL is missing but user has a RemnaWave UUID,
+    # fetch fresh data from the panel and persist it
+    if user.subscription and not subscription_url and getattr(user, 'remnawave_uuid', None):
+        try:
+            service = RemnaWaveService()
+            async with service.get_api_client() as api:
+                rw_user = await api.get_user_by_uuid(user.remnawave_uuid)
+                if rw_user and rw_user.subscription_url:
+                    subscription_url = rw_user.subscription_url
+                    user.subscription.subscription_url = subscription_url
+                    if rw_user.happ_crypto_link and not subscription_crypto_link:
+                        subscription_crypto_link = rw_user.happ_crypto_link
+                        user.subscription.subscription_crypto_link = subscription_crypto_link
+                    await db.commit()
+                    logger.info(
+                        'Restored subscription URLs from panel',
+                        user_id=user.id,
+                        subscription_url=subscription_url,
+                    )
+        except Exception as e:
+            logger.warning('Failed to fetch subscription URL from panel', error=e)
 
     config = await _load_app_config_async()
 

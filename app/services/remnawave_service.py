@@ -1861,7 +1861,7 @@ class RemnaWaveService:
                 )
 
             panel_url = panel_user.get('subscriptionUrl', '')
-            if not subscription.subscription_url or subscription.subscription_url != panel_url:
+            if panel_url and subscription.subscription_url != panel_url:
                 subscription.subscription_url = panel_url
 
             panel_crypto_link = panel_user.get('subscriptionCryptoLink') or (panel_user.get('happ') or {}).get(
