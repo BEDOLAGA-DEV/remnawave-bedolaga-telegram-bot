@@ -1337,7 +1337,12 @@ class RemnaWaveService:
                         logger.debug('✅ Обновлён пользователь', telegram_id=telegram_id)
 
                 except Exception as user_error:
-                    logger.error('❌ Ошибка обработки пользователя', telegram_id=telegram_id, user_error=user_error)
+                    logger.error(
+                        '❌ Ошибка обработки пользователя',
+                        telegram_id=telegram_id,
+                        user_error=user_error,
+                        exc_info=True,
+                    )
                     stats['errors'] += 1
                     if uuid_mutation:
                         uuid_mutation.rollback()
