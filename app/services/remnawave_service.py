@@ -502,18 +502,17 @@ class RemnaWaveService:
                 language='ru',
             )
 
-            db_user = await create_user_no_commit(**create_kwargs)
+            # Используем SAVEPOINT чтобы при IntegrityError откатить только
+            # вложенную транзакцию, а не всю сессию. Полный rollback помечает
+            # ВСЕ объекты сессии как expired, что вызывает MissingGreenlet
+            # при последующем sync-доступе к атрибутам ORM-объектов.
+            async with db.begin_nested():
+                db_user = await create_user_no_commit(**create_kwargs)
             return db_user, True
         except IntegrityError as create_error:
             logger.info(
                 '♻️ Пользователь с telegram_id уже существует. Используем существующую запись.', telegram_id=telegram_id
             )
-
-            try:
-                await db.rollback()
-            except Exception:
-                # create_user_no_commit уже выполняет rollback при необходимости
-                pass
 
             try:
                 existing_user = await get_user_by_telegram_id(db, telegram_id)
@@ -535,13 +534,11 @@ class RemnaWaveService:
                 )
                 return None, False
         except Exception as general_error:
+            # SAVEPOINT (begin_nested) уже откатил частичную работу.
+            # Полный rollback не нужен — он бы пометил все объекты сессии expired.
             logger.error(
                 '❌ Общая ошибка создания/загрузки пользователя', telegram_id=telegram_id, general_error=general_error
             )
-            try:
-                await db.rollback()
-            except:
-                pass
             return None, False
 
     async def get_system_statistics(self) -> dict[str, Any]:
