@@ -190,6 +190,7 @@ async def list_applications(
                 telegram_channel=app.telegram_channel,
                 description=app.description,
                 expected_monthly_referrals=app.expected_monthly_referrals,
+                desired_commission_percent=app.desired_commission_percent,
                 status=app.status,
                 admin_comment=app.admin_comment,
                 approved_commission_percent=app.approved_commission_percent,

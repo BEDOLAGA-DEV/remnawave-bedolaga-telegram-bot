@@ -16,6 +16,7 @@ class PartnerApplicationRequest(BaseModel):
     telegram_channel: str | None = Field(None, max_length=255)
     description: str | None = Field(None, max_length=2000)
     expected_monthly_referrals: int | None = Field(None, ge=0, le=2_000_000_000)
+    desired_commission_percent: int | None = Field(None, ge=1, le=100)
 
 
 class PartnerApplicationInfo(BaseModel):
@@ -28,6 +29,7 @@ class PartnerApplicationInfo(BaseModel):
     telegram_channel: str | None = None
     description: str | None = None
     expected_monthly_referrals: int | None = None
+    desired_commission_percent: int | None = None
     admin_comment: str | None = None
     approved_commission_percent: int | None = None
     created_at: datetime
@@ -76,6 +78,7 @@ class AdminPartnerApplicationItem(BaseModel):
     telegram_channel: str | None = None
     description: str | None = None
     expected_monthly_referrals: int | None = None
+    desired_commission_percent: int | None = None
     status: str
     admin_comment: str | None = None
     approved_commission_percent: int | None = None

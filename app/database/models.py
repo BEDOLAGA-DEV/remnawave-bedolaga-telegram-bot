@@ -1578,6 +1578,7 @@ class PartnerApplication(Base):
     telegram_channel = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
     expected_monthly_referrals = Column(Integer, nullable=True)
+    desired_commission_percent = Column(Integer, nullable=True)
 
     status = Column(String(20), default=PartnerStatus.PENDING.value, nullable=False)
 

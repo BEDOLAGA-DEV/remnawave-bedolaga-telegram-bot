@@ -57,6 +57,7 @@ async def get_partner_status(
             telegram_channel=latest_app.telegram_channel,
             description=latest_app.description,
             expected_monthly_referrals=latest_app.expected_monthly_referrals,
+            desired_commission_percent=latest_app.desired_commission_percent,
             admin_comment=latest_app.admin_comment,
             approved_commission_percent=latest_app.approved_commission_percent,
             created_at=latest_app.created_at,
@@ -114,6 +115,7 @@ async def apply_for_partner(
         telegram_channel=request.telegram_channel,
         description=request.description,
         expected_monthly_referrals=request.expected_monthly_referrals,
+        desired_commission_percent=request.desired_commission_percent,
     )
 
     if not application:
@@ -155,6 +157,7 @@ async def apply_for_partner(
         telegram_channel=application.telegram_channel,
         description=application.description,
         expected_monthly_referrals=application.expected_monthly_referrals,
+        desired_commission_percent=application.desired_commission_percent,
         admin_comment=application.admin_comment,
         approved_commission_percent=application.approved_commission_percent,
         created_at=application.created_at,
