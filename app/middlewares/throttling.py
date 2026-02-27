@@ -36,7 +36,7 @@ class ThrottlingMiddleware(BaseMiddleware):
         self.start_window = start_window
         self.start_buckets: dict[int, list[float]] = {}
 
-        self._last_cleanup: float = 0.0
+        self._last_cleanup: float = time.monotonic()
         self._cleanup_interval: float = 30.0
 
     def _maybe_cleanup(self, now: float) -> None:
@@ -71,7 +71,7 @@ class ThrottlingMiddleware(BaseMiddleware):
         self._maybe_cleanup(now)
 
         # --- /start burst rate-limit ---
-        if isinstance(event, Message) and event.text and event.text.split()[0] == '/start':
+        if isinstance(event, Message) and event.text and event.text.split(maxsplit=1)[0] == '/start':
             timestamps = self.start_buckets.get(user_id, [])
             timestamps = [ts for ts in timestamps if now - ts < self.start_window]
 
@@ -98,7 +98,7 @@ class ThrottlingMiddleware(BaseMiddleware):
         last_call = self.user_buckets.get(user_id, 0)
 
         if now - last_call < self.rate_limit:
-            logger.warning('Throttling user', user_id=user_id)
+            logger.debug('Throttling user', user_id=user_id)
 
             # Для сообщений: молчим только если это состояние работы с тикетами; иначе показываем блок
             if isinstance(event, Message):

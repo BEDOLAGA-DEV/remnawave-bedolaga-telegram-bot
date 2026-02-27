@@ -339,8 +339,12 @@ class SubscriptionRenewalService:
                     traffic_limit_gb=subscription.traffic_limit_gb,
                     purchased_traffic_gb=purchased_traffic,
                 )
-                base_traffic = settings.DEFAULT_TRAFFIC_LIMIT_GB or 0
-            traffic_limit = base_traffic
+                # All traffic is purchased; pass it as sole traffic_limit
+                # and clear purchased_traffic to avoid double-counting below
+                traffic_limit = purchased_traffic
+                purchased_traffic = 0
+            else:
+                traffic_limit = base_traffic
         else:
             traffic_limit = subscription.traffic_limit_gb
             if traffic_limit is None:
