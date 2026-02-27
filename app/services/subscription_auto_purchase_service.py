@@ -307,9 +307,8 @@ def _apply_extension_updates(context: AutoExtendContext) -> None:
     """
     subscription = context.subscription
 
-    # Обновляем tariff_id если указан в контексте
-    if context.tariff_id is not None:
-        subscription.tariff_id = context.tariff_id
+    # НЕ обновляем tariff_id здесь — это делает extend_subscription(),
+    # чтобы корректно определить is_tariff_change внутри CRUD
 
     # Обновляем allowed_squads если указаны (заменяем полностью)
     if context.allowed_squads is not None:
