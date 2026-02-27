@@ -2274,7 +2274,7 @@ async def confirm_tariff_switch(
             await subscription_service.create_remnawave_user(
                 db,
                 subscription,
-                reset_traffic=True,
+                reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
                 reset_reason='переключение тарифа',
             )
         except Exception as e:
@@ -2446,13 +2446,13 @@ async def confirm_daily_tariff_switch(
         await db.commit()
         await db.refresh(subscription)
 
-        # Обновляем пользователя в Remnawave (create_remnawave_user также сбрасывает устройства)
+        # Обновляем пользователя в Remnawave (сброс трафика по админ-настройке)
         try:
             subscription_service = SubscriptionService()
             await subscription_service.create_remnawave_user(
                 db,
                 subscription,
-                reset_traffic=True,
+                reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
                 reset_reason='смена на суточный тариф',
             )
         except Exception as e:
@@ -3023,13 +3023,13 @@ async def confirm_instant_switch(
         await db.commit()
         await db.refresh(subscription)
 
-        # Обновляем пользователя в Remnawave
+        # Обновляем пользователя в Remnawave (сброс трафика по админ-настройке)
         try:
             subscription_service = SubscriptionService()
             await subscription_service.create_remnawave_user(
                 db,
                 subscription,
-                reset_traffic=False,  # Не сбрасываем трафик при переключении
+                reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
                 reset_reason='мгновенное переключение тарифа',
             )
         except Exception as e:

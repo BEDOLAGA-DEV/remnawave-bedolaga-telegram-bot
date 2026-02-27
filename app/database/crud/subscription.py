@@ -444,7 +444,12 @@ async def extend_subscription(
 
     if traffic_limit_gb is not None:
         old_traffic = subscription.traffic_limit_gb
-        subscription.traffic_used_gb = 0.0
+        # Сброс использованного трафика: при смене тарифа — по настройке, при продлении — всегда
+        if is_tariff_change:
+            if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+                subscription.traffic_used_gb = 0.0
+        else:
+            subscription.traffic_used_gb = 0.0
 
         if is_tariff_change:
             # При СМЕНЕ тарифа сбрасываем все докупки трафика

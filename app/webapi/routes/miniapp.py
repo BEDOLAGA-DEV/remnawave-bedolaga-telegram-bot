@@ -6991,10 +6991,16 @@ async def switch_tariff_endpoint(
     await db.refresh(subscription)
     await db.refresh(user)
 
-    # Синхронизируем с RemnaWave
+    # Синхронизируем с RemnaWave (опционально сбрасываем трафик по настройке)
+    should_reset_traffic = settings.RESET_TRAFFIC_ON_TARIFF_SWITCH
     try:
         service = SubscriptionService()
-        await service.update_remnawave_user(db, subscription)
+        await service.update_remnawave_user(
+            db,
+            subscription,
+            reset_traffic=should_reset_traffic,
+            reset_reason='смена тарифа',
+        )
     except Exception as e:
         logger.error('Ошибка синхронизации с RemnaWave при смене тарифа', error=e)
 

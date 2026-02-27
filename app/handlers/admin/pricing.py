@@ -181,6 +181,13 @@ CORE_PRICING_ENTRIES: tuple[SettingEntry, ...] = (
         action='toggle',
     ),
     SettingEntry(
+        key='RESET_TRAFFIC_ON_TARIFF_SWITCH',
+        section='core',
+        label_ru='🔄 Сбрасывать трафик при смене тарифа',
+        label_en='🔄 Reset traffic on tariff switch',
+        action='toggle',
+    ),
+    SettingEntry(
         key='DEFAULT_TRAFFIC_RESET_STRATEGY',
         section='core',
         label_ru='🗓 Стратегия сброса трафика',

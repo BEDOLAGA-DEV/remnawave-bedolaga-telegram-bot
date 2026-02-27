@@ -454,8 +454,11 @@ async def _auto_extend_subscription(
         )
 
     subscription_service = SubscriptionService()
-    # При смене тарифа ВСЕГДА сбрасываем трафик, иначе по настройке
-    should_reset_traffic = is_tariff_change or settings.RESET_TRAFFIC_ON_PAYMENT
+    # Сброс трафика: при смене тарифа — по RESET_TRAFFIC_ON_TARIFF_SWITCH, при оплате — по RESET_TRAFFIC_ON_PAYMENT
+    should_reset_traffic = (
+        (is_tariff_change and settings.RESET_TRAFFIC_ON_TARIFF_SWITCH)
+        or settings.RESET_TRAFFIC_ON_PAYMENT
+    )
     try:
         await subscription_service.update_remnawave_user(
             db,

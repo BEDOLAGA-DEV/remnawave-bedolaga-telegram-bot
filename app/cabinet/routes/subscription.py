@@ -4082,13 +4082,24 @@ async def switch_tariff(
     user.subscription.updated_at = datetime.now(UTC)
     await db.commit()
 
-    # Sync with RemnaWave
+    # Sync with RemnaWave (optionally reset traffic based on admin setting)
+    should_reset_traffic = settings.RESET_TRAFFIC_ON_TARIFF_SWITCH
     try:
         subscription_service = SubscriptionService()
         if getattr(user, 'remnawave_uuid', None):
-            await subscription_service.update_remnawave_user(db, user.subscription)
+            await subscription_service.update_remnawave_user(
+                db,
+                user.subscription,
+                reset_traffic=should_reset_traffic,
+                reset_reason='смена тарифа',
+            )
         else:
-            await subscription_service.create_remnawave_user(db, user.subscription)
+            await subscription_service.create_remnawave_user(
+                db,
+                user.subscription,
+                reset_traffic=should_reset_traffic,
+                reset_reason='смена тарифа',
+            )
     except Exception as e:
         logger.error('Failed to sync tariff switch with RemnaWave', error=e)
 
