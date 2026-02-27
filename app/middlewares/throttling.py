@@ -109,9 +109,9 @@ class ThrottlingMiddleware(BaseMiddleware):
                     current = None
                 if current:
                     state_str = str(current)
-                    is_ticket_state = (
-                        ':waiting_for_message' in state_str or ':waiting_for_reply' in state_str
-                    ) and ('TicketStates' in state_str or 'AdminTicketStates' in state_str)
+                    is_ticket_state = (':waiting_for_message' in state_str or ':waiting_for_reply' in state_str) and (
+                        'TicketStates' in state_str or 'AdminTicketStates' in state_str
+                    )
                     if is_ticket_state:
                         return None
                 try:

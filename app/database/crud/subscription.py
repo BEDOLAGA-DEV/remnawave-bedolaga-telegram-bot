@@ -1406,9 +1406,8 @@ async def get_subscription_renewal_cost(
                 )
                 traffic_price_per_month = settings.get_traffic_price(purchased_traffic)
             else:
-                traffic_price_per_month = (
-                    settings.get_traffic_price(base_traffic_gb)
-                    + settings.get_traffic_price(purchased_traffic)
+                traffic_price_per_month = settings.get_traffic_price(base_traffic_gb) + settings.get_traffic_price(
+                    purchased_traffic
                 )
         else:
             traffic_price_per_month = settings.get_traffic_price(subscription.traffic_limit_gb)

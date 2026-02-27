@@ -63,9 +63,7 @@ async def get_referral_info(
     # Get withdrawn amount (approved + completed withdrawal requests)
     withdrawn_query = select(func.coalesce(func.sum(WithdrawalRequest.amount_kopeks), 0)).where(
         WithdrawalRequest.user_id == user.id,
-        WithdrawalRequest.status.in_(
-            [WithdrawalRequestStatus.APPROVED.value, WithdrawalRequestStatus.COMPLETED.value]
-        ),
+        WithdrawalRequest.status.in_([WithdrawalRequestStatus.APPROVED.value, WithdrawalRequestStatus.COMPLETED.value]),
     )
     withdrawn_result = await db.execute(withdrawn_query)
     withdrawn = withdrawn_result.scalar() or 0

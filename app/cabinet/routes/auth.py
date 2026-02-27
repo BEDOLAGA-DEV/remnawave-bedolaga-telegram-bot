@@ -611,7 +611,9 @@ async def register_email(
             )
 
     return {
-        'message': 'Email linked successfully' if not settings.is_cabinet_email_verification_enabled() else 'Verification email sent',
+        'message': 'Email linked successfully'
+        if not settings.is_cabinet_email_verification_enabled()
+        else 'Verification email sent',
         'email': request.email,
     }
 
