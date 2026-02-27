@@ -142,6 +142,7 @@ async def apply_for_partner(
                         'website_url': request.website_url,
                         'description': request.description,
                         'expected_monthly_referrals': request.expected_monthly_referrals,
+                        'desired_commission_percent': request.desired_commission_percent,
                     },
                 )
             finally:
