@@ -4070,6 +4070,9 @@ async def switch_tariff(
     user.subscription.purchased_traffic_gb = 0
     user.subscription.traffic_reset_at = None
 
+    if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+        user.subscription.traffic_used_gb = 0.0
+
     if switching_to_daily:
         # Switching TO daily - reset end_date to 1 day, set last_daily_charge_at
         user.subscription.end_date = datetime.now(UTC) + timedelta(days=1)

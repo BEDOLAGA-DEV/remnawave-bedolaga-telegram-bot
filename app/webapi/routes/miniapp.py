@@ -6958,8 +6958,16 @@ async def switch_tariff_endpoint(
     subscription.device_limit = new_tariff.device_limit
     subscription.connected_squads = squads
     # Сбрасываем докупленный трафик при смене тарифа
+    from sqlalchemy import delete as sql_delete
+
+    from app.database.models import TrafficPurchase
+
+    await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
     subscription.purchased_traffic_gb = 0
-    subscription.traffic_reset_at = None  # Сбрасываем дату сброса трафика
+    subscription.traffic_reset_at = None
+
+    if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+        subscription.traffic_used_gb = 0.0
 
     # Обработка daily полей при смене тарифа
     new_is_daily = getattr(new_tariff, 'is_daily', False)

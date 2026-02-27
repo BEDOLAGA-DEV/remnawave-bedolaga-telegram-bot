@@ -1056,11 +1056,37 @@ async def update_user_subscription(
         # Set squads from tariff
         if tariff.allowed_squads:
             subscription.connected_squads = tariff.allowed_squads
+
+        # Сбрасываем докупленный трафик при смене тарифа
+        from sqlalchemy import delete as sql_delete
+
+        from app.database.models import TrafficPurchase
+
+        await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
+        subscription.purchased_traffic_gb = 0
+        subscription.traffic_reset_at = None
+
+        from app.config import settings
+
+        if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+            subscription.traffic_used_gb = 0.0
+
         await db.commit()
         await db.refresh(subscription)
 
-        # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription)
+        # Синхронизируем с RemnaWave (сброс трафика по админ-настройке)
+        try:
+            from app.services.subscription_service import SubscriptionService
+
+            subscription_service = SubscriptionService()
+            await subscription_service.update_remnawave_user(
+                db,
+                subscription,
+                reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+                reset_reason='смена тарифа (cabinet admin)',
+            )
+        except Exception as e:
+            logger.error('Failed to sync tariff switch with RemnaWave', error=e)
 
         logger.info('Admin changed tariff for user to', admin_id=admin.id, user_id=user_id, tariff_name=tariff.name)
 
