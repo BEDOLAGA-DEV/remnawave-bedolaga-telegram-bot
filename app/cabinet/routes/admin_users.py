@@ -625,7 +625,7 @@ async def get_user_detail(
         referral=referral_info,
         total_spent_kopeks=user_stats.get('total_spent', 0),
         purchase_count=user_stats.get('purchase_count', 0),
-        used_promocodes=user.used_promocodes,
+        used_promocodes=user.used_promocodes or 0,
         has_had_paid_subscription=user.has_had_paid_subscription,
         lifetime_used_traffic_bytes=user.lifetime_used_traffic_bytes or 0,
         campaign_name=campaign_name,
