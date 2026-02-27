@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.config import settings
 from app.database.models import User
 from app.external.ban_system_api import BanSystemAPI, BanSystemAPIError
+from app.localization.texts import get_texts
 
 from ..dependencies import require_permission
 from ..schemas.ban_system import (
@@ -50,8 +51,19 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix='/admin/ban-system', tags=['Cabinet Admin Ban System'])
 
 
-def _get_ban_api() -> BanSystemAPI:
+def _get_default_texts():
+    language = getattr(settings, 'DEFAULT_LANGUAGE', 'ru') or 'ru'
+    return get_texts(language)
+
+
+def _get_admin_texts(admin: User | None):
+    language = getattr(admin, 'language', None)
+    return get_texts(language)
+
+
+def _get_ban_api(texts=None) -> BanSystemAPI:
     """Get Ban System API instance."""
+    texts = texts or _get_default_texts()
     logger.debug(
         'Ban System check enabled: configured',
         is_ban_system_enabled=settings.is_ban_system_enabled(),
@@ -62,13 +74,19 @@ def _get_ban_api() -> BanSystemAPI:
     if not settings.is_ban_system_enabled():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='Ban System integration is disabled',
+            detail=texts.t(
+                'CABINET_ADMIN_BAN_SYSTEM_INTEGRATION_DISABLED',
+                'Ban System integration is disabled',
+            ),
         )
 
     if not settings.is_ban_system_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='Ban System is not configured',
+            detail=texts.t(
+                'CABINET_ADMIN_BAN_SYSTEM_NOT_CONFIGURED',
+                'Ban System is not configured',
+            ),
         )
 
     return BanSystemAPI(
@@ -78,8 +96,9 @@ def _get_ban_api() -> BanSystemAPI:
     )
 
 
-async def _api_request(api: BanSystemAPI, method: str, *args, **kwargs) -> Any:
+async def _api_request(api: BanSystemAPI, method: str, *args, texts=None, **kwargs) -> Any:
     """Execute API request with error handling."""
+    texts = texts or _get_default_texts()
     try:
         async with api:
             func = getattr(api, method)
@@ -88,13 +107,19 @@ async def _api_request(api: BanSystemAPI, method: str, *args, **kwargs) -> Any:
         logger.error('Ban System API error', error=e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f'Ban System API error: {e.message}',
+            detail=texts.t(
+                'CABINET_ADMIN_BAN_SYSTEM_API_ERROR_DETAIL',
+                'Ban System API error: {message}',
+            ).format(message=e.message),
         )
     except Exception as e:
         logger.error('Ban System unexpected error', error=e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f'Internal error: {e!s}',
+            detail=texts.t(
+                'CABINET_ADMIN_BAN_SYSTEM_INTERNAL_ERROR_DETAIL',
+                'Internal error: {error}',
+            ).format(error=f'{e!s}'),
         )
 
 
@@ -363,11 +388,15 @@ async def unban_user(
     admin: User = Depends(require_permission('ban_system:unban')),
 ) -> UnbanResponse:
     """Unban (enable) a user."""
+    texts = _get_admin_texts(admin)
     api = _get_ban_api()
     try:
         await _api_request(api, 'enable_user', user_id=user_id)
         logger.info('Admin unbanned user in Ban System', admin_id=admin.id, user_id=user_id)
-        return UnbanResponse(success=True, message='User unbanned successfully')
+        return UnbanResponse(
+            success=True,
+            message=texts.t('CABINET_ADMIN_BAN_SYSTEM_USER_UNBANNED_SUCCESS', 'User unbanned successfully'),
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -380,6 +409,7 @@ async def ban_user(
     admin: User = Depends(require_permission('ban_system:ban')),
 ) -> UnbanResponse:
     """Manually ban a user."""
+    texts = _get_admin_texts(admin)
     api = _get_ban_api()
     try:
         await _api_request(
@@ -390,7 +420,10 @@ async def ban_user(
             reason=request.reason,
         )
         logger.info('Admin banned user', admin_id=admin.id, username=request.username, reason=request.reason)
-        return UnbanResponse(success=True, message='User banned successfully')
+        return UnbanResponse(
+            success=True,
+            message=texts.t('CABINET_ADMIN_BAN_SYSTEM_USER_BANNED_SUCCESS', 'User banned successfully'),
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -849,11 +882,18 @@ async def whitelist_add(
     admin: User = Depends(require_permission('ban_system:edit')),
 ) -> UnbanResponse:
     """Add user to whitelist."""
+    texts = _get_admin_texts(admin)
     api = _get_ban_api()
     try:
         await _api_request(api, 'whitelist_add', username=request.username)
         logger.info('Admin added to Ban System whitelist', admin_id=admin.id, username=request.username)
-        return UnbanResponse(success=True, message=f'User {request.username} added to whitelist')
+        return UnbanResponse(
+            success=True,
+            message=texts.t(
+                'CABINET_ADMIN_BAN_SYSTEM_WHITELIST_ADDED_SUCCESS',
+                'User {username} added to whitelist',
+            ).format(username=request.username),
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -866,11 +906,18 @@ async def whitelist_remove(
     admin: User = Depends(require_permission('ban_system:edit')),
 ) -> UnbanResponse:
     """Remove user from whitelist."""
+    texts = _get_admin_texts(admin)
     api = _get_ban_api()
     try:
         await _api_request(api, 'whitelist_remove', username=request.username)
         logger.info('Admin removed from Ban System whitelist', admin_id=admin.id, username=request.username)
-        return UnbanResponse(success=True, message=f'User {request.username} removed from whitelist')
+        return UnbanResponse(
+            success=True,
+            message=texts.t(
+                'CABINET_ADMIN_BAN_SYSTEM_WHITELIST_REMOVED_SUCCESS',
+                'User {username} removed from whitelist',
+            ).format(username=request.username),
+        )
     except HTTPException:
         raise
     except Exception as e:

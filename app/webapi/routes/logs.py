@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.crud.ticket import TicketCRUD
+from app.localization.texts import get_texts
 from app.services.monitoring_service import monitoring_service
 
 from ..dependencies import get_db_session, require_api_token
@@ -72,6 +73,7 @@ async def get_system_log_preview(
 ) -> SystemLogPreviewResponse:
     """Получить предпросмотр системного лог-файла бота."""
 
+    texts = get_texts('ru')
     log_path = _resolve_system_log_path()
 
     if not log_path.exists() or not log_path.is_file():
@@ -104,7 +106,13 @@ async def get_system_log_preview(
         )
     except Exception as error:  # pragma: no cover - защита от неожиданных ошибок чтения
         logger.error('Ошибка чтения лог-файла', log_path=log_path, error=error)
-        raise HTTPException(status_code=500, detail='Не удалось прочитать лог-файл') from error
+        raise HTTPException(
+            status_code=500,
+            detail=texts.t(
+                'WEBAPI_LOGS_FAILED_TO_READ_LOG_FILE',
+                'Не удалось прочитать лог-файл',
+            ),
+        ) from error
 
     preview_text = content[-preview_limit:] if preview_limit > 0 else ''
     truncated = len(content) > len(preview_text)
@@ -128,10 +136,17 @@ async def download_system_log(
 ) -> FileResponse:
     """Скачать полный лог-файл бота."""
 
+    texts = get_texts('ru')
     log_path = _resolve_system_log_path()
 
     if not log_path.exists() or not log_path.is_file():
-        raise HTTPException(status_code=404, detail='Лог-файл не найден')
+        raise HTTPException(
+            status_code=404,
+            detail=texts.t(
+                'WEBAPI_LOGS_LOG_FILE_NOT_FOUND',
+                'Лог-файл не найден',
+            ),
+        )
 
     try:
         return FileResponse(
@@ -141,7 +156,13 @@ async def download_system_log(
         )
     except Exception as error:  # pragma: no cover - защита от неожиданных ошибок отдачи файла
         logger.error('Ошибка отправки лог-файла', log_path=log_path, error=error)
-        raise HTTPException(status_code=500, detail='Не удалось отправить лог-файл') from error
+        raise HTTPException(
+            status_code=500,
+            detail=texts.t(
+                'WEBAPI_LOGS_FAILED_TO_SEND_LOG_FILE',
+                'Не удалось отправить лог-файл',
+            ),
+        ) from error
 
 
 @router.get('/system/full', response_model=SystemLogFullResponse)
@@ -150,16 +171,29 @@ async def get_system_log_full(
 ) -> SystemLogFullResponse:
     """Получить полный системный лог-файл бота."""
 
+    texts = get_texts('ru')
     log_path = _resolve_system_log_path()
 
     if not log_path.exists() or not log_path.is_file():
-        raise HTTPException(status_code=404, detail='Лог-файл не найден')
+        raise HTTPException(
+            status_code=404,
+            detail=texts.t(
+                'WEBAPI_LOGS_LOG_FILE_NOT_FOUND',
+                'Лог-файл не найден',
+            ),
+        )
 
     try:
         content, size_bytes, mtime = await _read_system_log(log_path)
     except Exception as error:  # pragma: no cover - защита от неожиданных ошибок чтения
         logger.error('Ошибка чтения лог-файла', log_path=log_path, error=error)
-        raise HTTPException(status_code=500, detail='Не удалось прочитать лог-файл') from error
+        raise HTTPException(
+            status_code=500,
+            detail=texts.t(
+                'WEBAPI_LOGS_FAILED_TO_READ_LOG_FILE',
+                'Не удалось прочитать лог-файл',
+            ),
+        ) from error
 
     return SystemLogFullResponse(
         path=str(log_path),

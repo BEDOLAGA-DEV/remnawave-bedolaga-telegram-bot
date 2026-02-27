@@ -178,24 +178,41 @@ class ChannelCheckerMiddleware(BaseMiddleware):
                 'чтобы получать уведомления о новых возможностях и обновлениях бота. Спасибо!',
             )
 
-            try:
-                await event.message.edit_text(text, reply_markup=channel_sub_kb)
-            except TelegramBadRequest as e:
-                if 'message is not modified' not in str(e).lower():
-                    raise
+                if isinstance(event, CallbackQuery) and event.data == 'sub_channel_check':
+                    user_language = DEFAULT_LANGUAGE
+                    if event.from_user and event.from_user.language_code:
+                        user_language = event.from_user.language_code.split('-')[0]
+                    texts = get_texts(user_language)
+                    await event.answer(
+                        texts.t('CHANNEL_SUBSCRIBE_REQUIRED_ALERT', '❌ Вы не подписались на канал!'),
+                        show_alert=True,
+                    )
+                    return None
 
-            await event.answer(
-                texts.t(
-                    'CHANNEL_CHECK_NOT_SUBSCRIBED',
-                    'You are not subscribed to all required channels. Please subscribe and try again.',
-                ),
-                show_alert=True,
-            )
-            return None
+                return await self._deny_message(event, bot, channel_link, channel_id)
+            logger.warning('⚠️ Неожиданный статус пользователя', telegram_id=telegram_id, status=member.status)
+            await self._capture_start_payload(state, event, bot)
+            return await self._deny_message(event, bot, channel_link, channel_id)
 
-        return await self._deny_message(event, bot, all_channels)
-
-    # -- _deny_message (multi-channel) -----------------------------------------
+        except TelegramForbiddenError as e:
+            logger.error('❌ Бот заблокирован в канале', channel_id=channel_id, error=e)
+            await self._capture_start_payload(state, event, bot)
+            return await self._deny_message(event, bot, channel_link, channel_id)
+        except TelegramBadRequest as e:
+            if 'chat not found' in str(e).lower():
+                logger.error('❌ Канал не найден', channel_id=channel_id, error=e)
+            elif 'user not found' in str(e).lower():
+                logger.error('❌ Пользователь не найден', telegram_id=telegram_id, error=e)
+            else:
+                logger.error('❌ Ошибка запроса к каналу', channel_id=channel_id, error=e)
+            await self._capture_start_payload(state, event, bot)
+            return await self._deny_message(event, bot, channel_link, channel_id)
+        except TelegramNetworkError as e:
+            logger.warning('⚠️ Таймаут при проверке подписки на канал', error=e)
+            return await handler(event, data)
+        except Exception as e:
+            logger.error('❌ Неожиданная ошибка при проверке подписки', error=e)
+            return await handler(event, data)
 
     @staticmethod
     async def _deny_message(

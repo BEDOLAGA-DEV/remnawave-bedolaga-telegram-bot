@@ -28,23 +28,38 @@ async def start_wata_payment(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT',
+            'Действие ограничено администратором',
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'),
+                        url=support_url,
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
         await callback.answer()
         return
 
     if not settings.is_wata_enabled():
-        await callback.answer('❌ Оплата через WATA временно недоступна', show_alert=True)
+        await callback.answer(
+            texts.t('WATA_TEMPORARILY_UNAVAILABLE', '❌ Оплата через WATA временно недоступна'),
+            show_alert=True,
+        )
         return
 
     message_text = texts.t(
@@ -95,16 +110,28 @@ async def process_wata_payment_amount(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT',
+            'Действие ограничено администратором',
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'),
+                        url=support_url,
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await message.answer(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
             parse_mode='HTML',
         )
@@ -112,7 +139,9 @@ async def process_wata_payment_amount(
         return
 
     if not settings.is_wata_enabled():
-        await message.answer('❌ Оплата через WATA временно недоступна')
+        await message.answer(
+            texts.t('WATA_TEMPORARILY_UNAVAILABLE', '❌ Оплата через WATA временно недоступна')
+        )
         return
 
     if amount_kopeks < settings.WATA_MIN_AMOUNT_KOPEKS:
@@ -260,17 +289,24 @@ async def check_wata_payment_status(
     callback: types.CallbackQuery,
     db: AsyncSession,
 ):
+    fallback_texts = get_texts('ru')
     try:
         local_payment_id = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(
+            fallback_texts.t('WATA_INVALID_PAYMENT_IDENTIFIER', '❌ Некорректный идентификатор платежа'),
+            show_alert=True,
+        )
         return
 
     payment_service = PaymentService(callback.bot)
     status_info = await payment_service.get_wata_payment_status(db, local_payment_id)
 
     if not status_info:
-        await callback.answer('❌ Платеж не найден', show_alert=True)
+        await callback.answer(
+            fallback_texts.t('WATA_PAYMENT_NOT_FOUND', '❌ Платеж не найден'),
+            show_alert=True,
+        )
         return
 
     payment = status_info['payment']
@@ -299,16 +335,33 @@ async def check_wata_payment_status(
     message_lines = [
         texts.t('WATA_STATUS_TITLE', '💳 <b>Статус платежа WATA</b>'),
         '',
-        f'🆔 ID: {payment.payment_link_id}',
-        f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}',
-        f'📊 Статус: {label_info["emoji"]} {label_info["label"]}',
-        f'📅 Создан: {payment.created_at.strftime("%d.%m.%Y %H:%M") if payment.created_at else "—"}',
+        texts.t('WATA_STATUS_LINE_ID', '🆔 ID: {payment_id}').format(payment_id=payment.payment_link_id),
+        texts.t('WATA_STATUS_LINE_AMOUNT', '💰 Сумма: {amount}').format(
+            amount=settings.format_price(payment.amount_kopeks)
+        ),
+        texts.t('WATA_STATUS_LINE_STATUS', '📊 Статус: {emoji} {label}').format(
+            emoji=label_info['emoji'],
+            label=label_info['label'],
+        ),
+        texts.t('WATA_STATUS_LINE_CREATED', '📅 Создан: {created_at}').format(
+            created_at=payment.created_at.strftime('%d.%m.%Y %H:%M') if payment.created_at else '—'
+        ),
     ]
 
     if payment.is_paid:
-        message_lines.append('\n✅ Платеж успешно завершен! Средства уже на балансе.')
+        message_lines.append(
+            texts.t(
+                'WATA_STATUS_COMPLETED_NOTE',
+                '\n✅ Платеж успешно завершен! Средства уже на балансе.',
+            )
+        )
     elif payment.status in {'Opened', 'Closed'}:
-        message_lines.append('\n⏳ Платеж еще не завершен. Завершите оплату по ссылке и проверьте статус позже.')
+        message_lines.append(
+            texts.t(
+                'WATA_STATUS_PENDING_NOTE',
+                '\n⏳ Платеж еще не завершен. Завершите оплату по ссылке и проверьте статус позже.',
+            )
+        )
 
     await callback.message.answer('\n'.join(message_lines), parse_mode='HTML')
     await callback.answer()

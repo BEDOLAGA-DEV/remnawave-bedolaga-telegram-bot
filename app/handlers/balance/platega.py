@@ -105,16 +105,27 @@ async def start_platega_payment(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT', 'Действие ограничено администратором'
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'),
+                        url=support_url,
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
         await callback.answer()
@@ -182,14 +193,22 @@ async def handle_platega_method_selection(
     db_user: User,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
+
     try:
         method_code = int(callback.data.rsplit('_', 1)[-1])
     except ValueError:
-        await callback.answer('❌ Некорректный способ оплаты', show_alert=True)
+        await callback.answer(
+            texts.t('PLATEGA_INVALID_PAYMENT_METHOD', '❌ Некорректный способ оплаты'),
+            show_alert=True,
+        )
         return
 
     if method_code not in _get_active_methods():
-        await callback.answer('⚠️ Этот способ сейчас недоступен', show_alert=True)
+        await callback.answer(
+            texts.t('PLATEGA_METHOD_NOT_AVAILABLE', '⚠️ Этот способ сейчас недоступен'),
+            show_alert=True,
+        )
         return
 
     await _prompt_amount(callback.message, db_user, state, method_code)
@@ -208,16 +227,27 @@ async def process_platega_payment_amount(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT', 'Действие ограничено администратором'
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'),
+                        url=support_url,
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await message.answer(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
             parse_mode='HTML',
         )
@@ -385,10 +415,18 @@ async def check_platega_payment_status(
     callback: types.CallbackQuery,
     db: AsyncSession,
 ):
+    texts = get_texts('ru')
     try:
+        db_user = getattr(callback, 'db_user', None)
+        if db_user and getattr(db_user, 'language', None):
+            texts = get_texts(db_user.language)
+
         local_payment_id = int(callback.data.split('_')[-1])
     except ValueError:
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(
+            texts.t('PLATEGA_INVALID_PAYMENT_ID', '❌ Некорректный идентификатор платежа'),
+            show_alert=True,
+        )
         return
 
     payment_service = PaymentService(callback.bot)
@@ -397,23 +435,26 @@ async def check_platega_payment_status(
         status_info = await payment_service.get_platega_payment_status(db, local_payment_id)
     except Exception as error:
         logger.exception('Ошибка проверки статуса Platega', error=error)
-        await callback.answer('⚠️ Ошибка проверки статуса', show_alert=True)
+        await callback.answer(
+            texts.t('PLATEGA_STATUS_CHECK_ERROR', '⚠️ Ошибка проверки статуса'),
+            show_alert=True,
+        )
         return
 
     if not status_info:
-        await callback.answer('⚠️ Платёж не найден', show_alert=True)
+        await callback.answer(
+            texts.t('PLATEGA_PAYMENT_NOT_FOUND_ALERT', '⚠️ Платёж не найден'),
+            show_alert=True,
+        )
         return
 
     payment = status_info.get('payment')
     status = status_info.get('status')
     is_paid = status_info.get('is_paid')
 
-    language = 'ru'
     user = getattr(payment, 'user', None)
     if user and getattr(user, 'language', None):
-        language = user.language
-
-    texts = get_texts(language)
+        texts = get_texts(user.language)
 
     if is_paid:
         await callback.answer(texts.t('PLATEGA_PAYMENT_ALREADY_CONFIRMED', '✅ Платёж уже зачислен'), show_alert=True)

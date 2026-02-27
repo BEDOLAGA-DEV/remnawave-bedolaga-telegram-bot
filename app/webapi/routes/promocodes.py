@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.localization.texts import get_texts
 from app.database.crud.promocode import (
     create_promocode,
     delete_promocode,
@@ -81,27 +82,51 @@ def _serialize_recent_use(use: PromoCodeUse) -> PromoCodeRecentUse:
 def _validate_create_payload(payload: PromoCodeCreateRequest) -> None:
     code = payload.code.strip()
     if not code:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Code must not be empty')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t('WEBAPI_PROMOCODES_CODE_MUST_NOT_BE_EMPTY', 'Code must not be empty'),
+        )
 
     normalized_valid_from = _normalize_datetime(payload.valid_from)
     normalized_valid_until = _normalize_datetime(payload.valid_until)
 
     if payload.type == PromoCodeType.BALANCE and payload.balance_bonus_kopeks <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Balance bonus must be positive for balance promo codes')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_PROMOCODES_BALANCE_BONUS_MUST_BE_POSITIVE_FOR_BALANCE_PROMO_CODES',
+                'Balance bonus must be positive for balance promo codes',
+            ),
+        )
 
     if (
         payload.type in {PromoCodeType.SUBSCRIPTION_DAYS, PromoCodeType.TRIAL_SUBSCRIPTION}
         and payload.subscription_days <= 0
     ):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Subscription days must be positive for this promo code type')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_PROMOCODES_SUBSCRIPTION_DAYS_MUST_BE_POSITIVE_FOR_THIS_PROMO_CODE_TYPE',
+                'Subscription days must be positive for this promo code type',
+            ),
+        )
 
     if normalized_valid_from and normalized_valid_until and normalized_valid_from > normalized_valid_until:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'valid_from cannot be greater than valid_until')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_PROMOCODES_VALID_FROM_CANNOT_BE_GREATER_THAN_VALID_UNTIL',
+                'valid_from cannot be greater than valid_until',
+            ),
+        )
 
 
 def _validate_update_payload(payload: PromoCodeUpdateRequest, promocode: PromoCode) -> None:
     if payload.code is not None and not payload.code.strip():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Code must not be empty')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t('WEBAPI_PROMOCODES_CODE_MUST_NOT_BE_EMPTY', 'Code must not be empty'),
+        )
 
     if payload.type is not None:
         new_type = payload.type
@@ -116,19 +141,43 @@ def _validate_update_payload(payload: PromoCodeUpdateRequest, promocode: PromoCo
     )
 
     if new_type == PromoCodeType.BALANCE and balance_bonus <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Balance bonus must be positive for balance promo codes')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_PROMOCODES_BALANCE_BONUS_MUST_BE_POSITIVE_FOR_BALANCE_PROMO_CODES',
+                'Balance bonus must be positive for balance promo codes',
+            ),
+        )
 
     if new_type in {PromoCodeType.SUBSCRIPTION_DAYS, PromoCodeType.TRIAL_SUBSCRIPTION} and subscription_days <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Subscription days must be positive for this promo code type')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_PROMOCODES_SUBSCRIPTION_DAYS_MUST_BE_POSITIVE_FOR_THIS_PROMO_CODE_TYPE',
+                'Subscription days must be positive for this promo code type',
+            ),
+        )
 
     valid_from = _normalize_datetime(payload.valid_from) if payload.valid_from is not None else promocode.valid_from
     valid_until = _normalize_datetime(payload.valid_until) if payload.valid_until is not None else promocode.valid_until
 
     if valid_from and valid_until and valid_from > valid_until:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'valid_from cannot be greater than valid_until')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_PROMOCODES_VALID_FROM_CANNOT_BE_GREATER_THAN_VALID_UNTIL',
+                'valid_from cannot be greater than valid_until',
+            ),
+        )
 
     if payload.max_uses is not None and payload.max_uses != 0 and payload.max_uses < promocode.current_uses:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'max_uses cannot be less than current uses')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_PROMOCODES_MAX_USES_CANNOT_BE_LESS_THAN_CURRENT_USES',
+                'max_uses cannot be less than current uses',
+            ),
+        )
 
 
 @router.get('', response_model=PromoCodeListResponse)
@@ -158,7 +207,10 @@ async def get_promocode(
 ) -> PromoCodeDetailResponse:
     promocode = await get_promocode_by_id(db, promocode_id)
     if not promocode:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo code not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_PROMOCODES_NOT_FOUND', 'Promo code not found'),
+        )
 
     stats = await get_promocode_statistics(db, promocode_id)
     base = _serialize_promocode(promocode)
@@ -186,7 +238,13 @@ async def create_promocode_endpoint(
 
     existing = await get_promocode_by_code(db, normalized_code)
     if existing:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Promo code with this code already exists')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_PROMOCODES_CODE_ALREADY_EXISTS',
+                'Promo code with this code already exists',
+            ),
+        )
 
     creator_id = payload.created_by if payload.created_by is not None and payload.created_by > 0 else None
 
@@ -227,7 +285,10 @@ async def update_promocode_endpoint(
 ) -> PromoCodeResponse:
     promocode = await get_promocode_by_id(db, promocode_id)
     if not promocode:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo code not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_PROMOCODES_NOT_FOUND', 'Promo code not found'),
+        )
 
     _validate_update_payload(payload, promocode)
 
@@ -238,7 +299,13 @@ async def update_promocode_endpoint(
         if normalized_code != promocode.code:
             existing = await get_promocode_by_code(db, normalized_code)
             if existing and existing.id != promocode_id:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Promo code with this code already exists')
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=get_texts('ru').t(
+                        'WEBAPI_PROMOCODES_CODE_ALREADY_EXISTS',
+                        'Promo code with this code already exists',
+                    ),
+                )
         updates['code'] = normalized_code
 
     if payload.type is not None:
@@ -281,10 +348,16 @@ async def delete_promocode_endpoint(
 ) -> Response:
     promocode = await get_promocode_by_id(db, promocode_id)
     if not promocode:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo code not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_PROMOCODES_NOT_FOUND', 'Promo code not found'),
+        )
 
     success = await delete_promocode(db, promocode)
     if not success:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Failed to delete promo code')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t('WEBAPI_PROMOCODES_FAILED_TO_DELETE', 'Failed to delete promo code'),
+        )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

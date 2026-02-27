@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import PaymentMethod, User
+from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.services.payment_verification_service import (
     SUPPORTED_MANUAL_CHECK_METHODS,
@@ -86,104 +87,119 @@ class PaymentsStatsResponse(BaseModel):
 # ============ Helper functions ============
 
 
-def _get_status_info(record: PendingPayment) -> tuple[str, str]:
+def _get_admin_texts(admin: User | None):
+    language = getattr(admin, 'language', None)
+    return get_texts(language)
+
+
+def _get_status_info(record: PendingPayment, texts) -> tuple[str, str]:
     """Get status emoji and text for a pending payment."""
     status_str = (record.status or '').lower()
+    status_paid = texts.t('CABINET_ADMIN_PAYMENTS_STATUS_PAID', 'Оплачено')
+    status_pending = texts.t('CABINET_ADMIN_PAYMENTS_STATUS_PENDING_PAYMENT', 'Ожидает оплаты')
+    status_processing = texts.t('CABINET_ADMIN_PAYMENTS_STATUS_PROCESSING', 'Обрабатывается')
+    status_error = texts.t('CABINET_ADMIN_PAYMENTS_STATUS_ERROR', 'Ошибка')
+    status_canceled = texts.t('CABINET_ADMIN_PAYMENTS_STATUS_CANCELED', 'Отменено')
+    status_unknown = texts.t('CABINET_ADMIN_PAYMENTS_STATUS_UNKNOWN', 'Неизвестно')
+    status_hold = texts.t('CABINET_ADMIN_PAYMENTS_STATUS_HOLD', 'На удержании')
+    status_declined = texts.t('CABINET_ADMIN_PAYMENTS_STATUS_DECLINED', 'Отклонено')
+    status_expired = texts.t('CABINET_ADMIN_PAYMENTS_STATUS_EXPIRED', 'Истёк')
+    status_authorized = texts.t('CABINET_ADMIN_PAYMENTS_STATUS_AUTHORIZED', 'Авторизовано')
 
     if record.is_paid:
-        return '✅', 'Оплачено'
+        return '✅', status_paid
 
     if record.method == PaymentMethod.PAL24:
         mapping = {
-            'new': ('⏳', 'Ожидает оплаты'),
-            'process': ('⌛', 'Обрабатывается'),
-            'success': ('✅', 'Оплачено'),
-            'fail': ('❌', 'Ошибка'),
-            'canceled': ('❌', 'Отменено'),
+            'new': ('⏳', status_pending),
+            'process': ('⌛', status_processing),
+            'success': ('✅', status_paid),
+            'fail': ('❌', status_error),
+            'canceled': ('❌', status_canceled),
         }
-        return mapping.get(status_str, ('❓', 'Неизвестно'))
+        return mapping.get(status_str, ('❓', status_unknown))
 
     if record.method == PaymentMethod.MULENPAY:
         mapping = {
-            'created': ('⏳', 'Ожидает оплаты'),
-            'processing': ('⌛', 'Обрабатывается'),
-            'hold': ('🔒', 'На удержании'),
-            'success': ('✅', 'Оплачено'),
-            'canceled': ('❌', 'Отменено'),
-            'error': ('❌', 'Ошибка'),
+            'created': ('⏳', status_pending),
+            'processing': ('⌛', status_processing),
+            'hold': ('🔒', status_hold),
+            'success': ('✅', status_paid),
+            'canceled': ('❌', status_canceled),
+            'error': ('❌', status_error),
         }
-        return mapping.get(status_str, ('❓', 'Неизвестно'))
+        return mapping.get(status_str, ('❓', status_unknown))
 
     if record.method == PaymentMethod.WATA:
         mapping = {
-            'opened': ('⏳', 'Ожидает оплаты'),
-            'pending': ('⏳', 'Ожидает оплаты'),
-            'processing': ('⌛', 'Обрабатывается'),
-            'paid': ('✅', 'Оплачено'),
-            'closed': ('✅', 'Оплачено'),
-            'declined': ('❌', 'Отклонено'),
-            'canceled': ('❌', 'Отменено'),
-            'expired': ('⌛', 'Истёк'),
+            'opened': ('⏳', status_pending),
+            'pending': ('⏳', status_pending),
+            'processing': ('⌛', status_processing),
+            'paid': ('✅', status_paid),
+            'closed': ('✅', status_paid),
+            'declined': ('❌', status_declined),
+            'canceled': ('❌', status_canceled),
+            'expired': ('⌛', status_expired),
         }
-        return mapping.get(status_str, ('❓', 'Неизвестно'))
+        return mapping.get(status_str, ('❓', status_unknown))
 
     if record.method == PaymentMethod.PLATEGA:
         mapping = {
-            'pending': ('⏳', 'Ожидает оплаты'),
-            'inprogress': ('⌛', 'Обрабатывается'),
-            'confirmed': ('✅', 'Оплачено'),
-            'failed': ('❌', 'Ошибка'),
-            'canceled': ('❌', 'Отменено'),
-            'expired': ('⌛', 'Истёк'),
+            'pending': ('⏳', status_pending),
+            'inprogress': ('⌛', status_processing),
+            'confirmed': ('✅', status_paid),
+            'failed': ('❌', status_error),
+            'canceled': ('❌', status_canceled),
+            'expired': ('⌛', status_expired),
         }
-        return mapping.get(status_str, ('❓', 'Неизвестно'))
+        return mapping.get(status_str, ('❓', status_unknown))
 
     if record.method == PaymentMethod.HELEKET:
         if status_str in {'pending', 'created', 'waiting', 'check', 'processing'}:
-            return '⏳', 'Ожидает оплаты'
+            return '⏳', status_pending
         if status_str in {'paid', 'paid_over'}:
-            return '✅', 'Оплачено'
+            return '✅', status_paid
         if status_str in {'cancel', 'canceled', 'fail', 'failed', 'expired'}:
-            return '❌', 'Отменено'
-        return '❓', 'Неизвестно'
+            return '❌', status_canceled
+        return '❓', status_unknown
 
     if record.method == PaymentMethod.YOOKASSA:
         mapping = {
-            'pending': ('⏳', 'Ожидает оплаты'),
-            'waiting_for_capture': ('⌛', 'Обрабатывается'),
-            'succeeded': ('✅', 'Оплачено'),
-            'canceled': ('❌', 'Отменено'),
+            'pending': ('⏳', status_pending),
+            'waiting_for_capture': ('⌛', status_processing),
+            'succeeded': ('✅', status_paid),
+            'canceled': ('❌', status_canceled),
         }
-        return mapping.get(status_str, ('❓', 'Неизвестно'))
+        return mapping.get(status_str, ('❓', status_unknown))
 
     if record.method == PaymentMethod.CRYPTOBOT:
         mapping = {
-            'active': ('⏳', 'Ожидает оплаты'),
-            'paid': ('✅', 'Оплачено'),
-            'expired': ('⌛', 'Истёк'),
+            'active': ('⏳', status_pending),
+            'paid': ('✅', status_paid),
+            'expired': ('⌛', status_expired),
         }
-        return mapping.get(status_str, ('❓', 'Неизвестно'))
+        return mapping.get(status_str, ('❓', status_unknown))
 
     if record.method == PaymentMethod.CLOUDPAYMENTS:
         mapping = {
-            'pending': ('⏳', 'Ожидает оплаты'),
-            'authorized': ('⌛', 'Авторизовано'),
-            'completed': ('✅', 'Оплачено'),
-            'failed': ('❌', 'Ошибка'),
+            'pending': ('⏳', status_pending),
+            'authorized': ('⌛', status_authorized),
+            'completed': ('✅', status_paid),
+            'failed': ('❌', status_error),
         }
-        return mapping.get(status_str, ('❓', 'Неизвестно'))
+        return mapping.get(status_str, ('❓', status_unknown))
 
     if record.method == PaymentMethod.FREEKASSA:
         mapping = {
-            'pending': ('⏳', 'Ожидает оплаты'),
-            'success': ('✅', 'Оплачено'),
-            'paid': ('✅', 'Оплачено'),
-            'canceled': ('❌', 'Отменено'),
-            'error': ('❌', 'Ошибка'),
+            'pending': ('⏳', status_pending),
+            'success': ('✅', status_paid),
+            'paid': ('✅', status_paid),
+            'canceled': ('❌', status_canceled),
+            'error': ('❌', status_error),
         }
-        return mapping.get(status_str, ('❓', 'Неизвестно'))
+        return mapping.get(status_str, ('❓', status_unknown))
 
-    return '❓', 'Неизвестно'
+    return '❓', status_unknown
 
 
 def _is_checkable(record: PendingPayment) -> bool:
@@ -240,9 +256,9 @@ def _get_payment_url(record: PendingPayment) -> str | None:
     return payment_url
 
 
-def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
+def _record_to_response(record: PendingPayment, texts) -> PendingPaymentResponse:
     """Convert PendingPayment to API response."""
-    status_emoji, status_text = _get_status_info(record)
+    status_emoji, status_text = _get_status_info(record, texts)
     return PendingPaymentResponse(
         id=record.local_id,
         method=record.method.value,
@@ -276,6 +292,7 @@ async def get_all_pending_payments(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get all pending payments for admin verification."""
+    texts = _get_admin_texts(admin)
     all_pending = await list_recent_pending_payments(db)
 
     # Apply method filter if specified
@@ -293,7 +310,7 @@ async def get_all_pending_payments(
     start_idx = (page - 1) * per_page
     page_payments = all_pending[start_idx : start_idx + per_page]
 
-    items = [_record_to_response(p) for p in page_payments]
+    items = [_record_to_response(p, texts) for p in page_payments]
 
     return PendingPaymentListResponse(
         items=items,
@@ -333,12 +350,16 @@ async def get_pending_payment_details(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get details of a specific pending payment."""
+    texts = _get_admin_texts(admin)
     try:
         payment_method = PaymentMethod(method)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Invalid payment method: {method}',
+            detail=texts.t(
+                'CABINET_ADMIN_PAYMENTS_INVALID_METHOD',
+                'Invalid payment method: {method}',
+            ).format(method=method),
         )
 
     record = await get_payment_record(db, payment_method, payment_id)
@@ -346,10 +367,10 @@ async def get_pending_payment_details(
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail='Payment not found',
+            detail=texts.t('CABINET_ADMIN_PAYMENTS_NOT_FOUND', 'Payment not found'),
         )
 
-    return _record_to_response(record)
+    return _record_to_response(record, texts)
 
 
 @router.post('/{method}/{payment_id}/check', response_model=ManualCheckResponse)
@@ -360,12 +381,16 @@ async def check_payment_status(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Manually check and update payment status."""
+    texts = _get_admin_texts(admin)
     try:
         payment_method = PaymentMethod(method)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Invalid payment method: {method}',
+            detail=texts.t(
+                'CABINET_ADMIN_PAYMENTS_INVALID_METHOD',
+                'Invalid payment method: {method}',
+            ).format(method=method),
         )
 
     # Get current record
@@ -374,15 +399,18 @@ async def check_payment_status(
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail='Payment not found',
+            detail=texts.t('CABINET_ADMIN_PAYMENTS_NOT_FOUND', 'Payment not found'),
         )
 
     # Check if manual check is available
     if not _is_checkable(record):
         return ManualCheckResponse(
             success=False,
-            message='Ручная проверка недоступна для этого платежа',
-            payment=_record_to_response(record),
+            message=texts.t(
+                'CABINET_ADMIN_PAYMENTS_MANUAL_CHECK_NOT_AVAILABLE',
+                'Ручная проверка недоступна для этого платежа',
+            ),
+            payment=_record_to_response(record, texts),
             status_changed=False,
         )
 
@@ -396,16 +424,22 @@ async def check_payment_status(
     if not updated:
         return ManualCheckResponse(
             success=False,
-            message='Не удалось проверить статус платежа',
-            payment=_record_to_response(record),
+            message=texts.t(
+                'CABINET_ADMIN_PAYMENTS_MANUAL_CHECK_FAILED',
+                'Не удалось проверить статус платежа',
+            ),
+            payment=_record_to_response(record, texts),
             status_changed=False,
         )
 
     status_changed = updated.status != old_status or updated.is_paid != old_is_paid
 
     if status_changed:
-        _, new_status_text = _get_status_info(updated)
-        message = f'Статус обновлён: {new_status_text}'
+        _, new_status_text = _get_status_info(updated, texts)
+        message = texts.t(
+            'CABINET_ADMIN_PAYMENTS_STATUS_UPDATED',
+            'Статус обновлён: {status_text}',
+        ).format(status_text=new_status_text)
         logger.info(
             'Admin checked payment /',
             admin_id=admin.id,
@@ -415,12 +449,12 @@ async def check_payment_status(
             status=updated.status,
         )
     else:
-        message = 'Статус не изменился'
+        message = texts.t('CABINET_ADMIN_PAYMENTS_STATUS_UNCHANGED', 'Статус не изменился')
 
     return ManualCheckResponse(
         success=True,
         message=message,
-        payment=_record_to_response(updated),
+        payment=_record_to_response(updated, texts),
         status_changed=status_changed,
         old_status=old_status,
         new_status=updated.status,

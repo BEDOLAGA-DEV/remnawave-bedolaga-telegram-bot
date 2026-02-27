@@ -27,8 +27,12 @@ async def show_reports_menu(
     db_user: User,
     db: AsyncSession,
 ) -> None:
+    texts = get_texts(db_user.language)
     await callback.message.edit_text(
-        '📊 <b>Отчеты</b>\n\nВыберите период, чтобы отправить отчет в админский топик.',
+        texts.t(
+            'ADMIN_REPORTS_MENU_TEXT',
+            '📊 <b>Отчеты</b>\n\nВыберите период, чтобы отправить отчет в админский топик.',
+        ),
         reply_markup=get_admin_reports_keyboard(db_user.language),
         parse_mode='HTML',
     )
@@ -70,6 +74,7 @@ async def _send_report(
     period: ReportPeriod,
     language: str,
 ) -> None:
+    texts = get_texts(language)
     try:
         report_text = await reporting_service.send_report(period, send_to_topic=True)
     except ReportingServiceError as exc:
@@ -78,14 +83,17 @@ async def _send_report(
         return
     except Exception as exc:
         logger.error('Непредвиденная ошибка при отправке отчета', exc=exc)
-        await callback.answer('Не удалось отправить отчет. Попробуйте позже.', show_alert=True)
+        await callback.answer(
+            texts.t('REPORT_SEND_ERROR', 'Не удалось отправить отчет. Попробуйте позже.'),
+            show_alert=True,
+        )
         return
 
     await callback.message.answer(
         report_text,
         reply_markup=get_admin_report_result_keyboard(language),
     )
-    await callback.answer('Отчет отправлен в топик')
+    await callback.answer(texts.t('REPORT_SENT_TO_TOPIC', 'Отчет отправлен в топик'))
 
 
 @admin_required

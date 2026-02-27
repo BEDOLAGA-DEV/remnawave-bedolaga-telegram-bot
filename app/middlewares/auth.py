@@ -13,6 +13,8 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from app.config import settings
 from app.database.crud.user import get_user_by_telegram_id
 from app.database.database import AsyncSessionLocal
+from app.localization.loader import DEFAULT_LANGUAGE
+from app.localization.texts import get_texts
 from app.services.remnawave_service import RemnaWaveService
 from app.states import RegistrationStates
 from app.utils.check_reg_process import is_registration_process
@@ -56,6 +58,11 @@ class AuthMiddleware(BaseMiddleware):
         if user.is_bot:
             return await handler(event, data)
 
+        language = DEFAULT_LANGUAGE
+        if user.language_code:
+            language = user.language_code.split('-')[0]
+        texts = get_texts(language)
+
         async with AsyncSessionLocal() as db:
             try:
                 db_user = await get_user_by_telegram_id(db, user.id)
@@ -89,18 +96,42 @@ class AuthMiddleware(BaseMiddleware):
                         await db.commit()
                         return result
                     if isinstance(event, Message):
-                        await event.answer('▶️ Для начала работы необходимо выполнить команду /start')
+                        await event.answer(
+                            texts.t(
+                                'AUTH_MIDDLEWARE_START_REQUIRED_MESSAGE',
+                                '▶️ Для начала работы необходимо выполнить команду /start',
+                            )
+                        )
                     elif isinstance(event, CallbackQuery):
-                        await event.answer('▶️ Необходимо начать с команды /start', show_alert=True)
+                        await event.answer(
+                            texts.t(
+                                'AUTH_MIDDLEWARE_START_REQUIRED_ALERT',
+                                '▶️ Необходимо начать с команды /start',
+                            ),
+                            show_alert=True,
+                        )
                     logger.info('🚫 Заблокирован незарегистрированный пользователь', user_id=user.id)
                     return None
                 from app.database.models import UserStatus
 
+                texts = get_texts(db_user.language if db_user.language else language)
+
                 if db_user.status == UserStatus.BLOCKED.value:
                     if isinstance(event, Message):
-                        await event.answer('🚫 Ваш аккаунт заблокирован администратором.')
+                        await event.answer(
+                            texts.t(
+                                'AUTH_MIDDLEWARE_ACCOUNT_BLOCKED',
+                                '🚫 Ваш аккаунт заблокирован администратором.',
+                            )
+                        )
                     elif isinstance(event, CallbackQuery):
-                        await event.answer('🚫 Ваш аккаунт заблокирован администратором.', show_alert=True)
+                        await event.answer(
+                            texts.t(
+                                'AUTH_MIDDLEWARE_ACCOUNT_BLOCKED',
+                                '🚫 Ваш аккаунт заблокирован администратором.',
+                            ),
+                            show_alert=True,
+                        )
                     logger.info('🚫 Заблокированный пользователь попытался использовать бота', user_id=user.id)
                     return None
 
@@ -148,11 +179,18 @@ class AuthMiddleware(BaseMiddleware):
                         return result
                     if isinstance(event, Message):
                         await event.answer(
-                            '❌ Ваш аккаунт был удален.\n🔄 Для повторной регистрации выполните команду /start'
+                            texts.t(
+                                'AUTH_MIDDLEWARE_ACCOUNT_DELETED_MESSAGE',
+                                '❌ Ваш аккаунт был удален.\n🔄 Для повторной регистрации выполните команду /start',
+                            )
                         )
                     elif isinstance(event, CallbackQuery):
                         await event.answer(
-                            '❌ Ваш аккаунт был удален. Для повторной регистрации выполните /start', show_alert=True
+                            texts.t(
+                                'AUTH_MIDDLEWARE_ACCOUNT_DELETED_ALERT',
+                                '❌ Ваш аккаунт был удален. Для повторной регистрации выполните /start',
+                            ),
+                            show_alert=True,
                         )
                     logger.info('❌ Удаленный пользователь попытался использовать бота без /start', user_id=user.id)
                     return None

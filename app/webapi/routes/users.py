@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.localization.texts import get_texts
 from app.database.crud.promo_group import get_promo_group_by_id
 from app.database.crud.subscription import (
     create_paid_subscription,
@@ -172,7 +173,10 @@ async def get_user(
     # If not found as telegram_id, check as internal user ID
     user = await get_user_by_id(db, user_id)
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_USERS_USER_NOT_FOUND', 'User not found'),
+        )
 
     return _serialize_user(user)
 
@@ -188,7 +192,10 @@ async def get_user_by_telegram_id_endpoint(
     """
     user = await get_user_by_telegram_id(db, telegram_id)
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_USERS_USER_NOT_FOUND', 'User not found'),
+        )
 
     return _serialize_user(user)
 
@@ -203,7 +210,13 @@ async def create_user_endpoint(
     if payload.telegram_id is not None:
         existing = await get_user_by_telegram_id(db, payload.telegram_id)
         if existing:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'User with this telegram_id already exists')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=get_texts('ru').t(
+                    'WEBAPI_USERS_TELEGRAM_ID_ALREADY_EXISTS',
+                    'User with this telegram_id already exists',
+                ),
+            )
 
     user = await create_user(
         db,
@@ -218,7 +231,10 @@ async def create_user_endpoint(
     if payload.promo_group_id and payload.promo_group_id != user.promo_group_id:
         promo_group = await get_promo_group_by_id(db, payload.promo_group_id)
         if not promo_group:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Promo group not found')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=get_texts('ru').t('WEBAPI_PROMO_GROUPS_NOT_FOUND', 'Promo group not found'),
+            )
         user = await update_user(db, user, promo_group_id=promo_group.id)
 
     user = await get_user_by_id(db, user.id)
@@ -241,7 +257,10 @@ async def update_user_endpoint(
         found_user = await get_user_by_id(db, user_id)
 
     if not found_user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_USERS_USER_NOT_FOUND', 'User not found'),
+        )
 
     updates: dict[str, Any] = {}
 
@@ -262,19 +281,31 @@ async def update_user_endpoint(
         try:
             status_value = UserStatus(payload.status).value
         except ValueError as error:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid status') from error
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=get_texts('ru').t('WEBAPI_USERS_INVALID_STATUS', 'Invalid status'),
+            ) from error
         updates['status'] = status_value
 
     if payload.promo_group_id is not None:
         promo_group = await get_promo_group_by_id(db, payload.promo_group_id)
         if not promo_group:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Promo group not found')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=get_texts('ru').t('WEBAPI_PROMO_GROUPS_NOT_FOUND', 'Promo group not found'),
+            )
         updates['promo_group_id'] = promo_group.id
 
     if payload.referral_code is not None and payload.referral_code != found_user.referral_code:
         existing_code_owner = await get_user_by_referral_code(db, payload.referral_code)
         if existing_code_owner and existing_code_owner.id != found_user.id:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Referral code already in use')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=get_texts('ru').t(
+                    'WEBAPI_USERS_REFERRAL_CODE_ALREADY_IN_USE',
+                    'Referral code already in use',
+                ),
+            )
         updates['referral_code'] = payload.referral_code
 
     if not updates:
@@ -298,7 +329,10 @@ async def update_balance(
     db: AsyncSession = Depends(get_db_session),
 ) -> UserResponse:
     if payload.amount_kopeks == 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Amount must be non-zero')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t('WEBAPI_USERS_AMOUNT_MUST_BE_NON_ZERO', 'Amount must be non-zero'),
+        )
 
     # First check if the provided ID is a telegram_id
     user = await get_user_by_telegram_id(db, user_id)
@@ -309,18 +343,28 @@ async def update_balance(
         found_user = await get_user_by_id(db, user_id)
 
     if not found_user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_USERS_USER_NOT_FOUND', 'User not found'),
+        )
 
     success = await add_user_balance(
         db,
         found_user,
         amount_kopeks=payload.amount_kopeks,
-        description=payload.description or 'Корректировка через веб-API',
+        description=payload.description
+        or get_texts('ru').t(
+            'WEBAPI_USERS_BALANCE_ADJUSTMENT_VIA_WEBAPI',
+            'Корректировка через веб-API',
+        ),
         create_transaction=payload.create_transaction,
     )
 
     if not success:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, 'Failed to update balance')
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=get_texts('ru').t('WEBAPI_USERS_FAILED_TO_UPDATE_BALANCE', 'Failed to update balance'),
+        )
 
     # Reload the user to ensure we have the latest data
     if found_user.telegram_id == user_id:
@@ -339,7 +383,10 @@ async def _get_user_by_id_or_telegram_id(db: AsyncSession, user_id: int) -> User
 
     user = await get_user_by_id(db, user_id)
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_USERS_USER_NOT_FOUND', 'User not found'),
+        )
     return user
 
 
@@ -359,7 +406,11 @@ async def create_user_subscription(
     existing = await get_subscription_by_user_id(db, user.id)
     if existing and not payload.replace_existing:
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, 'User already has a subscription. Use replace_existing=true to replace it'
+            status.HTTP_400_BAD_REQUEST,
+            detail=get_texts('ru').t(
+                'WEBAPI_USERS_ALREADY_HAS_SUBSCRIPTION_USE_REPLACE_EXISTING',
+                'User already has a subscription. Use replace_existing=true to replace it',
+            ),
         )
 
     forced_devices = None
@@ -402,7 +453,13 @@ async def create_user_subscription(
             )
     else:
         if payload.duration_days is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'duration_days is required for paid subscriptions')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=get_texts('ru').t(
+                    'WEBAPI_SUBSCRIPTIONS_DURATION_DAYS_IS_REQUIRED_FOR_PAID_SUBSCRIPTIONS',
+                    'duration_days is required for paid subscriptions',
+                ),
+            )
         device_limit = payload.device_limit
         if device_limit is None:
             if forced_devices is not None:
@@ -457,7 +514,10 @@ async def delete_user_subscription(
 
     subscription = await get_subscription_by_user_id(db, user.id)
     if not subscription:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User has no subscription')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_USERS_HAS_NO_SUBSCRIPTION', 'User has no subscription'),
+        )
 
     if is_active_paid_subscription(subscription):
         logger.info(

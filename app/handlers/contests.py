@@ -162,14 +162,20 @@ async def play_contest(callback: types.CallbackQuery, state: FSMContext, db_user
     # Validate callback data
     parts = _validate_callback_data(callback.data)
     if not parts or len(parts) < 4 or parts[1] != 'play':
-        await callback.answer('Некорректные данные', show_alert=True)
+        await callback.answer(
+            texts.t('CONTEST_INVALID_DATA', 'Некорректные данные'),
+            show_alert=True,
+        )
         return
 
     round_id_str = parts[-1]
     try:
         round_id = int(round_id_str)
     except ValueError:
-        await callback.answer('Некорректные данные', show_alert=True)
+        await callback.answer(
+            texts.t('CONTEST_INVALID_DATA', 'Некорректные данные'),
+            show_alert=True,
+        )
         return
 
     # Get round with template
@@ -247,7 +253,10 @@ async def handle_pick(callback: types.CallbackQuery, db_user, db: AsyncSession):
     # Validate callback data
     parts = _validate_callback_data(callback.data)
     if not parts or len(parts) < 4 or parts[1] != 'pick':
-        await callback.answer('Некорректные данные', show_alert=True)
+        await callback.answer(
+            texts.t('CONTEST_INVALID_DATA', 'Некорректные данные'),
+            show_alert=True,
+        )
         return
 
     round_id_str = parts[2]
@@ -256,7 +265,10 @@ async def handle_pick(callback: types.CallbackQuery, db_user, db: AsyncSession):
     try:
         round_id = int(round_id_str)
     except ValueError:
-        await callback.answer('Некорректные данные', show_alert=True)
+        await callback.answer(
+            texts.t('CONTEST_INVALID_DATA', 'Некорректные данные'),
+            show_alert=True,
+        )
         return
 
     # Re-check subscription

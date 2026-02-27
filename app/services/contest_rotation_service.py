@@ -16,6 +16,7 @@ from app.database.crud.contest import (
 )
 from app.database.database import AsyncSessionLocal
 from app.database.models import ContestTemplate, SubscriptionStatus, User
+from app.localization.texts import get_texts
 from app.services.contests.enums import GameType, PrizeType
 from app.services.contests.games import get_game_strategy
 
@@ -35,8 +36,10 @@ GAME_ANAGRAM = GameType.ANAGRAM.value
 DEFAULT_TEMPLATES = [
     {
         'slug': GAME_QUEST,
-        'name': 'Квест-кнопки',
-        'description': 'Найди секретную кнопку 3×3',
+        'name_key': 'CONTEST_TEMPLATE_QUEST_NAME',
+        'name_default': 'Квест-кнопки',
+        'description_key': 'CONTEST_TEMPLATE_QUEST_DESCRIPTION',
+        'description_default': 'Найди секретную кнопку 3×3',
         'prize_type': 'days',
         'prize_value': '1',
         'max_winners': 3,
@@ -48,8 +51,10 @@ DEFAULT_TEMPLATES = [
     },
     {
         'slug': GAME_LOCKS,
-        'name': 'Кнопочный взлом',
-        'description': 'Найди взломанную кнопку среди 20 замков',
+        'name_key': 'CONTEST_TEMPLATE_LOCKS_NAME',
+        'name_default': 'Кнопочный взлом',
+        'description_key': 'CONTEST_TEMPLATE_LOCKS_DESCRIPTION',
+        'description_default': 'Найди взломанную кнопку среди 20 замков',
         'prize_type': 'days',
         'prize_value': '5',
         'max_winners': 1,
@@ -61,8 +66,10 @@ DEFAULT_TEMPLATES = [
     },
     {
         'slug': GAME_CIPHER,
-        'name': 'Шифр букв',
-        'description': 'Расшифруй слово по номерам',
+        'name_key': 'CONTEST_TEMPLATE_CIPHER_NAME',
+        'name_default': 'Шифр букв',
+        'description_key': 'CONTEST_TEMPLATE_CIPHER_DESCRIPTION',
+        'description_default': 'Расшифруй слово по номерам',
         'prize_type': 'days',
         'prize_value': '1',
         'max_winners': 1,
@@ -74,8 +81,10 @@ DEFAULT_TEMPLATES = [
     },
     {
         'slug': GAME_SERVER,
-        'name': 'Сервер-лотерея',
-        'description': 'Угадай доступный сервер',
+        'name_key': 'CONTEST_TEMPLATE_SERVER_NAME',
+        'name_default': 'Сервер-лотерея',
+        'description_key': 'CONTEST_TEMPLATE_SERVER_DESCRIPTION',
+        'description_default': 'Угадай доступный сервер',
         'prize_type': 'days',
         'prize_value': '7',
         'max_winners': 1,
@@ -87,8 +96,10 @@ DEFAULT_TEMPLATES = [
     },
     {
         'slug': GAME_BLITZ,
-        'name': 'Блиц-реакция',
-        'description': 'Нажми кнопку за 10 секунд',
+        'name_key': 'CONTEST_TEMPLATE_BLITZ_NAME',
+        'name_default': 'Блиц-реакция',
+        'description_key': 'CONTEST_TEMPLATE_BLITZ_DESCRIPTION',
+        'description_default': 'Нажми кнопку за 10 секунд',
         'prize_type': 'days',
         'prize_value': '1',
         'max_winners': 1,
@@ -100,8 +111,10 @@ DEFAULT_TEMPLATES = [
     },
     {
         'slug': GAME_EMOJI,
-        'name': 'Угадай сервис по эмодзи',
-        'description': 'Определи сервис по эмодзи',
+        'name_key': 'CONTEST_TEMPLATE_EMOJI_NAME',
+        'name_default': 'Угадай сервис по эмодзи',
+        'description_key': 'CONTEST_TEMPLATE_EMOJI_DESCRIPTION',
+        'description_default': 'Определи сервис по эмодзи',
         'prize_type': 'days',
         'prize_value': '1',
         'max_winners': 1,
@@ -113,8 +126,10 @@ DEFAULT_TEMPLATES = [
     },
     {
         'slug': GAME_ANAGRAM,
-        'name': 'Анаграмма дня',
-        'description': 'Собери слово из букв',
+        'name_key': 'CONTEST_TEMPLATE_ANAGRAM_NAME',
+        'name_default': 'Анаграмма дня',
+        'description_key': 'CONTEST_TEMPLATE_ANAGRAM_DESCRIPTION',
+        'description_default': 'Собери слово из букв',
         'prize_type': 'days',
         'prize_value': '1',
         'max_winners': 1,
@@ -161,8 +176,15 @@ class ContestRotationService:
         self._task = None
 
     async def _ensure_default_templates(self) -> None:
+        texts = get_texts('ru')
         async with AsyncSessionLocal() as db:
-            for tpl in DEFAULT_TEMPLATES:
+            for raw_tpl in DEFAULT_TEMPLATES:
+                tpl = dict(raw_tpl)
+                tpl['name'] = texts.t(tpl.pop('name_key'), tpl.pop('name_default'))
+                tpl['description'] = texts.t(
+                    tpl.pop('description_key'),
+                    tpl.pop('description_default'),
+                )
                 try:
                     await upsert_template(db, **tpl)
                 except Exception as exc:
@@ -261,8 +283,6 @@ class ContestRotationService:
         if not self.bot:
             return
 
-        from app.localization.texts import get_texts
-
         texts = get_texts('ru')  # Default to ru for announcements
 
         # Format prize display based on prize_type
@@ -272,7 +292,10 @@ class ContestRotationService:
         if prize_type == PrizeType.DAYS.value:
             prize_display = f'{prize_value} {texts.t("DAYS", "дн. подписки")}'
         elif prize_type == PrizeType.BALANCE.value:
-            prize_display = f'{prize_value} коп.'
+            prize_display = texts.t(
+                'CONTEST_PRIZE_BALANCE_KOPEKS',
+                '{amount} коп.',
+            ).format(amount=prize_value)
         elif prize_type == PrizeType.CUSTOM.value:
             prize_display = prize_value
         else:
@@ -295,14 +318,16 @@ class ContestRotationService:
     async def _send_channel_announce(self, text: str) -> None:
         if not self.bot:
             return
-        from app.services.channel_subscription_service import channel_subscription_service
 
-        channel_id = await channel_subscription_service.get_first_channel_id()
-        if not channel_id:
+        texts = get_texts('ru')
+        channel_id_raw = settings.CHANNEL_SUB_ID
+        if not channel_id_raw:
             return
 
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text='🎲 Играть', callback_data='contests_menu')]]
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.t('CONTEST_PLAY_BUTTON', '🎲 Играть'), callback_data='contests_menu')]
+            ]
         )
 
         try:
@@ -321,12 +346,15 @@ class ContestRotationService:
             return
 
         try:
+            texts = get_texts('ru')
             batch_size = 500
             offset = 0
             sent = failed = 0
 
             keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text='🎲 Играть', callback_data='contests_menu')]]
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=texts.t('CONTEST_PLAY_BUTTON', '🎲 Играть'), callback_data='contests_menu')]
+                ]
             )
 
             while True:

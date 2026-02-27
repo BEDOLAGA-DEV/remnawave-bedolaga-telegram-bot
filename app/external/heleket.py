@@ -12,9 +12,11 @@ import aiohttp
 import structlog
 
 from app.config import settings
+from app.localization.texts import get_texts
 
 
 logger = structlog.get_logger(__name__)
+texts = get_texts('ru')
 
 
 class HeleketService:
@@ -127,7 +129,12 @@ class HeleketService:
         order_id: str | None = None,
     ) -> dict[str, Any] | None:
         if not uuid and not order_id:
-            raise ValueError('Нужно указать uuid или order_id для Heleket payment/info')
+            raise ValueError(
+                texts.t(
+                    'HELEKET_PAYMENT_INFO_MISSING_IDENTIFIERS',
+                    'Нужно указать uuid или order_id для Heleket payment/info',
+                )
+            )
 
         payload: dict[str, Any] = {}
         if uuid:

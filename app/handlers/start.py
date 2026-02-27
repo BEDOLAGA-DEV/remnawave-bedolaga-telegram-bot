@@ -262,7 +262,11 @@ async def handle_potential_referral_code(message: types.Message, state: FSMConte
 
 
 def _get_language_prompt_text() -> str:
-    return '🌐 Выберите язык / Choose your language:'
+    texts = get_texts(DEFAULT_LANGUAGE)
+    return texts.t(
+        'LANGUAGE_PROMPT',
+        '🌐 Выберите язык интерфейса:',
+    )
 
 
 async def _prompt_language_selection(message: types.Message, state: FSMContext) -> None:
@@ -701,7 +705,11 @@ async def process_language_selection(
             normalized_selected=normalized_selected,
             from_user_id=callback.from_user.id,
         )
-        await callback.answer('❌ Unsupported language', show_alert=True)
+        texts = get_texts(DEFAULT_LANGUAGE)
+        await callback.answer(
+            texts.t('LANGUAGE_UNSUPPORTED', '❌ Неподдерживаемый язык'),
+            show_alert=True,
+        )
         return
 
     resolved_language = available_map[normalized_selected].lower()

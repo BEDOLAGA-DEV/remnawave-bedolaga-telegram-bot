@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.localization.texts import get_texts
 from app.database.crud.welcome_text import (
     count_welcome_texts,
     create_welcome_text,
@@ -88,7 +89,10 @@ async def get_welcome_text_endpoint(
 ) -> WelcomeTextResponse:
     record = await get_welcome_text_by_id(db, welcome_text_id)
     if not record:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Welcome text not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_WELCOME_TEXTS_NOT_FOUND', 'Welcome text not found'),
+        )
 
     return _serialize(record)
 
@@ -102,7 +106,10 @@ async def update_welcome_text_endpoint(
 ) -> WelcomeTextResponse:
     record = await get_welcome_text_by_id(db, welcome_text_id)
     if not record:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Welcome text not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_WELCOME_TEXTS_NOT_FOUND', 'Welcome text not found'),
+        )
 
     update_payload = payload.dict(exclude_unset=True)
     if 'text' in update_payload:
@@ -119,7 +126,10 @@ async def delete_welcome_text_endpoint(
 ) -> Response:
     record = await get_welcome_text_by_id(db, welcome_text_id)
     if not record:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Welcome text not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_WELCOME_TEXTS_NOT_FOUND', 'Welcome text not found'),
+        )
 
     await delete_welcome_text(db, record)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

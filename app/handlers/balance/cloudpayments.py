@@ -137,16 +137,27 @@ async def process_cloudpayments_payment_amount(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT', 'Действие ограничено администратором'
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'),
+                        url=support_url,
+                    )
+                ]
+            )
         keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await message.answer(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
             parse_mode='HTML',
         )
@@ -201,16 +212,27 @@ async def start_cloudpayments_payment(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT', 'Действие ограничено администратором'
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'),
+                        url=support_url,
+                    )
+                ]
+            )
         keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
         await callback.answer()
@@ -400,10 +422,16 @@ async def handle_cloudpayments_quick_amount(
         if len(parts) >= 3:
             amount_kopeks = int(parts[2])
         else:
-            await callback.answer('Invalid callback data', show_alert=True)
+            await callback.answer(
+                texts.t('CLOUDPAYMENTS_INVALID_CALLBACK_DATA', '❌ Некорректные данные платежа'),
+                show_alert=True,
+            )
             return
     except (ValueError, IndexError):
-        await callback.answer('Invalid amount', show_alert=True)
+        await callback.answer(
+            texts.t('CLOUDPAYMENTS_INVALID_AMOUNT_ALERT', '❌ Некорректная сумма'),
+            show_alert=True,
+        )
         return
 
     amount_rub = amount_kopeks / 100

@@ -36,7 +36,10 @@ async def present_subscription_summary(
         summary_text, prepared_data = await _prepare_subscription_summary(db_user, data, texts)
     except ValueError as exc:
         logger.error('Ошибка в расчете цены подписки для пользователя', telegram_id=db_user.telegram_id, exc=exc)
-        await callback.answer('Ошибка расчета цены. Обратитесь в поддержку.', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_EXTEND_PRICE_CALC_ERROR', 'Ошибка расчета цены. Обратитесь в поддержку.'),
+            show_alert=True,
+        )
         return False
 
     await state.set_data(prepared_data)

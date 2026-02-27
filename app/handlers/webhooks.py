@@ -8,6 +8,7 @@ from app.database.crud.user import add_user_balance, get_user_by_id
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, TransactionType
 from app.external.tribute import TributeService
+from app.localization.texts import get_texts
 
 
 logger = structlog.get_logger(__name__)
@@ -54,11 +55,15 @@ async def tribute_webhook(request):
                     user = await get_user_by_id(db, processed_data['user_id'])
 
                     if user:
+                        texts = get_texts(user.language if user.language else settings.DEFAULT_LANGUAGE)
                         await add_user_balance(
                             db,
                             user,
                             processed_data['amount_kopeks'],
-                            f'Пополнение через Tribute: {processed_data["payment_id"]}',
+                            texts.t(
+                                'WEBHOOK_TRIBUTE_TOPUP_WITH_PAYMENT_ID',
+                                'Пополнение через Tribute: {payment_id}',
+                            ).format(payment_id=processed_data['payment_id']),
                         )
 
                         await create_transaction(
@@ -66,7 +71,10 @@ async def tribute_webhook(request):
                             user_id=user.id,
                             type=TransactionType.DEPOSIT,
                             amount_kopeks=processed_data['amount_kopeks'],
-                            description='Пополнение через Tribute',
+                            description=texts.t(
+                                'WEBHOOK_TRIBUTE_TOPUP_DESCRIPTION',
+                                'Пополнение через Tribute',
+                            ),
                             payment_method=PaymentMethod.TRIBUTE,
                             external_id=processed_data['payment_id'],
                         )
@@ -87,6 +95,7 @@ async def tribute_webhook(request):
 
 
 async def handle_successful_payment(message: types.Message):
+    texts = get_texts(settings.DEFAULT_LANGUAGE)
     try:
         payment = message.successful_payment
 
@@ -110,24 +119,39 @@ async def handle_successful_payment(message: types.Message):
                     user = await get_user_by_id(db, user_id)
 
                     if user:
-                        await add_user_balance(db, user, amount_kopeks, 'Пополнение через Telegram Stars')
+                        texts = get_texts(user.language if user.language else settings.DEFAULT_LANGUAGE)
+                        await add_user_balance(
+                            db,
+                            user,
+                            amount_kopeks,
+                            texts.t(
+                                'WEBHOOK_STARS_TOPUP_DESCRIPTION',
+                                'Пополнение через Telegram Stars',
+                            ),
+                        )
 
                         await create_transaction(
                             db=db,
                             user_id=user.id,
                             type=TransactionType.DEPOSIT,
                             amount_kopeks=amount_kopeks,
-                            description='Пополнение через Telegram Stars',
+                            description=texts.t(
+                                'WEBHOOK_STARS_TOPUP_DESCRIPTION',
+                                'Пополнение через Telegram Stars',
+                            ),
                             payment_method=PaymentMethod.TELEGRAM_STARS,
                             external_id=payment.telegram_payment_charge_id,
                         )
 
                         await message.answer(
-                            f'✅ Баланс успешно пополнен на {settings.format_price(amount_kopeks)}!\n\n'
-                            '⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. '
-                            'Обязательно активируйте подписку отдельно!\n\n'
-                            f'🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
-                            f'подписка будет приобретена автоматически после пополнения баланса.'
+                            texts.t(
+                                'WEBHOOK_STARS_TOPUP_SUCCESS',
+                                '✅ Баланс успешно пополнен на {amount}!\n\n'
+                                '⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. '
+                                'Обязательно активируйте подписку отдельно!\n\n'
+                                '🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
+                                'подписка будет приобретена автоматически после пополнения баланса.',
+                            ).format(amount=settings.format_price(amount_kopeks))
                         )
 
                         logger.info(
@@ -145,10 +169,17 @@ async def handle_successful_payment(message: types.Message):
 
 
 async def handle_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery):
+    texts = get_texts(settings.DEFAULT_LANGUAGE)
     try:
         await pre_checkout_query.answer(ok=True)
         logger.info('Pre-checkout query принят', pre_checkout_query_id=pre_checkout_query.id)
 
     except Exception as e:
         logger.error('Ошибка в pre-checkout query', error=e)
-        await pre_checkout_query.answer(ok=False, error_message='Ошибка обработки платежа')
+        await pre_checkout_query.answer(
+            ok=False,
+            error_message=texts.t(
+                'WEBHOOK_STARS_PRECHECK_PROCESSING_ERROR',
+                'Ошибка обработки платежа',
+            ),
+        )

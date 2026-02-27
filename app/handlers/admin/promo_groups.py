@@ -492,7 +492,14 @@ async def show_promo_groups_menu(
         lines = [header, '', texts.t('ADMIN_PROMO_GROUPS_EMPTY', 'Промогруппы не найдены.')]
         keyboard_rows = []
 
-    keyboard_rows.append([types.InlineKeyboardButton(text='➕ Создать', callback_data='admin_promo_group_create')])
+    keyboard_rows.append(
+        [
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_PROMOCODES_CREATE', '➕ Создать'),
+                callback_data='admin_promo_group_create',
+            )
+        ]
+    )
     keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='admin_submenu_promo')])
 
     await callback.message.edit_text(
@@ -506,11 +513,13 @@ async def show_promo_groups_menu(
 async def _get_group_or_alert(
     callback: types.CallbackQuery,
     db: AsyncSession,
+    language: str = 'ru',
 ) -> PromoGroup | None:
+    texts = get_texts(language)
     group_id = int(callback.data.split('_')[-1])
     group = await get_promo_group_by_id(db, group_id)
     if not group:
-        await callback.answer('❌ Промогруппа не найдена', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMO_GROUP_NOT_FOUND', '❌ Промогруппа не найдена'), show_alert=True)
         return None
     return group
 
@@ -522,7 +531,7 @@ async def show_promo_group_details(
     db_user,
     db: AsyncSession,
 ):
-    group = await _get_group_or_alert(callback, db)
+    group = await _get_group_or_alert(callback, db, db_user.language)
     if not group:
         return
 
@@ -838,7 +847,7 @@ async def start_edit_promo_group(
     state: FSMContext,
     db: AsyncSession,
 ):
-    group = await _get_group_or_alert(callback, db)
+    group = await _get_group_or_alert(callback, db, db_user.language)
     if not group:
         return
 
@@ -863,9 +872,10 @@ async def prompt_edit_promo_group_field(
     state: FSMContext,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     parts = callback.data.split('_')
     if len(parts) < 6:
-        await callback.answer('❌ Неверная команда', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMO_GROUP_INVALID_COMMAND', '❌ Неверная команда'), show_alert=True)
         return
 
     group_id = int(parts[4])
@@ -873,12 +883,10 @@ async def prompt_edit_promo_group_field(
 
     group = await get_promo_group_by_id(db, group_id)
     if not group:
-        await callback.answer('❌ Промогруппа не найдена', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMO_GROUP_NOT_FOUND', '❌ Промогруппа не найдена'), show_alert=True)
         return
 
     await state.update_data(edit_group_id=group.id, language=db_user.language)
-
-    texts = get_texts(db_user.language)
     reply_markup = _get_edit_prompt_keyboard(group.id, texts)
 
     if field == 'name':
@@ -925,7 +933,7 @@ async def prompt_edit_promo_group_field(
             'Введите сумму общих трат (в ₽) для автовыдачи. Текущее значение: {current}.',
         ).format(current=_format_auto_assign_value(group.auto_assign_total_spent_kopeks))
     else:
-        await callback.answer('❌ Неизвестный параметр', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMO_GROUP_UNKNOWN_FIELD', '❌ Неизвестный параметр'), show_alert=True)
         return
 
     await callback.message.edit_text(prompt, reply_markup=reply_markup)
@@ -950,7 +958,7 @@ async def process_edit_group_name(
 
     group = await get_promo_group_by_id(db, data.get('edit_group_id'))
     if not group:
-        await message.answer('❌ Промогруппа не найдена')
+        await message.answer(texts.t('ADMIN_PROMO_GROUP_NOT_FOUND', '❌ Промогруппа не найдена'))
         await state.clear()
         return
 
@@ -992,7 +1000,7 @@ async def process_edit_group_priority(
 
     group = await get_promo_group_by_id(db, data.get('edit_group_id'))
     if not group:
-        await message.answer('❌ Промогруппа не найдена')
+        await message.answer(texts.t('ADMIN_PROMO_GROUP_NOT_FOUND', '❌ Промогруппа не найдена'))
         await state.clear()
         return
 
@@ -1027,7 +1035,7 @@ async def process_edit_group_traffic(
 
     group = await get_promo_group_by_id(db, data.get('edit_group_id'))
     if not group:
-        await message.answer('❌ Промогруппа не найдена')
+        await message.answer(texts.t('ADMIN_PROMO_GROUP_NOT_FOUND', '❌ Промогруппа не найдена'))
         await state.clear()
         return
 
@@ -1062,7 +1070,7 @@ async def process_edit_group_servers(
 
     group = await get_promo_group_by_id(db, data.get('edit_group_id'))
     if not group:
-        await message.answer('❌ Промогруппа не найдена')
+        await message.answer(texts.t('ADMIN_PROMO_GROUP_NOT_FOUND', '❌ Промогруппа не найдена'))
         await state.clear()
         return
 
@@ -1097,7 +1105,7 @@ async def process_edit_group_devices(
 
     group = await get_promo_group_by_id(db, data.get('edit_group_id'))
     if not group:
-        await message.answer('❌ Промогруппа не найдена')
+        await message.answer(texts.t('ADMIN_PROMO_GROUP_NOT_FOUND', '❌ Промогруппа не найдена'))
         await state.clear()
         return
 
@@ -1137,7 +1145,7 @@ async def process_edit_group_period_discounts(
 
     group = await get_promo_group_by_id(db, data.get('edit_group_id'))
     if not group:
-        await message.answer('❌ Промогруппа не найдена')
+        await message.answer(texts.t('ADMIN_PROMO_GROUP_NOT_FOUND', '❌ Промогруппа не найдена'))
         await state.clear()
         return
 
@@ -1177,7 +1185,7 @@ async def process_edit_group_auto_assign(
 
     group = await get_promo_group_by_id(db, data.get('edit_group_id'))
     if not group:
-        await message.answer('❌ Промогруппа не найдена')
+        await message.answer(texts.t('ADMIN_PROMO_GROUP_NOT_FOUND', '❌ Промогруппа не найдена'))
         await state.clear()
         return
 
@@ -1210,12 +1218,12 @@ async def show_promo_group_members(
     limit = 10
     offset = (page - 1) * limit
 
+    texts = get_texts(db_user.language)
     group = await get_promo_group_by_id(db, group_id)
     if not group:
-        await callback.answer('❌ Промогруппа не найдена', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMO_GROUP_NOT_FOUND', '❌ Промогруппа не найдена'), show_alert=True)
         return
 
-    texts = get_texts(db_user.language)
     members = await get_promo_group_members(db, group_id, offset=offset, limit=limit)
     total_members = await count_promo_group_members(db, group_id)
     total_pages = max(1, (total_members + limit - 1) // limit)
@@ -1237,7 +1245,18 @@ async def show_promo_group_members(
             else:
                 user_link = f'<b>{user.full_name}</b>'
                 tg_display = user.email or f'#{user.id}'
-            lines.append(f'{index}. {user_link} (ID {user.id}, {username}, TG {tg_display})')
+            lines.append(
+                texts.t(
+                    'ADMIN_PROMO_GROUP_MEMBERS_LINE',
+                    '{index}. {user_link} (ID {user_id}, {username}, TG {tg_display})',
+                ).format(
+                    index=index,
+                    user_link=user_link,
+                    user_id=user.id,
+                    username=username,
+                    tg_display=tg_display,
+                )
+            )
         body = '\n'.join(lines)
 
     keyboard = []
@@ -1268,7 +1287,7 @@ async def request_delete_promo_group(
     db_user,
     db: AsyncSession,
 ):
-    group = await _get_group_or_alert(callback, db)
+    group = await _get_group_or_alert(callback, db, db_user.language)
     if not group:
         return
 
@@ -1304,7 +1323,7 @@ async def delete_promo_group_confirmed(
     db_user,
     db: AsyncSession,
 ):
-    group = await _get_group_or_alert(callback, db)
+    group = await _get_group_or_alert(callback, db, db_user.language)
     if not group:
         return
 
@@ -1334,7 +1353,7 @@ async def toggle_promo_group_addon_discounts(
     db_user,
     db: AsyncSession,
 ):
-    group = await _get_group_or_alert(callback, db)
+    group = await _get_group_or_alert(callback, db, db_user.language)
     if not group:
         return
 

@@ -16,6 +16,7 @@ from app.database.crud.user import (
     set_user_oauth_provider_id,
 )
 from app.database.models import User
+from app.localization.texts import get_texts
 
 from ..auth.oauth_providers import (
     OAuthUserInfo,
@@ -101,11 +102,15 @@ async def get_oauth_providers():
 @router.get('/{provider}/authorize', response_model=OAuthAuthorizeResponse)
 async def get_oauth_authorize_url(provider: str):
     """Get authorization URL for an OAuth provider."""
+    texts = get_texts(getattr(settings, 'DEFAULT_LANGUAGE', 'ru') or 'ru')
     oauth_provider = get_provider(provider)
     if not oauth_provider:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'OAuth provider "{provider}" is not enabled',
+            detail=texts.t(
+                'CABINET_OAUTH_PROVIDER_NOT_ENABLED',
+                'OAuth provider "{provider}" is not enabled',
+            ).format(provider=provider),
         )
 
     state = await generate_oauth_state(provider)
@@ -121,11 +126,15 @@ async def oauth_callback(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Handle OAuth callback: exchange code, find/create user, return JWT."""
+    texts = get_texts(getattr(settings, 'DEFAULT_LANGUAGE', 'ru') or 'ru')
     # 1. Validate CSRF state
     if not await validate_oauth_state(request.state, provider):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Invalid or expired OAuth state',
+            detail=texts.t(
+                'CABINET_OAUTH_INVALID_OR_EXPIRED_STATE',
+                'Invalid or expired OAuth state',
+            ),
         )
 
     # 2. Get provider instance
@@ -133,7 +142,10 @@ async def oauth_callback(
     if not oauth_provider:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'OAuth provider "{provider}" is not enabled',
+            detail=texts.t(
+                'CABINET_OAUTH_PROVIDER_NOT_ENABLED',
+                'OAuth provider "{provider}" is not enabled',
+            ).format(provider=provider),
         )
 
     # 3. Exchange code for tokens
@@ -143,7 +155,10 @@ async def oauth_callback(
         logger.error('OAuth code exchange failed for', provider=provider, exc=exc)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Failed to exchange authorization code',
+            detail=texts.t(
+                'CABINET_OAUTH_FAILED_TO_EXCHANGE_AUTHORIZATION_CODE',
+                'Failed to exchange authorization code',
+            ),
         ) from exc
 
     # 4. Fetch user info from provider
@@ -153,7 +168,10 @@ async def oauth_callback(
         logger.error('OAuth user info fetch failed for', provider=provider, exc=exc)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Failed to fetch user information from provider',
+            detail=texts.t(
+                'CABINET_OAUTH_FAILED_TO_FETCH_USER_INFORMATION_FROM_PROVIDER',
+                'Failed to fetch user information from provider',
+            ),
         ) from exc
 
     # 5. Find user by provider ID

@@ -23,6 +23,7 @@ from app.keyboards.admin import (
     get_admin_promocodes_keyboard,
     get_promocode_type_keyboard,
 )
+from app.localization.texts import get_texts
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.formatters import format_datetime
@@ -30,23 +31,54 @@ from app.utils.formatters import format_datetime
 
 logger = structlog.get_logger(__name__)
 
+PROMOCODE_TYPE_ICONS = {
+    PromoCodeType.BALANCE.value: '💰',
+    PromoCodeType.SUBSCRIPTION_DAYS.value: '📅',
+    PromoCodeType.TRIAL_SUBSCRIPTION.value: '🎁',
+    PromoCodeType.PROMO_GROUP.value: '🏷️',
+    PromoCodeType.DISCOUNT.value: '💸',
+}
+
+PROMOCODE_TYPE_KEYS = {
+    PromoCodeType.BALANCE.value: 'ADMIN_PROMOCODE_TYPE_BALANCE',
+    PromoCodeType.SUBSCRIPTION_DAYS.value: 'ADMIN_PROMOCODE_TYPE_DAYS',
+    PromoCodeType.TRIAL_SUBSCRIPTION.value: 'ADMIN_PROMOCODE_TYPE_TRIAL',
+    PromoCodeType.PROMO_GROUP.value: 'ADMIN_PROMOCODE_TYPE_PROMO_GROUP',
+    PromoCodeType.DISCOUNT.value: 'ADMIN_PROMOCODE_TYPE_DISCOUNT',
+    'balance': 'ADMIN_PROMOCODE_TYPE_BALANCE',
+    'days': 'ADMIN_PROMOCODE_TYPE_DAYS',
+    'trial': 'ADMIN_PROMOCODE_TYPE_TRIAL',
+    'group': 'ADMIN_PROMOCODE_TYPE_PROMO_GROUP',
+    'discount': 'ADMIN_PROMOCODE_TYPE_DISCOUNT',
+}
+
+
+def _get_promocode_type_icon(promo_type: str) -> str:
+    return PROMOCODE_TYPE_ICONS.get(promo_type, '🎫')
+
+
+def _get_promocode_type_label(texts, promo_type: str) -> str:
+    key = PROMOCODE_TYPE_KEYS.get(promo_type)
+    if not key:
+        return promo_type
+    return texts.t(key, promo_type)
+
 
 @admin_required
 @error_handler
 async def show_promocodes_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     total_codes = await get_promocodes_count(db)
     active_codes = await get_promocodes_count(db, is_active=True)
-
-    text = f"""
-🎫 <b>Управление промокодами</b>
-
-📊 <b>Статистика:</b>
-- Всего промокодов: {total_codes}
-- Активных: {active_codes}
-- Неактивных: {total_codes - active_codes}
-
-Выберите действие:
-"""
+    text = texts.t(
+        'ADMIN_PROMOCODES_MENU_TEXT',
+        '🎫 <b>Управление промокодами</b>\n\n'
+        '📊 <b>Статистика:</b>\n'
+        '- Всего промокодов: {total_codes}\n'
+        '- Активных: {active_codes}\n'
+        '- Неактивных: {inactive_codes}\n\n'
+        'Выберите действие:',
+    ).format(total_codes=total_codes, active_codes=active_codes, inactive_codes=total_codes - active_codes)
 
     await callback.message.edit_text(text, reply_markup=get_admin_promocodes_keyboard(db_user.language))
     await callback.answer()
@@ -55,6 +87,7 @@ async def show_promocodes_menu(callback: types.CallbackQuery, db_user: User, db:
 @admin_required
 @error_handler
 async def show_promocodes_list(callback: types.CallbackQuery, db_user: User, db: AsyncSession, page: int = 1):
+    texts = get_texts(db_user.language)
     limit = 10
     offset = (page - 1) * limit
 
@@ -64,48 +97,67 @@ async def show_promocodes_list(callback: types.CallbackQuery, db_user: User, db:
 
     if not promocodes:
         await callback.message.edit_text(
-            '🎫 Промокоды не найдены',
+            texts.t('ADMIN_PROMOCODES_EMPTY', '🎫 Промокоды не найдены'),
             reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_promocodes')]]
+                inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='admin_promocodes')]]
             ),
         )
         await callback.answer()
         return
 
-    text = f'🎫 <b>Список промокодов</b> (стр. {page}/{total_pages})\n\n'
+    text = (
+        texts.t('ADMIN_PROMOCODES_LIST_TITLE', '🎫 <b>Список промокодов</b> (стр. {page}/{total_pages})')
+        .format(page=page, total_pages=total_pages)
+        + '\n\n'
+    )
     keyboard = []
 
     for promo in promocodes:
         status_emoji = '✅' if promo.is_active else '❌'
-        type_emoji = {
-            'balance': '💰',
-            'subscription_days': '📅',
-            'trial_subscription': '🎁',
-            'promo_group': '🏷️',
-            'discount': '💸',
-        }.get(promo.type, '🎫')
+        type_emoji = _get_promocode_type_icon(promo.type)
 
         text += f'{status_emoji} {type_emoji} <code>{promo.code}</code>\n'
-        text += f'📊 Использований: {promo.current_uses}/{promo.max_uses}\n'
+        text += texts.t(
+            'ADMIN_PROMOCODES_LIST_USES',
+            '📊 Использований: {current_uses}/{max_uses}',
+        ).format(current_uses=promo.current_uses, max_uses=promo.max_uses) + '\n'
 
         if promo.type == PromoCodeType.BALANCE.value:
-            text += f'💰 Бонус: {settings.format_price(promo.balance_bonus_kopeks)}\n'
+            text += texts.t('ADMIN_PROMOCODES_LIST_BONUS', '💰 Бонус: {amount}').format(
+                amount=settings.format_price(promo.balance_bonus_kopeks)
+            ) + '\n'
         elif promo.type == PromoCodeType.SUBSCRIPTION_DAYS.value:
-            text += f'📅 Дней: {promo.subscription_days}\n'
+            text += texts.t('ADMIN_PROMOCODES_LIST_DAYS', '📅 Дней: {days}').format(days=promo.subscription_days) + '\n'
         elif promo.type == PromoCodeType.PROMO_GROUP.value:
             if promo.promo_group:
-                text += f'🏷️ Промогруппа: {promo.promo_group.name}\n'
+                text += texts.t('ADMIN_PROMOCODES_LIST_PROMO_GROUP', '🏷️ Промогруппа: {name}').format(
+                    name=promo.promo_group.name
+                ) + '\n'
         elif promo.type == PromoCodeType.DISCOUNT.value:
             discount_hours = promo.subscription_days
             if discount_hours > 0:
-                text += f'💸 Скидка: {promo.balance_bonus_kopeks}% ({discount_hours} ч.)\n'
+                text += texts.t('ADMIN_PROMOCODES_LIST_DISCOUNT_HOURS', '💸 Скидка: {percent}% ({hours} ч.)').format(
+                    percent=promo.balance_bonus_kopeks, hours=discount_hours
+                ) + '\n'
             else:
-                text += f'💸 Скидка: {promo.balance_bonus_kopeks}% (до покупки)\n'
+                text += texts.t(
+                    'ADMIN_PROMOCODES_LIST_DISCOUNT_BEFORE_PURCHASE',
+                    '💸 Скидка: {percent}% (до покупки)',
+                ).format(percent=promo.balance_bonus_kopeks) + '\n'
 
         if promo.valid_until:
-            text += f'⏰ До: {format_datetime(promo.valid_until)}\n'
+            text += texts.t('ADMIN_PROMOCODES_LIST_VALID_UNTIL', '⏰ До: {date}').format(
+                date=format_datetime(promo.valid_until)
+            ) + '\n'
 
-        keyboard.append([types.InlineKeyboardButton(text=f'🎫 {promo.code}', callback_data=f'promo_manage_{promo.id}')])
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('ADMIN_PROMOCODES_LIST_ITEM_BUTTON', '🎫 {code}').format(code=promo.code),
+                    callback_data=f'promo_manage_{promo.id}',
+                )
+            ]
+        )
 
         text += '\n'
 
@@ -117,8 +169,12 @@ async def show_promocodes_list(callback: types.CallbackQuery, db_user: User, db:
 
     keyboard.extend(
         [
-            [types.InlineKeyboardButton(text='➕ Создать', callback_data='admin_promo_create')],
-            [types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_promocodes')],
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('ADMIN_PROMOCODES_CREATE', '➕ Создать'), callback_data='admin_promo_create'
+                )
+            ],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='admin_promocodes')],
         ]
     )
 
@@ -140,68 +196,128 @@ async def show_promocodes_list_page(callback: types.CallbackQuery, db_user: User
 @admin_required
 @error_handler
 async def show_promocode_management(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     promo_id = int(callback.data.split('_')[-1])
 
     promo = await get_promocode_by_id(db, promo_id)
     if not promo:
-        await callback.answer('❌ Промокод не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_NOT_FOUND', '❌ Промокод не найден'), show_alert=True)
         return
 
     status_emoji = '✅' if promo.is_active else '❌'
-    type_emoji = {
-        'balance': '💰',
-        'subscription_days': '📅',
-        'trial_subscription': '🎁',
-        'promo_group': '🏷️',
-        'discount': '💸',
-    }.get(promo.type, '🎫')
+    type_emoji = _get_promocode_type_icon(promo.type)
+    status_text = (
+        texts.t('ADMIN_PROMOCODE_STATUS_ACTIVE', 'Активен')
+        if promo.is_active
+        else texts.t('ADMIN_PROMOCODE_STATUS_INACTIVE', 'Неактивен')
+    )
 
-    text = f"""
-🎫 <b>Управление промокодом</b>
-
-{type_emoji} <b>Код:</b> <code>{promo.code}</code>
-{status_emoji} <b>Статус:</b> {'Активен' if promo.is_active else 'Неактивен'}
-📊 <b>Использований:</b> {promo.current_uses}/{promo.max_uses}
-"""
+    lines = [
+        texts.t('ADMIN_PROMOCODE_MANAGEMENT_TITLE', '🎫 <b>Управление промокодом</b>'),
+        '',
+        texts.t('ADMIN_PROMOCODE_MANAGEMENT_CODE', '{icon} <b>Код:</b> <code>{code}</code>').format(
+            icon=type_emoji, code=promo.code
+        ),
+        texts.t('ADMIN_PROMOCODE_MANAGEMENT_STATUS', '{icon} <b>Статус:</b> {status}').format(
+            icon=status_emoji, status=status_text
+        ),
+        texts.t(
+            'ADMIN_PROMOCODE_MANAGEMENT_USES',
+            '📊 <b>Использований:</b> {current_uses}/{max_uses}',
+        ).format(current_uses=promo.current_uses, max_uses=promo.max_uses),
+    ]
 
     if promo.type == PromoCodeType.BALANCE.value:
-        text += f'💰 <b>Бонус:</b> {settings.format_price(promo.balance_bonus_kopeks)}\n'
+        lines.append(
+            texts.t('ADMIN_PROMOCODE_MANAGEMENT_BONUS', '💰 <b>Бонус:</b> {amount}').format(
+                amount=settings.format_price(promo.balance_bonus_kopeks)
+            )
+        )
     elif promo.type == PromoCodeType.SUBSCRIPTION_DAYS.value:
-        text += f'📅 <b>Дней:</b> {promo.subscription_days}\n'
+        lines.append(
+            texts.t('ADMIN_PROMOCODE_MANAGEMENT_DAYS', '📅 <b>Дней:</b> {days}').format(days=promo.subscription_days)
+        )
     elif promo.type == PromoCodeType.PROMO_GROUP.value:
         if promo.promo_group:
-            text += f'🏷️ <b>Промогруппа:</b> {promo.promo_group.name} (приоритет: {promo.promo_group.priority})\n'
+            lines.append(
+                texts.t(
+                    'ADMIN_PROMOCODE_MANAGEMENT_PROMO_GROUP',
+                    '🏷️ <b>Промогруппа:</b> {name} (приоритет: {priority})',
+                ).format(name=promo.promo_group.name, priority=promo.promo_group.priority)
+            )
         elif promo.promo_group_id:
-            text += f'🏷️ <b>Промогруппа ID:</b> {promo.promo_group_id} (не найдена)\n'
+            lines.append(
+                texts.t(
+                    'ADMIN_PROMOCODE_MANAGEMENT_PROMO_GROUP_ID',
+                    '🏷️ <b>Промогруппа ID:</b> {promo_group_id} (не найдена)',
+                ).format(promo_group_id=promo.promo_group_id)
+            )
     elif promo.type == PromoCodeType.DISCOUNT.value:
         discount_hours = promo.subscription_days
         if discount_hours > 0:
-            text += f'💸 <b>Скидка:</b> {promo.balance_bonus_kopeks}% (срок: {discount_hours} ч.)\n'
+            lines.append(
+                texts.t(
+                    'ADMIN_PROMOCODE_MANAGEMENT_DISCOUNT_HOURS',
+                    '💸 <b>Скидка:</b> {percent}% (срок: {hours} ч.)',
+                ).format(percent=promo.balance_bonus_kopeks, hours=discount_hours)
+            )
         else:
-            text += f'💸 <b>Скидка:</b> {promo.balance_bonus_kopeks}% (до первой покупки)\n'
+            lines.append(
+                texts.t(
+                    'ADMIN_PROMOCODE_MANAGEMENT_DISCOUNT_BEFORE_FIRST_PURCHASE',
+                    '💸 <b>Скидка:</b> {percent}% (до первой покупки)',
+                ).format(percent=promo.balance_bonus_kopeks)
+            )
 
     if promo.valid_until:
-        text += f'⏰ <b>Действует до:</b> {format_datetime(promo.valid_until)}\n'
+        lines.append(
+            texts.t('ADMIN_PROMOCODE_MANAGEMENT_VALID_UNTIL', '⏰ <b>Действует до:</b> {date}').format(
+                date=format_datetime(promo.valid_until)
+            )
+        )
 
     first_purchase_only = getattr(promo, 'first_purchase_only', False)
     first_purchase_emoji = '✅' if first_purchase_only else '❌'
-    text += f'🆕 <b>Только первая покупка:</b> {first_purchase_emoji}\n'
+    lines.append(
+        texts.t('ADMIN_PROMOCODE_MANAGEMENT_FIRST_PURCHASE', '🆕 <b>Только первая покупка:</b> {status}').format(
+            status=first_purchase_emoji
+        )
+    )
 
-    text += f'📅 <b>Создан:</b> {format_datetime(promo.created_at)}\n'
+    lines.append(
+        texts.t('ADMIN_PROMOCODE_MANAGEMENT_CREATED_AT', '📅 <b>Создан:</b> {date}').format(
+            date=format_datetime(promo.created_at)
+        )
+    )
 
-    first_purchase_btn_text = '🆕 Первая покупка: ✅' if first_purchase_only else '🆕 Первая покупка: ❌'
+    text = '\n'.join(lines)
+
+    first_purchase_btn_text = (
+        texts.t('ADMIN_PROMOCODE_FIRST_PURCHASE_ENABLED', '🆕 Первая покупка: ✅')
+        if first_purchase_only
+        else texts.t('ADMIN_PROMOCODE_FIRST_PURCHASE_DISABLED', '🆕 Первая покупка: ❌')
+    )
 
     keyboard = [
         [
-            types.InlineKeyboardButton(text='✏️ Редактировать', callback_data=f'promo_edit_{promo.id}'),
-            types.InlineKeyboardButton(text='🔄 Переключить статус', callback_data=f'promo_toggle_{promo.id}'),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_PROMOCODE_EDIT', '✏️ Редактировать'), callback_data=f'promo_edit_{promo.id}'
+            ),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_PROMOCODE_TOGGLE_BUTTON', '🔄 Переключить статус'),
+                callback_data=f'promo_toggle_{promo.id}',
+            ),
         ],
         [types.InlineKeyboardButton(text=first_purchase_btn_text, callback_data=f'promo_toggle_first_{promo.id}')],
         [
-            types.InlineKeyboardButton(text='📊 Статистика', callback_data=f'promo_stats_{promo.id}'),
-            types.InlineKeyboardButton(text='🗑️ Удалить', callback_data=f'promo_delete_{promo.id}'),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_PROMOCODE_STATS', '📊 Статистика'), callback_data=f'promo_stats_{promo.id}'
+            ),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_PROMOCODE_DELETE', '🗑️ Удалить'), callback_data=f'promo_delete_{promo.id}'
+            ),
         ],
-        [types.InlineKeyboardButton(text='⬅️ К списку', callback_data='admin_promo_list')],
+        [types.InlineKeyboardButton(text=texts.t('ADMIN_BACK_TO_LIST', '⬅️ К списку'), callback_data='admin_promo_list')],
     ]
 
     await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
@@ -211,52 +327,84 @@ async def show_promocode_management(callback: types.CallbackQuery, db_user: User
 @admin_required
 @error_handler
 async def show_promocode_edit_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     try:
         promo_id = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Ошибка получения ID промокода', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_ID_PARSE_ERROR', '❌ Ошибка получения ID промокода'), show_alert=True)
         return
 
     promo = await get_promocode_by_id(db, promo_id)
     if not promo:
-        await callback.answer('❌ Промокод не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_NOT_FOUND', '❌ Промокод не найден'), show_alert=True)
         return
 
-    text = f"""
-✏️ <b>Редактирование промокода</b> <code>{promo.code}</code>
-
-💰 <b>Текущие параметры:</b>
-"""
+    text = (
+        texts.t('ADMIN_PROMOCODE_EDIT_MENU_TITLE', '✏️ <b>Редактирование промокода</b> <code>{code}</code>').format(
+            code=promo.code
+        )
+        + '\n\n'
+        + texts.t('ADMIN_PROMOCODE_EDIT_MENU_CURRENT_PARAMS', '💰 <b>Текущие параметры:</b>')
+        + '\n'
+    )
 
     if promo.type == PromoCodeType.BALANCE.value:
-        text += f'• Бонус: {settings.format_price(promo.balance_bonus_kopeks)}\n'
+        text += texts.t('ADMIN_PROMOCODE_EDIT_MENU_BONUS', '• Бонус: {amount}').format(
+            amount=settings.format_price(promo.balance_bonus_kopeks)
+        ) + '\n'
     elif promo.type in [PromoCodeType.SUBSCRIPTION_DAYS.value, PromoCodeType.TRIAL_SUBSCRIPTION.value]:
-        text += f'• Дней: {promo.subscription_days}\n'
+        text += texts.t('ADMIN_PROMOCODE_EDIT_MENU_DAYS', '• Дней: {days}').format(days=promo.subscription_days) + '\n'
 
-    text += f'• Использований: {promo.current_uses}/{promo.max_uses}\n'
+    text += texts.t('ADMIN_PROMOCODE_EDIT_MENU_USES', '• Использований: {current_uses}/{max_uses}').format(
+        current_uses=promo.current_uses, max_uses=promo.max_uses
+    ) + '\n'
 
     if promo.valid_until:
-        text += f'• До: {format_datetime(promo.valid_until)}\n'
+        text += texts.t('ADMIN_PROMOCODE_EDIT_MENU_VALID_UNTIL', '• До: {date}').format(
+            date=format_datetime(promo.valid_until)
+        ) + '\n'
     else:
-        text += '• Срок: бессрочно\n'
+        text += texts.t('ADMIN_PROMOCODE_EDIT_MENU_UNLIMITED', '• Срок: бессрочно') + '\n'
 
-    text += '\nВыберите параметр для изменения:'
+    text += '\n' + texts.t('ADMIN_PROMO_GROUP_EDIT_MENU_HINT', 'Выберите параметр для изменения:')
 
     keyboard = [
-        [types.InlineKeyboardButton(text='📅 Дата окончания', callback_data=f'promo_edit_date_{promo.id}')],
-        [types.InlineKeyboardButton(text='📊 Количество использований', callback_data=f'promo_edit_uses_{promo.id}')],
+        [
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_PROMOCODE_EDIT_BUTTON_EXPIRY', '📅 Дата окончания'),
+                callback_data=f'promo_edit_date_{promo.id}',
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_PROMOCODE_EDIT_BUTTON_USES', '📊 Количество использований'),
+                callback_data=f'promo_edit_uses_{promo.id}',
+            )
+        ],
     ]
 
     if promo.type == PromoCodeType.BALANCE.value:
         keyboard.insert(
-            1, [types.InlineKeyboardButton(text='💰 Сумма бонуса', callback_data=f'promo_edit_amount_{promo.id}')]
+            1,
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('ADMIN_PROMOCODE_EDIT_BUTTON_AMOUNT', '💰 Сумма бонуса'),
+                    callback_data=f'promo_edit_amount_{promo.id}',
+                )
+            ],
         )
     elif promo.type in [PromoCodeType.SUBSCRIPTION_DAYS.value, PromoCodeType.TRIAL_SUBSCRIPTION.value]:
         keyboard.insert(
-            1, [types.InlineKeyboardButton(text='📅 Количество дней', callback_data=f'promo_edit_days_{promo.id}')]
+            1,
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('ADMIN_PROMOCODE_EDIT_BUTTON_DAYS', '📅 Количество дней'),
+                    callback_data=f'promo_edit_days_{promo.id}',
+                )
+            ],
         )
 
-    keyboard.extend([[types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'promo_manage_{promo.id}')]])
+    keyboard.extend([[types.InlineKeyboardButton(text=texts.BACK, callback_data=f'promo_manage_{promo.id}')]])
 
     await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
     await callback.answer()
@@ -265,28 +413,27 @@ async def show_promocode_edit_menu(callback: types.CallbackQuery, db_user: User,
 @admin_required
 @error_handler
 async def start_edit_promocode_date(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     try:
         promo_id = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Ошибка получения ID промокода', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_ID_PARSE_ERROR', '❌ Ошибка получения ID промокода'), show_alert=True)
         return
 
     await state.update_data(editing_promo_id=promo_id, edit_action='date')
 
-    text = f"""
-📅 <b>Изменение даты окончания промокода</b>
-
-Введите количество дней до окончания (от текущего момента):
-• Введите <b>0</b> для бессрочного промокода
-• Введите положительное число для установки срока
-
-<i>Например: 30 (промокод будет действовать 30 дней)</i>
-
-ID промокода: {promo_id}
-"""
+    text = texts.t(
+        'ADMIN_PROMOCODE_EDIT_EXPIRY_PROMPT',
+        '📅 <b>Изменение даты окончания промокода</b>\n\n'
+        'Введите количество дней до окончания (от текущего момента):\n'
+        '• Введите <b>0</b> для бессрочного промокода\n'
+        '• Введите положительное число для установки срока\n\n'
+        '<i>Например: 30 (промокод будет действовать 30 дней)</i>\n\n'
+        'ID промокода: {promo_id}',
+    ).format(promo_id=promo_id)
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'promo_edit_{promo_id}')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=texts.CANCEL, callback_data=f'promo_edit_{promo_id}')]]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -297,25 +444,25 @@ ID промокода: {promo_id}
 @admin_required
 @error_handler
 async def start_edit_promocode_amount(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     try:
         promo_id = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Ошибка получения ID промокода', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_ID_PARSE_ERROR', '❌ Ошибка получения ID промокода'), show_alert=True)
         return
 
     await state.update_data(editing_promo_id=promo_id, edit_action='amount')
 
-    text = f"""
-💰 <b>Изменение суммы бонуса промокода</b>
-
-Введите новую сумму в рублях:
-<i>Например: 500</i>
-
-ID промокода: {promo_id}
-"""
+    text = texts.t(
+        'ADMIN_PROMOCODE_EDIT_AMOUNT_PROMPT',
+        '💰 <b>Изменение суммы бонуса промокода</b>\n\n'
+        'Введите новую сумму в рублях:\n'
+        '<i>Например: 500</i>\n\n'
+        'ID промокода: {promo_id}',
+    ).format(promo_id=promo_id)
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'promo_edit_{promo_id}')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=texts.CANCEL, callback_data=f'promo_edit_{promo_id}')]]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -326,26 +473,26 @@ ID промокода: {promo_id}
 @admin_required
 @error_handler
 async def start_edit_promocode_days(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     # ИСПРАВЛЕНИЕ: берем последний элемент как ID
     try:
         promo_id = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Ошибка получения ID промокода', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_ID_PARSE_ERROR', '❌ Ошибка получения ID промокода'), show_alert=True)
         return
 
     await state.update_data(editing_promo_id=promo_id, edit_action='days')
 
-    text = f"""
-📅 <b>Изменение количества дней подписки</b>
-
-Введите новое количество дней:
-<i>Например: 30</i>
-
-ID промокода: {promo_id}
-"""
+    text = texts.t(
+        'ADMIN_PROMOCODE_EDIT_DAYS_PROMPT',
+        '📅 <b>Изменение количества дней подписки</b>\n\n'
+        'Введите новое количество дней:\n'
+        '<i>Например: 30</i>\n\n'
+        'ID промокода: {promo_id}',
+    ).format(promo_id=promo_id)
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'promo_edit_{promo_id}')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=texts.CANCEL, callback_data=f'promo_edit_{promo_id}')]]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -356,28 +503,27 @@ ID промокода: {promo_id}
 @admin_required
 @error_handler
 async def start_edit_promocode_uses(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     try:
         promo_id = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Ошибка получения ID промокода', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_ID_PARSE_ERROR', '❌ Ошибка получения ID промокода'), show_alert=True)
         return
 
     await state.update_data(editing_promo_id=promo_id, edit_action='uses')
 
-    text = f"""
-📊 <b>Изменение максимального количества использований</b>
-
-Введите новое количество использований:
-• Введите <b>0</b> для безлимитных использований
-• Введите положительное число для ограничения
-
-<i>Например: 100</i>
-
-ID промокода: {promo_id}
-"""
+    text = texts.t(
+        'ADMIN_PROMOCODE_EDIT_USES_PROMPT',
+        '📊 <b>Изменение максимального количества использований</b>\n\n'
+        'Введите новое количество использований:\n'
+        '• Введите <b>0</b> для безлимитных использований\n'
+        '• Введите положительное число для ограничения\n\n'
+        '<i>Например: 100</i>\n\n'
+        'ID промокода: {promo_id}',
+    ).format(promo_id=promo_id)
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'promo_edit_{promo_id}')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=texts.CANCEL, callback_data=f'promo_edit_{promo_id}')]]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -388,8 +534,9 @@ ID промокода: {promo_id}
 @admin_required
 @error_handler
 async def start_promocode_creation(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     await callback.message.edit_text(
-        '🎫 <b>Создание промокода</b>\n\nВыберите тип промокода:',
+        texts.t('ADMIN_PROMOCODE_CREATE_START', '🎫 <b>Создание промокода</b>\n\nВыберите тип промокода:'),
         reply_markup=get_promocode_type_keyboard(db_user.language),
     )
     await callback.answer()
@@ -398,24 +545,19 @@ async def start_promocode_creation(callback: types.CallbackQuery, db_user: User,
 @admin_required
 @error_handler
 async def select_promocode_type(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     promo_type = callback.data.split('_')[-1]
-
-    type_names = {
-        'balance': '💰 Пополнение баланса',
-        'days': '📅 Дни подписки',
-        'trial': '🎁 Тестовая подписка',
-        'group': '🏷️ Промогруппа',
-        'discount': '💸 Одноразовая скидка',
-    }
 
     await state.update_data(promocode_type=promo_type)
 
     await callback.message.edit_text(
-        f'🎫 <b>Создание промокода</b>\n\n'
-        f'Тип: {type_names.get(promo_type, promo_type)}\n\n'
-        f'Введите код промокода (только латинские буквы и цифры):',
+        texts.t(
+            'ADMIN_PROMOCODE_CREATE_CODE_PROMPT',
+            '🎫 <b>Создание промокода</b>\n\nТип: {type_label}\n\n'
+            'Введите код промокода (только латинские буквы и цифры):',
+        ).format(type_label=_get_promocode_type_label(texts, promo_type)),
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_promocodes')]]
+            inline_keyboard=[[types.InlineKeyboardButton(text=texts.CANCEL, callback_data='admin_promocodes')]]
         ),
     )
 
@@ -426,15 +568,21 @@ async def select_promocode_type(callback: types.CallbackQuery, db_user: User, st
 @admin_required
 @error_handler
 async def process_promocode_code(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     code = message.text.strip().upper()
 
     if not code.isalnum() or len(code) < 3 or len(code) > 20:
-        await message.answer('❌ Код должен содержать только латинские буквы и цифры (3-20 символов)')
+        await message.answer(
+            texts.t(
+                'ADMIN_PROMOCODE_CODE_INVALID',
+                '❌ Код должен содержать только латинские буквы и цифры (3-20 символов)',
+            )
+        )
         return
 
     existing = await get_promocode_by_code(db, code)
     if existing:
-        await message.answer('❌ Промокод с таким кодом уже существует')
+        await message.answer(texts.t('ADMIN_PROMOCODE_CODE_EXISTS', '❌ Промокод с таким кодом уже существует'))
         return
 
     await state.update_data(promocode_code=code)
@@ -443,16 +591,36 @@ async def process_promocode_code(message: types.Message, db_user: User, state: F
     promo_type = data.get('promocode_type')
 
     if promo_type == 'balance':
-        await message.answer(f'💰 <b>Промокод:</b> <code>{code}</code>\n\nВведите сумму пополнения баланса (в рублях):')
+        await message.answer(
+            texts.t(
+                'ADMIN_PROMOCODE_INPUT_BALANCE',
+                '💰 <b>Промокод:</b> <code>{code}</code>\n\nВведите сумму пополнения баланса (в рублях):',
+            ).format(code=code)
+        )
         await state.set_state(AdminStates.setting_promocode_value)
     elif promo_type == 'days':
-        await message.answer(f'📅 <b>Промокод:</b> <code>{code}</code>\n\nВведите количество дней подписки:')
+        await message.answer(
+            texts.t(
+                'ADMIN_PROMOCODE_INPUT_DAYS',
+                '📅 <b>Промокод:</b> <code>{code}</code>\n\nВведите количество дней подписки:',
+            ).format(code=code)
+        )
         await state.set_state(AdminStates.setting_promocode_value)
     elif promo_type == 'trial':
-        await message.answer(f'🎁 <b>Промокод:</b> <code>{code}</code>\n\nВведите количество дней тестовой подписки:')
+        await message.answer(
+            texts.t(
+                'ADMIN_PROMOCODE_INPUT_TRIAL_DAYS',
+                '🎁 <b>Промокод:</b> <code>{code}</code>\n\nВведите количество дней тестовой подписки:',
+            ).format(code=code)
+        )
         await state.set_state(AdminStates.setting_promocode_value)
     elif promo_type == 'discount':
-        await message.answer(f'💸 <b>Промокод:</b> <code>{code}</code>\n\nВведите процент скидки (1-100):')
+        await message.answer(
+            texts.t(
+                'ADMIN_PROMOCODE_INPUT_DISCOUNT_PERCENT',
+                '💸 <b>Промокод:</b> <code>{code}</code>\n\nВведите процент скидки (1-100):',
+            ).format(code=code)
+        )
         await state.set_state(AdminStates.setting_promocode_value)
     elif promo_type == 'group':
         # Show promo group selection
@@ -460,29 +628,40 @@ async def process_promocode_code(message: types.Message, db_user: User, state: F
 
         if not groups_with_counts:
             await message.answer(
-                '❌ Промогруппы не найдены. Создайте хотя бы одну промогруппу.',
+                texts.t('ADMIN_PROMOCODE_PROMO_GROUPS_EMPTY', '❌ Промогруппы не найдены. Создайте хотя бы одну промогруппу.'),
                 reply_markup=types.InlineKeyboardMarkup(
-                    inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_promocodes')]]
+                    inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='admin_promocodes')]]
                 ),
             )
             await state.clear()
             return
 
         keyboard = []
-        text = f'🏷️ <b>Промокод:</b> <code>{code}</code>\n\nВыберите промогруппу для назначения:\n\n'
+        text = (
+            texts.t(
+                'ADMIN_PROMOCODE_SELECT_PROMO_GROUP',
+                '🏷️ <b>Промокод:</b> <code>{code}</code>\n\nВыберите промогруппу для назначения:',
+            ).format(code=code)
+            + '\n\n'
+        )
 
         for promo_group, user_count in groups_with_counts:
-            text += f'• {promo_group.name} (приоритет: {promo_group.priority}, пользователей: {user_count})\n'
+            text += texts.t(
+                'ADMIN_PROMOCODE_SELECT_PROMO_GROUP_LINE',
+                '• {name} (приоритет: {priority}, пользователей: {users})',
+            ).format(name=promo_group.name, priority=promo_group.priority, users=user_count) + '\n'
             keyboard.append(
                 [
                     types.InlineKeyboardButton(
-                        text=f'{promo_group.name} (↑{promo_group.priority})',
+                        text=texts.t('ADMIN_PROMOCODE_SELECT_PROMO_GROUP_BUTTON', '{name} (↑{priority})').format(
+                            name=promo_group.name, priority=promo_group.priority
+                        ),
                         callback_data=f'promo_select_group_{promo_group.id}',
                     )
                 ]
             )
 
-        keyboard.append([types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_promocodes')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.CANCEL, callback_data='admin_promocodes')])
 
         await message.answer(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
         await state.set_state(AdminStates.selecting_promo_group)
@@ -494,24 +673,31 @@ async def process_promo_group_selection(
     callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession
 ):
     """Handle promo group selection for promocode"""
+    texts = get_texts(db_user.language)
     try:
         promo_group_id = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Ошибка получения ID промогруппы', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_PROMOCODE_PROMO_GROUP_ID_PARSE_ERROR', '❌ Ошибка получения ID промогруппы'),
+            show_alert=True,
+        )
         return
 
     promo_group = await get_promo_group_by_id(db, promo_group_id)
     if not promo_group:
-        await callback.answer('❌ Промогруппа не найдена', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMO_GROUP_NOT_FOUND', '❌ Промогруппа не найдена'), show_alert=True)
         return
 
     await state.update_data(promo_group_id=promo_group_id, promo_group_name=promo_group.name)
 
     await callback.message.edit_text(
-        f'🏷️ <b>Промокод для промогруппы</b>\n\n'
-        f'Промогруппа: {promo_group.name}\n'
-        f'Приоритет: {promo_group.priority}\n\n'
-        f'📊 Введите количество использований промокода (или 0 для безлимита):'
+        texts.t(
+            'ADMIN_PROMOCODE_PROMO_GROUP_SELECTED',
+            '🏷️ <b>Промокод для промогруппы</b>\n\n'
+            'Промогруппа: {name}\n'
+            'Приоритет: {priority}\n\n'
+            '📊 Введите количество использований промокода (или 0 для безлимита):',
+        ).format(name=promo_group.name, priority=promo_group.priority)
     )
 
     await state.set_state(AdminStates.setting_promocode_uses)
@@ -521,6 +707,7 @@ async def process_promo_group_selection(
 @admin_required
 @error_handler
 async def process_promocode_value(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
 
     if data.get('editing_promo_id'):
@@ -533,32 +720,38 @@ async def process_promocode_value(message: types.Message, db_user: User, state: 
         promo_type = data.get('promocode_type')
 
         if promo_type == 'balance' and (value < 1 or value > 10000):
-            await message.answer('❌ Сумма должна быть от 1 до 10,000 рублей')
+            await message.answer(texts.t('ADMIN_PROMOCODE_AMOUNT_RANGE_ERROR', '❌ Сумма должна быть от 1 до 10,000 рублей'))
             return
         if promo_type in ['days', 'trial'] and (value < 1 or value > 3650):
-            await message.answer('❌ Количество дней должно быть от 1 до 3650')
+            await message.answer(texts.t('ADMIN_PROMOCODE_DAYS_RANGE_ERROR', '❌ Количество дней должно быть от 1 до 3650'))
             return
         if promo_type == 'discount' and (value < 1 or value > 100):
-            await message.answer('❌ Процент скидки должен быть от 1 до 100')
+            await message.answer(texts.t('ADMIN_PROMOCODE_DISCOUNT_RANGE_ERROR', '❌ Процент скидки должен быть от 1 до 100'))
             return
 
         await state.update_data(promocode_value=value)
 
-        await message.answer('📊 Введите количество использований промокода (или 0 для безлимита):')
+        await message.answer(
+            texts.t(
+                'ADMIN_PROMOCODE_INPUT_USES',
+                '📊 Введите количество использований промокода (или 0 для безлимита):',
+            )
+        )
         await state.set_state(AdminStates.setting_promocode_uses)
 
     except ValueError:
-        await message.answer('❌ Введите корректное число')
+        await message.answer(texts.t('ADMIN_PROMOCODE_INVALID_NUMBER', '❌ Введите корректное число'))
 
 
 async def handle_edit_value(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     promo_id = data.get('editing_promo_id')
     edit_action = data.get('edit_action')
 
     promo = await get_promocode_by_id(db, promo_id)
     if not promo:
-        await message.answer('❌ Промокод не найден')
+        await message.answer(texts.t('ADMIN_PROMOCODE_NOT_FOUND', '❌ Промокод не найден'))
         await state.clear()
         return
 
@@ -567,30 +760,42 @@ async def handle_edit_value(message: types.Message, db_user: User, state: FSMCon
 
         if edit_action == 'amount':
             if value < 1 or value > 10000:
-                await message.answer('❌ Сумма должна быть от 1 до 10,000 рублей')
+                await message.answer(
+                    texts.t('ADMIN_PROMOCODE_AMOUNT_RANGE_ERROR', '❌ Сумма должна быть от 1 до 10,000 рублей')
+                )
                 return
 
             await update_promocode(db, promo, balance_bonus_kopeks=value * 100)
             await message.answer(
-                f'✅ Сумма бонуса изменена на {value}₽',
+                texts.t('ADMIN_PROMOCODE_AMOUNT_UPDATED', '✅ Сумма бонуса изменена на {value}₽').format(value=value),
                 reply_markup=types.InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'promo_manage_{promo_id}')]
+                        [
+                            types.InlineKeyboardButton(
+                                text=texts.t('ADMIN_PROMOCODE_BACK_TO_PROMOCODE', '🎫 К промокоду'),
+                                callback_data=f'promo_manage_{promo_id}',
+                            )
+                        ]
                     ]
                 ),
             )
 
         elif edit_action == 'days':
             if value < 1 or value > 3650:
-                await message.answer('❌ Количество дней должно быть от 1 до 3650')
+                await message.answer(texts.t('ADMIN_PROMOCODE_DAYS_RANGE_ERROR', '❌ Количество дней должно быть от 1 до 3650'))
                 return
 
             await update_promocode(db, promo, subscription_days=value)
             await message.answer(
-                f'✅ Количество дней изменено на {value}',
+                texts.t('ADMIN_PROMOCODE_DAYS_UPDATED', '✅ Количество дней изменено на {value}').format(value=value),
                 reply_markup=types.InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'promo_manage_{promo_id}')]
+                        [
+                            types.InlineKeyboardButton(
+                                text=texts.t('ADMIN_PROMOCODE_BACK_TO_PROMOCODE', '🎫 К промокоду'),
+                                callback_data=f'promo_manage_{promo_id}',
+                            )
+                        ]
                     ]
                 ),
             )
@@ -605,12 +810,13 @@ async def handle_edit_value(message: types.Message, db_user: User, state: FSMCon
         )
 
     except ValueError:
-        await message.answer('❌ Введите корректное число')
+        await message.answer(texts.t('ADMIN_PROMOCODE_INVALID_NUMBER', '❌ Введите корректное число'))
 
 
 @admin_required
 @error_handler
 async def process_promocode_uses(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
 
     if data.get('editing_promo_id'):
@@ -621,7 +827,9 @@ async def process_promocode_uses(message: types.Message, db_user: User, state: F
         max_uses = int(message.text.strip())
 
         if max_uses < 0 or max_uses > 100000:
-            await message.answer('❌ Количество использований должно быть от 0 до 100,000')
+            await message.answer(
+                texts.t('ADMIN_PROMOCODE_USES_RANGE_ERROR', '❌ Количество использований должно быть от 0 до 100,000')
+            )
             return
 
         if max_uses == 0:
@@ -629,20 +837,23 @@ async def process_promocode_uses(message: types.Message, db_user: User, state: F
 
         await state.update_data(promocode_max_uses=max_uses)
 
-        await message.answer('⏰ Введите срок действия промокода в днях (или 0 для бессрочного):')
+        await message.answer(
+            texts.t('ADMIN_PROMOCODE_INPUT_EXPIRY_DAYS', '⏰ Введите срок действия промокода в днях (или 0 для бессрочного):')
+        )
         await state.set_state(AdminStates.setting_promocode_expiry)
 
     except ValueError:
-        await message.answer('❌ Введите корректное число')
+        await message.answer(texts.t('ADMIN_PROMOCODE_INVALID_NUMBER', '❌ Введите корректное число'))
 
 
 async def handle_edit_uses(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     promo_id = data.get('editing_promo_id')
 
     promo = await get_promocode_by_id(db, promo_id)
     if not promo:
-        await message.answer('❌ Промокод не найден')
+        await message.answer(texts.t('ADMIN_PROMOCODE_NOT_FOUND', '❌ Промокод не найден'))
         await state.clear()
         return
 
@@ -650,7 +861,9 @@ async def handle_edit_uses(message: types.Message, db_user: User, state: FSMCont
         max_uses = int(message.text.strip())
 
         if max_uses < 0 or max_uses > 100000:
-            await message.answer('❌ Количество использований должно быть от 0 до 100,000')
+            await message.answer(
+                texts.t('ADMIN_PROMOCODE_USES_RANGE_ERROR', '❌ Количество использований должно быть от 0 до 100,000')
+            )
             return
 
         if max_uses == 0:
@@ -658,18 +871,28 @@ async def handle_edit_uses(message: types.Message, db_user: User, state: FSMCont
 
         if max_uses < promo.current_uses:
             await message.answer(
-                f'❌ Новый лимит ({max_uses}) не может быть меньше текущих использований ({promo.current_uses})'
+                texts.t(
+                    'ADMIN_PROMOCODE_USES_LESS_THAN_CURRENT',
+                    '❌ Новый лимит ({max_uses}) не может быть меньше текущих использований ({current_uses})',
+                ).format(max_uses=max_uses, current_uses=promo.current_uses)
             )
             return
 
         await update_promocode(db, promo, max_uses=max_uses)
 
-        uses_text = 'безлимитное' if max_uses == 999999 else str(max_uses)
+        uses_text = texts.t('ADMIN_PROMOCODE_USES_UNLIMITED', 'безлимитное') if max_uses == 999999 else str(max_uses)
         await message.answer(
-            f'✅ Максимальное количество использований изменено на {uses_text}',
+            texts.t('ADMIN_PROMOCODE_USES_UPDATED', '✅ Максимальное количество использований изменено на {uses}').format(
+                uses=uses_text
+            ),
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'promo_manage_{promo_id}')]
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('ADMIN_PROMOCODE_BACK_TO_PROMOCODE', '🎫 К промокоду'),
+                            callback_data=f'promo_manage_{promo_id}',
+                        )
+                    ]
                 ]
             ),
         )
@@ -683,12 +906,13 @@ async def handle_edit_uses(message: types.Message, db_user: User, state: FSMCont
         )
 
     except ValueError:
-        await message.answer('❌ Введите корректное число')
+        await message.answer(texts.t('ADMIN_PROMOCODE_INVALID_NUMBER', '❌ Введите корректное число'))
 
 
 @admin_required
 @error_handler
 async def process_promocode_expiry(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
 
     if data.get('editing_promo_id'):
@@ -699,7 +923,9 @@ async def process_promocode_expiry(message: types.Message, db_user: User, state:
         expiry_days = int(message.text.strip())
 
         if expiry_days < 0 or expiry_days > 3650:
-            await message.answer('❌ Срок действия должен быть от 0 до 3650 дней')
+            await message.answer(
+                texts.t('ADMIN_PROMOCODE_EXPIRY_RANGE_ERROR', '❌ Срок действия должен быть от 0 до 3650 дней')
+            )
             return
 
         code = data.get('promocode_code')
@@ -713,9 +939,12 @@ async def process_promocode_expiry(message: types.Message, db_user: User, state:
         if promo_type == 'discount':
             await state.update_data(promocode_expiry_days=expiry_days)
             await message.answer(
-                f'⏰ <b>Промокод:</b> <code>{code}</code>\n\n'
-                f'Введите срок действия скидки в часах (0-8760):\n'
-                f'0 = бессрочно до первой покупки'
+                texts.t(
+                    'ADMIN_PROMOCODE_INPUT_DISCOUNT_HOURS',
+                    '⏰ <b>Промокод:</b> <code>{code}</code>\n\n'
+                    'Введите срок действия скидки в часах (0-8760):\n'
+                    '0 = бессрочно до первой покупки',
+                ).format(code=code)
             )
             await state.set_state(AdminStates.setting_discount_hours)
             return
@@ -743,36 +972,54 @@ async def process_promocode_expiry(message: types.Message, db_user: User, state:
             promo_group_id=promo_group_id if promo_type == 'group' else None,
         )
 
-        type_names = {
-            'balance': 'Пополнение баланса',
-            'days': 'Дни подписки',
-            'trial': 'Тестовая подписка',
-            'group': 'Промогруппа',
-        }
-
-        summary_text = f"""
-✅ <b>Промокод создан!</b>
-
-🎫 <b>Код:</b> <code>{promocode.code}</code>
-📝 <b>Тип:</b> {type_names.get(promo_type)}
-"""
+        lines = [
+            texts.t('ADMIN_PROMOCODE_CREATED_TITLE', '✅ <b>Промокод создан!</b>'),
+            '',
+            texts.t('ADMIN_PROMOCODE_CREATED_CODE', '🎫 <b>Код:</b> <code>{code}</code>').format(code=promocode.code),
+            texts.t('ADMIN_PROMOCODE_CREATED_TYPE', '📝 <b>Тип:</b> {type_label}').format(
+                type_label=_get_promocode_type_label(texts, promo_type)
+            ),
+        ]
 
         if promo_type == 'balance':
-            summary_text += f'💰 <b>Сумма:</b> {settings.format_price(promocode.balance_bonus_kopeks)}\n'
+            lines.append(
+                texts.t('ADMIN_PROMOCODE_CREATED_AMOUNT', '💰 <b>Сумма:</b> {amount}').format(
+                    amount=settings.format_price(promocode.balance_bonus_kopeks)
+                )
+            )
         elif promo_type in ['days', 'trial']:
-            summary_text += f'📅 <b>Дней:</b> {promocode.subscription_days}\n'
+            lines.append(
+                texts.t('ADMIN_PROMOCODE_MANAGEMENT_DAYS', '📅 <b>Дней:</b> {days}').format(days=promocode.subscription_days)
+            )
         elif promo_type == 'group' and promo_group_name:
-            summary_text += f'🏷️ <b>Промогруппа:</b> {promo_group_name}\n'
+            lines.append(
+                texts.t('ADMIN_PROMOCODE_CREATED_GROUP', '🏷️ <b>Промогруппа:</b> {name}').format(name=promo_group_name)
+            )
 
-        summary_text += f'📊 <b>Использований:</b> {promocode.max_uses}\n'
+        lines.append(
+            texts.t('ADMIN_PROMOCODE_CREATED_USES', '📊 <b>Использований:</b> {uses}').format(uses=promocode.max_uses)
+        )
 
         if promocode.valid_until:
-            summary_text += f'⏰ <b>Действует до:</b> {format_datetime(promocode.valid_until)}\n'
+            lines.append(
+                texts.t('ADMIN_PROMOCODE_MANAGEMENT_VALID_UNTIL', '⏰ <b>Действует до:</b> {date}').format(
+                    date=format_datetime(promocode.valid_until)
+                )
+            )
+
+        summary_text = '\n'.join(lines)
 
         await message.answer(
             summary_text,
             reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text='🎫 К промокодам', callback_data='admin_promocodes')]]
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('ADMIN_PROMOCODE_BACK_TO_PROMOCODES', '🎫 К промокодам'),
+                            callback_data='admin_promocodes',
+                        )
+                    ]
+                ]
             ),
         )
 
@@ -780,20 +1027,23 @@ async def process_promocode_expiry(message: types.Message, db_user: User, state:
         logger.info('Создан промокод администратором', code=code, telegram_id=db_user.telegram_id)
 
     except ValueError:
-        await message.answer('❌ Введите корректное число дней')
+        await message.answer(texts.t('ADMIN_PROMOCODE_INVALID_DAYS_NUMBER', '❌ Введите корректное число дней'))
 
 
 @admin_required
 @error_handler
 async def process_discount_hours(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
     """Обработчик ввода срока действия скидки в часах для DISCOUNT промокода."""
+    texts = get_texts(db_user.language)
     data = await state.get_data()
 
     try:
         discount_hours = int(message.text.strip())
 
         if discount_hours < 0 or discount_hours > 8760:
-            await message.answer('❌ Срок действия скидки должен быть от 0 до 8760 часов')
+            await message.answer(
+                texts.t('ADMIN_PROMOCODE_DISCOUNT_HOURS_RANGE_ERROR', '❌ Срок действия скидки должен быть от 0 до 8760 часов')
+            )
             return
 
         code = data.get('promocode_code')
@@ -820,28 +1070,56 @@ async def process_discount_hours(message: types.Message, db_user: User, state: F
             promo_group_id=None,
         )
 
-        summary_text = f"""
-✅ <b>Промокод создан!</b>
-
-🎫 <b>Код:</b> <code>{promocode.code}</code>
-📝 <b>Тип:</b> Одноразовая скидка
-💸 <b>Скидка:</b> {promocode.balance_bonus_kopeks}%
-"""
+        lines = [
+            texts.t('ADMIN_PROMOCODE_CREATED_TITLE', '✅ <b>Промокод создан!</b>'),
+            '',
+            texts.t('ADMIN_PROMOCODE_CREATED_CODE', '🎫 <b>Код:</b> <code>{code}</code>').format(code=promocode.code),
+            texts.t('ADMIN_PROMOCODE_CREATED_TYPE', '📝 <b>Тип:</b> {type_label}').format(
+                type_label=_get_promocode_type_label(texts, 'discount')
+            ),
+            texts.t('ADMIN_PROMOCODE_CREATED_DISCOUNT', '💸 <b>Скидка:</b> {percent}%').format(
+                percent=promocode.balance_bonus_kopeks
+            ),
+        ]
 
         if discount_hours > 0:
-            summary_text += f'⏰ <b>Срок скидки:</b> {discount_hours} ч.\n'
+            lines.append(
+                texts.t('ADMIN_PROMOCODE_CREATED_DISCOUNT_HOURS', '⏰ <b>Срок скидки:</b> {hours} ч.').format(
+                    hours=discount_hours
+                )
+            )
         else:
-            summary_text += '⏰ <b>Срок скидки:</b> до первой покупки\n'
+            lines.append(
+                texts.t(
+                    'ADMIN_PROMOCODE_CREATED_DISCOUNT_BEFORE_FIRST_PURCHASE',
+                    '⏰ <b>Срок скидки:</b> до первой покупки',
+                )
+            )
 
-        summary_text += f'📊 <b>Использований:</b> {promocode.max_uses}\n'
+        lines.append(
+            texts.t('ADMIN_PROMOCODE_CREATED_USES', '📊 <b>Использований:</b> {uses}').format(uses=promocode.max_uses)
+        )
 
         if promocode.valid_until:
-            summary_text += f'⏳ <b>Промокод действует до:</b> {format_datetime(promocode.valid_until)}\n'
+            lines.append(
+                texts.t('ADMIN_PROMOCODE_CREATED_DISCOUNT_VALID_UNTIL', '⏳ <b>Промокод действует до:</b> {date}').format(
+                    date=format_datetime(promocode.valid_until)
+                )
+            )
+
+        summary_text = '\n'.join(lines)
 
         await message.answer(
             summary_text,
             reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text='🎫 К промокодам', callback_data='admin_promocodes')]]
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('ADMIN_PROMOCODE_BACK_TO_PROMOCODES', '🎫 К промокодам'),
+                            callback_data='admin_promocodes',
+                        )
+                    ]
+                ]
             ),
         )
 
@@ -855,16 +1133,17 @@ async def process_discount_hours(message: types.Message, db_user: User, state: F
         )
 
     except ValueError:
-        await message.answer('❌ Введите корректное число часов')
+        await message.answer(texts.t('ADMIN_PROMOCODE_INVALID_HOURS_NUMBER', '❌ Введите корректное число часов'))
 
 
 async def handle_edit_expiry(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
+    texts = get_texts(db_user.language)
     data = await state.get_data()
     promo_id = data.get('editing_promo_id')
 
     promo = await get_promocode_by_id(db, promo_id)
     if not promo:
-        await message.answer('❌ Промокод не найден')
+        await message.answer(texts.t('ADMIN_PROMOCODE_NOT_FOUND', '❌ Промокод не найден'))
         await state.clear()
         return
 
@@ -872,7 +1151,9 @@ async def handle_edit_expiry(message: types.Message, db_user: User, state: FSMCo
         expiry_days = int(message.text.strip())
 
         if expiry_days < 0 or expiry_days > 3650:
-            await message.answer('❌ Срок действия должен быть от 0 до 3650 дней')
+            await message.answer(
+                texts.t('ADMIN_PROMOCODE_EXPIRY_RANGE_ERROR', '❌ Срок действия должен быть от 0 до 3650 дней')
+            )
             return
 
         valid_until = None
@@ -882,15 +1163,22 @@ async def handle_edit_expiry(message: types.Message, db_user: User, state: FSMCo
         await update_promocode(db, promo, valid_until=valid_until)
 
         if valid_until:
-            expiry_text = f'до {format_datetime(valid_until)}'
+            expiry_text = texts.t('ADMIN_PROMOCODE_EXPIRY_UNTIL', 'до {date}').format(date=format_datetime(valid_until))
         else:
-            expiry_text = 'бессрочно'
+            expiry_text = texts.t('ADMIN_PROMOCODE_EXPIRY_UNLIMITED', 'бессрочно')
 
         await message.answer(
-            f'✅ Срок действия промокода изменен: {expiry_text}',
+            texts.t('ADMIN_PROMOCODE_EXPIRY_UPDATED', '✅ Срок действия промокода изменен: {expiry}').format(
+                expiry=expiry_text
+            ),
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'promo_manage_{promo_id}')]
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('ADMIN_PROMOCODE_BACK_TO_PROMOCODE', '🎫 К промокоду'),
+                            callback_data=f'promo_manage_{promo_id}',
+                        )
+                    ]
                 ]
             ),
         )
@@ -904,24 +1192,32 @@ async def handle_edit_expiry(message: types.Message, db_user: User, state: FSMCo
         )
 
     except ValueError:
-        await message.answer('❌ Введите корректное число дней')
+        await message.answer(texts.t('ADMIN_PROMOCODE_INVALID_DAYS_NUMBER', '❌ Введите корректное число дней'))
 
 
 @admin_required
 @error_handler
 async def toggle_promocode_status(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     promo_id = int(callback.data.split('_')[-1])
 
     promo = await get_promocode_by_id(db, promo_id)
     if not promo:
-        await callback.answer('❌ Промокод не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_NOT_FOUND', '❌ Промокод не найден'), show_alert=True)
         return
 
     new_status = not promo.is_active
     await update_promocode(db, promo, is_active=new_status)
 
-    status_text = 'активирован' if new_status else 'деактивирован'
-    await callback.answer(f'✅ Промокод {status_text}', show_alert=True)
+    status_text = (
+        texts.t('ADMIN_PROMOCODE_STATUS_ACTIVATED', 'активирован')
+        if new_status
+        else texts.t('ADMIN_PROMOCODE_STATUS_DEACTIVATED', 'деактивирован')
+    )
+    await callback.answer(
+        texts.t('ADMIN_PROMOCODE_STATUS_TOGGLED', '✅ Промокод {status}').format(status=status_text),
+        show_alert=True,
+    )
 
     await show_promocode_management(callback, db_user, db)
 
@@ -930,18 +1226,28 @@ async def toggle_promocode_status(callback: types.CallbackQuery, db_user: User, 
 @error_handler
 async def toggle_promocode_first_purchase(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     """Переключает режим 'только для первой покупки'."""
+    texts = get_texts(db_user.language)
     promo_id = int(callback.data.split('_')[-1])
 
     promo = await get_promocode_by_id(db, promo_id)
     if not promo:
-        await callback.answer('❌ Промокод не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_NOT_FOUND', '❌ Промокод не найден'), show_alert=True)
         return
 
     new_status = not getattr(promo, 'first_purchase_only', False)
     await update_promocode(db, promo, first_purchase_only=new_status)
 
-    status_text = 'включён' if new_status else 'выключен'
-    await callback.answer(f"✅ Режим 'первая покупка' {status_text}", show_alert=True)
+    status_text = (
+        texts.t('ADMIN_PROMOCODE_FIRST_PURCHASE_MODE_ENABLED', 'включён')
+        if new_status
+        else texts.t('AUTOPAY_STATUS_DISABLED', 'выключен')
+    )
+    await callback.answer(
+        texts.t("ADMIN_PROMOCODE_FIRST_PURCHASE_MODE_TOGGLED", "✅ Режим 'первая покупка' {status}").format(
+            status=status_text
+        ),
+        show_alert=True,
+    )
 
     await show_promocode_management(callback, db_user, db)
 
@@ -949,36 +1255,42 @@ async def toggle_promocode_first_purchase(callback: types.CallbackQuery, db_user
 @admin_required
 @error_handler
 async def confirm_delete_promocode(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     try:
         promo_id = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Ошибка получения ID промокода', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_ID_PARSE_ERROR', '❌ Ошибка получения ID промокода'), show_alert=True)
         return
 
     promo = await get_promocode_by_id(db, promo_id)
     if not promo:
-        await callback.answer('❌ Промокод не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_NOT_FOUND', '❌ Промокод не найден'), show_alert=True)
         return
 
-    text = f"""
-⚠️ <b>Подтверждение удаления</b>
-
-Вы действительно хотите удалить промокод <code>{promo.code}</code>?
-
-📊 <b>Информация о промокоде:</b>
-• Использований: {promo.current_uses}/{promo.max_uses}
-• Статус: {'Активен' if promo.is_active else 'Неактивен'}
-
-<b>⚠️ Внимание:</b> Это действие нельзя отменить!
-
-ID: {promo_id}
-"""
+    status_text = (
+        texts.t('ADMIN_PROMOCODE_STATUS_ACTIVE', 'Активен')
+        if promo.is_active
+        else texts.t('ADMIN_PROMOCODE_STATUS_INACTIVE', 'Неактивен')
+    )
+    text = texts.t(
+        'ADMIN_PROMOCODE_DELETE_CONFIRM_TEXT',
+        '⚠️ <b>Подтверждение удаления</b>\n\n'
+        'Вы действительно хотите удалить промокод <code>{code}</code>?\n\n'
+        '📊 <b>Информация о промокоде:</b>\n'
+        '• Использований: {current_uses}/{max_uses}\n'
+        '• Статус: {status}\n\n'
+        '<b>⚠️ Внимание:</b> Это действие нельзя отменить!\n\n'
+        'ID: {promo_id}',
+    ).format(code=promo.code, current_uses=promo.current_uses, max_uses=promo.max_uses, status=status_text, promo_id=promo_id)
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                types.InlineKeyboardButton(text='✅ Да, удалить', callback_data=f'promo_delete_confirm_{promo.id}'),
-                types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'promo_manage_{promo.id}'),
+                types.InlineKeyboardButton(
+                    text=texts.t('ADMIN_BACKUP_DELETE_CONFIRM_BUTTON', '✅ Да, удалить'),
+                    callback_data=f'promo_delete_confirm_{promo.id}',
+                ),
+                types.InlineKeyboardButton(text=texts.CANCEL, callback_data=f'promo_manage_{promo.id}'),
             ]
         ]
     )
@@ -990,49 +1302,62 @@ ID: {promo_id}
 @admin_required
 @error_handler
 async def delete_promocode_confirmed(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     try:
         promo_id = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Ошибка получения ID промокода', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_ID_PARSE_ERROR', '❌ Ошибка получения ID промокода'), show_alert=True)
         return
 
     promo = await get_promocode_by_id(db, promo_id)
     if not promo:
-        await callback.answer('❌ Промокод не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_NOT_FOUND', '❌ Промокод не найден'), show_alert=True)
         return
 
     code = promo.code
     success = await delete_promocode(db, promo)
 
     if success:
-        await callback.answer(f'✅ Промокод {code} удален', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_PROMOCODE_DELETED', '✅ Промокод {code} удален').format(code=code),
+            show_alert=True,
+        )
         await show_promocodes_list(callback, db_user, db)
     else:
-        await callback.answer('❌ Ошибка удаления промокода', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_DELETE_ERROR', '❌ Ошибка удаления промокода'), show_alert=True)
 
 
 @admin_required
 @error_handler
 async def show_promocode_stats(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     promo_id = int(callback.data.split('_')[-1])
 
     promo = await get_promocode_by_id(db, promo_id)
     if not promo:
-        await callback.answer('❌ Промокод не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_PROMOCODE_NOT_FOUND', '❌ Промокод не найден'), show_alert=True)
         return
 
     stats = await get_promocode_statistics(db, promo_id)
 
-    text = f"""
-📊 <b>Статистика промокода</b> <code>{promo.code}</code>
-
-📈 <b>Общая статистика:</b>
-- Всего использований: {stats['total_uses']}
-- Использований сегодня: {stats['today_uses']}
-- Осталось использований: {promo.max_uses - promo.current_uses}
-
-📅 <b>Последние использования:</b>
-"""
+    text = (
+        texts.t('ADMIN_PROMOCODE_STATS_TEXT', '📊 <b>Статистика промокода</b> <code>{code}</code>').format(code=promo.code)
+        + '\n\n'
+        + texts.t('ADMIN_PROMOCODE_STATS_OVERVIEW', '📈 <b>Общая статистика:</b>')
+        + '\n'
+        + texts.t('ADMIN_PROMOCODE_STATS_TOTAL_USES', '- Всего использований: {count}').format(count=stats['total_uses'])
+        + '\n'
+        + texts.t('ADMIN_PROMOCODE_STATS_TODAY_USES', '- Использований сегодня: {count}').format(
+            count=stats['today_uses']
+        )
+        + '\n'
+        + texts.t('ADMIN_PROMOCODE_STATS_REMAINING_USES', '- Осталось использований: {count}').format(
+            count=promo.max_uses - promo.current_uses
+        )
+        + '\n\n'
+        + texts.t('ADMIN_PROMOCODE_STATS_RECENT_USES', '📅 <b>Последние использования:</b>')
+        + '\n'
+    )
 
     if stats['recent_uses']:
         for use in stats['recent_uses'][:5]:
@@ -1049,10 +1374,10 @@ async def show_promocode_stats(callback: types.CallbackQuery, db_user: User, db:
 
             text += f'- {use_date} | {user_display}\n'
     else:
-        text += '- Пока не было использований\n'
+        text += texts.t('ADMIN_PROMOCODE_STATS_NO_USES', '- Пока не было использований') + '\n'
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'promo_manage_{promo.id}')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data=f'promo_manage_{promo.id}')]]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -1062,24 +1387,36 @@ async def show_promocode_stats(callback: types.CallbackQuery, db_user: User, db:
 @admin_required
 @error_handler
 async def show_general_promocode_stats(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     total_codes = await get_promocodes_count(db)
     active_codes = await get_promocodes_count(db, is_active=True)
 
-    text = f"""
-📊 <b>Общая статистика промокодов</b>
-
-📈 <b>Основные показатели:</b>
-- Всего промокодов: {total_codes}
-- Активных: {active_codes}
-- Неактивных: {total_codes - active_codes}
-
-Для детальной статистики выберите конкретный промокод из списка.
-"""
+    text = (
+        texts.t('ADMIN_PROMOCODES_GENERAL_STATS_TITLE_TEXT', '📊 <b>Общая статистика промокодов</b>')
+        + '\n\n'
+        + texts.t('ADMIN_PROMOCODES_GENERAL_STATS_MAIN_METRICS', '📈 <b>Основные показатели:</b>')
+        + '\n'
+        + texts.t('ADMIN_PROMOCODES_MENU_TOTAL_LINE', '- Всего промокодов: {count}').format(count=total_codes)
+        + '\n'
+        + texts.t('ADMIN_PROMOCODES_MENU_ACTIVE_LINE', '- Активных: {count}').format(count=active_codes)
+        + '\n'
+        + texts.t('ADMIN_PROMOCODES_MENU_INACTIVE_LINE', '- Неактивных: {count}').format(count=total_codes - active_codes)
+        + '\n\n'
+        + texts.t(
+            'ADMIN_PROMOCODES_GENERAL_STATS_HINT',
+            'Для детальной статистики выберите конкретный промокод из списка.',
+        )
+    )
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [types.InlineKeyboardButton(text='🎫 К промокодам', callback_data='admin_promo_list')],
-            [types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_promocodes')],
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('ADMIN_PROMOCODE_BACK_TO_PROMOCODES', '🎫 К промокодам'),
+                    callback_data='admin_promo_list',
+                )
+            ],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='admin_promocodes')],
         ]
     )
 

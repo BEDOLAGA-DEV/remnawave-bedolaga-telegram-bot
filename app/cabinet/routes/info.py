@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.rules import get_current_rules_content, get_rules_by_language
 from app.database.models import User
+from app.localization.texts import get_texts
 from app.services.faq_service import FaqService
 from app.services.privacy_policy_service import PrivacyPolicyService
 from app.services.public_offer_service import PublicOfferService
@@ -42,6 +43,13 @@ def _get_available_language_codes() -> list[str]:
         seen.add(normalized)
         codes.append(normalized)
     return codes
+
+
+def _get_cabinet_texts(language: str | None = None):
+    normalized = _normalize_language_code(language)
+    if not normalized:
+        normalized = _normalize_language_code(getattr(settings, 'DEFAULT_LANGUAGE', 'ru') or 'ru')
+    return get_texts(normalized or 'ru')
 
 
 # ============ Schemas ============
@@ -132,6 +140,7 @@ async def get_faq_page(
 ):
     """Get a specific FAQ page by ID."""
     requested_lang = FaqService.normalize_language(language)
+    texts = _get_cabinet_texts(requested_lang)
     page = await FaqService.get_page(
         db,
         page_id,
@@ -143,7 +152,7 @@ async def get_faq_page(
     if not page:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail='FAQ page not found',
+            detail=texts.t('CABINET_INFO_FAQ_PAGE_NOT_FOUND', 'FAQ page not found'),
         )
 
     return FaqPageResponse(
@@ -181,6 +190,7 @@ async def get_privacy_policy(
 ):
     """Get privacy policy."""
     requested_lang = PrivacyPolicyService.normalize_language(language)
+    texts = _get_cabinet_texts(requested_lang)
     policy = await PrivacyPolicyService.get_policy(db, requested_lang, fallback=True)
 
     if policy and policy.content:
@@ -189,10 +199,10 @@ async def get_privacy_policy(
 
     # Return default policy if none found
     return PrivacyPolicyResponse(
-        content="""# Политика конфиденциальности
-
-Мы уважаем вашу конфиденциальность и защищаем ваши персональные данные.
-""",
+        content=texts.t(
+            'CABINET_INFO_DEFAULT_PRIVACY_POLICY',
+            '# Политика конфиденциальности\n\nМы уважаем вашу конфиденциальность и защищаем ваши персональные данные.\n',
+        ),
         updated_at=None,
     )
 
@@ -204,6 +214,7 @@ async def get_public_offer(
 ):
     """Get public offer."""
     requested_lang = PublicOfferService.normalize_language(language)
+    texts = _get_cabinet_texts(requested_lang)
     offer = await PublicOfferService.get_offer(db, requested_lang, fallback=True)
 
     if offer and offer.content:
@@ -212,10 +223,10 @@ async def get_public_offer(
 
     # Return default offer if none found
     return PublicOfferResponse(
-        content="""# Публичная оферта
-
-Условия использования сервиса.
-""",
+        content=texts.t(
+            'CABINET_INFO_DEFAULT_PUBLIC_OFFER',
+            '# Публичная оферта\n\nУсловия использования сервиса.\n',
+        ),
         updated_at=None,
     )
 
@@ -223,8 +234,10 @@ async def get_public_offer(
 @router.get('/service', response_model=ServiceInfoResponse)
 async def get_service_info():
     """Get general service information."""
+    texts = _get_cabinet_texts(getattr(settings, 'DEFAULT_LANGUAGE', 'ru'))
     return ServiceInfoResponse(
-        name=getattr(settings, 'SERVICE_NAME', None) or getattr(settings, 'BOT_NAME', 'VPN Service'),
+        name=getattr(settings, 'SERVICE_NAME', None)
+        or getattr(settings, 'BOT_NAME', texts.t('CABINET_INFO_DEFAULT_SERVICE_NAME', 'VPN Service')),
         description=getattr(settings, 'SERVICE_DESCRIPTION', None),
         support_email=getattr(settings, 'SUPPORT_EMAIL', None),
         support_telegram=getattr(settings, 'SUPPORT_USERNAME', None) or getattr(settings, 'SUPPORT_TELEGRAM', None),
@@ -268,10 +281,13 @@ async def update_user_language(
     """Update user's language preference."""
     requested_language = _normalize_language_code(request.get('language', 'ru'))
     available_languages = _get_available_language_codes()
+    texts = _get_cabinet_texts(getattr(user, 'language', None))
     if requested_language not in available_languages:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Invalid language. Supported: {", ".join(available_languages)}',
+            detail=texts.t('CABINET_INFO_INVALID_LANGUAGE', 'Invalid language. Supported: {languages}').format(
+                languages=', '.join(available_languages)
+            ),
         )
 
     user.language = requested_language

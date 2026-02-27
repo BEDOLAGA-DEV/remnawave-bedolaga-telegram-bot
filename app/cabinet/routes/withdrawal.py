@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User, WithdrawalRequest, WithdrawalRequestStatus
+from app.localization.texts import get_texts
 from app.services.referral_withdrawal_service import referral_withdrawal_service
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
@@ -138,6 +139,7 @@ async def cancel_withdrawal(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Cancel a pending withdrawal request."""
+    texts = get_texts(getattr(user, 'language', None))
     result = await db.execute(
         select(WithdrawalRequest)
         .where(
@@ -151,13 +153,13 @@ async def cancel_withdrawal(
     if not withdrawal:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail='Заявка не найдена',
+            detail=texts.t('CABINET_WITHDRAWAL_REQUEST_NOT_FOUND', 'Заявка не найдена'),
         )
 
     if withdrawal.status != WithdrawalRequestStatus.PENDING.value:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Можно отменить только заявку в ожидании',
+            detail=texts.t('CABINET_WITHDRAWAL_CANCEL_ONLY_PENDING', 'Можно отменить только заявку в ожидании'),
         )
 
     withdrawal.status = WithdrawalRequestStatus.CANCELLED.value

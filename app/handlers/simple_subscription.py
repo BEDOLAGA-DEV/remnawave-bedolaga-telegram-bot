@@ -39,21 +39,37 @@ async def start_simple_subscription_purchase(
     texts = get_texts(db_user.language)
 
     if not settings.SIMPLE_SUBSCRIPTION_ENABLED:
-        await callback.answer('❌ Простая покупка подписки временно недоступна', show_alert=True)
+        await callback.answer(
+            texts.t('SIMPLE_SUBSCRIPTION_DISABLED', '❌ Простая покупка подписки временно недоступна'),
+            show_alert=True,
+        )
         return
 
     # Проверка ограничения на покупку/продление подписки
     if getattr(db_user, 'restriction_subscription', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT',
+            'Действие ограничено администратором',
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'),
+                        url=support_url,
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Покупка подписки ограничена</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_SUBSCRIPTION_BLOCKED',
+                '🚫 <b>Покупка/продление подписки ограничено</b>\n\n{reason}\n\n'
+                'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
         await callback.answer()
@@ -158,24 +174,38 @@ async def start_simple_subscription_purchase(
     show_devices = settings.is_devices_selection_enabled()
 
     message_lines = [
-        '⚡ <b>Простая покупка подписки</b>',
+        texts.t('SIMPLE_SUBSCRIPTION_TITLE', '⚡ <b>Простая покупка подписки</b>'),
         '',
-        f'📅 Период: {subscription_params["period_days"]} дней',
+        texts.t('SIMPLE_SUBSCRIPTION_PERIOD_LINE', '📅 Период: {days} дней').format(
+            days=subscription_params['period_days']
+        ),
     ]
 
     if show_devices:
-        message_lines.append(f'📱 Устройства: {subscription_params["device_limit"]}')
+        message_lines.append(
+            texts.t('SIMPLE_SUBSCRIPTION_DEVICES_LINE', '📱 Устройства: {devices}').format(
+                devices=subscription_params['device_limit']
+            )
+        )
 
     traffic_limit_gb = subscription_params['traffic_limit_gb']
-    traffic_label = 'Безлимит' if traffic_limit_gb == 0 else f'{traffic_limit_gb} ГБ'
+    traffic_label = (
+        texts.t('SUBSCRIPTION_TRAFFIC_DISPLAY_UNLIMITED', 'Безлимит')
+        if traffic_limit_gb == 0
+        else texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_GB_VALUE', '{traffic_gb} ГБ').format(traffic_gb=traffic_limit_gb)
+    )
 
     message_lines.extend(
         [
-            f'📊 Трафик: {traffic_label}',
-            f'🌍 Сервер: {server_label}',
+            texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_LINE', '📊 Трафик: {traffic}').format(traffic=traffic_label),
+            texts.t('SIMPLE_SUBSCRIPTION_SERVER_LINE', '🌍 Сервер: {server}').format(server=server_label),
             '',
-            f'💰 Стоимость: {settings.format_price(price_kopeks)}',
-            f'💳 Ваш баланс: {settings.format_price(user_balance_kopeks)}',
+            texts.t('SIMPLE_SUBSCRIPTION_PRICE_LINE', '💰 Стоимость: {price}').format(
+                price=settings.format_price(price_kopeks)
+            ),
+            texts.t('SIMPLE_SUBSCRIPTION_BALANCE_LINE', '💳 Ваш баланс: {balance}').format(
+                balance=settings.format_price(user_balance_kopeks)
+            ),
             '',
         ]
     )
@@ -184,9 +214,12 @@ async def start_simple_subscription_purchase(
     if has_active_paid_subscription:
         # У пользователя уже есть активная платная подписка
         message_lines.append(
-            '⚠️ У вас уже есть активная платная подписка. '
-            'Покупка простой подписки изменит параметры вашей текущей подписки. '
-            'Требуется подтверждение.'
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_ACTIVE_PAID_WARNING',
+                '⚠️ У вас уже есть активная платная подписка. '
+                'Покупка простой подписки изменит параметры вашей текущей подписки. '
+                'Требуется подтверждение.',
+            )
         )
         message_text = '\n'.join(message_lines)
 
@@ -194,7 +227,8 @@ async def start_simple_subscription_purchase(
         keyboard_rows = [
             [
                 types.InlineKeyboardButton(
-                    text='✅ Подтвердить покупку', callback_data='simple_subscription_confirm_purchase'
+                    text=texts.t('SIMPLE_SUBSCRIPTION_CONFIRM_PURCHASE_BUTTON', '✅ Подтвердить покупку'),
+                    callback_data='simple_subscription_confirm_purchase',
                 )
             ],
             [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
@@ -204,9 +238,19 @@ async def start_simple_subscription_purchase(
         # У пользователя нет активной платной подписки (или есть только пробная)
         # Показываем стандартный выбор метода оплаты
         if can_pay_from_balance:
-            message_lines.append('Вы можете оплатить подписку с баланса или выбрать другой способ оплаты.')
+            message_lines.append(
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_CAN_PAY_BALANCE',
+                    'Вы можете оплатить подписку с баланса или выбрать другой способ оплаты.',
+                )
+            )
         else:
-            message_lines.append('Баланс пока недостаточный для мгновенной оплаты. Выберите подходящий способ оплаты:')
+            message_lines.append(
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_BALANCE_INSUFFICIENT_PROMPT',
+                    'Баланс пока недостаточный для мгновенной оплаты. Выберите подходящий способ оплаты:',
+                )
+            )
 
         message_text = '\n'.join(message_lines)
 
@@ -220,7 +264,7 @@ async def start_simple_subscription_purchase(
             keyboard_rows.append(
                 [
                     types.InlineKeyboardButton(
-                        text='✅ Оплатить с баланса',
+                        text=texts.t('SIMPLE_SUBSCRIPTION_PAY_BALANCE_BUTTON', '✅ Оплатить с баланса'),
                         callback_data='simple_subscription_pay_with_balance',
                     )
                 ]
@@ -266,40 +310,84 @@ def _get_simple_subscription_payment_keyboard(language: str) -> types.InlineKeyb
     # Добавляем доступные методы оплаты
     if settings.TELEGRAM_STARS_ENABLED:
         keyboard.append(
-            [types.InlineKeyboardButton(text='⭐ Telegram Stars', callback_data='simple_subscription_stars')]
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('PAYMENT_TELEGRAM_STARS', '⭐ Telegram Stars'),
+                    callback_data='simple_subscription_stars',
+                )
+            ]
         )
 
     if settings.is_yookassa_enabled():
         yookassa_methods = []
         if settings.YOOKASSA_SBP_ENABLED:
             yookassa_methods.append(
-                types.InlineKeyboardButton(text='🏦 YooKassa (СБП)', callback_data='simple_subscription_yookassa_sbp')
+                types.InlineKeyboardButton(
+                    text=texts.t('PAID_TRIAL_YOOKASSA_SBP_BUTTON', '🏦 YooKassa (СБП)'),
+                    callback_data='simple_subscription_yookassa_sbp',
+                )
             )
         yookassa_methods.append(
-            types.InlineKeyboardButton(text='💳 YooKassa (Карта)', callback_data='simple_subscription_yookassa')
+            types.InlineKeyboardButton(
+                text=texts.t('PAID_TRIAL_YOOKASSA_CARD_BUTTON', '💳 YooKassa (Карта)'),
+                callback_data='simple_subscription_yookassa',
+            )
         )
         if yookassa_methods:
             keyboard.append(yookassa_methods)
 
     if settings.is_cryptobot_enabled():
         keyboard.append(
-            [types.InlineKeyboardButton(text='🪙 CryptoBot', callback_data='simple_subscription_cryptobot')]
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('SIMPLE_SUBSCRIPTION_CRYPTOBOT_BUTTON', '🪙 CryptoBot'),
+                    callback_data='simple_subscription_cryptobot',
+                )
+            ]
         )
 
     if settings.is_heleket_enabled():
-        keyboard.append([types.InlineKeyboardButton(text='🪙 Heleket', callback_data='simple_subscription_heleket')])
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('SIMPLE_SUBSCRIPTION_HELEKET_BUTTON', '🪙 Heleket'),
+                    callback_data='simple_subscription_heleket',
+                )
+            ]
+        )
 
     if settings.is_mulenpay_enabled():
         mulenpay_name = settings.get_mulenpay_display_name()
         keyboard.append(
-            [types.InlineKeyboardButton(text=f'💳 {mulenpay_name}', callback_data='simple_subscription_mulenpay')]
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('SIMPLE_SUBSCRIPTION_MULENPAY_BUTTON', '💳 {mulenpay_name}').format(
+                        mulenpay_name=mulenpay_name
+                    ),
+                    callback_data='simple_subscription_mulenpay',
+                )
+            ]
         )
 
     if settings.is_pal24_enabled():
-        keyboard.append([types.InlineKeyboardButton(text='💳 PayPalych', callback_data='simple_subscription_pal24')])
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('SIMPLE_SUBSCRIPTION_PAL24_BUTTON', '💳 PayPalych'),
+                    callback_data='simple_subscription_pal24',
+                )
+            ]
+        )
 
     if settings.is_wata_enabled():
-        keyboard.append([types.InlineKeyboardButton(text='💳 WATA', callback_data='simple_subscription_wata')])
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('SIMPLE_SUBSCRIPTION_WATA_BUTTON', '💳 WATA'),
+                    callback_data='simple_subscription_wata',
+                )
+            ]
+        )
 
     # Кнопка назад
     keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')])
@@ -378,7 +466,13 @@ async def handle_simple_subscription_pay_with_balance(
     subscription_params = data.get('subscription_params', {})
 
     if not subscription_params:
-        await callback.answer('❌ Данные подписки устарели. Пожалуйста, начните сначала.', show_alert=True)
+        await callback.answer(
+            texts.t(
+                'COUNTRY_SELECTION_DATA_EXPIRED_RESTART',
+                '❌ Данные подписки устарели. Начните оформление заново.',
+            ),
+            show_alert=True,
+        )
         return
 
     # Проверяем, имеет ли пользователь активную платную подписку
@@ -389,7 +483,11 @@ async def handle_simple_subscription_pay_with_balance(
     if current_subscription and not getattr(current_subscription, 'is_trial', False) and current_subscription.is_active:
         # У пользователя есть активная платная подписка - требуем подтверждение
         await callback.answer(
-            '⚠️ У вас уже есть активная платная подписка. Пожалуйста, подтвердите покупку.', show_alert=True
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_CONFIRM_REQUIRED_ALERT',
+                '⚠️ У вас уже есть активная платная подписка. Пожалуйста, подтвердите покупку.',
+            ),
+            show_alert=True,
         )
         return
 
@@ -426,7 +524,13 @@ async def handle_simple_subscription_pay_with_balance(
     user_balance_kopeks = getattr(db_user, 'balance_kopeks', 0)
 
     if user_balance_kopeks < total_required:
-        await callback.answer('❌ Недостаточно средств на балансе для оплаты подписки', show_alert=True)
+        await callback.answer(
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_INSUFFICIENT_BALANCE_ALERT',
+                '❌ Недостаточно средств на балансе для оплаты подписки',
+            ),
+            show_alert=True,
+        )
         return
 
     try:
@@ -437,12 +541,21 @@ async def handle_simple_subscription_pay_with_balance(
             db,
             db_user,
             price_kopeks,
-            f'Оплата подписки на {subscription_params["period_days"]} дней',
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_BALANCE_PAYMENT_DESCRIPTION',
+                'Оплата подписки на {period_days} дней',
+            ).format(period_days=subscription_params['period_days']),
             consume_promo_offer=False,
         )
 
         if not success:
-            await callback.answer('❌ Ошибка списания средств с баланса', show_alert=True)
+            await callback.answer(
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_BALANCE_DEBIT_ERROR',
+                    '❌ Ошибка списания средств с баланса',
+                ),
+                show_alert=True,
+            )
             return
 
         # Проверяем, есть ли у пользователя уже подписка
@@ -499,9 +612,18 @@ async def handle_simple_subscription_pay_with_balance(
                 db,
                 db_user.id,
                 price_kopeks,
-                f'Возврат средств за неудавшуюся подписку на {subscription_params["period_days"]} дней',
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_BALANCE_REFUND_DESCRIPTION',
+                    'Возврат средств за неудавшуюся подписку на {period_days} дней',
+                ).format(period_days=subscription_params['period_days']),
             )
-            await callback.answer('❌ Ошибка создания подписки. Средства возвращены на баланс.', show_alert=True)
+            await callback.answer(
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_CREATE_FAILED_REFUNDED_ALERT',
+                    '❌ Ошибка создания подписки. Средства возвращены на баланс.',
+                ),
+                show_alert=True,
+            )
             return
 
         # Обновляем баланс пользователя
@@ -532,26 +654,47 @@ async def handle_simple_subscription_pay_with_balance(
         show_devices = settings.is_devices_selection_enabled()
 
         success_lines = [
-            '✅ <b>Подписка успешно активирована!</b>',
+            texts.t('SIMPLE_SUBSCRIPTION_SUCCESS_TITLE', '✅ <b>Подписка успешно активирована!</b>'),
             '',
-            f'📅 Период: {subscription_params["period_days"]} дней',
+            texts.t('SIMPLE_SUBSCRIPTION_PERIOD_LINE', '📅 Период: {days} дней').format(
+                days=subscription_params['period_days']
+            ),
         ]
 
         if show_devices:
-            success_lines.append(f'📱 Устройства: {subscription_params["device_limit"]}')
+            success_lines.append(
+                texts.t('SIMPLE_SUBSCRIPTION_DEVICES_LINE', '📱 Устройства: {devices}').format(
+                    devices=subscription_params['device_limit']
+                )
+            )
 
         success_traffic_gb = subscription_params['traffic_limit_gb']
-        success_traffic_label = 'Безлимит' if success_traffic_gb == 0 else f'{success_traffic_gb} ГБ'
+        success_traffic_label = (
+            texts.t('SUBSCRIPTION_TRAFFIC_DISPLAY_UNLIMITED', 'Безлимит')
+            if success_traffic_gb == 0
+            else texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_GB_VALUE', '{traffic_gb} ГБ').format(
+                traffic_gb=success_traffic_gb
+            )
+        )
 
         success_lines.extend(
             [
-                f'📊 Трафик: {success_traffic_label}',
-                f'🌍 Сервер: {server_label}',
+                texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_LINE', '📊 Трафик: {traffic}').format(
+                    traffic=success_traffic_label
+                ),
+                texts.t('SIMPLE_SUBSCRIPTION_SERVER_LINE', '🌍 Сервер: {server}').format(server=server_label),
                 '',
-                f'💰 Списано с баланса: {settings.format_price(price_kopeks)}',
-                f'💳 Ваш баланс: {settings.format_price(db_user.balance_kopeks)}',
+                texts.t('SIMPLE_SUBSCRIPTION_DEBITED_LINE', '💰 Списано с баланса: {amount}').format(
+                    amount=settings.format_price(price_kopeks)
+                ),
+                texts.t('SIMPLE_SUBSCRIPTION_BALANCE_LINE', '💳 Ваш баланс: {balance}').format(
+                    balance=settings.format_price(db_user.balance_kopeks)
+                ),
                 '',
-                "🔗 Для подключения перейдите в раздел 'Подключиться'",
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_CONNECT_HINT',
+                    "🔗 Для подключения перейдите в раздел 'Подключиться'",
+                ),
             ]
         )
 
@@ -617,7 +760,14 @@ async def handle_simple_subscription_pay_with_balance(
         if happ_row:
             keyboard_rows.append(happ_row)
 
-        keyboard_rows.append([types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')])
+        keyboard_rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('MAIN_MENU_BUTTON', '🏠 Главное меню'),
+                    callback_data='back_to_menu',
+                )
+            ]
+        )
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
@@ -657,7 +807,10 @@ async def handle_simple_subscription_pay_with_balance(
             exc_info=True,
         )
         await callback.answer(
-            '❌ Ошибка оплаты подписки. Попробуйте позже или обратитесь в поддержку.',
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_PAYMENT_ERROR',
+                '❌ Ошибка оплаты подписки. Попробуйте позже или обратитесь в поддержку.',
+            ),
             show_alert=True,
         )
         await state.clear()
@@ -672,7 +825,10 @@ async def handle_simple_subscription_pay_with_balance_disabled(
 ):
     """Показывает уведомление, если баланса недостаточно для прямой оплаты."""
     await callback.answer(
-        '❌ Недостаточно средств на балансе. Пополните баланс или выберите другой способ оплаты.',
+        get_texts(db_user.language).t(
+            'SIMPLE_SUBSCRIPTION_BALANCE_NOT_ENOUGH_ALERT',
+            '❌ Недостаточно средств на балансе. Пополните баланс или выберите другой способ оплаты.',
+        ),
         show_alert=True,
     )
 
@@ -691,7 +847,13 @@ async def handle_simple_subscription_other_payment_methods(
     subscription_params = data.get('subscription_params', {})
 
     if not subscription_params:
-        await callback.answer('❌ Данные подписки устарели. Пожалуйста, начните сначала.', show_alert=True)
+        await callback.answer(
+            texts.t(
+                'COUNTRY_SELECTION_DATA_EXPIRED_RESTART',
+                '❌ Данные подписки устарели. Начните оформление заново.',
+            ),
+            show_alert=True,
+        )
         return
 
     resolved_squad_uuid = await _ensure_simple_subscription_squad_uuid(
@@ -734,28 +896,45 @@ async def handle_simple_subscription_other_payment_methods(
     show_devices = settings.is_devices_selection_enabled()
 
     message_lines = [
-        '💳 <b>Оплата подписки</b>',
+        texts.t('SIMPLE_SUBSCRIPTION_PAYMENT_TITLE', '💳 <b>Оплата подписки</b>'),
         '',
-        f'📅 Период: {subscription_params["period_days"]} дней',
+        texts.t('SIMPLE_SUBSCRIPTION_PERIOD_LINE', '📅 Период: {days} дней').format(
+            days=subscription_params['period_days']
+        ),
     ]
 
     if show_devices:
-        message_lines.append(f'📱 Устройства: {subscription_params["device_limit"]}')
+        message_lines.append(
+            texts.t('SIMPLE_SUBSCRIPTION_DEVICES_LINE', '📱 Устройства: {devices}').format(
+                devices=subscription_params['device_limit']
+            )
+        )
 
     payment_traffic_gb = subscription_params['traffic_limit_gb']
-    payment_traffic_label = 'Безлимит' if payment_traffic_gb == 0 else f'{payment_traffic_gb} ГБ'
+    payment_traffic_label = (
+        texts.t('SUBSCRIPTION_TRAFFIC_DISPLAY_UNLIMITED', 'Безлимит')
+        if payment_traffic_gb == 0
+        else texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_GB_VALUE', '{traffic_gb} ГБ').format(
+            traffic_gb=payment_traffic_gb
+        )
+    )
 
     message_lines.extend(
         [
-            f'📊 Трафик: {payment_traffic_label}',
-            f'🌍 Сервер: {server_label}',
+            texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_LINE', '📊 Трафик: {traffic}').format(traffic=payment_traffic_label),
+            texts.t('SIMPLE_SUBSCRIPTION_SERVER_LINE', '🌍 Сервер: {server}').format(server=server_label),
             '',
-            f'💰 Стоимость: {settings.format_price(price_kopeks)}',
+            texts.t('SIMPLE_SUBSCRIPTION_PRICE_LINE', '💰 Стоимость: {price}').format(
+                price=settings.format_price(price_kopeks)
+            ),
             '',
             (
-                'Вы можете оплатить подписку с баланса или выбрать другой способ оплаты:'
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_CAN_PAY_BALANCE',
+                    'Вы можете оплатить подписку с баланса или выбрать другой способ оплаты.',
+                )
                 if can_pay_from_balance
-                else 'Выберите подходящий способ оплаты:'
+                else texts.t('SIMPLE_SUBSCRIPTION_CHOOSE_PAYMENT', 'Выберите способ оплаты:')
             ),
         ]
     )
@@ -769,7 +948,8 @@ async def handle_simple_subscription_other_payment_methods(
         keyboard_rows.append(
             [
                 types.InlineKeyboardButton(
-                    text='✅ Оплатить с баланса', callback_data='simple_subscription_pay_with_balance'
+                    text=texts.t('SIMPLE_SUBSCRIPTION_PAY_BALANCE_BUTTON', '✅ Оплатить с баланса'),
+                    callback_data='simple_subscription_pay_with_balance',
                 )
             ]
         )
@@ -796,7 +976,13 @@ async def handle_simple_subscription_payment_method(
     subscription_params = data.get('subscription_params', {})
 
     if not subscription_params:
-        await callback.answer('❌ Данные подписки устарели. Пожалуйста, начните сначала.', show_alert=True)
+        await callback.answer(
+            texts.t(
+                'COUNTRY_SELECTION_DATA_EXPIRED_RESTART',
+                '❌ Данные подписки устарели. Начните оформление заново.',
+            ),
+            show_alert=True,
+        )
         return
 
     # Проверяем, имеет ли пользователь активную платную подписку
@@ -807,7 +993,10 @@ async def handle_simple_subscription_payment_method(
     if current_subscription and not getattr(current_subscription, 'is_trial', False) and current_subscription.is_active:
         # У пользователя есть активная платная подписка - показываем сообщение
         await callback.answer(
-            '⚠️ У вас уже есть активная платная подписка. Пожалуйста, подтвердите покупку через главное меню.',
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_CONFIRM_VIA_MENU_ALERT',
+                '⚠️ У вас уже есть активная платная подписка. Пожалуйста, подтвердите покупку через главное меню.',
+            ),
             show_alert=True,
         )
         return
@@ -848,27 +1037,54 @@ async def handle_simple_subscription_payment_method(
             )
 
             if not order:
-                await callback.answer('❌ Не удалось подготовить заказ. Попробуйте позже.', show_alert=True)
+                await callback.answer(
+                    texts.t(
+                        'SIMPLE_SUBSCRIPTION_ORDER_PREPARE_ERROR',
+                        '❌ Не удалось подготовить заказ. Попробуйте позже.',
+                    ),
+                    show_alert=True,
+                )
                 return
 
             stars_count = settings.rubles_to_stars(settings.kopeks_to_rubles(price_kopeks))
 
             stars_traffic_gb = subscription_params['traffic_limit_gb']
-            stars_traffic_label = 'Безлимит' if stars_traffic_gb == 0 else f'{stars_traffic_gb} ГБ'
+            stars_traffic_label = (
+                texts.t('SUBSCRIPTION_TRAFFIC_DISPLAY_UNLIMITED', 'Безлимит')
+                if stars_traffic_gb == 0
+                else texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_GB_VALUE', '{traffic_gb} ГБ').format(
+                    traffic_gb=stars_traffic_gb
+                )
+            )
 
             await callback.bot.send_invoice(
                 chat_id=callback.from_user.id,
-                title=f'Подписка на {subscription_params["period_days"]} дней',
+                title=texts.t(
+                    'SIMPLE_SUBSCRIPTION_STARS_INVOICE_TITLE',
+                    'Подписка на {days} дней',
+                ).format(days=subscription_params['period_days']),
                 description=(
-                    f'Простая покупка подписки\n'
-                    f'Период: {subscription_params["period_days"]} дней\n'
-                    f'Устройства: {subscription_params["device_limit"]}\n'
-                    f'Трафик: {stars_traffic_label}'
+                    texts.t(
+                        'SIMPLE_SUBSCRIPTION_STARS_INVOICE_DESCRIPTION',
+                        'Простая покупка подписки\n'
+                        'Период: {days} дней\n'
+                        'Устройства: {devices}\n'
+                        'Трафик: {traffic}',
+                    ).format(
+                        days=subscription_params['period_days'],
+                        devices=subscription_params['device_limit'],
+                        traffic=stars_traffic_label,
+                    )
                 ),
                 payload=(f'simple_sub_{db_user.id}_{order.id}_{subscription_params["period_days"]}'),
                 provider_token='',  # Пустой токен для Telegram Stars
                 currency='XTR',  # Telegram Stars
-                prices=[types.LabeledPrice(label='Подписка', amount=stars_count)],
+                prices=[
+                    types.LabeledPrice(
+                        label=texts.t('SIMPLE_SUBSCRIPTION_STARS_INVOICE_PRICE_LABEL', 'Подписка'),
+                        amount=stars_count,
+                    )
+                ],
             )
 
             await state.clear()
@@ -877,11 +1093,17 @@ async def handle_simple_subscription_payment_method(
         elif payment_method in ['yookassa', 'yookassa_sbp']:
             # Оплата через YooKassa
             if not settings.is_yookassa_enabled():
-                await callback.answer('❌ Оплата через YooKassa временно недоступна', show_alert=True)
+                await callback.answer(
+                    texts.t('YOOKASSA_TOPUP_NOT_AVAILABLE', '❌ Оплата через YooKassa временно недоступна'),
+                    show_alert=True,
+                )
                 return
 
             if payment_method == 'yookassa_sbp' and not settings.YOOKASSA_SBP_ENABLED:
-                await callback.answer('❌ Оплата через СБП временно недоступна', show_alert=True)
+                await callback.answer(
+                    texts.t('YOOKASSA_SBP_TOPUP_NOT_AVAILABLE', '❌ Оплата через СБП временно недоступна'),
+                    show_alert=True,
+                )
                 return
 
             # Создаем заказ на подписку
@@ -897,7 +1119,10 @@ async def handle_simple_subscription_payment_method(
             )
 
             if not order:
-                await callback.answer('❌ Ошибка создания заказа', show_alert=True)
+                await callback.answer(
+                    texts.t('SIMPLE_SUBSCRIPTION_ORDER_CREATE_ERROR', '❌ Ошибка создания заказа'),
+                    show_alert=True,
+                )
                 return
 
             # Создаем платеж через YooKassa
@@ -906,7 +1131,10 @@ async def handle_simple_subscription_payment_method(
                     db=db,
                     user_id=db_user.id,
                     amount_kopeks=price_kopeks,
-                    description=f'Оплата подписки на {subscription_params["period_days"]} дней',
+                    description=texts.t(
+                        'SIMPLE_SUBSCRIPTION_BALANCE_PAYMENT_DESCRIPTION',
+                        'Оплата подписки на {period_days} дней',
+                    ).format(period_days=subscription_params['period_days']),
                     receipt_email=db_user.email if hasattr(db_user, 'email') and db_user.email else None,
                     receipt_phone=db_user.phone if hasattr(db_user, 'phone') and db_user.phone else None,
                     metadata={
@@ -922,7 +1150,10 @@ async def handle_simple_subscription_payment_method(
                     db=db,
                     user_id=db_user.id,
                     amount_kopeks=price_kopeks,
-                    description=f'Оплата подписки на {subscription_params["period_days"]} дней',
+                    description=texts.t(
+                        'SIMPLE_SUBSCRIPTION_BALANCE_PAYMENT_DESCRIPTION',
+                        'Оплата подписки на {period_days} дней',
+                    ).format(period_days=subscription_params['period_days']),
                     receipt_email=db_user.email if hasattr(db_user, 'email') and db_user.email else None,
                     receipt_phone=db_user.phone if hasattr(db_user, 'phone') and db_user.phone else None,
                     metadata={
@@ -935,7 +1166,10 @@ async def handle_simple_subscription_payment_method(
                 )
 
             if not payment_result:
-                await callback.answer('❌ Ошибка создания платежа', show_alert=True)
+                await callback.answer(
+                    texts.t('YOOKASSA_PAYMENT_CREATE_ERROR', '❌ Ошибка создания платежа. Попробуйте позже или обратитесь в поддержку.'),
+                    show_alert=True,
+                )
                 return
 
             # Отправляем QR-код и/или ссылку для оплаты
@@ -943,7 +1177,10 @@ async def handle_simple_subscription_payment_method(
             qr_confirmation_data = payment_result.get('qr_confirmation_data')
 
             if not confirmation_url and not qr_confirmation_data:
-                await callback.answer('❌ Ошибка получения данных для оплаты', show_alert=True)
+                await callback.answer(
+                    texts.t('YOOKASSA_SBP_PAYMENT_DATA_ERROR', '❌ Ошибка получения данных для оплаты через СБП. Обратитесь в поддержку.'),
+                    show_alert=True,
+                )
                 return
 
             # Подготовим QR-код для вставки в основное сообщение
@@ -982,18 +1219,31 @@ async def handle_simple_subscription_payment_method(
 
             # Добавляем кнопку оплаты, если доступна ссылка
             if confirmation_url:
-                keyboard_buttons.append([types.InlineKeyboardButton(text='🔗 Перейти к оплате', url=confirmation_url)])
+                keyboard_buttons.append(
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('YOOKASSA_SBP_GO_TO_PAYMENT_BUTTON', '🔗 Перейти к оплате'),
+                            url=confirmation_url,
+                        )
+                    ]
+                )
             else:
                 # Если ссылка недоступна, предлагаем оплатить через ID платежа в приложении банка
                 keyboard_buttons.append(
-                    [types.InlineKeyboardButton(text='📱 Оплатить в приложении банка', callback_data='temp_disabled')]
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('YOOKASSA_SBP_PAY_IN_BANK_APP_BUTTON', '📱 Оплатить в приложении банка'),
+                            callback_data='temp_disabled',
+                        )
+                    ]
                 )
 
             # Добавляем общие кнопки
             keyboard_buttons.append(
                 [
                     types.InlineKeyboardButton(
-                        text='📊 Проверить статус', callback_data=f'check_yookassa_{payment_result["local_payment_id"]}'
+                        text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                        callback_data=f'check_yookassa_{payment_result["local_payment_id"]}',
                     )
                 ]
             )
@@ -1007,22 +1257,40 @@ async def handle_simple_subscription_payment_method(
             show_devices = settings.is_devices_selection_enabled()
 
             message_lines = [
-                '💳 <b>Оплата подписки через YooKassa</b>',
+                texts.t('SIMPLE_SUBSCRIPTION_YOOKASSA_TITLE', '💳 <b>Оплата подписки через YooKassa</b>'),
                 '',
-                f'📅 Период: {subscription_params["period_days"]} дней',
+                texts.t('SIMPLE_SUBSCRIPTION_PERIOD_LINE', '📅 Период: {days} дней').format(
+                    days=subscription_params['period_days']
+                ),
             ]
 
             if show_devices:
-                message_lines.append(f'📱 Устройства: {subscription_params["device_limit"]}')
+                message_lines.append(
+                    texts.t('SIMPLE_SUBSCRIPTION_DEVICES_LINE', '📱 Устройства: {devices}').format(
+                        devices=subscription_params['device_limit']
+                    )
+                )
 
             yookassa_traffic_gb = subscription_params['traffic_limit_gb']
-            yookassa_traffic_label = 'Безлимит' if yookassa_traffic_gb == 0 else f'{yookassa_traffic_gb} ГБ'
+            yookassa_traffic_label = (
+                texts.t('SUBSCRIPTION_TRAFFIC_DISPLAY_UNLIMITED', 'Безлимит')
+                if yookassa_traffic_gb == 0
+                else texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_GB_VALUE', '{traffic_gb} ГБ').format(
+                    traffic_gb=yookassa_traffic_gb
+                )
+            )
 
             message_lines.extend(
                 [
-                    f'📊 Трафик: {yookassa_traffic_label}',
-                    f'💰 Сумма: {settings.format_price(price_kopeks)}',
-                    f'🆔 ID платежа: {payment_result["yookassa_payment_id"][:8]}...',
+                    texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_LINE', '📊 Трафик: {traffic}').format(
+                        traffic=yookassa_traffic_label
+                    ),
+                    texts.t('SIMPLE_SUBSCRIPTION_YOOKASSA_AMOUNT_LINE', '💰 Сумма: {amount}').format(
+                        amount=settings.format_price(price_kopeks)
+                    ),
+                    texts.t('SIMPLE_SUBSCRIPTION_YOOKASSA_PAYMENT_ID_LINE', '🆔 ID платежа: {payment_id}...').format(
+                        payment_id=payment_result['yookassa_payment_id'][:8]
+                    ),
                     '',
                 ]
             )
@@ -1031,20 +1299,22 @@ async def handle_simple_subscription_payment_method(
 
             # Добавляем инструкции в зависимости от доступных способов оплаты
             if not confirmation_url:
-                message_text += (
-                    f'📱 <b>Инструкция по оплате:</b>\n'
-                    f'1. Откройте приложение вашего банка\n'
-                    f'2. Найдите функцию оплаты по реквизитам или перевод по СБП\n'
-                    f'3. Введите ID платежа: <code>{payment_result["yookassa_payment_id"]}</code>\n'
-                    f'4. Подтвердите платеж в приложении банка\n'
-                    f'5. Деньги поступят на баланс автоматически\n\n'
-                )
+                message_text += texts.t(
+                    'YOOKASSA_SBP_PAYMENT_MANUAL_INSTRUCTIONS',
+                    '📱 <b>Инструкция по оплате:</b>\n'
+                    '1. Откройте приложение вашего банка\n'
+                    '2. Найдите функцию оплаты по реквизитам или перевод по СБП\n'
+                    '3. Введите ID платежа: <code>{full_payment_id}</code>\n'
+                    '4. Подтвердите платеж в приложении банка\n'
+                    '5. Деньги поступят на баланс автоматически\n\n',
+                ).format(full_payment_id=payment_result['yookassa_payment_id'])
 
-            message_text += (
-                f'🔒 Оплата происходит через защищенную систему YooKassa\n'
-                f'✅ Принимаем карты: Visa, MasterCard, МИР\n\n'
-                f'❓ Если возникнут проблемы, обратитесь в {settings.get_support_contact_display_html()}'
-            )
+            message_text += texts.t(
+                'YOOKASSA_SBP_PAYMENT_FOOTER',
+                '🔒 Оплата происходит через защищенную систему YooKassa\n'
+                '✅ Принимаем СБП от всех банков-участников\n\n'
+                '❓ Если возникнут проблемы, обратитесь в {support}',
+            ).format(support=settings.get_support_contact_display_html())
 
             # Отправляем сообщение с инструкциями и клавиатурой
             # Если есть QR-код, отправляем его как медиа-сообщение
@@ -1064,13 +1334,19 @@ async def handle_simple_subscription_payment_method(
         elif payment_method == 'cryptobot':
             # Оплата через CryptoBot
             if not settings.is_cryptobot_enabled():
-                await callback.answer('❌ Оплата через CryptoBot временно недоступна', show_alert=True)
+                await callback.answer(
+                    texts.t('CRYPTOBOT_NOT_AVAILABLE', '❌ Оплата криптовалютой временно недоступна'),
+                    show_alert=True,
+                )
                 return
 
             amount_rubles = price_kopeks / 100
             if amount_rubles < 100 or amount_rubles > 100000:
                 await callback.answer(
-                    '❌ Сумма должна быть от 100 до 100 000 ₽ для оплаты через CryptoBot',
+                    texts.t(
+                        'SIMPLE_SUBSCRIPTION_CRYPTOBOT_AMOUNT_RANGE_ERROR',
+                        '❌ Сумма должна быть от 100 до 100 000 ₽ для оплаты через CryptoBot',
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1086,13 +1362,19 @@ async def handle_simple_subscription_payment_method(
             amount_usd = round(amount_rubles / usd_rate, 2)
             if amount_usd < 1:
                 await callback.answer(
-                    '❌ Минимальная сумма для оплаты через CryptoBot — примерно 1 USD',
+                    texts.t(
+                        'SIMPLE_SUBSCRIPTION_CRYPTOBOT_MIN_USD_ERROR',
+                        '❌ Минимальная сумма для оплаты через CryptoBot — примерно 1 USD',
+                    ),
                     show_alert=True,
                 )
                 return
             if amount_usd > 1000:
                 await callback.answer(
-                    '❌ Максимальная сумма для оплаты через CryptoBot — 1000 USD',
+                    texts.t(
+                        'SIMPLE_SUBSCRIPTION_CRYPTOBOT_MAX_USD_ERROR',
+                        '❌ Максимальная сумма для оплаты через CryptoBot — 1000 USD',
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1112,7 +1394,10 @@ async def handle_simple_subscription_payment_method(
 
             if not crypto_result:
                 await callback.answer(
-                    '❌ Ошибка создания платежа через CryptoBot. Попробуйте позже или обратитесь в поддержку.',
+                    texts.t(
+                        'CRYPTOBOT_CREATE_PAYMENT_ERROR',
+                        '❌ Ошибка создания платежа. Попробуйте позже или обратитесь в поддержку.',
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1125,7 +1410,10 @@ async def handle_simple_subscription_payment_method(
 
             if not payment_url:
                 await callback.answer(
-                    '❌ Не удалось получить ссылку для оплаты. Обратитесь в поддержку.',
+                    texts.t(
+                        'CRYPTOBOT_PAYMENT_LINK_ERROR',
+                        '❌ Ошибка получения ссылки для оплаты. Обратитесь в поддержку.',
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1134,7 +1422,7 @@ async def handle_simple_subscription_payment_method(
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
-                            text='🪙 Оплатить через CryptoBot',
+                            text=texts.t('SIMPLE_SUBSCRIPTION_CRYPTOBOT_PAY_BUTTON', '🪙 Оплатить через CryptoBot'),
                             url=payment_url,
                         )
                     ],
@@ -1149,18 +1437,28 @@ async def handle_simple_subscription_payment_method(
             )
 
             message_text = (
-                '🪙 <b>Оплата через CryptoBot</b>\n\n'
-                f'💰 Сумма к оплате: {amount_rubles:.0f} ₽\n'
-                f'💵 В долларах: {amount_usd:.2f} USD\n'
-                f'🪙 Актив: {crypto_result["asset"]}\n'
-                f'💱 Курс: 1 USD ≈ {usd_rate:.2f} ₽\n'
-                f'🆔 ID платежа: {crypto_result["invoice_id"][:8]}...\n\n'
-                '📱 <b>Инструкция:</b>\n'
-                "1. Нажмите кнопку 'Оплатить через CryptoBot'\n"
-                '2. Выберите актив и следуйте подсказкам\n'
-                '3. Подтвердите перевод\n'
-                '4. Средства зачислятся автоматически\n\n'
-                f'❓ Если возникнут проблемы, обратитесь в {settings.get_support_contact_display_html()}'
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_CRYPTOBOT_INVOICE_MESSAGE',
+                    '🪙 <b>Оплата через CryptoBot</b>\n\n'
+                    '💰 Сумма к оплате: {amount_rub} ₽\n'
+                    '💵 В долларах: {amount_usd} USD\n'
+                    '🪙 Актив: {asset}\n'
+                    '💱 Курс: 1 USD ≈ {rate} ₽\n'
+                    '🆔 ID платежа: {invoice_short}...\n\n'
+                    '📱 <b>Инструкция:</b>\n'
+                    "1. Нажмите кнопку 'Оплатить через CryptoBot'\n"
+                    '2. Выберите актив и следуйте подсказкам\n'
+                    '3. Подтвердите перевод\n'
+                    '4. Средства зачислятся автоматически\n\n'
+                    '❓ Если возникнут проблемы, обратитесь в {support}',
+                ).format(
+                    amount_rub=f'{amount_rubles:.0f}',
+                    amount_usd=f'{amount_usd:.2f}',
+                    asset=crypto_result['asset'],
+                    rate=f'{usd_rate:.2f}',
+                    invoice_short=crypto_result['invoice_id'][:8],
+                    support=settings.get_support_contact_display_html(),
+                )
             )
 
             await callback.message.edit_text(
@@ -1175,13 +1473,19 @@ async def handle_simple_subscription_payment_method(
 
         elif payment_method == 'heleket':
             if not settings.is_heleket_enabled():
-                await callback.answer('❌ Оплата через Heleket временно недоступна', show_alert=True)
+                await callback.answer(
+                    texts.t('HELEKET_NOT_AVAILABLE', '❌ Оплата через Heleket недоступна'),
+                    show_alert=True,
+                )
                 return
 
             amount_rubles = price_kopeks / 100
             if amount_rubles < 100 or amount_rubles > 100000:
                 await callback.answer(
-                    '❌ Сумма должна быть от 100 до 100 000 ₽ для оплаты через Heleket',
+                    texts.t(
+                        'SIMPLE_SUBSCRIPTION_HELEKET_AMOUNT_RANGE_ERROR',
+                        '❌ Сумма должна быть от 100 до 100 000 ₽ для оплаты через Heleket',
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1199,7 +1503,10 @@ async def handle_simple_subscription_payment_method(
 
             if not heleket_result:
                 await callback.answer(
-                    '❌ Ошибка создания платежа Heleket. Попробуйте позже или обратитесь в поддержку.',
+                    texts.t(
+                        'HELEKET_CREATE_PAYMENT_ERROR',
+                        '❌ Не удалось создать счёт в Heleket. Попробуйте позже или обратитесь в поддержку.',
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1207,7 +1514,10 @@ async def handle_simple_subscription_payment_method(
             payment_url = heleket_result.get('payment_url')
             if not payment_url:
                 await callback.answer(
-                    '❌ Не удалось получить ссылку для оплаты Heleket. Обратитесь в поддержку.',
+                    texts.t(
+                        'HELEKET_PAYMENT_LINK_ERROR',
+                        '❌ Не удалось получить ссылку для оплаты Heleket',
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1228,7 +1538,7 @@ async def handle_simple_subscription_payment_method(
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
-                            text='🪙 Оплатить через Heleket',
+                            text=texts.t('SIMPLE_SUBSCRIPTION_HELEKET_PAY_BUTTON', '🪙 Оплатить через Heleket'),
                             url=payment_url,
                         )
                     ],
@@ -1243,35 +1553,54 @@ async def handle_simple_subscription_payment_method(
             )
 
             message_lines = [
-                '🪙 <b>Оплата через Heleket</b>',
+                texts.t('SIMPLE_SUBSCRIPTION_HELEKET_TITLE', '🪙 <b>Оплата через Heleket</b>'),
                 '',
-                f'💰 Сумма: {settings.format_price(price_kopeks)}',
+                texts.t('SIMPLE_SUBSCRIPTION_HELEKET_AMOUNT_LINE', '💰 Сумма: {amount}').format(
+                    amount=settings.format_price(price_kopeks)
+                ),
             ]
 
             if payer_amount and payer_currency:
-                message_lines.append(f'🪙 К оплате: {payer_amount} {payer_currency}')
+                message_lines.append(
+                    texts.t('SIMPLE_SUBSCRIPTION_HELEKET_PAYER_LINE', '🪙 К оплате: {payer_amount} {payer_currency}').format(
+                        payer_amount=payer_amount,
+                        payer_currency=payer_currency,
+                    )
+                )
                 try:
                     payer_amount_float = float(payer_amount)
                     if payer_amount_float > 0:
                         rub_per_currency = amount_rubles / payer_amount_float
-                        message_lines.append(f'💱 Курс: 1 {payer_currency} ≈ {rub_per_currency:.2f} ₽')
+                        message_lines.append(
+                            texts.t(
+                                'SIMPLE_SUBSCRIPTION_HELEKET_RATE_LINE',
+                                '💱 Курс: 1 {currency} ≈ {rate} ₽',
+                            ).format(currency=payer_currency, rate=f'{rub_per_currency:.2f}')
+                        )
                 except (TypeError, ValueError, ZeroDivisionError):
                     pass
 
             if markup_percent:
                 sign = '+' if markup_percent > 0 else ''
-                message_lines.append(f'📈 Наценка: {sign}{markup_percent}%')
+                message_lines.append(
+                    texts.t('SIMPLE_SUBSCRIPTION_HELEKET_MARKUP_LINE', '📈 Наценка: {value}%').format(
+                        value=f'{sign}{markup_percent}'
+                    )
+                )
 
             message_lines.extend(
                 [
                     '',
-                    '📱 <b>Инструкция:</b>',
-                    "1. Нажмите кнопку 'Оплатить через Heleket'",
-                    '2. Следуйте подсказкам на странице оплаты',
-                    '3. Подтвердите перевод',
-                    '4. Средства зачислятся автоматически',
+                    texts.t('HELEKET_INVOICE_INSTRUCTION_TITLE', '📱 Инструкция:'),
+                    texts.t('SIMPLE_SUBSCRIPTION_HELEKET_INSTRUCTION_STEP_1', "1. Нажмите кнопку 'Оплатить через Heleket'"),
+                    texts.t('SIMPLE_SUBSCRIPTION_HELEKET_INSTRUCTION_STEP_2', '2. Следуйте подсказкам на странице оплаты'),
+                    texts.t('SIMPLE_SUBSCRIPTION_HELEKET_INSTRUCTION_STEP_3', '3. Подтвердите перевод'),
+                    texts.t('SIMPLE_SUBSCRIPTION_HELEKET_INSTRUCTION_STEP_4', '4. Средства зачислятся автоматически'),
                     '',
-                    f'❓ Если возникнут проблемы, обратитесь в {settings.get_support_contact_display_html()}',
+                    texts.t(
+                        'SIMPLE_SUBSCRIPTION_SUPPORT_LINE',
+                        '❓ Если возникнут проблемы, обратитесь в {support}',
+                    ).format(support=settings.get_support_contact_display_html()),
                 ]
             )
 
@@ -1290,14 +1619,22 @@ async def handle_simple_subscription_payment_method(
             mulenpay_name = settings.get_mulenpay_display_name()
             if not settings.is_mulenpay_enabled():
                 await callback.answer(
-                    f'❌ Оплата через {mulenpay_name} временно недоступна',
+                    texts.t('MULENPAY_NOT_AVAILABLE', '❌ Оплата через {mulenpay_name} временно недоступна').format(
+                        mulenpay_name=mulenpay_name
+                    ),
                     show_alert=True,
                 )
                 return
 
             if price_kopeks < settings.MULENPAY_MIN_AMOUNT_KOPEKS or price_kopeks > settings.MULENPAY_MAX_AMOUNT_KOPEKS:
                 await callback.answer(
-                    f'❌ Сумма для Mulen Pay должна быть в пределах от {settings.format_price(settings.MULENPAY_MIN_AMOUNT_KOPEKS)} до {settings.format_price(settings.MULENPAY_MAX_AMOUNT_KOPEKS)}',
+                    texts.t(
+                        'SIMPLE_SUBSCRIPTION_MULENPAY_AMOUNT_RANGE_ERROR',
+                        '❌ Сумма для Mulen Pay должна быть в пределах от {min_amount} до {max_amount}',
+                    ).format(
+                        min_amount=settings.format_price(settings.MULENPAY_MIN_AMOUNT_KOPEKS),
+                        max_amount=settings.format_price(settings.MULENPAY_MAX_AMOUNT_KOPEKS),
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1332,7 +1669,9 @@ async def handle_simple_subscription_payment_method(
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('MULENPAY_PAY_BUTTON', '💳 Оплатить через Mulen Pay'),
+                            text=texts.t('MULENPAY_PAY_BUTTON', '💳 Оплатить через {mulenpay_name}').format(
+                                mulenpay_name=mulenpay_name
+                            ),
                             url=payment_url,
                         )
                     ],
@@ -1380,7 +1719,7 @@ async def handle_simple_subscription_payment_method(
         elif payment_method == 'pal24':
             # Оплата через PayPalych
             if not settings.is_pal24_enabled():
-                await callback.answer('❌ Оплата через PayPalych временно недоступна', show_alert=True)
+                await callback.answer(texts.t('PAL24_NOT_AVAILABLE', '❌ Оплата через PayPalych временно недоступна'), show_alert=True)
                 return
 
             payment_service = PaymentService(callback.bot)
@@ -1513,7 +1852,7 @@ async def handle_simple_subscription_payment_method(
             steps.append(success_template.format(step=step_counter))
 
             message_template = texts.t(
-                'PAL24_PAYMENT_INSTRUCTIONS',
+                'SIMPLE_SUBSCRIPTION_PAL24_PAYMENT_INSTRUCTIONS',
                 (
                     '🏦 <b>Оплата через PayPalych</b>\n\n'
                     '💰 Сумма: {amount}\n'
@@ -1555,11 +1894,20 @@ async def handle_simple_subscription_payment_method(
         elif payment_method == 'wata':
             # Оплата через WATA
             if not settings.is_wata_enabled():
-                await callback.answer('❌ Оплата через WATA временно недоступна', show_alert=True)
+                await callback.answer(
+                    texts.t('WATA_TEMPORARILY_UNAVAILABLE', '❌ Оплата через WATA временно недоступна'),
+                    show_alert=True,
+                )
                 return
             if price_kopeks < settings.WATA_MIN_AMOUNT_KOPEKS or price_kopeks > settings.WATA_MAX_AMOUNT_KOPEKS:
                 await callback.answer(
-                    f'❌ Сумма для WATA должна быть между {settings.format_price(settings.WATA_MIN_AMOUNT_KOPEKS)} и {settings.format_price(settings.WATA_MAX_AMOUNT_KOPEKS)}.',
+                    texts.t(
+                        'SIMPLE_SUBSCRIPTION_WATA_AMOUNT_RANGE_ERROR',
+                        '❌ Сумма для WATA должна быть между {min_amount} и {max_amount}.',
+                    ).format(
+                        min_amount=settings.format_price(settings.WATA_MIN_AMOUNT_KOPEKS),
+                        max_amount=settings.format_price(settings.WATA_MAX_AMOUNT_KOPEKS),
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1642,12 +1990,19 @@ async def handle_simple_subscription_payment_method(
             return
 
         else:
-            await callback.answer('❌ Неизвестный способ оплаты', show_alert=True)
+            await callback.answer(
+                texts.t('BALANCE_UNKNOWN_PAYMENT_METHOD_ALERT', '❌ Неизвестный способ оплаты'),
+                show_alert=True,
+            )
 
     except Exception as e:
         logger.error('Ошибка обработки метода оплаты простой подписки', error=e)
         await callback.answer(
-            '❌ Ошибка обработки запроса. Попробуйте позже или обратитесь в поддержку.', show_alert=True
+            texts.t(
+                'BALANCE_REQUEST_PROCESSING_ERROR_ALERT',
+                '❌ Ошибка обработки запроса',
+            ),
+            show_alert=True,
         )
         await state.clear()
 
@@ -1663,21 +2018,26 @@ async def check_simple_pal24_payment_status(
         status_info = await payment_service.get_pal24_payment_status(db, local_payment_id)
 
         if not status_info:
-            await callback.answer('❌ Платеж не найден', show_alert=True)
+            await callback.answer(
+                get_texts(settings.DEFAULT_LANGUAGE).t('PAL24_PAYMENT_NOT_FOUND_ALERT', '❌ Платеж не найден'),
+                show_alert=True,
+            )
             return
 
         payment = status_info['payment']
+        db_user = getattr(callback, 'db_user', None)
+        texts = get_texts(db_user.language if db_user else settings.DEFAULT_LANGUAGE)
 
         status_labels = {
-            'NEW': ('⏳', 'Ожидает оплаты'),
-            'PROCESS': ('⌛', 'Обрабатывается'),
-            'SUCCESS': ('✅', 'Оплачен'),
-            'FAIL': ('❌', 'Отменен'),
-            'UNDERPAID': ('⚠️', 'Недоплата'),
-            'OVERPAID': ('⚠️', 'Переплата'),
+            'NEW': ('⏳', texts.t('PAL24_STATUS_NEW', 'Ожидает оплаты')),
+            'PROCESS': ('⌛', texts.t('PAL24_STATUS_PROCESS', 'Обрабатывается')),
+            'SUCCESS': ('✅', texts.t('PAL24_STATUS_SUCCESS', 'Оплачен')),
+            'FAIL': ('❌', texts.t('PAL24_STATUS_FAIL', 'Отменен')),
+            'UNDERPAID': ('⚠️', texts.t('PAL24_STATUS_UNDERPAID', 'Недоплата')),
+            'OVERPAID': ('⚠️', texts.t('PAL24_STATUS_OVERPAID', 'Переплата')),
         }
 
-        emoji, status_text = status_labels.get(payment.status, ('❓', 'Неизвестно'))
+        emoji, status_text = status_labels.get(payment.status, ('❓', texts.t('PAL24_STATUS_UNKNOWN', 'Неизвестно')))
 
         metadata = payment.metadata_json or {}
         links_meta = metadata.get('links') if isinstance(metadata, dict) else {}
@@ -1690,33 +2050,46 @@ async def check_simple_pal24_payment_status(
         if not card_link and payment.link_page_url and payment.link_page_url != sbp_link:
             card_link = payment.link_page_url
 
-        db_user = getattr(callback, 'db_user', None)
-        texts = get_texts(db_user.language if db_user else settings.DEFAULT_LANGUAGE)
-
         message_lines = [
-            '🏦 Статус платежа PayPalych:',
+            texts.t('PAL24_STATUS_MESSAGE_TITLE', '🏦 Статус платежа PayPalych:'),
             '',
-            f'🆔 ID счета: {payment.bill_id}',
-            f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}',
-            f'📊 Статус: {emoji} {status_text}',
-            f'📅 Создан: {payment.created_at.strftime("%d.%m.%Y %H:%M")}',
+            texts.t('PAL24_STATUS_BILL_ID_LINE', '🆔 ID счета: {bill_id}').format(bill_id=payment.bill_id),
+            texts.t('PAL24_STATUS_AMOUNT_LINE', '💰 Сумма: {amount}').format(
+                amount=settings.format_price(payment.amount_kopeks)
+            ),
+            texts.t('PAL24_STATUS_STATE_LINE', '📊 Статус: {emoji} {status_text}').format(
+                emoji=emoji,
+                status_text=status_text,
+            ),
+            texts.t('PAL24_STATUS_CREATED_AT_LINE', '📅 Создан: {created_at}').format(
+                created_at=payment.created_at.strftime('%d.%m.%Y %H:%M')
+            ),
         ]
 
         if payment.is_paid:
-            message_lines += ['', '✅ Платеж успешно завершен! Средства уже зачислены.']
+            message_lines += ['', texts.t('PAL24_STATUS_PAID_NOTE', '✅ Платеж успешно завершен! Средства уже на балансе.')]
         elif payment.status in {'NEW', 'PROCESS'}:
             message_lines += [
                 '',
-                '⏳ Платеж еще не завершен. Оплатите счет и проверьте статус позже.',
+                texts.t('PAL24_STATUS_PENDING_NOTE', '⏳ Платеж еще не завершен. Оплатите счет и проверьте статус позже.'),
             ]
             if sbp_link:
-                message_lines += ['', f'🏦 СБП: {sbp_link}']
+                message_lines += [
+                    '',
+                    texts.t('PAL24_STATUS_SBP_LINK_LINE', '🏦 СБП: {sbp_link}').format(sbp_link=sbp_link),
+                ]
             if card_link and card_link != sbp_link:
-                message_lines.append(f'💳 Карта: {card_link}')
+                message_lines.append(
+                    texts.t('PAL24_STATUS_CARD_LINK_LINE', '💳 Банковская карта: {card_link}').format(
+                        card_link=card_link
+                    )
+                )
         elif payment.status in {'FAIL', 'UNDERPAID', 'OVERPAID'}:
             message_lines += [
                 '',
-                f'❌ Платеж не завершен корректно. Обратитесь в {settings.get_support_contact_display()}',
+                texts.t('PAL24_STATUS_FAILED_NOTE', '❌ Платеж не завершен корректно. Обратитесь в {support}').format(
+                    support=settings.get_support_contact_display()
+                ),
             ]
 
         pay_rows: list[list[types.InlineKeyboardButton]] = []
@@ -1783,7 +2156,10 @@ async def check_simple_pal24_payment_status(
 
     except Exception as error:
         logger.error('Ошибка проверки статуса PayPalych для простой подписки', error=error)
-        await callback.answer('❌ Ошибка проверки статуса', show_alert=True)
+        await callback.answer(
+            get_texts(settings.DEFAULT_LANGUAGE).t('PAL24_STATUS_CHECK_ERROR', '❌ Ошибка проверки статуса'),
+            show_alert=True,
+        )
 
 
 @error_handler
@@ -1794,14 +2170,23 @@ async def check_simple_mulenpay_payment_status(
     try:
         local_payment_id = int(callback.data.rsplit('_', 1)[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(
+            get_texts(settings.DEFAULT_LANGUAGE).t(
+                'HELEKET_INVALID_PAYMENT_ID',
+                'Некорректный идентификатор платежа',
+            ),
+            show_alert=True,
+        )
         return
 
     payment_service = PaymentService(callback.bot)
     status_info = await payment_service.get_mulenpay_payment_status(db, local_payment_id)
 
     if not status_info:
-        await callback.answer('❌ Платеж не найден', show_alert=True)
+        await callback.answer(
+            get_texts(settings.DEFAULT_LANGUAGE).t('MULENPAY_PAYMENT_NOT_FOUND_ALERT', '❌ Платеж не найден'),
+            show_alert=True,
+        )
         return
 
     payment = status_info['payment']
@@ -1818,30 +2203,45 @@ async def check_simple_mulenpay_payment_status(
 
     texts = get_texts(user_language)
     status_labels = {
-        'created': ('⏳', 'Ожидает оплаты'),
-        'processing': ('⌛', 'Обрабатывается'),
-        'success': ('✅', 'Оплачен'),
-        'canceled': ('❌', 'Отменен'),
-        'error': ('⚠️', 'Ошибка'),
-        'hold': ('🔒', 'Холд'),
-        'unknown': ('❓', 'Неизвестно'),
+        'created': ('⏳', texts.t('MULENPAY_STATUS_CREATED', 'Ожидает оплаты')),
+        'processing': ('⌛', texts.t('MULENPAY_STATUS_PROCESSING', 'Обрабатывается')),
+        'success': ('✅', texts.t('MULENPAY_STATUS_SUCCESS', 'Оплачен')),
+        'canceled': ('❌', texts.t('MULENPAY_STATUS_CANCELED', 'Отменен')),
+        'error': ('⚠️', texts.t('MULENPAY_STATUS_ERROR', 'Ошибка')),
+        'hold': ('🔒', texts.t('MULENPAY_STATUS_HOLD', 'Холд')),
+        'unknown': ('❓', texts.t('MULENPAY_STATUS_UNKNOWN', 'Неизвестно')),
     }
 
-    emoji, status_text = status_labels.get(payment.status, ('❓', 'Неизвестно'))
+    emoji, status_text = status_labels.get(payment.status, ('❓', texts.t('MULENPAY_STATUS_UNKNOWN', 'Неизвестно')))
 
-    message_lines = [
-        '💳 Статус платежа Mulen Pay:',
-        '',
-        f'🆔 ID: {payment.mulen_payment_id or payment.id}',
-        f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}',
-        f'📊 Статус: {emoji} {status_text}',
-        f'📅 Создан: {payment.created_at.strftime("%d.%m.%Y %H:%M") if payment.created_at else "—"}',
-    ]
+    message_text = texts.t(
+        'MULENPAY_STATUS_HEADER',
+        '💳 Статус платежа {mulenpay_name}:\n\n',
+    ).format(mulenpay_name=settings.get_mulenpay_display_name())
+    message_text += texts.t('MULENPAY_STATUS_ID_LINE', '🆔 ID: {payment_id}\n').format(
+        payment_id=payment.mulen_payment_id or payment.id
+    )
+    message_text += texts.t('MULENPAY_STATUS_AMOUNT_LINE', '💰 Сумма: {amount}\n').format(
+        amount=settings.format_price(payment.amount_kopeks)
+    )
+    message_text += texts.t('MULENPAY_STATUS_STATE_LINE', '📊 Статус: {emoji} {status_text}\n').format(
+        emoji=emoji,
+        status_text=status_text,
+    )
+    message_text += texts.t('MULENPAY_STATUS_CREATED_AT_LINE', '📅 Создан: {created_at}\n').format(
+        created_at=payment.created_at.strftime('%d.%m.%Y %H:%M') if payment.created_at else '—'
+    )
 
     if payment.is_paid:
-        message_lines.append('\n✅ Платеж успешно завершен! Средства уже зачислены.')
+        message_text += texts.t(
+            'MULENPAY_STATUS_PAID_NOTE',
+            '\n✅ Платеж успешно завершен! Средства уже на балансе.',
+        )
     elif payment.status in {'created', 'processing'}:
-        message_lines.append('\n⏳ Платеж еще не завершен. Завершите оплату и проверьте статус позже.')
+        message_text += texts.t(
+            'MULENPAY_STATUS_PENDING_NOTE',
+            '\n⏳ Платеж еще не завершен. Завершите оплату по ссылке и проверьте статус позже.',
+        )
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1857,7 +2257,7 @@ async def check_simple_mulenpay_payment_status(
 
     await callback.answer()
     await callback.message.edit_text(
-        '\n'.join(message_lines),
+        message_text,
         reply_markup=keyboard,
         parse_mode='HTML',
     )
@@ -1871,22 +2271,34 @@ async def check_simple_cryptobot_payment_status(
     try:
         local_payment_id = int(callback.data.rsplit('_', 1)[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(
+            get_texts(settings.DEFAULT_LANGUAGE).t(
+                'HELEKET_INVALID_PAYMENT_ID',
+                'Некорректный идентификатор платежа',
+            ),
+            show_alert=True,
+        )
         return
 
     from app.database.crud.cryptobot import get_cryptobot_payment_by_id
 
     payment = await get_cryptobot_payment_by_id(db, local_payment_id)
     if not payment:
-        await callback.answer('❌ Платеж не найден', show_alert=True)
+        await callback.answer(
+            get_texts(settings.DEFAULT_LANGUAGE).t('WATA_PAYMENT_NOT_FOUND', '❌ Платеж не найден'),
+            show_alert=True,
+        )
         return
 
     status_labels = {
-        'active': ('⏳', 'Ожидает оплаты'),
-        'paid': ('✅', 'Оплачен'),
-        'expired': ('❌', 'Истек'),
+        'active': ('⏳', get_texts(settings.DEFAULT_LANGUAGE).t('YOOKASSA_STATUS_PENDING', 'Ожидает оплаты')),
+        'paid': ('✅', get_texts(settings.DEFAULT_LANGUAGE).t('YOOKASSA_STATUS_SUCCEEDED', 'Оплачен')),
+        'expired': ('❌', get_texts(settings.DEFAULT_LANGUAGE).t('SIMPLE_SUBSCRIPTION_CRYPTOBOT_STATUS_EXPIRED', 'Истек')),
     }
-    emoji, status_text = status_labels.get(payment.status, ('❓', 'Неизвестно'))
+    emoji, status_text = status_labels.get(
+        payment.status,
+        ('❓', get_texts(settings.DEFAULT_LANGUAGE).t('YOOKASSA_STATUS_UNKNOWN', 'Неизвестно')),
+    )
 
     language = settings.DEFAULT_LANGUAGE
     try:
@@ -1900,18 +2312,35 @@ async def check_simple_cryptobot_payment_status(
 
     texts = get_texts(language)
     message_lines = [
-        '🪙 <b>Статус платежа CryptoBot</b>',
+        texts.t('SIMPLE_SUBSCRIPTION_CRYPTOBOT_STATUS_TITLE', '🪙 <b>Статус платежа CryptoBot</b>'),
         '',
-        f'🆔 ID: {payment.invoice_id}',
-        f'💰 Сумма: {payment.amount} {payment.asset}',
-        f'📊 Статус: {emoji} {status_text}',
-        f'📅 Создан: {payment.created_at.strftime("%d.%m.%Y %H:%M") if payment.created_at else "—"}',
+        texts.t('SIMPLE_SUBSCRIPTION_STATUS_ID_LINE', '🆔 ID: {payment_id}').format(payment_id=payment.invoice_id),
+        texts.t('SIMPLE_SUBSCRIPTION_CRYPTOBOT_STATUS_AMOUNT_LINE', '💰 Сумма: {amount}').format(
+            amount=f'{payment.amount} {payment.asset}'
+        ),
+        texts.t('SIMPLE_SUBSCRIPTION_STATUS_STATE_LINE', '📊 Статус: {emoji} {status}').format(
+            emoji=emoji,
+            status=status_text,
+        ),
+        texts.t('SIMPLE_SUBSCRIPTION_STATUS_CREATED_LINE', '📅 Создан: {created_at}').format(
+            created_at=payment.created_at.strftime('%d.%m.%Y %H:%M') if payment.created_at else '—'
+        ),
     ]
 
     if payment.status == 'paid':
-        message_lines.append('\n✅ Платеж подтвержден. Средства уже зачислены.')
+        message_lines.append(
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_CRYPTOBOT_STATUS_PAID_NOTE',
+                '\n✅ Платеж подтвержден. Средства уже зачислены.',
+            )
+        )
     elif payment.status == 'active':
-        message_lines.append('\n⏳ Платеж еще ожидает подтверждения. Оплатите счет и проверьте статус позже.')
+        message_lines.append(
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_CRYPTOBOT_STATUS_PENDING_NOTE',
+                '\n⏳ Платеж еще ожидает подтверждения. Оплатите счет и проверьте статус позже.',
+            )
+        )
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1941,28 +2370,40 @@ async def check_simple_heleket_payment_status(
     try:
         local_payment_id = int(callback.data.rsplit('_', 1)[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(
+            get_texts(settings.DEFAULT_LANGUAGE).t(
+                'HELEKET_INVALID_PAYMENT_ID',
+                'Некорректный идентификатор платежа',
+            ),
+            show_alert=True,
+        )
         return
 
     from app.database.crud.heleket import get_heleket_payment_by_id
 
     payment = await get_heleket_payment_by_id(db, local_payment_id)
     if not payment:
-        await callback.answer('❌ Платеж не найден', show_alert=True)
+        await callback.answer(
+            get_texts(settings.DEFAULT_LANGUAGE).t('WATA_PAYMENT_NOT_FOUND', '❌ Платеж не найден'),
+            show_alert=True,
+        )
         return
 
     status_labels = {
-        'check': ('⏳', 'Ожидает оплаты'),
-        'paid': ('✅', 'Оплачен'),
-        'paid_over': ('✅', 'Оплачен (переплата)'),
-        'wrong_amount': ('⚠️', 'Неверная сумма'),
-        'cancel': ('❌', 'Отменен'),
-        'fail': ('❌', 'Ошибка'),
-        'process': ('⌛', 'Обрабатывается'),
-        'confirm_check': ('⌛', 'Ожидает подтверждения'),
+        'check': ('⏳', get_texts(settings.DEFAULT_LANGUAGE).t('HELEKET_STATUS_CHECK', '⏳ Ожидаем оплату')),
+        'paid': ('✅', get_texts(settings.DEFAULT_LANGUAGE).t('HELEKET_STATUS_PAID', '✅ Платёж зачислен')),
+        'paid_over': ('✅', get_texts(settings.DEFAULT_LANGUAGE).t('HELEKET_STATUS_PAID_OVER', '✅ Платёж зачислен (с переплатой)')),
+        'wrong_amount': ('⚠️', get_texts(settings.DEFAULT_LANGUAGE).t('HELEKET_STATUS_WRONG_AMOUNT', '❗️ Оплачена неверная сумма')),
+        'cancel': ('❌', get_texts(settings.DEFAULT_LANGUAGE).t('HELEKET_STATUS_CANCEL', '🚫 Платёж отменён')),
+        'fail': ('❌', get_texts(settings.DEFAULT_LANGUAGE).t('HELEKET_STATUS_FAIL', '❌ Ошибка при оплате')),
+        'process': ('⌛', get_texts(settings.DEFAULT_LANGUAGE).t('HELEKET_STATUS_PROCESS', '⚙️ Платёж обрабатывается')),
+        'confirm_check': ('⌛', get_texts(settings.DEFAULT_LANGUAGE).t('HELEKET_STATUS_CONFIRM_CHECK', '⛓ Ожидание подтверждений сети')),
     }
 
-    emoji, status_text = status_labels.get(payment.status, ('❓', 'Неизвестно'))
+    emoji, status_text = status_labels.get(
+        payment.status,
+        ('❓', get_texts(settings.DEFAULT_LANGUAGE).t('HELEKET_STATUS_UNKNOWN', 'ℹ️ Статус платежа: {status}').format(status='UNKNOWN')),
+    )
 
     language = settings.DEFAULT_LANGUAGE
     try:
@@ -1977,26 +2418,56 @@ async def check_simple_heleket_payment_status(
     texts = get_texts(language)
 
     message_lines = [
-        '🪙 Статус платежа Heleket:',
+        texts.t('SIMPLE_SUBSCRIPTION_HELEKET_STATUS_TITLE', '🪙 Статус платежа Heleket:'),
         '',
-        f'🆔 UUID: {payment.uuid[:8]}...',
-        f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}',
-        f'📊 Статус: {emoji} {status_text}',
-        f'📅 Создан: {payment.created_at.strftime("%d.%m.%Y %H:%M") if payment.created_at else "—"}',
+        texts.t('SIMPLE_SUBSCRIPTION_HELEKET_STATUS_UUID_LINE', '🆔 UUID: {uuid_short}...').format(
+            uuid_short=payment.uuid[:8]
+        ),
+        texts.t('SIMPLE_SUBSCRIPTION_HELEKET_AMOUNT_LINE', '💰 Сумма: {amount}').format(
+            amount=settings.format_price(payment.amount_kopeks)
+        ),
+        texts.t('SIMPLE_SUBSCRIPTION_STATUS_STATE_LINE', '📊 Статус: {emoji} {status}').format(
+            emoji=emoji,
+            status=status_text,
+        ),
+        texts.t('SIMPLE_SUBSCRIPTION_STATUS_CREATED_LINE', '📅 Создан: {created_at}').format(
+            created_at=payment.created_at.strftime('%d.%m.%Y %H:%M') if payment.created_at else '—'
+        ),
     ]
 
     if payment.payer_amount and payment.payer_currency:
-        message_lines.append(f'🪙 Оплата: {payment.payer_amount} {payment.payer_currency}')
+        message_lines.append(
+            texts.t('SIMPLE_SUBSCRIPTION_HELEKET_STATUS_PAYER_LINE', '🪙 Оплата: {payer_amount} {payer_currency}').format(
+                payer_amount=payment.payer_amount,
+                payer_currency=payment.payer_currency,
+            )
+        )
 
     if payment.is_paid:
-        message_lines.append('\n✅ Платеж успешно завершен! Средства уже зачислены.')
+        message_lines.append(
+            texts.t(
+                'MULENPAY_STATUS_PAID_NOTE',
+                '\n✅ Платеж успешно завершен! Средства уже на балансе.',
+            )
+        )
     elif payment.status in {'check', 'process', 'confirm_check'}:
-        message_lines.append('\n⏳ Платеж еще обрабатывается. Завершите оплату и проверьте статус позже.')
+        message_lines.append(
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_HELEKET_STATUS_PENDING_NOTE',
+                '\n⏳ Платеж еще обрабатывается. Завершите оплату и проверьте статус позже.',
+            )
+        )
         if payment.payment_url:
-            message_lines.append(f'\n🔗 Ссылка на оплату: {payment.payment_url}')
+            message_lines.append(
+                texts.t('SIMPLE_SUBSCRIPTION_PAYMENT_URL_LINE', '\n🔗 Ссылка на оплату: {payment_url}').format(
+                    payment_url=payment.payment_url
+                )
+            )
     elif payment.status in {'fail', 'cancel', 'wrong_amount'}:
         message_lines.append(
-            f'\n❌ Платеж не завершен корректно. Обратитесь в {settings.get_support_contact_display()}'
+            texts.t('PAL24_STATUS_FAILED_NOTE', '❌ Платеж не завершен корректно. Обратитесь в {support}').format(
+                support=settings.get_support_contact_display()
+            )
         )
 
     keyboard = types.InlineKeyboardMarkup(
@@ -2027,14 +2498,23 @@ async def check_simple_wata_payment_status(
     try:
         local_payment_id = int(callback.data.rsplit('_', 1)[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(
+            get_texts(settings.DEFAULT_LANGUAGE).t(
+                'WATA_INVALID_PAYMENT_IDENTIFIER',
+                '❌ Некорректный идентификатор платежа',
+            ),
+            show_alert=True,
+        )
         return
 
     payment_service = PaymentService(callback.bot)
     status_info = await payment_service.get_wata_payment_status(db, local_payment_id)
 
     if not status_info:
-        await callback.answer('❌ Платеж не найден', show_alert=True)
+        await callback.answer(
+            get_texts(settings.DEFAULT_LANGUAGE).t('WATA_PAYMENT_NOT_FOUND', '❌ Платеж не найден'),
+            show_alert=True,
+        )
         return
 
     payment = status_info['payment']
@@ -2051,16 +2531,30 @@ async def check_simple_wata_payment_status(
     message_lines = [
         texts.t('WATA_STATUS_TITLE', '💳 <b>Статус платежа WATA</b>'),
         '',
-        f'🆔 ID: {payment.payment_link_id}',
-        f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}',
-        f'📊 Статус: {emoji} {status_text}',
-        f'📅 Создан: {payment.created_at.strftime("%d.%m.%Y %H:%M") if payment.created_at else "—"}',
+        texts.t('WATA_STATUS_LINE_ID', '🆔 ID: {payment_id}').format(payment_id=payment.payment_link_id),
+        texts.t('WATA_STATUS_LINE_AMOUNT', '💰 Сумма: {amount}').format(
+            amount=settings.format_price(payment.amount_kopeks)
+        ),
+        texts.t('WATA_STATUS_LINE_STATUS', '📊 Статус: {emoji} {label}').format(emoji=emoji, label=status_text),
+        texts.t('WATA_STATUS_LINE_CREATED', '📅 Создан: {created_at}').format(
+            created_at=payment.created_at.strftime('%d.%m.%Y %H:%M') if payment.created_at else '—'
+        ),
     ]
 
     if payment.is_paid:
-        message_lines.append('\n✅ Платеж успешно завершен! Средства уже зачислены.')
+        message_lines.append(
+            texts.t(
+                'WATA_STATUS_COMPLETED_NOTE',
+                '\n✅ Платеж успешно завершен! Средства уже на балансе.',
+            )
+        )
     elif payment.status in {'Opened', 'Closed'}:
-        message_lines.append('\n⏳ Платеж еще не завершен. Завершите оплату и проверьте статус позже.')
+        message_lines.append(
+            texts.t(
+                'WATA_STATUS_PENDING_NOTE',
+                '\n⏳ Платеж еще не завершен. Завершите оплату по ссылке и проверьте статус позже.',
+            )
+        )
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
@@ -2096,7 +2590,13 @@ async def confirm_simple_subscription_purchase(
     subscription_params = data.get('subscription_params', {})
 
     if not subscription_params:
-        await callback.answer('❌ Данные подписки устарели. Пожалуйста, начните сначала.', show_alert=True)
+        await callback.answer(
+            texts.t(
+                'COUNTRY_SELECTION_DATA_EXPIRED_RESTART',
+                '❌ Данные подписки устарели. Начните оформление заново.',
+            ),
+            show_alert=True,
+        )
         return
 
     resolved_squad_uuid = await _ensure_simple_subscription_squad_uuid(
@@ -2132,7 +2632,13 @@ async def confirm_simple_subscription_purchase(
     user_balance_kopeks = getattr(db_user, 'balance_kopeks', 0)
 
     if user_balance_kopeks < total_required:
-        await callback.answer('❌ Недостаточно средств на балансе для оплаты подписки', show_alert=True)
+        await callback.answer(
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_INSUFFICIENT_BALANCE_ALERT',
+                '❌ Недостаточно средств на балансе для оплаты подписки',
+            ),
+            show_alert=True,
+        )
         return
 
     try:
@@ -2143,12 +2649,21 @@ async def confirm_simple_subscription_purchase(
             db,
             db_user,
             price_kopeks,
-            f'Оплата подписки на {subscription_params["period_days"]} дней',
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_BALANCE_PAYMENT_DESCRIPTION',
+                'Оплата подписки на {period_days} дней',
+            ).format(period_days=subscription_params['period_days']),
             consume_promo_offer=False,
         )
 
         if not success:
-            await callback.answer('❌ Ошибка списания средств с баланса', show_alert=True)
+            await callback.answer(
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_BALANCE_DEBIT_ERROR',
+                    '❌ Ошибка списания средств с баланса',
+                ),
+                show_alert=True,
+            )
             return
 
         # Проверяем, есть ли у пользователя уже подписка
@@ -2205,9 +2720,18 @@ async def confirm_simple_subscription_purchase(
                 db,
                 db_user.id,
                 price_kopeks,
-                f'Возврат средств за неудавшуюся подписку на {subscription_params["period_days"]} дней',
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_BALANCE_REFUND_DESCRIPTION',
+                    'Возврат средств за неудавшуюся подписку на {period_days} дней',
+                ).format(period_days=subscription_params['period_days']),
             )
-            await callback.answer('❌ Ошибка создания подписки. Средства возвращены на баланс.', show_alert=True)
+            await callback.answer(
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_CREATE_FAILED_REFUNDED_ALERT',
+                    '❌ Ошибка создания подписки. Средства возвращены на баланс.',
+                ),
+                show_alert=True,
+            )
             return
 
         # Обновляем баланс пользователя
@@ -2238,26 +2762,47 @@ async def confirm_simple_subscription_purchase(
         show_devices = settings.is_devices_selection_enabled()
 
         success_lines = [
-            '✅ <b>Подписка успешно активирована!</b>',
+            texts.t('SIMPLE_SUBSCRIPTION_SUCCESS_TITLE', '✅ <b>Подписка успешно активирована!</b>'),
             '',
-            f'📅 Период: {subscription_params["period_days"]} дней',
+            texts.t('SIMPLE_SUBSCRIPTION_PERIOD_LINE', '📅 Период: {days} дней').format(
+                days=subscription_params['period_days']
+            ),
         ]
 
         if show_devices:
-            success_lines.append(f'📱 Устройства: {subscription_params["device_limit"]}')
+            success_lines.append(
+                texts.t('SIMPLE_SUBSCRIPTION_DEVICES_LINE', '📱 Устройства: {devices}').format(
+                    devices=subscription_params['device_limit']
+                )
+            )
 
         success_traffic_gb = subscription_params['traffic_limit_gb']
-        success_traffic_label = 'Безлимит' if success_traffic_gb == 0 else f'{success_traffic_gb} ГБ'
+        success_traffic_label = (
+            texts.t('SUBSCRIPTION_TRAFFIC_DISPLAY_UNLIMITED', 'Безлимит')
+            if success_traffic_gb == 0
+            else texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_GB_VALUE', '{traffic_gb} ГБ').format(
+                traffic_gb=success_traffic_gb
+            )
+        )
 
         success_lines.extend(
             [
-                f'📊 Трафик: {success_traffic_label}',
-                f'🌍 Сервер: {server_label}',
+                texts.t('SIMPLE_SUBSCRIPTION_TRAFFIC_LINE', '📊 Трафик: {traffic}').format(
+                    traffic=success_traffic_label
+                ),
+                texts.t('SIMPLE_SUBSCRIPTION_SERVER_LINE', '🌍 Сервер: {server}').format(server=server_label),
                 '',
-                f'💰 Списано с баланса: {settings.format_price(price_kopeks)}',
-                f'💳 Ваш баланс: {settings.format_price(db_user.balance_kopeks)}',
+                texts.t('SIMPLE_SUBSCRIPTION_DEBITED_LINE', '💰 Списано с баланса: {amount}').format(
+                    amount=settings.format_price(price_kopeks)
+                ),
+                texts.t('SIMPLE_SUBSCRIPTION_BALANCE_LINE', '💳 Ваш баланс: {balance}').format(
+                    balance=settings.format_price(db_user.balance_kopeks)
+                ),
                 '',
-                "🔗 Для подключения перейдите в раздел 'Подключиться'",
+                texts.t(
+                    'SIMPLE_SUBSCRIPTION_CONNECT_HINT',
+                    "🔗 Для подключения перейдите в раздел 'Подключиться'",
+                ),
             ]
         )
 
@@ -2323,7 +2868,14 @@ async def confirm_simple_subscription_purchase(
         if happ_row:
             keyboard_rows.append(happ_row)
 
-        keyboard_rows.append([types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')])
+        keyboard_rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('MAIN_MENU_BUTTON', '🏠 Главное меню'),
+                    callback_data='back_to_menu',
+                )
+            ]
+        )
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
@@ -2363,7 +2915,10 @@ async def confirm_simple_subscription_purchase(
             exc_info=True,
         )
         await callback.answer(
-            '❌ Ошибка оплаты подписки. Попробуйте позже или обратитесь в поддержку.',
+            texts.t(
+                'SIMPLE_SUBSCRIPTION_PAYMENT_ERROR',
+                '❌ Ошибка оплаты подписки. Попробуйте позже или обратитесь в поддержку.',
+            ),
             show_alert=True,
         )
         await state.clear()

@@ -187,7 +187,7 @@ async def handle_subscription_config_back(
 
 
 async def handle_subscription_cancel(callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession):
-    get_texts(db_user.language)
+    texts = get_texts(db_user.language)
 
     await state.clear()
     await clear_subscription_checkout_draft(db_user.id)
@@ -199,7 +199,12 @@ async def handle_subscription_cancel(callback: types.CallbackQuery, state: FSMCo
 
     await show_main_menu(callback, db_user, db)
 
-    await callback.answer('❌ Покупка отменена')
+    await callback.answer(
+        texts.t(
+            'SUBSCRIPTION_PURCHASE_CANCELLED',
+            '❌ Покупка отменена',
+        )
+    )
 
 
 async def _show_previous_configuration_step(

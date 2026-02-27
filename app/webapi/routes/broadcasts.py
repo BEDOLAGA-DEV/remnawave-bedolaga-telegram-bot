@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import BroadcastHistory
+from app.localization.texts import get_texts
 from app.services.broadcast_service import (
     BroadcastConfig,
     BroadcastMediaConfig,
@@ -52,9 +53,13 @@ async def create_broadcast(
     token: Any = Depends(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> BroadcastResponse:
+    texts = get_texts('ru')
     message_text = payload.message_text.strip()
     if not message_text:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Message text must not be empty')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            texts.t('WEBAPI_BROADCASTS_MESSAGE_TEXT_MUST_NOT_BE_EMPTY', 'Message text must not be empty'),
+        )
 
     media_payload = payload.media
 
@@ -126,12 +131,19 @@ async def stop_broadcast(
     _: Any = Depends(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> BroadcastResponse:
+    texts = get_texts('ru')
     broadcast = await db.get(BroadcastHistory, broadcast_id)
     if not broadcast:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Broadcast not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_BROADCASTS_NOT_FOUND', 'Broadcast not found'),
+        )
 
     if broadcast.status not in {'queued', 'in_progress', 'cancelling'}:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Broadcast is not running')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            texts.t('WEBAPI_BROADCASTS_IS_NOT_RUNNING', 'Broadcast is not running'),
+        )
 
     is_running = await broadcast_service.request_stop(broadcast_id)
 

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.localization.texts import get_texts
 from app.database.crud.subscription_event import (
     create_subscription_event,
     list_subscription_events,
@@ -27,7 +28,13 @@ router = APIRouter()
 async def _get_user_or_error(db: AsyncSession, user_id: int) -> User:
     user = await db.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t(
+                'WEBAPI_SUBSCRIPTION_EVENTS_USER_NOT_FOUND',
+                'User not found',
+            ),
+        )
     return user
 
 
@@ -39,7 +46,10 @@ async def _ensure_subscription_exists(db: AsyncSession, subscription_id: int | N
     if not subscription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail='Subscription not found',
+            detail=get_texts('ru').t(
+                'WEBAPI_SUBSCRIPTION_EVENTS_SUBSCRIPTION_NOT_FOUND',
+                'Subscription not found',
+            ),
         )
 
 
@@ -51,7 +61,10 @@ async def _ensure_transaction_exists(db: AsyncSession, transaction_id: int | Non
     if not transaction_exists:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail='Transaction not found',
+            detail=get_texts('ru').t(
+                'WEBAPI_SUBSCRIPTION_EVENTS_TRANSACTION_NOT_FOUND',
+                'Transaction not found',
+            ),
         )
 
 

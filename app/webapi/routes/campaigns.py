@@ -14,6 +14,7 @@ from app.database.crud.campaign import (
     get_campaigns_list,
     update_campaign,
 )
+from app.localization.texts import get_texts
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.campaigns import (
@@ -72,6 +73,7 @@ async def create_campaign_endpoint(
     token: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> CampaignResponse:
+    texts = get_texts('ru')
     created_by = getattr(token, 'id', None)
 
     try:
@@ -94,7 +96,10 @@ async def create_campaign_endpoint(
         await db.rollback()
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'Campaign with this start_parameter already exists',
+            texts.t(
+                'WEBAPI_CAMPAIGNS_DUPLICATE_START_PARAMETER',
+                'Campaign with this start_parameter already exists',
+            ),
         ) from exc
 
     return _serialize_campaign(campaign)
@@ -138,9 +143,13 @@ async def delete_campaign_endpoint(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ):
+    texts = get_texts('ru')
     campaign = await get_campaign_by_id(db, campaign_id)
     if not campaign:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Campaign not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_CAMPAIGNS_NOT_FOUND', 'Campaign not found'),
+        )
 
     await delete_campaign(db, campaign)
 
@@ -156,9 +165,13 @@ async def update_campaign_endpoint(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> CampaignResponse:
+    texts = get_texts('ru')
     campaign = await get_campaign_by_id(db, campaign_id)
     if not campaign:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Campaign not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_CAMPAIGNS_NOT_FOUND', 'Campaign not found'),
+        )
 
     update_fields = payload.dict(exclude_unset=True)
     if not update_fields:
@@ -171,7 +184,10 @@ async def update_campaign_endpoint(
         if 'start_parameter' in str(exc.orig):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                'Campaign with this start_parameter already exists',
+                texts.t(
+                    'WEBAPI_CAMPAIGNS_DUPLICATE_START_PARAMETER',
+                    'Campaign with this start_parameter already exists',
+                ),
             ) from exc
         raise
 

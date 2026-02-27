@@ -11,6 +11,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton
 from sqlalchemy.exc import InterfaceError, OperationalError
 
 from app.config import settings
+from app.localization.texts import get_texts
 from app.services.startup_notification_service import _get_error_recommendations
 from app.utils.timezone import format_local_datetime
 
@@ -221,6 +222,7 @@ async def send_error_to_admin_chat(
     chat_id = getattr(settings, 'ADMIN_NOTIFICATIONS_CHAT_ID', None)
     topic_id = getattr(settings, 'ADMIN_NOTIFICATIONS_TOPIC_ID', None)
     enabled = getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False)
+    texts = get_texts(getattr(settings, 'DEFAULT_LANGUAGE', 'ru') or 'ru')
 
     if not enabled or not chat_id:
         return False
@@ -229,7 +231,7 @@ async def send_error_to_admin_chat(
     error_message = str(error)[:ERROR_MESSAGE_MAX_LENGTH]
     tb_str = tb_override or traceback.format_exc()
     if tb_str == 'NoneType: None\n' or tb_str == 'NoneType: None':
-        tb_str = '(no traceback available)'
+        tb_str = texts.t('GLOBAL_ERROR_NO_TRACEBACK_AVAILABLE', '(no traceback available)')
 
     # Добавляем в буфер
     _error_buffer.append((error_type, error_message, tb_str))
@@ -250,10 +252,12 @@ async def send_error_to_admin_chat(
 
         # Формируем лог-файл со всеми ошибками из буфера
         log_lines = [
-            'ERROR REPORT',
+            texts.t('GLOBAL_ERROR_REPORT_TITLE', 'ERROR REPORT'),
             separator,
-            f'Timestamp: {timestamp}',
-            f'Errors in buffer: {len(_error_buffer)}',
+            texts.t('GLOBAL_ERROR_REPORT_TIMESTAMP_LINE', 'Timestamp: {timestamp}').format(timestamp=timestamp),
+            texts.t('GLOBAL_ERROR_REPORT_BUFFER_COUNT_LINE', 'Errors in buffer: {count}').format(
+                count=len(_error_buffer)
+            ),
             '',
         ]
 
@@ -261,11 +265,14 @@ async def send_error_to_admin_chat(
             log_lines.extend(
                 [
                     separator,
-                    f'ERROR #{i}: {err_type}',
+                    texts.t('GLOBAL_ERROR_REPORT_ENTRY_TITLE', 'ERROR #{index}: {error_type}').format(
+                        index=i,
+                        error_type=err_type,
+                    ),
                     separator,
-                    f'Message: {err_msg}',
+                    texts.t('GLOBAL_ERROR_REPORT_MESSAGE_LINE', 'Message: {message}').format(message=err_msg),
                     '',
-                    'Traceback:',
+                    texts.t('GLOBAL_ERROR_REPORT_TRACEBACK_LABEL', 'Traceback:'),
                     err_tb,
                     '',
                 ]
@@ -275,20 +282,27 @@ async def send_error_to_admin_chat(
 
         errors_count = len(_error_buffer)
 
-        file_name = f'error_report_{now.strftime(DATETIME_FORMAT_FILENAME)}.txt'
+        file_name = (
+            f"{texts.t('GLOBAL_ERROR_REPORT_FILENAME_PREFIX', 'error_report')}"
+            f'_{now.strftime(DATETIME_FORMAT_FILENAME)}.txt'
+        )
         file = BufferedInputFile(
             file=log_content.encode('utf-8'),
             filename=file_name,
         )
 
-        message_text = (
-            f'<b>Remnawave Bedolaga Bot</b>\n\n'
-            f'⚠️ Ошибка во время работы\n\n'
-            f'<b>Тип:</b> <code>{error_type}</code>\n'
-            f'<b>Ошибок в отчёте:</b> {errors_count}\n'
-        )
+        message_text = texts.t(
+            'GLOBAL_ERROR_ADMIN_MESSAGE_HEADER',
+            '<b>Remnawave Bedolaga Bot</b>\n\n'
+            '⚠️ Ошибка во время работы\n\n'
+            '<b>Тип:</b> <code>{error_type}</code>\n'
+            '<b>Ошибок в отчёте:</b> {errors_count}\n',
+        ).format(error_type=error_type, errors_count=errors_count)
         if context:
-            message_text += f'<b>Контекст:</b> {context}\n'
+            message_text += texts.t(
+                'GLOBAL_ERROR_ADMIN_MESSAGE_CONTEXT_LINE',
+                '<b>Контекст:</b> {context}\n',
+            ).format(context=context)
 
         # Добавляем рекомендации если есть
         recommendations = _get_error_recommendations(error_message)
@@ -301,7 +315,10 @@ async def send_error_to_admin_chat(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text='💬 Сообщить разработчику',
+                        text=texts.t(
+                            'GLOBAL_ERROR_ADMIN_CONTACT_DEVELOPER_BUTTON',
+                            '💬 Сообщить разработчику',
+                        ),
                         url=DEVELOPER_CONTACT_URL,
                     ),
                 ],

@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.localization.texts import get_texts
 from app.services.system_settings_service import (
     ReadOnlySettingError,
     bot_configuration_service,
@@ -23,13 +24,16 @@ from ..schemas.config import (
 router = APIRouter()
 
 
-def _coerce_value(key: str, value: Any) -> Any:
+def _coerce_value(key: str, value: Any, texts: Any) -> Any:
     definition = bot_configuration_service.get_definition(key)
 
     if value is None:
         if definition.is_optional:
             return None
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Value is required')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            texts.t('WEBAPI_CONFIG_VALUE_REQUIRED', 'Value is required'),
+        )
 
     python_type = definition.python_type
 
@@ -55,7 +59,10 @@ def _coerce_value(key: str, value: Any) -> Any:
         else:
             normalized = str(value)
     except ValueError:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid value type') from None
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            texts.t('WEBAPI_CONFIG_INVALID_VALUE_TYPE', 'Invalid value type'),
+        ) from None
 
     choices = bot_configuration_service.get_choice_options(key)
     if choices:
@@ -64,7 +71,11 @@ def _coerce_value(key: str, value: Any) -> Any:
             readable = ', '.join(bot_configuration_service.format_value(opt.value) for opt in choices)
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail=f'Value must be one of: {readable}',
+                detail=texts.t(
+                    'WEBAPI_CONFIG_VALUE_MUST_BE_ONE_OF',
+                    'Value must be one of: {readable}',
+                    readable=readable,
+                ),
             )
 
     return normalized
@@ -134,10 +145,14 @@ async def get_setting(
     key: str,
     _: object = Security(require_api_token),
 ) -> SettingDefinition:
+    texts = get_texts('ru')
     try:
         definition = bot_configuration_service.get_definition(key)
     except KeyError as error:  # pragma: no cover - защита от некорректного ключа
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Setting not found') from error
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_CONFIG_SETTING_NOT_FOUND', 'Setting not found'),
+        ) from error
 
     return _serialize_definition(definition)
 
@@ -149,12 +164,16 @@ async def update_setting(
     _: object = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> SettingDefinition:
+    texts = get_texts('ru')
     try:
         definition = bot_configuration_service.get_definition(key)
     except KeyError as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Setting not found') from error
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_CONFIG_SETTING_NOT_FOUND', 'Setting not found'),
+        ) from error
 
-    value = _coerce_value(key, payload.value)
+    value = _coerce_value(key, payload.value, texts)
     try:
         await bot_configuration_service.set_value(db, key, value)
     except ReadOnlySettingError as error:
@@ -170,10 +189,14 @@ async def reset_setting(
     _: object = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> SettingDefinition:
+    texts = get_texts('ru')
     try:
         definition = bot_configuration_service.get_definition(key)
     except KeyError as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Setting not found') from error
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_CONFIG_SETTING_NOT_FOUND', 'Setting not found'),
+        ) from error
 
     try:
         await bot_configuration_service.reset_value(db, key)

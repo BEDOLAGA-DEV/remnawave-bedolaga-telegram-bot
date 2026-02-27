@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.localization.texts import get_texts
 from app.database.crud.webhook import (
     create_webhook,
     delete_webhook,
@@ -127,7 +128,10 @@ async def get_webhook(
     """Получить webhook по ID."""
     webhook = await get_webhook_by_id(db, webhook_id)
     if not webhook:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Webhook not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_WEBHOOKS_NOT_FOUND', 'Webhook not found'),
+        )
     return _serialize_webhook(webhook)
 
 
@@ -159,7 +163,10 @@ async def update_webhook_endpoint(
     """Обновить webhook."""
     webhook = await get_webhook_by_id(db, webhook_id)
     if not webhook:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Webhook not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_WEBHOOKS_NOT_FOUND', 'Webhook not found'),
+        )
 
     webhook = await update_webhook(
         db,
@@ -182,7 +189,10 @@ async def delete_webhook_endpoint(
     """Удалить webhook."""
     webhook = await get_webhook_by_id(db, webhook_id)
     if not webhook:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Webhook not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_WEBHOOKS_NOT_FOUND', 'Webhook not found'),
+        )
 
     await delete_webhook(db, webhook)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -200,7 +210,10 @@ async def list_webhook_deliveries(
     """Список доставок webhook."""
     webhook = await get_webhook_by_id(db, webhook_id)
     if not webhook:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Webhook not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=get_texts('ru').t('WEBAPI_WEBHOOKS_NOT_FOUND', 'Webhook not found'),
+        )
 
     query = select(WebhookDelivery).where(WebhookDelivery.webhook_id == webhook_id)
 

@@ -14,16 +14,15 @@ from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
 
-
 logger = structlog.get_logger(__name__)
 
 
 async def _create_kassa_ai_payment_and_respond(
-    message_or_callback,
-    db_user: User,
-    db: AsyncSession,
-    amount_kopeks: int,
-    edit_message: bool = False,
+        message_or_callback,
+        db_user: User,
+        db: AsyncSession,
+        amount_kopeks: int,
+        edit_message: bool = False,
 ):
     """
     Common logic for creating KassaAI payment and sending response.
@@ -43,7 +42,7 @@ async def _create_kassa_ai_payment_and_respond(
 
     description = settings.PAYMENT_BALANCE_TEMPLATE.format(
         service_name=settings.PAYMENT_SERVICE_NAME,
-        description='Пополнение баланса',
+        description=texts.t('TRIBUTE_PAYMENT_DESCRIPTION_TOPUP', 'Пополнение баланса'),
     )
 
     result = await payment_service.create_kassa_ai_payment(
@@ -123,11 +122,11 @@ async def _create_kassa_ai_payment_and_respond(
 
 @error_handler
 async def process_kassa_ai_payment_amount(
-    message: types.Message,
-    db_user: User,
-    db: AsyncSession,
-    amount_kopeks: int,
-    state: FSMContext,
+        message: types.Message,
+        db_user: User,
+        db: AsyncSession,
+        amount_kopeks: int,
+        state: FSMContext,
 ):
     """
     Process payment amount directly (called from quick_amount handlers).
@@ -136,15 +135,22 @@ async def process_kassa_ai_payment_amount(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT', 'Действие ограничено администратором'
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [InlineKeyboardButton(text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url)]
+            )
         keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await message.answer(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+            texts.t(
+                'KASSA_AI_TOPUP_RESTRICTION_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+            ).format(reason=reason),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
@@ -188,10 +194,10 @@ async def process_kassa_ai_payment_amount(
 
 @error_handler
 async def start_kassa_ai_topup(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
+        callback: types.CallbackQuery,
+        db_user: User,
+        db: AsyncSession,
+        state: FSMContext,
 ):
     """
     Start KassaAI top-up process - ask for amount.
@@ -200,15 +206,22 @@ async def start_kassa_ai_topup(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT', 'Действие ограничено администратором'
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [InlineKeyboardButton(text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url)]
+            )
         keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+            texts.t(
+                'KASSA_AI_TOPUP_RESTRICTION_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+            ).format(reason=reason),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
@@ -251,10 +264,10 @@ async def start_kassa_ai_topup(
 
 @error_handler
 async def process_kassa_ai_custom_amount(
-    message: types.Message,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
+        message: types.Message,
+        db_user: User,
+        db: AsyncSession,
+        state: FSMContext,
 ):
     """
     Process custom amount input for KassaAI payment.
@@ -290,10 +303,10 @@ async def process_kassa_ai_custom_amount(
 
 @error_handler
 async def process_kassa_ai_quick_amount(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
+        callback: types.CallbackQuery,
+        db_user: User,
+        db: AsyncSession,
+        state: FSMContext,
 ):
     """
     Process quick amount selection for KassaAI payment.
@@ -314,23 +327,36 @@ async def process_kassa_ai_quick_amount(
         if len(parts) >= 3:
             amount_kopeks = int(parts[2])
         else:
-            await callback.answer('Invalid callback data', show_alert=True)
+            await callback.answer(
+                texts.t('KASSA_AI_INVALID_CALLBACK_DATA', '❌ Некорректные данные платежа'),
+                show_alert=True,
+            )
             return
     except (ValueError, IndexError):
-        await callback.answer('Invalid amount', show_alert=True)
+        await callback.answer(
+            texts.t('INVALID_AMOUNT', '❌ Неверная сумма'),
+            show_alert=True,
+        )
         return
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = getattr(db_user, 'restriction_reason', None) or texts.t(
+            'USER_RESTRICTION_REASON_DEFAULT', 'Действие ограничено администратором'
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [InlineKeyboardButton(text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url)]
+            )
         keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+            texts.t(
+                'KASSA_AI_TOPUP_RESTRICTION_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+            ).format(reason=reason),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
         )

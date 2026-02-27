@@ -32,6 +32,7 @@ from app.database.crud.promo_offer_template import (
 from app.database.crud.user import get_user_by_email, get_user_by_telegram_id
 from app.database.models import DiscountOffer, PromoOfferLog, PromoOfferTemplate, User
 from app.handlers.admin.messages import get_custom_users, get_target_users
+from app.localization.texts import get_texts
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -40,6 +41,11 @@ from ..dependencies import get_cabinet_db, require_permission
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/admin/promo-offers', tags=['Admin Promo Offers'])
+
+
+def _get_admin_texts(admin: User | None):
+    language = getattr(admin, 'language', None)
+    return get_texts(language)
 
 
 # ============== Schemas ==============
@@ -292,9 +298,13 @@ async def get_template(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoOfferTemplateResponse:
     """Get a promo offer template."""
+    texts = _get_admin_texts(admin)
     template = await get_promo_offer_template_by_id(db, template_id)
     if not template:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Template not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('CABINET_ADMIN_PROMO_TEMPLATE_NOT_FOUND', 'Template not found'),
+        )
     return _serialize_template(template)
 
 
@@ -306,9 +316,13 @@ async def update_template(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoOfferTemplateResponse:
     """Update a promo offer template."""
+    texts = _get_admin_texts(admin)
     template = await get_promo_offer_template_by_id(db, template_id)
     if not template:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Template not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('CABINET_ADMIN_PROMO_TEMPLATE_NOT_FOUND', 'Template not found'),
+        )
 
     if payload.test_squad_uuids is not None:
         normalized_squads = [str(uuid).strip() for uuid in payload.test_squad_uuids if str(uuid).strip()]
@@ -376,27 +390,54 @@ def _get_bot() -> Bot:
 
 
 def _build_default_promo_message(
+    texts,
     discount_percent: int,
     bonus_amount_kopeks: int,
     valid_hours: int,
 ) -> str:
     """Build default promo notification message."""
-    lines = ['🎁 <b>Специальное предложение для вас!</b>\n']
+    lines = [
+        texts.t(
+            'CABINET_ADMIN_PROMO_DEFAULT_MESSAGE_TITLE',
+            '🎁 <b>Специальное предложение для вас!</b>\n',
+        )
+    ]
 
     if discount_percent > 0:
-        lines.append(f'🔥 Скидка <b>{discount_percent}%</b> на подписку')
+        lines.append(
+            texts.t(
+                'CABINET_ADMIN_PROMO_DEFAULT_MESSAGE_DISCOUNT_LINE',
+                '🔥 Скидка <b>{discount_percent}%</b> на подписку',
+            ).format(discount_percent=discount_percent)
+        )
     if bonus_amount_kopeks > 0:
         bonus_rub = bonus_amount_kopeks / 100
-        lines.append(f'💰 Бонус <b>{bonus_rub:.0f}₽</b> на баланс')
+        lines.append(
+            texts.t(
+                'CABINET_ADMIN_PROMO_DEFAULT_MESSAGE_BONUS_LINE',
+                '💰 Бонус <b>{bonus_rub:.0f}₽</b> на баланс',
+            ).format(bonus_rub=bonus_rub)
+        )
 
-    lines.append(f'\n⏰ Предложение действует <b>{valid_hours} ч.</b>')
-    lines.append('\nНажмите кнопку ниже, чтобы активировать!')
+    lines.append(
+        texts.t(
+            'CABINET_ADMIN_PROMO_DEFAULT_MESSAGE_VALID_HOURS_LINE',
+            '\n⏰ Предложение действует <b>{valid_hours} ч.</b>',
+        ).format(valid_hours=valid_hours)
+    )
+    lines.append(
+        texts.t(
+            'CABINET_ADMIN_PROMO_DEFAULT_MESSAGE_CTA_LINE',
+            '\nНажмите кнопку ниже, чтобы активировать!',
+        )
+    )
 
     return '\n'.join(lines)
 
 
 async def _send_promo_notifications(
     offers_to_notify: list[tuple[User, DiscountOffer]],
+    texts,
     message_text: str | None,
     button_text: str | None,
     discount_percent: int,
@@ -417,13 +458,17 @@ async def _send_promo_notifications(
 
     # Build message text
     text = message_text or _build_default_promo_message(
+        texts=texts,
         discount_percent=discount_percent,
         bonus_amount_kopeks=bonus_amount_kopeks,
         valid_hours=valid_hours,
     )
 
     # Default button text
-    btn_text = button_text or '🎁 Получить'
+    btn_text = button_text or texts.t(
+        'CABINET_ADMIN_PROMO_DEFAULT_BUTTON_TEXT',
+        '🎁 Получить',
+    )
 
     semaphore = asyncio.Semaphore(20)
 
@@ -445,7 +490,7 @@ async def _send_promo_notifications(
                         ],
                         [
                             InlineKeyboardButton(
-                                text='❌ Закрыть',
+                                text=texts.t('CABINET_ADMIN_PROMO_CLOSE_BUTTON_TEXT', '❌ Закрыть'),
                                 callback_data='promo_offer_close',
                             )
                         ],
@@ -495,6 +540,7 @@ async def broadcast_offer(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoOfferBroadcastResponse:
     """Broadcast promo offer to users with optional Telegram notification."""
+    texts = _get_admin_texts(admin)
     recipients: dict[int, User] = {}
 
     # Resolve target segment
@@ -509,11 +555,17 @@ async def broadcast_offer(
     if payload.telegram_id is not None:
         user = await get_user_by_telegram_id(db, payload.telegram_id)
         if not user:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found by telegram_id')
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                texts.t('CABINET_ADMIN_PROMO_USER_NOT_FOUND_BY_TELEGRAM_ID', 'User not found by telegram_id'),
+            )
         if target_user_id and target_user_id != user.id:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                'Provided user_id does not match telegram_id',
+                texts.t(
+                    'CABINET_ADMIN_PROMO_USER_ID_MISMATCH_TELEGRAM_ID',
+                    'Provided user_id does not match telegram_id',
+                ),
             )
         target_user_id = user.id
 
@@ -521,11 +573,17 @@ async def broadcast_offer(
     if payload.email is not None and user is None:
         user = await get_user_by_email(db, payload.email)
         if not user:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found by email')
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                texts.t('CABINET_ADMIN_PROMO_USER_NOT_FOUND_BY_EMAIL', 'User not found by email'),
+            )
         if target_user_id and target_user_id != user.id:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                'Provided user_id does not match email',
+                texts.t(
+                    'CABINET_ADMIN_PROMO_USER_ID_MISMATCH_EMAIL',
+                    'Provided user_id does not match email',
+                ),
             )
         target_user_id = user.id
 
@@ -533,13 +591,16 @@ async def broadcast_offer(
         if user is None:
             user = await db.get(User, target_user_id)
         if not user:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                texts.t('CABINET_ADMIN_PROMO_USER_NOT_FOUND', 'User not found'),
+            )
         recipients[target_user_id] = user
 
     if not recipients:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'No recipients: specify target or user',
+            texts.t('CABINET_ADMIN_PROMO_NO_RECIPIENTS', 'No recipients: specify target or user'),
         )
 
     # Create offers for all recipients and collect (user, offer) pairs
@@ -584,6 +645,7 @@ async def broadcast_offer(
 
         notifications_sent, notifications_failed = await _send_promo_notifications(
             offers_to_notify=offers_to_notify,
+            texts=texts,
             message_text=rendered_message_text,
             button_text=payload.button_text,
             discount_percent=payload.discount_percent,

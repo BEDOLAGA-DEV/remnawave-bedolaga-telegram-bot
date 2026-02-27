@@ -23,6 +23,7 @@ from app.database.crud.server_squad import (
     update_server_squad_promo_groups,
 )
 from app.database.models import PromoGroup, ServerSquad, User
+from app.localization.texts import get_texts
 from app.utils.cache import cache
 
 from ..dependencies import get_db_session, require_api_token
@@ -56,6 +57,7 @@ else:
 
 
 router = APIRouter()
+
 
 
 def _serialize_promo_group(group: PromoGroup) -> PromoGroupSummary:
@@ -129,36 +131,52 @@ def _apply_filters(
 
 
 def _get_remnawave_service() -> RemnaWaveServiceType:
+    texts = get_texts('ru')
     if RemnaWaveService is None:  # pragma: no cover - зависимость не доступна
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='RemnaWave сервис недоступен',
+            detail=texts.t(
+                'WEBAPI_SERVERS_REMNAWAVE_SERVICE_UNAVAILABLE',
+                'RemnaWave сервис недоступен',
+            ),
         )
 
     return RemnaWaveService()
 
 
 def _ensure_service_configured(service: RemnaWaveServiceType) -> None:
+    texts = get_texts('ru')
     if RemnaWaveService is None:  # pragma: no cover - зависимость не доступна
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='RemnaWave сервис недоступен',
+            detail=texts.t(
+                'WEBAPI_SERVERS_REMNAWAVE_SERVICE_UNAVAILABLE',
+                'RemnaWave сервис недоступен',
+            ),
         )
 
     if not service.is_configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=service.configuration_error or 'RemnaWave API не настроен',
+            detail=service.configuration_error
+            or texts.t(
+                'WEBAPI_SERVERS_REMNAWAVE_API_NOT_CONFIGURED',
+                'RemnaWave API не настроен',
+            ),
         )
 
 
 async def _validate_promo_group_ids(db: AsyncSession, promo_group_ids: Iterable[int]) -> list[int]:
+    texts = get_texts('ru')
     unique_ids = [int(pg_id) for pg_id in set(promo_group_ids)]
 
     if not unique_ids:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'Нужно выбрать хотя бы одну промогруппу',
+            texts.t(
+                'WEBAPI_SERVERS_PROMO_GROUP_REQUIRED',
+                'Нужно выбрать хотя бы одну промогруппу',
+            ),
         )
 
     result = await db.execute(select(PromoGroup.id).where(PromoGroup.id.in_(unique_ids)))
@@ -167,7 +185,10 @@ async def _validate_promo_group_ids(db: AsyncSession, promo_group_ids: Iterable[
     if not found_ids:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'Не найдены промогруппы для обновления сервера',
+            texts.t(
+                'WEBAPI_SERVERS_PROMO_GROUPS_NOT_FOUND_FOR_UPDATE',
+                'Не найдены промогруппы для обновления сервера',
+            ),
         )
 
     return unique_ids
@@ -246,11 +267,15 @@ async def create_server_endpoint(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> ServerResponse:
+    texts = get_texts('ru')
     existing = await get_server_squad_by_uuid(db, payload.squad_uuid)
     if existing:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'Server with this UUID already exists',
+            texts.t(
+                'WEBAPI_SERVERS_UUID_ALREADY_EXISTS',
+                'Server with this UUID already exists',
+            ),
         )
 
     try:
@@ -284,9 +309,13 @@ async def get_server_endpoint(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> ServerResponse:
+    texts = get_texts('ru')
     server = await get_server_squad_by_id(db, server_id)
     if not server:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Server not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_SERVERS_NOT_FOUND', 'Server not found'),
+        )
 
     return _serialize_server(server)
 
@@ -298,9 +327,13 @@ async def update_server_endpoint(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> ServerResponse:
+    texts = get_texts('ru')
     server = await get_server_squad_by_id(db, server_id)
     if not server:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Server not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_SERVERS_NOT_FOUND', 'Server not found'),
+        )
 
     updates = payload.model_dump(exclude_unset=True, by_alias=False)
     promo_group_ids = updates.pop('promo_group_ids', None)
@@ -332,20 +365,30 @@ async def delete_server_endpoint(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> ServerDeleteResponse:
+    texts = get_texts('ru')
     server = await get_server_squad_by_id(db, server_id)
     if not server:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Server not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_SERVERS_NOT_FOUND', 'Server not found'),
+        )
 
     deleted = await delete_server_squad(db, server_id)
     if not deleted:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'Server cannot be deleted because it has active connections',
+            texts.t(
+                'WEBAPI_SERVERS_DELETE_HAS_ACTIVE_CONNECTIONS',
+                'Server cannot be deleted because it has active connections',
+            ),
         )
 
     await cache.delete_pattern('available_countries*')
 
-    return ServerDeleteResponse(success=True, message='Server deleted')
+    return ServerDeleteResponse(
+        success=True,
+        message=texts.t('WEBAPI_SERVERS_DELETE_SUCCESS_MESSAGE', 'Server deleted'),
+    )
 
 
 @router.get(
@@ -359,9 +402,13 @@ async def get_server_connected_users_endpoint(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> ServerConnectedUsersResponse:
+    texts = get_texts('ru')
     server = await get_server_squad_by_id(db, server_id)
     if not server:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Server not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            texts.t('WEBAPI_SERVERS_NOT_FOUND', 'Server not found'),
+        )
 
     users = await get_server_connected_users(db, server_id)
     total = len(users)

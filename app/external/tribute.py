@@ -6,9 +6,11 @@ from typing import Any
 import structlog
 
 from app.config import settings
+from app.localization.texts import get_texts
 
 
 logger = structlog.get_logger(__name__)
+texts = get_texts('ru')
 
 
 class TributeService:
@@ -17,7 +19,10 @@ class TributeService:
         self.donate_link = settings.TRIBUTE_DONATE_LINK
 
     async def create_payment_link(
-        self, user_id: int, amount_kopeks: int = 0, description: str = 'Пополнение баланса'
+        self,
+        user_id: int,
+        amount_kopeks: int = 0,
+        description: str = texts.t('TRIBUTE_PAYMENT_DESCRIPTION_TOPUP', 'Пополнение баланса'),
     ) -> str | None:
         if not settings.TRIBUTE_ENABLED:
             logger.warning('Tribute платежи отключены')
@@ -147,7 +152,10 @@ class TributeService:
             return None
 
     async def refund_payment(
-        self, payment_id: str, amount_kopeks: int | None = None, reason: str = 'Возврат по запросу'
+        self,
+        payment_id: str,
+        amount_kopeks: int | None = None,
+        reason: str = texts.t('TRIBUTE_REFUND_REASON_DEFAULT', 'Возврат по запросу'),
     ) -> dict[str, Any] | None:
         try:
             logger.info('Создание возврата для платежа', payment_id=payment_id)

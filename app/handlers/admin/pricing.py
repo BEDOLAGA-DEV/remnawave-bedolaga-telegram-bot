@@ -43,85 +43,81 @@ TRAFFIC_PACKAGE_ORDER_INDEX: dict[int, int] = {gb: index for index, gb in enumer
 @dataclass(slots=True)
 class ChoiceOption:
     value: Any
-    label_ru: str
-    label_en: str | None = None
+    label_key: str
+    label_default: str
 
-    def label(self, lang_code: str) -> str:
-        if lang_code == 'ru':
-            return self.label_ru
-        return self.label_en or self.label_ru
+    def label(self, language: str) -> str:
+        return get_texts(language).t(self.label_key, self.label_default)
 
 
 @dataclass(slots=True)
 class SettingEntry:
     key: str
     section: str
-    label_ru: str
-    label_en: str
+    label_key: str
+    label_default: str
     action: str  # "input", "toggle", "price", "choice"
-    description_ru: str | None = None
-    description_en: str | None = None
+    description_key: str | None = None
+    description_default: str | None = None
     choices: tuple[ChoiceOption, ...] | None = None
 
-    def label(self, lang_code: str) -> str:
-        if lang_code == 'ru':
-            return self.label_ru
-        return self.label_en or self.label_ru
+    def label(self, language: str) -> str:
+        return get_texts(language).t(self.label_key, self.label_default)
 
-    def description(self, lang_code: str) -> str | None:
-        if lang_code == 'ru':
-            return self.description_ru
-        return self.description_en or self.description_ru
+    def description(self, language: str) -> str | None:
+        if not self.description_key:
+            return None
+        return get_texts(language).t(self.description_key, self.description_default or '')
 
 
 TRIAL_ENTRIES: tuple[SettingEntry, ...] = (
     SettingEntry(
         key='TRIAL_DURATION_DAYS',
         section='trial',
-        label_ru='⏳ Длительность (дни)',
-        label_en='⏳ Duration (days)',
+        label_key='ADMIN_PRICING_ENTRY_TRIAL_DURATION_DAYS_LABEL',
+        label_default='⏳ Duration (days)',
         action='input',
     ),
     SettingEntry(
         key='TRIAL_TRAFFIC_LIMIT_GB',
         section='trial',
-        label_ru='📦 Лимит трафика (ГБ)',
-        label_en='📦 Traffic limit (GB)',
+        label_key='ADMIN_PRICING_ENTRY_TRIAL_TRAFFIC_LIMIT_GB_LABEL',
+        label_default='📦 Traffic limit (GB)',
         action='input',
     ),
     SettingEntry(
         key='TRIAL_DEVICE_LIMIT',
         section='trial',
-        label_ru='📱 Лимит устройств',
-        label_en='📱 Device limit',
+        label_key='ADMIN_PRICING_ENTRY_TRIAL_DEVICE_LIMIT_LABEL',
+        label_default='📱 Device limit',
         action='input',
     ),
     SettingEntry(
         key='TRIAL_PAYMENT_ENABLED',
         section='trial',
-        label_ru='💳 Платная активация',
-        label_en='💳 Paid activation',
+        label_key='ADMIN_PRICING_ENTRY_TRIAL_PAYMENT_ENABLED_LABEL',
+        label_default='💳 Paid activation',
         action='toggle',
-        description_ru='Если включено — за активацию триала будет списываться указанная сумма.',
-        description_en='When enabled, the configured amount is charged during trial activation.',
+        description_key='ADMIN_PRICING_ENTRY_TRIAL_PAYMENT_ENABLED_DESC',
+        description_default='When enabled, the configured amount is charged during trial activation.',
     ),
     SettingEntry(
         key='TRIAL_ACTIVATION_PRICE',
         section='trial',
-        label_ru='💰 Стоимость активации',
-        label_en='💰 Activation price',
+        label_key='ADMIN_PRICING_ENTRY_TRIAL_ACTIVATION_PRICE_LABEL',
+        label_default='💰 Activation price',
         action='price',
-        description_ru='Указывается в копейках. 0 — бесплатная активация.',
-        description_en='Amount in kopeks. 0 — free activation.',
+        description_key='ADMIN_PRICING_ENTRY_TRIAL_ACTIVATION_PRICE_DESC',
+        description_default='Amount in kopeks. 0 — free activation.',
     ),
     SettingEntry(
         key='TRIAL_ADD_REMAINING_DAYS_TO_PAID',
         section='trial',
-        label_ru='➕ Добавлять оставшиеся дни к платной подписке',
-        label_en='➕ Add remaining trial days to paid plan',
+        label_key='ADMIN_PRICING_ENTRY_TRIAL_ADD_REMAINING_DAYS_LABEL',
+        label_default='➕ Add remaining trial days to paid plan',
         action='toggle',
-        description_ru='Если включено — при покупке платной подписки оставшиеся дни триала будут добавлены к сроку.',
-        description_en='When enabled, remaining trial days are added to paid subscription duration.',
+        description_key='ADMIN_PRICING_ENTRY_TRIAL_ADD_REMAINING_DAYS_DESC',
+        description_default='When enabled, remaining trial days are added to paid subscription duration.',
     ),
 )
 
@@ -130,87 +126,87 @@ CORE_PRICING_ENTRIES: tuple[SettingEntry, ...] = (
     SettingEntry(
         key='BASE_SUBSCRIPTION_PRICE',
         section='core',
-        label_ru='💳 Базовая стоимость подписки',
-        label_en='💳 Base subscription price',
+        label_key='ADMIN_PRICING_ENTRY_BASE_SUBSCRIPTION_PRICE_LABEL',
+        label_default='💳 Base subscription price',
         action='price',
     ),
     SettingEntry(
         key='BASE_PROMO_GROUP_PERIOD_DISCOUNTS_ENABLED',
         section='core',
-        label_ru='🎟️ Базовые скидки для групп',
-        label_en='🎟️ Base group discounts',
+        label_key='ADMIN_PRICING_ENTRY_BASE_PROMO_GROUP_DISCOUNTS_ENABLED_LABEL',
+        label_default='🎟️ Base group discounts',
         action='toggle',
-        description_ru='Включает применение базовых скидок для групповых промо-периодов.',
-        description_en='Enables base discounts for promo group periods.',
+        description_key='ADMIN_PRICING_ENTRY_BASE_PROMO_GROUP_DISCOUNTS_ENABLED_DESC',
+        description_default='Enables base discounts for promo group periods.',
     ),
     SettingEntry(
         key='BASE_PROMO_GROUP_PERIOD_DISCOUNTS',
         section='core',
-        label_ru='🔖 Скидки по периодам',
-        label_en='🔖 Period discounts',
+        label_key='ADMIN_PRICING_ENTRY_BASE_PROMO_GROUP_DISCOUNTS_LABEL',
+        label_default='🔖 Period discounts',
         action='input',
-        description_ru='Формат: список пар дней и скидки через запятую (например 30:10,60:20).',
-        description_en='Format: comma-separated day/discount pairs (e.g. 30:10,60:20).',
+        description_key='ADMIN_PRICING_ENTRY_BASE_PROMO_GROUP_DISCOUNTS_DESC',
+        description_default='Format: comma-separated day/discount pairs (e.g. 30:10,60:20).',
     ),
     SettingEntry(
         key='DEFAULT_DEVICE_LIMIT',
         section='core',
-        label_ru='📱 Устройств по умолчанию',
-        label_en='📱 Default device limit',
+        label_key='ADMIN_PRICING_ENTRY_DEFAULT_DEVICE_LIMIT_LABEL',
+        label_default='📱 Default device limit',
         action='input',
     ),
     SettingEntry(
         key='DEFAULT_TRAFFIC_LIMIT_GB',
         section='core',
-        label_ru='📦 Трафик по умолчанию (ГБ)',
-        label_en='📦 Default traffic (GB)',
+        label_key='ADMIN_PRICING_ENTRY_DEFAULT_TRAFFIC_LIMIT_GB_LABEL',
+        label_default='📦 Default traffic (GB)',
         action='input',
     ),
     SettingEntry(
         key='MAX_DEVICES_LIMIT',
         section='core',
-        label_ru='📈 Максимум устройств',
-        label_en='📈 Maximum devices',
+        label_key='ADMIN_PRICING_ENTRY_MAX_DEVICES_LIMIT_LABEL',
+        label_default='📈 Maximum devices',
         action='input',
     ),
     SettingEntry(
         key='RESET_TRAFFIC_ON_PAYMENT',
         section='core',
-        label_ru='🔄 Сбрасывать трафик при оплате',
-        label_en='🔄 Reset traffic on payment',
+        label_key='ADMIN_PRICING_ENTRY_RESET_TRAFFIC_ON_PAYMENT_LABEL',
+        label_default='🔄 Reset traffic on payment',
         action='toggle',
     ),
     SettingEntry(
         key='DEFAULT_TRAFFIC_RESET_STRATEGY',
         section='core',
-        label_ru='🗓 Стратегия сброса трафика',
-        label_en='🗓 Traffic reset strategy',
+        label_key='ADMIN_PRICING_ENTRY_DEFAULT_TRAFFIC_RESET_STRATEGY_LABEL',
+        label_default='🗓 Traffic reset strategy',
         action='input',
-        description_ru='Доступные значения: DAY, WEEK, MONTH, NEVER.',
-        description_en='Available values: DAY, WEEK, MONTH, NEVER.',
+        description_key='ADMIN_PRICING_ENTRY_DEFAULT_TRAFFIC_RESET_STRATEGY_DESC',
+        description_default='Available values: DAY, WEEK, MONTH, NEVER.',
     ),
     SettingEntry(
         key='TRAFFIC_SELECTION_MODE',
         section='core',
-        label_ru='⚙️ Режим выбора трафика',
-        label_en='⚙️ Traffic selection mode',
+        label_key='ADMIN_PRICING_ENTRY_TRAFFIC_SELECTION_MODE_LABEL',
+        label_default='⚙️ Traffic selection mode',
         action='choice',
         choices=(
-            ChoiceOption('selectable', 'Выбор пакетов', 'Selectable'),
-            ChoiceOption('fixed', 'Фиксированный лимит', 'Fixed limit'),
-            ChoiceOption('fixed_with_topup', 'Фикс. лимит + докупка', 'Fixed + topup'),
+            ChoiceOption('selectable', 'ADMIN_PRICING_CHOICE_TRAFFIC_SELECTABLE', 'Selectable'),
+            ChoiceOption('fixed', 'ADMIN_PRICING_CHOICE_TRAFFIC_FIXED', 'Fixed limit'),
+            ChoiceOption('fixed_with_topup', 'ADMIN_PRICING_CHOICE_TRAFFIC_FIXED_TOPUP', 'Fixed + topup'),
         ),
-        description_ru='Определяет, выбирают ли пользователи пакеты или получают фиксированный лимит.',
-        description_en='Defines whether users pick packages or use a fixed limit.',
+        description_key='ADMIN_PRICING_ENTRY_TRAFFIC_SELECTION_MODE_DESC',
+        description_default='Defines whether users pick packages or use a fixed limit.',
     ),
     SettingEntry(
         key='FIXED_TRAFFIC_LIMIT_GB',
         section='core',
-        label_ru='📏 Фиксированный лимит трафика (ГБ)',
-        label_en='📏 Fixed traffic limit (GB)',
+        label_key='ADMIN_PRICING_ENTRY_FIXED_TRAFFIC_LIMIT_GB_LABEL',
+        label_default='📏 Fixed traffic limit (GB)',
         action='input',
-        description_ru='Используется только в режиме фиксированного трафика. 0 = безлимит.',
-        description_en='Used only in fixed traffic mode. 0 = unlimited.',
+        description_key='ADMIN_PRICING_ENTRY_FIXED_TRAFFIC_LIMIT_GB_DESC',
+        description_default='Used only in fixed traffic mode. 0 = unlimited.',
     ),
 )
 
@@ -311,26 +307,29 @@ def _language_code(language: str | None) -> str:
 
 
 def _format_period_label(days: int, lang_code: str, short: bool = False) -> str:
+    texts = get_texts(lang_code)
     if short:
-        suffix = 'д' if lang_code == 'ru' else 'd'
+        suffix = texts.t('ADMIN_PRICING_DAY_SUFFIX_SHORT', 'd')
         return f'{days}{suffix}'
     if lang_code == 'ru':
-        return f'{days} дней'
+        return texts.t('ADMIN_PRICING_PERIOD_LABEL_TEMPLATE', '{days} days').format(days=days)
     if days == 1:
-        return '1 day'
-    return f'{days}-day plan'
+        return texts.t('ADMIN_PRICING_PERIOD_LABEL_ONE_DAY', '1 day')
+    return texts.t('ADMIN_PRICING_PERIOD_LABEL_MULTI_TEMPLATE', '{days}-day plan').format(days=days)
 
 
 def _format_traffic_label(gb: int, lang_code: str, short: bool = False) -> str:
+    texts = get_texts(lang_code)
     if gb == 0:
-        return '∞' if short else ('Безлимит' if lang_code == 'ru' else 'Unlimited')
-    unit = 'ГБ' if lang_code == 'ru' else 'GB'
+        return '∞' if short else texts.t('TRAFFIC_UNLIMITED_SHORT', 'Unlimited')
+    unit = texts.t('ADMIN_PRICING_TRAFFIC_UNIT_SHORT', 'GB')
     if short:
-        return f'{gb}{unit}' if lang_code == 'ru' else f'{gb}{unit}'
+        return f'{gb}{unit}'
     return f'{gb} {unit}'
 
 
 def _format_trial_summary(lang_code: str) -> str:
+    texts = get_texts(lang_code)
     duration = settings.TRIAL_DURATION_DAYS
     traffic = settings.TRIAL_TRAFFIC_LIMIT_GB
     devices = settings.TRIAL_DEVICE_LIMIT
@@ -339,22 +338,23 @@ def _format_trial_summary(lang_code: str) -> str:
         price_note = f', 💳 {settings.format_price(settings.get_trial_activation_price())}'
 
     traffic_label = _format_traffic_label(traffic, lang_code, short=True)
-    devices_label = f'{devices}📱' if lang_code == 'ru' else f'{devices}📱'
-    days_suffix = 'д' if lang_code == 'ru' else 'd'
+    devices_label = f'{devices}📱'
+    days_suffix = texts.t('ADMIN_PRICING_DAY_SUFFIX_SHORT', 'd')
     return f'{duration}{days_suffix}, {traffic_label}, {devices_label}{price_note}'
 
 
 def _format_core_summary(lang_code: str) -> str:
+    texts = get_texts(lang_code)
     base_price = settings.format_price(settings.BASE_SUBSCRIPTION_PRICE)
     device_limit = settings.DEFAULT_DEVICE_LIMIT
     traffic_limit = settings.DEFAULT_TRAFFIC_LIMIT_GB
     mode = settings.TRAFFIC_SELECTION_MODE.lower()
     if mode == 'fixed':
-        traffic_mode = '⚙️ fixed'
+        traffic_mode = texts.t('ADMIN_PRICING_TRAFFIC_MODE_FIXED', '⚙️ fixed')
     elif mode == 'fixed_with_topup':
-        traffic_mode = '⚙️ fixed+topup'
+        traffic_mode = texts.t('ADMIN_PRICING_TRAFFIC_MODE_FIXED_TOPUP', '⚙️ fixed+topup')
     else:
-        traffic_mode = '⚙️ selectable'
+        traffic_mode = texts.t('ADMIN_PRICING_TRAFFIC_MODE_SELECTABLE', '⚙️ selectable')
     traffic_label = _format_traffic_label(traffic_limit, lang_code, short=True)
     return f'{base_price}, {device_limit}📱, {traffic_label}, {traffic_mode}'
 
@@ -386,16 +386,18 @@ def _get_traffic_items(lang_code: str) -> list[PriceItem]:
 
 
 def _get_extra_items(lang_code: str) -> list[PriceItem]:
+    texts = get_texts(lang_code)
     items: list[PriceItem] = []
 
     if hasattr(settings, 'PRICE_PER_DEVICE'):
-        label = 'Дополнительное устройство' if lang_code == 'ru' else 'Extra device'
+        label = texts.t('ADMIN_PRICING_EXTRA_DEVICE_LABEL', 'Extra device')
         items.append(('PRICE_PER_DEVICE', label, settings.PRICE_PER_DEVICE))
 
     return items
 
 
 def _build_period_summary(items: Iterable[PriceItem], lang_code: str, fallback: str) -> str:
+    texts = get_texts(lang_code)
     parts: list[str] = []
     for key, label, price in items:
         try:
@@ -404,7 +406,7 @@ def _build_period_summary(items: Iterable[PriceItem], lang_code: str, fallback: 
             days = None
 
         if days is not None:
-            suffix = 'д' if lang_code == 'ru' else 'd'
+            suffix = texts.t('ADMIN_PRICING_DAY_SUFFIX_SHORT', 'd')
             short_label = f'{days}{suffix}'
         else:
             short_label = label
@@ -430,12 +432,17 @@ def _build_traffic_summary(lang_code: str, fallback: str) -> str:
 
 
 def _build_period_options_summary(lang_code: str) -> str:
-    suffix = 'д' if lang_code == 'ru' else 'd'
+    texts = get_texts(lang_code)
+    suffix = texts.t('ADMIN_PRICING_DAY_SUFFIX_SHORT', 'd')
     available = ', '.join(f'{days}{suffix}' for days in settings.get_available_subscription_periods())
     renewal = ', '.join(f'{days}{suffix}' for days in settings.get_available_renewal_periods())
-    if lang_code == 'ru':
-        return f'Подписки: {available or "—"} | Продления: {renewal or "—"}'
-    return f'Subscriptions: {available or "-"} | Renewals: {renewal or "-"}'
+    return texts.t(
+        'ADMIN_PRICING_PERIOD_OPTIONS_SUMMARY',
+        'Subscriptions: {available} | Renewals: {renewal}',
+    ).format(
+        available=available or '-',
+        renewal=renewal or '-',
+    )
 
 
 def _build_extra_summary(items: Iterable[PriceItem], fallback: str) -> str:
@@ -448,7 +455,6 @@ def _build_settings_section(
     language: str,
 ) -> tuple[str, types.InlineKeyboardMarkup]:
     texts = get_texts(language)
-    lang_code = _language_code(language)
     entries = SETTING_ENTRIES_BY_SECTION.get(section, ())
 
     if section == 'trial':
@@ -471,7 +477,7 @@ def _build_settings_section(
         lines.append('')
 
     for entry in entries:
-        label = entry.label(lang_code)
+        label = entry.label(language)
         value = bot_configuration_service.get_current_value(entry.key)
         formatted = bot_configuration_service.format_value_human(entry.key, value)
 
@@ -498,7 +504,7 @@ def _build_settings_section(
                 icon = '✅' if is_active else '⚪️'
                 buttons.append(
                     types.InlineKeyboardButton(
-                        text=f'{icon} {option.label(lang_code)}',
+                        text=f'{icon} {option.label(language)}',
                         callback_data=(
                             f'admin_pricing_choice:{section}:{_encode_setting_callback_key(entry.key)}:{option.value}'
                         ),
@@ -521,7 +527,7 @@ def _build_settings_section(
                 ]
             )
 
-        description = entry.description(lang_code)
+        description = entry.description(language)
         if description:
             lines.append(f'<i>{description}</i>')
         lines.append('')
@@ -869,10 +875,11 @@ def _parse_price_input(text: str) -> int:
 
 def _resolve_label(section: str, key: str, language: str) -> str:
     lang_code = _language_code(language)
+    texts = get_texts(language)
 
     entry = SETTING_ENTRY_BY_KEY.get(key)
     if entry is not None:
-        return entry.label(lang_code)
+        return entry.label(language)
 
     if section == 'periods' and key.startswith('PRICE_') and key.endswith('_DAYS'):
         try:
@@ -894,7 +901,7 @@ def _resolve_label(section: str, key: str, language: str) -> str:
             return _format_traffic_label(gb, lang_code)
 
     if key == 'PRICE_PER_DEVICE':
-        return 'Дополнительное устройство' if lang_code == 'ru' else 'Extra device'
+        return texts.t('ADMIN_PRICING_EXTRA_DEVICE_LABEL', 'Extra device')
 
     return key
 
@@ -983,8 +990,7 @@ async def start_setting_edit(
     key = _decode_setting_callback_key(raw_key)
     entry = SETTING_ENTRY_BY_KEY.get(key)
     texts = get_texts(db_user.language)
-    lang_code = _language_code(db_user.language)
-    label = entry.label(lang_code) if entry else key
+    label = entry.label(db_user.language) if entry else key
     current_value = bot_configuration_service.get_current_value(key)
     formatted_current = bot_configuration_service.format_value_human(key, current_value)
     guidance = bot_configuration_service.get_setting_guidance(key)
@@ -1140,8 +1146,7 @@ async def process_pricing_input(
         await state.clear()
         return
     entry = SETTING_ENTRY_BY_KEY.get(key)
-    lang_code = _language_code(db_user.language)
-    label = entry.label(lang_code) if entry else (stored_label or key)
+    label = entry.label(db_user.language) if entry else (stored_label or key)
     formatted_value = bot_configuration_service.format_value_human(
         key, bot_configuration_service.get_current_value(key)
     )
@@ -1241,12 +1246,11 @@ async def select_setting_choice(
     await bot_configuration_service.set_value(db, key, target_option.value)
     await db.commit()
 
-    lang_code = _language_code(db_user.language)
     await callback.answer(
         texts.t(
             'ADMIN_PRICING_CHOICE_UPDATED',
             'Выбрано: {label}',
-        ).format(label=target_option.label(lang_code))
+        ).format(label=target_option.label(db_user.language))
     )
 
     text, keyboard = _build_section(section, db_user.language)
