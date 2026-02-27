@@ -261,24 +261,6 @@ async def get_subscription(
         # Return 200 with has_subscription: false instead of 404
         return SubscriptionStatusResponse(has_subscription=False, subscription=None)
 
-    # Fallback: restore subscription URL from panel if missing
-    if not fresh_user.subscription.subscription_url and getattr(fresh_user, 'remnawave_uuid', None):
-        try:
-            service = RemnaWaveService()
-            async with service.get_api_client() as api:
-                rw_user = await api.get_user_by_uuid(fresh_user.remnawave_uuid)
-                if rw_user and rw_user.subscription_url:
-                    fresh_user.subscription.subscription_url = rw_user.subscription_url
-                    if rw_user.happ_crypto_link and not fresh_user.subscription.subscription_crypto_link:
-                        fresh_user.subscription.subscription_crypto_link = rw_user.happ_crypto_link
-                    await db.commit()
-                    logger.info(
-                        'Restored subscription URLs from panel for dashboard',
-                        user_id=fresh_user.id,
-                    )
-        except Exception as e:
-            logger.warning('Failed to fetch subscription URL from panel', error=e)
-
     # Load tariff for daily subscription check and tariff name
     tariff_name = None
     if fresh_user.subscription.tariff_id:
@@ -3223,27 +3205,24 @@ async def get_app_config(
         subscription_url = user.subscription.subscription_url
         subscription_crypto_link = user.subscription.subscription_crypto_link
 
-    # Fallback: if subscription URL is missing but user has a RemnaWave UUID,
-    # fetch fresh data from the panel and persist it
-    if user.subscription and not subscription_url and getattr(user, 'remnawave_uuid', None):
+    # Generate crypto link on the fly if subscription_url exists but crypto link is missing.
+    # This covers synced users where enrich_happ_links was not called.
+    if subscription_url and not subscription_crypto_link:
         try:
             service = RemnaWaveService()
             async with service.get_api_client() as api:
-                rw_user = await api.get_user_by_uuid(user.remnawave_uuid)
-                if rw_user and rw_user.subscription_url:
-                    subscription_url = rw_user.subscription_url
-                    user.subscription.subscription_url = subscription_url
-                    if rw_user.happ_crypto_link and not subscription_crypto_link:
-                        subscription_crypto_link = rw_user.happ_crypto_link
-                        user.subscription.subscription_crypto_link = subscription_crypto_link
-                    await db.commit()
-                    logger.info(
-                        'Restored subscription URLs from panel',
-                        user_id=user.id,
-                        subscription_url=subscription_url,
-                    )
+                encrypted = await api.encrypt_happ_crypto_link(subscription_url)
+                if encrypted:
+                    subscription_crypto_link = encrypted
+                    if user.subscription:
+                        user.subscription.subscription_crypto_link = encrypted
+                        await db.commit()
+                        logger.info(
+                            'Generated and saved crypto link for user',
+                            user_id=user.id,
+                        )
         except Exception as e:
-            logger.warning('Failed to fetch subscription URL from panel', error=e)
+            logger.debug('Could not generate crypto link', error=e)
 
     config = await _load_app_config_async()
 
@@ -3305,11 +3284,15 @@ async def get_app_config(
                     if btn_type in ('subscriptionLink', 'copyButton'):
                         url = btn.get('url', '') or btn.get('link', '')
                         if url and '{{' in url:
-                            btn['resolvedUrl'] = _resolve_button_url(
+                            resolved = _resolve_button_url(
                                 url,
                                 subscription_url,
                                 subscription_crypto_link,
                             )
+                            # Only set resolvedUrl if ALL templates were resolved;
+                            # otherwise let the frontend fall through to deepLink/subscriptionUrl
+                            if '{{' not in resolved:
+                                btn['resolvedUrl'] = resolved
 
             enriched_apps.append(app)
 
