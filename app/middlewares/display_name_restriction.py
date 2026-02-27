@@ -4,6 +4,7 @@ from typing import Any
 
 import structlog
 from aiogram import BaseMiddleware
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import (
     CallbackQuery,
     Message,
@@ -106,12 +107,15 @@ class DisplayNameRestrictionMiddleware(BaseMiddleware):
                 suspicious_value=suspicious_value,
             )
 
-            if isinstance(event, Message):
-                await event.answer(warning)
-            elif isinstance(event, CallbackQuery):
-                await event.answer(warning, show_alert=True)
-            elif isinstance(event, PreCheckoutQuery):
-                await event.answer(ok=False, error_message=warning)
+            try:
+                if isinstance(event, Message):
+                    await event.answer(warning)
+                elif isinstance(event, CallbackQuery):
+                    await event.answer(warning, show_alert=True)
+                elif isinstance(event, PreCheckoutQuery):
+                    await event.answer(ok=False, error_message=warning)
+            except TelegramAPIError:
+                pass
             return None
 
         return await handler(event, data)
