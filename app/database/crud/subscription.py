@@ -1391,11 +1391,27 @@ async def get_subscription_renewal_cost(
         total_servers_discount = servers_discount_per_month * months_in_period
 
         # В режиме fixed_with_topup при продлении используем фиксированный лимит
+        purchased_traffic = subscription.purchased_traffic_gb or 0
         if settings.is_traffic_fixed():
-            renewal_traffic_gb = settings.get_fixed_traffic_limit()
+            traffic_price_per_month = settings.get_traffic_price(settings.get_fixed_traffic_limit())
+        # Separate base traffic from purchased to avoid wrong tier lookup
+        elif purchased_traffic > 0:
+            base_traffic_gb = (subscription.traffic_limit_gb or 0) - purchased_traffic
+            if base_traffic_gb <= 0:
+                logger.warning(
+                    'Purchased traffic >= total limit, pricing purchased portion only',
+                    subscription_id=subscription.id,
+                    traffic_limit_gb=subscription.traffic_limit_gb,
+                    purchased_traffic_gb=purchased_traffic,
+                )
+                traffic_price_per_month = settings.get_traffic_price(purchased_traffic)
+            else:
+                traffic_price_per_month = (
+                    settings.get_traffic_price(base_traffic_gb)
+                    + settings.get_traffic_price(purchased_traffic)
+                )
         else:
-            renewal_traffic_gb = subscription.traffic_limit_gb
-        traffic_price_per_month = settings.get_traffic_price(renewal_traffic_gb)
+            traffic_price_per_month = settings.get_traffic_price(subscription.traffic_limit_gb)
         traffic_discount_percent = _get_discount_percent(
             user,
             promo_group,

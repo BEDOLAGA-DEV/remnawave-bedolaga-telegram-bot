@@ -325,8 +325,22 @@ class SubscriptionRenewalService:
             await self._validate_servers_for_user_promo_group(db, user, connected_uuids)
 
         # В режиме fixed_with_topup при продлении используем фиксированный лимит
+        purchased_traffic = subscription.purchased_traffic_gb or 0
         if settings.is_traffic_fixed():
             traffic_limit = settings.get_fixed_traffic_limit()
+        # Separate base traffic from purchased to avoid wrong tier lookup
+        # e.g. 25GB base + 100GB purchased = 125GB total → would round up to 250GB tier
+        elif purchased_traffic > 0:
+            base_traffic = (subscription.traffic_limit_gb or 0) - purchased_traffic
+            if base_traffic <= 0:
+                logger.warning(
+                    'Purchased traffic >= total limit, pricing purchased portion only',
+                    subscription_id=subscription.id,
+                    traffic_limit_gb=subscription.traffic_limit_gb,
+                    purchased_traffic_gb=purchased_traffic,
+                )
+                base_traffic = settings.DEFAULT_TRAFFIC_LIMIT_GB or 0
+            traffic_limit = base_traffic
         else:
             traffic_limit = subscription.traffic_limit_gb
             if traffic_limit is None:
@@ -346,6 +360,20 @@ class SubscriptionRenewalService:
         )
 
         months = details.get('months_in_period') or calculate_months_from_days(period_days)
+
+        # Add purchased traffic cost separately (uses its own tier price, same discount %)
+        if purchased_traffic > 0 and not settings.is_traffic_fixed():
+            purchased_price_per_month = settings.get_traffic_price(purchased_traffic)
+            traffic_discount_pct = details.get('traffic_discount_percent', 0)
+            purchased_disc_per_month = purchased_price_per_month * traffic_discount_pct // 100
+            discounted_purchased_per_month = purchased_price_per_month - purchased_disc_per_month
+            purchased_total = discounted_purchased_per_month * months
+            purchased_disc_total = purchased_disc_per_month * months
+
+            total_cost += purchased_total
+            details['traffic_price_per_month'] = details.get('traffic_price_per_month', 0) + purchased_price_per_month
+            details['total_traffic_price'] = details.get('total_traffic_price', 0) + purchased_total
+            details['traffic_discount_total'] = details.get('traffic_discount_total', 0) + purchased_disc_total
 
         base_original_total = (
             details.get('base_price_original', 0)
