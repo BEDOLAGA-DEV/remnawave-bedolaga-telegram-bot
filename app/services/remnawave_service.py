@@ -2156,22 +2156,32 @@ class RemnaWaveService:
                 except Exception as e:
                     logger.debug('Пользователь не найден по username', user_identifier=user_identifier, error=e)
 
-                # Если не нашли по username, ищем по email среди всех пользователей
+                # Если не нашли по username, ищем по email среди всех пользователей (с пагинацией)
                 try:
-                    all_users_response = await api.get_all_users(start=0, size=10000)
-                    users_list = all_users_response.get('users', [])
+                    page_size = 500
+                    start = 0
+                    while True:
+                        page_response = await api.get_all_users(start=start, size=page_size)
+                        users_list = page_response.get('users', [])
+                        total = page_response.get('total', 0)
 
-                    for panel_user in users_list:
-                        panel_email = panel_user.email if hasattr(panel_user, 'email') else None
-                        if panel_email and panel_email.lower() == user_identifier.lower():
-                            panel_telegram_id = panel_user.telegram_id if hasattr(panel_user, 'telegram_id') else None
-                            if panel_telegram_id:
-                                logger.info(
-                                    'Найден пользователь по email telegram_id',
-                                    user_identifier=user_identifier,
-                                    panel_telegram_id=panel_telegram_id,
+                        for panel_user in users_list:
+                            panel_email = panel_user.email if hasattr(panel_user, 'email') else None
+                            if panel_email and panel_email.lower() == user_identifier.lower():
+                                panel_telegram_id = (
+                                    panel_user.telegram_id if hasattr(panel_user, 'telegram_id') else None
                                 )
-                                return panel_telegram_id
+                                if panel_telegram_id:
+                                    logger.info(
+                                        'Найден пользователь по email telegram_id',
+                                        user_identifier=user_identifier,
+                                        panel_telegram_id=panel_telegram_id,
+                                    )
+                                    return panel_telegram_id
+
+                        start += len(users_list)
+                        if start >= total or not users_list:
+                            break
                 except Exception as e:
                     logger.warning('Ошибка поиска пользователя по email', user_identifier=user_identifier, error=e)
 

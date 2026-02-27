@@ -559,53 +559,59 @@ async def register_email(
             detail='You already have a verified email',
         )
 
-    # Generate verification token
-    verification_token = generate_verification_token()
-    verification_expires = get_verification_expires_at()
-
     # Update user
     user.email = request.email
-    user.email_verified = False
     user.password_hash = hash_password(request.password)
-    user.email_verification_token = verification_token
-    user.email_verification_expires = verification_expires
 
-    await db.commit()
+    if not settings.is_cabinet_email_verification_enabled():
+        # Верификация отключена — сразу помечаем email как verified
+        user.email_verified = True
+        user.email_verified_at = datetime.now(UTC)
+        await db.commit()
+    else:
+        # Generate verification token
+        verification_token = generate_verification_token()
+        verification_expires = get_verification_expires_at()
 
-    # Send verification email asynchronously (smtplib is blocking)
-    if settings.is_cabinet_email_verification_enabled() and email_service.is_configured():
-        cabinet_url = settings.CABINET_URL
-        verification_url = f'{cabinet_url}/verify-email'
-        lang = user.language or 'ru'
-        full_url = f'{verification_url}?token={verification_token}'
-        expire_hours = settings.get_cabinet_email_verification_expire_hours()
+        user.email_verified = False
+        user.email_verification_token = verification_token
+        user.email_verification_expires = verification_expires
+        await db.commit()
 
-        # Check for admin template override
-        override = await get_rendered_override(
-            'email_verification',
-            lang,
-            context={
-                'username': user.first_name or '',
-                'verification_url': full_url,
-                'expire_hours': str(expire_hours),
-            },
-            db=db,
-        )
-        custom_subject, custom_body = override if override else (None, None)
+        # Send verification email asynchronously (smtplib is blocking)
+        if email_service.is_configured():
+            cabinet_url = settings.CABINET_URL
+            verification_url = f'{cabinet_url}/verify-email'
+            lang = user.language or 'ru'
+            full_url = f'{verification_url}?token={verification_token}'
+            expire_hours = settings.get_cabinet_email_verification_expire_hours()
 
-        await asyncio.to_thread(
-            email_service.send_verification_email,
-            to_email=request.email,
-            verification_token=verification_token,
-            verification_url=verification_url,
-            username=user.first_name,
-            language=lang,
-            custom_subject=custom_subject,
-            custom_body_html=custom_body,
-        )
+            # Check for admin template override
+            override = await get_rendered_override(
+                'email_verification',
+                lang,
+                context={
+                    'username': user.first_name or '',
+                    'verification_url': full_url,
+                    'expire_hours': str(expire_hours),
+                },
+                db=db,
+            )
+            custom_subject, custom_body = override if override else (None, None)
+
+            await asyncio.to_thread(
+                email_service.send_verification_email,
+                to_email=request.email,
+                verification_token=verification_token,
+                verification_url=verification_url,
+                username=user.first_name,
+                language=lang,
+                custom_subject=custom_subject,
+                custom_body_html=custom_body,
+            )
 
     return {
-        'message': 'Verification email sent',
+        'message': 'Email linked successfully' if not settings.is_cabinet_email_verification_enabled() else 'Verification email sent',
         'email': request.email,
     }
 
@@ -685,12 +691,12 @@ async def register_email_standalone(
         referred_by_id=referrer.id if referrer else None,
     )
 
-    # Для тестового email - автоматически верифицировать
-    if is_test_email:
+    # Для тестового email или отключённой верификации - автоматически верифицировать
+    if is_test_email or not settings.is_cabinet_email_verification_enabled():
         user.email_verified = True
         user.email_verified_at = datetime.now(UTC)
         await db.commit()
-        logger.info('Test email auto-verified: user_id', email=request.email, user_id=user.id)
+        logger.info('Email auto-verified (test or verification disabled)', email=request.email, user_id=user.id)
     else:
         # Сгенерировать токен верификации
         verification_token = generate_verification_token()
@@ -743,11 +749,12 @@ async def register_email_standalone(
             # Не прерываем регистрацию из-за ошибки реферальной системы
 
     # Для тестового email - сразу можно логиниться (уже verified)
-    # Для обычного email - требуется верификация
+    # Для обычного email - требуется верификация (если включена)
+    verification_required = not is_test_email and settings.is_cabinet_email_verification_enabled()
     return RegisterResponse(
         message='Verification email sent. Please check your inbox.',
         email=request.email,
-        requires_verification=not is_test_email,
+        requires_verification=verification_required,
     )
 
 
@@ -917,8 +924,8 @@ async def login_email(
             detail='Invalid email or password',
         )
 
-    # Test email bypasses verification check
-    if not user.email_verified and not is_test_email:
+    # Test email and disabled verification bypass the check
+    if not user.email_verified and not is_test_email and settings.is_cabinet_email_verification_enabled():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Please verify your email first',
