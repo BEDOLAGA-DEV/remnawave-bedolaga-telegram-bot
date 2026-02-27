@@ -2443,6 +2443,9 @@ async def confirm_daily_tariff_switch(
         subscription.purchased_traffic_gb = 0
         subscription.traffic_reset_at = None
 
+        if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+            subscription.traffic_used_gb = 0.0
+
         await db.commit()
         await db.refresh(subscription)
 
@@ -2996,6 +2999,9 @@ async def confirm_instant_switch(
         await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
         subscription.purchased_traffic_gb = 0
         subscription.traffic_reset_at = None
+
+        if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+            subscription.traffic_used_gb = 0.0
 
         if is_new_daily:
             # Для суточного тарифа - сбрасываем на 1 день и настраиваем суточные параметры

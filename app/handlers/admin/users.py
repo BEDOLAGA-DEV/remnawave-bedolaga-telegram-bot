@@ -5327,11 +5327,20 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         subscription.purchased_traffic_gb = 0
         subscription.traffic_reset_at = None
 
+        # Сброс использованного трафика по админ-настройке
+        if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+            subscription.traffic_used_gb = 0.0
+
         await db.commit()
 
-        # Синхронизируем с RemnaWave
+        # Синхронизируем с RemnaWave (сброс трафика по админ-настройке)
         subscription_service = SubscriptionService()
-        await subscription_service.update_remnawave_user(db, subscription)
+        await subscription_service.update_remnawave_user(
+            db,
+            subscription,
+            reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+            reset_reason='смена тарифа (админ)',
+        )
 
         logger.info(
             'Админ изменил тариф пользователя',
