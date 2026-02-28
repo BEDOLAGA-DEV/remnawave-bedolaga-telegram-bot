@@ -691,6 +691,30 @@ async def create_topup(
                     detail='Failed to create KassaAI payment',
                 )
 
+        elif request.payment_method == 'shkeeper':
+            if not settings.is_shkeeper_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='SHKeeper payment method is unavailable',
+                )
+
+            payment_service = PaymentService()
+            result = await payment_service.create_shkeeper_payment(
+                db=db,
+                user_id=user.id,
+                amount_kopeks=request.amount_kopeks,
+                description=settings.get_balance_payment_description(request.amount_kopeks),
+            )
+
+            if result and result.get('payment_url'):
+                payment_url = result.get('payment_url')
+                payment_id = str(result.get('local_payment_id') or result.get('order_id') or 'pending')
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Failed to create SHKeeper payment',
+                )
+
         elif request.payment_method == 'tribute':
             if not settings.TRIBUTE_ENABLED or not settings.TRIBUTE_DONATE_LINK:
                 raise HTTPException(
@@ -842,6 +866,18 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
         }
         return mapping.get(status, ('❓', 'Неизвестно'))
 
+    if record.method == PaymentMethod.SHKEEPER:
+        mapping = {
+            'pending': ('⏳', 'Ожидает оплаты'),
+            'processing': ('⌛', 'Обрабатывается'),
+            'paid': ('✅', 'Оплачено'),
+            'success': ('✅', 'Оплачено'),
+            'failed': ('❌', 'Ошибка'),
+            'expired': ('⌛', 'Истёк'),
+            'canceled': ('❌', 'Отменено'),
+        }
+        return mapping.get(status, ('❓', 'Неизвестно'))
+
     return '❓', 'Неизвестно'
 
 
@@ -872,6 +908,8 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status in {'pending', 'created', 'processing'}
     if record.method == PaymentMethod.KASSA_AI:
         return status in {'pending', 'created', 'processing'}
+    if record.method == PaymentMethod.SHKEEPER:
+        return status in {'pending', 'processing', 'created'}
     return False
 
 
@@ -895,7 +933,12 @@ def _get_payment_url(record: PendingPayment) -> str | None:
         )
     elif record.method == PaymentMethod.PLATEGA:
         payment_url = getattr(payment, 'redirect_url', None) or payment_url
-    elif record.method in (PaymentMethod.CLOUDPAYMENTS, PaymentMethod.FREEKASSA, PaymentMethod.KASSA_AI):
+    elif record.method in (
+        PaymentMethod.CLOUDPAYMENTS,
+        PaymentMethod.FREEKASSA,
+        PaymentMethod.KASSA_AI,
+        PaymentMethod.SHKEEPER,
+    ):
         payment_url = getattr(payment, 'payment_url', None) or payment_url
 
     return payment_url

@@ -22,6 +22,7 @@ from app.services.payment import (
     Pal24PaymentMixin,
     PaymentCommonMixin,
     PlategaPaymentMixin,
+    ShkeeperPaymentMixin,
     TelegramStarsMixin,
     TributePaymentMixin,
     WataPaymentMixin,
@@ -31,6 +32,7 @@ from app.services.payment.cloudpayments import CloudPaymentsPaymentMixin
 from app.services.payment.freekassa import FreekassaPaymentMixin
 from app.services.payment.kassa_ai import KassaAiPaymentMixin
 from app.services.platega_service import PlategaService
+from app.services.shkeeper_service import ShkeeperService
 from app.services.wata_service import WataService
 from app.services.yookassa_service import YooKassaService
 from app.utils.currency_converter import currency_converter  # noqa: F401
@@ -292,6 +294,36 @@ async def update_cloudpayments_payment(*args, **kwargs):
     return await cloudpayments_crud.update_cloudpayments_payment(*args, **kwargs)
 
 
+async def create_shkeeper_payment(*args, **kwargs):
+    shkeeper_crud = import_module('app.database.crud.shkeeper')
+    return await shkeeper_crud.create_shkeeper_payment(*args, **kwargs)
+
+
+async def get_shkeeper_payment_by_id(*args, **kwargs):
+    shkeeper_crud = import_module('app.database.crud.shkeeper')
+    return await shkeeper_crud.get_shkeeper_payment_by_id(*args, **kwargs)
+
+
+async def get_shkeeper_payment_by_order_id(*args, **kwargs):
+    shkeeper_crud = import_module('app.database.crud.shkeeper')
+    return await shkeeper_crud.get_shkeeper_payment_by_order_id(*args, **kwargs)
+
+
+async def get_shkeeper_payment_by_external_id(*args, **kwargs):
+    shkeeper_crud = import_module('app.database.crud.shkeeper')
+    return await shkeeper_crud.get_shkeeper_payment_by_external_id(*args, **kwargs)
+
+
+async def get_shkeeper_payment_by_invoice_id(*args, **kwargs):
+    shkeeper_crud = import_module('app.database.crud.shkeeper')
+    return await shkeeper_crud.get_shkeeper_payment_by_invoice_id(*args, **kwargs)
+
+
+async def update_shkeeper_payment_status(*args, **kwargs):
+    shkeeper_crud = import_module('app.database.crud.shkeeper')
+    return await shkeeper_crud.update_shkeeper_payment_status(*args, **kwargs)
+
+
 class PaymentService(
     PaymentCommonMixin,
     TelegramStarsMixin,
@@ -306,6 +338,7 @@ class PaymentService(
     CloudPaymentsPaymentMixin,
     FreekassaPaymentMixin,
     KassaAiPaymentMixin,
+    ShkeeperPaymentMixin,
 ):
     """Основной интерфейс платежей, делегирующий работу специализированным mixin-ам."""
 
@@ -322,11 +355,12 @@ class PaymentService(
         self.platega_service = PlategaService() if settings.is_platega_enabled() else None
         self.wata_service = WataService() if settings.is_wata_enabled() else None
         self.cloudpayments_service = CloudPaymentsService() if settings.is_cloudpayments_enabled() else None
+        self.shkeeper_service = ShkeeperService() if settings.is_shkeeper_enabled() else None
         self.nalogo_service = NaloGoService() if settings.is_nalogo_enabled() else None
 
         mulenpay_name = settings.get_mulenpay_display_name()
         logger.debug(
-            'PaymentService инициализирован (YooKassa Stars CryptoBot Heleket Pal24 Platega Wata CloudPayments=)',
+            'PaymentService инициализирован (YooKassa Stars CryptoBot Heleket Pal24 Platega Wata CloudPayments SHKeeper=)',
             yookassa_service=bool(self.yookassa_service),
             stars_service=bool(self.stars_service),
             cryptobot_service=bool(self.cryptobot_service),
@@ -337,4 +371,5 @@ class PaymentService(
             platega_service=bool(self.platega_service),
             wata_service=bool(self.wata_service),
             cloudpayments_service=bool(self.cloudpayments_service),
+            shkeeper_service=bool(self.shkeeper_service),
         )

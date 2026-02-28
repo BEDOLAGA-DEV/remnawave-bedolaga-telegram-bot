@@ -2092,7 +2092,7 @@ REMNAWAVE_SECRET_KEY=XXXXXXX:DDDDDDDD
 4. Протестируйте через админ-панель бота
 5. Включите метод для пользователей
 
-Подробнее: [docs/payment-setup.md](docs/payment-setup.md)
+Подробнее: [docs/shkeeper-setup.md](docs/shkeeper-setup.md)
 
 </details>
 

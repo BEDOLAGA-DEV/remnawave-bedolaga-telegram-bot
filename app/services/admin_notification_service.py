@@ -1269,6 +1269,7 @@ class AdminNotificationService:
             'cloudpayments': f'💳 {settings.get_cloudpayments_display_name()}',
             'freekassa': f'💳 {settings.get_freekassa_display_name()}',
             'kassa_ai': f'💳 {settings.get_kassa_ai_display_name()}',
+            'shkeeper': f'💳 {settings.get_shkeeper_display_name()}',
             'manual': '🛠️ Вручную (админ)',
             'balance': '💰 С баланса',
         }

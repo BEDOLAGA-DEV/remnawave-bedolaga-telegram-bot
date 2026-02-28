@@ -465,6 +465,7 @@ class MiniAppPaymentStatusQuery(BaseModel):
     payment_link_id: str | None = Field(default=None, alias='paymentLinkId')
     invoice_id: str | None = Field(default=None, alias='invoiceId')
     payment_id: str | None = Field(default=None, alias='paymentId')
+    order_id: str | None = Field(default=None, alias='orderId')
     payload: str | None = None
     amount_kopeks: int | None = Field(default=None, alias='amountKopeks')
     started_at: str | None = Field(default=None, alias='startedAt')

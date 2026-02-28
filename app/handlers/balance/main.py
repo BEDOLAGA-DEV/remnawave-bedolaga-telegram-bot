@@ -129,6 +129,13 @@ async def route_payment_by_method(
             await process_kassa_ai_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method == 'shkeeper':
+        from .shkeeper import process_shkeeper_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_shkeeper_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
     return False
 
 
@@ -860,6 +867,11 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.callback_query.register(start_kassa_ai_topup, F.data == 'topup_kassa_ai')
     dp.callback_query.register(process_kassa_ai_quick_amount, F.data.startswith('topup_amount|kassa_ai|'))
+
+    from .shkeeper import check_shkeeper_payment_status, start_shkeeper_payment
+
+    dp.callback_query.register(start_shkeeper_payment, F.data == 'topup_shkeeper')
+    dp.callback_query.register(check_shkeeper_payment_status, F.data.startswith('check_shkeeper_'))
 
     from .mulenpay import check_mulenpay_payment_status
 

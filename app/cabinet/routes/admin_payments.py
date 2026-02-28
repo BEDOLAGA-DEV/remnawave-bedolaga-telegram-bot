@@ -183,6 +183,29 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
         }
         return mapping.get(status_str, ('❓', 'Неизвестно'))
 
+    if record.method == PaymentMethod.KASSA_AI:
+        mapping = {
+            'pending': ('⏳', 'Ожидает оплаты'),
+            'success': ('✅', 'Оплачено'),
+            'paid': ('✅', 'Оплачено'),
+            'canceled': ('❌', 'Отменено'),
+            'failed': ('❌', 'Ошибка'),
+            'expired': ('⌛', 'Истёк'),
+        }
+        return mapping.get(status_str, ('❓', 'Неизвестно'))
+
+    if record.method == PaymentMethod.SHKEEPER:
+        mapping = {
+            'pending': ('⏳', 'Ожидает оплаты'),
+            'processing': ('⌛', 'Обрабатывается'),
+            'paid': ('✅', 'Оплачено'),
+            'success': ('✅', 'Оплачено'),
+            'failed': ('❌', 'Ошибка'),
+            'expired': ('⌛', 'Истёк'),
+            'canceled': ('❌', 'Отменено'),
+        }
+        return mapping.get(status_str, ('❓', 'Неизвестно'))
+
     return '❓', 'Неизвестно'
 
 
@@ -211,6 +234,10 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status_str in {'pending', 'authorized'}
     if record.method == PaymentMethod.FREEKASSA:
         return status_str in {'pending', 'created', 'processing'}
+    if record.method == PaymentMethod.KASSA_AI:
+        return status_str in {'pending', 'created', 'processing'}
+    if record.method == PaymentMethod.SHKEEPER:
+        return status_str in {'pending', 'processing', 'created'}
     return False
 
 
@@ -234,7 +261,12 @@ def _get_payment_url(record: PendingPayment) -> str | None:
         )
     elif record.method == PaymentMethod.PLATEGA:
         payment_url = getattr(payment, 'redirect_url', None) or payment_url
-    elif record.method == PaymentMethod.CLOUDPAYMENTS or record.method == PaymentMethod.FREEKASSA:
+    elif record.method in (
+        PaymentMethod.CLOUDPAYMENTS,
+        PaymentMethod.FREEKASSA,
+        PaymentMethod.KASSA_AI,
+        PaymentMethod.SHKEEPER,
+    ):
         payment_url = getattr(payment, 'payment_url', None) or payment_url
 
     return payment_url
