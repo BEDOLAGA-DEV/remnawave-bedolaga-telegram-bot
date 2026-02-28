@@ -129,6 +129,13 @@ def _get_method_defaults() -> dict:
             'default_max': settings.KASSA_AI_MAX_AMOUNT_KOPEKS,
             'available_sub_options': None,
         },
+        'shkeeper': {
+            'default_display_name': settings.get_shkeeper_display_name(),
+            'is_configured': settings.is_shkeeper_enabled(),
+            'default_min': settings.SHKEEPER_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.SHKEEPER_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': None,
+        },
     }
 
 
@@ -169,6 +176,7 @@ DEFAULT_METHOD_ORDER = [
     'freekassa_card',
     'cloudpayments',
     'kassa_ai',
+    'shkeeper',
 ]
 
 

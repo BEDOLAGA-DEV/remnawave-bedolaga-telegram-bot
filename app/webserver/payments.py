@@ -32,7 +32,10 @@ def _create_cors_response() -> Response:
         headers={
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, trbt-signature, Crypto-Pay-API-Signature, X-MulenPay-Signature, Authorization',
+            'Access-Control-Allow-Headers': (
+                'Content-Type, trbt-signature, Crypto-Pay-API-Signature, '
+                'X-MulenPay-Signature, X-Shkeeper-API-Key, Authorization'
+            ),
         },
     )
 
@@ -536,6 +539,75 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     {'status': 'error', 'reason': 'not_processed'},
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
+
+        routes_registered = True
+
+    if settings.is_shkeeper_enabled():
+
+        @router.options(settings.SHKEEPER_WEBHOOK_PATH)
+        async def shkeeper_options() -> Response:
+            return _create_cors_response()
+
+        @router.get(settings.SHKEEPER_WEBHOOK_PATH)
+        async def shkeeper_health() -> JSONResponse:
+            return JSONResponse(
+                {
+                    'status': 'ok',
+                    'service': 'shkeeper_webhook',
+                    'enabled': settings.is_shkeeper_enabled(),
+                }
+            )
+
+        @router.post(settings.SHKEEPER_WEBHOOK_PATH)
+        async def shkeeper_webhook(request: Request) -> JSONResponse:
+            raw_body = await request.body()
+            if not raw_body:
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'empty_body'},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+            shkeeper_service = getattr(payment_service, 'shkeeper_service', None)
+            if not shkeeper_service:
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'service_not_configured'},
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+            callback_key = _extract_header(
+                request,
+                (
+                    'X-Shkeeper-Api-Key',
+                    'X-Shkeeper-API-Key',
+                    'X-SHKEEPER-API-KEY',
+                ),
+            )
+            if not shkeeper_service.verify_callback_auth(callback_key):
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'invalid_signature'},
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                )
+
+            try:
+                payload = json.loads(raw_body.decode('utf-8'))
+            except json.JSONDecodeError:
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'invalid_json'},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+            success = await _process_payment_service_callback(
+                payment_service,
+                payload,
+                'process_shkeeper_webhook',
+            )
+            if success:
+                return JSONResponse({'status': 'ok'})
+
+            return JSONResponse(
+                {'status': 'error', 'reason': 'not_processed'},
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
 
         routes_registered = True
 
@@ -1126,6 +1198,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     'cloudpayments_enabled': settings.is_cloudpayments_enabled(),
                     'freekassa_enabled': settings.is_freekassa_enabled(),
                     'kassa_ai_enabled': settings.is_kassa_ai_enabled(),
+                    'shkeeper_enabled': settings.is_shkeeper_enabled(),
                 }
             )
 

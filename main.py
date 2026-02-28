@@ -541,6 +541,7 @@ async def main():
                 settings.is_pal24_enabled(),
                 settings.is_wata_enabled(),
                 settings.is_heleket_enabled(),
+                settings.is_shkeeper_enabled(),
             ]
         )
 
@@ -715,6 +716,8 @@ async def main():
             webhook_lines.append(f'Freekassa: {_fmt(settings.FREEKASSA_WEBHOOK_PATH)}')
         if settings.is_kassa_ai_enabled():
             webhook_lines.append(f'Kassa.ai: {_fmt(settings.KASSA_AI_WEBHOOK_PATH)}')
+        if settings.is_shkeeper_enabled():
+            webhook_lines.append(f'SHKeeper: {_fmt(settings.SHKEEPER_WEBHOOK_PATH)}')
         if settings.is_remnawave_webhook_enabled():
             webhook_lines.append(f'RemnaWave: {_fmt(settings.REMNAWAVE_WEBHOOK_PATH)}')
 
