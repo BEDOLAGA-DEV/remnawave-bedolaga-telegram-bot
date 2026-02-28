@@ -15,9 +15,9 @@ from app.services.shkeeper_service import ShkeeperAPIError, ShkeeperService
 from app.services.subscription_auto_purchase_service import (
     auto_purchase_saved_cart_after_topup,
 )
+from app.utils.currency_converter import currency_converter
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
-from app.utils.currency_converter import currency_converter
 
 
 PAID_STATUSES = {'paid', 'success', 'completed', 'confirmed'}

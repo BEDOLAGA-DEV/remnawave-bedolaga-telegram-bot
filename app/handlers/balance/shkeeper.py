@@ -25,8 +25,6 @@ async def start_shkeeper_payment(
     db_user: User,
     state: FSMContext,
 ):
-    texts = get_texts(db_user.language)
-
     if not settings.is_shkeeper_enabled():
         await callback.answer('❌ Оплата через SHKeeper временно недоступна', show_alert=True)
         return
