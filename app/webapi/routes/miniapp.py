@@ -56,7 +56,12 @@ from app.database.models import (
 )
 from app.services.faq_service import FaqService
 from app.services.maintenance_service import maintenance_service
-from app.services.payment_service import PaymentService, get_wata_payment_by_link_id
+from app.services.payment_service import (
+    PaymentService,
+    get_shkeeper_payment_by_invoice_id,
+    get_shkeeper_payment_by_order_id,
+    get_wata_payment_by_link_id,
+)
 from app.services.privacy_policy_service import PrivacyPolicyService
 from app.services.promo_offer_service import promo_offer_service
 from app.services.promocode_service import PromoCodeService
@@ -773,6 +778,19 @@ async def get_payment_methods(
             )
         )
 
+    if settings.is_shkeeper_enabled():
+        methods.append(
+            MiniAppPaymentMethod(
+                id='shkeeper',
+                icon='💳',
+                requires_amount=True,
+                currency='RUB',
+                min_amount_kopeks=settings.SHKEEPER_MIN_AMOUNT_KOPEKS,
+                max_amount_kopeks=settings.SHKEEPER_MAX_AMOUNT_KOPEKS,
+                integration_type=MiniAppPaymentIntegrationType.REDIRECT,
+            )
+        )
+
     if settings.is_platega_enabled() and settings.get_platega_active_methods():
         platega_methods = settings.get_platega_active_methods()
         definitions = settings.get_platega_method_definitions()
@@ -879,9 +897,10 @@ async def get_payment_methods(
         'pal24': 7,
         'platega': 8,
         'wata': 9,
-        'cryptobot': 10,
-        'heleket': 11,
-        'tribute': 12,
+        'shkeeper': 10,
+        'cryptobot': 11,
+        'heleket': 12,
+        'tribute': 13,
     }
     methods.sort(key=lambda item: order_map.get(item.id, 99))
 
@@ -1138,6 +1157,41 @@ async def create_payment_link(
                 'payment_id': result.get('payment_link_id'),
                 'status': result.get('status'),
                 'order_id': result.get('order_id'),
+                'requested_at': _current_request_timestamp(),
+            },
+        )
+
+    if method == 'shkeeper':
+        if not settings.is_shkeeper_enabled():
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Payment method is unavailable')
+        if amount_kopeks is None or amount_kopeks <= 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount must be positive')
+        if amount_kopeks < settings.SHKEEPER_MIN_AMOUNT_KOPEKS:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount is below minimum')
+        if amount_kopeks > settings.SHKEEPER_MAX_AMOUNT_KOPEKS:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount exceeds maximum')
+
+        payment_service = PaymentService()
+        result = await payment_service.create_shkeeper_payment(
+            db=db,
+            user_id=user.id,
+            amount_kopeks=amount_kopeks,
+            description=settings.get_balance_payment_description(amount_kopeks, telegram_user_id=user.telegram_id),
+        )
+        payment_url = result.get('payment_url') if result else None
+        if not result or not payment_url:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail='Failed to create payment')
+
+        return MiniAppPaymentCreateResponse(
+            method=method,
+            payment_url=payment_url,
+            amount_kopeks=amount_kopeks,
+            extra={
+                'local_payment_id': result.get('local_payment_id'),
+                'order_id': result.get('order_id'),
+                'invoice_id': result.get('invoice_id'),
+                'external_id': result.get('external_id'),
+                'status': result.get('status'),
                 'requested_at': _current_request_timestamp(),
             },
         )
@@ -1486,6 +1540,8 @@ async def _resolve_payment_status_entry(
         return await _resolve_platega_payment_status(payment_service, db, user, query)
     if method == 'wata':
         return await _resolve_wata_payment_status(payment_service, db, user, query)
+    if method == 'shkeeper':
+        return await _resolve_shkeeper_payment_status(payment_service, db, user, query)
     if method == 'pal24':
         return await _resolve_pal24_payment_status(payment_service, db, user, query)
     if method == 'cryptobot':
@@ -1815,6 +1871,100 @@ async def _resolve_wata_payment_status(
         transaction_id=payment.transaction_id,
         external_id=payment.payment_link_id,
         message=message,
+        extra=extra,
+    )
+
+
+async def _resolve_shkeeper_payment_status(
+    payment_service: PaymentService,
+    db: AsyncSession,
+    user: User,
+    query: MiniAppPaymentStatusQuery,
+) -> MiniAppPaymentStatusResult:
+    local_id = query.local_payment_id
+    invoice_id = query.invoice_id or query.payment_id
+    order_id = query.order_id
+    fallback_payment = None
+
+    if not local_id and invoice_id:
+        fallback_payment = await get_shkeeper_payment_by_invoice_id(db, str(invoice_id))
+        if fallback_payment:
+            local_id = fallback_payment.id
+    if not local_id and order_id:
+        fallback_payment = await get_shkeeper_payment_by_order_id(db, str(order_id))
+        if fallback_payment:
+            local_id = fallback_payment.id
+
+    if not local_id:
+        return MiniAppPaymentStatusResult(
+            method='shkeeper',
+            status='pending',
+            is_paid=False,
+            amount_kopeks=query.amount_kopeks,
+            message='Missing payment identifier',
+            extra={
+                'local_payment_id': query.local_payment_id,
+                'payment_id': query.payment_id,
+                'invoice_id': query.invoice_id,
+                'order_id': query.order_id,
+                'payload': query.payload,
+                'started_at': query.started_at,
+            },
+        )
+
+    status_info = await payment_service.get_shkeeper_payment_status(db, local_id)
+    payment = (status_info or {}).get('payment') or fallback_payment
+
+    if not payment or payment.user_id != user.id:
+        return MiniAppPaymentStatusResult(
+            method='shkeeper',
+            status='pending',
+            is_paid=False,
+            amount_kopeks=query.amount_kopeks,
+            message='Payment not found',
+            extra={
+                'local_payment_id': local_id,
+                'payment_id': query.payment_id,
+                'invoice_id': query.invoice_id,
+                'order_id': query.order_id,
+                'payload': query.payload,
+                'started_at': query.started_at,
+            },
+        )
+
+    status_raw = getattr(payment, 'status', None)
+    is_paid_flag = bool(getattr(payment, 'is_paid', False))
+    status_value = _classify_status(status_raw, is_paid_flag)
+    completed_at = (
+        getattr(payment, 'paid_at', None)
+        or getattr(payment, 'updated_at', None)
+        or getattr(payment, 'created_at', None)
+    )
+
+    extra: dict[str, Any] = {
+        'local_payment_id': payment.id,
+        'order_id': payment.order_id,
+        'invoice_id': payment.shkeeper_invoice_id,
+        'payment_id': payment.shkeeper_invoice_id or payment.order_id,
+        'external_id': payment.external_id,
+        'status': status_raw,
+        'is_paid': is_paid_flag,
+        'payload': query.payload,
+        'started_at': query.started_at,
+    }
+    if status_info and status_info.get('remote'):
+        extra['remote'] = status_info.get('remote')
+
+    return MiniAppPaymentStatusResult(
+        method='shkeeper',
+        status=status_value,
+        is_paid=status_value == 'paid',
+        amount_kopeks=payment.amount_kopeks,
+        currency=payment.currency,
+        completed_at=completed_at,
+        transaction_id=payment.transaction_id,
+        external_id=payment.shkeeper_invoice_id or payment.external_id,
+        message=None,
         extra=extra,
     )
 
@@ -4416,6 +4566,7 @@ def _format_payment_method_title(method: str) -> str:
         'mulenpay': 'MulenPay',
         'pal24': 'Pal24',
         'wata': 'WataPay',
+        'shkeeper': 'SHKeeper',
         'heleket': 'Heleket',
         'tribute': 'Tribute',
         'stars': 'Telegram Stars',

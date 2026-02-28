@@ -691,6 +691,30 @@ async def create_topup(
                     detail='Failed to create KassaAI payment',
                 )
 
+        elif request.payment_method == 'shkeeper':
+            if not settings.is_shkeeper_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='SHKeeper payment method is unavailable',
+                )
+
+            payment_service = PaymentService()
+            result = await payment_service.create_shkeeper_payment(
+                db=db,
+                user_id=user.id,
+                amount_kopeks=request.amount_kopeks,
+                description=settings.get_balance_payment_description(request.amount_kopeks),
+            )
+
+            if result and result.get('payment_url'):
+                payment_url = result.get('payment_url')
+                payment_id = str(result.get('local_payment_id') or result.get('order_id') or 'pending')
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Failed to create SHKeeper payment',
+                )
+
         elif request.payment_method == 'tribute':
             if not settings.TRIBUTE_ENABLED or not settings.TRIBUTE_DONATE_LINK:
                 raise HTTPException(

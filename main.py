@@ -463,6 +463,8 @@ async def main():
                     verification_providers.append('Heleket')
                 elif method == PaymentMethod.CRYPTOBOT and settings.is_cryptobot_enabled():
                     verification_providers.append('CryptoBot')
+                elif method == PaymentMethod.SHKEEPER and settings.is_shkeeper_enabled():
+                    verification_providers.append(settings.get_shkeeper_display_name())
 
             if verification_providers:
                 hours = int(PENDING_MAX_AGE.total_seconds() // 3600)
