@@ -519,6 +519,9 @@ async def get_campaigns_overview_by_period(
     period: str,
 ) -> dict[str, int | str | datetime]:
     date_range = get_campaign_period_bounds(period)
+    total = await get_campaigns_count(db)
+    active = await get_campaigns_count(db, is_active=True)
+    inactive = await get_campaigns_count(db, is_active=False)
     registration_filters: list = []
     _append_period_range_filters(registration_filters, AdvertisingCampaignRegistration.created_at, date_range)
 
@@ -536,6 +539,9 @@ async def get_campaigns_overview_by_period(
     )
 
     return {
+        'total': total,
+        'active': active,
+        'inactive': inactive,
         'period': period,
         'period_started_at': date_range[0],
         'period_ended_at': date_range[1],

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 
 CampaignBonusType = Literal['balance', 'subscription', 'none', 'tariff']
+CampaignStatsPeriod = Literal['day', 'week', 'month', 'previous_month', 'year']
 
 
 class TariffInfo(BaseModel):
@@ -155,6 +156,10 @@ class CampaignStatisticsResponse(BaseModel):
     paid_users_count: int = 0
     conversion_rate: float = 0.0
     trial_conversion_rate: float = 0.0
+    tariff_issued: int = 0
+    period: CampaignStatsPeriod | None = None
+    period_started_at: datetime | None = None
+    period_ended_at: datetime | None = None
     # Deep link
     deep_link: str | None = None
     web_link: str | None = None
@@ -203,6 +208,9 @@ class CampaignsOverviewResponse(BaseModel):
     total_balance_issued_rubles: float
     total_subscription_issued: int
     total_tariff_issued: int = 0
+    period: CampaignStatsPeriod | None = None
+    period_started_at: datetime | None = None
+    period_ended_at: datetime | None = None
 
 
 class AvailablePartnerItem(BaseModel):
