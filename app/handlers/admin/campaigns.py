@@ -1902,7 +1902,9 @@ async def process_edit_campaign_tariff_days(
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_campaigns_menu, F.data == 'admin_campaigns')
     dp.callback_query.register(show_campaigns_overall_stats, F.data == 'admin_campaigns_stats')
-    dp.callback_query.register(show_campaigns_overall_stats_by_period, F.data.startswith('admin_campaigns_stats_period_'))
+    dp.callback_query.register(
+        show_campaigns_overall_stats_by_period, F.data.startswith('admin_campaigns_stats_period_')
+    )
     dp.callback_query.register(show_campaigns_list, F.data == 'admin_campaigns_list')
     dp.callback_query.register(show_campaigns_list, F.data.startswith('admin_campaigns_list_page_'))
     dp.callback_query.register(start_campaign_creation, F.data == 'admin_campaigns_create')

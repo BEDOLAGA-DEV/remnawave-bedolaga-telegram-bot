@@ -42,8 +42,8 @@ from ..schemas.campaigns import (
     CampaignRegistrationItem,
     CampaignRegistrationsResponse,
     CampaignsOverviewResponse,
-    CampaignStatsPeriod,
     CampaignStatisticsResponse,
+    CampaignStatsPeriod,
     CampaignToggleResponse,
     CampaignUpdateRequest,
     ServerSquadInfo,
@@ -278,8 +278,10 @@ async def get_campaign_stats(
             detail='Campaign not found',
         )
 
-    stats = await get_campaign_statistics_by_period(db, campaign_id, period) if period else await get_campaign_statistics(
-        db, campaign_id
+    stats = (
+        await get_campaign_statistics_by_period(db, campaign_id, period)
+        if period
+        else await get_campaign_statistics(db, campaign_id)
     )
 
     return CampaignStatisticsResponse(

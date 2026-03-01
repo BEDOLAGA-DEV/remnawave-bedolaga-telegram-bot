@@ -5,7 +5,6 @@ from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.utils.timezone import get_local_timezone
 from app.database.models import (
     AdvertisingCampaign,
     AdvertisingCampaignRegistration,
@@ -16,6 +15,7 @@ from app.database.models import (
     TransactionType,
     User,
 )
+from app.utils.timezone import get_local_timezone
 
 
 logger = structlog.get_logger(__name__)
@@ -500,7 +500,9 @@ async def get_campaigns_overview(db: AsyncSession) -> dict[str, int]:
     )
 
     tariff_result = await db.execute(
-        select(func.count(AdvertisingCampaignRegistration.id)).where(AdvertisingCampaignRegistration.bonus_type == 'tariff')
+        select(func.count(AdvertisingCampaignRegistration.id)).where(
+            AdvertisingCampaignRegistration.bonus_type == 'tariff'
+        )
     )
 
     return {
@@ -525,17 +527,23 @@ async def get_campaigns_overview_by_period(
     registration_filters: list = []
     _append_period_range_filters(registration_filters, AdvertisingCampaignRegistration.created_at, date_range)
 
-    registrations_result = await db.execute(select(func.count(AdvertisingCampaignRegistration.id)).where(*registration_filters))
+    registrations_result = await db.execute(
+        select(func.count(AdvertisingCampaignRegistration.id)).where(*registration_filters)
+    )
     balance_result = await db.execute(
-        select(func.coalesce(func.sum(AdvertisingCampaignRegistration.balance_bonus_kopeks), 0)).where(*registration_filters)
+        select(func.coalesce(func.sum(AdvertisingCampaignRegistration.balance_bonus_kopeks), 0)).where(
+            *registration_filters
+        )
     )
     subscription_result = await db.execute(
-        select(func.count(AdvertisingCampaignRegistration.id))
-        .where(AdvertisingCampaignRegistration.bonus_type == 'subscription', *registration_filters)
+        select(func.count(AdvertisingCampaignRegistration.id)).where(
+            AdvertisingCampaignRegistration.bonus_type == 'subscription', *registration_filters
+        )
     )
     tariff_result = await db.execute(
-        select(func.count(AdvertisingCampaignRegistration.id))
-        .where(AdvertisingCampaignRegistration.bonus_type == 'tariff', *registration_filters)
+        select(func.count(AdvertisingCampaignRegistration.id)).where(
+            AdvertisingCampaignRegistration.bonus_type == 'tariff', *registration_filters
+        )
     )
 
     return {
