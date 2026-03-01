@@ -225,7 +225,8 @@ class RemnaWaveWebhookService:
             logger.debug('Admin notifications disabled, skipping event', event_name=event_name)
             return True
 
-        if event_name in _NODE_CONNECTION_EVENTS and not settings.WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS:
+        notify_node_status = bool(getattr(settings, 'WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS', False))
+        if event_name in _NODE_CONNECTION_EVENTS and not notify_node_status:
             logger.debug(
                 'Admin webhook notification skipped for node connection status event',
                 event_name=event_name,
@@ -625,16 +626,6 @@ class RemnaWaveWebhookService:
             and subscription.subscription_url != subscription_url
         ):
             subscription.subscription_url = subscription_url
-            changed = True
-
-        # Sync subscription crypto link (for HAPP_CRYPT4_LINK)
-        subscription_crypto_link = data.get('subscriptionCryptoLink')
-        if (
-            subscription_crypto_link
-            and self._is_valid_link(subscription_crypto_link)
-            and subscription.subscription_crypto_link != subscription_crypto_link
-        ):
-            subscription.subscription_crypto_link = subscription_crypto_link
             changed = True
 
         # Always stamp to protect from sync overwrite, even if no fields changed
