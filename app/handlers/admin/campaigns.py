@@ -12,9 +12,11 @@ from app.database.crud.campaign import (
     get_campaign_by_id,
     get_campaign_by_start_parameter,
     get_campaign_statistics,
+    get_campaign_statistics_by_period,
     get_campaigns_count,
     get_campaigns_list,
     get_campaigns_overview,
+    get_campaigns_overview_by_period,
     update_campaign,
 )
 from app.database.crud.server_squad import get_all_server_squads, get_server_squad_by_id
@@ -26,6 +28,7 @@ from app.keyboards.admin import (
     get_campaign_bonus_type_keyboard,
     get_campaign_edit_keyboard,
     get_campaign_management_keyboard,
+    get_campaign_stats_period_keyboard,
     get_confirmation_keyboard,
 )
 from app.localization.texts import get_texts
@@ -37,6 +40,7 @@ logger = structlog.get_logger(__name__)
 
 _CAMPAIGN_PARAM_REGEX = re.compile(r'^[A-Za-z0-9_-]{3,32}$')
 _CAMPAIGNS_PAGE_SIZE = 5
+_CAMPAIGN_STATS_PERIODS = ('day', 'week', 'month', 'previous_month', 'year')
 
 
 def _format_campaign_summary(campaign, texts) -> str:
@@ -177,20 +181,57 @@ async def show_campaigns_overall_stats(
     db_user: User,
     db: AsyncSession,
 ):
-    texts = get_texts(db_user.language)
-    overview = await get_campaigns_overview(db)
+    await callback.message.edit_text(
+        '📊 <b>Общая статистика кампаний</b>\n\nВыберите период:',
+        reply_markup=get_campaign_stats_period_keyboard(
+            language=db_user.language,
+            callback_prefix='admin_campaigns_stats_period_',
+            back_callback='admin_campaigns',
+        ),
+    )
+    await callback.answer()
 
-    text = ['📊 <b>Общая статистика кампаний</b>\n']
+
+def _format_period_label(period: str) -> str:
+    labels = {
+        'day': 'день',
+        'week': 'неделю',
+        'month': 'месяц',
+        'previous_month': 'прошлый месяц',
+        'year': 'год',
+    }
+    return labels.get(period, period)
+
+
+@admin_required
+@error_handler
+async def show_campaigns_overall_stats_by_period(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+):
+    period = callback.data.removeprefix('admin_campaigns_stats_period_')
+    if period not in _CAMPAIGN_STATS_PERIODS:
+        await callback.answer('❌ Неизвестный период', show_alert=True)
+        return
+
+    texts = get_texts(db_user.language)
+    overview = await get_campaigns_overview_by_period(db, period)
+
+    text = [f'📊 <b>Общая статистика кампаний за {_format_period_label(period)}</b>\n']
     text.append(f'Всего кампаний: <b>{overview["total"]}</b>')
     text.append(f'Активны: <b>{overview["active"]}</b>, выключены: <b>{overview["inactive"]}</b>')
-    text.append(f'Всего регистраций: <b>{overview["registrations"]}</b>')
-    text.append(f'Суммарно выдано баланса: <b>{texts.format_price(overview["balance_total"])}</b>')
+    text.append(f'Регистраций: <b>{overview["registrations"]}</b>')
+    text.append(f'Выдано баланса: <b>{texts.format_price(overview["balance_total"])}</b>')
     text.append(f'Выдано подписок: <b>{overview["subscription_total"]}</b>')
+    text.append(f'Выдано тарифов: <b>{overview["tariff_total"]}</b>')
 
     await callback.message.edit_text(
         '\n'.join(text),
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_campaigns')]]
+        reply_markup=get_campaign_stats_period_keyboard(
+            language=db_user.language,
+            callback_prefix='admin_campaigns_stats_period_',
+            back_callback='admin_campaigns',
         ),
     )
     await callback.answer()
@@ -1138,28 +1179,61 @@ async def show_campaign_stats(
         await callback.answer('❌ Кампания не найдена', show_alert=True)
         return
 
-    texts = get_texts(db_user.language)
-    stats = await get_campaign_statistics(db, campaign_id)
+    await callback.message.edit_text(
+        '📊 <b>Статистика кампании</b>\n\nВыберите период:',
+        reply_markup=get_campaign_stats_period_keyboard(
+            language=db_user.language,
+            callback_prefix=f'admin_campaign_stats_period_{campaign_id}_',
+            back_callback=f'admin_campaign_manage_{campaign_id}',
+        ),
+    )
+    await callback.answer()
 
-    text = ['📊 <b>Статистика кампании</b>\n']
+
+@admin_required
+@error_handler
+async def show_campaign_stats_by_period(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+):
+    payload = callback.data.removeprefix('admin_campaign_stats_period_')
+    match = re.match(r'^(?P<campaign_id>\d+)_(?P<period>day|week|month|previous_month|year)$', payload)
+    if not match:
+        await callback.answer('❌ Некорректный запрос', show_alert=True)
+        return
+
+    campaign_id = int(match.group('campaign_id'))
+    period = match.group('period')
+    if period not in _CAMPAIGN_STATS_PERIODS:
+        await callback.answer('❌ Неизвестный период', show_alert=True)
+        return
+
+    campaign = await get_campaign_by_id(db, campaign_id)
+    if not campaign:
+        await callback.answer('❌ Кампания не найдена', show_alert=True)
+        return
+
+    texts = get_texts(db_user.language)
+    stats = await get_campaign_statistics_by_period(db, campaign_id, period)
+
+    text = [f'📊 <b>Статистика кампании за {_format_period_label(period)}</b>\n']
     text.append(_format_campaign_summary(campaign, texts))
     text.append(f'Регистраций: <b>{stats["registrations"]}</b>')
     text.append(f'Выдано баланса: <b>{texts.format_price(stats["balance_issued"])}</b>')
     text.append(f'Выдано подписок: <b>{stats["subscription_issued"]}</b>')
+    text.append(f'Выдано тарифов: <b>{stats.get("tariff_issued", 0)}</b>')
+    text.append(f'Доход: <b>{texts.format_price(stats["total_revenue_kopeks"])}</b>')
+    text.append(f'Конверсия в оплату: <b>{stats["conversion_rate"]:.1f}%</b>')
     if stats['last_registration']:
         text.append(f'Последняя регистрация: {stats["last_registration"].strftime("%d.%m.%Y %H:%M")}')
 
     await callback.message.edit_text(
         '\n'.join(text),
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(
-                        text='⬅️ Назад',
-                        callback_data=f'admin_campaign_manage_{campaign_id}',
-                    )
-                ]
-            ]
+        reply_markup=get_campaign_stats_period_keyboard(
+            language=db_user.language,
+            callback_prefix=f'admin_campaign_stats_period_{campaign_id}_',
+            back_callback=f'admin_campaign_manage_{campaign_id}',
         ),
     )
     await callback.answer()
@@ -1828,9 +1902,11 @@ async def process_edit_campaign_tariff_days(
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_campaigns_menu, F.data == 'admin_campaigns')
     dp.callback_query.register(show_campaigns_overall_stats, F.data == 'admin_campaigns_stats')
+    dp.callback_query.register(show_campaigns_overall_stats_by_period, F.data.startswith('admin_campaigns_stats_period_'))
     dp.callback_query.register(show_campaigns_list, F.data == 'admin_campaigns_list')
     dp.callback_query.register(show_campaigns_list, F.data.startswith('admin_campaigns_list_page_'))
     dp.callback_query.register(start_campaign_creation, F.data == 'admin_campaigns_create')
+    dp.callback_query.register(show_campaign_stats_by_period, F.data.startswith('admin_campaign_stats_period_'))
     dp.callback_query.register(show_campaign_stats, F.data.startswith('admin_campaign_stats_'))
     dp.callback_query.register(show_campaign_detail, F.data.startswith('admin_campaign_manage_'))
     dp.callback_query.register(start_edit_campaign_name, F.data.startswith('admin_campaign_edit_name_'))
