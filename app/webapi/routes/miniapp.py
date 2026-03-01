@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 import math
 import re
 from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, ROUND_UP, Decimal, InvalidOperation
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -205,17 +203,6 @@ router = APIRouter()
 promo_code_service = PromoCodeService()
 renewal_service = SubscriptionRenewalService()
 
-# Кешированный Bot для проверки подписки на канал (снижает нагрузку)
-_channel_check_bot: Bot | None = None
-
-
-def _get_channel_check_bot() -> Bot:
-    """Получить или создать Bot для проверки подписки на канал."""
-    global _channel_check_bot
-    if _channel_check_bot is None:
-        _channel_check_bot = Bot(token=settings.BOT_TOKEN)
-    return _channel_check_bot
-
 
 _CRYPTOBOT_MIN_USD = 1.0
 _CRYPTOBOT_MAX_USD = 1000.0
@@ -237,57 +224,6 @@ def _get_tariff_monthly_price(tariff) -> int:
             return int(first_price * 30 / first_period)
 
     return 0
-
-
-@router.get('/app-config.json')
-async def get_app_config() -> dict[str, Any]:
-    data = _load_app_config_data()
-    if data is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='App config not found')
-
-    return data
-
-
-def _get_app_config_candidate_files() -> list[Path]:
-    seen: set[Path] = set()
-    candidates: list[Path] = []
-
-    def _add_candidate(path: Path) -> None:
-        resolved = path.resolve()
-        if resolved not in seen:
-            seen.add(resolved)
-            candidates.append(resolved)
-
-    cwd = Path.cwd()
-    _add_candidate(cwd / 'miniapp' / 'app-config.json')
-    _add_candidate(cwd / 'app-config.json')
-
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        _add_candidate(parent / 'miniapp' / 'app-config.json')
-        _add_candidate(parent / 'app-config.json')
-
-    _add_candidate(Path('/var/www/remnawave-miniapp/app-config.json'))
-
-    return candidates
-
-
-def _load_app_config_data() -> dict[str, Any] | None:
-    for path in _get_app_config_candidate_files():
-        if not path.is_file():
-            continue
-
-        try:
-            with path.open('r', encoding='utf-8') as file:
-                data = json.load(file)
-        except (OSError, json.JSONDecodeError) as error:
-            logger.warning('Failed to load app-config from', path=path, error=error)
-            continue
-
-        if isinstance(data, dict):
-            return data
-
-    return None
 
 
 _DECIMAL_ONE_HUNDRED = Decimal(100)
@@ -3100,26 +3036,21 @@ async def get_subscription_details(
         ) from None
 
     # Check required channel subscription
-    if settings.CHANNEL_IS_REQUIRED_SUB and settings.CHANNEL_SUB_ID:
-        try:
-            bot = _get_channel_check_bot()
-            chat_member = await bot.get_chat_member(chat_id=settings.CHANNEL_SUB_ID, user_id=telegram_id)
-            # Не закрываем сессию - бот переиспользуется
+    if settings.CHANNEL_IS_REQUIRED_SUB:
+        from app.services.channel_subscription_service import channel_subscription_service
 
-            if chat_member.status not in ['member', 'administrator', 'creator']:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={
-                        'code': 'channel_subscription_required',
-                        'message': 'Please subscribe to our channel to continue',
-                        'channel_link': settings.CHANNEL_LINK,
-                    },
-                )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning('Failed to check channel subscription for user', telegram_id=telegram_id, error=e)
-            # Don't block user if check fails
+        channels_with_status = await channel_subscription_service.get_channels_with_status(telegram_id)
+        is_subscribed = all(ch['is_subscribed'] for ch in channels_with_status) if channels_with_status else True
+
+        if not is_subscribed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    'code': 'channel_subscription_required',
+                    'message': 'Please subscribe to the required channels to continue',
+                    'channels': channels_with_status,
+                },
+            )
 
     user = await get_user_by_telegram_id(db, telegram_id)
     purchase_url = (settings.MINIAPP_PURCHASE_URL or '').strip()

@@ -212,7 +212,7 @@ async def test_create_yookassa_sbp_payment_success(monkeypatch: pytest.MonkeyPat
 
     assert result is not None
     assert result['confirmation_token'] == 'token123'
-    assert captured_args['payment_method_type'] == 'bank_card'
+    assert captured_args['payment_method_type'] == 'sbp'
     assert captured_args['metadata_json']['type'] == 'balance_topup_sbp'
 
 

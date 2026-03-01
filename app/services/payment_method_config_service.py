@@ -98,6 +98,20 @@ def _get_method_defaults() -> dict:
                 {'id': 'card', 'name': 'Карта'},
             ],
         },
+        'freekassa_sbp': {
+            'default_display_name': settings.get_freekassa_sbp_display_name(),
+            'is_configured': settings.is_freekassa_sbp_enabled(),
+            'default_min': settings.FREEKASSA_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.FREEKASSA_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': None,
+        },
+        'freekassa_card': {
+            'default_display_name': settings.get_freekassa_card_display_name(),
+            'is_configured': settings.is_freekassa_card_enabled(),
+            'default_min': settings.FREEKASSA_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.FREEKASSA_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': None,
+        },
         'cloudpayments': {
             'default_display_name': settings.get_cloudpayments_display_name(),
             'is_configured': settings.is_cloudpayments_enabled(),
@@ -151,6 +165,8 @@ DEFAULT_METHOD_ORDER = [
     'platega',
     'wata',
     'freekassa',
+    'freekassa_sbp',
+    'freekassa_card',
     'cloudpayments',
     'kassa_ai',
 ]

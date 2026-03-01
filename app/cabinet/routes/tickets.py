@@ -282,7 +282,13 @@ async def add_ticket_message(
 
     # Уведомить админов об ответе пользователя (Telegram)
     try:
-        await notify_admins_about_ticket_reply(ticket, request.message, db)
+        await notify_admins_about_ticket_reply(
+            ticket,
+            request.message,
+            db,
+            media_file_id=request.media_file_id,
+            media_type=request.media_type,
+        )
     except Exception as e:
         logger.error('Error notifying admins about ticket reply from cabinet', error=e)
 

@@ -17,7 +17,7 @@ from app.services.payment_method_config_service import (
     update_sort_order,
 )
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 
 
 logger = structlog.get_logger(__name__)
@@ -124,7 +124,7 @@ def _enrich_config(config, defaults: dict) -> PaymentMethodConfigResponse:
 
 @router.get('', response_model=list[PaymentMethodConfigResponse])
 async def list_payment_methods(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('payment_methods:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """List all payment method configurations."""
@@ -135,7 +135,7 @@ async def list_payment_methods(
 
 @router.get('/promo-groups', response_model=list[PromoGroupSimple])
 async def list_promo_groups(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('payment_methods:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """List all promo groups for filter selector."""
@@ -146,7 +146,7 @@ async def list_promo_groups(
 @router.get('/{method_id}', response_model=PaymentMethodConfigResponse)
 async def get_payment_method(
     method_id: str,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('payment_methods:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get a single payment method configuration."""
@@ -163,7 +163,7 @@ async def get_payment_method(
 @router.put('/order')
 async def update_payment_methods_order(
     request: SortOrderRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('payment_methods:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Batch update sort order for payment methods."""
@@ -176,7 +176,7 @@ async def update_payment_methods_order(
 async def update_payment_method(
     method_id: str,
     request: PaymentMethodConfigUpdateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('payment_methods:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update a payment method configuration."""

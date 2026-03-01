@@ -15,6 +15,7 @@ from app.database.crud.campaign import (
     get_campaign_by_start_parameter,
     get_campaign_registration_by_user,
 )
+from app.database.crud.rbac import UserRoleCRUD
 from app.database.crud.user import (
     clear_email_change_pending,
     create_user,
@@ -99,9 +100,17 @@ def _user_to_response(user: User) -> UserResponse:
     )
 
 
-def _create_auth_response(user: User) -> AuthResponse:
-    """Create full auth response with tokens."""
-    access_token = create_access_token(user.id, user.telegram_id)
+async def _create_auth_response(user: User, db: AsyncSession) -> AuthResponse:
+    """Create full auth response with tokens and RBAC permissions."""
+    user_permissions, user_role_names, user_role_level = await UserRoleCRUD.get_user_permissions(db, user.id)
+
+    access_token = create_access_token(
+        user.id,
+        user.telegram_id,
+        permissions=user_permissions,
+        roles=user_role_names,
+        role_level=user_role_level,
+    )
     refresh_token = create_refresh_token(user.id)
     expires_in = settings.get_cabinet_access_token_expire_minutes() * 60
 
@@ -422,7 +431,7 @@ async def auth_telegram(
     user.cabinet_last_login = datetime.now(UTC)
     await db.commit()
 
-    response = _create_auth_response(user)
+    response = await _create_auth_response(user, db)
 
     # Store refresh token
     await _store_refresh_token(db, user.id, response.refresh_token)
@@ -502,7 +511,7 @@ async def auth_telegram_widget(
     user.cabinet_last_login = datetime.now(UTC)
     await db.commit()
 
-    response = _create_auth_response(user)
+    response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, response.refresh_token)
 
     # Process referral code (before campaign bonus, which may also set referrer)
@@ -777,7 +786,7 @@ async def verify_email(
     await _sync_subscription_from_panel_by_email(db, user)
 
     # Return auth tokens so user is logged in after verification
-    response = _create_auth_response(user)
+    response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, response.refresh_token)
 
     # Process campaign bonus
@@ -924,7 +933,7 @@ async def login_email(
     user.cabinet_last_login = datetime.now(UTC)
     await db.commit()
 
-    response = _create_auth_response(user)
+    response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, response.refresh_token)
 
     # Process campaign bonus
@@ -987,7 +996,14 @@ async def refresh_token(
             detail='User not found or inactive',
         )
 
-    access_token = create_access_token(user.id, user.telegram_id)
+    user_permissions, user_role_names, user_role_level = await UserRoleCRUD.get_user_permissions(db, user.id)
+    access_token = create_access_token(
+        user.id,
+        user.telegram_id,
+        permissions=user_permissions,
+        roles=user_role_names,
+        role_level=user_role_level,
+    )
     expires_in = settings.get_cabinet_access_token_expire_minutes() * 60
 
     return TokenResponse(
@@ -1111,12 +1127,32 @@ async def get_current_user(
     return _user_to_response(user)
 
 
+@router.get('/me/permissions')
+async def get_my_permissions(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get current user's RBAC permissions, roles, and level."""
+    from app.services.permission_service import PermissionService
+
+    return await PermissionService.get_user_permissions(db, user.id, user=user)
+
+
 @router.get('/me/is-admin')
 async def check_is_admin(
     user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Check if current user is an admin."""
+    """Check if current user is an admin (legacy config or RBAC)."""
+    # Legacy check: config-based admin list
     is_admin = settings.is_admin(telegram_id=user.telegram_id, email=user.email if user.email_verified else None)
+
+    if not is_admin:
+        # RBAC check: user has any active role with level > 0
+        _permissions, _role_names, max_level = await UserRoleCRUD.get_user_permissions(db, user.id)
+        if max_level > 0:
+            is_admin = True
+
     return {'is_admin': is_admin}
 
 

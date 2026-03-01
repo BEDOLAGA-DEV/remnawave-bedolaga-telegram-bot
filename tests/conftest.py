@@ -146,11 +146,22 @@ if 'yookassa' not in sys.modules:
     payment_builder_module.PaymentRequestBuilder = _FakePaymentRequestBuilder
     confirmation_module.ConfirmationType = _FakeConfirmationType
 
+    exceptions_module = types.ModuleType('yookassa.domain.exceptions')
+    not_found_module = types.ModuleType('yookassa.domain.exceptions.not_found_error')
+
+    class _FakeNotFoundError(Exception):
+        pass
+
+    not_found_module.NotFoundError = _FakeNotFoundError
+    exceptions_module.not_found_error = not_found_module
+
     sys.modules['yookassa.domain'] = domain_module
     sys.modules['yookassa.domain.request'] = request_module
     sys.modules['yookassa.domain.request.payment_request_builder'] = payment_builder_module
     sys.modules['yookassa.domain.common'] = common_module
     sys.modules['yookassa.domain.common.confirmation_type'] = confirmation_module
+    sys.modules['yookassa.domain.exceptions'] = exceptions_module
+    sys.modules['yookassa.domain.exceptions.not_found_error'] = not_found_module
 
 
 @pytest.fixture

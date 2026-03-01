@@ -1,7 +1,6 @@
 """Subscription management routes for cabinet."""
 
 import base64
-import json
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -205,7 +204,10 @@ def _subscription_to_response(
     if is_daily and not is_daily_paused:
         last_charge = getattr(subscription, 'last_daily_charge_at', None)
         if last_charge:
-            next_daily_charge_at = last_charge + timedelta(days=1)
+            next_charge = last_charge + timedelta(days=1)
+            # Если время списания уже прошло — не показываем (DailySubscriptionService обработает)
+            if next_charge > datetime.now(UTC):
+                next_daily_charge_at = next_charge
 
     # Проверяем настройку скрытия ссылки (скрывается только текст, кнопки работают)
     hide_link = settings.should_hide_subscription_link()
@@ -2681,77 +2683,12 @@ async def get_device_price(
 # ============ App Config for Connection ============
 
 
-def _load_app_config_from_file() -> dict[str, Any]:
-    """Load app-config.json file."""
-    try:
-        config_path = settings.get_app_config_path()
-        with open(config_path, encoding='utf-8') as f:
-            data = json.load(f)
-            if isinstance(data, dict):
-                return data
-    except Exception as e:
-        logger.error('Failed to load app-config.json', error=e)
-    return {}
-
-
 def _get_remnawave_config_uuid() -> str | None:
     """Get RemnaWave config UUID from system settings or env."""
     try:
         return bot_configuration_service.get_current_value('CABINET_REMNA_SUB_CONFIG')
     except Exception:
         return settings.CABINET_REMNA_SUB_CONFIG
-
-
-def _is_subscription_link_template(url: str) -> bool:
-    """Check if URL is a RemnaWave subscription link template."""
-    if not url:
-        return False
-    # RemnaWave uses templates like {{HAPP_CRYPT4_LINK}}, {{V2RAY_LINK}}, etc.
-    if url.startswith('{{') and url.endswith('}}'):
-        return True
-    # Also check for button type "subscriptionLink" indicator
-    return False
-
-
-def _convert_remnawave_block_to_step(block: dict[str, Any], url_scheme: str = '') -> dict[str, Any]:
-    """Convert RemnaWave block format to cabinet step format."""
-    step = {
-        'description': block.get('description', {}),
-    }
-    if block.get('title'):
-        step['title'] = block['title']
-    if block.get('buttons'):
-        buttons = []
-        for btn in block['buttons']:
-            btn_url = btn.get('url', '') or btn.get('link', '')
-            btn_type = btn.get('type', '')
-
-            # Replace subscription link templates with {{deepLink}} placeholder
-            # RemnaWave uses templates like {{HAPP_CRYPT4_LINK}} or type="subscriptionLink"
-            if (
-                _is_subscription_link_template(btn_url)
-                or btn_type == 'subscriptionLink'
-                or (
-                    url_scheme
-                    and btn_url
-                    and (
-                        btn_url.startswith(url_scheme)
-                        or btn_url.endswith('://')
-                        or btn_url.endswith('://add/')
-                        or ('://' in btn_url and not btn_url.startswith('http'))
-                    )
-                )
-            ):
-                btn_url = '{{deepLink}}'
-
-            buttons.append(
-                {
-                    'buttonLink': btn_url,
-                    'buttonText': btn.get('text', {}),
-                }
-            )
-        step['buttons'] = buttons
-    return step
 
 
 def _extract_scheme_from_buttons(buttons: list[dict[str, Any]]) -> tuple[str, bool]:
@@ -2822,15 +2759,6 @@ def _get_url_scheme_for_app(app: dict[str, Any]) -> tuple[str, bool]:
         if scheme:
             return scheme, uses_crypto
 
-    # 4. Check in step structures (cabinet format)
-    for step_key in ['installationStep', 'addSubscriptionStep', 'connectAndUseStep']:
-        step = app.get(step_key, {})
-        if isinstance(step, dict):
-            step_buttons = step.get('buttons', [])
-            scheme, uses_crypto = _extract_scheme_from_buttons(step_buttons)
-            if scheme:
-                return scheme, uses_crypto
-
     # No scheme found
     logger.debug(
         '_get_url_scheme_for_app: No scheme found for app has blocks: has buttons: has urlScheme',
@@ -2842,147 +2770,10 @@ def _get_url_scheme_for_app(app: dict[str, Any]) -> tuple[str, bool]:
     return '', False
 
 
-def _find_subscription_block(blocks: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Find block that contains subscriptionLink button."""
-    for block in blocks:
-        if not isinstance(block, dict):
-            continue
-        buttons = block.get('buttons', [])
-        for btn in buttons:
-            if not isinstance(btn, dict):
-                continue
-            # Check for subscriptionLink type, {{SUBSCRIPTION_LINK}}, or {{HAPP_CRYPT4_LINK}} in link
-            btn_type = btn.get('type', '')
-            link = btn.get('link', '') or btn.get('url', '')
-            link_upper = link.upper() if link else ''
-            if btn_type == 'subscriptionLink' or 'SUBSCRIPTION_LINK' in link_upper or 'HAPP_CRYPT4_LINK' in link_upper:
-                return block
-    return None
+async def _load_app_config_async() -> dict[str, Any] | None:
+    """Load app config from RemnaWave API (if configured).
 
-
-def _find_connect_block(blocks: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Find block that is about connection/usage (usually last or has specific keywords)."""
-    # Look for block with "connect" or "use" in title
-    for block in blocks:
-        if not isinstance(block, dict):
-            continue
-        title = block.get('title', {})
-        title_en = title.get('en', '') if isinstance(title, dict) else ''
-        title_lower = title_en.lower()
-        if 'connect' in title_lower or 'use' in title_lower:
-            return block
-    # Fallback to last block if no match
-    return blocks[-1] if blocks else None
-
-
-def _convert_remnawave_app_to_cabinet(app: dict[str, Any]) -> dict[str, Any]:
-    """Convert RemnaWave app format to cabinet app format."""
-    blocks = app.get('blocks', [])
-    url_scheme, uses_crypto = _get_url_scheme_for_app(app)
-
-    # Debug log for conversion (не логируем отсутствие urlScheme - для Happ это нормально)
-    app_name = app.get('name', 'unknown')
-    if url_scheme:
-        logger.debug('_convert_remnawave_app_to_cabinet: app urlScheme', app_name=app_name, url_scheme=url_scheme)
-
-    # Smart block mapping: find blocks by their content, not just position
-    # 1. First block is usually installation
-    installation_block = blocks[0] if len(blocks) > 0 else None
-    # 2. Find subscription block (with subscriptionLink button)
-    subscription_block = _find_subscription_block(blocks)
-    # 3. Find connect/use block (usually last or has "connect" in title)
-    connect_block = _find_connect_block(blocks)
-
-    # Convert blocks to steps
-    installation_step = (
-        _convert_remnawave_block_to_step(installation_block, url_scheme) if installation_block else {'description': {}}
-    )
-    subscription_step = (
-        _convert_remnawave_block_to_step(subscription_block, url_scheme) if subscription_block else {'description': {}}
-    )
-    connect_step = _convert_remnawave_block_to_step(connect_block, url_scheme) if connect_block else {'description': {}}
-
-    # Ensure subscription step has a deepLink button if urlScheme exists
-    if url_scheme:
-        has_deeplink_button = False
-        if 'buttons' in subscription_step:
-            for btn in subscription_step['buttons']:
-                if btn.get('buttonLink') == '{{deepLink}}':
-                    has_deeplink_button = True
-                    break
-
-        if not has_deeplink_button:
-            # Add deepLink button at the beginning
-            deeplink_button = {
-                'buttonLink': '{{deepLink}}',
-                'buttonText': {
-                    'en': 'Open app',
-                    'ru': 'Открыть приложение',
-                    'zh': '打开应用',
-                    'fa': 'باز کردن برنامه',
-                },
-            }
-            if 'buttons' not in subscription_step:
-                subscription_step['buttons'] = []
-            subscription_step['buttons'].insert(0, deeplink_button)
-
-    return {
-        'id': app.get('name', '').lower().replace(' ', '-'),
-        'name': app.get('name', ''),
-        'isFeatured': app.get('featured', False),
-        'urlScheme': url_scheme,
-        'usesCryptoLink': uses_crypto,
-        'isNeedBase64Encoding': app.get('isNeedBase64Encoding', False),
-        'installationStep': installation_step,
-        'addSubscriptionStep': subscription_step,
-        'connectAndUseStep': connect_step,
-    }
-
-
-def _convert_remnawave_config_to_cabinet(config: dict[str, Any]) -> dict[str, Any]:
-    """Convert RemnaWave config format to cabinet format."""
-    platforms = {}
-    remnawave_platforms = config.get('platforms', {})
-
-    for platform_key, platform_data in remnawave_platforms.items():
-        if not isinstance(platform_data, dict):
-            continue
-        apps = platform_data.get('apps', [])
-        if not isinstance(apps, list):
-            continue
-
-        cabinet_apps = []
-        for app in apps:
-            if isinstance(app, dict):
-                cabinet_apps.append(_convert_remnawave_app_to_cabinet(app))
-
-        if cabinet_apps:
-            platforms[platform_key] = cabinet_apps
-
-    # Convert branding
-    branding = {}
-    if config.get('brandingSettings'):
-        branding = {
-            'name': config['brandingSettings'].get('name', ''),
-            'logoUrl': config['brandingSettings'].get('logoUrl', ''),
-            'supportUrl': config['brandingSettings'].get('supportUrl', ''),
-        }
-
-    return {
-        'config': {
-            'additionalLocales': ['zh', 'fa'],
-            'branding': branding,
-        },
-        'platforms': platforms,
-    }
-
-
-async def _load_app_config_async() -> dict[str, Any]:
-    """Load app config from RemnaWave (if configured) or local file.
-
-    When config comes from RemnaWave, returns the original format with
-    ``_isRemnawave`` flag so the caller can serve it as-is (enriched with
-    deep links) instead of converting to the legacy step-based format.
+    Returns None when no Remnawave config is set or API fails.
     """
     remnawave_uuid = _get_remnawave_config_uuid()
 
@@ -2997,15 +2788,9 @@ async def _load_app_config_async() -> dict[str, Any]:
                     raw['_isRemnawave'] = True
                     return raw
         except Exception as e:
-            logger.warning('Failed to load RemnaWave config, falling back to file', error=e)
+            logger.warning('Failed to load RemnaWave config', error=e)
 
-    # Fallback to local file
-    return _load_app_config_from_file()
-
-
-def _load_app_config() -> dict[str, Any]:
-    """Load app-config.json file (sync version for compatibility)."""
-    return _load_app_config_from_file()
+    return None
 
 
 def _create_deep_link(
@@ -3420,18 +3205,22 @@ async def get_app_config(
         subscription_url = user.subscription.subscription_url
         subscription_crypto_link = user.subscription.subscription_crypto_link
 
-    # Load config from RemnaWave (if configured) or local file
     config = await _load_app_config_async()
 
-    is_remnawave = config.pop('_isRemnawave', False)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='App configuration not set up.',
+        )
+
+    config.pop('_isRemnawave', None)
     hide_link = settings.should_hide_subscription_link()
 
-    # Строим platformNames из displayName каждой платформы RemnaWave
+    # Build platformNames from displayName of each platform
     platform_names: dict[str, Any] = {}
     for pk, pd in config.get('platforms', {}).items():
         if isinstance(pd, dict) and 'displayName' in pd:
             platform_names[pk] = pd['displayName']
-    # Фоллбэк для платформ без displayName (en достаточно)
     fallback_names = {
         'ios': {'en': 'iPhone/iPad'},
         'android': {'en': 'Android'},
@@ -3445,111 +3234,63 @@ async def get_app_config(
         if k not in platform_names:
             platform_names[k] = v
 
-    if is_remnawave:
-        # ── RemnaWave original format ──
-        # Serve original blocks/svgLibrary enriched with deep links and resolved URLs.
-        platforms: dict[str, Any] = {}
-        for platform_key, platform_data in config.get('platforms', {}).items():
-            if not isinstance(platform_data, dict):
-                continue
-            apps = platform_data.get('apps', [])
-            if not isinstance(apps, list):
-                continue
-
-            enriched_apps = []
-            for app in apps:
-                if not isinstance(app, dict):
-                    continue
-
-                # Generate deep link
-                deep_link = None
-                if subscription_url or subscription_crypto_link:
-                    deep_link = _create_deep_link(app, subscription_url, subscription_crypto_link)
-                app['deepLink'] = deep_link
-
-                # Resolve templates only for subscriptionLink and copyButton (not external)
-                for block in app.get('blocks', []):
-                    if not isinstance(block, dict):
-                        continue
-                    for btn in block.get('buttons', []):
-                        if not isinstance(btn, dict):
-                            continue
-                        btn_type = btn.get('type', '')
-                        if btn_type in ('subscriptionLink', 'copyButton'):
-                            url = btn.get('url', '') or btn.get('link', '')
-                            if url and '{{' in url:
-                                btn['resolvedUrl'] = _resolve_button_url(
-                                    url,
-                                    subscription_url,
-                                    subscription_crypto_link,
-                                )
-
-                enriched_apps.append(app)
-
-            if enriched_apps:
-                # Сохраняем platform-level поля (svgIconKey, displayName и т.д.)
-                platform_output = {k: v for k, v in platform_data.items() if k != 'apps'}
-                platform_output['apps'] = enriched_apps
-                platforms[platform_key] = platform_output
-
-        return {
-            'isRemnawave': True,
-            'platforms': platforms,
-            'svgLibrary': config.get('svgLibrary', {}),
-            'baseTranslations': config.get('baseTranslations'),
-            'baseSettings': config.get('baseSettings'),
-            'uiConfig': config.get('uiConfig', {}),
-            'platformNames': platform_names,
-            'hasSubscription': bool(subscription_url or subscription_crypto_link),
-            'subscriptionUrl': subscription_url,
-            'subscriptionCryptoLink': subscription_crypto_link,
-            'hideLink': hide_link,
-            'branding': config.get('brandingSettings', {}),
-        }
-
-    # ── Legacy file-based format ──
-    platforms_raw = config.get('platforms', {})
-    if not isinstance(platforms_raw, dict):
-        platforms_raw = {}
-
-    platforms_legacy: dict[str, Any] = {}
-    for platform_key, apps in platforms_raw.items():
+    # Serve original blocks/svgLibrary enriched with deep links and resolved URLs.
+    platforms: dict[str, Any] = {}
+    for platform_key, platform_data in config.get('platforms', {}).items():
+        if not isinstance(platform_data, dict):
+            continue
+        apps = platform_data.get('apps', [])
         if not isinstance(apps, list):
             continue
 
-        platform_apps = []
+        enriched_apps = []
         for app in apps:
             if not isinstance(app, dict):
                 continue
 
-            app_data = {
-                'id': app.get('id'),
-                'name': app.get('name'),
-                'isFeatured': app.get('isFeatured', False),
-                'installationStep': app.get('installationStep'),
-                'addSubscriptionStep': app.get('addSubscriptionStep'),
-                'connectAndUseStep': app.get('connectAndUseStep'),
-                'additionalBeforeAddSubscriptionStep': app.get('additionalBeforeAddSubscriptionStep'),
-                'additionalAfterAddSubscriptionStep': app.get('additionalAfterAddSubscriptionStep'),
-            }
-
-            # Add deep link if subscription exists
+            # Generate deep link
+            deep_link = None
             if subscription_url or subscription_crypto_link:
-                app_data['deepLink'] = _create_deep_link(app, subscription_url, subscription_crypto_link)
+                deep_link = _create_deep_link(app, subscription_url, subscription_crypto_link)
+            app['deepLink'] = deep_link
 
-            platform_apps.append(app_data)
+            # Resolve templates only for subscriptionLink and copyButton (not external)
+            for block in app.get('blocks', []):
+                if not isinstance(block, dict):
+                    continue
+                for btn in block.get('buttons', []):
+                    if not isinstance(btn, dict):
+                        continue
+                    btn_type = btn.get('type', '')
+                    if btn_type in ('subscriptionLink', 'copyButton'):
+                        url = btn.get('url', '') or btn.get('link', '')
+                        if url and '{{' in url:
+                            btn['resolvedUrl'] = _resolve_button_url(
+                                url,
+                                subscription_url,
+                                subscription_crypto_link,
+                            )
 
-        if platform_apps:
-            platforms_legacy[platform_key] = platform_apps
+            enriched_apps.append(app)
+
+        if enriched_apps:
+            platform_output = {k: v for k, v in platform_data.items() if k != 'apps'}
+            platform_output['apps'] = enriched_apps
+            platforms[platform_key] = platform_output
 
     return {
-        'platforms': platforms_legacy,
+        'isRemnawave': True,
+        'platforms': platforms,
+        'svgLibrary': config.get('svgLibrary', {}),
+        'baseTranslations': config.get('baseTranslations'),
+        'baseSettings': config.get('baseSettings'),
+        'uiConfig': config.get('uiConfig', {}),
         'platformNames': platform_names,
         'hasSubscription': bool(subscription_url or subscription_crypto_link),
-        'subscriptionUrl': subscription_url if not hide_link else None,
-        'subscriptionCryptoLink': subscription_crypto_link if not hide_link else None,
+        'subscriptionUrl': subscription_url,
+        'subscriptionCryptoLink': subscription_crypto_link,
         'hideLink': hide_link,
-        'branding': config.get('config', {}).get('branding', {}),
+        'branding': config.get('brandingSettings', {}),
     }
 
 

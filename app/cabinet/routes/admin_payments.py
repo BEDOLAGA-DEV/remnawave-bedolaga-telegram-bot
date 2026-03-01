@@ -19,7 +19,7 @@ from app.services.payment_verification_service import (
     run_manual_check,
 )
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 
 
 logger = structlog.get_logger(__name__)
@@ -272,7 +272,7 @@ async def get_all_pending_payments(
     page: int = Query(1, ge=1, description='Page number'),
     per_page: int = Query(20, ge=1, le=100, description='Items per page'),
     method_filter: str | None = Query(None, description='Filter by payment method'),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('payments:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get all pending payments for admin verification."""
@@ -306,7 +306,7 @@ async def get_all_pending_payments(
 
 @router.get('/stats', response_model=PaymentsStatsResponse)
 async def get_payments_stats(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('payments:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get statistics about pending payments."""
@@ -329,7 +329,7 @@ async def get_payments_stats(
 async def get_pending_payment_details(
     method: str,
     payment_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('payments:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get details of a specific pending payment."""
@@ -356,7 +356,7 @@ async def get_pending_payment_details(
 async def check_payment_status(
     method: str,
     payment_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('payments:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Manually check and update payment status."""

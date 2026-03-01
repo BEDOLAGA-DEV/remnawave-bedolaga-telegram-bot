@@ -30,7 +30,7 @@ from app.database.models import (
     User,
 )
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.campaigns import (
     AvailablePartnerItem,
     CampaignCreateRequest,
@@ -80,7 +80,7 @@ def _get_partner_name(campaign: AdvertisingCampaign) -> str | None:
 
 @router.get('/overview', response_model=CampaignsOverviewResponse)
 async def get_overview(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get campaigns overview statistics."""
@@ -108,7 +108,7 @@ async def get_overview(
 
 @router.get('/available-servers', response_model=list[ServerSquadInfo])
 async def get_available_servers(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get list of available server squads for campaign subscription bonus."""
@@ -126,7 +126,7 @@ async def get_available_servers(
 
 @router.get('/available-tariffs', response_model=list[TariffListItem])
 async def get_available_tariffs(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get list of available tariffs for campaign tariff bonus."""
@@ -155,7 +155,7 @@ async def get_available_tariffs(
 
 @router.get('/available-partners', response_model=list[AvailablePartnerItem])
 async def get_available_partners(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get list of approved partners for campaign partner selector."""
@@ -178,7 +178,7 @@ async def list_campaigns(
     include_inactive: bool = True,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get list of all campaigns."""
@@ -211,7 +211,7 @@ async def list_campaigns(
 @router.get('/{campaign_id}', response_model=CampaignDetailResponse)
 async def get_campaign(
     campaign_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get detailed campaign info."""
@@ -257,7 +257,7 @@ async def get_campaign(
 @router.get('/{campaign_id}/stats', response_model=CampaignStatisticsResponse)
 async def get_campaign_stats(
     campaign_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:stats')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get detailed campaign statistics."""
@@ -303,7 +303,7 @@ async def get_campaign_registrations(
     campaign_id: int,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=100),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get list of users registered through campaign."""
@@ -381,7 +381,7 @@ async def get_campaign_registrations(
 @router.post('', response_model=CampaignDetailResponse)
 async def create_new_campaign(
     request: CampaignCreateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:create')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Create a new advertising campaign."""
@@ -446,7 +446,7 @@ async def create_new_campaign(
 async def update_existing_campaign(
     campaign_id: int,
     request: CampaignUpdateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update an existing campaign."""
@@ -532,7 +532,7 @@ async def update_existing_campaign(
 @router.delete('/{campaign_id}')
 async def delete_existing_campaign(
     campaign_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:delete')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Delete a campaign."""
@@ -560,7 +560,7 @@ async def delete_existing_campaign(
 @router.post('/{campaign_id}/toggle', response_model=CampaignToggleResponse)
 async def toggle_campaign(
     campaign_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('campaigns:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Toggle campaign active status."""

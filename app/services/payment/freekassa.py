@@ -32,6 +32,8 @@ class FreekassaPaymentMixin:
         description: str = 'Пополнение баланса',
         email: str | None = None,
         language: str = 'ru',
+        payment_system_id: int | None = None,
+        payment_method: str | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж Freekassa.
@@ -83,18 +85,23 @@ class FreekassaPaymentMixin:
             'description': description,
             'language': language,
             'type': 'balance_topup',
+            'payment_method': payment_method or 'freekassa',
         }
 
         try:
+            # Определяем payment_system_id: явно переданный > из настроек
+            ps_id = payment_system_id or settings.FREEKASSA_PAYMENT_SYSTEM_ID
+
             # Выбираем способ создания платежа: API или форма
-            if settings.FREEKASSA_USE_API:
-                # Используем API для создания заказа (нужно для NSPK СБП)
+            # Если указан payment_system_id — всегда используем API
+            if settings.FREEKASSA_USE_API or ps_id:
+                # Используем API для создания заказа
                 payment_url = await freekassa_service.create_order_and_get_url(
                     order_id=order_id,
                     amount=amount_rubles,
                     currency=currency,
                     email=email,
-                    payment_system_id=settings.FREEKASSA_PAYMENT_SYSTEM_ID,
+                    payment_system_id=ps_id,
                 )
                 logger.info('Freekassa API: создан заказ order_id url', order_id=order_id, payment_url=payment_url)
             else:
@@ -339,7 +346,18 @@ class FreekassaPaymentMixin:
         if getattr(self, 'bot', None) and user.telegram_id:
             try:
                 keyboard = await self.build_topup_success_keyboard(user)
-                display_name = settings.get_freekassa_display_name()
+
+                # Resolve display name from payment metadata (sub-method aware)
+                display_name = settings.get_freekassa_display_name_html()
+                try:
+                    meta = json.loads(payment.metadata_json) if payment.metadata_json else {}
+                    pm = meta.get('payment_method', 'freekassa')
+                    if pm == 'freekassa_sbp':
+                        display_name = settings.get_freekassa_sbp_display_name_html()
+                    elif pm == 'freekassa_card':
+                        display_name = settings.get_freekassa_card_display_name_html()
+                except (json.JSONDecodeError, AttributeError):
+                    pass
                 await self.bot.send_message(
                     user.telegram_id,
                     (

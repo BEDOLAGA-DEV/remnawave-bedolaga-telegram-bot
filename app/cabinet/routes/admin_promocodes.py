@@ -30,7 +30,7 @@ from app.database.crud.promocode import (
 )
 from app.database.models import PromoCode, PromoCodeType, PromoCodeUse, PromoGroup, User
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 
 
 router = APIRouter(prefix='/admin/promocodes', tags=['Admin Promocodes'])
@@ -305,7 +305,7 @@ def _validate_update_payload(payload: PromoCodeUpdateRequest, promocode: PromoCo
 
 @router.get('', response_model=PromoCodeListResponse)
 async def list_promocodes(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promocodes:read')),
     db: AsyncSession = Depends(get_cabinet_db),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -326,7 +326,7 @@ async def list_promocodes(
 @router.get('/{promocode_id}', response_model=PromoCodeDetailResponse)
 async def get_promocode(
     promocode_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promocodes:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoCodeDetailResponse:
     """Get promocode details with usage statistics."""
@@ -349,7 +349,7 @@ async def get_promocode(
 @router.post('', response_model=PromoCodeResponse, status_code=status.HTTP_201_CREATED)
 async def create_promocode_endpoint(
     payload: PromoCodeCreateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promocodes:create')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoCodeResponse:
     """Create a new promocode."""
@@ -399,7 +399,7 @@ async def create_promocode_endpoint(
 async def update_promocode_endpoint(
     promocode_id: int,
     payload: PromoCodeUpdateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promocodes:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoCodeResponse:
     """Update an existing promocode."""
@@ -460,7 +460,7 @@ async def update_promocode_endpoint(
 )
 async def delete_promocode_endpoint(
     promocode_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promocodes:delete')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> Response:
     """Delete a promocode."""
@@ -486,7 +486,7 @@ class DeactivateDiscountResponse(BaseModel):
 @router.post('/deactivate-discount/{user_id}', response_model=DeactivateDiscountResponse)
 async def admin_deactivate_discount_promocode(
     user_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promocodes:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> DeactivateDiscountResponse:
     """Admin: deactivate a user's active discount promo code."""
@@ -537,7 +537,7 @@ promo_groups_router = APIRouter(prefix='/admin/promo-groups', tags=['Admin Promo
 
 @promo_groups_router.get('', response_model=PromoGroupListResponse)
 async def list_promo_groups(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promo_groups:read')),
     db: AsyncSession = Depends(get_cabinet_db),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -561,7 +561,7 @@ async def list_promo_groups(
 @promo_groups_router.get('/{group_id}', response_model=PromoGroupResponse)
 async def get_promo_group(
     group_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promo_groups:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoGroupResponse:
     """Get promo group details."""
@@ -576,7 +576,7 @@ async def get_promo_group(
 @promo_groups_router.post('', response_model=PromoGroupResponse, status_code=status.HTTP_201_CREATED)
 async def create_promo_group_endpoint(
     payload: PromoGroupCreateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promo_groups:create')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoGroupResponse:
     """Create a new promo group."""
@@ -608,7 +608,7 @@ async def create_promo_group_endpoint(
 async def update_promo_group_endpoint(
     group_id: int,
     payload: PromoGroupUpdateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promo_groups:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoGroupResponse:
     """Update a promo group."""
@@ -645,7 +645,7 @@ async def update_promo_group_endpoint(
 @promo_groups_router.delete('/{group_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_promo_group_endpoint(
     group_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promo_groups:delete')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> Response:
     """Delete a promo group."""

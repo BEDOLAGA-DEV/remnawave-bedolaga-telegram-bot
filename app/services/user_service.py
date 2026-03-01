@@ -1203,6 +1203,22 @@ class UserService:
                 logger.error('❌ Ошибка удаления подписки', error=e)
 
             try:
+                from app.database.models import (
+                    AccessPolicy,
+                    AdminAuditLog,
+                    AdminRole,
+                    UserRole,
+                    WithdrawalRequest,
+                )
+
+                await db.execute(delete(AdminAuditLog).where(AdminAuditLog.user_id == user_id))
+                await db.execute(delete(WithdrawalRequest).where(WithdrawalRequest.user_id == user_id))
+                await db.execute(
+                    update(WithdrawalRequest).where(WithdrawalRequest.processed_by == user_id).values(processed_by=None)
+                )
+                await db.execute(update(AdminRole).where(AdminRole.created_by == user_id).values(created_by=None))
+                await db.execute(update(UserRole).where(UserRole.assigned_by == user_id).values(assigned_by=None))
+                await db.execute(update(AccessPolicy).where(AccessPolicy.created_by == user_id).values(created_by=None))
                 await db.execute(delete(User).where(User.id == user_id))
                 await db.commit()
                 logger.info('✅ Пользователь окончательно удален из базы', user_id=user_id)

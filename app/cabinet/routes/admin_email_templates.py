@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import User
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 from ..services.email_template_overrides import (
     delete_template_override,
     get_all_overrides,
@@ -370,7 +370,7 @@ class EmailTemplateSendTestRequest(BaseModel):
 
 @router.get('', summary='List all email template types')
 async def list_template_types(
-    _admin: User = Depends(get_current_admin_user),
+    _admin: User = Depends(require_permission('email_templates:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """List all available email template types with override status."""
@@ -405,7 +405,7 @@ async def list_template_types(
 @router.get('/{notification_type}', summary='Get templates for a notification type')
 async def get_templates_for_type(
     notification_type: str,
-    _admin: User = Depends(get_current_admin_user),
+    _admin: User = Depends(require_permission('email_templates:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """Get all language templates for a specific notification type."""
@@ -479,7 +479,7 @@ async def update_template(
     notification_type: str,
     language: str,
     data: EmailTemplateUpdate,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('email_templates:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """Save a custom email template override."""
@@ -515,7 +515,7 @@ async def update_template(
 async def reset_template(
     notification_type: str,
     language: str,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('email_templates:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """Delete custom template override, reverting to default."""
@@ -543,7 +543,7 @@ async def reset_template(
 async def preview_template(
     notification_type: str,
     data: EmailTemplatePreviewRequest,
-    _admin: User = Depends(get_current_admin_user),
+    _admin: User = Depends(require_permission('email_templates:read')),
 ) -> dict[str, Any]:
     """Preview a rendered email template with sample data."""
     valid_types = [t['type'] for t in TEMPLATE_TYPES]
@@ -588,7 +588,7 @@ async def preview_template(
 async def send_test_email(
     notification_type: str,
     data: EmailTemplateSendTestRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('email_templates:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """Send a test email to the admin's email address."""

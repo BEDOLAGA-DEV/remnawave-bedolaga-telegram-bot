@@ -342,3 +342,97 @@ class RateLimitCache:
     async def reset_rate_limit(user_id: int, action: str) -> bool:
         key = cache_key('rate_limit', user_id, action)
         return await cache.delete(key)
+
+
+class ChannelSubCache:
+    """Cache for user channel subscription statuses.
+
+    Redis keys:
+    - channel_sub:{telegram_id}:{channel_id} -> "1" or "0" (TTL 600s)
+    - required_channels:active -> JSON list of active channels (TTL 60s)
+    """
+
+    SUB_TTL = 600  # 10 min -- individual user subscription status
+    CHANNELS_TTL = 60  # 1 min -- list of required channels
+
+    @staticmethod
+    async def get_sub_status(telegram_id: int, channel_id: str) -> bool | None:
+        """Get subscription status from cache. None = cache miss."""
+        key = cache_key('channel_sub', telegram_id, channel_id)
+        result = await cache.get(key)
+        if result is None:
+            return None
+        return result == 1
+
+    @staticmethod
+    async def get_sub_statuses(telegram_id: int, channel_ids: list[str]) -> dict[str, bool | None]:
+        """Batch-fetch subscription statuses via Redis MGET (single round-trip).
+
+        Returns {channel_id: True/False/None} where None = cache miss.
+        Falls back to sequential gets if Redis pipeline is unavailable.
+        """
+        if not channel_ids:
+            return {}
+
+        if not cache._connected or cache.redis_client is None:
+            return dict.fromkeys(channel_ids, None)
+
+        keys = [cache_key('channel_sub', telegram_id, ch_id) for ch_id in channel_ids]
+        try:
+            raw_values = await cache.redis_client.mget(keys)
+        except Exception as e:
+            logger.warning('Redis MGET failed, falling back to sequential', error=str(e))
+            result: dict[str, bool | None] = {}
+            for ch_id in channel_ids:
+                result[ch_id] = await ChannelSubCache.get_sub_status(telegram_id, ch_id)
+            return result
+
+        statuses: dict[str, bool | None] = {}
+        for ch_id, raw in zip(channel_ids, raw_values, strict=True):
+            if raw is None:
+                statuses[ch_id] = None
+            else:
+                try:
+                    parsed = json.loads(raw)
+                    statuses[ch_id] = parsed == 1
+                except (ValueError, TypeError):
+                    statuses[ch_id] = None
+        return statuses
+
+    @staticmethod
+    async def set_sub_status(telegram_id: int, channel_id: str, is_member: bool) -> None:
+        key = cache_key('channel_sub', telegram_id, channel_id)
+        await cache.set(key, 1 if is_member else 0, expire=ChannelSubCache.SUB_TTL)
+
+    @staticmethod
+    async def invalidate_sub(telegram_id: int, channel_id: str) -> None:
+        key = cache_key('channel_sub', telegram_id, channel_id)
+        await cache.delete(key)
+
+    @staticmethod
+    async def invalidate_user_channels(telegram_id: int, channel_ids: list[str]) -> None:
+        """Invalidate specific channel keys for a user using single Redis DELETE.
+
+        Uses multi-key DELETE (O(K)) instead of delete_pattern() which uses KEYS (O(N)).
+        At 100k users * 5 channels = 500k keys, KEYS would block Redis for seconds.
+        """
+        if not channel_ids or not cache._connected or not cache.redis_client:
+            return
+        keys = [cache_key('channel_sub', telegram_id, ch_id) for ch_id in channel_ids]
+        try:
+            await cache.redis_client.delete(*keys)
+        except Exception as e:
+            logger.warning('Failed to invalidate user channel cache', telegram_id=telegram_id, error=e)
+
+    @staticmethod
+    async def get_required_channels() -> list[dict] | None:
+        """Get the list of required channels from cache."""
+        return await cache.get('required_channels:active')
+
+    @staticmethod
+    async def set_required_channels(channels: list[dict]) -> None:
+        await cache.set('required_channels:active', channels, expire=ChannelSubCache.CHANNELS_TTL)
+
+    @staticmethod
+    async def invalidate_channels() -> None:
+        await cache.delete('required_channels:active')

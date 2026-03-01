@@ -69,8 +69,6 @@ services:
       # Данные приложения (для SQLite в случае переключения)
       - ./data:/app/data:rw
       - ./locales:/app/locales:rw
-      # Конфигурация приложения
-      # - ./app-config.json:/app/app-config.json:ro
       # Timezone
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro

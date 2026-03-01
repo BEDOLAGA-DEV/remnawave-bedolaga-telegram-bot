@@ -9,7 +9,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.cabinet.dependencies import get_cabinet_db, get_current_admin_user
+from app.cabinet.dependencies import get_cabinet_db, require_permission
 from app.cabinet.schemas.wheel import (
     AdminSpinItem,
     AdminSpinsResponse,
@@ -42,7 +42,7 @@ router = APIRouter(prefix='/admin/wheel', tags=['Admin Fortune Wheel'])
 
 @router.get('/config', response_model=AdminWheelConfigResponse)
 async def get_admin_wheel_config(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('wheel:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Получить полную конфигурацию колеса."""
@@ -93,7 +93,7 @@ async def get_admin_wheel_config(
 @router.put('/config', response_model=AdminWheelConfigResponse)
 async def update_admin_wheel_config(
     request: UpdateWheelConfigRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('wheel:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Обновить конфигурацию колеса."""
@@ -155,7 +155,7 @@ async def update_admin_wheel_config(
 
 @router.get('/prizes', response_model=list[WheelPrizeAdminResponse])
 async def get_prizes(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('wheel:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Получить список призов."""
@@ -188,7 +188,7 @@ async def get_prizes(
 @router.post('/prizes', response_model=WheelPrizeAdminResponse, status_code=status.HTTP_201_CREATED)
 async def create_prize(
     request: CreatePrizeRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('wheel:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Создать новый приз."""
@@ -237,7 +237,7 @@ async def create_prize(
 async def update_prize(
     prize_id: int,
     request: UpdatePrizeRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('wheel:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Обновить приз."""
@@ -286,7 +286,7 @@ async def update_prize(
 @router.delete('/prizes/{prize_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_prize_endpoint(
     prize_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('wheel:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Удалить приз."""
@@ -304,7 +304,7 @@ async def delete_prize_endpoint(
 @router.post('/prizes/reorder', status_code=status.HTTP_200_OK)
 async def reorder_prizes(
     request: ReorderPrizesRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('wheel:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Переупорядочить призы."""
@@ -317,7 +317,7 @@ async def reorder_prizes(
 async def get_statistics(
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('wheel:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Получить статистику колеса."""
@@ -344,7 +344,7 @@ async def get_all_spins_endpoint(
     date_to: datetime | None = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=100),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('wheel:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Получить все спины с фильтрами."""

@@ -16,7 +16,7 @@ from app.database.crud.server_squad import (
 from app.database.models import PromoGroup, ServerSquad, Subscription, Tariff, User
 from app.services.subscription_service import SubscriptionService
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.servers import (
     PromoGroupInfo,
     ServerDetailResponse,
@@ -66,7 +66,7 @@ async def _get_tariffs_using_server(db: AsyncSession, squad_uuid: str) -> list[s
 @router.get('', response_model=ServerListResponse)
 async def list_servers(
     include_unavailable: bool = True,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('servers:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get list of all servers."""
@@ -103,7 +103,7 @@ async def list_servers(
 @router.get('/{server_id}', response_model=ServerDetailResponse)
 async def get_server(
     server_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('servers:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get detailed server info."""
@@ -146,7 +146,7 @@ async def get_server(
 async def update_existing_server(
     server_id: int,
     request: ServerUpdateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('servers:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update an existing server."""
@@ -191,7 +191,7 @@ async def update_existing_server(
 @router.post('/{server_id}/toggle', response_model=ServerToggleResponse)
 async def toggle_server(
     server_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('servers:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Toggle server availability."""
@@ -218,7 +218,7 @@ async def toggle_server(
 @router.post('/{server_id}/trial', response_model=ServerTrialToggleResponse)
 async def toggle_server_trial(
     server_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('servers:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Toggle server trial eligibility."""
@@ -245,7 +245,7 @@ async def toggle_server_trial(
 @router.get('/{server_id}/stats', response_model=ServerStatsResponse)
 async def get_server_stats(
     server_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('servers:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get server statistics."""
@@ -287,7 +287,7 @@ async def get_server_stats(
 
 @router.post('/sync', response_model=ServerSyncResponse)
 async def sync_servers(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('servers:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Sync servers with RemnaWave."""

@@ -2,7 +2,6 @@ from datetime import UTC, datetime
 
 import structlog
 from aiogram import Bot, Dispatcher, F, types
-from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -37,6 +36,7 @@ from app.middlewares.channel_checker import (
 )
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.campaign_service import AdvertisingCampaignService
+from app.services.channel_subscription_service import channel_subscription_service
 from app.services.main_menu_button_service import MainMenuButtonService
 from app.services.pinned_message_service import (
     deliver_pinned_message_to_user,
@@ -1906,20 +1906,22 @@ async def required_sub_channel_check(
 
         texts = get_texts(language)
 
-        chat_member = await bot.get_chat_member(chat_id=settings.CHANNEL_SUB_ID, user_id=query.from_user.id)
+        # Ensure bot is set on service
+        if not channel_subscription_service.bot:
+            channel_subscription_service.bot = bot
 
-        if chat_member.status not in [
-            ChatMemberStatus.MEMBER,
-            ChatMemberStatus.ADMINISTRATOR,
-            ChatMemberStatus.CREATOR,
-        ]:
+        # Invalidate cache for fresh check (user just clicked "I subscribed")
+        await channel_subscription_service.invalidate_user_cache(query.from_user.id)
+
+        is_subscribed = await channel_subscription_service.is_user_subscribed_to_all(query.from_user.id)
+        if not is_subscribed:
             # НЕ удаляем payload - пользователь может попробовать снова после подписки
             logger.info(
-                "📦 CHANNEL CHECK: Подписка не подтверждена, payload '' сохранён для следующей попытки",
+                'CHANNEL CHECK: Подписка не подтверждена, payload сохранён для следующей попытки',
                 pending_start_payload=pending_start_payload,
             )
             return await query.answer(
-                texts.t('CHANNEL_SUBSCRIBE_REQUIRED_ALERT', '❌ Вы не подписались на канал!'),
+                texts.t('CHANNEL_SUBSCRIBE_REQUIRED_ALERT', 'Please subscribe to all required channels first!'),
                 show_alert=True,
             )
 

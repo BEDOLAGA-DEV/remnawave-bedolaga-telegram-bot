@@ -645,19 +645,6 @@ class BackupService:
         files_dir = staging_dir / 'files'
         files_dir.mkdir(parents=True, exist_ok=True)
 
-        app_config_path = settings.get_app_config_path()
-        if app_config_path:
-            src = Path(app_config_path)
-            if src.exists():
-                dest = files_dir / src.name
-                await asyncio.to_thread(shutil.copy2, src, dest)
-                files_info.append(
-                    {
-                        'path': str(src),
-                        'relative_path': f'files/{src.name}',
-                    }
-                )
-
         if include_logs and settings.LOG_FILE:
             log_path = Path(settings.LOG_FILE)
             if log_path.exists():
@@ -1493,46 +1480,10 @@ class BackupService:
                 logger.warning('⚠️ Не удалось очистить таблицу', table_name=table_name, error=e)
 
     async def _collect_file_snapshots(self) -> dict[str, dict[str, Any]]:
-        snapshots: dict[str, dict[str, Any]] = {}
-
-        app_config_path = settings.get_app_config_path()
-        if app_config_path:
-            path_obj = Path(app_config_path)
-            if path_obj.exists() and path_obj.is_file():
-                try:
-                    async with aiofiles.open(path_obj, encoding='utf-8') as f:
-                        content = await f.read()
-                    snapshots['app_config'] = {
-                        'path': str(path_obj),
-                        'content': content,
-                        'modified_at': datetime.fromtimestamp(path_obj.stat().st_mtime, tz=UTC).isoformat(),
-                    }
-                    logger.info('📁 Добавлен в бекап файл конфигурации', path_obj=path_obj)
-                except Exception as e:
-                    logger.error('Ошибка чтения файла конфигурации', path_obj=path_obj, e=e)
-
-        return snapshots
+        return {}
 
     async def _restore_file_snapshots(self, file_snapshots: dict[str, dict[str, Any]]) -> int:
-        restored_files = 0
-
-        if not file_snapshots:
-            return restored_files
-
-        app_config_snapshot = file_snapshots.get('app_config')
-        if app_config_snapshot:
-            target_path = Path(settings.get_app_config_path())
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-
-            try:
-                async with aiofiles.open(target_path, 'w', encoding='utf-8') as f:
-                    await f.write(app_config_snapshot.get('content', ''))
-                restored_files += 1
-                logger.info('📁 Файл app-config восстановлен по пути', target_path=target_path)
-            except Exception as e:
-                logger.error('Ошибка восстановления файла', target_path=target_path, e=e)
-
-        return restored_files
+        return 0
 
     async def get_backup_list(self) -> list[dict[str, Any]]:
         backups = []

@@ -1471,14 +1471,12 @@ class RemnaWaveService:
                     )
 
                 # Используем один API клиент для всех операций сброса HWID
-                hwid_api_client = None
                 hwid_api_cm = None
                 try:
                     hwid_api_cm = self.get_api_client()
-                    hwid_api_client = await hwid_api_cm.__aenter__()
+                    await hwid_api_cm.__aenter__()
                 except Exception as api_init_error:
                     logger.warning('⚠️ Не удалось создать API клиент для сброса HWID', api_init_error=api_init_error)
-                    hwid_api_client = None
                     hwid_api_cm = None
 
                 try:
@@ -1499,19 +1497,8 @@ class RemnaWaveService:
 
                             logger.info('🗑️ Деактивация подписки пользователя (нет в панели)', telegram_id=telegram_id)
 
-                            if db_user.remnawave_uuid and hwid_api_client:
-                                try:
-                                    devices_reset = await hwid_api_client.reset_user_devices(db_user.remnawave_uuid)
-                                    if devices_reset:
-                                        logger.info(
-                                            '🔧 Сброшены HWID устройства для пользователя', telegram_id=telegram_id
-                                        )
-                                except Exception as hwid_error:
-                                    logger.error(
-                                        '❌ Ошибка сброса HWID устройств для',
-                                        telegram_id=telegram_id,
-                                        hwid_error=hwid_error,
-                                    )
+                            # NOTE: Не сбрасываем HWID здесь — пользователь уже удалён из панели,
+                            # API вернёт 404, UUID очищается ниже (cleanup_mutation)
 
                             try:
                                 from sqlalchemy import delete

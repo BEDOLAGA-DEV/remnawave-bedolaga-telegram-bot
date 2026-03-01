@@ -666,6 +666,7 @@
     "ADMIN_SETTINGS_MAINTENANCE": "🔧 تعمیرات",
     "ADMIN_SETTINGS_PRIVACY_POLICY": "🛡️ حریم خصوصی",
     "ADMIN_SETTINGS_PUBLIC_OFFER": "📄 شرایط استفاده",
+    "ADMIN_SETTINGS_REQUIRED_CHANNELS": "📢 کانال‌های اجباری",
     "ADMIN_SETTINGS_SUBMENU_DESCRIPTION": "مدیریت Remnawave، مانیتورینگ و تنظیمات:",
     "ADMIN_SETTINGS_SUBMENU_TITLE": "⚙️ **تنظیمات سیستم**",
     "ADMIN_SETTINGS_TARIFFS": "📦 تعرفه‌ها",
@@ -951,9 +952,10 @@
     "CHANGE_DEVICES_TITLE": "📱 تغییر تعداد دستگاه",
     "CHANGE_TARIFF_BUTTON": "📦 تعرفه",
     "CHANNEL_CHECK_BUTTON": "✅ عضو شدم",
-    "CHANNEL_REQUIRED_TEXT": "🔒 برای استفاده از ربات در کانال خبری عضو شوید، سپس دکمه زیر بزنید.",
+    "CHANNEL_CHECK_NOT_SUBSCRIBED": "شما هنوز در همه کانال‌ها عضو نشده‌اید! لطفاً عضو شوید و دوباره امتحان کنید.",
+    "CHANNEL_REQUIRED_TEXT": "لطفاً در کانال‌های اجباری عضو شوید و سپس دکمه زیر را فشار دهید.",
     "CHANNEL_SUBSCRIBE_BUTTON": "📢 عضویت در کانال",
-    "CHANNEL_SUBSCRIBE_REQUIRED_ALERT": "❌ هنوز عضو کانال نشده‌اید!",
+    "CHANNEL_SUBSCRIBE_REQUIRED_ALERT": "لطفاً ابتدا در همه کانال‌های اجباری عضو شوید!",
     "CHANNEL_SUBSCRIBE_THANKS": "✅ ممنون از عضویت",
     "CHECK_STATUS_BUTTON": "📊 بررسی وضعیت",
     "CHECK_STATUS_NO_CHANGES": "وضعیت تغییر نکرده",
@@ -1452,10 +1454,12 @@
     "SUBSCRIPTION_NO_SERVERS": "❌ سروری در دسترس نیست",
     "SUBSCRIPTION_OVERVIEW_TEMPLATE": "📱 <b>اشتراک شما</b>\n\n📊 وضعیت: {status}\n📅 اعتبار: {expiry}\n📈 ترافیک: {traffic}\n📱 دستگاه‌ها: {devices}\n🌍 سرورها: {servers}",
     "SUBSCRIPTION_DAILY_OVERVIEW_TEMPLATE": "👤 {full_name}\n💰 موجودی: {balance}\n📱 اشتراک: {status_emoji} {status_display}{warning}{tariff_info_block}\n\n📱 اطلاعات اشتراک\n🎭 نوع: {subscription_type}\n📈 ترافیک: {traffic}\n🌍 سرورها: {servers}\n📱 دستگاه‌ها: {devices}\n🌍 کشورها: {countries}",
+    "SUBSCRIPTION_DEACTIVATED_CHANNEL_UNSUBSCRIBE": "اشتراک شما متوقف شده است زیرا از کانال اجباری خارج شدید.\n\nبرای بازیابی دسترسی VPN در همه کانال‌ها عضو شوید.",
     "SUBSCRIPTION_PROMO_DISCOUNT_HINT": "⚡ تخفیف اضافی {percent}% فعال شد.\n\nبا سایر تخفیف‌ها جمع می‌شود!",
     "SUBSCRIPTION_PROMO_DISCOUNT_NOTE": "⚡ تخفیف اضافی {percent}%: -{amount}",
     "SUBSCRIPTION_PROMO_DISCOUNT_TIMER": "\n⏳ اعتبار تخفیف: {time_left} <code>{bar}</code>",
     "SUBSCRIPTION_PURCHASED": "🎉 اشتراک خریداری شد!",
+    "SUBSCRIPTION_REACTIVATED_CHANNEL_SUBSCRIBE": "اشتراک شما بازیابی شد!\n\nبا تشکر از عضویت در کانال‌ها. VPN دوباره فعال است.",
     "SUBSCRIPTION_SETTINGS_BUTTON": "⚙️ تنظیمات",
     "SUBSCRIPTION_SETTINGS_OVERVIEW": "⚙️ <b>تنظیمات اشتراک</b>",
     "SUBSCRIPTION_SETTINGS_PAID_ONLY": "⚠️ تنظیمات فقط برای اشتراک پولی",

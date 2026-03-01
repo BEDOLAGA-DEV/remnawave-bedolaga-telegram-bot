@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.database.models import User
 from app.services.version_service import version_service
 
-from ..dependencies import get_current_admin_user
+from ..dependencies import require_permission
 
 
 logger = structlog.get_logger(__name__)
@@ -93,7 +93,7 @@ async def _fetch_cabinet_releases(force: bool = False) -> list[dict]:
 
 @router.get('/releases', response_model=ReleasesResponse)
 async def get_releases(
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission('updates:read')),
 ) -> ReleasesResponse:
     """Get release information for bot and cabinet."""
     # Bot releases

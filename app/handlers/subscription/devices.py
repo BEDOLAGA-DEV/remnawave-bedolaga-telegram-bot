@@ -1,3 +1,4 @@
+import html as html_mod
 from datetime import UTC, datetime
 from io import BytesIO
 
@@ -49,11 +50,10 @@ from app.utils.subscription_utils import (
 from .common import (
     _get_addon_discount_percent_for_user,
     _get_period_hint_from_subscription,
-    format_additional_section,
-    get_apps_for_device,
+    get_apps_for_platform_async,
     get_device_name,
-    get_step_description,
     logger,
+    render_guide_blocks,
 )
 from .countries import _get_available_countries
 
@@ -818,6 +818,7 @@ async def handle_devices_page(callback: types.CallbackQuery, db_user: User, db: 
 
 
 async def handle_single_device_reset(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
     try:
         callback_parts = callback.data.split('_')
         if len(callback_parts) < 4:
@@ -840,8 +841,6 @@ async def handle_single_device_reset(callback: types.CallbackQuery, db_user: Use
             show_alert=True,
         )
         return
-
-    texts = get_texts(db_user.language)
 
     try:
         from app.services.remnawave_service import RemnaWaveService
@@ -1296,7 +1295,8 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
         )
         return
 
-    apps = get_apps_for_device(device_type, db_user.language)
+    apps = await get_apps_for_platform_async(device_type, db_user.language)
+
     hide_subscription_link = settings.should_hide_subscription_link()
 
     if not apps:
@@ -1341,7 +1341,7 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
         return
 
     other_app_names = ', '.join(
-        str(app.get('name')).strip()
+        html_mod.escape(str(app.get('name')).strip())
         for app in other_apps
         if isinstance(app.get('name'), str) and app.get('name').strip()
     )
@@ -1361,34 +1361,20 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
     else:
         link_section = (
             texts.t('SUBSCRIPTION_DEVICE_LINK_TITLE', '🔗 <b>Ссылка подписки:</b>')
-            + f'\n<code>{subscription_link}</code>\n\n'
+            + f'\n<code>{html_mod.escape(subscription_link)}</code>\n\n'
         )
-
-    installation_description = get_step_description(featured_app, 'installationStep', db_user.language)
-    add_description = get_step_description(featured_app, 'addSubscriptionStep', db_user.language)
-    connect_description = get_step_description(featured_app, 'connectAndUseStep', db_user.language)
-    additional_before_text = format_additional_section(
-        featured_app.get('additionalBeforeAddSubscriptionStep'),
-        texts,
-        db_user.language,
-    )
-    additional_after_text = format_additional_section(
-        featured_app.get('additionalAfterAddSubscriptionStep'),
-        texts,
-        db_user.language,
-    )
 
     guide_text = (
         texts.t(
             'SUBSCRIPTION_DEVICE_GUIDE_TITLE',
             '📱 <b>Настройка для {device_name}</b>',
-        ).format(device_name=get_device_name(device_type, db_user.language))
+        ).format(device_name=html_mod.escape(get_device_name(device_type, db_user.language)))
         + '\n\n'
         + link_section
         + texts.t(
             'SUBSCRIPTION_DEVICE_FEATURED_APP',
             '📋 <b>Рекомендуемое приложение:</b> {app_name}',
-        ).format(app_name=featured_app.get('name', ''))
+        ).format(app_name=html_mod.escape(featured_app.get('name', '')))
     )
 
     other_apps_section = ''
@@ -1406,20 +1392,9 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
             )
         )
 
-    guide_text += '\n\n' + texts.t('SUBSCRIPTION_DEVICE_STEP_INSTALL_TITLE', '<b>Шаг 1 - Установка:</b>')
-    if installation_description:
-        guide_text += f'\n{installation_description}'
-
-    if additional_before_text:
-        guide_text += f'\n\n{additional_before_text}'
-
-    guide_text += '\n\n' + texts.t('SUBSCRIPTION_DEVICE_STEP_ADD_TITLE', '<b>Шаг 2 - Добавление подписки:</b>')
-    if add_description:
-        guide_text += f'\n{add_description}'
-
-    guide_text += '\n\n' + texts.t('SUBSCRIPTION_DEVICE_STEP_CONNECT_TITLE', '<b>Шаг 3 - Подключение:</b>')
-    if connect_description:
-        guide_text += f'\n{connect_description}'
+    blocks_text = render_guide_blocks(featured_app.get('blocks', []), db_user.language)
+    if blocks_text:
+        guide_text += '\n\n' + blocks_text
 
 #    guide_text += '\n\n' + texts.t('SUBSCRIPTION_DEVICE_HOW_TO_TITLE', '💡 <b>Как подключить:</b>')
 #    guide_text += '\n' + '\n'.join(
@@ -1442,12 +1417,6 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
 #            ),
 #        ]
 #    )
-
-    if additional_after_text:
-        guide_text += f'\n\n{additional_after_text}'
-
-    if other_apps_section:
-        guide_text += other_apps_section
 
     await callback.message.edit_text(
         guide_text,
@@ -1678,7 +1647,7 @@ async def handle_app_selection(callback: types.CallbackQuery, db_user: User, db:
 
     device_type = parts[2]
 
-    apps = get_apps_for_device(device_type, db_user.language)
+    apps = await get_apps_for_platform_async(device_type, db_user.language)
 
     if not apps:
         await callback.answer(
@@ -1691,7 +1660,7 @@ async def handle_app_selection(callback: types.CallbackQuery, db_user: User, db:
         texts.t(
             'SUBSCRIPTION_APPS_TITLE',
             '📱 <b>Приложения для {device_name}</b>',
-        ).format(device_name=get_device_name(device_type, db_user.language))
+        ).format(device_name=html_mod.escape(get_device_name(device_type, db_user.language)))
         + '\n\n'
         + texts.t('SUBSCRIPTION_APPS_PROMPT', 'Выберите приложение для подключения:')
     )
@@ -1703,6 +1672,11 @@ async def handle_app_selection(callback: types.CallbackQuery, db_user: User, db:
 
 
 async def handle_specific_app_guide(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    parts = callback.data.split('_', 2)
+    if len(parts) < 3:
+        await callback.answer('Invalid callback data', show_alert=True)
+        return
+    _, device_type, app_id = parts
     texts = get_texts(db_user.language)
     callback_data = callback.data or ''
     parsed_callback = _parse_specific_app_callback_data(callback_data, db_user.language)
@@ -1726,8 +1700,8 @@ async def handle_specific_app_guide(callback: types.CallbackQuery, db_user: User
         )
         return
 
-    apps = get_apps_for_device(device_type, db_user.language)
-    app = next((a for a in apps if a['id'] == app_id), None)
+    apps = await get_apps_for_platform_async(device_type, db_user.language)
+    app = next((a for a in apps if a.get('id') == app_id), None) if apps else None
 
     if not app:
         await callback.answer(
@@ -1753,53 +1727,33 @@ async def handle_specific_app_guide(callback: types.CallbackQuery, db_user: User
     else:
         link_section = (
             texts.t('SUBSCRIPTION_DEVICE_LINK_TITLE', '🔗 <b>Ссылка подписки:</b>')
-            + f'\n<code>{subscription_link}</code>\n\n'
+            + f'\n<code>{html_mod.escape(subscription_link)}</code>\n\n'
         )
-
-    installation_description = get_step_description(app, 'installationStep', db_user.language)
-    add_description = get_step_description(app, 'addSubscriptionStep', db_user.language)
-    connect_description = get_step_description(app, 'connectAndUseStep', db_user.language)
-    additional_before_text = format_additional_section(
-        app.get('additionalBeforeAddSubscriptionStep'),
-        texts,
-        db_user.language,
-    )
-    additional_after_text = format_additional_section(
-        app.get('additionalAfterAddSubscriptionStep'),
-        texts,
-        db_user.language,
-    )
 
     guide_text = (
         texts.t(
             'SUBSCRIPTION_SPECIFIC_APP_TITLE',
             '📱 <b>{app_name} - {device_name}</b>',
-        ).format(app_name=app.get('name', ''), device_name=get_device_name(device_type, db_user.language))
+        ).format(
+            app_name=html_mod.escape(app.get('name', '')),
+            device_name=html_mod.escape(get_device_name(device_type, db_user.language)),
+        )
         + '\n\n'
         + link_section
     )
 
-    guide_text += texts.t('SUBSCRIPTION_DEVICE_STEP_INSTALL_TITLE', '<b>Шаг 1 - Установка:</b>')
-    if installation_description:
-        guide_text += f'\n{installation_description}'
-
-    if additional_before_text:
-        guide_text += f'\n\n{additional_before_text}'
-
-    guide_text += '\n\n' + texts.t('SUBSCRIPTION_DEVICE_STEP_ADD_TITLE', '<b>Шаг 2 - Добавление подписки:</b>')
-    if add_description:
-        guide_text += f'\n{add_description}'
-
-    guide_text += '\n\n' + texts.t('SUBSCRIPTION_DEVICE_STEP_CONNECT_TITLE', '<b>Шаг 3 - Подключение:</b>')
-    if connect_description:
-        guide_text += f'\n{connect_description}'
-
-    if additional_after_text:
-        guide_text += f'\n\n{additional_after_text}'
+    blocks_text = render_guide_blocks(app.get('blocks', []), db_user.language)
+    if blocks_text:
+        guide_text += blocks_text + '\n\n'
 
     await callback.message.edit_text(
         guide_text,
-        reply_markup=get_specific_app_keyboard(subscription_link, app, device_type, db_user.language),
+        reply_markup=get_specific_app_keyboard(
+            subscription_link,
+            app,
+            device_type,
+            db_user.language,
+        ),
         parse_mode='HTML',
     )
     await callback.answer()
@@ -1831,7 +1785,7 @@ async def show_device_connection_help(callback: types.CallbackQuery, db_user: Us
 • Нажмите "Подключить"
 
 <b>🔗 Ваша ссылка подписки:</b>
-<code>{subscription_link}</code>
+<code>{html_mod.escape(subscription_link)}</code>
 
 💡 <b>Совет:</b> Сохраните эту ссылку - она понадобится для подключения новых устройств
 """

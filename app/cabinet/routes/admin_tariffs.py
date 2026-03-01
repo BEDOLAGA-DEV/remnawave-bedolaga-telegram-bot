@@ -19,7 +19,7 @@ from app.database.crud.tariff import (
 )
 from app.database.models import PromoGroup, Subscription, Tariff, Transaction, TransactionType, User
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.tariffs import (
     PeriodPrice,
     PromoGroupInfo,
@@ -107,7 +107,7 @@ def _period_prices_to_dict(period_prices: list[PeriodPrice]) -> dict:
 @router.get('', response_model=TariffListResponse)
 async def list_tariffs(
     include_inactive: bool = True,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tariffs:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get list of all tariffs."""
@@ -141,7 +141,7 @@ async def list_tariffs(
 
 @router.get('/available-servers', response_model=list[ServerInfo])
 async def get_available_servers(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tariffs:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get list of all servers for tariff selection."""
@@ -161,7 +161,7 @@ async def get_available_servers(
 @router.put('/order')
 async def update_tariff_order(
     request: TariffSortOrderRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tariffs:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update the display order of tariffs."""
@@ -176,7 +176,7 @@ async def update_tariff_order(
 @router.get('/{tariff_id}', response_model=TariffDetailResponse)
 async def get_tariff(
     tariff_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tariffs:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get detailed tariff info."""
@@ -246,7 +246,7 @@ async def get_tariff(
 @router.post('', response_model=TariffDetailResponse)
 async def create_new_tariff(
     request: TariffCreateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tariffs:create')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Create a new tariff."""
@@ -307,7 +307,7 @@ async def create_new_tariff(
 async def update_existing_tariff(
     tariff_id: int,
     request: TariffUpdateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tariffs:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update an existing tariff."""
@@ -400,7 +400,7 @@ async def update_existing_tariff(
 @router.delete('/{tariff_id}')
 async def delete_existing_tariff(
     tariff_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tariffs:delete')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Delete a tariff."""
@@ -430,7 +430,7 @@ async def delete_existing_tariff(
 @router.post('/{tariff_id}/toggle', response_model=TariffToggleResponse)
 async def toggle_tariff(
     tariff_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tariffs:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Toggle tariff active status."""
@@ -460,7 +460,7 @@ async def toggle_tariff(
 @router.post('/{tariff_id}/trial', response_model=TariffTrialResponse)
 async def toggle_trial_tariff(
     tariff_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tariffs:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Toggle tariff trial availability.
@@ -500,7 +500,7 @@ async def toggle_trial_tariff(
 @router.get('/{tariff_id}/stats', response_model=TariffStatsResponse)
 async def get_tariff_stats(
     tariff_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tariffs:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get tariff statistics."""

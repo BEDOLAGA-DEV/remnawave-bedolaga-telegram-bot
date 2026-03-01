@@ -34,7 +34,7 @@ from app.database.models import DiscountOffer, PromoOfferLog, PromoOfferTemplate
 from app.handlers.admin.messages import get_custom_users, get_target_users
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 
 
 logger = structlog.get_logger(__name__)
@@ -272,7 +272,7 @@ async def _resolve_target_users(db: AsyncSession, target: str) -> list[User]:
 
 @router.get('/templates', response_model=PromoOfferTemplateListResponse)
 async def list_templates(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promo_offers:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoOfferTemplateListResponse:
     """Get list of promo offer templates."""
@@ -288,7 +288,7 @@ async def list_templates(
 @router.get('/templates/{template_id}', response_model=PromoOfferTemplateResponse)
 async def get_template(
     template_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promo_offers:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoOfferTemplateResponse:
     """Get a promo offer template."""
@@ -302,7 +302,7 @@ async def get_template(
 async def update_template(
     template_id: int,
     payload: PromoOfferTemplateUpdateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promo_offers:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoOfferTemplateResponse:
     """Update a promo offer template."""
@@ -338,7 +338,7 @@ async def update_template(
 
 @router.get('', response_model=PromoOfferListResponse)
 async def list_offers(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promo_offers:read')),
     db: AsyncSession = Depends(get_cabinet_db),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -491,7 +491,7 @@ async def _send_promo_notifications(
 @router.post('/broadcast', response_model=PromoOfferBroadcastResponse, status_code=status.HTTP_201_CREATED)
 async def broadcast_offer(
     payload: PromoOfferBroadcastRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promo_offers:send')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PromoOfferBroadcastResponse:
     """Broadcast promo offer to users with optional Telegram notification."""
@@ -605,7 +605,7 @@ async def broadcast_offer(
 
 @router.get('/logs', response_model=PromoOfferLogListResponse)
 async def get_logs(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('promo_offers:read')),
     db: AsyncSession = Depends(get_cabinet_db),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),

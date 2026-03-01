@@ -113,11 +113,13 @@ async def route_payment_by_method(
             await process_cloudpayments_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
-    if payment_method == 'freekassa':
+    if payment_method in ('freekassa', 'freekassa_sbp', 'freekassa_card'):
         from .freekassa import process_freekassa_payment_amount
 
         async with AsyncSessionLocal() as db:
-            await process_freekassa_payment_amount(message, db_user, db, amount_kopeks, state)
+            await process_freekassa_payment_amount(
+                message, db_user, db, amount_kopeks, state, payment_method=payment_method
+            )
         return True
 
     if payment_method == 'kassa_ai':
@@ -838,10 +840,21 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_cloudpayments_payment, F.data == 'topup_cloudpayments')
     dp.callback_query.register(handle_cloudpayments_quick_amount, F.data.startswith('topup_amount|cloudpayments|'))
 
-    from .freekassa import process_freekassa_quick_amount, start_freekassa_topup
+    from .freekassa import (
+        process_freekassa_card_quick_amount,
+        process_freekassa_quick_amount,
+        process_freekassa_sbp_quick_amount,
+        start_freekassa_card_topup,
+        start_freekassa_sbp_topup,
+        start_freekassa_topup,
+    )
 
     dp.callback_query.register(start_freekassa_topup, F.data == 'topup_freekassa')
     dp.callback_query.register(process_freekassa_quick_amount, F.data.startswith('topup_amount|freekassa|'))
+    dp.callback_query.register(start_freekassa_sbp_topup, F.data == 'topup_freekassa_sbp')
+    dp.callback_query.register(process_freekassa_sbp_quick_amount, F.data.startswith('topup_amount|freekassa_sbp|'))
+    dp.callback_query.register(start_freekassa_card_topup, F.data == 'topup_freekassa_card')
+    dp.callback_query.register(process_freekassa_card_quick_amount, F.data.startswith('topup_amount|freekassa_card|'))
 
     from .kassa_ai import process_kassa_ai_quick_amount, start_kassa_ai_topup
 

@@ -43,7 +43,7 @@ async def _finalize_oauth_login(
     """Update last login, create tokens, store refresh token."""
     user.cabinet_last_login = datetime.now(UTC)
     await db.commit()
-    auth_response = _create_auth_response(user)
+    auth_response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, auth_response.refresh_token, device_info=f'oauth:{provider}')
 
     # Process referral code (before campaign bonus, which may also set referrer)

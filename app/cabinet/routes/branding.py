@@ -3,18 +3,19 @@
 import json
 import os
 from pathlib import Path
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import SystemSetting, User
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 
 
 logger = structlog.get_logger(__name__)
@@ -37,6 +38,17 @@ YANDEX_METRIKA_ID_KEY = 'CABINET_YANDEX_METRIKA_ID'  # Stores counter ID (numeri
 GOOGLE_ADS_ID_KEY = 'CABINET_GOOGLE_ADS_ID'  # Stores conversion ID (e.g. "AW-123456789")
 GOOGLE_ADS_LABEL_KEY = 'CABINET_GOOGLE_ADS_LABEL'  # Stores conversion label (alphanumeric)
 LITE_MODE_ENABLED_KEY = 'CABINET_LITE_MODE_ENABLED'  # Stores "true" or "false"
+ANIMATION_CONFIG_KEY = 'CABINET_ANIMATION_CONFIG'  # Stores JSON with animation config
+
+# Default animation config
+DEFAULT_ANIMATION_CONFIG = {
+    'enabled': True,
+    'type': 'aurora',
+    'settings': {},
+    'opacity': 1.0,
+    'blur': 0,
+    'reducedOnMobile': True,
+}
 
 # Allowed image types
 ALLOWED_CONTENT_TYPES = {'image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'}
@@ -119,6 +131,92 @@ class AnimationEnabledUpdate(BaseModel):
     """Request to update animation setting."""
 
     enabled: bool
+
+
+ALLOWED_BG_TYPES = (
+    'aurora',
+    'sparkles',
+    'vortex',
+    'shooting-stars',
+    'background-beams',
+    'background-beams-collision',
+    'gradient-animation',
+    'wavy',
+    'background-lines',
+    'boxes',
+    'meteors',
+    'grid',
+    'dots',
+    'spotlight',
+    'ripple',
+    'none',
+)
+
+MAX_SETTINGS_KEYS = 20
+MAX_SETTINGS_VALUE_LEN = 200
+
+
+def _validate_settings(v: dict) -> dict:
+    """Validate settings dict: flat structure, bounded size, no nested objects."""
+    if len(v) > MAX_SETTINGS_KEYS:
+        raise ValueError(f'Settings must have at most {MAX_SETTINGS_KEYS} keys')
+    for key, val in v.items():
+        if not isinstance(key, str) or len(key) > 50:
+            raise ValueError('Setting keys must be strings under 50 characters')
+        if isinstance(val, dict | list):
+            raise ValueError('Nested objects/arrays not allowed in settings')
+        if isinstance(val, str) and len(val) > MAX_SETTINGS_VALUE_LEN:
+            raise ValueError(f'String setting values must be under {MAX_SETTINGS_VALUE_LEN} characters')
+    return v
+
+
+class AnimationConfigResponse(BaseModel):
+    """Full animation config."""
+
+    enabled: bool = True
+    type: str = 'aurora'
+    settings: dict = Field(default_factory=dict)
+    opacity: float = Field(default=1.0, ge=0.0, le=1.0)
+    blur: float = Field(default=0, ge=0, le=100)
+    reducedOnMobile: bool = True
+
+
+class AnimationConfigUpdate(BaseModel):
+    """Request to update animation config (partial update)."""
+
+    enabled: bool | None = None
+    type: (
+        Literal[
+            'aurora',
+            'sparkles',
+            'vortex',
+            'shooting-stars',
+            'background-beams',
+            'background-beams-collision',
+            'gradient-animation',
+            'wavy',
+            'background-lines',
+            'boxes',
+            'meteors',
+            'grid',
+            'dots',
+            'spotlight',
+            'ripple',
+            'none',
+        ]
+        | None
+    ) = None
+    settings: dict | None = None
+    opacity: float | None = Field(default=None, ge=0.0, le=1.0)
+    blur: float | None = Field(default=None, ge=0, le=100)
+    reducedOnMobile: bool | None = None
+
+    @field_validator('settings')
+    @classmethod
+    def validate_settings(cls, v: dict | None) -> dict | None:
+        if v is None:
+            return v
+        return _validate_settings(v)
 
 
 class FullscreenEnabledResponse(BaseModel):
@@ -296,7 +394,7 @@ async def get_logo():
 @router.put('/name', response_model=BrandingResponse)
 async def update_branding_name(
     payload: BrandingNameUpdate,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update the project name. Admin only. Empty name allowed (logo only mode)."""
@@ -324,7 +422,7 @@ async def update_branding_name(
 @router.post('/logo', response_model=BrandingResponse)
 async def upload_logo(
     file: UploadFile = File(...),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Upload a custom logo. Admin only."""
@@ -387,7 +485,7 @@ async def upload_logo(
 
 @router.delete('/logo', response_model=BrandingResponse)
 async def delete_logo(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Delete custom logo and revert to letter. Admin only."""
@@ -459,7 +557,7 @@ async def get_theme_colors(
 @router.patch('/colors', response_model=ThemeColorsResponse)
 async def update_theme_colors(
     payload: ThemeColorsUpdate,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update theme colors. Admin only. Partial update supported."""
@@ -493,7 +591,7 @@ async def update_theme_colors(
 
 @router.post('/colors/reset', response_model=ThemeColorsResponse)
 async def reset_theme_colors(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Reset theme colors to defaults. Admin only."""
@@ -533,7 +631,7 @@ async def get_enabled_themes(
 @router.patch('/themes', response_model=EnabledThemesResponse)
 async def update_enabled_themes(
     payload: EnabledThemesUpdate,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update which themes are enabled. Admin only. At least one theme must be enabled."""
@@ -587,7 +685,7 @@ async def get_animation_enabled(
 @router.patch('/animation', response_model=AnimationEnabledResponse)
 async def update_animation_enabled(
     payload: AnimationEnabledUpdate,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update animation enabled setting. Admin only."""
@@ -596,6 +694,69 @@ async def update_animation_enabled(
     logger.info('Admin set animation enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
 
     return AnimationEnabledResponse(enabled=payload.enabled)
+
+
+# ============ Animation Config Routes (new JSON-based) ============
+
+
+@router.get('/animation-config', response_model=AnimationConfigResponse)
+async def get_animation_config(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get full animation config. Public endpoint."""
+    config_value = await get_setting_value(db, ANIMATION_CONFIG_KEY)
+
+    if config_value is not None:
+        try:
+            config = json.loads(config_value)
+            return AnimationConfigResponse(**config)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Auto-migrate from old ANIMATION_ENABLED_KEY
+    old_value = await get_setting_value(db, ANIMATION_ENABLED_KEY)
+    if old_value is not None:
+        config = {**DEFAULT_ANIMATION_CONFIG, 'enabled': old_value.lower() == 'true'}
+        await set_setting_value(db, ANIMATION_CONFIG_KEY, json.dumps(config))
+        return AnimationConfigResponse(**config)
+
+    return AnimationConfigResponse(**DEFAULT_ANIMATION_CONFIG)
+
+
+@router.patch('/animation-config', response_model=AnimationConfigResponse)
+async def update_animation_config(
+    payload: AnimationConfigUpdate,
+    admin: User = Depends(require_permission('settings:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update animation config (partial update). Admin only."""
+    # Get current config
+    config_value = await get_setting_value(db, ANIMATION_CONFIG_KEY)
+    if config_value:
+        try:
+            current = json.loads(config_value)
+        except (json.JSONDecodeError, TypeError):
+            current = dict(DEFAULT_ANIMATION_CONFIG)
+    else:
+        current = dict(DEFAULT_ANIMATION_CONFIG)
+
+    # Merge only provided fields
+    update_data = payload.model_dump(exclude_none=True)
+    current.update(update_data)
+
+    await set_setting_value(db, ANIMATION_CONFIG_KEY, json.dumps(current))
+
+    # Also sync old key for backwards compat
+    await set_setting_value(db, ANIMATION_ENABLED_KEY, str(current.get('enabled', True)).lower())
+
+    logger.info(
+        'Admin updated animation config',
+        telegram_id=admin.telegram_id,
+        type=current.get('type'),
+        enabled=current.get('enabled'),
+    )
+
+    return AnimationConfigResponse(**current)
 
 
 # ============ Fullscreen Routes ============
@@ -622,7 +783,7 @@ async def get_fullscreen_enabled(
 @router.patch('/fullscreen', response_model=FullscreenEnabledResponse)
 async def update_fullscreen_enabled(
     payload: FullscreenEnabledUpdate,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update fullscreen enabled setting. Admin only."""
@@ -658,7 +819,7 @@ async def get_email_auth_enabled(
 @router.patch('/email-auth', response_model=EmailAuthEnabledResponse)
 async def update_email_auth_enabled(
     payload: EmailAuthEnabledUpdate,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update email auth enabled setting. Admin only."""
@@ -694,7 +855,7 @@ async def get_analytics_counters(
 @router.patch('/analytics', response_model=AnalyticsCountersResponse)
 async def update_analytics_counters(
     payload: AnalyticsCountersUpdate,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update analytics counter settings. Admin only. Partial update supported."""
@@ -758,7 +919,7 @@ async def get_lite_mode_enabled(
 @router.patch('/lite-mode', response_model=LiteModeEnabledResponse)
 async def update_lite_mode_enabled(
     payload: LiteModeEnabledUpdate,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update lite mode enabled setting. Admin only."""

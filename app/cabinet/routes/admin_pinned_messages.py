@@ -22,7 +22,7 @@ from app.services.pinned_message_service import (
 )
 from app.utils.validators import sanitize_html, validate_html_tags
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.pinned_messages import (
     PinnedMessageBroadcastResponse,
     PinnedMessageCreateRequest,
@@ -89,7 +89,7 @@ def _get_bot() -> Bot:
 
 @router.get('', response_model=PinnedMessageListResponse)
 async def list_pinned_messages(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('pinned_messages:read')),
     db: AsyncSession = Depends(get_cabinet_db),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -117,7 +117,7 @@ async def list_pinned_messages(
 
 @router.get('/active', response_model=PinnedMessageResponse | None)
 async def get_active_message(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('pinned_messages:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PinnedMessageResponse | None:
     """Get current active pinned message."""
@@ -130,7 +130,7 @@ async def get_active_message(
 @router.get('/{message_id}', response_model=PinnedMessageResponse)
 async def get_pinned_message(
     message_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('pinned_messages:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PinnedMessageResponse:
     """Get pinned message by ID."""
@@ -147,7 +147,7 @@ async def get_pinned_message(
 @router.post('', response_model=PinnedMessageBroadcastResponse, status_code=status.HTTP_201_CREATED)
 async def create_pinned_message(
     payload: PinnedMessageCreateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('pinned_messages:create')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PinnedMessageBroadcastResponse:
     """
@@ -201,7 +201,7 @@ async def create_pinned_message(
 async def update_pinned_message(
     message_id: int,
     payload: PinnedMessageUpdateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('pinned_messages:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PinnedMessageResponse:
     """Update a pinned message content, media, or settings."""
@@ -240,7 +240,7 @@ async def update_pinned_message(
 async def update_pinned_message_settings(
     message_id: int,
     payload: PinnedMessageSettingsRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('pinned_messages:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PinnedMessageResponse:
     """Update only pinned message display settings."""
@@ -267,7 +267,7 @@ async def update_pinned_message_settings(
 
 @router.post('/active/deactivate', response_model=PinnedMessageResponse | None)
 async def deactivate_active_message(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('pinned_messages:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PinnedMessageResponse | None:
     """Deactivate the current active pinned message without unpinning from users."""
@@ -282,7 +282,7 @@ async def deactivate_active_message(
 
 @router.post('/active/unpin', response_model=PinnedMessageUnpinResponse)
 async def unpin_active_message(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('pinned_messages:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PinnedMessageUnpinResponse:
     """Unpin messages from all users and deactivate the active pinned message."""
@@ -311,7 +311,7 @@ async def unpin_active_message(
 async def activate_pinned_message(
     message_id: int,
     broadcast: bool = Query(False),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('pinned_messages:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PinnedMessageBroadcastResponse:
     """
@@ -360,7 +360,7 @@ async def activate_pinned_message(
 @router.post('/{message_id}/broadcast', response_model=PinnedMessageBroadcastResponse)
 async def broadcast_message(
     message_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('pinned_messages:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PinnedMessageBroadcastResponse:
     """Broadcast a pinned message to all active users."""
@@ -391,7 +391,7 @@ async def broadcast_message(
 @router.delete('/{message_id}', status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_pinned_message(
     message_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('pinned_messages:delete')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> None:
     """Delete a pinned message. Active messages must be deactivated first."""

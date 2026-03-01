@@ -20,7 +20,7 @@ from app.database.models import (
 from app.services.partner_application_service import partner_application_service
 from app.services.partner_stats_service import PartnerStatsService
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.partners import (
     AdminApproveRequest,
     AdminPartnerApplicationItem,
@@ -73,7 +73,7 @@ def _build_partner_settings_response() -> PartnerSettingsResponse:
 
 @router.get('/settings', response_model=PartnerSettingsResponse)
 async def get_partner_settings(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:settings')),
 ):
     """Get partner system settings."""
     return _build_partner_settings_response()
@@ -82,7 +82,7 @@ async def get_partner_settings(
 @router.patch('/settings', response_model=PartnerSettingsResponse)
 async def update_partner_settings(
     request: PartnerSettingsUpdateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:settings')),
 ):
     """Update partner system settings."""
     from pathlib import Path
@@ -159,7 +159,7 @@ async def list_applications(
     application_status: Literal['pending', 'approved', 'rejected', 'none'] | None = Query(None, alias='status'),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """List partner applications."""
@@ -205,7 +205,7 @@ async def list_applications(
 async def approve_application(
     application_id: int,
     request: AdminApproveRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:approve')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Approve a partner application."""
@@ -259,7 +259,7 @@ async def approve_application(
 async def reject_application(
     application_id: int,
     request: AdminRejectRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:approve')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Reject a partner application."""
@@ -310,7 +310,7 @@ async def reject_application(
 
 @router.get('/stats')
 async def get_partner_stats(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get overall partner statistics."""
@@ -340,7 +340,7 @@ async def get_partner_stats(
 async def list_partners(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """List approved partners."""
@@ -404,7 +404,7 @@ async def list_partners(
 @router.get('/{user_id}', response_model=AdminPartnerDetailResponse)
 async def get_partner_detail(
     user_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get detailed partner info."""
@@ -460,7 +460,7 @@ async def get_partner_detail(
 async def update_commission(
     user_id: int,
     request: AdminUpdateCommissionRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update partner commission percent."""
@@ -495,7 +495,7 @@ async def update_commission(
 @router.post('/{user_id}/revoke')
 async def revoke_partner(
     user_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:revoke')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Revoke partner status."""
@@ -514,7 +514,7 @@ async def revoke_partner(
 async def assign_campaign(
     user_id: int,
     campaign_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Assign a campaign to a partner."""
@@ -558,7 +558,7 @@ async def assign_campaign(
 async def unassign_campaign(
     user_id: int,
     campaign_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('partners:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Unassign a campaign from a partner."""

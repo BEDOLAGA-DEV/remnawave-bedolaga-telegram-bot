@@ -460,6 +460,19 @@ class TicketMessageCRUD:
         return result.scalars().all()
 
     @staticmethod
+    async def get_first_message(db: AsyncSession, ticket_id: int) -> TicketMessage | None:
+        """Получить первое сообщение в тикете"""
+        query = (
+            select(TicketMessage)
+            .where(TicketMessage.ticket_id == ticket_id)
+            .order_by(TicketMessage.created_at)
+            .limit(1)
+        )
+
+        result = await db.execute(query)
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_last_message(db: AsyncSession, ticket_id: int) -> TicketMessage | None:
         """Получить последнее сообщение в тикете"""
         query = (

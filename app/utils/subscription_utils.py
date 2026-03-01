@@ -181,7 +181,7 @@ def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:
 
     if not settings.is_devices_selection_enabled():
         forced_limit = settings.get_disabled_mode_device_limit()
-        if forced_limit is not None:
+        if forced_limit is not None and forced_limit > 0:
             _logger.info(
                 'DEVICES_SELECTION disabled, using forced limit',
                 forced_limit=forced_limit,
@@ -189,7 +189,7 @@ def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:
                 subscription_id=getattr(subscription, 'id', None),
             )
             return forced_limit
-        # Если forced_limit не задан, используем device_limit из подписки
+        # forced_limit не задан или равен 0 — используем device_limit из подписки,
         # чтобы при смене тарифа лимит устройств обновлялся в панели
 
     limit = getattr(subscription, 'device_limit', None)

@@ -240,7 +240,7 @@ class AdminNotificationService:
 
         return mapping.get(promo_type, f'ℹ️ {promo_type}')
 
-    def _format_campaign_bonus(self, campaign: AdvertisingCampaign) -> list[str]:
+    def _format_campaign_bonus(self, campaign: AdvertisingCampaign, *, tariff_name: str | None = None) -> list[str]:
         if campaign.is_balance_bonus:
             return [
                 f'💰 Баланс: {settings.format_price(campaign.balance_bonus_kopeks or 0)}',
@@ -249,13 +249,23 @@ class AdminNotificationService:
         if campaign.is_subscription_bonus:
             default_devices = getattr(settings, 'DEFAULT_DEVICE_LIMIT', 1)
             details = [
-                f'📅 Дней подписки: {campaign.subscription_duration_days or 0}',
-                f'📊 Трафик: {campaign.subscription_traffic_gb or 0} ГБ',
-                f'📱 Устройства: {campaign.subscription_device_limit or default_devices}',
+                f'📅 {campaign.subscription_duration_days or 0} дн. '
+                f'• 📊 {campaign.subscription_traffic_gb or 0} ГБ '
+                f'• 📱 {campaign.subscription_device_limit or default_devices} устр.',
             ]
             if campaign.subscription_squads:
                 details.append(f'🌐 Сквады: {len(campaign.subscription_squads)} шт.')
             return details
+
+        if campaign.is_tariff_bonus:
+            name = tariff_name or f'ID {campaign.tariff_id}'
+            details = [f'📦 Тариф: <b>{name}</b>']
+            if campaign.tariff_duration_days:
+                details.append(f'📅 Период: {campaign.tariff_duration_days} дней')
+            return details
+
+        if campaign.is_none_bonus:
+            return ['🔗 Только отслеживание']
 
         return ['ℹ️ Бонусы не предусмотрены']
 
@@ -1035,40 +1045,50 @@ class AdminNotificationService:
             return False
 
         try:
-            user_status = '🆕 Новый пользователь' if not user else '👥 Уже зарегистрирован'
-            promo_block = (
-                self._format_promo_group_block(await self._get_user_promo_group(db, user))
-                if user
-                else self._format_promo_group_block(None)
-            )
-
             full_name = telegram_user.full_name or telegram_user.username or str(telegram_user.id)
-            username = f'@{telegram_user.username}' if telegram_user.username else 'отсутствует'
+            user_status = '🆕 Новый' if not user else '👥 Существующий'
 
             message_lines = [
-                '📣 <b>ПЕРЕХОД ПО РЕКЛАМНОЙ КАМПАНИИ</b>',
+                '📣 <b>ПЕРЕХОД ПО РК</b>',
                 '',
-                f'🧾 <b>Кампания:</b> {campaign.name}',
-                f'🆔 ID кампании: {campaign.id}',
-                f'🔗 Start-параметр: <code>{campaign.start_parameter}</code>',
+                f'🧾 {campaign.name} (<code>{campaign.start_parameter}</code>)',
                 '',
-                f'👤 <b>Пользователь:</b> {full_name}',
-                f'🆔 <b>Telegram ID:</b> <code>{telegram_user.id}</code>',
-                f'📱 <b>Username:</b> {username}',
-                user_status,
-                '',
-                promo_block,
-                '',
-                '🎯 <b>Бонус кампании:</b>',
+                f'👤 {full_name} (<code>{telegram_user.id}</code>)',
             ]
 
-            bonus_lines = self._format_campaign_bonus(campaign)
+            if telegram_user.username:
+                message_lines.append(f'📱 @{telegram_user.username}')
+
+            message_lines.append(f'📋 {user_status}')
+
+            # Промогруппа — только если есть
+            if user:
+                promo_group = await self._get_user_promo_group(db, user)
+                if promo_group:
+                    message_lines.append(f'🏷️ Промогруппа: {promo_group.name}')
+
+            message_lines.append('')
+
+            # Загружаем название тарифа для tariff-бонуса
+            tariff_name = None
+            if campaign.is_tariff_bonus and campaign.tariff_id:
+                try:
+                    from app.database.crud.tariff import get_tariff_by_id
+
+                    tariff = await get_tariff_by_id(db, campaign.tariff_id)
+                    if tariff:
+                        tariff_name = tariff.name
+                except Exception:
+                    pass
+
+            # Бонус кампании
+            bonus_lines = self._format_campaign_bonus(campaign, tariff_name=tariff_name)
             message_lines.extend(bonus_lines)
 
             message_lines.extend(
                 [
                     '',
-                    f'⏰ <i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}</i>',
+                    f'<i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}</i>',
                 ]
             )
 
@@ -1778,10 +1798,16 @@ class AdminNotificationService:
             return False
 
     async def send_ticket_event_notification(
-        self, text: str, keyboard: types.InlineKeyboardMarkup | None = None
+        self,
+        text: str,
+        keyboard: types.InlineKeyboardMarkup | None = None,
+        *,
+        media_file_id: str | None = None,
+        media_type: str | None = None,
     ) -> bool:
         """Публичный метод для отправки уведомлений по тикетам в админ-топик.
         Учитывает настройки включенности в settings.
+        Если передан media_file_id, отправляет медиа в тот же топик вместе с текстом.
         """
         # Respect runtime toggle for admin ticket notifications
         try:
@@ -1797,7 +1823,58 @@ class AdminNotificationService:
                 runtime_enabled=runtime_enabled,
             )
             return False
+
+        # Если есть медиа, отправляем фото с текстом как caption (если влезает) или текст + фото
+        if media_file_id and media_type == 'photo':
+            return await self._send_ticket_photo_notification(text, media_file_id, keyboard)
+
         return await self._send_message(text, reply_markup=keyboard, ticket_event=True)
+
+    async def _send_ticket_photo_notification(
+        self,
+        text: str,
+        photo_file_id: str,
+        keyboard: types.InlineKeyboardMarkup | None = None,
+    ) -> bool:
+        """Отправить фото с текстом в тикет-топик.
+        Если текст <= 1024 символов — отправляем фото с caption.
+        Иначе — сначала текст, потом фото в тот же топик.
+        """
+        if not self.chat_id:
+            return False
+
+        thread_id = self.ticket_topic_id or self.topic_id
+
+        try:
+            if len(text) <= 1024:
+                # Фото с caption — всё в одном сообщении
+                photo_kwargs: dict = {
+                    'chat_id': self.chat_id,
+                    'photo': photo_file_id,
+                    'caption': text,
+                    'parse_mode': 'HTML',
+                }
+                if thread_id:
+                    photo_kwargs['message_thread_id'] = thread_id
+                if keyboard:
+                    photo_kwargs['reply_markup'] = keyboard
+                await self.bot.send_photo(**photo_kwargs)
+            else:
+                # Текст отдельно, фото следом в тот же топик
+                await self._send_message(text, reply_markup=keyboard, ticket_event=True)
+                photo_kwargs = {
+                    'chat_id': self.chat_id,
+                    'photo': photo_file_id,
+                }
+                if thread_id:
+                    photo_kwargs['message_thread_id'] = thread_id
+                await self.bot.send_photo(**photo_kwargs)
+
+            return True
+        except Exception as e:
+            logger.error('Ошибка отправки фото-уведомления тикета', error=e)
+            # Fallback: отправляем хотя бы текст
+            return await self._send_message(text, reply_markup=keyboard, ticket_event=True)
 
     async def send_suspicious_traffic_notification(self, message: str, bot: Bot, topic_id: int | None = None) -> bool:
         """

@@ -758,15 +758,23 @@ async def get_expiring_subscriptions(db: AsyncSession, days_before: int = 3) -> 
 
 
 async def get_expired_subscriptions(db: AsyncSession) -> list[Subscription]:
+    from app.database.models import Tariff
+
     result = await db.execute(
         select(Subscription)
         .join(User, Subscription.user_id == User.id)
-        .options(selectinload(Subscription.user))
+        .outerjoin(Tariff, Subscription.tariff_id == Tariff.id)
+        .options(selectinload(Subscription.user), selectinload(Subscription.tariff))
         .where(
             and_(
                 Subscription.status == SubscriptionStatus.ACTIVE.value,
                 User.status == UserStatus.ACTIVE.value,
                 Subscription.end_date <= datetime.now(UTC),
+                # Не трогаем активные суточные подписки — ими управляет DailySubscriptionService
+                ~and_(
+                    Tariff.is_daily.is_(True),
+                    Subscription.is_daily_paused.is_(False),
+                ),
             )
         )
     )

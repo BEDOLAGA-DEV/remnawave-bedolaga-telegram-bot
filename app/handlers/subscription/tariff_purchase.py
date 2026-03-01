@@ -65,16 +65,25 @@ def _apply_promo_discount(price: int, discount_percent: int) -> int:
 
 
 def _get_user_period_discount(db_user: User, period_days: int) -> int:
-    """Получает скидку пользователя на период из промогруппы."""
-    promo_group = getattr(db_user, 'promo_group', None)
+    """Получает скидку пользователя на период из промогруппы + промо-оффер (стекинг).
 
-    if promo_group:
-        discount = promo_group.get_discount_percent('period', period_days)
-        if discount > 0:
-            return discount
-
+    Возвращает итоговый процент скидки после последовательного применения
+    скидки промогруппы и персональной скидки промо-оффера.
+    """
+    promo_group = db_user.get_primary_promo_group()
+    group_discount = promo_group.get_discount_percent('period', period_days) if promo_group else 0
     personal_discount = get_user_active_promo_discount_percent(db_user)
-    return personal_discount
+
+    if group_discount <= 0 and personal_discount <= 0:
+        return 0
+
+    # Стекинг: применяем последовательно (как в кабинете)
+    # price * (1 - group/100) * (1 - personal/100)
+    # Вычисляем эффективный общий процент
+    remaining = (100 - group_discount) * (100 - personal_discount)
+    effective_discount = 100 - remaining // 100
+
+    return effective_discount
 
 
 def format_tariffs_list_text(

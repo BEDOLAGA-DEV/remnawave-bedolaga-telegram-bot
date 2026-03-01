@@ -323,14 +323,11 @@ class ReferralContestService:
         if not self.bot:
             return
 
-        channel_id_raw = settings.CHANNEL_SUB_ID
-        if not channel_id_raw:
-            return
+        from app.services.channel_subscription_service import channel_subscription_service
 
-        try:
-            channel_id = int(channel_id_raw)
-        except Exception:
-            channel_id = channel_id_raw
+        channel_id = await channel_subscription_service.get_first_channel_id()
+        if not channel_id:
+            return
 
         lines = [
             f'🏆 {contest.title}',
@@ -358,9 +355,9 @@ class ReferralContestService:
                 disable_web_page_preview=True,
             )
         except (TelegramForbiddenError, TelegramNotFound):
-            logger.info('Не удалось отправить сводку конкурса в канал', channel_id_raw=channel_id_raw)
+            logger.info('Не удалось отправить сводку конкурса в канал', channel_id=channel_id)
         except Exception as exc:
-            logger.error('Ошибка отправки сводки конкурса в канал', channel_id_raw=channel_id_raw, exc=exc)
+            logger.error('Ошибка отправки сводки конкурса в канал', channel_id=channel_id, exc=exc)
 
     def _build_participant_message(
         self,

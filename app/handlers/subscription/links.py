@@ -16,16 +16,7 @@ from app.utils.subscription_utils import (
     get_happ_cryptolink_redirect_link,
 )
 
-def _has_callback_button(message: types.Message, callback_data: str) -> bool:
-    rm = getattr(message, "reply_markup", None)
-    if not rm or not getattr(rm, "inline_keyboard", None):
-        return False
-
-    for row in rm.inline_keyboard:
-        for btn in row:
-            if getattr(btn, "callback_data", None) == callback_data:
-                return True
-    return False
+from .common import get_platforms_list, load_app_config_async, logger
 
 
 async def handle_connect_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
@@ -157,6 +148,33 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
             parse_mode='HTML',
         )
     else:
+        # Guide mode: load config and build dynamic platform keyboard
+        platforms = None
+        try:
+            config = await load_app_config_async()
+            if config:
+                platforms = get_platforms_list(config) or None
+        except Exception as e:
+            logger.warning('Failed to load platforms for guide mode', error=e)
+
+        if not platforms:
+            await callback.message.edit_text(
+                texts.t(
+                    'GUIDE_CONFIG_NOT_SET',
+                    '⚠️ <b>Конфигурация не настроена</b>\n\n'
+                    'Администратор ещё не настроил конфигурацию приложений.\n'
+                    'Обратитесь к администратору.',
+                ),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                    ]
+                ),
+                parse_mode='HTML',
+            )
+            await callback.answer()
+            return
+
         if hide_subscription_link:
             device_text = texts.t(
                 'SUBSCRIPTION_CONNECT_DEVICE_MESSAGE_HIDDEN',
@@ -179,7 +197,7 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
 
         await callback.message.edit_text(
             device_text,
-            reply_markup=get_device_selection_keyboard(db_user.language, back_callback_data=back_cb),
+            reply_markup=get_device_selection_keyboard(db_user.language, platforms=platforms),
             parse_mode='HTML',
         )
 

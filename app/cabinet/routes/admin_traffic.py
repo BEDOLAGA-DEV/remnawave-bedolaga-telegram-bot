@@ -20,7 +20,7 @@ from app.config import settings
 from app.database.models import Subscription, Transaction, TransactionType, User
 from app.services.remnawave_service import RemnaWaveService
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.traffic import (
     ExportCsvRequest,
     ExportCsvResponse,
@@ -262,7 +262,7 @@ def _build_traffic_items(
 
 @router.get('', response_model=TrafficUsageResponse)
 async def get_traffic_usage(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('traffic:read')),
     db: AsyncSession = Depends(get_cabinet_db),
     period: int = Query(30, ge=1, le=30),
     limit: int = Query(50, ge=1, le=200),
@@ -497,7 +497,7 @@ async def _build_enrichment(db: AsyncSession, user_map: dict[str, User]) -> dict
 
 @router.get('/enrichment', response_model=TrafficEnrichmentResponse)
 async def get_traffic_enrichment(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('traffic:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Return enrichment data: device counts, spending, dates, last node."""
@@ -530,7 +530,7 @@ async def get_traffic_enrichment(
 @router.post('/export-csv', response_model=ExportCsvResponse)
 async def export_traffic_csv(
     request: ExportCsvRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('traffic:export')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Generate CSV with traffic usage and send to admin's Telegram DM."""

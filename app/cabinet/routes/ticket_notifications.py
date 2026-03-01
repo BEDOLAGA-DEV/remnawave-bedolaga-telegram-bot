@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.crud.ticket_notification import TicketNotificationCRUD
 from app.database.models import User
 
-from ..dependencies import get_cabinet_db, get_current_admin_user, get_current_cabinet_user
+from ..dependencies import get_cabinet_db, get_current_cabinet_user, require_permission
 
 
 logger = structlog.get_logger(__name__)
@@ -132,7 +132,7 @@ async def get_admin_notifications(
     unread_only: bool = Query(False, description='Only return unread notifications'),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tickets:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get ticket notifications for admins."""
@@ -149,7 +149,7 @@ async def get_admin_notifications(
 
 @admin_router.get('/unread-count', response_model=UnreadCountResponse)
 async def get_admin_unread_count(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tickets:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get unread notifications count for admins."""
@@ -160,7 +160,7 @@ async def get_admin_unread_count(
 @admin_router.post('/{notification_id}/read')
 async def mark_admin_notification_as_read(
     notification_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tickets:settings')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Mark an admin notification as read."""
@@ -185,7 +185,7 @@ async def mark_admin_notification_as_read(
 
 @admin_router.post('/read-all')
 async def mark_all_admin_notifications_as_read(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tickets:settings')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Mark all admin notifications as read."""
@@ -196,7 +196,7 @@ async def mark_all_admin_notifications_as_read(
 @admin_router.post('/ticket/{ticket_id}/read')
 async def mark_admin_ticket_notifications_as_read(
     ticket_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('tickets:settings')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Mark all admin notifications for a specific ticket as read."""

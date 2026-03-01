@@ -16,7 +16,7 @@ from app.database.crud.server_squad import (
 from app.database.models import User
 from app.utils.cache import cache
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.remnawave import (
     AutoSyncRunResponse,
     # Auto Sync
@@ -153,7 +153,7 @@ def _serialize_node(node_data: dict[str, Any]) -> NodeInfo:
 
 @router.get('/status', response_model=RemnaWaveStatusResponse)
 async def get_remnawave_status(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
 ) -> RemnaWaveStatusResponse:
     """Get RemnaWave configuration and connection status."""
     service = _get_service()
@@ -176,7 +176,7 @@ async def get_remnawave_status(
 
 @router.get('/system', response_model=SystemStatsResponse)
 async def get_system_statistics(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
 ) -> SystemStatsResponse:
     """Get full system statistics from RemnaWave."""
     service = _get_service()
@@ -238,7 +238,7 @@ async def get_system_statistics(
 
 @router.get('/nodes', response_model=NodesListResponse)
 async def list_nodes(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
 ) -> NodesListResponse:
     """Get list of all nodes."""
     service = _get_service()
@@ -252,7 +252,7 @@ async def list_nodes(
 
 @router.get('/nodes/overview', response_model=NodesOverview)
 async def get_nodes_overview(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
 ) -> NodesOverview:
     """Get nodes overview with statistics."""
     service = _get_service()
@@ -278,7 +278,7 @@ async def get_nodes_overview(
 
 @router.get('/nodes/realtime')
 async def get_nodes_realtime(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
 ) -> list[dict[str, Any]]:
     """Get realtime node usage data."""
     service = _get_service()
@@ -290,7 +290,7 @@ async def get_nodes_realtime(
 @router.get('/nodes/{node_uuid}', response_model=NodeInfo)
 async def get_node_details(
     node_uuid: str,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
 ) -> NodeInfo:
     """Get detailed information about a specific node."""
     service = _get_service()
@@ -309,7 +309,7 @@ async def get_node_details(
 @router.get('/nodes/{node_uuid}/statistics', response_model=NodeStatisticsResponse)
 async def get_node_statistics(
     node_uuid: str,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
 ) -> NodeStatisticsResponse:
     """Get node statistics with usage history."""
     service = _get_service()
@@ -335,7 +335,7 @@ async def get_node_usage(
     node_uuid: str,
     start: datetime | None = Query(default=None),
     end: datetime | None = Query(default=None),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
 ) -> NodeUsageResponse:
     """Get node usage history for a date range."""
     service = _get_service()
@@ -358,7 +358,7 @@ async def get_node_usage(
 async def perform_node_action(
     node_uuid: str,
     payload: NodeActionRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:manage')),
 ) -> NodeActionResponse:
     """Perform an action on a node (enable/disable/restart)."""
     service = _get_service()
@@ -399,7 +399,7 @@ async def perform_node_action(
 
 @router.post('/nodes/restart-all', response_model=NodeActionResponse)
 async def restart_all_nodes(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:manage')),
 ) -> NodeActionResponse:
     """Restart all nodes."""
     service = _get_service()
@@ -421,7 +421,7 @@ async def restart_all_nodes(
 
 @router.get('/squads', response_model=SquadsListResponse)
 async def list_squads(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SquadsListResponse:
     """Get list of all squads with local database info."""
@@ -463,7 +463,7 @@ async def list_squads(
 @router.get('/squads/{squad_uuid}', response_model=SquadDetailResponse)
 async def get_squad_details(
     squad_uuid: str,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SquadDetailResponse:
     """Get detailed information about a squad."""
@@ -506,7 +506,7 @@ async def get_squad_details(
 @router.post('/squads', response_model=SquadOperationResponse, status_code=status.HTTP_201_CREATED)
 async def create_squad(
     payload: SquadCreateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:manage')),
 ) -> SquadOperationResponse:
     """Create a new squad in RemnaWave."""
     service = _get_service()
@@ -533,7 +533,7 @@ async def create_squad(
 async def update_squad(
     squad_uuid: str,
     payload: SquadUpdateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:manage')),
 ) -> SquadOperationResponse:
     """Update a squad in RemnaWave."""
     service = _get_service()
@@ -564,7 +564,7 @@ async def update_squad(
 async def perform_squad_action(
     squad_uuid: str,
     payload: SquadActionRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:manage')),
 ) -> SquadOperationResponse:
     """Perform an action on a squad."""
     service = _get_service()
@@ -609,7 +609,7 @@ async def perform_squad_action(
 @router.delete('/squads/{squad_uuid}', response_model=SquadOperationResponse)
 async def delete_squad(
     squad_uuid: str,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:manage')),
 ) -> SquadOperationResponse:
     """Delete a squad."""
     service = _get_service()
@@ -632,7 +632,7 @@ async def delete_squad(
 @router.get('/squads/{squad_uuid}/migration-preview', response_model=MigrationPreviewResponse)
 async def preview_migration(
     squad_uuid: str,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> MigrationPreviewResponse:
     """Get migration preview for a squad."""
@@ -657,7 +657,7 @@ async def preview_migration(
 @router.post('/squads/migrate', response_model=MigrationResponse)
 async def migrate_squad_users(
     payload: MigrationRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:manage')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> MigrationResponse:
     """Migrate users from one squad to another."""
@@ -731,7 +731,7 @@ async def migrate_squad_users(
 
 @router.get('/inbounds', response_model=InboundsListResponse)
 async def list_inbounds(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
 ) -> InboundsListResponse:
     """Get list of all available inbounds."""
     service = _get_service()
@@ -746,7 +746,7 @@ async def list_inbounds(
 
 @router.get('/sync/auto/status', response_model=AutoSyncStatus)
 async def get_auto_sync_status(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
 ) -> AutoSyncStatus:
     """Get auto sync status."""
     if remnawave_sync_service is None:
@@ -775,7 +775,7 @@ async def get_auto_sync_status(
 @router.post('/sync/auto/toggle', response_model=SyncResponse)
 async def toggle_auto_sync(
     payload: AutoSyncToggleRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:sync')),
 ) -> SyncResponse:
     """Toggle auto sync on/off."""
     if remnawave_sync_service is None:
@@ -811,7 +811,7 @@ async def toggle_auto_sync(
 
 @router.post('/sync/auto/run', response_model=AutoSyncRunResponse)
 async def run_auto_sync_now(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:sync')),
 ) -> AutoSyncRunResponse:
     """Run auto sync immediately."""
     if remnawave_sync_service is None:
@@ -839,7 +839,7 @@ async def run_auto_sync_now(
 @router.post('/sync/from-panel', response_model=SyncResponse)
 async def sync_from_panel(
     payload: SyncMode,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:sync')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SyncResponse:
     """Sync users from RemnaWave panel to bot."""
@@ -863,7 +863,7 @@ async def sync_from_panel(
 
 @router.post('/sync/to-panel', response_model=SyncResponse)
 async def sync_to_panel(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:sync')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SyncResponse:
     """Sync users from bot to RemnaWave panel."""
@@ -882,7 +882,7 @@ async def sync_to_panel(
 
 @router.post('/sync/servers', response_model=SyncResponse)
 async def sync_servers(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:sync')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SyncResponse:
     """Sync servers/squads from RemnaWave."""
@@ -925,7 +925,7 @@ async def sync_servers(
 
 @router.post('/sync/subscriptions/validate', response_model=SyncResponse)
 async def validate_subscriptions(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:sync')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SyncResponse:
     """Validate and fix subscriptions."""
@@ -944,7 +944,7 @@ async def validate_subscriptions(
 
 @router.post('/sync/subscriptions/cleanup', response_model=SyncResponse)
 async def cleanup_subscriptions(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:sync')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SyncResponse:
     """Cleanup orphaned subscriptions."""
@@ -963,7 +963,7 @@ async def cleanup_subscriptions(
 
 @router.post('/sync/subscriptions/statuses', response_model=SyncResponse)
 async def sync_subscription_statuses(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:sync')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SyncResponse:
     """Sync subscription statuses."""
@@ -982,7 +982,7 @@ async def sync_subscription_statuses(
 
 @router.get('/sync/recommendations', response_model=SyncResponse)
 async def get_sync_recommendations(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('remnawave:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SyncResponse:
     """Get sync recommendations."""

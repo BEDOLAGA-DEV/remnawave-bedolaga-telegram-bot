@@ -63,35 +63,39 @@ def calculate_user_price(user: User | None, base_price: int, period_days: int, c
     if not base_price or base_price <= 0:
         return PriceInfo(base_price=base_price or 0, final_price=base_price or 0, discount_percent=0)
 
-    # Get discount percentage
+    # Step 1: Get promo group discount
     if user:
-        # Get user's promo group discount for this category
-        discount_percent = user.get_promo_discount(category, period_days)
+        group_discount = user.get_promo_discount(category, period_days)
     else:
-        # For None user, use base settings discount
-        discount_percent = settings.get_base_promo_group_period_discount(period_days)
+        group_discount = settings.get_base_promo_group_period_discount(period_days)
+
+    # Step 2: Get promo offer discount (stacking)
+    promo_offer_discount = 0
+    if user:
+        from app.utils.promo_offer import get_user_active_promo_discount_percent
+
+        promo_offer_discount = get_user_active_promo_discount_percent(user)
+
+    # Apply both discounts sequentially (same as cabinet)
+    final_price = base_price
+    if group_discount > 0:
+        final_price = final_price - (final_price * group_discount) // 100
+    if promo_offer_discount > 0:
+        final_price = final_price - (final_price * promo_offer_discount) // 100
+
+    # Effective combined discount percent
+    if final_price < base_price:
+        discount_percent = round((base_price - final_price) * 100 / base_price)
+    else:
+        discount_percent = 0
 
     logger.debug(
-        'calculate_user_price: user=, base_price=, period_days=, category=, discount_percent',
-        telegram_id=user.telegram_id if user else 'None',
-        base_price=base_price,
-        period_days=period_days,
-        category=category,
-        discount_percent=discount_percent,
-    )
-
-    if discount_percent <= 0:
-        return PriceInfo(base_price=base_price, final_price=base_price, discount_percent=0)
-
-    # Calculate discounted price
-    discount_value = (base_price * discount_percent) // 100
-    final_price = base_price - discount_value
-
-    logger.debug(
-        'Calculated price for user -> (-%) [category=, period=]',
+        'calculate_user_price',
         telegram_id=user.telegram_id if user else 'None',
         base_price=base_price,
         final_price=final_price,
+        group_discount=group_discount,
+        promo_offer_discount=promo_offer_discount,
         discount_percent=discount_percent,
         category=category,
         period_days=period_days,

@@ -18,7 +18,7 @@ from app.services.broadcast_service import (
     email_broadcast_service,
 )
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.broadcasts import (
     BroadcastButton,
     BroadcastButtonsResponse,
@@ -247,7 +247,7 @@ def _validate_buttons(buttons: list[str]) -> bool:
 
 @router.get('/filters', response_model=BroadcastFiltersResponse)
 async def get_filters(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('broadcasts:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> BroadcastFiltersResponse:
     """Get all available filters with user counts."""
@@ -310,7 +310,7 @@ async def get_filters(
 
 @router.get('/tariffs', response_model=BroadcastTariffsResponse)
 async def get_tariffs(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('broadcasts:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> BroadcastTariffsResponse:
     """Get tariffs for broadcast filtering."""
@@ -333,7 +333,7 @@ async def get_tariffs(
 
 @router.get('/buttons', response_model=BroadcastButtonsResponse)
 async def get_buttons(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('broadcasts:read')),
 ) -> BroadcastButtonsResponse:
     """Get available buttons for broadcasts."""
     default_buttons = set(DEFAULT_BROADCAST_BUTTONS)
@@ -352,7 +352,7 @@ async def get_buttons(
 @router.post('/preview', response_model=BroadcastPreviewResponse)
 async def preview_broadcast(
     request: BroadcastPreviewRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('broadcasts:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> BroadcastPreviewResponse:
     """Preview broadcast recipients count."""
@@ -381,7 +381,7 @@ async def preview_broadcast(
 @router.post('', response_model=BroadcastResponse, status_code=status.HTTP_201_CREATED)
 async def create_broadcast(
     request: BroadcastCreateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('broadcasts:create')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> BroadcastResponse:
     """Create and start a broadcast."""
@@ -461,7 +461,7 @@ async def create_broadcast(
 
 @router.get('', response_model=BroadcastListResponse)
 async def list_broadcasts(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('broadcasts:read')),
     db: AsyncSession = Depends(get_cabinet_db),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -487,7 +487,7 @@ async def list_broadcasts(
 
 @router.get('/email-filters', response_model=EmailFiltersResponse)
 async def get_email_filters(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('broadcasts:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> EmailFiltersResponse:
     """Get all available email filters with user counts."""
@@ -523,7 +523,7 @@ async def get_email_filters(
 @router.post('/email-preview', response_model=EmailPreviewResponse)
 async def preview_email_broadcast(
     request: EmailPreviewRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('broadcasts:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> EmailPreviewResponse:
     """Preview email broadcast recipients count."""
@@ -548,7 +548,7 @@ async def preview_email_broadcast(
 @router.post('/send', response_model=BroadcastResponse, status_code=status.HTTP_201_CREATED)
 async def create_combined_broadcast(
     request: CombinedBroadcastCreateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('broadcasts:send')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> BroadcastResponse:
     """Create and start a combined broadcast (telegram/email/both)."""
@@ -679,7 +679,7 @@ async def create_combined_broadcast(
 @router.get('/{broadcast_id}', response_model=BroadcastResponse)
 async def get_broadcast(
     broadcast_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('broadcasts:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> BroadcastResponse:
     """Get broadcast details."""
@@ -695,7 +695,7 @@ async def get_broadcast(
 @router.post('/{broadcast_id}/stop', response_model=BroadcastResponse)
 async def stop_broadcast(
     broadcast_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('broadcasts:send')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> BroadcastResponse:
     """Stop a running broadcast (telegram or email)."""

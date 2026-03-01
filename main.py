@@ -218,6 +218,21 @@ async def main():
                 stage.warning('Не удалось создать/проверить дефолтный веб-API токен')
 
         async with timeline.stage(
+            'RBAC bootstrap',
+            '🔐',
+            success_message='RBAC roles and superadmins ready',
+        ) as stage:
+            try:
+                from app.database.database import AsyncSessionLocal
+                from app.services.rbac_bootstrap_service import bootstrap_superadmins
+
+                async with AsyncSessionLocal() as db:
+                    await bootstrap_superadmins(db)
+            except Exception as error:
+                stage.warning(f'RBAC bootstrap warning: {error}')
+                logger.error('RBAC bootstrap failed', error=error)
+
+        async with timeline.stage(
             'Синхронизация тарифов из конфига',
             '💰',
             success_message='Тарифы синхронизированы',
@@ -286,6 +301,10 @@ async def main():
         traffic_monitoring_scheduler.set_bot(bot)
         daily_subscription_service.set_bot(bot)
         telegram_notifier.set_bot(bot)
+
+        from app.services.channel_subscription_service import channel_subscription_service
+
+        channel_subscription_service.bot = bot
 
         # Initialize email broadcast service
         from app.cabinet.services.email_service import email_service

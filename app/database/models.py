@@ -28,6 +28,7 @@ from sqlalchemy import (
     TypeDecorator,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, backref, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -1060,6 +1061,7 @@ class User(Base):
     promo_group = relationship('PromoGroup', back_populates='users')
     user_promo_groups = relationship('UserPromoGroup', back_populates='user', cascade='all, delete-orphan')
     poll_responses = relationship('PollResponse', back_populates='user')
+    admin_roles_rel = relationship('UserRole', foreign_keys='[UserRole.user_id]', back_populates='user')
     notification_settings = Column(JSON, nullable=True, default=dict)
     last_pinned_message_id = Column(Integer, nullable=True)
 
@@ -2810,3 +2812,157 @@ class PaymentMethodConfig(Base):
 
     def __repr__(self) -> str:
         return f"<PaymentMethodConfig method_id='{self.method_id}' order={self.sort_order} enabled={self.is_enabled}>"
+
+
+class RequiredChannel(Base):
+    """Channels that users must subscribe to in order to use the bot."""
+
+    __tablename__ = 'required_channels'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel_id = Column(String(100), unique=True, nullable=False)  # -100xxx numeric format (always string)
+    channel_link = Column(String(500), nullable=True)  # https://t.me/xxx
+    title = Column(String(255), nullable=True)  # Display name
+    is_active = Column(Boolean, nullable=False, server_default='true')
+    sort_order = Column(Integer, nullable=False, server_default='0')
+    disable_trial_on_leave = Column(Boolean, nullable=False, server_default='true')
+    disable_paid_on_leave = Column(Boolean, nullable=False, server_default='false')
+    created_at = Column(AwareDateTime(), nullable=False, server_default=func.now())
+    updated_at = Column(AwareDateTime(), nullable=True, onupdate=func.now())
+
+    def __repr__(self) -> str:
+        return f'<RequiredChannel id={self.id} channel_id={self.channel_id!r} active={self.is_active}>'
+
+
+class UserChannelSubscription(Base):
+    """Cache of user subscription status per required channel."""
+
+    __tablename__ = 'user_channel_subscriptions'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    telegram_id = Column(BigInteger, nullable=False)
+    channel_id = Column(String(100), nullable=False)  # matches RequiredChannel.channel_id
+    is_member = Column(Boolean, nullable=False, server_default='false')
+    checked_at = Column(AwareDateTime(), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('telegram_id', 'channel_id', name='uq_user_channel_sub'),
+        # UniqueConstraint creates its own index; only add telegram_id index for
+        # "get all subs for user" queries
+        Index('ix_user_channel_sub_telegram_id', 'telegram_id'),
+        # Standalone channel_id index for delete_channel() bulk DELETE
+        Index('ix_user_channel_sub_channel_id', 'channel_id'),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f'<UserChannelSubscription telegram_id={self.telegram_id}'
+            f' channel={self.channel_id!r} member={self.is_member}>'
+        )
+
+
+# ── RBAC / ABAC models ──────────────────────────────────────────────────
+
+
+class AdminRole(Base):
+    """Role definition with permission groups for admin cabinet RBAC."""
+
+    __tablename__ = 'admin_roles'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), unique=True, nullable=False)
+    description = Column(Text, nullable=True)
+    level = Column(Integer, default=0, nullable=False)
+    permissions = Column(JSONB, default=list, nullable=False)
+    color = Column(String(7), nullable=True)
+    icon = Column(String(50), nullable=True)
+    is_system = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(Integer, ForeignKey('users.id'), nullable=True)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+    creator = relationship('User', foreign_keys=[created_by])
+    user_roles = relationship('UserRole', back_populates='role')
+
+    def __repr__(self) -> str:
+        return f'<AdminRole id={self.id} name={self.name!r} level={self.level}>'
+
+
+class UserRole(Base):
+    """M2M assignment of users to admin roles."""
+
+    __tablename__ = 'user_roles'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    role_id = Column(Integer, ForeignKey('admin_roles.id', ondelete='CASCADE'), nullable=False)
+    assigned_by = Column(Integer, ForeignKey('users.id'), nullable=True)
+    assigned_at = Column(AwareDateTime(), server_default=func.now())
+    expires_at = Column(AwareDateTime(), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    __table_args__ = (UniqueConstraint('user_id', 'role_id', name='uq_user_role'),)
+
+    user = relationship('User', foreign_keys=[user_id], back_populates='admin_roles_rel')
+    role = relationship('AdminRole', back_populates='user_roles')
+    assigner = relationship('User', foreign_keys=[assigned_by])
+
+    def __repr__(self) -> str:
+        return f'<UserRole id={self.id} user_id={self.user_id} role_id={self.role_id}>'
+
+
+class AccessPolicy(Base):
+    """ABAC attribute-based access policy."""
+
+    __tablename__ = 'access_policies'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    role_id = Column(Integer, ForeignKey('admin_roles.id', ondelete='CASCADE'), nullable=True)
+    priority = Column(Integer, default=0, nullable=False)
+    effect = Column(String(10), nullable=False)  # "allow" / "deny"
+    conditions = Column(JSONB, default=dict, nullable=False)
+    resource = Column(String(100), nullable=False)
+    actions = Column(JSONB, default=list, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(Integer, ForeignKey('users.id'), nullable=True)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+    role = relationship('AdminRole')
+    creator = relationship('User', foreign_keys=[created_by])
+
+    def __repr__(self) -> str:
+        return f'<AccessPolicy id={self.id} name={self.name!r} effect={self.effect!r}>'
+
+
+class AdminAuditLog(Base):
+    """Immutable audit log for admin actions."""
+
+    __tablename__ = 'admin_audit_log'
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    action = Column(String(100), nullable=False)
+    resource_type = Column(String(50), nullable=True)
+    resource_id = Column(String(100), nullable=True)
+    details = Column(JSONB, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False)
+    request_method = Column(String(10), nullable=True)
+    request_path = Column(Text, nullable=True)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+
+    __table_args__ = (
+        Index('ix_admin_audit_user_created', 'user_id', 'created_at'),
+        Index('ix_admin_audit_resource', 'resource_type', 'resource_id'),
+        Index('ix_admin_audit_created', 'created_at'),
+    )
+
+    user = relationship('User', foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return f'<AdminAuditLog id={self.id} action={self.action!r} status={self.status!r}>'

@@ -11,13 +11,23 @@ from app.config import settings
 JWT_ALGORITHM = 'HS256'
 
 
-def create_access_token(user_id: int, telegram_id: int | None = None) -> str:
+def create_access_token(
+    user_id: int,
+    telegram_id: int | None = None,
+    *,
+    permissions: list[str] | None = None,
+    roles: list[str] | None = None,
+    role_level: int = 0,
+) -> str:
     """
     Create a short-lived access token.
 
     Args:
         user_id: Database user ID
         telegram_id: Telegram user ID (optional for email-only users)
+        permissions: RBAC permission strings to embed in token
+        roles: Role names to embed in token
+        role_level: Maximum role level (0 = no special level)
 
     Returns:
         Encoded JWT access token
@@ -35,6 +45,14 @@ def create_access_token(user_id: int, telegram_id: int | None = None) -> str:
     # Добавляем telegram_id только если он есть
     if telegram_id is not None:
         payload['telegram_id'] = telegram_id
+
+    # RBAC data — only include when provided to keep token compact
+    if permissions is not None:
+        payload['permissions'] = permissions
+    if roles is not None:
+        payload['roles'] = roles
+    if role_level > 0:
+        payload['role_level'] = role_level
 
     secret = settings.get_cabinet_jwt_secret()
     return jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)

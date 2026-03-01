@@ -13,7 +13,7 @@ from app.services.system_settings_service import (
     bot_configuration_service,
 )
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 
 
 logger = structlog.get_logger(__name__)
@@ -179,7 +179,7 @@ def _serialize_definition(definition, include_choices: bool = True) -> SettingDe
 
 @router.get('/categories', response_model=list[SettingCategorySummary])
 async def list_categories(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:read')),
 ):
     """Get list of setting categories."""
     categories = bot_configuration_service.get_categories()
@@ -196,7 +196,7 @@ async def list_categories(
 
 @router.get('', response_model=list[SettingDefinition])
 async def list_settings(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:read')),
     category: str | None = Query(default=None, alias='category_key'),
 ):
     """Get list of all settings or settings for a specific category."""
@@ -217,7 +217,7 @@ async def list_settings(
 @router.get('/{key}', response_model=SettingDefinition)
 async def get_setting(
     key: str,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:read')),
 ):
     """Get a specific setting by key."""
     try:
@@ -232,7 +232,7 @@ async def get_setting(
 async def update_setting(
     key: str,
     payload: SettingUpdateRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update a setting value."""
@@ -255,7 +255,7 @@ async def update_setting(
 @router.delete('/{key}', response_model=SettingDefinition)
 async def reset_setting(
     key: str,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Reset a setting to its default value."""

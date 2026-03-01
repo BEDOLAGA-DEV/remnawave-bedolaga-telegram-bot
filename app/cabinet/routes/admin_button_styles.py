@@ -17,7 +17,7 @@ from app.utils.button_styles_cache import (
     load_button_styles_cache,
 )
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 
 
 logger = structlog.get_logger(__name__)
@@ -112,7 +112,7 @@ def _build_response(styles: dict[str, dict]) -> ButtonStylesResponse:
 
 @router.get('', response_model=ButtonStylesResponse)
 async def get_button_styles(
-    _admin: User = Depends(get_current_admin_user),
+    _admin: User = Depends(require_permission('settings:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Return current per-section button styles. Admin only."""
@@ -145,7 +145,7 @@ async def get_button_styles(
 @router.patch('', response_model=ButtonStylesResponse)
 async def update_button_styles(
     payload: ButtonStylesUpdate,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Partially update per-section button styles. Admin only."""
@@ -243,7 +243,7 @@ async def update_button_styles(
 
 @router.post('/reset', response_model=ButtonStylesResponse)
 async def reset_button_styles(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Reset all button styles to defaults. Admin only."""

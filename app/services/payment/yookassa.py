@@ -258,7 +258,7 @@ class YooKassaPaymentMixin:
                 status=yookassa_response['status'],
                 confirmation_url=yookassa_response.get('confirmation_url'),  # Используем confirmation URL
                 metadata_json=payment_metadata,
-                payment_method_type='bank_card',
+                payment_method_type='sbp',
                 yookassa_created_at=None,
                 test_mode=yookassa_response.get('test_mode', False),
             )
@@ -897,6 +897,7 @@ class YooKassaPaymentMixin:
                                 f'🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
                                 f'подписка будет приобретена автоматически после пополнения баланса.\n\n{cart_message}',
                                 reply_markup=keyboard,
+                                parse_mode='HTML',
                             )
                             logger.info(
                                 'Отправлено уведомление с кнопкой возврата к оформлению подписки пользователю',
@@ -1079,14 +1080,14 @@ class YooKassaPaymentMixin:
                     'Успешно обработан платеж YooKassa как покупка подписки: пользователь , сумма ₽',
                     yookassa_payment_id=payment.yookassa_payment_id,
                     user_id=payment.user_id,
-                    amount_kopeks=payment.amount_kopeks / 100,
+                    amount_rubles=payment.amount_kopeks / 100,
                 )
             else:
                 logger.info(
                     'Успешно обработан платеж YooKassa : пользователь пополнил баланс на ₽',
                     yookassa_payment_id=payment.yookassa_payment_id,
                     user_id=payment.user_id,
-                    amount_kopeks=payment.amount_kopeks / 100,
+                    amount_rubles=payment.amount_kopeks / 100,
                 )
 
             # Создаем чек через NaloGO (если NALOGO_ENABLED=true)

@@ -1,5 +1,7 @@
 """Handler for Freekassa balance top-up."""
 
+import html
+
 import structlog
 from aiogram import types
 from aiogram.fsm.context import FSMContext
@@ -18,12 +20,29 @@ from app.utils.decorators import error_handler
 logger = structlog.get_logger(__name__)
 
 
+FREEKASSA_SUB_METHODS = {
+    'freekassa_sbp': {'payment_system_id': 44, 'get_name': lambda: settings.get_freekassa_sbp_display_name()},
+    'freekassa_card': {'payment_system_id': 36, 'get_name': lambda: settings.get_freekassa_card_display_name()},
+}
+
+
+def _resolve_freekassa_params(
+    payment_method: str | None,
+) -> tuple[int | None, str]:
+    """Return (payment_system_id, display_name) for a freekassa sub-method key."""
+    if payment_method and payment_method in FREEKASSA_SUB_METHODS:
+        meta = FREEKASSA_SUB_METHODS[payment_method]
+        return meta['payment_system_id'], meta['get_name']()
+    return None, settings.get_freekassa_display_name()
+
+
 async def _create_freekassa_payment_and_respond(
     message_or_callback,
     db_user: User,
     db: AsyncSession,
     amount_kopeks: int,
     edit_message: bool = False,
+    payment_method: str | None = None,
 ):
     """
     Common logic for creating Freekassa payment and sending response.
@@ -34,9 +53,12 @@ async def _create_freekassa_payment_and_respond(
         db: Database session
         amount_kopeks: Amount in kopeks
         edit_message: Whether to edit existing message or send new one
+        payment_method: Sub-method key (freekassa_sbp, freekassa_card, or None for default)
     """
     texts = get_texts(db_user.language)
     amount_rub = amount_kopeks / 100
+
+    ps_id, display_name = _resolve_freekassa_params(payment_method)
 
     # Create payment
     payment_service = PaymentService()
@@ -53,6 +75,8 @@ async def _create_freekassa_payment_and_respond(
         description=description,
         email=getattr(db_user, 'email', None),
         language=db_user.language,
+        payment_system_id=ps_id,
+        payment_method=payment_method,
     )
 
     if not result:
@@ -74,7 +98,6 @@ async def _create_freekassa_payment_and_respond(
         return
 
     payment_url = result.get('payment_url')
-    display_name = settings.get_freekassa_display_name()
 
     # Create keyboard with payment button
     keyboard = InlineKeyboardMarkup(
@@ -103,7 +126,7 @@ async def _create_freekassa_payment_and_respond(
         'Сумма: <b>{amount}₽</b>\n\n'
         'Нажмите кнопку ниже для оплаты.\n'
         'После успешной оплаты баланс будет пополнен автоматически.',
-    ).format(name=display_name, amount=f'{amount_rub:.2f}')
+    ).format(name=html.escape(display_name), amount=f'{amount_rub:.2f}')
 
     if edit_message:
         await message_or_callback.edit_text(
@@ -128,9 +151,11 @@ async def process_freekassa_payment_amount(
     db: AsyncSession,
     amount_kopeks: int,
     state: FSMContext,
+    payment_method: str | None = None,
 ):
     """
     Process payment amount directly (called from quick_amount handlers).
+    payment_method: 'freekassa', 'freekassa_sbp', 'freekassa_card'
     """
     texts = get_texts(db_user.language)
 
@@ -183,20 +208,43 @@ async def process_freekassa_payment_amount(
         db=db,
         amount_kopeks=amount_kopeks,
         edit_message=False,
+        payment_method=payment_method,
     )
 
 
-@error_handler
-async def start_freekassa_topup(
+async def _start_freekassa_topup_impl(
     callback: types.CallbackQuery,
     db_user: User,
-    db: AsyncSession,
     state: FSMContext,
+    payment_method: str,
 ):
     """
     Start Freekassa top-up process - ask for amount.
+    payment_method: 'freekassa', 'freekassa_sbp', 'freekassa_card'
     """
     texts = get_texts(db_user.language)
+
+    # Проверка доступности метода
+    if not settings.is_freekassa_enabled():
+        await callback.answer(
+            texts.t('FREEKASSA_NOT_AVAILABLE', 'Freekassa временно недоступен'),
+            show_alert=True,
+        )
+        return
+
+    if payment_method == 'freekassa_sbp' and not settings.is_freekassa_sbp_enabled():
+        await callback.answer(
+            texts.t('FREEKASSA_NOT_AVAILABLE', 'Freekassa временно недоступен'),
+            show_alert=True,
+        )
+        return
+
+    if payment_method == 'freekassa_card' and not settings.is_freekassa_card_enabled():
+        await callback.answer(
+            texts.t('FREEKASSA_NOT_AVAILABLE', 'Freekassa временно недоступен'),
+            show_alert=True,
+        )
+        return
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
@@ -215,11 +263,11 @@ async def start_freekassa_topup(
         return
 
     await state.set_state(BalanceStates.waiting_for_amount)
-    await state.update_data(payment_method='freekassa')
+    await state.update_data(payment_method=payment_method)
 
     min_amount = settings.FREEKASSA_MIN_AMOUNT_KOPEKS // 100
     max_amount = settings.FREEKASSA_MAX_AMOUNT_KOPEKS // 100
-    display_name = settings.get_freekassa_display_name()
+    _, display_name = _resolve_freekassa_params(payment_method)
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -250,6 +298,39 @@ async def start_freekassa_topup(
 
 
 @error_handler
+async def start_freekassa_topup(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _start_freekassa_topup_impl(callback, db_user, state, 'freekassa')
+
+
+@error_handler
+async def start_freekassa_sbp_topup(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _start_freekassa_topup_impl(callback, db_user, state, 'freekassa_sbp')
+
+
+@error_handler
+async def start_freekassa_card_topup(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _start_freekassa_topup_impl(callback, db_user, state, 'freekassa_card')
+
+
+FREEKASSA_PAYMENT_METHODS = {'freekassa', 'freekassa_sbp', 'freekassa_card'}
+
+
+@error_handler
 async def process_freekassa_custom_amount(
     message: types.Message,
     db_user: User,
@@ -260,7 +341,7 @@ async def process_freekassa_custom_amount(
     Process custom amount input for Freekassa payment.
     """
     data = await state.get_data()
-    if data.get('payment_method') != 'freekassa':
+    if data.get('payment_method') not in FREEKASSA_PAYMENT_METHODS:
         return
 
     texts = get_texts(db_user.language)
@@ -285,19 +366,21 @@ async def process_freekassa_custom_amount(
         db=db,
         amount_kopeks=amount_kopeks,
         state=state,
+        payment_method=data.get('payment_method'),
     )
 
 
-@error_handler
-async def process_freekassa_quick_amount(
+async def _process_freekassa_quick_amount_impl(
     callback: types.CallbackQuery,
     db_user: User,
     db: AsyncSession,
     state: FSMContext,
+    payment_method: str,
 ):
     """
     Process quick amount selection for Freekassa payment.
     Called when user clicks a predefined amount button.
+    payment_method: 'freekassa', 'freekassa_sbp', 'freekassa_card'
     """
     texts = get_texts(db_user.language)
 
@@ -308,7 +391,21 @@ async def process_freekassa_quick_amount(
         )
         return
 
-    # Extract amount from callback data: topup_amount|freekassa|{amount_kopeks}
+    if payment_method == 'freekassa_sbp' and not settings.is_freekassa_sbp_enabled():
+        await callback.answer(
+            texts.t('FREEKASSA_NOT_AVAILABLE', 'Freekassa временно недоступен'),
+            show_alert=True,
+        )
+        return
+
+    if payment_method == 'freekassa_card' and not settings.is_freekassa_card_enabled():
+        await callback.answer(
+            texts.t('FREEKASSA_NOT_AVAILABLE', 'Freekassa временно недоступен'),
+            show_alert=True,
+        )
+        return
+
+    # Extract amount from callback data: topup_amount|{method}|{amount_kopeks}
     try:
         parts = callback.data.split('|')
         if len(parts) >= 3:
@@ -363,4 +460,35 @@ async def process_freekassa_quick_amount(
         db=db,
         amount_kopeks=amount_kopeks,
         edit_message=True,
+        payment_method=payment_method,
     )
+
+
+@error_handler
+async def process_freekassa_quick_amount(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _process_freekassa_quick_amount_impl(callback, db_user, db, state, 'freekassa')
+
+
+@error_handler
+async def process_freekassa_sbp_quick_amount(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _process_freekassa_quick_amount_impl(callback, db_user, db, state, 'freekassa_sbp')
+
+
+@error_handler
+async def process_freekassa_card_quick_amount(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _process_freekassa_quick_amount_impl(callback, db_user, db, state, 'freekassa_card')

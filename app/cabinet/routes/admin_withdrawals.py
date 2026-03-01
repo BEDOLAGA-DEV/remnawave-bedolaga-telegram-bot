@@ -16,7 +16,7 @@ from app.database.models import (
 )
 from app.services.referral_withdrawal_service import referral_withdrawal_service
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.withdrawals import (
     AdminApproveWithdrawalRequest,
     AdminRejectWithdrawalRequest,
@@ -49,7 +49,7 @@ async def list_withdrawals(
     ),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('withdrawals:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """List all withdrawal requests."""
@@ -123,7 +123,7 @@ async def list_withdrawals(
 @router.get('/{withdrawal_id}', response_model=AdminWithdrawalDetailResponse)
 async def get_withdrawal_detail(
     withdrawal_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('withdrawals:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get detailed withdrawal request with risk analysis."""
@@ -180,7 +180,7 @@ async def get_withdrawal_detail(
 async def approve_withdrawal(
     withdrawal_id: int,
     request: AdminApproveWithdrawalRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('withdrawals:approve')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Approve a withdrawal request."""
@@ -232,7 +232,7 @@ async def approve_withdrawal(
 async def reject_withdrawal(
     withdrawal_id: int,
     request: AdminRejectWithdrawalRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('withdrawals:reject')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Reject a withdrawal request."""
@@ -283,7 +283,7 @@ async def reject_withdrawal(
 @router.post('/{withdrawal_id}/complete')
 async def complete_withdrawal(
     withdrawal_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('withdrawals:approve')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Mark a withdrawal as completed (money transferred)."""

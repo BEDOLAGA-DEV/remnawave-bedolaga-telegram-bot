@@ -4,6 +4,7 @@
 Отправляет красивое сообщение с информацией о системе при запуске бота.
 """
 
+import html
 from datetime import UTC, datetime
 from typing import Final
 
@@ -413,12 +414,12 @@ async def send_crash_notification(bot: Bot, error: Exception, traceback_str: str
             filename=file_name,
         )
 
-        # Текст сообщения
+        # Текст сообщения (escape HTML в error_type/message — они могут содержать <class ...>)
         message_text = (
             f'<b>Remnawave Bedolaga Bot</b>\n\n'
             f'❌ Бот упал с ошибкой\n\n'
-            f'<b>Тип:</b> <code>{error_type}</code>\n'
-            f'<b>Сообщение:</b> <code>{error_message[:CRASH_ERROR_PREVIEW_LENGTH]}</code>\n'
+            f'<b>Тип:</b> <code>{html.escape(error_type)}</code>\n'
+            f'<b>Сообщение:</b> <code>{html.escape(error_message[:CRASH_ERROR_PREVIEW_LENGTH])}</code>\n'
         )
 
         # Добавляем рекомендации если есть

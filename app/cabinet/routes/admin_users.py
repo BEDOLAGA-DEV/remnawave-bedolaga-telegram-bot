@@ -37,7 +37,7 @@ from app.database.models import (
 )
 from app.utils.timezone import panel_datetime_to_utc
 
-from ..dependencies import get_cabinet_db, get_current_admin_user
+from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.users import (
     DeleteDeviceResponse,
     DeleteUserRequest,
@@ -297,7 +297,10 @@ async def _sync_subscription_to_panel(db: AsyncSession, user: User, subscription
                     update_kwargs['hwid_device_limit'] = hwid_limit
 
                 try:
-                    await api.update_user(**update_kwargs)
+                    updated_panel_user = await api.update_user(**update_kwargs)
+                    subscription.subscription_url = updated_panel_user.subscription_url
+                    subscription.subscription_crypto_link = updated_panel_user.happ_crypto_link
+                    subscription.remnawave_short_uuid = updated_panel_user.short_uuid
                     changes['action'] = 'updated'
                     logger.info('Updated user in Remnawave panel', user_id=user.id)
                 except Exception as update_error:
@@ -326,6 +329,7 @@ async def _sync_subscription_to_panel(db: AsyncSession, user: User, subscription
                 user.remnawave_uuid = new_panel_user.uuid
                 subscription.remnawave_short_uuid = new_panel_user.short_uuid
                 subscription.subscription_url = new_panel_user.subscription_url
+                subscription.subscription_crypto_link = new_panel_user.happ_crypto_link
                 changes['action'] = 'created'
                 changes['panel_uuid'] = new_panel_user.uuid
                 logger.info('Created user in Remnawave panel', user_id=user.id, uuid=new_panel_user.uuid)
@@ -351,7 +355,7 @@ async def list_users(
     email: str | None = Query(None, max_length=255),
     status: UserStatusEnum | None = Query(None),
     sort_by: SortByEnum = Query(SortByEnum.CREATED_AT),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """
@@ -408,7 +412,7 @@ async def list_users(
 
 @router.get('/stats', response_model=UsersStatsResponse)
 async def get_users_stats(
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get overall users statistics."""
@@ -509,7 +513,7 @@ async def get_users_stats(
 @router.get('/{user_id}', response_model=UserDetailResponse)
 async def get_user_detail(
     user_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get detailed user information by ID."""
@@ -640,7 +644,7 @@ async def get_user_detail(
 @router.get('/by-telegram/{telegram_id}', response_model=UserDetailResponse)
 async def get_user_by_telegram(
     telegram_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get user by Telegram ID."""
@@ -659,7 +663,7 @@ async def get_user_by_telegram(
 @router.get('/{user_id}/panel-info', response_model=UserPanelInfoResponse)
 async def get_user_panel_info(
     user_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get user panel info from Remnawave (config links, traffic, connection data)."""
@@ -737,7 +741,7 @@ async def get_user_panel_info(
 @router.get('/{user_id}/node-usage', response_model=UserNodeUsageResponse)
 async def get_user_node_usage(
     user_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get user per-node traffic usage (always 30 days with daily breakdown)."""
@@ -825,7 +829,7 @@ async def get_user_node_usage(
 async def update_user_balance(
     user_id: int,
     request: UpdateBalanceRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:balance')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """
@@ -902,7 +906,7 @@ async def update_user_balance(
 async def update_user_subscription(
     user_id: int,
     request: UpdateSubscriptionRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:subscription')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """
@@ -1269,7 +1273,7 @@ async def update_user_subscription(
 async def get_user_available_tariffs(
     user_id: int,
     include_inactive: bool = Query(False, description='Include inactive tariffs'),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """
@@ -1367,7 +1371,7 @@ async def get_user_available_tariffs(
 async def update_user_status(
     user_id: int,
     request: UpdateUserStatusRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update user status (active, blocked, deleted)."""
@@ -1412,7 +1416,7 @@ async def update_user_status(
 async def block_user(
     user_id: int,
     reason: str | None = None,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:block')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Block a user (shortcut for status update)."""
@@ -1423,7 +1427,7 @@ async def block_user(
 @router.post('/{user_id}/unblock', response_model=UpdateUserStatusResponse)
 async def unblock_user(
     user_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:block')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Unblock a user (shortcut for status update)."""
@@ -1438,7 +1442,7 @@ async def unblock_user(
 async def update_user_restrictions(
     user_id: int,
     request: UpdateRestrictionsRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update user restrictions (topup, subscription)."""
@@ -1486,7 +1490,7 @@ async def update_user_restrictions(
 async def update_user_promo_group(
     user_id: int,
     request: UpdatePromoGroupRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:promo_group')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update user promo group."""
@@ -1541,7 +1545,7 @@ async def update_user_promo_group(
 async def update_user_referral_commission(
     user_id: int,
     request: UpdateReferralCommissionRequest,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:referral')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update user's individual referral commission percentage."""
@@ -1579,7 +1583,7 @@ async def update_user_referral_commission(
 @router.get('/{user_id}/devices', response_model=UserDevicesResponse)
 async def get_user_devices(
     user_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get user devices from Remnawave panel."""
@@ -1633,7 +1637,7 @@ async def get_user_devices(
 async def delete_user_device(
     user_id: int,
     hwid: str,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Delete a single device for user."""
@@ -1664,7 +1668,7 @@ async def delete_user_device(
 @router.delete('/{user_id}/devices', response_model=ResetDevicesResponse)
 async def reset_user_devices(
     user_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Reset all devices for user."""
@@ -1712,7 +1716,7 @@ async def reset_user_devices(
 async def delete_user(
     user_id: int,
     request: DeleteUserRequest = DeleteUserRequest(),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:delete')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """
@@ -1750,7 +1754,7 @@ async def delete_user(
 async def full_delete_user(
     user_id: int,
     request: FullDeleteUserRequest = FullDeleteUserRequest(),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:delete')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """
@@ -1799,7 +1803,7 @@ async def full_delete_user(
 async def reset_user_trial(
     user_id: int,
     request: ResetTrialRequest = ResetTrialRequest(),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:subscription')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """
@@ -1870,7 +1874,7 @@ async def reset_user_trial(
 async def reset_user_subscription(
     user_id: int,
     request: ResetSubscriptionRequest = ResetSubscriptionRequest(),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:subscription')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """
@@ -1955,7 +1959,7 @@ async def reset_user_subscription(
 async def disable_user(
     user_id: int,
     request: DisableUserRequest = DisableUserRequest(),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:block')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """
@@ -2032,7 +2036,7 @@ async def get_user_referrals(
     user_id: int,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get list of users referred by this user."""
@@ -2072,7 +2076,7 @@ async def get_user_transactions(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     transaction_type: str | None = Query(None),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get user transactions."""
@@ -2129,7 +2133,7 @@ async def get_user_transactions(
 @router.get('/{user_id}/sync/status', response_model=PanelSyncStatusResponse)
 async def get_user_sync_status(
     user_id: int,
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:sync')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """
@@ -2286,7 +2290,7 @@ async def get_user_sync_status(
 async def sync_user_from_panel(
     user_id: int,
     request: SyncFromPanelRequest = SyncFromPanelRequest(),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:sync')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """
@@ -2488,7 +2492,7 @@ async def sync_user_from_panel(
 async def sync_user_to_panel(
     user_id: int,
     request: SyncToPanelRequest = SyncToPanelRequest(),
-    admin: User = Depends(get_current_admin_user),
+    admin: User = Depends(require_permission('users:sync')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """

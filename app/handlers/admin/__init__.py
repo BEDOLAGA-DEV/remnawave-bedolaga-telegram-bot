@@ -24,6 +24,7 @@ from . import (
     referrals,
     remnawave,
     reports,
+    required_channels,
     rules,
     servers,
     statistics,
