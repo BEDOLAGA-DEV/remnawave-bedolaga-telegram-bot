@@ -508,7 +508,19 @@ def load_app_config() -> dict[str, Any]:
     return {}
 
 
+def _get_bot_guide_config_source() -> str:
+    source = str(getattr(settings, 'BOT_GUIDE_CONFIG_SOURCE', 'auto') or 'auto').strip().lower()
+    if source in {'auto', 'local', 'remnawave'}:
+        return source
+    return 'auto'
+
+
 def _get_remnawave_config_uuid() -> str | None:
+    # Allow bot guide flow to be decoupled from cabinet app-config source.
+    # In "local" mode, bot always uses local app-config file.
+    if _get_bot_guide_config_source() == 'local':
+        return None
+
     try:
         from app.services.system_settings_service import bot_configuration_service
 
@@ -526,13 +538,21 @@ async def load_app_config_async() -> dict[str, Any] | None:
     global _app_config_cache, _app_config_cache_ts
 
     ttl = settings.APP_CONFIG_CACHE_TTL
+    source = _get_bot_guide_config_source()
+
+    def _is_stale_for_mode(config: dict[str, Any]) -> bool:
+        # If mode switched to local, ignore cached RemnaWave config immediately.
+        return source == 'local' and bool(config.get('_isRemnawave'))
+
     if _app_config_cache and (time.monotonic() - _app_config_cache_ts) < ttl:
-        return _app_config_cache
+        if not _is_stale_for_mode(_app_config_cache):
+            return _app_config_cache
 
     async with _app_config_lock:
         # Double-check after acquiring lock
         if _app_config_cache and (time.monotonic() - _app_config_cache_ts) < ttl:
-            return _app_config_cache
+            if not _is_stale_for_mode(_app_config_cache):
+                return _app_config_cache
 
         remnawave_uuid = _get_remnawave_config_uuid()
 
@@ -555,10 +575,12 @@ async def load_app_config_async() -> dict[str, Any] | None:
 
         local_config = load_app_config()
         if local_config:
-            _app_config_cache = local_config
+            local_with_meta = dict(local_config)
+            local_with_meta['_isRemnawave'] = False
+            _app_config_cache = local_with_meta
             _app_config_cache_ts = time.monotonic()
             logger.debug('Loaded app config from local fallback file')
-            return local_config
+            return local_with_meta
 
         return None
 
