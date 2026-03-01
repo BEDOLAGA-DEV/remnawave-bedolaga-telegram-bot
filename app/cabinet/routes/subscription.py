@@ -1,8 +1,10 @@
 """Subscription management routes for cabinet."""
 
 import base64
+import json
 import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -2770,6 +2772,37 @@ def _get_url_scheme_for_app(app: dict[str, Any]) -> tuple[str, bool]:
     return '', False
 
 
+def _load_app_config_from_file() -> dict[str, Any] | None:
+    """Load local app-config file as fallback when RemnaWave config is unavailable."""
+    try:
+        from app.handlers.subscription.common import normalize_local_app_config
+    except Exception:
+        normalize_local_app_config = None
+
+    try:
+        if hasattr(settings, 'get_app_config_path'):
+            config_path = settings.get_app_config_path()
+        else:
+            raw_path = str(getattr(settings, 'APP_CONFIG_PATH', 'app-config.json')).strip() or 'app-config.json'
+            if Path(raw_path).is_absolute():
+                config_path = raw_path
+            else:
+                config_path = str(Path(__file__).resolve().parents[3] / raw_path)
+
+        with open(config_path, encoding='utf-8') as file_obj:
+            data = json.load(file_obj)
+
+        if not isinstance(data, dict):
+            return None
+
+        if callable(normalize_local_app_config):
+            return normalize_local_app_config(data)
+        return data
+    except Exception as e:
+        logger.warning('Failed to load local app-config fallback for cabinet', error=e)
+        return None
+
+
 async def _load_app_config_async() -> dict[str, Any] | None:
     """Load app config from RemnaWave API (if configured).
 
@@ -2789,6 +2822,12 @@ async def _load_app_config_async() -> dict[str, Any] | None:
                     return raw
         except Exception as e:
             logger.warning('Failed to load RemnaWave config', error=e)
+
+    local_config = _load_app_config_from_file()
+    if local_config:
+        local_config['_isRemnawave'] = False
+        logger.debug('Loaded app config from local fallback file for cabinet')
+        return local_config
 
     return None
 
@@ -3213,7 +3252,8 @@ async def get_app_config(
             detail='App configuration not set up.',
         )
 
-    config.pop('_isRemnawave', None)
+    is_remnawave = bool(config.get('_isRemnawave', False))
+    config = {k: v for k, v in config.items() if k != '_isRemnawave'}
     hide_link = settings.should_hide_subscription_link()
 
     # Build platformNames from displayName of each platform
@@ -3279,7 +3319,7 @@ async def get_app_config(
             platforms[platform_key] = platform_output
 
     return {
-        'isRemnawave': True,
+        'isRemnawave': is_remnawave,
         'platforms': platforms,
         'svgLibrary': config.get('svgLibrary', {}),
         'baseTranslations': config.get('baseTranslations'),

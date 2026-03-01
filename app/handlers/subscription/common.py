@@ -1,9 +1,11 @@
 import asyncio
 import base64
 import html as html_mod
+import json
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -303,6 +305,208 @@ _PLATFORM_TO_DEVICE = {
     'appleTV': 'appletv',
 }
 
+_LEGACY_TO_REMNAWAVE_PLATFORM = {
+    'ios': 'ios',
+    'android': 'android',
+    'windows': 'windows',
+    'mac': 'macos',
+    'macos': 'macos',
+    'linux': 'linux',
+    'tv': 'androidTV',
+    'androidtv': 'androidTV',
+    'appletv': 'appleTV',
+    'apple_tv': 'appleTV',
+}
+
+
+def _normalize_localized_text(value: Any, fallback_en: str = '', fallback_ru: str | None = None) -> dict[str, str]:
+    if isinstance(value, dict):
+        normalized: dict[str, str] = {}
+        for key, item in value.items():
+            key_str = str(key).strip()
+            if not key_str or not isinstance(item, str):
+                continue
+            cleaned = item.strip()
+            if cleaned:
+                normalized[key_str] = cleaned
+        if normalized:
+            return normalized
+
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned:
+            return {'en': cleaned, 'ru': cleaned}
+
+    result: dict[str, str] = {}
+    if fallback_en:
+        result['en'] = fallback_en
+    if fallback_ru:
+        result['ru'] = fallback_ru
+    elif fallback_en:
+        result['ru'] = fallback_en
+    return result
+
+
+def _legacy_step_to_block(step_data: Any, default_title_en: str, default_title_ru: str) -> dict[str, Any] | None:
+    if not isinstance(step_data, dict):
+        return None
+
+    block: dict[str, Any] = {
+        'title': _normalize_localized_text(step_data.get('title'), default_title_en, default_title_ru),
+        'description': _normalize_localized_text(step_data.get('description')),
+        'buttons': [],
+    }
+
+    for button in step_data.get('buttons', []):
+        if not isinstance(button, dict):
+            continue
+        button_url = str(button.get('buttonLink', '')).strip()
+        if not button_url:
+            continue
+
+        text_value = button.get('buttonText')
+        if isinstance(text_value, dict):
+            text = _normalize_localized_text(text_value, 'Open', 'Открыть')
+        elif isinstance(text_value, str) and text_value.strip():
+            text = {'en': text_value.strip(), 'ru': text_value.strip()}
+        else:
+            text = {'en': 'Open', 'ru': 'Открыть'}
+
+        block['buttons'].append(
+            {
+                'type': 'externalLink',
+                'text': text,
+                'url': button_url,
+            }
+        )
+
+    if not block['description'] and not block['buttons']:
+        return None
+
+    return block
+
+
+def _normalize_legacy_app(legacy_app: dict[str, Any]) -> dict[str, Any]:
+    app_name = str(legacy_app.get('name', '')).strip() or 'Unknown'
+    app_id = str(legacy_app.get('id', '')).strip() or app_name
+    url_scheme = str(legacy_app.get('urlScheme', '')).strip()
+
+    blocks: list[dict[str, Any]] = []
+    installation_block = _legacy_step_to_block(
+        legacy_app.get('installationStep'),
+        default_title_en='Install',
+        default_title_ru='Установка',
+    )
+    if installation_block:
+        blocks.append(installation_block)
+
+    add_block = _legacy_step_to_block(
+        legacy_app.get('addSubscriptionStep'),
+        default_title_en='Add subscription',
+        default_title_ru='Добавление подписки',
+    )
+    if add_block:
+        blocks.append(add_block)
+
+    connect_block = _legacy_step_to_block(
+        legacy_app.get('connectAndUseStep'),
+        default_title_en='Connect and use',
+        default_title_ru='Подключение',
+    )
+    if connect_block:
+        blocks.append(connect_block)
+
+    has_subscription_button = any(
+        isinstance(button, dict) and button.get('type') == 'subscriptionLink'
+        for block in blocks
+        for button in block.get('buttons', [])
+        if isinstance(block, dict)
+    )
+
+    if not has_subscription_button:
+        if blocks:
+            target_block = blocks[-1]
+        else:
+            target_block = {
+                'title': {'en': 'Connect', 'ru': 'Подключение'},
+                'description': {},
+                'buttons': [],
+            }
+            blocks.append(target_block)
+
+        target_block.setdefault('buttons', [])
+        target_block['buttons'].append(
+            {
+                'type': 'subscriptionLink',
+                'text': {'en': 'Connect', 'ru': 'Подключиться'},
+                # If scheme is absent, create_deep_link() will safely fallback to plain subscription URL.
+                'url': '{{SUBSCRIPTION_LINK}}',
+            }
+        )
+
+    return {
+        'id': app_id,
+        'name': app_name,
+        'featured': bool(legacy_app.get('isFeatured', False)),
+        'urlScheme': url_scheme,
+        'isNeedBase64Encoding': bool(legacy_app.get('isNeedBase64Encoding', False)),
+        'blocks': blocks,
+    }
+
+
+def normalize_local_app_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Normalize local app-config.json to RemnaWave-like shape.
+
+    Supports both formats:
+    - RemnaWave format: platforms.<key>.apps = [...]
+    - Legacy format:    platforms.<key> = [...]
+    """
+    if not isinstance(config, dict):
+        return {}
+
+    platforms = config.get('platforms', {})
+    if not isinstance(platforms, dict):
+        return config
+
+    # Already in RemnaWave shape.
+    if any(isinstance(value, dict) and isinstance(value.get('apps'), list) for value in platforms.values()):
+        return config
+
+    normalized_platforms: dict[str, dict[str, Any]] = {}
+    for raw_platform, raw_apps in platforms.items():
+        if not isinstance(raw_apps, list):
+            continue
+
+        normalized_key = _LEGACY_TO_REMNAWAVE_PLATFORM.get(str(raw_platform).strip().lower(), str(raw_platform))
+        apps = [_normalize_legacy_app(app) for app in raw_apps if isinstance(app, dict)]
+        if not apps:
+            continue
+
+        normalized_platforms[normalized_key] = {'apps': apps}
+
+    normalized: dict[str, Any] = {k: v for k, v in config.items() if k != 'platforms'}
+    normalized['platforms'] = normalized_platforms
+    return normalized
+
+
+def load_app_config() -> dict[str, Any]:
+    """Load local app-config.json as fallback for guide mode."""
+    try:
+        if hasattr(settings, 'get_app_config_path'):
+            config_path = settings.get_app_config_path()
+        else:
+            raw_path = str(getattr(settings, 'APP_CONFIG_PATH', 'app-config.json')).strip() or 'app-config.json'
+            config_path = raw_path if Path(raw_path).is_absolute() else str(Path(__file__).resolve().parents[3] / raw_path)
+
+        with open(config_path, encoding='utf-8') as file_obj:
+            data = json.load(file_obj)
+            if isinstance(data, dict):
+                return normalize_local_app_config(data)
+    except Exception as e:
+        logger.warning('Failed to load local app-config fallback', error=e)
+
+    return {}
+
 
 def _get_remnawave_config_uuid() -> str | None:
     try:
@@ -349,6 +553,13 @@ async def load_app_config_async() -> dict[str, Any] | None:
             except Exception as e:
                 logger.warning('Failed to load Remnawave config', error=e)
 
+        local_config = load_app_config()
+        if local_config:
+            _app_config_cache = local_config
+            _app_config_cache_ts = time.monotonic()
+            logger.debug('Loaded app config from local fallback file')
+            return local_config
+
         return None
 
 
@@ -379,6 +590,26 @@ async def get_apps_for_platform_async(device_type: str, language: str = 'ru') ->
     if isinstance(platform_data, dict):
         apps = platform_data.get('apps', [])
         return [normalize_app(app) for app in apps if isinstance(app, dict)]
+    return []
+
+
+def get_apps_for_device(device_type: str, language: str = 'ru') -> list[dict[str, Any]]:
+    """Sync helper for compatibility with legacy guide handlers."""
+    config = load_app_config()
+    platforms = config.get('platforms', {}) if isinstance(config, dict) else {}
+    if not isinstance(platforms, dict):
+        return []
+
+    platform_key = _DEVICE_TO_PLATFORM.get(device_type, device_type)
+    platform_data = platforms.get(platform_key)
+
+    if isinstance(platform_data, dict):
+        apps = platform_data.get('apps', [])
+        return [normalize_app(app) for app in apps if isinstance(app, dict)]
+
+    if isinstance(platform_data, list):  # defensive backward compatibility
+        return [normalize_app(app) for app in platform_data if isinstance(app, dict)]
+
     return []
 
 

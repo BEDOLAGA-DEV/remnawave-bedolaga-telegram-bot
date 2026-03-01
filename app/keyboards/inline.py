@@ -531,7 +531,7 @@ def get_main_menu_keyboard(
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'),
+                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
                             web_app=types.WebAppInfo(url=subscription_link),
                         )
                     ]
@@ -542,7 +542,7 @@ def get_main_menu_keyboard(
             keyboard.append(
                 [
                     InlineKeyboardButton(
-                        text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'),
+                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
                         web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
                     )
                 ]
@@ -550,7 +550,7 @@ def get_main_menu_keyboard(
         elif connect_mode == 'link':
             if subscription_link:
                 keyboard.append(
-                    [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'), url=subscription_link)]
+                    [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), url=subscription_link)]
                 )
             else:
                 keyboard.append([_fallback_connect_button()])
@@ -559,7 +559,7 @@ def get_main_menu_keyboard(
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'),
+                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
                             callback_data='open_subscription_link',
                         )
                     ]
@@ -806,7 +806,7 @@ def get_happ_cryptolink_keyboard(
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'),
+                    text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
                     url=final_redirect_link,
                 )
             ]
@@ -976,7 +976,7 @@ def get_insufficient_balance_keyboard(
 
 
 def get_subscription_keyboard(
-    language: str = DEFAULT_LANGUAGE, has_subscription: bool = False, is_trial: bool = False, subscription=None, balance_kopeks: int | None = None,
+    language: str = DEFAULT_LANGUAGE, has_subscription: bool = False, is_trial: bool = False, subscription=None
 ) -> InlineKeyboardMarkup:
     from app.config import settings
 
@@ -984,12 +984,6 @@ def get_subscription_keyboard(
     keyboard = []
 
     if has_subscription:
-
-        balance_text = texts.t('BALANCE_MENU_BUTTON', '💰 Баланс: {balance}')
-        if balance_kopeks is not None:
-            balance_text = balance_text.format(balance=texts.format_price(balance_kopeks))
-        keyboard.append([InlineKeyboardButton(text=balance_text, callback_data='subscription_balance')])
-
         subscription_link = get_display_subscription_link(subscription) if subscription else None
         if subscription_link:
             connect_mode = settings.CONNECT_BUTTON_MODE
@@ -998,7 +992,7 @@ def get_subscription_keyboard(
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'),
+                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
                             web_app=types.WebAppInfo(url=subscription_link),
                         )
                     ]
@@ -1008,7 +1002,7 @@ def get_subscription_keyboard(
                     keyboard.append(
                         [
                             InlineKeyboardButton(
-                                text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'),
+                                text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
                                 web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
                             )
                         ]
@@ -1017,19 +1011,19 @@ def get_subscription_keyboard(
                     keyboard.append(
                         [
                             InlineKeyboardButton(
-                                text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'), callback_data='subscription_connect'
+                                text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
                             )
                         ]
                     )
             elif connect_mode == 'link':
                 keyboard.append(
-                    [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'), url=subscription_link)]
+                    [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), url=subscription_link)]
                 )
             elif connect_mode == 'happ_cryptolink':
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'),
+                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
                             callback_data='open_subscription_link',
                         )
                     ]
@@ -1038,7 +1032,7 @@ def get_subscription_keyboard(
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'), callback_data='subscription_connect'
+                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
                         )
                     ]
                 )
@@ -1046,7 +1040,7 @@ def get_subscription_keyboard(
             keyboard.append(
                 [
                     InlineKeyboardButton(
-                        text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'),
+                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
                         web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
                     )
                 ]
@@ -1055,7 +1049,7 @@ def get_subscription_keyboard(
             keyboard.append(
                 [
                     InlineKeyboardButton(
-                        text=texts.t('CONNECT_BUTTON', '🚀 Подключиться'), callback_data='subscription_connect'
+                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
                     )
                 ]
             )
@@ -1425,7 +1419,7 @@ def get_subscription_confirm_keyboard(language: str = DEFAULT_LANGUAGE) -> Inlin
     )
 
 
-def get_balance_keyboard(language: str = DEFAULT_LANGUAGE, back_callback: str = 'back_to_menu') -> InlineKeyboardMarkup:
+def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
     texts = get_texts(language)
 
     keyboard = [
@@ -1433,7 +1427,7 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE, back_callback: str = 
             InlineKeyboardButton(text=texts.BALANCE_HISTORY, callback_data='balance_history'),
             InlineKeyboardButton(text=texts.BALANCE_TOP_UP, callback_data='balance_topup'),
         ],
-        [InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)],
+        [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
     ]
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -2277,6 +2271,8 @@ def get_manage_countries_keyboard(
 def get_device_selection_keyboard(
     language: str = DEFAULT_LANGUAGE,
     platforms: list[dict] | None = None,
+    *,
+    back_callback_data: str = 'menu_subscription',
 ) -> InlineKeyboardMarkup:
     from app.config import settings
     from app.handlers.subscription.common import get_localized_value
@@ -2303,6 +2299,39 @@ def get_device_selection_keyboard(
                 row = []
         if row:
             keyboard.append(row)
+    else:
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    text=texts.t('DEVICE_GUIDE_IOS', '📱 iOS (iPhone/iPad)'),
+                    callback_data='device_guide_ios',
+                ),
+                InlineKeyboardButton(
+                    text=texts.t('DEVICE_GUIDE_ANDROID', '🤖 Android'),
+                    callback_data='device_guide_android',
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.t('DEVICE_GUIDE_WINDOWS', '💻 Windows'),
+                    callback_data='device_guide_windows',
+                ),
+                InlineKeyboardButton(
+                    text=texts.t('DEVICE_GUIDE_MAC', '🍏 MacOS'),
+                    callback_data='device_guide_mac',
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.t('DEVICE_GUIDE_LINUX', '🐧 Linux'),
+                    callback_data='device_guide_linux',
+                ),
+                InlineKeyboardButton(
+                    text=texts.t('DEVICE_GUIDE_TV_GROUP', '📺 Телевизоры'),
+                    callback_data='device_guide_tvs',
+                ),
+            ],
+        ]
 
     if settings.CONNECT_BUTTON_MODE == 'guide':
         keyboard.append(
@@ -2318,6 +2347,7 @@ def get_device_selection_keyboard(
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+
 def get_tv_selection_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
     """Подменю выбора платформы ТВ (Android TV / Apple TV)."""
     texts = get_texts(language)
@@ -2325,24 +2355,18 @@ def get_tv_selection_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboar
     keyboard = [
         [
             InlineKeyboardButton(
-                text=texts.t("DEVICE_GUIDE_ANDROID_TV", "📺 Android TV"),
-                callback_data="device_guide_tv",
+                text=texts.t('DEVICE_GUIDE_ANDROID_TV', '📺 Android TV'),
+                callback_data='device_guide_tv',
             ),
             InlineKeyboardButton(
-                text=texts.t("DEVICE_GUIDE_APPLE_TV", "📺 Apple TV"),
-                callback_data="device_guide_appletv",
+                text=texts.t('DEVICE_GUIDE_APPLE_TV', '📺 Apple TV'),
+                callback_data='device_guide_appletv',
             ),
         ],
-        [
-            InlineKeyboardButton(text=texts.BACK, callback_data="subscription_connect"),
-        ],
+        [InlineKeyboardButton(text=texts.BACK, callback_data='subscription_connect')],
     ]
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def _is_android_tv_device(device_type: str) -> bool:
-    return device_type == 'tv'
 
 
 def get_android_tv_qr_wait_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
@@ -2358,7 +2382,6 @@ def get_android_tv_qr_wait_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineK
         ]
     )
 
-
 def get_connection_guide_keyboard(
     subscription_url: str,
     app: dict,
@@ -2369,7 +2392,7 @@ def get_connection_guide_keyboard(
     from app.handlers.subscription.common import create_deep_link, get_localized_value, resolve_button_url
 
     texts = get_texts(language)
-    is_android_tv = _is_android_tv_device(device_type)
+    is_android_tv = device_type == 'tv'
 
     keyboard: list[list[InlineKeyboardButton]] = []
 
@@ -2404,7 +2427,17 @@ def get_connection_guide_keyboard(
                 url = resolved_url or resolve_button_url(btn_url, subscription_url)
                 deep_link = create_deep_link(app.get('_raw', app), subscription_url)
                 final_url = deep_link or url or subscription_url
-                if final_url:
+                if is_android_tv:
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                                callback_data='android_tv_connect',
+                                style='success',
+                            )
+                        ]
+                    )
+                elif final_url:
                     keyboard.append(
                         [
                             InlineKeyboardButton(

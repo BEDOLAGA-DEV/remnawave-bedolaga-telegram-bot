@@ -2,7 +2,6 @@ import html as html_mod
 from datetime import UTC, datetime
 from io import BytesIO
 
-
 from aiogram import types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,8 +12,8 @@ from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import TransactionType, User
 from app.keyboards.inline import (
-    get_app_selection_keyboard,
     get_android_tv_qr_wait_keyboard,
+    get_app_selection_keyboard,
     get_back_keyboard,
     get_change_devices_keyboard,
     get_confirm_change_devices_keyboard,
@@ -23,7 +22,6 @@ from app.keyboards.inline import (
     get_devices_management_keyboard,
     get_insufficient_balance_keyboard,
     get_specific_app_keyboard,
-    get_device_selection_keyboard,
     get_tv_selection_keyboard,
 )
 from app.localization.texts import get_texts
@@ -1273,14 +1271,14 @@ async def confirm_reset_devices(callback: types.CallbackQuery, db_user: User, db
 async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     device_type = callback.data.split('_')[2]
     texts = get_texts(db_user.language)
-    if device_type == "tvs":
+    if device_type == 'tvs':
         await callback.message.edit_text(
             texts.t(
-                "DEVICE_GUIDE_TV_GROUP_MESSAGE",
-                "📺 <b>Телевизоры</b>\n\nВыберите платформу вашего ТВ:",
+                'DEVICE_GUIDE_TV_GROUP_MESSAGE',
+                '📺 <b>Телевизоры</b>\n\nВыберите платформу вашего ТВ:',
             ),
             reply_markup=get_tv_selection_keyboard(db_user.language),
-            parse_mode="HTML",
+            parse_mode='HTML',
         )
         await callback.answer()
         return
@@ -1311,7 +1309,7 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
     other_apps = [app for app in apps if isinstance(app, dict) and app.get('id') and app.get('id') != featured_app_id]
 
     if device_type == 'tv':
-        featured_app_name = str(featured_app.get('name') or 'v2rayTun')
+        featured_app_name = html_mod.escape(str(featured_app.get('name') or 'v2rayTun'))
         android_tv_guide_text = texts.t(
             'ANDROID_TV_GUIDE_MESSAGE',
             (
@@ -1347,17 +1345,15 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
     )
 
     if hide_subscription_link:
-        # Скрываем уведомление о ссылке подписки по запросу.
-        # link_section = (
-        #         texts.t("SUBSCRIPTION_DEVICE_LINK_TITLE", "🔗 <b>Ссылка подписки:</b>")
-        #         + "\n"
-        #         + texts.t(
-        #     "SUBSCRIPTION_LINK_HIDDEN_NOTICE",
-        #     "ℹ️ Ссылка подписки доступна по кнопке «Показать ссылку подписки» ниже или в разделе \"Моя подписка\".",
-        # )
-        #         + "\n\n"
-        # )
-        link_section = ''
+        link_section = (
+            texts.t('SUBSCRIPTION_DEVICE_LINK_TITLE', '🔗 <b>Ссылка подписки:</b>')
+            + '\n'
+            + texts.t(
+                'SUBSCRIPTION_LINK_HIDDEN_NOTICE',
+                'ℹ️ Ссылка подписки доступна по кнопкам ниже или в разделе "Моя подписка".',
+            )
+            + '\n\n'
+        )
     else:
         link_section = (
             texts.t('SUBSCRIPTION_DEVICE_LINK_TITLE', '🔗 <b>Ссылка подписки:</b>')
@@ -1377,46 +1373,41 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
         ).format(app_name=html_mod.escape(featured_app.get('name', '')))
     )
 
-    other_apps_section = ''
     if other_app_names:
-        other_apps_section = (
-            '\n\n'
-            + texts.t(
-                'SUBSCRIPTION_DEVICE_OTHER_APPS',
-                '📦 <b>Другие приложения:</b> {app_list}',
-            ).format(app_list=other_app_names)
-            + '\n'
-            + texts.t(
-                'SUBSCRIPTION_DEVICE_OTHER_APPS_HINT',
-                'Нажмите кнопку "Другие приложения" ниже, чтобы выбрать приложение.',
-            )
+        guide_text += '\n\n' + texts.t(
+            'SUBSCRIPTION_DEVICE_OTHER_APPS',
+            '📦 <b>Другие приложения:</b> {app_list}',
+        ).format(app_list=other_app_names)
+        guide_text += '\n' + texts.t(
+            'SUBSCRIPTION_DEVICE_OTHER_APPS_HINT',
+            'Нажмите кнопку "Другие приложения" ниже, чтобы выбрать приложение.',
         )
 
     blocks_text = render_guide_blocks(featured_app.get('blocks', []), db_user.language)
     if blocks_text:
         guide_text += '\n\n' + blocks_text
 
-#    guide_text += '\n\n' + texts.t('SUBSCRIPTION_DEVICE_HOW_TO_TITLE', '💡 <b>Как подключить:</b>')
-#    guide_text += '\n' + '\n'.join(
-#        [
-#            texts.t(
-#                'SUBSCRIPTION_DEVICE_HOW_TO_STEP1',
-#                '1. Установите приложение по ссылке выше',
-#            ),
-#            texts.t(
-#                'SUBSCRIPTION_DEVICE_HOW_TO_STEP2',
-#                '2. Нажмите кнопку "Подключиться" ниже',
-#            ),
-#            texts.t(
-#                'SUBSCRIPTION_DEVICE_HOW_TO_STEP3',
-#                '3. Откройте приложение и вставьте ссылку',
-#            ),
-#            texts.t(
-#                'SUBSCRIPTION_DEVICE_HOW_TO_STEP4',
-#                '4. Подключитесь к серверу',
-#            ),
-#        ]
-#    )
+    guide_text += '\n\n' + texts.t('SUBSCRIPTION_DEVICE_HOW_TO_TITLE', '💡 <b>Как подключить:</b>')
+    guide_text += '\n' + '\n'.join(
+        [
+            texts.t(
+                'SUBSCRIPTION_DEVICE_HOW_TO_STEP1',
+                '1. Установите приложение по ссылке выше',
+            ),
+            texts.t(
+                'SUBSCRIPTION_DEVICE_HOW_TO_STEP2',
+                '2. Нажмите кнопку "Подключиться" ниже',
+            ),
+            texts.t(
+                'SUBSCRIPTION_DEVICE_HOW_TO_STEP3',
+                '3. Откройте приложение и вставьте ссылку',
+            ),
+            texts.t(
+                'SUBSCRIPTION_DEVICE_HOW_TO_STEP4',
+                '4. Подключитесь к серверу',
+            ),
+        ]
+    )
 
     await callback.message.edit_text(
         guide_text,
@@ -1498,7 +1489,7 @@ async def handle_android_tv_qr_photo(message: types.Message, db_user: User, stat
     try:
         image_bytes = await _download_photo_bytes(message)
     except Exception as exc:
-        logger.error(f'Ошибка загрузки фото QR для Android TV: {exc}')
+        logger.error('Ошибка загрузки фото QR для Android TV', error=exc)
         await message.answer(
             texts.t(
                 'ANDROID_TV_QR_DOWNLOAD_ERROR',
@@ -1511,7 +1502,7 @@ async def handle_android_tv_qr_photo(message: types.Message, db_user: User, stat
     try:
         streamvault_key = decode_android_tv_qr_key(image_bytes)
     except AndroidTvQrDecodeError as exc:
-        logger.warning(f'Не удалось декодировать Android TV QR: {exc}')
+        logger.warning('Не удалось декодировать Android TV QR', error=exc)
         await message.answer(
             texts.t(
                 'ANDROID_TV_QR_DECODE_ERROR',
@@ -1524,7 +1515,7 @@ async def handle_android_tv_qr_photo(message: types.Message, db_user: User, stat
         )
         return
     except Exception as exc:
-        logger.error(f'Ошибка декодирования QR для Android TV: {exc}')
+        logger.error('Ошибка декодирования QR для Android TV', error=exc)
         await message.answer(
             texts.t(
                 'ANDROID_TV_QR_DECODE_ERROR',
@@ -1540,14 +1531,14 @@ async def handle_android_tv_qr_photo(message: types.Message, db_user: User, stat
     try:
         response = await publish_streamvault_subscription(streamvault_key, subscription_link)
         logger.info(
-            'Android TV import sent for user %s using key %s...%s (response=%s)',
-            db_user.telegram_id,
-            streamvault_key[:6],
-            streamvault_key[-4:],
-            response,
+            'Android TV import sent',
+            telegram_id=db_user.telegram_id,
+            key_prefix=streamvault_key[:6],
+            key_suffix=streamvault_key[-4:],
+            response=response,
         )
     except AndroidTvStreamVaultError as exc:
-        logger.warning(f'Не удалось отправить Android TV импорт: {exc}')
+        logger.warning('Не удалось отправить Android TV импорт', error=exc)
         await message.answer(
             texts.t(
                 'ANDROID_TV_STREAMVAULT_ERROR',
@@ -1560,7 +1551,7 @@ async def handle_android_tv_qr_photo(message: types.Message, db_user: User, stat
         )
         return
     except Exception as exc:
-        logger.error(f'Неожиданная ошибка отправки Android TV импорта: {exc}')
+        logger.error('Неожиданная ошибка отправки Android TV импорта', error=exc)
         await message.answer(
             texts.t(
                 'ANDROID_TV_STREAMVAULT_ERROR',
@@ -1600,52 +1591,9 @@ async def handle_android_tv_qr_non_photo(message: types.Message, db_user: User):
     )
 
 
-def _parse_specific_app_callback_data(callback_data: str | None, language: str) -> tuple[str, str] | None:
-    if not callback_data or not callback_data.startswith('app_') or callback_data.startswith('app_list_'):
-        return None
-
-    payload = callback_data[4:]
-    if '_' not in payload:
-        return None
-
-    payload_parts = payload.split('_')
-    candidates: list[tuple[str, str]] = []
-
-    # Пробуем все возможные точки разделения device/app и валидируем по app-config.
-    for split_index in range(1, len(payload_parts)):
-        device_type = '_'.join(payload_parts[:split_index])
-        app_id = '_'.join(payload_parts[split_index:])
-        if not device_type or not app_id:
-            continue
-
-        apps = get_apps_for_device(device_type, language)
-        if any(isinstance(app, dict) and app.get('id') == app_id for app in apps):
-            candidates.append((device_type, app_id))
-
-    if candidates:
-        candidates.sort(key=lambda item: len(item[0]), reverse=True)
-        return candidates[0]
-
-    parts = callback_data.split('_', 2)
-    if len(parts) != 3 or not parts[1] or not parts[2]:
-        return None
-
-    return parts[1], parts[2]
-
-
 async def handle_app_selection(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    device_type = callback.data.split('_')[2]
     texts = get_texts(db_user.language)
-    callback_data = callback.data or ''
-    parts = callback_data.split('_', 2)
-    if len(parts) != 3 or parts[0] != 'app' or parts[1] != 'list' or not parts[2]:
-        logger.warning('Некорректный callback_data в выборе приложений: %s', callback_data)
-        await callback.answer(
-            texts.t('SUBSCRIPTION_DEVICE_APPS_NOT_FOUND', '❌ Приложения для этого устройства не найдены'),
-            show_alert=True,
-        )
-        return
-
-    device_type = parts[2]
 
     apps = await get_apps_for_platform_async(device_type, db_user.language)
 
@@ -1678,17 +1626,6 @@ async def handle_specific_app_guide(callback: types.CallbackQuery, db_user: User
         return
     _, device_type, app_id = parts
     texts = get_texts(db_user.language)
-    callback_data = callback.data or ''
-    parsed_callback = _parse_specific_app_callback_data(callback_data, db_user.language)
-    if not parsed_callback:
-        logger.warning('Некорректный callback_data для приложения: %s', callback_data)
-        await callback.answer(
-            texts.t('SUBSCRIPTION_APP_NOT_FOUND', '❌ Приложение не найдено'),
-            show_alert=True,
-        )
-        return
-
-    device_type, app_id = parsed_callback
     subscription = db_user.subscription
 
     subscription_link = get_display_subscription_link(subscription)
@@ -1713,17 +1650,15 @@ async def handle_specific_app_guide(callback: types.CallbackQuery, db_user: User
     hide_subscription_link = settings.should_hide_subscription_link()
 
     if hide_subscription_link:
-        # Скрываем уведомление о ссылке подписки по запросу.
-        # link_section = (
-        #         texts.t("SUBSCRIPTION_DEVICE_LINK_TITLE", "🔗 <b>Ссылка подписки:</b>")
-        #         + "\n"
-        #         + texts.t(
-        #     "SUBSCRIPTION_LINK_HIDDEN_NOTICE",
-        #     "ℹ️ Ссылка подписки доступна по кнопке «Показать ссылку подписки» или в разделе \"Моя подписка\".",
-        # )
-        #         + "\n\n"
-        # )
-        link_section = ''
+        link_section = (
+            texts.t('SUBSCRIPTION_DEVICE_LINK_TITLE', '🔗 <b>Ссылка подписки:</b>')
+            + '\n'
+            + texts.t(
+                'SUBSCRIPTION_LINK_HIDDEN_NOTICE',
+                'ℹ️ Ссылка подписки доступна по кнопкам ниже или в разделе "Моя подписка".',
+            )
+            + '\n\n'
+        )
     else:
         link_section = (
             texts.t('SUBSCRIPTION_DEVICE_LINK_TITLE', '🔗 <b>Ссылка подписки:</b>')

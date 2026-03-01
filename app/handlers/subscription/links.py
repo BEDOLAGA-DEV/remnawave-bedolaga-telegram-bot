@@ -16,7 +16,7 @@ from app.utils.subscription_utils import (
     get_happ_cryptolink_redirect_link,
 )
 
-from .common import get_platforms_list, load_app_config_async, logger
+from .common import load_app_config_async, logger
 
 
 async def handle_connect_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
@@ -41,7 +41,6 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
         return
 
     connect_mode = settings.CONNECT_BUTTON_MODE
-
     back_cb = 'back_to_menu' if callback.data == 'subscription_connect_main' else 'menu_subscription'
 
     if connect_mode == 'miniapp_subscription':
@@ -148,16 +147,14 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
             parse_mode='HTML',
         )
     else:
-        # Guide mode: load config and build dynamic platform keyboard
-        platforms = None
+        # Guide mode: show classic device menu, but verify config availability first.
+        config = None
         try:
             config = await load_app_config_async()
-            if config:
-                platforms = get_platforms_list(config) or None
         except Exception as e:
-            logger.warning('Failed to load platforms for guide mode', error=e)
+            logger.warning('Failed to load guide config', error=e)
 
-        if not platforms:
+        if not config:
             await callback.message.edit_text(
                 texts.t(
                     'GUIDE_CONFIG_NOT_SET',
@@ -167,7 +164,7 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
                     ]
                 ),
                 parse_mode='HTML',
@@ -197,7 +194,7 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
 
         await callback.message.edit_text(
             device_text,
-            reply_markup=get_device_selection_keyboard(db_user.language, platforms=platforms),
+            reply_markup=get_device_selection_keyboard(db_user.language, back_callback_data=back_cb),
             parse_mode='HTML',
         )
 
