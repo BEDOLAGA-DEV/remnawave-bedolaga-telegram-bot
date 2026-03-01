@@ -684,6 +684,11 @@ class Settings(BaseSettings):
     WEB_API_REQUEST_LOGGING: bool = True
 
     APP_CONFIG_PATH: str = 'app-config.json'
+    # Source for bot guide config:
+    # - auto: prefer RemnaWave config when CABINET_REMNA_SUB_CONFIG is set, fallback to local file
+    # - local: always use local APP_CONFIG_PATH file in bot guide handlers
+    # - remnawave: always try RemnaWave first in bot guide handlers
+    BOT_GUIDE_CONFIG_SOURCE: str = 'auto'
     ENABLE_DEEP_LINKS: bool = True
     APP_CONFIG_CACHE_TTL: int = 3600
 
