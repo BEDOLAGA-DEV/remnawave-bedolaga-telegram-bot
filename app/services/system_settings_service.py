@@ -1603,8 +1603,11 @@ class BotConfigurationService:
     @classmethod
     def _apply_to_settings(cls, key: str, value: Any) -> None:
         if cls._is_env_override(key):
-            logger.debug('Пропуск применения настройки : значение задано через окружение', key=key)
-            return
+            # Allow DB overrides for critical AI ticket settings
+            if key not in {'SUPPORT_AI_ENABLED', 'SUPPORT_AI_FORUM_ID'}:
+                logger.debug('Пропуск применения настройки: значение задано через окружение', key=key)
+                return
+            logger.info('Применяем настройку из БД поверх .env (приоритет для ИИ)', key=key)
         try:
             setattr(settings, key, value)
             if key in {

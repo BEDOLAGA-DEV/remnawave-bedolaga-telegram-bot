@@ -154,35 +154,49 @@ async def test_connection(db: AsyncSession, provider_name: str, key: Optional[st
     if not provider:
         return {'ok': False, 'error': 'Провайдер не найден', 'models': []}
 
-    test_key = key or _get_working_key(provider)
-    if not test_key:
+    keys_to_test = [key] if key else (provider.api_keys or [])
+    if not keys_to_test:
         return {'ok': False, 'error': 'Нет API ключей', 'models': []}
 
-    try:
-        fetchers = {
-            'groq': _fetch_models_groq,
-            'openai': _fetch_models_openai,
-            'anthropic': _fetch_models_anthropic,
-            'google': _fetch_models_google,
-            'openrouter': _fetch_models_openrouter,
-        }
-        fetch_fn = fetchers.get(provider_name)
-        if not fetch_fn:
-            return {'ok': False, 'error': 'Неизвестный провайдер', 'models': []}
+    fetchers = {
+        'groq': _fetch_models_groq,
+        'openai': _fetch_models_openai,
+        'anthropic': _fetch_models_anthropic,
+        'google': _fetch_models_google,
+        'openrouter': _fetch_models_openrouter,
+    }
+    fetch_fn = fetchers.get(provider_name)
+    if not fetch_fn:
+        return {'ok': False, 'error': 'Неизвестный провайдер', 'models': []}
 
-        result = await fetch_fn(provider, test_key)
+    active_idx = provider.active_key_index or 0
+    last_result = {'ok': False, 'error': 'Неизвестная ошибка', 'models': []}
 
-        if result['ok'] and result['models']:
-            # Cache models in DB
-            provider.available_models = result['models']
-            if not provider.selected_model:
-                provider.selected_model = result['models'][0]
-            await db.commit()
+    # Test keys starting from the active index
+    for attempt in range(len(keys_to_test)):
+        # If manually testing a specific key, just use idx 0
+        idx = 0 if key else (active_idx + attempt) % len(keys_to_test)
+        test_key = keys_to_test[idx]
 
-        return result
-    except Exception as e:
-        logger.warning('ai_manager.test_connection_failed', provider=provider_name, error=str(e))
-        return {'ok': False, 'error': str(e), 'models': []}
+        try:
+            result = await fetch_fn(provider, test_key)
+            if result['ok'] and result['models']:
+                # Working key found! Cache models and update active index
+                provider.available_models = result['models']
+                if not provider.selected_model:
+                    provider.selected_model = result['models'][0]
+                if not key and idx != active_idx:
+                    provider.active_key_index = idx
+                await db.commit()
+                return result
+            
+            last_result = result
+        except Exception as e:
+            logger.warning('ai_manager.test_connection_failed', provider=provider_name, error=str(e))
+            last_result = {'ok': False, 'error': str(e), 'models': []}
+
+    # If we get here, all keys failed
+    return last_result
 
 
 async def _fetch_models_groq(provider: AIProviderConfig, key: str) -> dict:
@@ -222,7 +236,7 @@ async def _fetch_models_anthropic(provider: AIProviderConfig, key: str) -> dict:
 async def _fetch_models_google(provider: AIProviderConfig, key: str) -> dict:
     base = provider.base_url or 'https://generativelanguage.googleapis.com/v1beta'
     async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.get(f'{base}/models', headers={'x-goog-api-key': key})
+        r = await client.get(f'{base}/models', params={'key': key})
     if r.status_code == 200:
         data = r.json()
         models = [
@@ -428,10 +442,10 @@ async def _call_google(
         payload['systemInstruction'] = {'parts': [{'text': '\n\n'.join(system_parts)}]}
 
     url = f'{base}/models/{model}:generateContent'
-    headers = {'Content-Type': 'application/json', 'x-goog-api-key': key}
+    headers = {'Content-Type': 'application/json'}
 
     async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(url, headers=headers, json=payload)
+        r = await client.post(url, params={'key': key}, headers=headers, json=payload)
 
     if r.status_code == 200:
         candidates = r.json().get('candidates', [])

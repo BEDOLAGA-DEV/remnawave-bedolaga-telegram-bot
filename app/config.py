@@ -2385,10 +2385,10 @@ class Settings(BaseSettings):
 
     def get_support_system_mode(self) -> str:
         mode = (self.SUPPORT_SYSTEM_MODE or 'both').strip().lower()
-        return mode if mode in {'tickets', 'contact', 'both'} else 'both'
+        return mode if mode in {'tickets', 'contact', 'both', 'ai_tiket'} else 'both'
 
     def is_support_tickets_enabled(self) -> bool:
-        return self.get_support_system_mode() in {'tickets', 'both'}
+        return self.get_support_system_mode() in {'tickets', 'both', 'ai_tiket'}
 
     def is_support_contact_enabled(self) -> bool:
         return self.get_support_system_mode() in {'contact', 'both'}

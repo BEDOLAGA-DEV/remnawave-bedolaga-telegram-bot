@@ -253,6 +253,7 @@ async def toggle_sla(callback: types.CallbackQuery, db_user: User, db: AsyncSess
 class SupportAdvancedStates(StatesGroup):
     waiting_for_sla_minutes = State()
     waiting_for_moderator_id = State()
+    waiting_for_ai_forum_id = State()
 
 
 @admin_required
@@ -550,6 +551,56 @@ async def delete_sent_message(callback: types.CallbackQuery, db_user: User, db: 
             await callback.answer(texts.t('ADMIN_SUPPORT_MESSAGE_DELETED', 'Сообщение удалено'))
 
 
+@admin_required
+@error_handler
+async def start_set_ai_forum_id(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    texts = get_texts(db_user.language)
+    await callback.message.edit_text(
+        texts.t(
+            'ADMIN_SUPPORT_AI_FORUM_ID_PROMPT',
+            '💬 <b>ID группы/форума для тикетов</b>\n\nВведите Telegram ID группы (например, -100123456789):',
+        ),
+        parse_mode='HTML',
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='admin_support_settings')]]
+        ),
+    )
+    await state.set_state(SupportAdvancedStates.waiting_for_ai_forum_id)
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def handle_ai_forum_id(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
+    texts = get_texts(db_user.language)
+    text = (message.text or '').strip()
+    
+    if not text.startswith('-100') and not text.isdigit() and not text.startswith('-'):
+        await message.answer(texts.t('ADMIN_SUPPORT_AI_FORUM_ID_INVALID', '❌ Некорректный ID группы. Введите число (чаще всего начинается с -100 для форумов).'))
+        return
+        
+    from app.services.system_settings_service import BotConfigurationService
+    from app.config import settings
+    
+    await BotConfigurationService.set_value(db, 'SUPPORT_AI_FORUM_ID', text)
+    settings.SUPPORT_AI_FORUM_ID = text
+    
+    await state.clear()
+    markup = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('DELETE_MESSAGE', '🗑 Удалить'), callback_data='admin_support_delete_msg'
+                )
+            ],
+            [
+                types.InlineKeyboardButton(text=texts.BACK, callback_data='admin_support_settings')
+            ]
+        ]
+    )
+    await message.answer(texts.t('ADMIN_SUPPORT_AI_FORUM_ID_SAVED', '✅ ID группы сохранен'), reply_markup=markup)
+
+
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_support_settings, F.data == 'admin_support_settings')
     dp.callback_query.register(toggle_support_menu, F.data == 'admin_support_toggle_menu')
@@ -568,9 +619,11 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(start_add_moderator, F.data == 'admin_support_add_moderator')
     dp.callback_query.register(start_remove_moderator, F.data == 'admin_support_remove_moderator')
     dp.callback_query.register(list_moderators, F.data == 'admin_support_list_moderators')
+    dp.callback_query.register(start_set_ai_forum_id, F.data == 'admin_support_ai_forum_id')
     dp.message.register(handle_new_desc, SupportSettingsStates.waiting_for_desc)
     dp.message.register(handle_sla_minutes, SupportAdvancedStates.waiting_for_sla_minutes)
     dp.message.register(handle_moderator_id, SupportAdvancedStates.waiting_for_moderator_id)
+    dp.message.register(handle_ai_forum_id, SupportAdvancedStates.waiting_for_ai_forum_id)
 
     # DonMatteo-AI-Tiket: multi-provider, FAQ, prompt handlers
     from app.modules.ai_ticket.handlers.ai_provider_admin import register_ai_provider_handlers

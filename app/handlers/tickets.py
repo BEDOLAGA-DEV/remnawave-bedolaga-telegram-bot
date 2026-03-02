@@ -7,6 +7,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InaccessibleMessage
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.crud.ticket import TicketCRUD, TicketMessageCRUD
@@ -45,17 +46,26 @@ async def show_ticket_priority_selection(
 
     if SupportSettingsService.get_system_mode() == 'ai_tiket':
         from app.modules.ai_ticket.handlers.client import handle_ai_ticket_message
+        from app.config import settings
 
         await callback.answer()
         service_name = settings.BOT_USERNAME or 'Техподдержка'
-        # In ai_tiket mode, skip classic ticket creation — prompt user to type message
-        await callback.message.edit_text(
+        prompt_text = (
             f'🤖 <b>{service_name}</b>\n\n'
             'Напишите ваш вопрос или опишите проблему — '
-            'AI-ассистент ответит моментально.',
-            parse_mode='HTML',
+            'AI-ассистент ответит моментально.'
         )
-        # Set a dedicated FSM state so the next text message goes to the AI handler
+        cancel_kb = get_ticket_cancel_keyboard(db_user.language)
+        
+        try:
+            await callback.message.edit_text(prompt_text, reply_markup=cancel_kb, parse_mode='HTML')
+        except TelegramBadRequest:
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer(prompt_text, reply_markup=cancel_kb, parse_mode='HTML')
+            
         await state.set_state('ai_ticket_waiting_message')
         return
     # --- End routing guard ---
@@ -341,25 +351,58 @@ async def show_my_tickets(callback: types.CallbackQuery, db_user: User, db: Asyn
         except ValueError:
             current_page = 1
 
-    # Пагинация открытых тикетов из БД
-    per_page = 10
-    total_open = await TicketCRUD.count_user_tickets_by_statuses(
-        db, db_user.id, [TicketStatus.OPEN.value, TicketStatus.ANSWERED.value, TicketStatus.PENDING.value]
-    )
-    total_pages = max(1, (total_open + per_page - 1) // per_page)
-    current_page = max(1, min(current_page, total_pages))
-    offset = (current_page - 1) * per_page
-    open_tickets = await TicketCRUD.get_user_tickets_by_statuses(
-        db,
-        db_user.id,
-        [TicketStatus.OPEN.value, TicketStatus.ANSWERED.value, TicketStatus.PENDING.value],
-        limit=per_page,
-        offset=offset,
-    )
+    # --- DonMatteo-AI-Tiket logic ---
+    from app.services.support_settings_service import SupportSettingsService
+    from app.modules.ai_ticket.services.forum_service import ForumService
 
-    # Проверка на отсутствие тикетов совсем (ни открытых, ни закрытых)
-    has_closed_any = await TicketCRUD.count_user_tickets_by_statuses(db, db_user.id, [TicketStatus.CLOSED.value]) > 0
-    if not open_tickets and not has_closed_any:
+    is_ai_mode = SupportSettingsService.get_system_mode() == 'ai_tiket'
+    per_page = 10
+
+    if is_ai_mode:
+        total_open = await ForumService.count_user_tickets(db, db_user.id, statuses=['open'])
+        total_pages = max(1, (total_open + per_page - 1) // per_page)
+        current_page = max(1, min(current_page, total_pages))
+        offset = (current_page - 1) * per_page
+        
+        open_tickets = await ForumService.get_user_tickets(
+            db, db_user.id, statuses=['open'], limit=per_page, offset=offset
+        )
+        # Format for keyboard
+        from app.modules.ai_ticket.services.forum_service import ForumTicketMessage
+        open_data = []
+        for t in open_tickets:
+            # We don't have titles in ForumTicket, use first message or placeholder
+            msg_stmt = select(ForumTicketMessage).where(ForumTicketMessage.ticket_id == t.id).order_by(ForumTicketMessage.created_at).limit(1)
+            msg_res = await db.execute(msg_stmt)
+            first_msg = msg_res.scalars().first()
+            title = (first_msg.content[:30] + '...') if first_msg else f"Тикет #{t.id}"
+            open_data.append({
+                'id': t.id,
+                'title': title,
+                'status_emoji': '🆕' if t.ai_enabled else '👨‍💼'
+            })
+        
+        has_closed_any = await ForumService.count_user_tickets(db, db_user.id, statuses=['closed']) > 0
+    else:
+        # Standard logic
+        total_open = await TicketCRUD.count_user_tickets_by_statuses(
+            db, db_user.id, [TicketStatus.OPEN.value, TicketStatus.ANSWERED.value, TicketStatus.PENDING.value]
+        )
+        total_pages = max(1, (total_open + per_page - 1) // per_page)
+        current_page = max(1, min(current_page, total_pages))
+        offset = (current_page - 1) * per_page
+        open_tickets = await TicketCRUD.get_user_tickets_by_statuses(
+            db,
+            db_user.id,
+            [TicketStatus.OPEN.value, TicketStatus.ANSWERED.value, TicketStatus.PENDING.value],
+            limit=per_page,
+            offset=offset,
+        )
+        open_data = [{'id': t.id, 'title': t.title, 'status_emoji': t.status_emoji} for t in open_tickets]
+        has_closed_any = await TicketCRUD.count_user_tickets_by_statuses(db, db_user.id, [TicketStatus.CLOSED.value]) > 0
+    # --- End AI mode logic ---
+
+    if not open_data and not has_closed_any:
         await callback.message.edit_text(
             texts.t('NO_TICKETS', 'У вас пока нет тикетов.'),
             reply_markup=types.InlineKeyboardMarkup(
@@ -381,14 +424,13 @@ async def show_my_tickets(callback: types.CallbackQuery, db_user: User, db: Asyn
         await callback.answer()
         return
 
-    # Открытые с пагинацией (DB)
-    open_data = [{'id': t.id, 'title': t.title, 'status_emoji': t.status_emoji} for t in open_tickets]
     keyboard = get_my_tickets_keyboard(
         open_data,
         current_page=current_page,
         total_pages=total_pages,
         language=db_user.language,
         page_prefix='my_tickets_page_',
+        id_prefix='view_forum_ticket_' if is_ai_mode else 'view_ticket_',
     )
     # Добавим кнопку перехода к закрытым
     keyboard.inline_keyboard.insert(
@@ -399,7 +441,7 @@ async def show_my_tickets(callback: types.CallbackQuery, db_user: User, db: Asyn
             )
         ],
     )
-    # Всегда используем фото-рендер с логотипом (утилита сама сделает фоллбек при необходимости)
+    # Всегда используем фото-рендер с логотипом
     await edit_or_answer_photo(
         callback=callback,
         caption=texts.t('MY_TICKETS_TITLE', '📋 Ваши тикеты:'),
@@ -421,36 +463,86 @@ async def show_my_tickets_closed(callback: types.CallbackQuery, db_user: User, d
             current_page = 1
 
     per_page = 10
-    total_closed = await TicketCRUD.count_user_tickets_by_statuses(db, db_user.id, [TicketStatus.CLOSED.value])
-    if total_closed == 0:
-        await callback.message.edit_text(
-            texts.t('NO_CLOSED_TICKETS', 'Закрытых тикетов пока нет.'),
-            reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        types.InlineKeyboardButton(
-                            text=texts.t('BACK_TO_OPEN_TICKETS', '🔴 Открытые тикеты'), callback_data='my_tickets'
-                        )
-                    ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_support')],
-                ]
-            ),
+    
+    # --- DonMatteo-AI-Tiket logic ---
+    from app.services.support_settings_service import SupportSettingsService
+    from app.modules.ai_ticket.services.forum_service import ForumService
+
+    is_ai_mode = SupportSettingsService.get_system_mode() == 'ai_tiket'
+
+    if is_ai_mode:
+        total_closed = await ForumService.count_user_tickets(db, db_user.id, statuses=['closed'])
+        if total_closed == 0:
+            await callback.message.edit_text(
+                texts.t('NO_CLOSED_TICKETS', 'Закрытых тикетов пока нет.'),
+                reply_markup=types.InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            types.InlineKeyboardButton(
+                                text=texts.t('BACK_TO_OPEN_TICKETS', '🔴 Открытые тикеты'), callback_data='my_tickets'
+                            )
+                        ],
+                        [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_support')],
+                    ]
+                ),
+            )
+            await callback.answer()
+            return
+            
+        total_pages = max(1, (total_closed + per_page - 1) // per_page)
+        current_page = max(1, min(current_page, total_pages))
+        offset = (current_page - 1) * per_page
+        tickets = await ForumService.get_user_tickets(
+            db, db_user.id, statuses=['closed'], limit=per_page, offset=offset
         )
-        await callback.answer()
-        return
-    total_pages = max(1, (total_closed + per_page - 1) // per_page)
-    current_page = max(1, min(current_page, total_pages))
-    offset = (current_page - 1) * per_page
-    tickets = await TicketCRUD.get_user_tickets_by_statuses(
-        db, db_user.id, [TicketStatus.CLOSED.value], limit=per_page, offset=offset
-    )
-    data = [{'id': t.id, 'title': t.title, 'status_emoji': t.status_emoji} for t in tickets]
+        # Format for keyboard
+        from app.modules.ai_ticket.services.forum_service import ForumTicketMessage
+        data = []
+        for t in tickets:
+            msg_stmt = select(ForumTicketMessage).where(ForumTicketMessage.ticket_id == t.id).order_by(ForumTicketMessage.created_at).limit(1)
+            msg_res = await db.execute(msg_stmt)
+            first_msg = msg_res.scalars().first()
+            title = (first_msg.content[:30] + '...') if first_msg else f"Тикет #{t.id}"
+            data.append({
+                'id': t.id,
+                'title': title,
+                'status_emoji': '✅'
+            })
+    else:
+        # Standard logic
+        total_closed = await TicketCRUD.count_user_tickets_by_statuses(db, db_user.id, [TicketStatus.CLOSED.value])
+        if total_closed == 0:
+            await callback.message.edit_text(
+                texts.t('NO_CLOSED_TICKETS', 'Закрытых тикетов пока нет.'),
+                reply_markup=types.InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            types.InlineKeyboardButton(
+                                text=texts.t('BACK_TO_OPEN_TICKETS', '🔴 Открытые тикеты'), callback_data='my_tickets'
+                            )
+                        ],
+                        [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_support')],
+                    ]
+                ),
+            )
+            await callback.answer()
+            return
+
+        total_pages = max(1, (total_closed + per_page - 1) // per_page)
+        current_page = max(1, min(current_page, total_pages))
+        offset = (current_page - 1) * per_page
+        tickets = await TicketCRUD.get_user_tickets_by_statuses(
+            db, db_user.id, [TicketStatus.CLOSED.value], limit=per_page, offset=offset
+        )
+        data = [{'id': t.id, 'title': t.title, 'status_emoji': t.status_emoji} for t in tickets]
+    # --- End AI mode logic ---
     kb = get_my_tickets_keyboard(
         data,
         current_page=current_page,
         total_pages=total_pages,
         language=db_user.language,
         page_prefix='my_tickets_closed_page_',
+        id_prefix='view_forum_ticket_' if is_ai_mode else 'view_ticket_',
     )
     kb.inline_keyboard.insert(
         0,
@@ -1128,6 +1220,138 @@ async def notify_admins_about_ticket_reply(
         logger.error('Error notifying admins about ticket reply', error=e)
 
 
+async def view_forum_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Показать детали ForumTicket с пагинацией"""
+    data_str = callback.data
+    page = 1
+    ticket_id = None
+    
+    if data_str.startswith('forum_ticket_view_page_'):
+        # format: forum_ticket_view_page_{ticket_id}_{page}
+        try:
+            parts = data_str.split('_')
+            ticket_id = int(parts[4])
+            page = max(1, int(parts[5]))
+        except Exception:
+            pass
+    if ticket_id is None:
+        try:
+            ticket_id = int(data_str.replace('view_forum_ticket_', ''))
+        except ValueError:
+            return
+
+    from app.modules.ai_ticket.services.forum_service import ForumService
+    from app.database.models_ai_ticket import ForumTicket, ForumTicketMessage
+    
+    stmt = select(ForumTicket).where(ForumTicket.id == ticket_id)
+    result = await db.execute(stmt)
+    ticket = result.scalars().first()
+
+    if not ticket or ticket.user_id != db_user.id:
+        texts = get_texts(db_user.language)
+        await callback.answer(texts.t('TICKET_NOT_FOUND', 'Тикет не найден.'), show_alert=True)
+        return
+
+    texts = get_texts(db_user.language)
+
+    # Формируем текст тикета
+    status_text = texts.t('TICKET_STATUS_OPEN', 'Открыт') if ticket.status == 'open' else texts.t('TICKET_STATUS_CLOSED', 'Закрыт')
+    status_emoji = '🆕' if ticket.ai_enabled else '👨‍💼'
+    if ticket.status == 'closed':
+        status_emoji = '✅'
+
+    # Get first message for title
+    msg_stmt = select(ForumTicketMessage).where(ForumTicketMessage.ticket_id == ticket.id).order_by(ForumTicketMessage.created_at).limit(1)
+    msg_res = await db.execute(msg_stmt)
+    first_msg = msg_res.scalars().first()
+    title = (first_msg.content[:30] + '...') if first_msg else f"Тикет #{ticket.id}"
+
+    header = (
+        f'🎫 Тикет #{ticket.id} (AI)\n\n'
+        f'📝 Заголовок: {title}\n'
+        f'📊 Статус: {status_emoji} {status_text}\n'
+        f'📅 Создан: {format_local_datetime(ticket.created_at, "%d.%m.%Y %H:%M")}\n\n'
+    )
+    
+    # Get all messages
+    msg_stmt_all = select(ForumTicketMessage).where(ForumTicketMessage.ticket_id == ticket.id).order_by(ForumTicketMessage.created_at)
+    msg_res_all = await db.execute(msg_stmt_all)
+    messages = msg_res_all.scalars().all()
+
+    message_blocks: list[str] = []
+    if messages:
+        message_blocks.append(f'💬 Сообщения ({len(messages)}):\n\n')
+        for msg in messages:
+            role_map = {
+                'user': '👤 Вы',
+                'ai': '🤖 AI',
+                'manager': '🛠️ Поддержка',
+                'system': '⚙️ System'
+            }
+            sender = role_map.get(msg.role, msg.role)
+            block = f'{sender} ({format_local_datetime(msg.created_at, "%d.%m %H:%M")}):\n{msg.content}\n\n'
+            message_blocks.append(block)
+            
+    pages = _split_text_into_pages(header, message_blocks, max_len=3500)
+    total_pages = len(pages)
+    page = min(page, total_pages)
+
+    # Keyboard logic
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[])
+    
+    if ticket.status == 'open':
+        keyboard.inline_keyboard.append([
+            types.InlineKeyboardButton(text=texts.t('CLOSE_TICKET_BUTTON', '❌ Закрыть тикет'), callback_data=f'close_forum_ticket_{ticket.id}')
+        ])
+    
+    keyboard.inline_keyboard.append([
+        types.InlineKeyboardButton(text=texts.BACK, callback_data='my_tickets' if ticket.status == 'open' else 'my_tickets_closed')
+    ])
+
+    # Pagination row
+    if total_pages > 1:
+        nav_row = []
+        if page > 1:
+            nav_row.append(types.InlineKeyboardButton(text='⬅️', callback_data=f'forum_ticket_view_page_{ticket_id}_{page - 1}'))
+        nav_row.append(types.InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='noop'))
+        if page < total_pages:
+            nav_row.append(types.InlineKeyboardButton(text='➡️', callback_data=f'forum_ticket_view_page_{ticket_id}_{page + 1}'))
+        keyboard.inline_keyboard.insert(0, nav_row)
+
+    page_text = pages[page - 1]
+    try:
+        await callback.message.edit_text(page_text, reply_markup=keyboard)
+    except Exception:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer(page_text, reply_markup=keyboard)
+    await callback.answer()
+
+
+async def close_forum_ticket_handler(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Закрыть ForumTicket по запросу пользователя"""
+    ticket_id = int(callback.data.replace('close_forum_ticket_', ''))
+    
+    from app.modules.ai_ticket.services.forum_service import ForumService
+    from app.database.models_ai_ticket import ForumTicket
+    
+    stmt = select(ForumTicket).where(ForumTicket.id == ticket_id)
+    result = await db.execute(stmt)
+    ticket = result.scalars().first()
+
+    if not ticket or ticket.user_id != db_user.id:
+        return
+        
+    await ForumService.close_ticket(db, ticket_id, bot=callback.bot)
+    await db.commit()
+    
+    texts = get_texts(db_user.language)
+    await callback.answer(texts.t('TICKET_CLOSED_CONFIRM', 'Тикет успешно закрыт.'), show_alert=True)
+    await show_my_tickets(callback, db_user, db)
+
+
 def register_handlers(dp: Dispatcher):
     """Регистрация обработчиков тикетов"""
 
@@ -1136,18 +1360,19 @@ def register_handlers(dp: Dispatcher):
 
     register_client_handlers(dp)
 
-    # AI ticket message handler (FSM state from routing guard)
+    # --- DonMatteo-AI-Tiket ---
+    from aiogram.filters import StateFilter
+
     async def _ai_ticket_message_proxy(
         message: types.Message, state: FSMContext, db_user: User, db: AsyncSession
     ):
         from app.modules.ai_ticket.handlers.client import handle_ai_ticket_message
 
+        logger.info('ai_ticket_proxy.triggered', user_id=db_user.id, state=await state.get_state())
         await state.clear()
         await handle_ai_ticket_message(message, message.bot, db, db_user)
 
-    from aiogram.fsm.state import State as _State
-
-    dp.message.register(_ai_ticket_message_proxy, _State(state='ai_ticket_waiting_message'))
+    dp.message.register(_ai_ticket_message_proxy, StateFilter('ai_ticket_waiting_message'))
     # --- End AI Tiket ---
 
     # Создание тикета (теперь без приоритета)
@@ -1163,6 +1388,10 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_my_tickets_closed, F.data.startswith('my_tickets_closed_page_'))
 
     dp.callback_query.register(view_ticket, F.data.startswith('view_ticket_') | F.data.startswith('ticket_view_page_'))
+    
+    # Forum Ticket handlers
+    dp.callback_query.register(view_forum_ticket, F.data.startswith('view_forum_ticket_') | F.data.startswith('forum_ticket_view_page_'))
+    dp.callback_query.register(close_forum_ticket_handler, F.data.startswith('close_forum_ticket_'))
 
     # Вложения пользователя
     dp.callback_query.register(send_ticket_attachments, F.data.startswith('ticket_attachments_'))

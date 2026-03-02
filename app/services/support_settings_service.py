@@ -53,12 +53,12 @@ class SupportSettingsService:
     def get_system_mode(cls) -> str:
         cls._load()
         mode = (cls._data.get('system_mode') or settings.get_support_system_mode()).strip().lower()
-        return mode if mode in {'tickets', 'contact', 'both'} else 'both'
+        return mode if mode in {'tickets', 'contact', 'both', 'ai_tiket'} else 'both'
 
     @classmethod
     def set_system_mode(cls, mode: str) -> bool:
         mode_clean = (mode or '').strip().lower()
-        if mode_clean not in {'tickets', 'contact', 'both'}:
+        if mode_clean not in {'tickets', 'contact', 'both', 'ai_tiket'}:
             return False
         cls._load()
         cls._data['system_mode'] = mode_clean
@@ -82,7 +82,7 @@ class SupportSettingsService:
     # Contact vs tickets helpers
     @classmethod
     def is_tickets_enabled(cls) -> bool:
-        return cls.get_system_mode() in {'tickets', 'both'}
+        return cls.get_system_mode() in {'tickets', 'both', 'ai_tiket'}
 
     @classmethod
     def is_contact_enabled(cls) -> bool:

@@ -100,9 +100,9 @@ async def show_ai_providers(callback: types.CallbackQuery, db_user: User, db: As
 
 @admin_required
 @error_handler
-async def show_provider_detail(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def show_provider_detail(callback: types.CallbackQuery, db_user: User, db: AsyncSession, provider_name: str | None = None):
     """Detail view for a single provider: keys, model, priority, enable/disable."""
-    provider_name = callback.data.split(':')[1]
+    provider_name = provider_name or callback.data.split(':')[1]
     provider = await ai_manager.get_provider(db, provider_name)
     if not provider:
         await callback.answer('Провайдер не найден', show_alert=True)
@@ -208,8 +208,7 @@ async def toggle_provider(callback: types.CallbackQuery, db_user: User, db: Asyn
     if provider:
         await ai_manager.set_enabled(db, name, not provider.enabled)
     # Re-show detail
-    callback.data = f'aip_detail:{name}'
-    await show_provider_detail(callback, db_user, db)
+    await show_provider_detail(callback, db_user, db, provider_name=name)
 
 
 # ───────────────── Add Key ─────────────────
@@ -272,8 +271,7 @@ async def remove_last_key(callback: types.CallbackQuery, db_user: User, db: Asyn
         if keys:
             await ai_manager.remove_key(db, name, len(keys) - 1)
 
-    callback.data = f'aip_detail:{name}'
-    await show_provider_detail(callback, db_user, db)
+    await show_provider_detail(callback, db_user, db, provider_name=name)
 
 
 # ───────────────── Test Connection ─────────────────
@@ -375,8 +373,7 @@ async def set_model(callback: types.CallbackQuery, db_user: User, db: AsyncSessi
     await ai_manager.set_model(db, name, model)
     await callback.answer(f'✅ Модель: {model}', show_alert=True)
 
-    callback.data = f'aip_detail:{name}'
-    await show_provider_detail(callback, db_user, db)
+    await show_provider_detail(callback, db_user, db, provider_name=name)
 
 
 # ───────────────── Priority ─────────────────
@@ -394,8 +391,7 @@ async def change_priority(callback: types.CallbackQuery, db_user: User, db: Asyn
         new_priority = max(0, current - 1) if direction == 'up' else current + 1
         await ai_manager.set_priority(db, name, new_priority)
 
-    callback.data = f'aip_detail:{name}'
-    await show_provider_detail(callback, db_user, db)
+    await show_provider_detail(callback, db_user, db, provider_name=name)
 
 
 # ───────────────── System Prompt ─────────────────
@@ -494,7 +490,6 @@ async def reset_prompt(callback: types.CallbackQuery, db_user: User, db: AsyncSe
     await prompt_service.reset_to_stock(db)
     await callback.answer('✅ Промпт сброшен на стандартный', show_alert=True)
 
-    callback.data = 'aip_prompt'
     await show_prompt_settings(callback, db_user, db)
 
 

@@ -48,11 +48,14 @@ class ForumService:
             return ticket
 
         # Create a new Forum topic in the manager group
-        forum_group_id = settings.SUPPORT_AI_FORUM_ID
+        from app.services.system_settings_service import BotConfigurationService
+        forum_group_id = BotConfigurationService.get_current_value('SUPPORT_AI_FORUM_ID')
+        
         if not forum_group_id:
-            raise ValueError('SUPPORT_AI_FORUM_ID is not configured')
+            raise ValueError('SUPPORT_AI_FORUM_ID is not configured in settings')
 
         topic_name = f'🎫 {user_display_name} (ID: {user_id})'
+        logger.info('forum_service.creating_topic', chat_id=forum_group_id, topic_name=topic_name, user_id=user_id)
         try:
             topic = await bot.create_forum_topic(
                 chat_id=int(forum_group_id),
@@ -136,15 +139,39 @@ class ForumService:
         await db.execute(stmt)
 
     @staticmethod
-    async def close_ticket(db: AsyncSession, ticket_id: int) -> None:
-        """Close a ticket."""
-        stmt = (
+    async def close_ticket(db: AsyncSession, ticket_id: int, bot: Bot | None = None) -> None:
+        """Close a ticket and its associated Forum topic."""
+        # Fetch ticket to get topic_id
+        stmt_select = select(ForumTicket).where(ForumTicket.id == ticket_id)
+        result = await db.execute(stmt_select)
+        ticket = result.scalars().first()
+        
+        if not ticket:
+            return
+
+        # Update DB status
+        stmt_update = (
             update(ForumTicket)
             .where(ForumTicket.id == ticket_id)
             .values(status='closed', closed_at=datetime.now(UTC))
         )
-        await db.execute(stmt)
-        logger.info('forum_service.ticket_closed', ticket_id=ticket_id)
+        await db.execute(stmt_update)
+        
+        # Close Telegram Forum topic if bot is available
+        if bot and ticket.telegram_topic_id:
+            from app.services.system_settings_service import BotConfigurationService
+            forum_group_id = BotConfigurationService.get_current_value('SUPPORT_AI_FORUM_ID')
+            if forum_group_id:
+                try:
+                    await bot.close_forum_topic(
+                        chat_id=int(forum_group_id),
+                        message_thread_id=ticket.telegram_topic_id
+                    )
+                    logger.info('forum_service.topic_closed', chat_id=forum_group_id, topic_id=ticket.telegram_topic_id)
+                except Exception as e:
+                    logger.error('forum_service.close_topic_failed', error=str(e), ticket_id=ticket_id)
+
+        logger.info('forum_service.ticket_closed_db', ticket_id=ticket_id)
 
     @staticmethod
     async def get_ticket_by_topic_id(db: AsyncSession, topic_id: int) -> ForumTicket | None:
@@ -172,3 +199,26 @@ class ForumService:
         for article in articles:
             parts.append(f'### {article.title}\n{article.content}')
         return '\n\n'.join(parts)
+
+    @staticmethod
+    async def count_user_tickets(db: AsyncSession, user_id: int, statuses: list[str] | None = None) -> int:
+        """Count ForumTickets for a user."""
+        from sqlalchemy import func
+        stmt = select(func.count()).select_from(ForumTicket).where(ForumTicket.user_id == user_id)
+        if statuses:
+            stmt = stmt.where(ForumTicket.status.in_(statuses))
+        result = await db.execute(stmt)
+        return int(result.scalar() or 0)
+
+    @staticmethod
+    async def get_user_tickets(
+        db: AsyncSession, user_id: int, statuses: list[str] | None = None, limit: int = 10, offset: int = 0
+    ) -> list[ForumTicket]:
+        """Fetch ForumTickets for a user with pagination."""
+        from sqlalchemy import desc
+        stmt = select(ForumTicket).where(ForumTicket.user_id == user_id)
+        if statuses:
+            stmt = stmt.where(ForumTicket.status.in_(statuses))
+        stmt = stmt.order_by(desc(ForumTicket.created_at)).limit(limit).offset(offset)
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
