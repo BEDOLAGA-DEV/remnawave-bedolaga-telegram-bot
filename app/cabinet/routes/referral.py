@@ -9,7 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.database.models import AdvertisingCampaign, ReferralEarning, User
+from app.database.models import (
+    AdvertisingCampaign,
+    ReferralEarning,
+    Subscription,
+    SubscriptionStatus,
+    User,
+    WithdrawalRequest,
+    WithdrawalRequestStatus,
+)
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 from ..schemas.referral import (
@@ -38,12 +46,15 @@ async def get_referral_info(
     total_result = await db.execute(total_query)
     total_referrals = total_result.scalar() or 0
 
-    # Get active referrals (with subscription)
+    # Get active referrals (with active subscription right now)
     active_query = (
-        select(func.count())
-        .select_from(User)
-        .where(User.referred_by_id == user.id)
-        .where(User.has_had_paid_subscription == True)
+        select(func.count(func.distinct(User.id)))
+        .join(Subscription, User.id == Subscription.user_id)
+        .where(
+            User.referred_by_id == user.id,
+            Subscription.status == SubscriptionStatus.ACTIVE.value,
+            Subscription.end_date > func.now(),
+        )
     )
     active_result = await db.execute(active_query)
     active_referrals = active_result.scalar() or 0
@@ -60,6 +71,26 @@ async def get_referral_info(
     if commission_percent is None:
         commission_percent = settings.REFERRAL_COMMISSION_PERCENT
 
+    # Get withdrawn amount (approved + completed withdrawal requests)
+    withdrawn_query = select(func.coalesce(func.sum(WithdrawalRequest.amount_kopeks), 0)).where(
+        WithdrawalRequest.user_id == user.id,
+        WithdrawalRequest.status.in_([WithdrawalRequestStatus.APPROVED.value, WithdrawalRequestStatus.COMPLETED.value]),
+    )
+    withdrawn_result = await db.execute(withdrawn_query)
+    withdrawn = withdrawn_result.scalar() or 0
+
+    # Get pending withdrawal amount
+    pending_query = select(func.coalesce(func.sum(WithdrawalRequest.amount_kopeks), 0)).where(
+        WithdrawalRequest.user_id == user.id,
+        WithdrawalRequest.status == WithdrawalRequestStatus.PENDING.value,
+    )
+    pending_result = await db.execute(pending_query)
+    pending = pending_result.scalar() or 0
+
+    # Доступный баланс: мин(кошелёк, заработано - выведено - в ожидании)
+    referral_entitlement = max(0, total_earnings - withdrawn - pending)
+    available_balance = min(user.balance_kopeks, referral_entitlement)
+
     # Build referral link
     bot_username = settings.get_bot_username() or 'bot'
     referral_link = f'https://t.me/{bot_username}?start={user.referral_code}'
@@ -72,6 +103,9 @@ async def get_referral_info(
         total_earnings_kopeks=total_earnings,
         total_earnings_rubles=total_earnings / 100,
         commission_percent=commission_percent,
+        available_balance_kopeks=available_balance,
+        available_balance_rubles=available_balance / 100,
+        withdrawn_kopeks=withdrawn,
     )
 
 

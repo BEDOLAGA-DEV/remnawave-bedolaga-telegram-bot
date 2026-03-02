@@ -398,6 +398,12 @@ async def renew_subscription(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Renew subscription (pay from balance)."""
+    if getattr(user, 'restriction_subscription', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Subscription renewal is restricted for this account',
+        )
+
     await db.refresh(user, ['subscription'])
 
     if not user.subscription:
@@ -658,6 +664,12 @@ async def purchase_traffic(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Purchase additional traffic."""
+    if getattr(user, 'restriction_subscription', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Subscription purchases are restricted for this account',
+        )
+
     from app.database.crud.subscription import add_subscription_traffic
     from app.database.crud.tariff import get_tariff_by_id
     from app.utils.pricing_utils import calculate_prorated_price
@@ -924,6 +936,12 @@ async def purchase_devices_legacy(
 
     DEPRECATED: Use /devices/purchase instead for full tariff and discount support.
     """
+    if getattr(user, 'restriction_subscription', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Subscription purchases are restricted for this account',
+        )
+
     await db.refresh(user, ['subscription'])
 
     if not user.subscription:
@@ -1634,6 +1652,12 @@ async def submit_purchase(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """Submit subscription purchase (deduct from balance, classic mode only)."""
+    if getattr(user, 'restriction_subscription', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Subscription purchases are restricted for this account',
+        )
+
     # This endpoint is for classic mode only, tariffs mode uses /purchase-tariff
     if settings.is_tariffs_mode():
         raise HTTPException(
@@ -1771,6 +1795,12 @@ async def purchase_tariff(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """Purchase a tariff (for tariffs mode)."""
+    if getattr(user, 'restriction_subscription', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Subscription purchases are restricted for this account',
+        )
+
     try:
         # Check tariffs mode
         if not settings.is_tariffs_mode():
@@ -2172,6 +2202,12 @@ async def purchase_devices(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Purchase additional device slots for subscription."""
+    if getattr(user, 'restriction_subscription', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Subscription purchases are restricted for this account',
+        )
+
     try:
         await db.refresh(user, ['subscription'])
         subscription = user.subscription
@@ -3244,6 +3280,25 @@ async def get_app_config(
         subscription_url = user.subscription.subscription_url
         subscription_crypto_link = user.subscription.subscription_crypto_link
 
+    # Generate crypto link on the fly if subscription_url exists but crypto link is missing.
+    # This covers synced users where enrich_happ_links was not called.
+    if subscription_url and not subscription_crypto_link:
+        try:
+            service = RemnaWaveService()
+            async with service.get_api_client() as api:
+                encrypted = await api.encrypt_happ_crypto_link(subscription_url)
+                if encrypted:
+                    subscription_crypto_link = encrypted
+                    if user.subscription:
+                        user.subscription.subscription_crypto_link = encrypted
+                        await db.commit()
+                        logger.info(
+                            'Generated and saved crypto link for user',
+                            user_id=user.id,
+                        )
+        except Exception as e:
+            logger.debug('Could not generate crypto link', error=e)
+
     config = await _load_app_config_async()
 
     if not config:
@@ -3305,11 +3360,15 @@ async def get_app_config(
                     if btn_type in ('subscriptionLink', 'copyButton'):
                         url = btn.get('url', '') or btn.get('link', '')
                         if url and '{{' in url:
-                            btn['resolvedUrl'] = _resolve_button_url(
+                            resolved = _resolve_button_url(
                                 url,
                                 subscription_url,
                                 subscription_crypto_link,
                             )
+                            # Only set resolvedUrl if ALL templates were resolved;
+                            # otherwise let the frontend fall through to deepLink/subscriptionUrl
+                            if '{{' not in resolved:
+                                btn['resolvedUrl'] = resolved
 
             enriched_apps.append(app)
 
@@ -4110,6 +4169,9 @@ async def switch_tariff(
     user.subscription.purchased_traffic_gb = 0
     user.subscription.traffic_reset_at = None
 
+    if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+        user.subscription.traffic_used_gb = 0.0
+
     if switching_to_daily:
         # Switching TO daily - reset end_date to 1 day, set last_daily_charge_at
         user.subscription.end_date = datetime.now(UTC) + timedelta(days=1)
@@ -4122,13 +4184,24 @@ async def switch_tariff(
     user.subscription.updated_at = datetime.now(UTC)
     await db.commit()
 
-    # Sync with RemnaWave
+    # Sync with RemnaWave (optionally reset traffic based on admin setting)
+    should_reset_traffic = settings.RESET_TRAFFIC_ON_TARIFF_SWITCH
     try:
         subscription_service = SubscriptionService()
         if getattr(user, 'remnawave_uuid', None):
-            await subscription_service.update_remnawave_user(db, user.subscription)
+            await subscription_service.update_remnawave_user(
+                db,
+                user.subscription,
+                reset_traffic=should_reset_traffic,
+                reset_reason='смена тарифа',
+            )
         else:
-            await subscription_service.create_remnawave_user(db, user.subscription)
+            await subscription_service.create_remnawave_user(
+                db,
+                user.subscription,
+                reset_traffic=should_reset_traffic,
+                reset_reason='смена тарифа',
+            )
     except Exception as e:
         logger.error('Failed to sync tariff switch with RemnaWave', error=e)
 

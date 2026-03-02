@@ -26,6 +26,7 @@ from app.database.crud.user import (
 )
 from app.database.models import (
     PromoGroup,
+    ReferralEarning,
     Subscription,
     SubscriptionServer,
     SubscriptionStatus,
@@ -205,10 +206,17 @@ async def _build_subscription_info_async(db: AsyncSession, subscription: Subscri
     return info
 
 
-async def _sync_subscription_to_panel(db: AsyncSession, user: User, subscription: Subscription) -> dict:
+async def _sync_subscription_to_panel(
+    db: AsyncSession,
+    user: User,
+    subscription: Subscription,
+    reset_traffic: bool = False,
+    reset_traffic_reason: str | None = None,
+) -> dict:
     """
     Sync user subscription to Remnawave panel.
     Creates user if not exists, updates if exists.
+    Optionally resets traffic after sync.
     Returns dict with changes/errors.
     """
     try:
@@ -333,6 +341,16 @@ async def _sync_subscription_to_panel(db: AsyncSession, user: User, subscription
                 changes['action'] = 'created'
                 changes['panel_uuid'] = new_panel_user.uuid
                 logger.info('Created user in Remnawave panel', user_id=user.id, uuid=new_panel_user.uuid)
+
+            # Reset traffic on panel if requested
+            if reset_traffic and user.remnawave_uuid:
+                try:
+                    await api.reset_user_traffic(user.remnawave_uuid)
+                    changes['traffic_reset'] = True
+                    reason_text = f' ({reset_traffic_reason})' if reset_traffic_reason else ''
+                    logger.info('Reset RemnaWave traffic for user', user_id=user.id, reason=reason_text)
+                except Exception as reset_exc:
+                    logger.warning('Failed to reset RemnaWave traffic', user_id=user.id, error=reset_exc)
 
             user.last_remnawave_sync = datetime.now(UTC)
             await db.commit()
@@ -546,11 +564,9 @@ async def get_user_detail(
     referrals = await get_referrals(db, user.id)
     referrals_count = len(referrals)
 
-    # Calculate total referral earnings
-    referral_earnings_q = select(func.sum(Transaction.amount_kopeks)).where(
-        Transaction.user_id == user.id,
-        Transaction.type == TransactionType.REFERRAL_REWARD.value,
-        Transaction.is_completed == True,
+    # Calculate total referral earnings (canonical source: ReferralEarning)
+    referral_earnings_q = select(func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0)).where(
+        ReferralEarning.user_id == user.id
     )
     referral_earnings = (await db.execute(referral_earnings_q)).scalar() or 0
 
@@ -625,7 +641,7 @@ async def get_user_detail(
         referral=referral_info,
         total_spent_kopeks=user_stats.get('total_spent', 0),
         purchase_count=user_stats.get('purchase_count', 0),
-        used_promocodes=user.used_promocodes,
+        used_promocodes=user.used_promocodes or 0,
         has_had_paid_subscription=user.has_had_paid_subscription,
         lifetime_used_traffic_bytes=user.lifetime_used_traffic_bytes or 0,
         campaign_name=campaign_name,
@@ -1056,11 +1072,35 @@ async def update_user_subscription(
         # Set squads from tariff
         if tariff.allowed_squads:
             subscription.connected_squads = tariff.allowed_squads
+
+        # Сбрасываем докупленный трафик при смене тарифа
+        from sqlalchemy import delete as sql_delete
+
+        from app.database.models import TrafficPurchase
+
+        await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
+        subscription.purchased_traffic_gb = 0
+        subscription.traffic_reset_at = None
+
+        from app.config import settings
+
+        if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+            subscription.traffic_used_gb = 0.0
+
         await db.commit()
         await db.refresh(subscription)
 
-        # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription)
+        # Синхронизируем с RemnaWave (discovery/create + сброс трафика по админ-настройке)
+        try:
+            await _sync_subscription_to_panel(
+                db,
+                user,
+                subscription,
+                reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+                reset_traffic_reason='смена тарифа (cabinet admin)',
+            )
+        except Exception as e:
+            logger.error('Failed to sync tariff switch with RemnaWave', error=e)
 
         logger.info('Admin changed tariff for user to', admin_id=admin.id, user_id=user_id, tariff_name=tariff.name)
 

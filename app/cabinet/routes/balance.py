@@ -314,6 +314,12 @@ async def create_topup(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Create payment for balance top-up."""
+    if getattr(user, 'restriction_topup', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Balance top-up is restricted for this account',
+        )
+
     # Validate payment method
     methods = await get_payment_methods(user=user, db=db)
     method = next((m for m in methods if m.id == request.payment_method), None)

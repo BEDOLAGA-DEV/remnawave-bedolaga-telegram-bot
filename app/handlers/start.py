@@ -394,8 +394,16 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             if campaign.partner_user_id:
                 await state.update_data(referrer_id=campaign.partner_user_id)
                 logger.info(
-                    '👤 Кампания привязана к партнёру',
+                    '👤 Кампания привязана к партнёру, реферер будет установлен',
+                    campaign_id=campaign.id,
+                    campaign_name=campaign.name,
                     partner_user_id=campaign.partner_user_id,
+                )
+            else:
+                logger.debug(
+                    'Кампания без партнёра, реферер не устанавливается',
+                    campaign_id=campaign.id,
+                    campaign_name=campaign.name,
                 )
         else:
             referral_code = start_parameter

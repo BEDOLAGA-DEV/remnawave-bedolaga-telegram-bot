@@ -25,6 +25,7 @@ class PartnerApplicationService:
         telegram_channel: str | None = None,
         description: str | None = None,
         expected_monthly_referrals: int | None = None,
+        desired_commission_percent: int | None = None,
     ) -> tuple[PartnerApplication | None, str]:
         """
         Подаёт заявку на партнёрский статус.
@@ -47,6 +48,7 @@ class PartnerApplicationService:
             telegram_channel=telegram_channel,
             description=description,
             expected_monthly_referrals=expected_monthly_referrals,
+            desired_commission_percent=desired_commission_percent,
         )
 
         user.partner_status = PartnerStatus.PENDING.value

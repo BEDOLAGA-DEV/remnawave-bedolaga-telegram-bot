@@ -11,9 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
 from app.services.cloudpayments_service import CloudPaymentsAPIError
-from app.services.subscription_auto_purchase_service import (
-    auto_purchase_saved_cart_after_topup,
-)
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
 
@@ -258,9 +255,11 @@ class CloudPaymentsPaymentMixin:
         except Exception as error:
             logger.exception('Ошибка отправки уведомления CloudPayments', error=error)
 
-        # Auto-purchase if enabled
+        # Автопокупка из сохранённой корзины и уведомление о корзине
         try:
-            await auto_purchase_saved_cart_after_topup(db, user, bot=getattr(self, 'bot', None))
+            from app.services.payment.common import send_cart_notification_after_topup
+
+            await send_cart_notification_after_topup(user, amount_kopeks, db, getattr(self, 'bot', None))
         except Exception as error:
             logger.exception('Ошибка автопокупки после CloudPayments', error=error)
 

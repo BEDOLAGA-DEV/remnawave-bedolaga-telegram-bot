@@ -1688,6 +1688,8 @@ class AdminNotificationService:
                 message_lines.append(f'📝 {html.escape(desc)}')
             if application_data.get('expected_monthly_referrals'):
                 message_lines.append(f'👥 Ожидаемых рефералов: {application_data["expected_monthly_referrals"]}/мес')
+            if application_data.get('desired_commission_percent'):
+                message_lines.append(f'💰 Желаемая комиссия: {application_data["desired_commission_percent"]}%')
 
             message_lines.extend(
                 [

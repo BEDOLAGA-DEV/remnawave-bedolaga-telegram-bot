@@ -5110,10 +5110,11 @@ async def _change_subscription_type(db: AsyncSession, user_id: int, new_type: st
         old_type = 'триальной' if subscription.is_trial else 'платной'
         new_type_text = 'триальной' if new_is_trial else 'платной'
 
+        was_trial = subscription.is_trial
         subscription.is_trial = new_is_trial
         subscription.updated_at = datetime.now(UTC)
 
-        if not new_is_trial and subscription.is_trial:
+        if not new_is_trial and was_trial:
             user = await get_user_by_id(db, user_id)
             if user:
                 user.has_had_paid_subscription = True
@@ -5326,11 +5327,20 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         subscription.purchased_traffic_gb = 0
         subscription.traffic_reset_at = None
 
+        # Сброс использованного трафика по админ-настройке
+        if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+            subscription.traffic_used_gb = 0.0
+
         await db.commit()
 
-        # Синхронизируем с RemnaWave
+        # Синхронизируем с RemnaWave (сброс трафика по админ-настройке)
         subscription_service = SubscriptionService()
-        await subscription_service.update_remnawave_user(db, subscription)
+        await subscription_service.update_remnawave_user(
+            db,
+            subscription,
+            reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+            reset_reason='смена тарифа (админ)',
+        )
 
         logger.info(
             'Админ изменил тариф пользователя',

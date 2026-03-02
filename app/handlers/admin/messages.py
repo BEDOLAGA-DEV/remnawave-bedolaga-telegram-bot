@@ -613,7 +613,9 @@ async def show_messages_history(callback: types.CallbackQuery, db_user: User, db
             )
 
             message_preview = (
-                broadcast.message_text[:100] + '...' if len(broadcast.message_text) > 100 else broadcast.message_text
+                broadcast.message_text[:100] + '...'
+                if broadcast.message_text and len(broadcast.message_text) > 100
+                else (broadcast.message_text or '📊 Опрос')
             )
 
             import html

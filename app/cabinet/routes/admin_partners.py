@@ -190,6 +190,7 @@ async def list_applications(
                 telegram_channel=app.telegram_channel,
                 description=app.description,
                 expected_monthly_referrals=app.expected_monthly_referrals,
+                desired_commission_percent=app.desired_commission_percent,
                 status=app.status,
                 admin_comment=app.admin_comment,
                 approved_commission_percent=app.approved_commission_percent,
@@ -417,17 +418,24 @@ async def get_partner_detail(
 
     stats = await PartnerStatsService.get_referrer_detailed_stats(db, user_id)
 
-    # Get assigned campaigns
+    # Get assigned campaigns with per-campaign stats
     campaigns_result = await db.execute(
         select(AdvertisingCampaign).where(AdvertisingCampaign.partner_user_id == user_id)
     )
     campaigns = campaigns_result.scalars().all()
+
+    campaign_ids = [c.id for c in campaigns]
+    per_campaign_stats = await PartnerStatsService.get_per_campaign_stats(db, user_id, campaign_ids)
+
     campaign_list = [
         CampaignSummary(
             id=c.id,
             name=c.name,
             start_parameter=c.start_parameter,
             is_active=c.is_active,
+            registrations_count=per_campaign_stats.get(c.id, {}).get('registrations_count', 0),
+            referrals_count=per_campaign_stats.get(c.id, {}).get('referrals_count', 0),
+            earnings_kopeks=per_campaign_stats.get(c.id, {}).get('earnings_kopeks', 0),
         )
         for c in campaigns
     ]
@@ -551,6 +559,12 @@ async def assign_campaign(
         )
     await db.commit()
 
+    logger.info(
+        'Кампания привязана к партнёру',
+        campaign_id=campaign_id,
+        partner_user_id=user_id,
+        admin_id=admin.id,
+    )
     return {'success': True}
 
 
@@ -562,21 +576,32 @@ async def unassign_campaign(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Unassign a campaign from a partner."""
-    campaign = await db.get(AdvertisingCampaign, campaign_id)
-    if not campaign:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail='Кампания не найдена',
+    # Atomic check-and-unset to prevent race conditions
+    result = await db.execute(
+        update(AdvertisingCampaign)
+        .where(
+            AdvertisingCampaign.id == campaign_id,
+            AdvertisingCampaign.partner_user_id == user_id,
         )
-
-    if campaign.partner_user_id != user_id:
+        .values(partner_user_id=None, updated_at=datetime.now(UTC))
+    )
+    if result.rowcount == 0:
+        campaign = await db.get(AdvertisingCampaign, campaign_id)
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='Кампания не найдена',
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Кампания не привязана к этому партнёру',
         )
-
-    campaign.partner_user_id = None
-    campaign.updated_at = datetime.now(UTC)
     await db.commit()
 
+    logger.info(
+        'Кампания откреплена от партнёра',
+        campaign_id=campaign_id,
+        partner_user_id=user_id,
+        admin_id=admin.id,
+    )
     return {'success': True}

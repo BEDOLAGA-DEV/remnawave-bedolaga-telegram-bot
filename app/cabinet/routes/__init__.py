@@ -19,6 +19,7 @@ from .admin_promo_offers import router as admin_promo_offers_router
 from .admin_promocodes import promo_groups_router as admin_promo_groups_router, router as admin_promocodes_router
 from .admin_remnawave import router as admin_remnawave_router
 from .admin_roles import router as admin_roles_router
+from .admin_sales_stats import router as admin_sales_stats_router
 from .admin_servers import router as admin_servers_router
 from .admin_settings import router as admin_settings_router
 from .admin_stats import router as admin_stats_router
@@ -87,6 +88,7 @@ router.include_router(admin_wheel_router)
 router.include_router(admin_tariffs_router)
 router.include_router(admin_servers_router)
 router.include_router(admin_stats_router)
+router.include_router(admin_sales_stats_router)
 router.include_router(admin_ban_system_router)
 router.include_router(admin_broadcasts_router)
 router.include_router(admin_promocodes_router)

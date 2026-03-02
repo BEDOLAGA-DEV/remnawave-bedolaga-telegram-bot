@@ -10,14 +10,30 @@ from sqlalchemy import and_, case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
+    AdvertisingCampaignRegistration,
     ReferralEarning,
     Subscription,
     SubscriptionStatus,
+    Transaction,
+    TransactionType,
     User,
 )
 
 
 logger = structlog.get_logger(__name__)
+
+# Constants for campaign detailed stats
+DAILY_STATS_DAYS = 30
+TOP_REFERRALS_LIMIT = 5
+PERIOD_COMPARISON_DAYS = 7
+
+
+def _calc_change(current_val: int, previous_val: int) -> dict[str, Any]:
+    """Calculate period-over-period change metrics."""
+    diff = current_val - previous_val
+    pct = round((diff / previous_val * 100), 2) if previous_val > 0 else (100.0 if current_val > 0 else 0.0)
+    trend = 'up' if diff > 0 else 'down' if diff < 0 else 'stable'
+    return {'absolute': diff, 'percent': pct, 'trend': trend}
 
 
 class PartnerStatsService:
@@ -579,6 +595,613 @@ class PartnerStatsService:
                 )
 
         return result
+
+    @classmethod
+    async def get_per_campaign_stats(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        campaign_ids: list[int],
+    ) -> dict[int, dict[str, int]]:
+        """Получить статистику по каждой кампании партнёра.
+
+        Returns:
+            dict keyed by campaign_id with registrations_count, referrals_count, earnings_kopeks.
+        """
+        if not campaign_ids:
+            return {}
+
+        # Registrations per campaign (only users referred by this partner)
+        reg_result = await db.execute(
+            select(
+                AdvertisingCampaignRegistration.campaign_id,
+                func.count(AdvertisingCampaignRegistration.id).label('count'),
+            )
+            .join(User, User.id == AdvertisingCampaignRegistration.user_id)
+            .where(
+                and_(
+                    AdvertisingCampaignRegistration.campaign_id.in_(campaign_ids),
+                    User.referred_by_id == user_id,
+                )
+            )
+            .group_by(AdvertisingCampaignRegistration.campaign_id)
+        )
+        registrations_map = {row.campaign_id: int(row.count) for row in reg_result.all()}
+
+        # Referral earnings per campaign (only for this partner)
+        earnings_result = await db.execute(
+            select(
+                ReferralEarning.campaign_id,
+                func.count(func.distinct(ReferralEarning.referral_id)).label('referrals'),
+                func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0).label('earnings'),
+            )
+            .where(
+                and_(
+                    ReferralEarning.user_id == user_id,
+                    ReferralEarning.campaign_id.in_(campaign_ids),
+                )
+            )
+            .group_by(ReferralEarning.campaign_id)
+        )
+        earnings_map = {
+            row.campaign_id: {'referrals': int(row.referrals), 'earnings': int(row.earnings)}
+            for row in earnings_result.all()
+        }
+
+        result: dict[int, dict[str, int]] = {}
+        for cid in campaign_ids:
+            earning_data = earnings_map.get(cid, {'referrals': 0, 'earnings': 0})
+            result[cid] = {
+                'registrations_count': registrations_map.get(cid, 0),
+                'referrals_count': earning_data['referrals'],
+                'earnings_kopeks': earning_data['earnings'],
+            }
+
+        return result
+
+    @classmethod
+    async def get_campaign_detailed_stats(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        campaign_id: int,
+    ) -> dict[str, Any]:
+        """Detailed stats for a single campaign owned by the partner."""
+        now = datetime.now(UTC)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_ago = now - timedelta(days=PERIOD_COMPARISON_DAYS)
+        month_ago = now - timedelta(days=DAILY_STATS_DAYS)
+
+        # --- Summary: registrations, referrals, earnings ---
+        basic = await cls.get_per_campaign_stats(db, user_id, [campaign_id])
+        summary = basic.get(campaign_id, {'registrations_count': 0, 'referrals_count': 0, 'earnings_kopeks': 0})
+
+        # --- Period earnings (today / week / month) ---
+        period_earnings_result = await db.execute(
+            select(
+                func.coalesce(
+                    func.sum(case((ReferralEarning.created_at >= today_start, ReferralEarning.amount_kopeks), else_=0)),
+                    0,
+                ).label('today'),
+                func.coalesce(
+                    func.sum(case((ReferralEarning.created_at >= week_ago, ReferralEarning.amount_kopeks), else_=0)),
+                    0,
+                ).label('week'),
+                func.coalesce(
+                    func.sum(case((ReferralEarning.created_at >= month_ago, ReferralEarning.amount_kopeks), else_=0)),
+                    0,
+                ).label('month'),
+            ).where(
+                and_(
+                    ReferralEarning.user_id == user_id,
+                    ReferralEarning.campaign_id == campaign_id,
+                )
+            )
+        )
+        pe_row = period_earnings_result.one()
+
+        # --- Daily stats (DAILY_STATS_DAYS days) ---
+        start_date = now - timedelta(days=DAILY_STATS_DAYS)
+
+        referrals_by_day = await db.execute(
+            select(
+                func.date(User.created_at).label('date'),
+                func.count(User.id).label('count'),
+            )
+            .join(AdvertisingCampaignRegistration, AdvertisingCampaignRegistration.user_id == User.id)
+            .where(
+                and_(
+                    User.referred_by_id == user_id,
+                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                    User.created_at >= start_date,
+                )
+            )
+            .group_by(func.date(User.created_at))
+        )
+        referrals_dict = {str(row.date): int(row.count) for row in referrals_by_day.all()}
+
+        earnings_by_day = await db.execute(
+            select(
+                func.date(ReferralEarning.created_at).label('date'),
+                func.sum(ReferralEarning.amount_kopeks).label('earnings'),
+            )
+            .where(
+                and_(
+                    ReferralEarning.user_id == user_id,
+                    ReferralEarning.campaign_id == campaign_id,
+                    ReferralEarning.created_at >= start_date,
+                )
+            )
+            .group_by(func.date(ReferralEarning.created_at))
+        )
+        earnings_dict = {str(row.date): int(row.earnings or 0) for row in earnings_by_day.all()}
+
+        daily_stats = []
+        for i in range(DAILY_STATS_DAYS):
+            date = (start_date + timedelta(days=i)).date()
+            date_str = str(date)
+            daily_stats.append(
+                {
+                    'date': date_str,
+                    'referrals_count': referrals_dict.get(date_str, 0),
+                    'earnings_kopeks': earnings_dict.get(date_str, 0),
+                }
+            )
+
+        # --- Period comparison (this week vs last week) ---
+        previous_start = week_ago - timedelta(days=PERIOD_COMPARISON_DAYS)
+
+        current_ref_result = await db.execute(
+            select(func.count(User.id))
+            .join(AdvertisingCampaignRegistration, AdvertisingCampaignRegistration.user_id == User.id)
+            .where(
+                and_(
+                    User.referred_by_id == user_id,
+                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                    User.created_at >= week_ago,
+                )
+            )
+        )
+        current_referrals = current_ref_result.scalar() or 0
+
+        previous_ref_result = await db.execute(
+            select(func.count(User.id))
+            .join(AdvertisingCampaignRegistration, AdvertisingCampaignRegistration.user_id == User.id)
+            .where(
+                and_(
+                    User.referred_by_id == user_id,
+                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                    User.created_at >= previous_start,
+                    User.created_at < week_ago,
+                )
+            )
+        )
+        previous_referrals = previous_ref_result.scalar() or 0
+
+        current_earn = await db.execute(
+            select(func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0)).where(
+                and_(
+                    ReferralEarning.user_id == user_id,
+                    ReferralEarning.campaign_id == campaign_id,
+                    ReferralEarning.created_at >= week_ago,
+                )
+            )
+        )
+        current_earnings = int(current_earn.scalar() or 0)
+
+        previous_earn = await db.execute(
+            select(func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0)).where(
+                and_(
+                    ReferralEarning.user_id == user_id,
+                    ReferralEarning.campaign_id == campaign_id,
+                    ReferralEarning.created_at >= previous_start,
+                    ReferralEarning.created_at < week_ago,
+                )
+            )
+        )
+        previous_earnings = int(previous_earn.scalar() or 0)
+
+        period_comparison = {
+            'current': {
+                'days': PERIOD_COMPARISON_DAYS,
+                'referrals_count': current_referrals,
+                'earnings_kopeks': current_earnings,
+            },
+            'previous': {
+                'days': PERIOD_COMPARISON_DAYS,
+                'referrals_count': previous_referrals,
+                'earnings_kopeks': previous_earnings,
+            },
+            'referrals_change': _calc_change(current_referrals, previous_referrals),
+            'earnings_change': _calc_change(current_earnings, previous_earnings),
+        }
+
+        # --- Top referrals for this campaign ---
+        top_result = await db.execute(
+            select(
+                User.id,
+                User.username,
+                User.first_name,
+                User.last_name,
+                User.created_at,
+                User.has_made_first_topup,
+                func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0).label('total_earnings'),
+            )
+            .join(AdvertisingCampaignRegistration, AdvertisingCampaignRegistration.user_id == User.id)
+            .outerjoin(
+                ReferralEarning,
+                and_(
+                    ReferralEarning.referral_id == User.id,
+                    ReferralEarning.user_id == user_id,
+                    ReferralEarning.campaign_id == campaign_id,
+                ),
+            )
+            .where(
+                and_(
+                    User.referred_by_id == user_id,
+                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                )
+            )
+            .group_by(User.id)
+            .order_by(desc(func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0)))
+            .limit(TOP_REFERRALS_LIMIT)
+        )
+        top_rows = top_result.all()
+
+        # Check active subscriptions for top referrals
+        top_user_ids = [row.id for row in top_rows]
+        active_subs: set[int] = set()
+        if top_user_ids:
+            active_result = await db.execute(
+                select(Subscription.user_id).where(
+                    and_(
+                        Subscription.user_id.in_(top_user_ids),
+                        Subscription.status == SubscriptionStatus.ACTIVE.value,
+                        Subscription.end_date > now,
+                    )
+                )
+            )
+            active_subs = {row.user_id for row in active_result.all()}
+
+        top_referrals = []
+        for row in top_rows:
+            full_name = f'{row.first_name or ""} {row.last_name or ""}'.strip() or row.username or f'User #{row.id}'
+            top_referrals.append(
+                {
+                    'id': row.id,
+                    'full_name': full_name,
+                    'created_at': row.created_at,
+                    'has_paid': row.has_made_first_topup,
+                    'is_active': row.id in active_subs,
+                    'total_earnings_kopeks': int(row.total_earnings),
+                }
+            )
+
+        # --- Conversion rate ---
+        reg_count = summary['registrations_count']
+        ref_count = summary['referrals_count']
+        conversion_rate = round((ref_count / reg_count * 100), 2) if reg_count > 0 else 0.0
+
+        return {
+            'campaign_id': campaign_id,
+            'registrations_count': reg_count,
+            'referrals_count': ref_count,
+            'earnings_kopeks': summary['earnings_kopeks'],
+            'conversion_rate': conversion_rate,
+            'earnings_today': int(pe_row.today),
+            'earnings_week': int(pe_row.week),
+            'earnings_month': int(pe_row.month),
+            'daily_stats': daily_stats,
+            'period_comparison': period_comparison,
+            'top_referrals': top_referrals,
+        }
+
+    @classmethod
+    async def get_admin_campaign_chart_data(
+        cls,
+        db: AsyncSession,
+        campaign_id: int,
+    ) -> dict[str, Any]:
+        """Chart data for admin campaign analytics (no partner filter).
+
+        Unlike get_campaign_detailed_stats which is partner-isolated,
+        this method returns ALL registrations and revenue for a campaign.
+        Revenue is based on actual user transactions (deposits + subscription payments),
+        not referral earnings.
+        """
+        now = datetime.now(UTC)
+        start_date = now - timedelta(days=DAILY_STATS_DAYS)
+        week_ago = now - timedelta(days=PERIOD_COMPARISON_DAYS)
+        previous_start = week_ago - timedelta(days=PERIOD_COMPARISON_DAYS)
+
+        # Subquery: user_ids registered via this campaign
+        campaign_user_ids_sq = (
+            select(AdvertisingCampaignRegistration.user_id)
+            .where(AdvertisingCampaignRegistration.campaign_id == campaign_id)
+            .scalar_subquery()
+        )
+
+        # --- Daily registrations (DAILY_STATS_DAYS days) ---
+        registrations_by_day = await db.execute(
+            select(
+                func.date(AdvertisingCampaignRegistration.created_at).label('date'),
+                func.count(AdvertisingCampaignRegistration.id).label('count'),
+            )
+            .where(
+                and_(
+                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                    AdvertisingCampaignRegistration.created_at >= start_date,
+                )
+            )
+            .group_by(func.date(AdvertisingCampaignRegistration.created_at))
+        )
+        registrations_dict = {str(row.date): int(row.count) for row in registrations_by_day.all()}
+
+        # --- Daily revenue (DAILY_STATS_DAYS days) ---
+        # Revenue = deposits (positive) + abs(subscription_payments) (stored negative)
+        revenue_amount_expr = func.coalesce(
+            func.sum(
+                case(
+                    (Transaction.type == TransactionType.DEPOSIT.value, Transaction.amount_kopeks),
+                    (
+                        Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        func.abs(Transaction.amount_kopeks),
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        )
+
+        revenue_by_day = await db.execute(
+            select(
+                func.date(Transaction.created_at).label('date'),
+                revenue_amount_expr.label('revenue'),
+            )
+            .where(
+                and_(
+                    Transaction.user_id.in_(campaign_user_ids_sq),
+                    Transaction.is_completed.is_(True),
+                    Transaction.created_at >= start_date,
+                    Transaction.type.in_(
+                        [
+                            TransactionType.DEPOSIT.value,
+                            TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        ]
+                    ),
+                )
+            )
+            .group_by(func.date(Transaction.created_at))
+        )
+        revenue_dict = {str(row.date): int(row.revenue) for row in revenue_by_day.all()}
+
+        # --- Combine into daily_stats ---
+        daily_stats: list[dict[str, Any]] = []
+        for i in range(DAILY_STATS_DAYS):
+            date = (start_date + timedelta(days=i)).date()
+            date_str = str(date)
+            daily_stats.append(
+                {
+                    'date': date_str,
+                    'referrals_count': registrations_dict.get(date_str, 0),
+                    'earnings_kopeks': revenue_dict.get(date_str, 0),
+                }
+            )
+
+        # --- Period comparison (this week vs last week) ---
+        # Current period registrations
+        current_reg_result = await db.execute(
+            select(func.count(AdvertisingCampaignRegistration.id)).where(
+                and_(
+                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                    AdvertisingCampaignRegistration.created_at >= week_ago,
+                )
+            )
+        )
+        current_registrations = current_reg_result.scalar() or 0
+
+        # Previous period registrations
+        previous_reg_result = await db.execute(
+            select(func.count(AdvertisingCampaignRegistration.id)).where(
+                and_(
+                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                    AdvertisingCampaignRegistration.created_at >= previous_start,
+                    AdvertisingCampaignRegistration.created_at < week_ago,
+                )
+            )
+        )
+        previous_registrations = previous_reg_result.scalar() or 0
+
+        # Current period revenue
+        current_rev_result = await db.execute(
+            select(revenue_amount_expr.label('revenue')).where(
+                and_(
+                    Transaction.user_id.in_(campaign_user_ids_sq),
+                    Transaction.is_completed.is_(True),
+                    Transaction.created_at >= week_ago,
+                    Transaction.type.in_(
+                        [
+                            TransactionType.DEPOSIT.value,
+                            TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        ]
+                    ),
+                )
+            )
+        )
+        current_revenue = int(current_rev_result.scalar() or 0)
+
+        # Previous period revenue
+        previous_rev_result = await db.execute(
+            select(revenue_amount_expr.label('revenue')).where(
+                and_(
+                    Transaction.user_id.in_(campaign_user_ids_sq),
+                    Transaction.is_completed.is_(True),
+                    Transaction.created_at >= previous_start,
+                    Transaction.created_at < week_ago,
+                    Transaction.type.in_(
+                        [
+                            TransactionType.DEPOSIT.value,
+                            TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        ]
+                    ),
+                )
+            )
+        )
+        previous_revenue = int(previous_rev_result.scalar() or 0)
+
+        period_comparison = {
+            'current': {
+                'days': PERIOD_COMPARISON_DAYS,
+                'referrals_count': current_registrations,
+                'earnings_kopeks': current_revenue,
+            },
+            'previous': {
+                'days': PERIOD_COMPARISON_DAYS,
+                'referrals_count': previous_registrations,
+                'earnings_kopeks': previous_revenue,
+            },
+            'referrals_change': _calc_change(current_registrations, previous_registrations),
+            'earnings_change': _calc_change(current_revenue, previous_revenue),
+        }
+
+        # --- Total deposits & spending (separate aggregates) ---
+        totals_result = await db.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (Transaction.type == TransactionType.DEPOSIT.value, Transaction.amount_kopeks),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label('deposits'),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                                func.abs(Transaction.amount_kopeks),
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label('spending'),
+            ).where(
+                and_(
+                    Transaction.user_id.in_(campaign_user_ids_sq),
+                    Transaction.is_completed.is_(True),
+                    Transaction.type.in_(
+                        [
+                            TransactionType.DEPOSIT.value,
+                            TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        ]
+                    ),
+                )
+            )
+        )
+        totals_row = totals_result.one()
+        total_deposits_kopeks = int(totals_row.deposits)
+        total_spending_kopeks = int(totals_row.spending)
+
+        # --- Top registrations (top 5 users by spending) ---
+        top_result = await db.execute(
+            select(
+                User.id,
+                User.username,
+                User.first_name,
+                User.last_name,
+                User.created_at,
+                User.has_had_paid_subscription,
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (Transaction.type == TransactionType.DEPOSIT.value, Transaction.amount_kopeks),
+                            (
+                                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                                func.abs(Transaction.amount_kopeks),
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label('total_spending'),
+            )
+            .join(AdvertisingCampaignRegistration, AdvertisingCampaignRegistration.user_id == User.id)
+            .outerjoin(
+                Transaction,
+                and_(
+                    Transaction.user_id == User.id,
+                    Transaction.is_completed.is_(True),
+                    Transaction.type.in_(
+                        [
+                            TransactionType.DEPOSIT.value,
+                            TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        ]
+                    ),
+                ),
+            )
+            .where(AdvertisingCampaignRegistration.campaign_id == campaign_id)
+            .group_by(User.id)
+            .order_by(
+                desc(
+                    func.coalesce(
+                        func.sum(
+                            case(
+                                (Transaction.type == TransactionType.DEPOSIT.value, Transaction.amount_kopeks),
+                                (
+                                    Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                                    func.abs(Transaction.amount_kopeks),
+                                ),
+                                else_=0,
+                            )
+                        ),
+                        0,
+                    )
+                )
+            )
+            .limit(TOP_REFERRALS_LIMIT)
+        )
+        top_rows = top_result.all()
+
+        # Batch-check active subscriptions to avoid N+1
+        top_user_ids = [row.id for row in top_rows]
+        active_subs: set[int] = set()
+        if top_user_ids:
+            active_result = await db.execute(
+                select(Subscription.user_id).where(
+                    and_(
+                        Subscription.user_id.in_(top_user_ids),
+                        Subscription.status == SubscriptionStatus.ACTIVE.value,
+                        Subscription.end_date > now,
+                    )
+                )
+            )
+            active_subs = {row.user_id for row in active_result.all()}
+
+        top_registrations: list[dict[str, Any]] = []
+        for row in top_rows:
+            full_name = f'{row.first_name or ""} {row.last_name or ""}'.strip() or row.username or f'User #{row.id}'
+            top_registrations.append(
+                {
+                    'id': row.id,
+                    'full_name': full_name,
+                    'created_at': row.created_at,
+                    'has_paid': row.has_had_paid_subscription,
+                    'is_active': row.id in active_subs,
+                    'total_earnings_kopeks': int(row.total_spending),
+                }
+            )
+
+        return {
+            'campaign_id': campaign_id,
+            'total_deposits_kopeks': total_deposits_kopeks,
+            'total_spending_kopeks': total_spending_kopeks,
+            'daily_stats': daily_stats,
+            'period_comparison': period_comparison,
+            'top_registrations': top_registrations,
+        }
 
     @classmethod
     async def _get_earnings_for_period(

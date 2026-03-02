@@ -15,6 +15,8 @@ from app.database.models import (
     Subscription,
     SubscriptionServer,
     SubscriptionStatus,
+    Transaction,
+    TransactionType,
     User,
     UserPromoGroup,
     UserStatus,
@@ -444,7 +446,12 @@ async def extend_subscription(
 
     if traffic_limit_gb is not None:
         old_traffic = subscription.traffic_limit_gb
-        subscription.traffic_used_gb = 0.0
+        # Сброс использованного трафика: при смене тарифа — по настройке, при продлении — всегда
+        if is_tariff_change:
+            if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+                subscription.traffic_used_gb = 0.0
+        else:
+            subscription.traffic_used_gb = 0.0
 
         if is_tariff_change:
             # При СМЕНЕ тарифа сбрасываем все докупки трафика
@@ -835,29 +842,43 @@ async def get_subscriptions_statistics(db: AsyncSession) -> dict:
 
     paid_subscriptions = active_subscriptions - trial_subscriptions
 
-    today = datetime.now(UTC).date()
+    now = datetime.now(UTC)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_ago = today_start - timedelta(days=7)
+    month_ago = today_start - timedelta(days=30)
+
     today_result = await db.execute(
-        select(func.count(Subscription.id)).where(
-            and_(Subscription.created_at >= today, Subscription.is_trial == False)
+        select(func.count(Transaction.id)).where(
+            and_(
+                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                Transaction.is_completed.is_(True),
+                Transaction.created_at >= today_start,
+            )
         )
     )
-    purchased_today = today_result.scalar()
+    purchased_today = today_result.scalar() or 0
 
-    week_ago = datetime.now(UTC) - timedelta(days=7)
     week_result = await db.execute(
-        select(func.count(Subscription.id)).where(
-            and_(Subscription.created_at >= week_ago, Subscription.is_trial == False)
+        select(func.count(Transaction.id)).where(
+            and_(
+                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                Transaction.is_completed.is_(True),
+                Transaction.created_at >= week_ago,
+            )
         )
     )
-    purchased_week = week_result.scalar()
+    purchased_week = week_result.scalar() or 0
 
-    month_ago = datetime.now(UTC) - timedelta(days=30)
     month_result = await db.execute(
-        select(func.count(Subscription.id)).where(
-            and_(Subscription.created_at >= month_ago, Subscription.is_trial == False)
+        select(func.count(Transaction.id)).where(
+            and_(
+                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                Transaction.is_completed.is_(True),
+                Transaction.created_at >= month_ago,
+            )
         )
     )
-    purchased_month = month_result.scalar()
+    purchased_month = month_result.scalar() or 0
 
     try:
         from app.database.crud.subscription_conversion import get_conversion_statistics
@@ -1391,11 +1412,26 @@ async def get_subscription_renewal_cost(
         total_servers_discount = servers_discount_per_month * months_in_period
 
         # В режиме fixed_with_topup при продлении используем фиксированный лимит
+        purchased_traffic = subscription.purchased_traffic_gb or 0
         if settings.is_traffic_fixed():
-            renewal_traffic_gb = settings.get_fixed_traffic_limit()
+            traffic_price_per_month = settings.get_traffic_price(settings.get_fixed_traffic_limit())
+        # Separate base traffic from purchased to avoid wrong tier lookup
+        elif purchased_traffic > 0:
+            base_traffic_gb = (subscription.traffic_limit_gb or 0) - purchased_traffic
+            if base_traffic_gb <= 0:
+                logger.warning(
+                    'Purchased traffic >= total limit, pricing purchased portion only',
+                    subscription_id=subscription.id,
+                    traffic_limit_gb=subscription.traffic_limit_gb,
+                    purchased_traffic_gb=purchased_traffic,
+                )
+                traffic_price_per_month = settings.get_traffic_price(purchased_traffic)
+            else:
+                traffic_price_per_month = settings.get_traffic_price(base_traffic_gb) + settings.get_traffic_price(
+                    purchased_traffic
+                )
         else:
-            renewal_traffic_gb = subscription.traffic_limit_gb
-        traffic_price_per_month = settings.get_traffic_price(renewal_traffic_gb)
+            traffic_price_per_month = settings.get_traffic_price(subscription.traffic_limit_gb)
         traffic_discount_percent = _get_discount_percent(
             user,
             promo_group,

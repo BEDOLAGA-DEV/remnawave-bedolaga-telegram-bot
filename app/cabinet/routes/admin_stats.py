@@ -686,53 +686,6 @@ async def get_top_referrers(
             if row.referrer_id in referrers_data:
                 referrers_data[row.referrer_id]['earnings_month'] = row.total or 0
 
-        # Also add REFERRAL_REWARD transactions
-        trans_total_query = await db.execute(
-            select(Transaction.user_id.label('referrer_id'), func.sum(Transaction.amount_kopeks).label('total'))
-            .where(Transaction.type == TransactionType.REFERRAL_REWARD.value)
-            .group_by(Transaction.user_id)
-        )
-        for row in trans_total_query:
-            if row.referrer_id in referrers_data:
-                referrers_data[row.referrer_id]['earnings_total'] = referrers_data[row.referrer_id].get(
-                    'earnings_total', 0
-                ) + (row.total or 0)
-
-        trans_today_query = await db.execute(
-            select(Transaction.user_id.label('referrer_id'), func.sum(Transaction.amount_kopeks).label('total'))
-            .where(
-                and_(Transaction.type == TransactionType.REFERRAL_REWARD.value, Transaction.created_at >= today_start)
-            )
-            .group_by(Transaction.user_id)
-        )
-        for row in trans_today_query:
-            if row.referrer_id in referrers_data:
-                referrers_data[row.referrer_id]['earnings_today'] = referrers_data[row.referrer_id].get(
-                    'earnings_today', 0
-                ) + (row.total or 0)
-
-        trans_week_query = await db.execute(
-            select(Transaction.user_id.label('referrer_id'), func.sum(Transaction.amount_kopeks).label('total'))
-            .where(and_(Transaction.type == TransactionType.REFERRAL_REWARD.value, Transaction.created_at >= week_ago))
-            .group_by(Transaction.user_id)
-        )
-        for row in trans_week_query:
-            if row.referrer_id in referrers_data:
-                referrers_data[row.referrer_id]['earnings_week'] = referrers_data[row.referrer_id].get(
-                    'earnings_week', 0
-                ) + (row.total or 0)
-
-        trans_month_query = await db.execute(
-            select(Transaction.user_id.label('referrer_id'), func.sum(Transaction.amount_kopeks).label('total'))
-            .where(and_(Transaction.type == TransactionType.REFERRAL_REWARD.value, Transaction.created_at >= month_ago))
-            .group_by(Transaction.user_id)
-        )
-        for row in trans_month_query:
-            if row.referrer_id in referrers_data:
-                referrers_data[row.referrer_id]['earnings_month'] = referrers_data[row.referrer_id].get(
-                    'earnings_month', 0
-                ) + (row.total or 0)
-
         # Get user info for all referrers
         referrer_ids = list(referrers_data.keys())
         if referrer_ids:

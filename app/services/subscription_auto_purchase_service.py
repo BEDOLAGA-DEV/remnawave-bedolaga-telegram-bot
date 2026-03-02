@@ -307,9 +307,8 @@ def _apply_extension_updates(context: AutoExtendContext) -> None:
     """
     subscription = context.subscription
 
-    # Обновляем tariff_id если указан в контексте
-    if context.tariff_id is not None:
-        subscription.tariff_id = context.tariff_id
+    # НЕ обновляем tariff_id здесь — это делает extend_subscription(),
+    # чтобы корректно определить is_tariff_change внутри CRUD
 
     # Обновляем allowed_squads если указаны (заменяем полностью)
     if context.allowed_squads is not None:
@@ -454,8 +453,11 @@ async def _auto_extend_subscription(
         )
 
     subscription_service = SubscriptionService()
-    # При смене тарифа ВСЕГДА сбрасываем трафик, иначе по настройке
-    should_reset_traffic = is_tariff_change or settings.RESET_TRAFFIC_ON_PAYMENT
+    # Сброс трафика: при смене тарифа — по RESET_TRAFFIC_ON_TARIFF_SWITCH, при оплате — по RESET_TRAFFIC_ON_PAYMENT
+    if is_tariff_change:
+        should_reset_traffic = settings.RESET_TRAFFIC_ON_TARIFF_SWITCH
+    else:
+        should_reset_traffic = settings.RESET_TRAFFIC_ON_PAYMENT
     try:
         await subscription_service.update_remnawave_user(
             db,

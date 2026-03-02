@@ -64,6 +64,7 @@ def _get_lifetime_traffic_bytes(panel_user: dict[str, Any]) -> int:
 
 
 _UUID_MAP_MISSING = object()
+_ATTR_NOT_CAPTURED = object()
 
 
 class _UUIDMapMutation:
@@ -74,15 +75,23 @@ class _UUIDMapMutation:
     def __init__(self, uuid_map: dict[str, 'User']):
         self.uuid_map = uuid_map
         self._map_original: dict[str, Any] = {}
-        self._user_original: dict[User, tuple[str | None, datetime | None]] = {}
+        self._user_original: dict[User, tuple[Any, Any]] = {}
 
     def _capture_user_state(self, user: Optional['User']) -> None:
         if not user or user in self._user_original:
             return
-        self._user_original[user] = (
-            getattr(user, 'remnawave_uuid', None),
-            getattr(user, 'updated_at', None),
-        )
+        # В async-контексте ORM-атрибуты могут быть expired (например после
+        # SAVEPOINT rollback). getattr не спасает — SQLAlchemy бросает
+        # MissingGreenlet, а не AttributeError. Ловим и помечаем sentinel'ом.
+        try:
+            uuid_val = getattr(user, 'remnawave_uuid', None)
+        except Exception:
+            uuid_val = _ATTR_NOT_CAPTURED
+        try:
+            updated_val = getattr(user, 'updated_at', None)
+        except Exception:
+            updated_val = _ATTR_NOT_CAPTURED
+        self._user_original[user] = (uuid_val, updated_val)
 
     def _capture_map_entry(self, key: str | None) -> None:
         if key is None or key in self._map_original:
@@ -121,8 +130,10 @@ class _UUIDMapMutation:
 
     def rollback(self) -> None:
         for user, (uuid_value, updated_at) in self._user_original.items():
-            user.remnawave_uuid = uuid_value
-            user.updated_at = updated_at
+            if uuid_value is not _ATTR_NOT_CAPTURED:
+                user.remnawave_uuid = uuid_value
+            if updated_at is not _ATTR_NOT_CAPTURED:
+                user.updated_at = updated_at
 
         for key, original in self._map_original.items():
             if original is _UUID_MAP_MISSING:
@@ -502,18 +513,17 @@ class RemnaWaveService:
                 language='ru',
             )
 
-            db_user = await create_user_no_commit(**create_kwargs)
+            # Используем SAVEPOINT чтобы при IntegrityError откатить только
+            # вложенную транзакцию, а не всю сессию. Полный rollback помечает
+            # ВСЕ объекты сессии как expired, что вызывает MissingGreenlet
+            # при последующем sync-доступе к атрибутам ORM-объектов.
+            async with db.begin_nested():
+                db_user = await create_user_no_commit(**create_kwargs)
             return db_user, True
         except IntegrityError as create_error:
             logger.info(
                 '♻️ Пользователь с telegram_id уже существует. Используем существующую запись.', telegram_id=telegram_id
             )
-
-            try:
-                await db.rollback()
-            except Exception:
-                # create_user_no_commit уже выполняет rollback при необходимости
-                pass
 
             try:
                 existing_user = await get_user_by_telegram_id(db, telegram_id)
@@ -535,13 +545,11 @@ class RemnaWaveService:
                 )
                 return None, False
         except Exception as general_error:
+            # SAVEPOINT (begin_nested) уже откатил частичную работу.
+            # Полный rollback не нужен — он бы пометил все объекты сессии expired.
             logger.error(
                 '❌ Общая ошибка создания/загрузки пользователя', telegram_id=telegram_id, general_error=general_error
             )
-            try:
-                await db.rollback()
-            except:
-                pass
             return None, False
 
     async def get_system_statistics(self) -> dict[str, Any]:
@@ -1306,20 +1314,16 @@ class RemnaWaveService:
                     elif sync_type in ['update_only', 'all']:
                         logger.debug('🔄 Обновление пользователя', telegram_id=telegram_id)
 
-                        # При синхронизации не обновляем имя и username пользователя
-                        # только сохраняем изменения, если были обновлены другие поля (подписка и т.д.)
-                        updated_fields = []
-                        # Если были обновлены другие поля (подписка, статус и т.д.), сохраняем изменения
-                        if updated_fields:
-                            logger.info(
-                                '🔄 Обновлены поля для пользователя',
-                                updated_fields=updated_fields,
-                                telegram_id=telegram_id,
-                            )
-                            await db.flush()  # Сохраняем изменения без коммита
+                        # Refresh expired ORM-объекты перед sync-доступом.
+                        # После SAVEPOINT rollback или других операций атрибуты
+                        # могут быть expired, что вызывает MissingGreenlet в sync-коде.
+                        from sqlalchemy import inspect as sa_inspect
 
-                        # Обновляем UUID ДО операций с подпиской, чтобы избежать
-                        # greenlet_spawn ошибки при доступе к атрибутам после flush
+                        user_state = sa_inspect(db_user)
+                        if user_state.expired_attributes:
+                            await db.refresh(db_user)
+
+                        # Обновляем UUID ДО операций с подпиской
                         _, uuid_mutation = self._ensure_user_remnawave_uuid(
                             db_user,
                             panel_user.get('uuid'),
@@ -1340,7 +1344,12 @@ class RemnaWaveService:
                         logger.debug('✅ Обновлён пользователь', telegram_id=telegram_id)
 
                 except Exception as user_error:
-                    logger.error('❌ Ошибка обработки пользователя', telegram_id=telegram_id, user_error=user_error)
+                    logger.error(
+                        '❌ Ошибка обработки пользователя',
+                        telegram_id=telegram_id,
+                        user_error=user_error,
+                        exc_info=True,
+                    )
                     stats['errors'] += 1
                     if uuid_mutation:
                         uuid_mutation.rollback()
@@ -1852,7 +1861,7 @@ class RemnaWaveService:
                 )
 
             panel_url = panel_user.get('subscriptionUrl', '')
-            if not subscription.subscription_url or subscription.subscription_url != panel_url:
+            if panel_url and subscription.subscription_url != panel_url:
                 subscription.subscription_url = panel_url
 
             panel_crypto_link = panel_user.get('subscriptionCryptoLink') or (panel_user.get('happ') or {}).get(
@@ -2156,22 +2165,32 @@ class RemnaWaveService:
                 except Exception as e:
                     logger.debug('Пользователь не найден по username', user_identifier=user_identifier, error=e)
 
-                # Если не нашли по username, ищем по email среди всех пользователей
+                # Если не нашли по username, ищем по email среди всех пользователей (с пагинацией)
                 try:
-                    all_users_response = await api.get_all_users(start=0, size=10000)
-                    users_list = all_users_response.get('users', [])
+                    page_size = 500
+                    start = 0
+                    while True:
+                        page_response = await api.get_all_users(start=start, size=page_size)
+                        users_list = page_response.get('users', [])
+                        total = page_response.get('total', 0)
 
-                    for panel_user in users_list:
-                        panel_email = panel_user.email if hasattr(panel_user, 'email') else None
-                        if panel_email and panel_email.lower() == user_identifier.lower():
-                            panel_telegram_id = panel_user.telegram_id if hasattr(panel_user, 'telegram_id') else None
-                            if panel_telegram_id:
-                                logger.info(
-                                    'Найден пользователь по email telegram_id',
-                                    user_identifier=user_identifier,
-                                    panel_telegram_id=panel_telegram_id,
+                        for panel_user in users_list:
+                            panel_email = panel_user.email if hasattr(panel_user, 'email') else None
+                            if panel_email and panel_email.lower() == user_identifier.lower():
+                                panel_telegram_id = (
+                                    panel_user.telegram_id if hasattr(panel_user, 'telegram_id') else None
                                 )
-                                return panel_telegram_id
+                                if panel_telegram_id:
+                                    logger.info(
+                                        'Найден пользователь по email telegram_id',
+                                        user_identifier=user_identifier,
+                                        panel_telegram_id=panel_telegram_id,
+                                    )
+                                    return panel_telegram_id
+
+                        start += len(users_list)
+                        if start >= total or not users_list:
+                            break
                 except Exception as e:
                     logger.warning('Ошибка поиска пользователя по email', user_identifier=user_identifier, error=e)
 

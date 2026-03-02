@@ -550,7 +550,11 @@ class FortuneWheelService:
             promocode_id = None
             if generated_promocode:
                 # Получаем ID промокода
-                result = await db.execute(f"SELECT id FROM promocodes WHERE code = '{generated_promocode}'")
+                from sqlalchemy import text
+
+                result = await db.execute(
+                    text('SELECT id FROM promocodes WHERE code = :code'), {'code': generated_promocode}
+                )
                 row = result.fetchone()
                 if row:
                     promocode_id = row[0]

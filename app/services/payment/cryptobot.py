@@ -13,9 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, TransactionType
-from app.services.subscription_auto_purchase_service import (
-    auto_purchase_saved_cart_after_topup,
-)
 from app.services.subscription_renewal_service import (
     RenewalPaymentDescriptor,
     SubscriptionRenewalChargeError,
@@ -50,14 +47,6 @@ class _UserNotificationPayload:
     reply_markup: Any
     amount_rubles: float
     asset: str
-
-
-@dataclass(slots=True)
-class _SavedCartNotificationPayload:
-    telegram_id: int
-    text: str
-    reply_markup: Any
-    user_id: int
 
 
 class CryptoBotPaymentMixin:
@@ -293,7 +282,6 @@ class CryptoBotPaymentMixin:
 
                 admin_notification: _AdminNotificationContext | None = None
                 user_notification: _UserNotificationPayload | None = None
-                saved_cart_notification: _SavedCartNotificationPayload | None = None
 
                 bot_instance = getattr(self, 'bot', None)
                 if bot_instance:
@@ -326,64 +314,17 @@ class CryptoBotPaymentMixin:
                     except Exception as error:
                         logger.error('Ошибка подготовки уведомления о пополнении CryptoBot', error=error)
 
+                if admin_notification:
+                    await self._deliver_admin_topup_notification(admin_notification)
+
+                if user_notification and bot_instance:
+                    await self._deliver_user_topup_notification(user_notification)
+
                 # Проверяем наличие сохраненной корзины для возврата к оформлению подписки
                 try:
-                    from aiogram import types
+                    from app.services.payment.common import send_cart_notification_after_topup
 
-                    from app.services.user_cart_service import user_cart_service
-
-                    has_saved_cart = await user_cart_service.has_user_cart(user.id)
-                    auto_purchase_success = False
-                    if has_saved_cart:
-                        try:
-                            auto_purchase_success = await auto_purchase_saved_cart_after_topup(
-                                db,
-                                user,
-                                bot=bot_instance,
-                            )
-                        except Exception as auto_error:
-                            logger.error(
-                                'Ошибка автоматической покупки подписки для пользователя',
-                                user_id=user.id,
-                                auto_error=auto_error,
-                                exc_info=True,
-                            )
-
-                        if auto_purchase_success:
-                            has_saved_cart = False
-
-                    if has_saved_cart and bot_instance:
-                        from app.localization.texts import get_texts
-
-                        texts = get_texts(user.language)
-                        cart_message = texts.BALANCE_TOPUP_CART_REMINDER_DETAILED.format(
-                            total_amount=settings.format_price(amount_kopeks)
-                        )
-
-                        keyboard = types.InlineKeyboardMarkup(
-                            inline_keyboard=[
-                                [
-                                    types.InlineKeyboardButton(
-                                        text=texts.RETURN_TO_SUBSCRIPTION_CHECKOUT, callback_data='return_to_saved_cart'
-                                    )
-                                ],
-                                [types.InlineKeyboardButton(text='💰 Мой баланс', callback_data='menu_balance')],
-                                [types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')],
-                            ]
-                        )
-
-                        saved_cart_notification = _SavedCartNotificationPayload(
-                            telegram_id=user.telegram_id,
-                            text=(
-                                f'✅ Баланс пополнен на {settings.format_price(amount_kopeks)}!\n\n'
-                                f'⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. '
-                                f'Обязательно активируйте подписку отдельно!\n\n'
-                                f'🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
-                                f'подписка будет приобретена автоматически после пополнения баланса.\n\n{cart_message}'
-                            ),
-                            reply_markup=keyboard,
-                            user_id=user.id,
-                        )
+                    await send_cart_notification_after_topup(user, amount_kopeks, db, bot_instance)
                 except Exception as error:
                     logger.error(
                         'Ошибка при работе с сохраненной корзиной для пользователя',
@@ -391,15 +332,6 @@ class CryptoBotPaymentMixin:
                         error=error,
                         exc_info=True,
                     )
-
-                if admin_notification:
-                    await self._deliver_admin_topup_notification(admin_notification)
-
-                if user_notification and bot_instance:
-                    await self._deliver_user_topup_notification(user_notification)
-
-                if saved_cart_notification and bot_instance:
-                    await self._deliver_saved_cart_reminder(saved_cart_notification)
 
             return True
 
@@ -629,33 +561,6 @@ class CryptoBotPaymentMixin:
             )
         except Exception as error:
             logger.error('Ошибка отправки уведомления о пополнении CryptoBot', error=error)
-
-    async def _deliver_saved_cart_reminder(self, payload: _SavedCartNotificationPayload) -> None:
-        bot_instance = getattr(self, 'bot', None)
-        if not bot_instance:
-            return
-
-        # Skip email-only users (no telegram_id)
-        if not payload.telegram_id:
-            logger.debug('Пропуск напоминания о корзине для email-пользователя')
-            return
-
-        try:
-            await bot_instance.send_message(
-                chat_id=payload.telegram_id,
-                text=payload.text,
-                reply_markup=payload.reply_markup,
-            )
-            logger.info(
-                'Отправлено уведомление с кнопкой возврата к оформлению подписки пользователю', user_id=payload.user_id
-            )
-        except Exception as error:
-            logger.error(
-                'Ошибка отправки уведомления о сохраненной корзине для пользователя',
-                user_id=payload.user_id,
-                error=error,
-                exc_info=True,
-            )
 
     async def get_cryptobot_payment_status(
         self,

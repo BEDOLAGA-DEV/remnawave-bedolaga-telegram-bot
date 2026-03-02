@@ -11,9 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
-from app.services.subscription_auto_purchase_service import (
-    auto_purchase_saved_cart_after_topup,
-)
 from app.services.wata_service import WataAPIError, WataService
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
@@ -517,10 +514,6 @@ class WataPaymentMixin:
                         f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}\n'
                         '🦊 Способ: WATA\n'
                         f'🆔 Транзакция: {transaction.id}\n\n'
-                        '⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. '
-                        'Обязательно активируйте подписку отдельно!\n\n'
-                        '🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
-                        'подписка будет приобретена автоматически после пополнения баланса.\n\n'
                         'Баланс пополнен автоматически!'
                     ),
                     parse_mode='HTML',
@@ -530,67 +523,9 @@ class WataPaymentMixin:
                 logger.error('Ошибка отправки уведомления пользователю WATA', error=error)
 
         try:
-            from aiogram import types
+            from app.services.payment.common import send_cart_notification_after_topup
 
-            from app.services.user_cart_service import user_cart_service
-
-            has_saved_cart = await user_cart_service.has_user_cart(user.id)
-            auto_purchase_success = False
-            if has_saved_cart:
-                try:
-                    auto_purchase_success = await auto_purchase_saved_cart_after_topup(
-                        db,
-                        user,
-                        bot=getattr(self, 'bot', None),
-                    )
-                except Exception as auto_error:
-                    logger.error(
-                        'Ошибка автоматической покупки подписки для пользователя',
-                        user_id=user.id,
-                        auto_error=auto_error,
-                        exc_info=True,
-                    )
-
-                if auto_purchase_success:
-                    has_saved_cart = False
-
-            if has_saved_cart and getattr(self, 'bot', None) and user.telegram_id:
-                from app.localization.texts import get_texts
-
-                texts = get_texts(user.language)
-                cart_message = texts.t(
-                    'BALANCE_TOPUP_CART_REMINDER_DETAILED',
-                    '🛒 У вас есть неоформленный заказ.\n\nВы можете продолжить оформление с теми же параметрами.',
-                ).format(total_amount=settings.format_price(payment.amount_kopeks))
-
-                keyboard = types.InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            types.InlineKeyboardButton(
-                                text=texts.RETURN_TO_SUBSCRIPTION_CHECKOUT,
-                                callback_data='return_to_saved_cart',
-                            )
-                        ],
-                        [
-                            types.InlineKeyboardButton(
-                                text='💰 Мой баланс',
-                                callback_data='menu_balance',
-                            )
-                        ],
-                        [
-                            types.InlineKeyboardButton(
-                                text='🏠 Главное меню',
-                                callback_data='back_to_menu',
-                            )
-                        ],
-                    ]
-                )
-
-                await self.bot.send_message(
-                    user.telegram_id,
-                    cart_message,
-                    reply_markup=keyboard,
-                )
+            await send_cart_notification_after_topup(user, payment.amount_kopeks, db, getattr(self, 'bot', None))
         except Exception as error:
             logger.debug('Не удалось отправить напоминание о корзине после WATA', error=error)
 

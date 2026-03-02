@@ -197,11 +197,7 @@ class PaymentCommonMixin:
                 '✅ <b>Платеж успешно завершен!</b>\n\n'
                 f'💰 Сумма: {settings.format_price(amount_kopeks)}\n'
                 f'💳 Способ: {payment_method}\n\n'
-                'Средства зачислены на ваш баланс!\n\n'
-                '⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. '
-                'Обязательно активируйте подписку отдельно!\n\n'
-                f'🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
-                f'подписка будет приобретена автоматически после пополнения баланса.'
+                'Средства зачислены на ваш баланс!'
             )
 
             await self.bot.send_message(
@@ -295,3 +291,111 @@ class PaymentCommonMixin:
         except Exception as error:
             logger.error('Ошибка обработки платежа', payment_id=payment_id, error=error)
             return False
+
+
+async def send_cart_notification_after_topup(
+    user: Any,
+    amount_kopeks: int,
+    db: AsyncSession,
+    bot: Any | None,
+) -> bool:
+    """Handle saved cart after balance top-up: try auto-purchase, then send notification.
+
+    Returns True if a cart notification was sent.
+    """
+    from aiogram import types
+
+    from app.database.crud.user import get_user_by_id
+    from app.services.subscription_auto_purchase_service import auto_purchase_saved_cart_after_topup
+
+    cart_data = await user_cart_service.get_user_cart(user.id)
+    if not cart_data:
+        return False
+
+    cart_total = cart_data.get('total_price', 0)
+    if not cart_total:
+        return False
+
+    # Try auto-purchase first
+    auto_purchase_success = False
+    try:
+        auto_purchase_success = await auto_purchase_saved_cart_after_topup(db, user, bot=bot)
+    except Exception as auto_error:
+        logger.error(
+            'Ошибка автоматической покупки подписки для пользователя',
+            user_id=user.id,
+            auto_error=auto_error,
+            exc_info=True,
+        )
+
+    if auto_purchase_success:
+        return False
+
+    if not bot or not getattr(user, 'telegram_id', None):
+        return False
+
+    # Refresh balance from DB to account for any changes during auto-purchase attempt
+    refreshed_user = await get_user_by_id(db, user.id)
+    balance = getattr(refreshed_user or user, 'balance_kopeks', 0)
+
+    texts = get_texts(getattr(user, 'language', 'ru'))
+
+    # Build message based on whether balance is sufficient
+    fmt = settings.format_price
+    if balance >= cart_total:
+        template = texts.get('BALANCE_TOPPED_UP_CART_SUFFICIENT', '')
+        message_text = template.format(amount=fmt(amount_kopeks), balance=fmt(balance), cart_total=fmt(cart_total))
+    else:
+        missing = cart_total - balance
+        template = texts.get('BALANCE_TOPPED_UP_CART_INSUFFICIENT', '')
+        message_text = template.format(
+            amount=fmt(amount_kopeks),
+            balance=fmt(balance),
+            cart_total=fmt(cart_total),
+            missing=fmt(missing),
+        )
+
+    if not message_text:
+        logger.warning('Missing cart notification template', language=getattr(user, 'language', 'ru'))
+        return False
+
+    sent = False
+    try:
+        keyboard = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.get('RETURN_TO_SUBSCRIPTION_CHECKOUT', '⬅️ Checkout'),
+                        callback_data='return_to_saved_cart',
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.get('MY_BALANCE_BUTTON', '💰 Balance'),
+                        callback_data='menu_balance',
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.get('MAIN_MENU_BUTTON', '🏠 Menu'),
+                        callback_data='back_to_menu',
+                    )
+                ],
+            ]
+        )
+        await bot.send_message(
+            chat_id=user.telegram_id,
+            text=message_text,
+            reply_markup=keyboard,
+            parse_mode='HTML',
+        )
+        sent = True
+        logger.info('Sent cart notification to user', user_id=user.id)
+    except Exception as send_error:
+        logger.error(
+            'Failed to send cart notification to user',
+            user_id=user.id,
+            error=send_error,
+        )
+
+    return sent

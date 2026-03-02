@@ -104,7 +104,6 @@ async def get_campaigns_list(
     stmt = (
         select(AdvertisingCampaign)
         .options(
-            selectinload(AdvertisingCampaign.registrations),
             selectinload(AdvertisingCampaign.tariff),
             selectinload(AdvertisingCampaign.partner),
         )
@@ -148,10 +147,22 @@ async def update_campaign(
         'partner_user_id',
     }
 
+    nullable_fields = {
+        'partner_user_id',
+        'tariff_id',
+        'subscription_duration_days',
+        'subscription_traffic_gb',
+        'subscription_device_limit',
+        'tariff_duration_days',
+    }
+
     update_data = {}
     for key, value in kwargs.items():
-        if key in allowed_fields and value is not None:
-            update_data[key] = value
+        if key not in allowed_fields:
+            continue
+        if value is None and key not in nullable_fields:
+            continue
+        update_data[key] = value
 
     if not update_data:
         return campaign

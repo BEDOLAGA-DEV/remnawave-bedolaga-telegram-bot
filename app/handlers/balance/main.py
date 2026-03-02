@@ -24,6 +24,15 @@ logger = structlog.get_logger(__name__)
 
 TRANSACTIONS_PER_PAGE = 10
 
+CREDIT_TRANSACTION_TYPES: frozenset[str] = frozenset(
+    {
+        TransactionType.DEPOSIT.value,
+        TransactionType.REFERRAL_REWARD.value,
+        TransactionType.REFUND.value,
+        TransactionType.POLL_REWARD.value,
+    }
+)
+
 
 async def route_payment_by_method(
     message: types.Message, db_user: User, amount_kopeks: int, state: FSMContext, payment_method: str
@@ -277,10 +286,11 @@ async def show_balance_history(callback: types.CallbackQuery, db_user: User, db:
     text = '📊 <b>История операций</b>\n\n'
 
     for transaction in unique_transactions:
-        emoji = '💰' if transaction.type == TransactionType.DEPOSIT.value else '💸'
+        is_credit = transaction.type in CREDIT_TRANSACTION_TYPES
+        emoji = '💰' if is_credit else '💸'
         amount_text = (
             f'+{texts.format_price(transaction.amount_kopeks)}'
-            if transaction.type == TransactionType.DEPOSIT.value
+            if is_credit
             else f'-{texts.format_price(abs(transaction.amount_kopeks))}'
         )
 
@@ -515,15 +525,17 @@ async def handle_successful_topup_with_cart(user_id: int, amount_kopeks: int, bo
                 ]
             )
 
+            if 0 < total_price <= user.balance_kopeks:
+                balance_hint = 'Средств на балансе достаточно для оформления.'
+            else:
+                missing = max(total_price - user.balance_kopeks, 0)
+                balance_hint = f'Не хватает: {texts.format_price(missing)}'
+
             success_text = (
                 f'✅ Баланс пополнен на {texts.format_price(amount_kopeks)}!\n\n'
                 f'💰 Текущий баланс: {texts.format_price(user.balance_kopeks)}\n\n'
-                f'⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. '
-                f'Обязательно активируйте подписку отдельно!\n\n'
-                f'🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
-                f'подписка будет приобретена автоматически после пополнения баланса.\n\n'
-                f'🛒 У вас есть сохраненная корзина подписки\n'
-                f'Стоимость: {texts.format_price(total_price)}\n\n'
+                f'🛒 У вас есть сохранённая корзина на {texts.format_price(total_price)}\n'
+                f'{balance_hint}\n\n'
                 f'Хотите продолжить оформление?'
             )
 

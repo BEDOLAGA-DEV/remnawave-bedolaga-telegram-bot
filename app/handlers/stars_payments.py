@@ -37,8 +37,38 @@ async def _handle_wheel_spin_payment(
             )
             return False
 
+        # Проверяем наличие активной подписки
+        from app.database.crud.subscription import get_subscription_by_user_id
+
+        subscription = await get_subscription_by_user_id(db, user.id)
+        if not subscription or not subscription.is_active:
+            # Конвертируем Stars в баланс как компенсацию
+            rubles_fallback = TelegramStarsService.calculate_rubles_from_stars(stars_amount)
+            kopeks_fallback = int((rubles_fallback * Decimal(100)).to_integral_value(rounding=ROUND_HALF_UP))
+            from app.database.crud.user import add_user_balance
+            from app.database.models import TransactionType
+
+            await add_user_balance(
+                db,
+                user,
+                kopeks_fallback,
+                f'Возврат за спин колеса без подписки ({stars_amount} Stars)',
+                transaction_type=TransactionType.REFUND,
+            )
+            await db.commit()
+            await message.answer(
+                '❌ Для использования колеса удачи необходима активная подписка.\n'
+                f'💰 {stars_amount} Stars возвращены на баланс в виде {kopeks_fallback / 100:.0f} ₽.',
+            )
+            logger.warning(
+                'Wheel spin without subscription, refunded to balance',
+                user_id=user.id,
+                stars_amount=stars_amount,
+                refund_kopeks=kopeks_fallback,
+            )
+            return False
+
         # Выполняем спин напрямую (оплата уже прошла через Stars)
-        prizes = await get_or_create_wheel_config(db)
         prizes = await get_wheel_prizes(db, config.id, active_only=True)
 
         if not prizes:
@@ -64,7 +94,11 @@ async def _handle_wheel_spin_payment(
 
         promocode_id = None
         if generated_promocode:
-            result = await db.execute(f"SELECT id FROM promocodes WHERE code = '{generated_promocode}'")
+            from sqlalchemy import text
+
+            result = await db.execute(
+                text('SELECT id FROM promocodes WHERE code = :code'), {'code': generated_promocode}
+            )
             row = result.fetchone()
             if row:
                 promocode_id = row[0]
@@ -419,10 +453,6 @@ async def handle_successful_payment(message: types.Message, db: AsyncSession, st
                     '⭐ Потрачено звезд: {stars_spent}\n'
                     '💰 Зачислено на баланс: {amount} ₽\n'
                     '🆔 ID транзакции: {transaction_id}...\n\n'
-                    '⚠️ <b>Важно:</b> Пополнение баланса не активирует подписку автоматически. '
-                    'Обязательно активируйте подписку отдельно!\n\n'
-                    '🔄 При наличии сохранённой корзины подписки и включенной автопокупке, '
-                    'подписка будет приобретена автоматически после пополнения баланса.\n\n'
                     'Спасибо за пополнение! 🚀',
                 ).format(
                     stars_spent=payment.total_amount,

@@ -12,9 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
-from app.services.subscription_auto_purchase_service import (
-    auto_purchase_saved_cart_after_topup,
-)
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
 
@@ -416,30 +413,13 @@ class HeleketPaymentMixin:
             else:
                 logger.info('Пропуск Telegram-уведомления Heleket для email-пользователя', user_id=user.id)
 
-        # Автопокупка из сохранённой корзины и умная автоактивация
+        # Автопокупка из сохранённой корзины и уведомление о корзине
         try:
-            from app.services.user_cart_service import user_cart_service
+            from app.services.payment.common import send_cart_notification_after_topup
 
-            has_saved_cart = await user_cart_service.has_user_cart(user.id)
-            auto_purchase_success = False
-            if has_saved_cart:
-                try:
-                    auto_purchase_success = await auto_purchase_saved_cart_after_topup(
-                        db,
-                        user,
-                        bot=getattr(self, 'bot', None),
-                    )
-                except Exception as auto_error:
-                    logger.error(
-                        'Ошибка автоматической покупки подписки для пользователя',
-                        user_id=user.id,
-                        auto_error=auto_error,
-                        exc_info=True,
-                    )
-
-                if auto_purchase_success:
-                    has_saved_cart = False
-
+            await send_cart_notification_after_topup(
+                user, updated_payment.amount_kopeks, db, getattr(self, 'bot', None)
+            )
         except Exception as error:
             logger.error(
                 'Ошибка при работе с автоактивацией для пользователя', user_id=user.id, error=error, exc_info=True

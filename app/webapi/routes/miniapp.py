@@ -4085,6 +4085,11 @@ async def activate_promo_code(
         'expired': status.HTTP_410_GONE,
         'used': status.HTTP_409_CONFLICT,
         'already_used_by_user': status.HTTP_409_CONFLICT,
+        'no_subscription_for_days': status.HTTP_400_BAD_REQUEST,
+        'trial_subscription_not_eligible': status.HTTP_400_BAD_REQUEST,
+        'active_discount_exists': status.HTTP_409_CONFLICT,
+        'not_first_purchase': status.HTTP_400_BAD_REQUEST,
+        'daily_limit': status.HTTP_429_TOO_MANY_REQUESTS,
         'server_error': status.HTTP_500_INTERNAL_SERVER_ERROR,
     }
     message_map = {
@@ -4093,6 +4098,11 @@ async def activate_promo_code(
         'expired': 'Promo code expired',
         'used': 'Promo code already used',
         'already_used_by_user': 'Promo code already used by this user',
+        'no_subscription_for_days': 'This promo code requires an active or expired subscription',
+        'trial_subscription_not_eligible': 'This promo code is not available for trial subscriptions',
+        'active_discount_exists': 'You already have an active discount',
+        'not_first_purchase': 'This promo code is only available for first purchase',
+        'daily_limit': 'Too many promo code activations today',
         'user_not_found': 'User not found',
         'server_error': 'Failed to activate promo code',
     }
@@ -6958,8 +6968,16 @@ async def switch_tariff_endpoint(
     subscription.device_limit = new_tariff.device_limit
     subscription.connected_squads = squads
     # Сбрасываем докупленный трафик при смене тарифа
+    from sqlalchemy import delete as sql_delete
+
+    from app.database.models import TrafficPurchase
+
+    await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
     subscription.purchased_traffic_gb = 0
-    subscription.traffic_reset_at = None  # Сбрасываем дату сброса трафика
+    subscription.traffic_reset_at = None
+
+    if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+        subscription.traffic_used_gb = 0.0
 
     # Обработка daily полей при смене тарифа
     new_is_daily = getattr(new_tariff, 'is_daily', False)
@@ -6991,10 +7009,16 @@ async def switch_tariff_endpoint(
     await db.refresh(subscription)
     await db.refresh(user)
 
-    # Синхронизируем с RemnaWave
+    # Синхронизируем с RemnaWave (опционально сбрасываем трафик по настройке)
+    should_reset_traffic = settings.RESET_TRAFFIC_ON_TARIFF_SWITCH
     try:
         service = SubscriptionService()
-        await service.update_remnawave_user(db, subscription)
+        await service.update_remnawave_user(
+            db,
+            subscription,
+            reset_traffic=should_reset_traffic,
+            reset_reason='смена тарифа',
+        )
     except Exception as e:
         logger.error('Ошибка синхронизации с RemnaWave при смене тарифа', error=e)
 

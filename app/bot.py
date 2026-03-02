@@ -132,8 +132,9 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     dp.message.middleware(blacklist_middleware)
     dp.callback_query.middleware(blacklist_middleware)
     dp.pre_checkout_query.middleware(blacklist_middleware)
-    dp.message.middleware(ThrottlingMiddleware())
-    dp.callback_query.middleware(ThrottlingMiddleware())
+    throttling_middleware = ThrottlingMiddleware()
+    dp.message.middleware(throttling_middleware)
+    dp.callback_query.middleware(throttling_middleware)
 
     # Middleware для автоматического логирования кликов по кнопкам
     if settings.MENU_LAYOUT_ENABLED:

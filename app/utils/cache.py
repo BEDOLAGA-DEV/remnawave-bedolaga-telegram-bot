@@ -82,6 +82,23 @@ class CacheService:
             logger.error('Ошибка setnx в кеш', key=key, error=e)
             return False
 
+    async def getdel(self, key: str) -> Any | None:
+        """Atomically get and delete a key (Redis GETDEL).
+
+        Returns the deserialized value if it existed, None otherwise.
+        """
+        if not self._connected:
+            return None
+
+        try:
+            value = await self.redis_client.getdel(key)
+            if value:
+                return json.loads(value)
+            return None
+        except Exception as e:
+            logger.error('Ошибка атомарного getdel из кеша', key=key, error=e)
+            return None
+
     async def delete(self, key: str) -> bool:
         if not self._connected:
             return False

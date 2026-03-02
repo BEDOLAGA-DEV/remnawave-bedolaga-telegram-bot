@@ -4,7 +4,7 @@ from typing import Any
 
 import structlog
 from aiogram import BaseMiddleware, Bot, types
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, TelegramObject, Update
 
@@ -93,11 +93,11 @@ class ChannelCheckerMiddleware(BaseMiddleware):
         # Fast-path bypasses
         telegram_id = None
         if isinstance(event, (Message, CallbackQuery)):
-            telegram_id = event.from_user.id
+            telegram_id = event.from_user.id if event.from_user else None
         elif isinstance(event, Update):
-            if event.message:
+            if event.message and event.message.from_user:
                 telegram_id = event.message.from_user.id
-            elif event.callback_query:
+            elif event.callback_query and event.callback_query.from_user:
                 telegram_id = event.callback_query.from_user.id
 
         if telegram_id is None:
@@ -145,7 +145,10 @@ class ChannelCheckerMiddleware(BaseMiddleware):
             # Rate limit: max 1 check per 5 seconds per user
             rate_key = f'sub_check_rate:{telegram_id}'
             if await cache.exists(rate_key):
-                await event.answer()
+                try:
+                    await event.answer()
+                except TelegramAPIError:
+                    pass
                 return None
             await cache.set(rate_key, 1, expire=5)
 
@@ -184,13 +187,16 @@ class ChannelCheckerMiddleware(BaseMiddleware):
                 if 'message is not modified' not in str(e).lower():
                     raise
 
-            await event.answer(
-                texts.t(
-                    'CHANNEL_CHECK_NOT_SUBSCRIBED',
-                    'You are not subscribed to all required channels. Please subscribe and try again.',
-                ),
-                show_alert=True,
-            )
+            try:
+                await event.answer(
+                    texts.t(
+                        'CHANNEL_CHECK_NOT_SUBSCRIBED',
+                        'You are not subscribed to all required channels. Please subscribe and try again.',
+                    ),
+                    show_alert=True,
+                )
+            except TelegramAPIError:
+                pass
             return None
 
         return await self._deny_message(event, bot, all_channels)
