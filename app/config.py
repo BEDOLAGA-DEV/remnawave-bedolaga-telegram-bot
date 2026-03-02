@@ -316,6 +316,8 @@ class Settings(BaseSettings):
     TELEGRAM_STARS_ENABLED: bool = True
     TELEGRAM_STARS_RATE_RUB: float = 1.3
     TELEGRAM_STARS_DISPLAY_NAME: str = 'Telegram Stars'
+    # Fallback курс USD/RUB для аварийного режима (None = отключен, использовать только live/cache курс).
+    USD_RUB_FALLBACK_RATE: float | None = None
 
     TRIBUTE_ENABLED: bool = False
     TRIBUTE_API_KEY: str | None = None

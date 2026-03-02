@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 import aiohttp
 import structlog
 
+from app.config import settings
+
 
 logger = structlog.get_logger(__name__)
 
@@ -23,7 +25,7 @@ class CurrencyConverter:
         if (
             cache_key in self._cache
             and cache_key in self._last_update
-            and (now - self._last_update[cache_key]).seconds < self._cache_ttl
+            and (now - self._last_update[cache_key]).total_seconds() < self._cache_ttl
         ):
             return self._cache[cache_key]
 
@@ -41,9 +43,12 @@ class CurrencyConverter:
             logger.warning('API курсов недоступен, используем кешированный курс')
             return self._cache[cache_key]
 
-        # Fallback курс
-        logger.warning('Используем fallback курс USD/RUB: 95')
-        return 95.0
+        fallback_rate = settings.USD_RUB_FALLBACK_RATE
+        if fallback_rate is not None and fallback_rate > 0:
+            logger.warning('Используем fallback курс USD/RUB из конфигурации', rate=fallback_rate)
+            return float(fallback_rate)
+
+        raise RuntimeError('Не удалось получить курс USD/RUB и fallback отключен')
 
     async def _fetch_exchange_rate(self) -> float | None:
         """Получает курс с нескольких источников"""

@@ -170,6 +170,7 @@ class ShkeeperPaymentMixin:
         try:
             amount_rubles = amount_kopeks / 100
             amount_usd = await currency_converter.rub_to_usd(amount_rubles)
+            conversion_rate = amount_rubles / amount_usd if amount_usd > 0 else None
             response = await self.shkeeper_service.create_invoice(  # type: ignore[union-attr]
                 amount_usd=amount_usd,
                 order_id=order_id,
@@ -208,7 +209,14 @@ class ShkeeperPaymentMixin:
             crypto=str(response.get('cryptocurrency') or response.get('crypto') or settings.SHKEEPER_CRYPTO),
             display_amount=str(response.get('display_amount') or response.get('amount') or '') or None,
             expires_at=ShkeeperService.parse_datetime(response.get('expires_at') or response.get('expires')),
-            metadata_json={'create_response': response},
+            metadata_json={
+                'create_response': response,
+                'conversion': {
+                    'amount_rubles': amount_rubles,
+                    'amount_usd': amount_usd,
+                    'usd_rub_rate': conversion_rate,
+                },
+            },
         )
 
         if status != local_payment.status:
