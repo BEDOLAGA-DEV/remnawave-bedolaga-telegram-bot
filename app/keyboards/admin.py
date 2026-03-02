@@ -730,6 +730,47 @@ def get_campaign_management_keyboard(campaign_id: int, is_active: bool, language
     )
 
 
+def get_campaign_stats_period_keyboard(
+    *,
+    language: str = 'ru',
+    callback_prefix: str,
+    back_callback: str,
+) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_CAMPAIGN_PERIOD_DAY', '📅 День'),
+                    callback_data=f'{callback_prefix}day',
+                ),
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_CAMPAIGN_PERIOD_WEEK', '📅 Неделя'),
+                    callback_data=f'{callback_prefix}week',
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_CAMPAIGN_PERIOD_MONTH', '📅 Месяц'),
+                    callback_data=f'{callback_prefix}month',
+                ),
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_CAMPAIGN_PERIOD_PREVIOUS_MONTH', '📅 Прошлый месяц'),
+                    callback_data=f'{callback_prefix}previous_month',
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_CAMPAIGN_PERIOD_YEAR', '📅 Год'),
+                    callback_data=f'{callback_prefix}year',
+                )
+            ],
+            [InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)],
+        ]
+    )
+
+
 def get_campaign_edit_keyboard(
     campaign_id: int,
     *,

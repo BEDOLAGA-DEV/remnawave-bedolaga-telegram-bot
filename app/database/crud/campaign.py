@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import and_, delete, func, select, update
@@ -15,9 +15,61 @@ from app.database.models import (
     TransactionType,
     User,
 )
+from app.utils.timezone import get_local_timezone
 
 
 logger = structlog.get_logger(__name__)
+
+CAMPAIGN_STATS_PERIODS = {'day', 'week', 'month', 'previous_month', 'year'}
+
+
+def get_campaign_period_bounds(period: str, *, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Вернуть границы периода в UTC [start, end)."""
+    if period not in CAMPAIGN_STATS_PERIODS:
+        raise ValueError(f'Неизвестный период аналитики: {period}')
+
+    local_tz = get_local_timezone()
+    current_local = now.astimezone(local_tz) if now else datetime.now(local_tz)
+    current_day_start = current_local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if period == 'day':
+        start_local = current_day_start
+        end_local = current_local
+    elif period == 'week':
+        start_local = current_day_start - timedelta(days=current_day_start.weekday())
+        end_local = current_local
+    elif period == 'month':
+        start_local = current_day_start.replace(day=1)
+        end_local = current_local
+    elif period == 'year':
+        start_local = current_day_start.replace(month=1, day=1)
+        end_local = current_local
+    else:  # previous_month
+        current_month_start = current_day_start.replace(day=1)
+        previous_month_end = current_month_start
+        previous_month_start = (current_month_start - timedelta(days=1)).replace(day=1)
+        start_local = previous_month_start
+        end_local = previous_month_end
+
+    return start_local.astimezone(UTC), end_local.astimezone(UTC)
+
+
+def _append_period_range_filters(conditions: list, column, date_range: tuple[datetime, datetime] | None) -> None:
+    if not date_range:
+        return
+    start_at, end_at = date_range
+    conditions.append(column >= start_at)
+    conditions.append(column < end_at)
+
+
+def _build_registrations_subquery(
+    campaign_id: int,
+    date_range: tuple[datetime, datetime] | None = None,
+):
+    conditions = [AdvertisingCampaignRegistration.campaign_id == campaign_id]
+    _append_period_range_filters(conditions, AdvertisingCampaignRegistration.created_at, date_range)
+
+    return select(AdvertisingCampaignRegistration.user_id).where(*conditions).subquery()
 
 
 async def create_campaign(
@@ -242,17 +294,39 @@ async def get_campaign_statistics(
     db: AsyncSession,
     campaign_id: int,
 ) -> dict[str, int | None]:
-    registrations_query = select(AdvertisingCampaignRegistration.user_id).where(
-        AdvertisingCampaignRegistration.campaign_id == campaign_id
-    )
-    registrations_subquery = registrations_query.subquery()
+    return await _get_campaign_statistics_with_range(db, campaign_id, date_range=None)
+
+
+async def get_campaign_statistics_by_period(
+    db: AsyncSession,
+    campaign_id: int,
+    period: str,
+) -> dict[str, int | float | datetime | None | str]:
+    date_range = get_campaign_period_bounds(period)
+    result = await _get_campaign_statistics_with_range(db, campaign_id, date_range=date_range)
+    result['period'] = period
+    result['period_started_at'] = date_range[0]
+    result['period_ended_at'] = date_range[1]
+    return result
+
+
+async def _get_campaign_statistics_with_range(
+    db: AsyncSession,
+    campaign_id: int,
+    *,
+    date_range: tuple[datetime, datetime] | None,
+) -> dict[str, int | float | datetime | None]:
+    registration_conditions = [AdvertisingCampaignRegistration.campaign_id == campaign_id]
+    _append_period_range_filters(registration_conditions, AdvertisingCampaignRegistration.created_at, date_range)
+
+    registrations_subquery = _build_registrations_subquery(campaign_id, date_range=date_range)
 
     result = await db.execute(
         select(
             func.count(AdvertisingCampaignRegistration.id),
             func.coalesce(func.sum(AdvertisingCampaignRegistration.balance_bonus_kopeks), 0),
             func.max(AdvertisingCampaignRegistration.created_at),
-        ).where(AdvertisingCampaignRegistration.campaign_id == campaign_id)
+        ).where(*registration_conditions)
     )
     count, total_balance, last_registration = result.one()
     count = count or 0
@@ -261,18 +335,33 @@ async def get_campaign_statistics(
     subscription_count_result = await db.execute(
         select(func.count(AdvertisingCampaignRegistration.id)).where(
             and_(
-                AdvertisingCampaignRegistration.campaign_id == campaign_id,
                 AdvertisingCampaignRegistration.bonus_type == 'subscription',
+                *registration_conditions,
             )
         )
     )
     subscription_bonuses_issued = subscription_count_result.scalar() or 0
 
+    tariff_count_result = await db.execute(
+        select(func.count(AdvertisingCampaignRegistration.id)).where(
+            and_(
+                AdvertisingCampaignRegistration.bonus_type == 'tariff',
+                *registration_conditions,
+            )
+        )
+    )
+    tariff_bonuses_issued = tariff_count_result.scalar() or 0
+
+    transactions_conditions = [
+        Transaction.user_id.in_(select(registrations_subquery.c.user_id)),
+        Transaction.is_completed.is_(True),
+    ]
+    _append_period_range_filters(transactions_conditions, Transaction.created_at, date_range)
+
     deposits_result = await db.execute(
         select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
-            Transaction.user_id.in_(select(registrations_subquery.c.user_id)),
             Transaction.type == TransactionType.DEPOSIT.value,
-            Transaction.is_completed.is_(True),
+            *transactions_conditions,
         )
     )
     deposits_total = deposits_result.scalar() or 0
@@ -327,9 +416,8 @@ async def get_campaign_statistics(
             Transaction.created_at,
         )
         .where(
-            Transaction.user_id.in_(select(registrations_subquery.c.user_id)),
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-            Transaction.is_completed.is_(True),
+            *transactions_conditions,
         )
         .order_by(Transaction.user_id, Transaction.created_at)
     )
@@ -392,6 +480,7 @@ async def get_campaign_statistics(
         'registrations': count,
         'balance_issued': total_balance,
         'subscription_issued': subscription_bonuses_issued,
+        'tariff_issued': tariff_bonuses_issued,
         'last_registration': last_registration,
         'total_revenue_kopeks': total_revenue,
         'trial_users_count': trial_users_count,
@@ -422,6 +511,12 @@ async def get_campaigns_overview(db: AsyncSession) -> dict[str, int]:
         )
     )
 
+    tariff_result = await db.execute(
+        select(func.count(AdvertisingCampaignRegistration.id)).where(
+            AdvertisingCampaignRegistration.bonus_type == 'tariff'
+        )
+    )
+
     return {
         'total': total,
         'active': active,
@@ -429,4 +524,49 @@ async def get_campaigns_overview(db: AsyncSession) -> dict[str, int]:
         'registrations': registrations_result.scalar() or 0,
         'balance_total': balance_result.scalar() or 0,
         'subscription_total': subscription_result.scalar() or 0,
+        'tariff_total': tariff_result.scalar() or 0,
+    }
+
+
+async def get_campaigns_overview_by_period(
+    db: AsyncSession,
+    period: str,
+) -> dict[str, int | str | datetime]:
+    date_range = get_campaign_period_bounds(period)
+    total = await get_campaigns_count(db)
+    active = await get_campaigns_count(db, is_active=True)
+    inactive = await get_campaigns_count(db, is_active=False)
+    registration_filters: list = []
+    _append_period_range_filters(registration_filters, AdvertisingCampaignRegistration.created_at, date_range)
+
+    registrations_result = await db.execute(
+        select(func.count(AdvertisingCampaignRegistration.id)).where(*registration_filters)
+    )
+    balance_result = await db.execute(
+        select(func.coalesce(func.sum(AdvertisingCampaignRegistration.balance_bonus_kopeks), 0)).where(
+            *registration_filters
+        )
+    )
+    subscription_result = await db.execute(
+        select(func.count(AdvertisingCampaignRegistration.id)).where(
+            AdvertisingCampaignRegistration.bonus_type == 'subscription', *registration_filters
+        )
+    )
+    tariff_result = await db.execute(
+        select(func.count(AdvertisingCampaignRegistration.id)).where(
+            AdvertisingCampaignRegistration.bonus_type == 'tariff', *registration_filters
+        )
+    )
+
+    return {
+        'total': total,
+        'active': active,
+        'inactive': inactive,
+        'period': period,
+        'period_started_at': date_range[0],
+        'period_ended_at': date_range[1],
+        'registrations': registrations_result.scalar() or 0,
+        'balance_total': balance_result.scalar() or 0,
+        'subscription_total': subscription_result.scalar() or 0,
+        'tariff_total': tariff_result.scalar() or 0,
     }

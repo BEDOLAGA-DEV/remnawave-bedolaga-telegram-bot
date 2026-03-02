@@ -14,9 +14,11 @@ from app.database.crud.campaign import (
     get_campaign_by_id,
     get_campaign_by_start_parameter,
     get_campaign_statistics,
+    get_campaign_statistics_by_period,
     get_campaigns_count,
     get_campaigns_list,
     get_campaigns_overview,
+    get_campaigns_overview_by_period,
     update_campaign,
 )
 from app.database.crud.server_squad import get_all_server_squads
@@ -43,6 +45,7 @@ from ..schemas.campaigns import (
     CampaignRegistrationsResponse,
     CampaignsOverviewResponse,
     CampaignStatisticsResponse,
+    CampaignStatsPeriod,
     CampaignToggleResponse,
     CampaignUpdateRequest,
     ServerSquadInfo,
@@ -82,19 +85,22 @@ def _get_partner_name(campaign: AdvertisingCampaign) -> str | None:
 
 @router.get('/overview', response_model=CampaignsOverviewResponse)
 async def get_overview(
+    period: CampaignStatsPeriod | None = Query(None),
     admin: User = Depends(require_permission('campaigns:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get campaigns overview statistics."""
-    overview = await get_campaigns_overview(db)
+    overview = await get_campaigns_overview_by_period(db, period) if period else await get_campaigns_overview(db)
 
-    # Count tariff bonuses
-    tariff_result = await db.execute(
-        select(func.count(AdvertisingCampaignRegistration.id)).where(
-            AdvertisingCampaignRegistration.bonus_type == 'tariff'
+    tariff_count = int(overview.get('tariff_total') or 0)
+    if not period:
+        # Обратная совместимость, если сводка из старого источника без tariff_total.
+        tariff_result = await db.execute(
+            select(func.count(AdvertisingCampaignRegistration.id)).where(
+                AdvertisingCampaignRegistration.bonus_type == 'tariff'
+            )
         )
-    )
-    tariff_count = tariff_result.scalar() or 0
+        tariff_count = tariff_result.scalar() or tariff_count
 
     return CampaignsOverviewResponse(
         total=overview['total'],
@@ -105,6 +111,9 @@ async def get_overview(
         total_balance_issued_rubles=overview['balance_total'] / 100,
         total_subscription_issued=overview['subscription_total'],
         total_tariff_issued=tariff_count,
+        period=period,
+        period_started_at=overview.get('period_started_at'),
+        period_ended_at=overview.get('period_ended_at'),
     )
 
 
@@ -277,6 +286,7 @@ async def get_campaign_chart_data(
 @router.get('/{campaign_id}/stats', response_model=CampaignStatisticsResponse)
 async def get_campaign_stats(
     campaign_id: int,
+    period: CampaignStatsPeriod | None = Query(None),
     admin: User = Depends(require_permission('campaigns:stats')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -288,7 +298,11 @@ async def get_campaign_stats(
             detail='Campaign not found',
         )
 
-    stats = await get_campaign_statistics(db, campaign_id)
+    stats = (
+        await get_campaign_statistics_by_period(db, campaign_id, period)
+        if period
+        else await get_campaign_statistics(db, campaign_id)
+    )
 
     return CampaignStatisticsResponse(
         id=campaign.id,
@@ -313,6 +327,10 @@ async def get_campaign_stats(
         paid_users_count=stats['paid_users_count'],
         conversion_rate=stats['conversion_rate'],
         trial_conversion_rate=stats['trial_conversion_rate'],
+        tariff_issued=stats.get('tariff_issued', 0),
+        period=period,
+        period_started_at=stats.get('period_started_at'),
+        period_ended_at=stats.get('period_ended_at'),
         deep_link=_get_deep_link(campaign.start_parameter),
         web_link=_get_web_link(campaign.start_parameter),
     )
