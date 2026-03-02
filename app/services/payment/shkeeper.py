@@ -7,10 +7,11 @@ from datetime import UTC, datetime
 from importlib import import_module
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.models import PaymentMethod, TransactionType
+from app.database.models import PaymentMethod, ShkeeperPayment, Transaction, TransactionType, User
 from app.services.shkeeper_service import ShkeeperAPIError, ShkeeperService
 from app.services.subscription_auto_purchase_service import (
     auto_purchase_saved_cart_after_topup,
@@ -210,59 +211,97 @@ class ShkeeperPaymentMixin:
         return {'payment': payment, 'remote': remote}
 
     async def _finalize_shkeeper_payment(self, db: AsyncSession, payment: Any, payload: dict[str, Any]) -> bool:
-        payment_module = import_module('app.services.payment_service')
+        # Блокируем запись платежа, чтобы параллельные callback-и не зачислили баланс дважды.
+        payment_result = await db.execute(
+            select(ShkeeperPayment).where(ShkeeperPayment.id == payment.id).with_for_update()
+        )
+        locked_payment = payment_result.scalar_one_or_none()
+        if not locked_payment:
+            logger.error('SHKeeper платеж не найден при финализации', payment_id=payment.id)
+            return False
 
-        if payment.transaction_id:
+        if locked_payment.transaction_id:
             logger.info(
-                'SHKeeper платеж уже обработан', order_id=payment.order_id, transaction_id=payment.transaction_id
+                'SHKeeper платеж уже обработан',
+                order_id=locked_payment.order_id,
+                transaction_id=locked_payment.transaction_id,
             )
             return True
 
-        transaction = await payment_module.create_transaction(
-            db,
-            user_id=payment.user_id,
-            type=TransactionType.DEPOSIT,
-            amount_kopeks=payment.amount_kopeks,
-            description=f'Пополнение через {settings.get_shkeeper_display_name()} ({payment.order_id})',
-            payment_method=PaymentMethod.SHKEEPER,
-            external_id=str(payload.get('id') or payload.get('invoice_id') or payment.order_id),
-            is_completed=True,
-            created_at=getattr(payment, 'created_at', None),
-        )
-
-        payment = await payment_module.update_shkeeper_payment_status(
-            db,
-            payment=payment,
-            status='paid',
-            is_paid=True,
-            paid_at=datetime.now(UTC),
-            transaction_id=transaction.id,
-            callback_payload=payload,
-        )
-
-        user = await payment_module.get_user_by_id(db, payment.user_id)
+        user_result = await db.execute(select(User).where(User.id == locked_payment.user_id).with_for_update())
+        user = user_result.scalar_one_or_none()
         if not user:
-            logger.error('Пользователь не найден при финализации SHKeeper', user_id=payment.user_id)
+            logger.error('Пользователь не найден при финализации SHKeeper', user_id=locked_payment.user_id)
             return False
+
+        transaction = Transaction(
+            user_id=locked_payment.user_id,
+            type=TransactionType.DEPOSIT.value,
+            amount_kopeks=locked_payment.amount_kopeks,
+            description=f'Пополнение через {settings.get_shkeeper_display_name()} ({locked_payment.order_id})',
+            payment_method=PaymentMethod.SHKEEPER.value,
+            external_id=str(payload.get('id') or payload.get('invoice_id') or locked_payment.order_id),
+            is_completed=True,
+            completed_at=datetime.now(UTC),
+            created_at=getattr(locked_payment, 'created_at', None),
+        )
+        db.add(transaction)
+        await db.flush()
+
+        now = datetime.now(UTC)
+        locked_payment.status = 'paid'
+        locked_payment.is_paid = True
+        locked_payment.paid_at = now
+        locked_payment.transaction_id = transaction.id
+        locked_payment.callback_payload = payload
+        locked_payment.updated_at = now
 
         old_balance = user.balance_kopeks
         was_first_topup = not user.has_made_first_topup
-        user.balance_kopeks += payment.amount_kopeks
-        user.updated_at = datetime.now(UTC)
+        user.balance_kopeks += locked_payment.amount_kopeks
+        user.updated_at = now
+        if was_first_topup and not user.has_made_first_topup:
+            user.has_made_first_topup = True
+
         await db.commit()
+        await db.refresh(transaction)
+        await db.refresh(locked_payment)
         await db.refresh(user)
+
+        try:
+            from app.services.event_emitter import event_emitter
+
+            await event_emitter.emit(
+                'payment.completed',
+                {
+                    'transaction_id': transaction.id,
+                    'user_id': user.id,
+                    'type': TransactionType.DEPOSIT.value,
+                    'amount_kopeks': locked_payment.amount_kopeks,
+                    'amount_rubles': locked_payment.amount_kopeks / 100,
+                    'payment_method': PaymentMethod.SHKEEPER.value,
+                    'external_id': transaction.external_id,
+                    'is_completed': True,
+                    'description': transaction.description,
+                },
+                db=db,
+            )
+        except Exception as error:
+            logger.warning('Не удалось отправить событие о транзакции SHKeeper', error=error)
+
+        try:
+            from app.services.promo_group_assignment import maybe_assign_promo_group_by_total_spent
+
+            await maybe_assign_promo_group_by_total_spent(db, user.id)
+        except Exception as error:
+            logger.debug('Не удалось проверить автовыдачу промогруппы после SHKeeper', user_id=user.id, error=error)
 
         try:
             from app.services.referral_service import process_referral_topup
 
-            await process_referral_topup(db, user.id, payment.amount_kopeks, getattr(self, 'bot', None))
+            await process_referral_topup(db, user.id, locked_payment.amount_kopeks, getattr(self, 'bot', None))
         except Exception as error:
             logger.error('Ошибка обработки реферального пополнения SHKeeper', error=error)
-
-        if was_first_topup and not user.has_made_first_topup:
-            user.has_made_first_topup = True
-            await db.commit()
-            await db.refresh(user)
 
         if getattr(self, 'bot', None):
             try:
@@ -289,7 +328,7 @@ class ShkeeperPaymentMixin:
                     user.telegram_id,
                     (
                         '✅ <b>Пополнение успешно!</b>\n\n'
-                        f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}\n'
+                        f'💰 Сумма: {settings.format_price(locked_payment.amount_kopeks)}\n'
                         f'💳 Способ: {settings.get_shkeeper_display_name()}\n'
                         f'🆔 Транзакция: {transaction.id}'
                     ),
@@ -304,5 +343,5 @@ class ShkeeperPaymentMixin:
         except Exception as error:
             logger.error('Ошибка автопокупки после пополнения SHKeeper', error=error)
 
-        logger.info('SHKeeper платеж успешно финализирован', order_id=payment.order_id, user_id=payment.user_id)
+        logger.info('SHKeeper платеж успешно финализирован', order_id=locked_payment.order_id, user_id=user.id)
         return True
