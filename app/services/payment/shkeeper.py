@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal, InvalidOperation
 from datetime import UTC, datetime
 from importlib import import_module
 from typing import Any
@@ -24,8 +25,73 @@ from app.utils.user_utils import format_referrer_info
 PAID_STATUSES = {'paid', 'success', 'completed', 'confirmed'}
 
 
+def _parse_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    raw = str(value).strip().replace(' ', '').replace(',', '.')
+    if not raw:
+        return None
+    try:
+        return Decimal(raw)
+    except (InvalidOperation, ValueError):
+        return None
+
+
 class ShkeeperPaymentMixin:
     """Создание инвойсов и обработка callback событий SHKeeper."""
+
+    @staticmethod
+    def _extract_received_amount(payload: dict[str, Any]) -> Decimal | None:
+        for key in (
+            'paid_amount_crypto',
+            'amount_crypto',
+            'crypto_amount',
+            'paid_amount',
+            'amount_paid',
+            'amount',
+        ):
+            amount = _parse_decimal(payload.get(key))
+            if amount is not None:
+                return amount
+        return None
+
+    @staticmethod
+    def _extract_expected_amount(payment: Any) -> Decimal | None:
+        expected_crypto = _parse_decimal(getattr(payment, 'amount_crypto', None))
+        if expected_crypto is not None:
+            return expected_crypto
+        return _parse_decimal(getattr(payment, 'display_amount', None))
+
+    def _is_sufficient_amount(self, payment: Any, payload: dict[str, Any]) -> bool:
+        expected = self._extract_expected_amount(payment)
+        if expected is None:
+            logger.warning(
+                'SHKeeper: не удалось проверить сумму, ожидаемая сумма отсутствует',
+                payment_id=getattr(payment, 'id', None),
+                order_id=getattr(payment, 'order_id', None),
+            )
+            return False
+
+        received = self._extract_received_amount(payload)
+        if received is None:
+            logger.warning(
+                'SHKeeper: не удалось проверить сумму, в callback отсутствует сумма',
+                payment_id=getattr(payment, 'id', None),
+                order_id=getattr(payment, 'order_id', None),
+            )
+            return False
+
+        if received < expected:
+            logger.warning(
+                'SHKeeper: получена сумма меньше ожидаемой, платеж не финализирован',
+                payment_id=getattr(payment, 'id', None),
+                order_id=getattr(payment, 'order_id', None),
+                expected=str(expected),
+                received=str(received),
+            )
+            return False
+
+        return True
 
     async def create_shkeeper_payment(
         self,
@@ -167,6 +233,8 @@ class ShkeeperPaymentMixin:
 
         paid_flag = bool(payload.get('paid'))
         if paid_flag or status in PAID_STATUSES:
+            if not self._is_sufficient_amount(payment, payload):
+                return False
             await self._finalize_shkeeper_payment(db, payment, payload)
 
         return True
@@ -205,6 +273,8 @@ class ShkeeperPaymentMixin:
                 metadata_json={**(payment.metadata_json or {}), 'last_status_response': remote},
             )
             if not payment.is_paid and (paid_flag or status in PAID_STATUSES):
+                if not self._is_sufficient_amount(payment, remote):
+                    return {'payment': payment, 'remote': remote}
                 await self._finalize_shkeeper_payment(db, payment, remote)
                 payment = await payment_module.get_shkeeper_payment_by_id(db, local_payment_id)
 
