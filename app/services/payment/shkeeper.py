@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from decimal import Decimal, InvalidOperation
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from importlib import import_module
 from typing import Any
 
