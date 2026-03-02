@@ -25,6 +25,26 @@ async def start_shkeeper_payment(
     db_user: User,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
+
+    # Проверка ограничения на пополнение.
+    if getattr(db_user, 'restriction_topup', False):
+        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        support_url = settings.get_support_contact_url()
+        keyboard = []
+        if support_url:
+            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+
+        await callback.message.edit_text(
+            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
+            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+            parse_mode='HTML',
+        )
+        await callback.answer()
+        return
+
     if not settings.is_shkeeper_enabled():
         await callback.answer('❌ Оплата через SHKeeper временно недоступна', show_alert=True)
         return
@@ -66,6 +86,24 @@ async def process_shkeeper_payment_amount(
     state: FSMContext,
 ):
     texts = get_texts(db_user.language)
+
+    # Проверка ограничения на пополнение.
+    if getattr(db_user, 'restriction_topup', False):
+        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        support_url = settings.get_support_contact_url()
+        keyboard = []
+        if support_url:
+            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+
+        await message.answer(
+            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
+            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+            parse_mode='HTML',
+        )
+        await state.clear()
+        return
 
     if not settings.is_shkeeper_enabled():
         await message.answer('❌ Оплата через SHKeeper временно недоступна')
