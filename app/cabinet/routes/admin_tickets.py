@@ -233,7 +233,7 @@ async def get_ticket_settings(
         sla_minutes=settings.SUPPORT_TICKET_SLA_MINUTES,
         sla_check_interval_seconds=settings.SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS,
         sla_reminder_cooldown_minutes=settings.SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES,
-        support_system_mode=settings.get_support_system_mode(),
+        support_system_mode=SupportSettingsService.get_system_mode(),
         cabinet_user_notifications_enabled=SupportSettingsService.get_cabinet_user_notifications_enabled(),
         cabinet_admin_notifications_enabled=SupportSettingsService.get_cabinet_admin_notifications_enabled(),
     )
@@ -294,6 +294,7 @@ async def update_ticket_settings(
                 updates['SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES'] = str(request.sla_reminder_cooldown_minutes)
             if request.support_system_mode is not None:
                 updates['SUPPORT_SYSTEM_MODE'] = request.support_system_mode.strip().lower()
+                settings.SUPPORT_SYSTEM_MODE = request.support_system_mode.strip().lower()
 
             new_lines = []
             updated_keys = set()
@@ -324,7 +325,7 @@ async def update_ticket_settings(
         sla_minutes=settings.SUPPORT_TICKET_SLA_MINUTES,
         sla_check_interval_seconds=settings.SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS,
         sla_reminder_cooldown_minutes=settings.SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES,
-        support_system_mode=settings.get_support_system_mode(),
+        support_system_mode=SupportSettingsService.get_system_mode(),
         cabinet_user_notifications_enabled=SupportSettingsService.get_cabinet_user_notifications_enabled(),
         cabinet_admin_notifications_enabled=SupportSettingsService.get_cabinet_admin_notifications_enabled(),
     )

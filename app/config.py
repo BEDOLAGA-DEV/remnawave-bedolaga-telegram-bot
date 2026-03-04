@@ -1709,7 +1709,7 @@ class Settings(BaseSettings):
             10: {'name': 'Банковские карты (RUB)', 'title': '💳 Карты (RUB)'},
             11: {'name': 'Банковские карты', 'title': '💳 Банковские карты'},
             12: {'name': 'Международные карты', 'title': '🌍 Международные карты'},
-            13: {'name': 'Криптовалюта', 'title': '🪙 Криптовалюта'},
+            13: {'name': 'Криптовалюта', 'title': '💎 Криптовалюта'},
         }
 
     def get_platega_method_display_name(self, method_code: int) -> str:
