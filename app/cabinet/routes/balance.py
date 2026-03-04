@@ -678,6 +678,11 @@ async def create_topup(
                     detail='KassaAI payment method is unavailable',
                 )
 
+            # Map payment_option to KassaAI payment system ID: sbp=44, card=36
+            kassa_option = (request.payment_option or '').strip().lower()
+            kassa_ps_id_map = {'sbp': 44, 'card': 36}
+            kassa_ps_id = kassa_ps_id_map.get(kassa_option)
+
             payment_service = PaymentService()
             result = await payment_service.create_kassa_ai_payment(
                 db=db,
@@ -686,6 +691,7 @@ async def create_topup(
                 description=settings.get_balance_payment_description(request.amount_kopeks),
                 email=getattr(user, 'email', None),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                payment_system_id=kassa_ps_id,
             )
 
             if result and result.get('payment_url'):

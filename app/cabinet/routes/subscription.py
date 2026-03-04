@@ -650,6 +650,7 @@ async def renew_subscription(
     except Exception as e:
         logger.error('Failed to send admin notification for subscription renewal', error=e)
 
+
     response = {
         'message': 'Subscription renewed successfully',
         'new_end_date': user.subscription.end_date.isoformat(),
@@ -1433,6 +1434,13 @@ async def activate_trial(
 
     logger.info('Trial subscription activated for user', user_id=user.id)
 
+    # Yandex offline conversions: fire trial event
+    try:
+        from app.services import yandex_offline_conv_service as yandex_conv
+        await yandex_conv.on_trial(db, user.id)
+    except Exception as e:
+        logger.debug('Yandex offline conv trial hook error', error=e)
+
     # Create RemnaWave user
     try:
         subscription_service = SubscriptionService()
@@ -1868,6 +1876,7 @@ async def submit_purchase(
                     await bot.session.close()
         except Exception as e:
             logger.error('Failed to send admin notification for subscription purchase', error=e)
+
 
         return {
             'success': True,
@@ -2322,6 +2331,7 @@ async def purchase_tariff(
                     await bot.session.close()
         except Exception as e:
             logger.error('Failed to send admin notification for tariff purchase', error=e)
+
 
         return response
 
@@ -4397,6 +4407,7 @@ async def switch_tariff(
                 await bot.session.close()
     except Exception as e:
         logger.error('Failed to send admin notification for tariff switch', error=e)
+
 
     response = {
         'success': True,
