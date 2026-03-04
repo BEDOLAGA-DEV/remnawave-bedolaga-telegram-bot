@@ -161,6 +161,14 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     support.register_handlers(dp)
     server_status.register_handlers(dp)
     tickets.register_handlers(dp)
+
+    # DonMatteo-AI-Tiket: register manager-side Forum group handler
+    if settings.SUPPORT_AI_FORUM_ID:
+        from app.modules.ai_ticket.handlers.manager import register_manager_handlers
+
+        register_manager_handlers(dp)
+        logger.info('🤖 AI-Tiket менеджер-обработчик зарегистрирован', forum_id=settings.SUPPORT_AI_FORUM_ID)
+
     admin_main.register_handlers(dp)
     admin_users.register_handlers(dp)
     admin_subscriptions.register_handlers(dp)

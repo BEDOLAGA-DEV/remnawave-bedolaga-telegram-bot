@@ -2,6 +2,8 @@
 
 from fastapi import APIRouter
 
+from .admin_ai_faq import router as admin_ai_faq_router
+from .admin_ai_providers import router as admin_ai_providers_router
 from .admin_apps import router as admin_apps_router
 from .admin_audit_log import router as admin_audit_log_router
 from .admin_ban_system import router as admin_ban_system_router
@@ -111,6 +113,8 @@ router.include_router(admin_apps_router)
 router.include_router(admin_roles_router)
 router.include_router(admin_policies_router)
 router.include_router(admin_audit_log_router)
+router.include_router(admin_ai_faq_router)
+router.include_router(admin_ai_providers_router)
 
 # WebSocket route
 router.include_router(websocket_router)

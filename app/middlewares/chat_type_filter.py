@@ -37,6 +37,13 @@ class ChatTypeFilterMiddleware(BaseMiddleware):
             chat = event.message.chat
 
         if chat is not None and chat.type != ChatType.PRIVATE:
+            # Allow AI-tiket Forum group through
+            from app.config import settings
+
+            forum_id = settings.SUPPORT_AI_FORUM_ID
+            if forum_id and str(chat.id) == str(forum_id):
+                return await handler(event, data)
+
             logger.debug(
                 'Dropping non-private chat event',
                 chat_id=chat.id,

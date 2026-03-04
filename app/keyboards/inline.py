@@ -2749,6 +2749,7 @@ def get_my_tickets_keyboard(
     total_pages: int = 1,
     language: str = DEFAULT_LANGUAGE,
     page_prefix: str = 'my_tickets_page_',
+    id_prefix: str = 'view_ticket_',
 ) -> InlineKeyboardMarkup:
     texts = get_texts(language)
     keyboard = []
@@ -2761,7 +2762,7 @@ def get_my_tickets_keyboard(
         title = ticket.get('title', 'Без названия')[:25]
         button_text = f'{status_emoji} #{ticket["id"]} {title}'
 
-        keyboard.append([InlineKeyboardButton(text=button_text, callback_data=f'view_ticket_{ticket["id"]}')])
+        keyboard.append([InlineKeyboardButton(text=button_text, callback_data=f'{id_prefix}{ticket["id"]}')])
 
     # Пагинация
     if total_pages > 1:
@@ -2786,6 +2787,7 @@ def get_my_tickets_keyboard(
         keyboard.append(nav_row)
 
     keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_support')])
+    keyboard.append([InlineKeyboardButton(text=texts.MAIN_MENU_BUTTON, callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -2815,6 +2817,7 @@ def get_ticket_view_keyboard(
         )
 
     keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='my_tickets')])
+    keyboard.append([InlineKeyboardButton(text=texts.MAIN_MENU_BUTTON, callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

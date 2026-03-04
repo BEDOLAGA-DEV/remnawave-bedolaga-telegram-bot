@@ -1349,8 +1349,6 @@
   "RESET_TRAFFIC_BUTTON": "🔄 Сбросить трафик",
   "NO_SAVED_SUBSCRIPTION_ORDER": "❗️ Сохраненный заказ не найден.",
   "RETURN_TO_SUBSCRIPTION_CHECKOUT": "⬅️ Вернуться к оформлению подписки",
-  "BALANCE_TOPPED_UP_CART_SUFFICIENT": "✅ Баланс пополнен на {amount}!\n\n💰 Текущий баланс: {balance}\n\n🛒 У вас есть сохранённая корзина на {cart_total}\nСредств на балансе достаточно для оформления.",
-  "BALANCE_TOPPED_UP_CART_INSUFFICIENT": "✅ Баланс пополнен на {amount}!\n\n💰 Текущий баланс: {balance}\n\n🛒 У вас есть сохранённая корзина на {cart_total}\nНе хватает: {missing}",
   "RULES_ACCEPT": "✅ Принимаю правила",
   "RULES_ACCEPTED_PROCESSING": "✅ Правила приняты! Завершаем регистрацию...",
   "RULES_DECLINE": "❌ Не принимаю",
@@ -1714,15 +1712,18 @@
   "MODEM_PRICE_WITH_DISCOUNT": "Стоимость: <s>{base_price}</s> <b>{final_price}</b> (за {months} мес)\n🎁 Скидка {discount}%: -{discount_amount}",
   "MODEM_PRICE_NO_DISCOUNT": "Стоимость: {price} (за {months} мес)",
   "MODEM_CONFIRM_ENABLE_BASE": "📡 <b>Подтверждение подключения модема</b>\n\n{price_text}\n\nПри подключении модема:\n• К подписке добавится дополнительное устройство\n• Ежемесячная плата увеличится на {monthly_price}\n\nПодтвердить подключение?",
+
   "ADMIN_USER_RESTRICTIONS": "⚠️ Ограничить",
   "USER_RESTRICTION_TOPUP_BLOCKED": "🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.",
   "USER_RESTRICTION_SUBSCRIPTION_BLOCKED": "🚫 <b>Покупка/продление подписки ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.",
   "USER_RESTRICTION_APPEAL_BUTTON": "🆘 Обжаловать",
+
   "PAUSE_DAILY_BUTTON": "⏸️ Приостановить подписку",
   "RESUME_DAILY_BUTTON": "▶️ Возобновить подписку",
   "DAILY_SWITCH_WARNING": "⚠️ <b>Внимание!</b> У вас осталось {days} дн. подписки.\nПри смене на суточный тариф они будут утеряны!",
   "DAILY_SUBSCRIPTION_PAUSED": "⏸️ Подписка приостановлена",
   "DAILY_SUBSCRIPTION_RESUMED": "▶️ Подписка возобновлена!",
+
   "WEBHOOK_SUB_EXPIRED": "❌ <b>Подписка истекла</b>\n\nВаша подписка завершена. Продлите подписку, чтобы восстановить доступ к VPN.",
   "WEBHOOK_SUB_DISABLED": "🚫 <b>Подписка отключена</b>\n\nВаша подписка была отключена администратором.",
   "WEBHOOK_SUB_ENABLED": "✅ <b>Подписка активирована</b>\n\nВаша подписка снова активна. Приятного использования!",
@@ -1740,14 +1741,5 @@
   "WEBHOOK_USER_NOT_CONNECTED": "📡 <b>Вы ещё не подключились</b>\n\nВаша подписка активна, но VPN-соединение не было установлено. Подключитесь, чтобы начать пользоваться.",
   "WEBHOOK_DEVICE_ADDED": "📱 <b>Новое устройство</b>\n\nК вашей подписке подключено новое устройство: <code>{device}</code>",
   "WEBHOOK_DEVICE_DELETED": "📱 <b>Устройство удалено</b>\n\nУстройство отключено от подписки: <code>{device}</code>",
-  "WEBHOOK_CLOSE_BUTTON": "✖️ Закрыть",
-  "CLOSE_TICKET_BUTTON": "❌ Закрыть тикет",
-  "TICKET_CLOSED_CONFIRM": "✅ Ваш тикет успешно закрыт!",
-  "AI_TICKET_MESSAGE_RECEIVED": "📩 <b>Ваше сообщение получено!</b>\n\nНаш ИИ-ассистент уже анализирует ваш вопрос и скоро ответит.\n\nПожалуйста, подождите немного.",
-  "AI_TICKET_UNAVAILABLE": "⚠️ <b>ИИ временно недоступен</b>\n\nК сожалению, автоматический помощник сейчас не может ответить. Ваше сообщение передано менеджеру.\n\nМы ответим вам в ближайшее время.",
-  "AI_TICKET_ERROR": "❌ <b>Произошла ошибка</b>\n\nНе удалось получить ответ от ИИ. Ваше обращение передано техподдержке.\n\nПриносим извинения за неудобства.",
-  "AI_TICKET_MANAGER_CALLED": "👨‍💻 <b>Менеджер вызван</b>\n\nВаше обращение передано сотруднику техподдержки. Он ответит вам в этом чате в ближайшее время.",
-  "AI_TICKET_CALL_MANAGER": "🆘 Вызвать менеджера",
-  "AI_TICKET_STATUS_OPEN": "Открыт",
-  "AI_TICKET_STATUS_CLOSED": "Закрыт"
+  "WEBHOOK_CLOSE_BUTTON": "✖️ Закрыть"
 }

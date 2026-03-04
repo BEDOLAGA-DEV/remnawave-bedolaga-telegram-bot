@@ -1328,8 +1328,6 @@
   "RESET_TRAFFIC_BUTTON": "🔄 Reset traffic",
   "NO_SAVED_SUBSCRIPTION_ORDER": "No pending subscription order was found.",
   "RETURN_TO_SUBSCRIPTION_CHECKOUT": "⬅️ Return to subscription checkout",
-  "BALANCE_TOPPED_UP_CART_SUFFICIENT": "✅ Balance topped up by {amount}!\n\n💰 Current balance: {balance}\n\n🛒 You have a saved cart for {cart_total}\nYour balance is sufficient to proceed.",
-  "BALANCE_TOPPED_UP_CART_INSUFFICIENT": "✅ Balance topped up by {amount}!\n\n💰 Current balance: {balance}\n\n🛒 You have a saved cart for {cart_total}\nStill needed: {missing}",
   "RULES_ACCEPT": "✅ I accept the rules",
   "RULES_ACCEPTED_PROCESSING": "✅ Rules accepted! Completing registration...",
   "RULES_DECLINE": "❌ I do not accept",
@@ -1693,15 +1691,18 @@
   "MODEM_PRICE_WITH_DISCOUNT": "Cost: <s>{base_price}</s> <b>{final_price}</b> (for {months} months)\n🎁 Discount {discount}%: -{discount_amount}",
   "MODEM_PRICE_NO_DISCOUNT": "Cost: {price} (for {months} months)",
   "MODEM_CONFIRM_ENABLE_BASE": "📡 <b>Confirm modem connection</b>\n\n{price_text}\n\nWhen connecting a modem:\n• An additional device will be added to your subscription\n• Monthly fee will increase by {monthly_price}\n\nConfirm connection?",
+
   "ADMIN_USER_RESTRICTIONS": "⚠️ Restrict",
   "USER_RESTRICTION_TOPUP_BLOCKED": "🚫 <b>Top-up restricted</b>\n\n{reason}\n\nIf you believe this is an error, you can appeal the decision.",
   "USER_RESTRICTION_SUBSCRIPTION_BLOCKED": "🚫 <b>Subscription purchase/renewal restricted</b>\n\n{reason}\n\nIf you believe this is an error, you can appeal the decision.",
   "USER_RESTRICTION_APPEAL_BUTTON": "🆘 Appeal",
+
   "PAUSE_DAILY_BUTTON": "⏸️ Pause subscription",
   "RESUME_DAILY_BUTTON": "▶️ Resume subscription",
   "DAILY_SWITCH_WARNING": "⚠️ <b>Warning!</b> You have {days} days left.\nThey will be lost when switching to daily tariff!",
   "DAILY_SUBSCRIPTION_PAUSED": "⏸️ Subscription paused",
   "DAILY_SUBSCRIPTION_RESUMED": "▶️ Subscription resumed!",
+
   "WEBHOOK_SUB_EXPIRED": "❌ <b>Subscription expired</b>\n\nYour subscription has ended. Renew to restore VPN access.",
   "WEBHOOK_SUB_DISABLED": "🚫 <b>Subscription disabled</b>\n\nYour subscription has been disabled by the administrator.",
   "WEBHOOK_SUB_ENABLED": "✅ <b>Subscription activated</b>\n\nYour subscription is active again. Enjoy!",
@@ -1719,14 +1720,5 @@
   "WEBHOOK_USER_NOT_CONNECTED": "📡 <b>Not connected yet</b>\n\nYour subscription is active but no VPN connection has been made. Connect to start using the service.",
   "WEBHOOK_DEVICE_ADDED": "📱 <b>New device</b>\n\nA new device has been added to your subscription: <code>{device}</code>",
   "WEBHOOK_DEVICE_DELETED": "📱 <b>Device removed</b>\n\nA device has been removed from your subscription: <code>{device}</code>",
-  "WEBHOOK_CLOSE_BUTTON": "✖️ Close",
-  "CLOSE_TICKET_BUTTON": "❌ Close Ticket",
-  "TICKET_CLOSED_CONFIRM": "✅ Your ticket has been closed successfully!",
-  "AI_TICKET_MESSAGE_RECEIVED": "📩 <b>Your message received!</b>\n\nOur AI assistant is already analyzing your question and will respond soon.\n\nPlease wait a moment.",
-  "AI_TICKET_UNAVAILABLE": "⚠️ <b>AI Temporarily Unavailable</b>\n\nUnfortunately, the automated assistant cannot respond right now. Your message has been forwarded to a manager.\n\nWe will respond to you shortly.",
-  "AI_TICKET_ERROR": "❌ <b>An error occurred</b>\n\nFailed to get a response from the AI. Your request has been forwarded to technical support.\n\nWe apologize for the inconvenience.",
-  "AI_TICKET_MANAGER_CALLED": "👨‍💻 <b>Manager called</b>\n\nYour request has been forwarded to a support staff member. They will respond to you in this chat shortly.",
-  "AI_TICKET_CALL_MANAGER": "🆘 Call Manager",
-  "AI_TICKET_STATUS_OPEN": "Open",
-  "AI_TICKET_STATUS_CLOSED": "Closed"
+  "WEBHOOK_CLOSE_BUTTON": "✖️ Close"
 }

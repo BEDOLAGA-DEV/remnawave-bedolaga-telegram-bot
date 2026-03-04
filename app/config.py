@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS: int = 60
     SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES: int = 15
 
+    # DonMatteo-AI-Tiket settings (провайдеры, ключи, модели — всё в админке)
+    SUPPORT_AI_ENABLED: bool = False
+    SUPPORT_AI_FORUM_ID: str | None = None  # Telegram Forum group ID for AI tickets (-100xxx)
+
     # MiniApp tickets settings
     MINIAPP_TICKETS_ENABLED: bool = True  # Enable/disable tickets section in miniapp
     MINIAPP_SUPPORT_TYPE: str = 'tickets'  # one of: tickets, profile, url
@@ -2381,10 +2385,10 @@ class Settings(BaseSettings):
 
     def get_support_system_mode(self) -> str:
         mode = (self.SUPPORT_SYSTEM_MODE or 'both').strip().lower()
-        return mode if mode in {'tickets', 'contact', 'both'} else 'both'
+        return mode if mode in {'tickets', 'contact', 'both', 'ai_tiket'} else 'both'
 
     def is_support_tickets_enabled(self) -> bool:
-        return self.get_support_system_mode() in {'tickets', 'both'}
+        return self.get_support_system_mode() in {'tickets', 'both', 'ai_tiket'}
 
     def is_support_contact_enabled(self) -> bool:
         return self.get_support_system_mode() in {'contact', 'both'}

@@ -253,10 +253,10 @@ async def update_ticket_settings(
     # Validate support_system_mode
     if request.support_system_mode is not None:
         mode = request.support_system_mode.strip().lower()
-        if mode not in {'tickets', 'contact', 'both'}:
+        if mode not in ('tickets', 'contact', 'both', 'ai_tiket'):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Invalid support_system_mode. Must be: tickets, contact, or both',
+                detail='Invalid support_system_mode. Must be: tickets, contact, both, or ai_tiket',
             )
 
     # Update in-memory settings

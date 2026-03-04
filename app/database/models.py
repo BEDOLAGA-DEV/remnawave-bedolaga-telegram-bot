@@ -2986,3 +2986,6 @@ class AdminAuditLog(Base):
 
     def __repr__(self) -> str:
         return f'<AdminAuditLog id={self.id} action={self.action!r} status={self.status!r}>'
+
+import app.database.models_ai_ticket  # noqa: F401, E402
+

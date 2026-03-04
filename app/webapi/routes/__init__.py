@@ -1,4 +1,6 @@
 from . import (
+    ai_faq,
+    ai_providers,
     config,
     contests,
     health,
@@ -27,6 +29,8 @@ from . import (
 
 
 __all__ = [
+    'ai_faq',
+    'ai_providers',
     'config',
     'contests',
     'health',

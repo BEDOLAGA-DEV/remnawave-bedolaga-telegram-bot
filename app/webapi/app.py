@@ -10,6 +10,8 @@ from app.webapi.docs import add_redoc_endpoint
 
 from .middleware import RequestLoggingMiddleware
 from .routes import (
+    ai_faq,
+    ai_providers,
     backups,
     ban_notifications,
     broadcasts,
@@ -168,6 +170,17 @@ OPENAPI_TAGS = [
             'Позволяет отправлять уведомления пользователям о блокировке и разблокировке.'
         ),
     },
+    {
+        'name': 'ai-providers',
+        'description': (
+            'Управление AI-провайдерами: ключи, модели, приоритеты, системный промпт '
+            'для модуля DonMatteo-AI-Tiket.'
+        ),
+    },
+    {
+        'name': 'ai-faq',
+        'description': 'Управление базой знаний (FAQ) для модуля DonMatteo-AI-Tiket.',
+    },
 ]
 
 
@@ -265,6 +278,16 @@ def create_web_api_app() -> FastAPI:
         ban_notifications.router,
         prefix='/ban-notifications',
         tags=['ban-notifications'],
+    )
+    app.include_router(
+        ai_providers.router,
+        prefix='/ai-providers',
+        tags=['ai-providers'],
+    )
+    app.include_router(
+        ai_faq.router,
+        prefix='/ai-faq',
+        tags=['ai-faq'],
     )
 
     # Cabinet (Personal Account) routes
