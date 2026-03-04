@@ -473,6 +473,106 @@ class VKProvider(OAuthProvider):
         )
 
 
+
+class TelegramOIDCProvider(OAuthProvider):
+    """Telegram OpenID Connect provider (oauth.telegram.org).
+
+    Uses OAuth 2.0 + OIDC with PKCE (S256).
+    Returns user info via id_token JWT (no userinfo endpoint needed).
+    """
+
+    name = 'telegram'
+    display_name = 'Telegram'
+
+    AUTHORIZE_URL = 'https://oauth.telegram.org/auth'
+    TOKEN_URL = 'https://oauth.telegram.org/token'
+
+    @staticmethod
+    def _generate_pkce() -> tuple[str, str]:
+        """Generate PKCE code_verifier and code_challenge (S256)."""
+        code_verifier = secrets.token_urlsafe(64)
+        digest = hashlib.sha256(code_verifier.encode('ascii')).digest()
+        code_challenge = base64.urlsafe_b64encode(digest).rstrip(b'=').decode('ascii')
+        return code_verifier, code_challenge
+
+    def prepare_auth_state(self) -> dict[str, str]:
+        code_verifier, code_challenge = self._generate_pkce()
+        return {
+            'code_verifier': code_verifier,
+            '_code_challenge': code_challenge,
+        }
+
+    def get_authorization_url(self, state: str, **kwargs: Any) -> str:
+        code_challenge: str = kwargs.get('_code_challenge', '')
+        # Extract origin from redirect_uri (scheme + host)
+        from urllib.parse import urlparse
+        parsed = urlparse(self.redirect_uri)
+        origin = f'{parsed.scheme}://{parsed.netloc}'
+        params: dict[str, str] = {
+            'client_id': self.client_id,
+            'redirect_uri': self.redirect_uri,
+            'response_type': 'code',
+            'scope': 'openid profile',
+            'state': state,
+            'code_challenge': code_challenge,
+            'code_challenge_method': 'S256',
+            'origin': origin,
+        }
+        request = httpx.Request('GET', self.AUTHORIZE_URL, params=params)
+        return str(request.url)
+
+    async def exchange_code(self, code: str, **kwargs: Any) -> OAuthTokenResponse:
+        code_verifier: str = kwargs.get('code_verifier', '')
+        if not code_verifier:
+            raise ValueError('code_verifier is required for Telegram OIDC token exchange')
+
+        # Telegram requires Basic Authorization for token exchange
+        credentials = base64.b64encode(f'{self.client_id}:{self.client_secret}'.encode()).decode()
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                self.TOKEN_URL,
+                headers={'Authorization': f'Basic {credentials}'},
+                data={
+                    'grant_type': 'authorization_code',
+                    'code': code,
+                    'redirect_uri': self.redirect_uri,
+                    'code_verifier': code_verifier,
+                },
+            )
+            response.raise_for_status()
+            data: OAuthTokenResponse = response.json()
+            return data
+
+    async def get_user_info(self, token_data: OAuthTokenResponse) -> OAuthUserInfo:
+        import jwt as pyjwt
+
+        id_token = token_data.get('id_token', '')
+        if not id_token:
+            raise ValueError('Telegram OIDC response missing id_token')
+
+        # Decode without verification — token comes directly from Telegram's token endpoint
+        claims = pyjwt.decode(id_token, options={'verify_signature': False})
+
+        # Telegram OIDC claims: sub, id, name, preferred_username, picture, phone_number
+        telegram_id = str(claims.get('id') or claims.get('sub'))
+        if not telegram_id:
+            raise ValueError('Telegram OIDC id_token missing user id')
+
+        name = claims.get('name', '')
+        first_name = name.split(' ', 1)[0] if name else None
+        last_name = name.split(' ', 1)[1] if name and ' ' in name else None
+
+        return OAuthUserInfo(
+            provider='telegram',
+            provider_id=telegram_id,
+            first_name=first_name,
+            last_name=last_name,
+            username=claims.get('preferred_username'),
+            avatar_url=claims.get('picture'),
+        )
+
+
 # --- Provider factory ---
 
 _PROVIDERS: dict[str, type[OAuthProvider]] = {
@@ -480,6 +580,7 @@ _PROVIDERS: dict[str, type[OAuthProvider]] = {
     'yandex': YandexProvider,
     'discord': DiscordProvider,
     'vk': VKProvider,
+    'telegram': TelegramOIDCProvider,
 }
 
 

@@ -425,6 +425,14 @@ async def add_user_balance(
             amount_kopeks=amount_kopeks,
         )
 
+        # Yandex offline conversions: fire purchase event for deposits
+        if transaction_type == TransactionType.DEPOSIT and amount_kopeks > 0:
+            try:
+                from app.services import yandex_offline_conv_service as yandex_conv
+                await yandex_conv.on_purchase(db, user.id, amount_kopeks)
+            except Exception as yandex_err:
+                logger.debug('Yandex offline conv purchase hook error', error=yandex_err)
+
         # Автоматическое возобновление приостановленной суточной подписки
         try:
             from app.database.crud.subscription import get_subscription_by_user_id, resume_daily_subscription
@@ -1264,6 +1272,7 @@ _OAUTH_PROVIDER_COLUMNS = {
     'yandex': 'yandex_id',
     'discord': 'discord_id',
     'vk': 'vk_id',
+    'telegram': 'telegram_id',
 }
 
 
@@ -1274,7 +1283,7 @@ async def get_user_by_oauth_provider(db: AsyncSession, provider: str, provider_i
         return None
     column = getattr(User, column_name)
     # VK uses BigInteger, so convert
-    value: str | int = int(provider_id) if provider == 'vk' else provider_id
+    value: str | int = int(provider_id) if provider in ('vk', 'telegram') else provider_id
     result = await db.execute(select(User).where(column == value))
     return result.scalar_one_or_none()
 
@@ -1284,7 +1293,7 @@ async def set_user_oauth_provider_id(db: AsyncSession, user: User, provider: str
     column_name = _OAUTH_PROVIDER_COLUMNS.get(provider)
     if not column_name:
         return
-    value: str | int = int(provider_id) if provider == 'vk' else provider_id
+    value: str | int = int(provider_id) if provider in ('vk', 'telegram') else provider_id
     setattr(user, column_name, value)
     user.updated_at = datetime.now(UTC)
     logger.info('Linked (id=) to user', provider=provider, provider_id=provider_id, user_id=user.id)
@@ -1308,7 +1317,7 @@ async def create_user_by_oauth(
     default_group = await _get_or_create_default_promo_group(db)
 
     column_name = _OAUTH_PROVIDER_COLUMNS.get(provider)
-    provider_value: str | int = int(provider_id) if provider == 'vk' else provider_id
+    provider_value: str | int = int(provider_id) if provider in ('vk', 'telegram') else provider_id
 
     user = User(
         telegram_id=None,
