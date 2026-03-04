@@ -13,6 +13,7 @@ class TelegramAuthRequest(BaseModel):
         None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description='Campaign slug from web link'
     )
     referral_code: str | None = Field(None, max_length=32, description='Referral code of inviter')
+    yandex_cid: str | None = Field(None, max_length=128, description='Yandex.Metrika ClientID')
 
 
 class TelegramWidgetAuthRequest(BaseModel):
@@ -29,6 +30,7 @@ class TelegramWidgetAuthRequest(BaseModel):
         None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description='Campaign slug from web link'
     )
     referral_code: str | None = Field(None, max_length=32, description='Referral code of inviter')
+    yandex_cid: str | None = Field(None, max_length=128, description='Yandex.Metrika ClientID')
 
 
 class EmailRegisterRequest(BaseModel):
@@ -55,6 +57,7 @@ class EmailLoginRequest(BaseModel):
     campaign_slug: str | None = Field(
         None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description='Campaign slug from web link'
     )
+    yandex_cid: str | None = Field(None, max_length=128, description='Yandex.Metrika ClientID')
 
 
 class RefreshTokenRequest(BaseModel):
@@ -114,6 +117,7 @@ class EmailRegisterStandaloneRequest(BaseModel):
     first_name: str | None = Field(None, max_length=64, description='First name')
     language: str = Field('ru', description='Preferred language')
     referral_code: str | None = Field(None, max_length=32, description='Referral code of inviter')
+    yandex_cid: str | None = Field(None, max_length=128, description='Yandex.Metrika ClientID')
 
 
 class CampaignBonusInfo(BaseModel):
