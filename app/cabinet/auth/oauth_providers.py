@@ -5,6 +5,7 @@ import hashlib
 import secrets
 from abc import ABC, abstractmethod
 from typing import Any, TypedDict
+from urllib.parse import quote, urlparse, urlencode
 
 import httpx
 import structlog
@@ -511,26 +512,23 @@ class TelegramOIDCProvider(OAuthProvider):
 
     def get_authorization_url(self, state: str, **kwargs: Any) -> str:
         code_challenge: str = kwargs.get('_code_challenge', '')
-        # Extract origin from redirect_uri (scheme + host)
-        from urllib.parse import urlparse, quote
         parsed = urlparse(self.redirect_uri)
         origin = f'{parsed.scheme}://{parsed.netloc}'
-        # Build URL manually to use %20 encoding (not +) for scope,
+        params: dict[str, str] = {
+            'client_id': self.client_id,
+            'origin': origin,
+            'return_to': self.redirect_uri,
+            'scope': 'openid profile',
+            'state': state,
+            'redirect_uri': self.redirect_uri,
+            'code_challenge': code_challenge,
+            'code_challenge_method': 'S256',
+            'response_type': 'code',
+        }
+        # Use quote (not quote_plus) to encode spaces as %20 instead of +,
         # matching Telegram's expected format to avoid extra redirects
-        encoded_redirect = quote(self.redirect_uri, safe='')
-        encoded_origin = quote(origin, safe='')
-        return (
-            f'{self.AUTHORIZE_URL}'
-            f'?client_id={self.client_id}'
-            f'&origin={encoded_origin}'
-            f'&return_to={encoded_redirect}'
-            f'&scope=openid%20profile'
-            f'&state={state}'
-            f'&redirect_uri={encoded_redirect}'
-            f'&code_challenge={code_challenge}'
-            f'&code_challenge_method=S256'
-            f'&response_type=code'
-        )
+        query = urlencode(params, quote_via=quote)
+        return f'{self.AUTHORIZE_URL}?{query}'
 
     async def exchange_code(self, code: str, **kwargs: Any) -> OAuthTokenResponse:
         code_verifier: str = kwargs.get('code_verifier', '')
