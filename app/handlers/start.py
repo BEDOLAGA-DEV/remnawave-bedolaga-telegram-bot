@@ -41,6 +41,7 @@ from app.middlewares.channel_checker import (
 )
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.campaign_service import AdvertisingCampaignService
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.services.channel_subscription_service import channel_subscription_service
 from app.services.main_menu_button_service import MainMenuButtonService
 from app.services.pinned_message_service import (
@@ -353,6 +354,16 @@ async def _apply_campaign_bonus_if_needed(
     return None
 
 
+async def _process_bot_yandex_cid(db, user, data, is_new_user):
+    yandex_cid = data.get('yandex_cid')
+    if yandex_cid and is_new_user:
+        try:
+            await yandex_conv.store_cid(db, user.id, yandex_cid, source='bot')
+            await yandex_conv.on_registration(db, user.id)
+        except Exception as e:
+            logger.warning('Failed to process yandex CID during registration', user_id=user.id, error=e)
+
+
 async def handle_potential_referral_code(message: types.Message, state: FSMContext, db: AsyncSession):
     current_state = await state.get_state()
     logger.info(
@@ -607,6 +618,13 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             # _activate_pending_gift_after_registration() before state.clear().
             await state.update_data(pending_gift_token=gift_token)
             start_parameter = None  # Don't treat as campaign or referral
+    # Extract Yandex CID from start parameter (e.g. utm_ya_<CID>)
+    yandex_cid_from_start = None
+    if start_parameter:
+        yandex_cid_from_start, _ = yandex_conv.parse_cid_from_start_param(start_parameter)
+        if yandex_cid_from_start:
+            await state.update_data(yandex_cid=yandex_cid_from_start)
+            logger.info('Yandex CID extracted from start param', cid_len=len(yandex_cid_from_start))
 
     # Handle web auth deep links: /start webauth_{token}
     if start_parameter and start_parameter.startswith('webauth_'):
@@ -1573,6 +1591,9 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
         except Exception as e:
             logger.error('Ошибка при обработке реферальной регистрации', error=e)
 
+    # Yandex offline conversions: store CID and fire registration event
+    await _process_bot_yandex_cid(db, user, data, is_new_user=is_new_user_registration)
+
     campaign_message = await _apply_campaign_bonus_if_needed(db, user, data, texts)
 
     try:
@@ -1901,6 +1922,9 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                 )
         except Exception as e:
             logger.error('❌ Ошибка при активации промокода', promocode_to_activate=promocode_to_activate, error=e)
+
+    # Yandex offline conversions: store CID and fire registration event
+    await _process_bot_yandex_cid(db, user, data, is_new_user=is_new_user_registration)
 
     campaign_message = await _apply_campaign_bonus_if_needed(db, user, data, texts)
 
