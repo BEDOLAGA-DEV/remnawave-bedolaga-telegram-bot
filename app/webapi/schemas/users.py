@@ -97,3 +97,24 @@ class UserSubscriptionCreateRequest(BaseModel):
     squad_uuid: str | None = None
     connected_squads: list[str] | None = None
     replace_existing: bool = False
+
+
+class PaymentLinkRequest(BaseModel):
+    """Запрос на создание платёжной ссылки KassaAI."""
+
+    amount_kopeks: int | None = None
+    tariff_id: int | None = None
+    duration_days: int | None = None
+    payment_system_id: int | None = None
+    description: str | None = None
+
+
+class PaymentLinkResponse(BaseModel):
+    """Ответ с данными платёжной ссылки."""
+
+    payment_url: str
+    order_id: str
+    amount_kopeks: int
+    amount_rubles: float
+    expires_at: str
+    local_payment_id: int
