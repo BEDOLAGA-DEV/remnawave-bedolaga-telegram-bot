@@ -30,6 +30,7 @@ class KassaAiPaymentMixin:
         email: str | None = None,
         language: str = 'ru',
         payment_system_id: int | None = None,
+        extra_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж KassaAI.
@@ -87,6 +88,8 @@ class KassaAiPaymentMixin:
             'language': language,
             'type': 'balance_topup',
         }
+        if extra_metadata:
+            metadata.update(extra_metadata)
 
         try:
             # Используем API для создания заказа
@@ -350,6 +353,23 @@ class KassaAiPaymentMixin:
             except Exception as error:
                 logger.error('Ошибка отправки уведомления пользователю KassaAI', error=error)
 
+        # Авто-подписка если в metadata указан тариф
+        try:
+            meta = {}
+            if payment.metadata_json:
+                meta = json.loads(payment.metadata_json) if isinstance(payment.metadata_json, str) else payment.metadata_json
+            meta_tariff_id = meta.get('tariff_id')
+            meta_duration_days = meta.get('duration_days')
+
+            if meta_tariff_id and meta_duration_days:
+                await self._auto_create_subscription_from_metadata(
+                    db, user, int(meta_tariff_id), int(meta_duration_days), payment.amount_kopeks
+                )
+        except Exception as error:
+            logger.error(
+                'Ошибка авто-подписки из metadata KassaAI', user_id=user.id, error=error, exc_info=True
+            )
+
         # Автопокупка подписки и уведомление о корзине
         try:
             from app.services.payment.common import send_cart_notification_after_topup
@@ -368,6 +388,99 @@ class KassaAiPaymentMixin:
         )
 
         return True
+
+    async def _auto_create_subscription_from_metadata(
+        self,
+        db: AsyncSession,
+        user: Any,
+        tariff_id: int,
+        duration_days: int,
+        amount_kopeks: int,
+    ) -> None:
+        """Создаёт подписку автоматически после оплаты если в metadata указан тариф."""
+        from app.database.crud.server_squad import get_all_server_squads
+        from app.database.crud.subscription import create_paid_subscription, get_subscription_by_user_id
+        from app.database.crud.tariff import get_tariff_by_id
+        from app.database.crud.transaction import create_transaction
+        from app.database.crud.user import subtract_user_balance
+        from app.services.subscription_service import SubscriptionService
+
+        tariff = await get_tariff_by_id(db, tariff_id)
+        if not tariff or not tariff.is_active:
+            logger.warning('Авто-подписка: тариф не найден или неактивен', tariff_id=tariff_id)
+            return
+
+        price = tariff.get_price_for_period(duration_days)
+        if price is None:
+            logger.warning('Авто-подписка: период недоступен', tariff_id=tariff_id, duration_days=duration_days)
+            return
+
+        final_price = int(price)
+        if user.balance_kopeks < final_price:
+            logger.warning(
+                'Авто-подписка: недостаточно средств',
+                user_id=user.id,
+                balance=user.balance_kopeks,
+                price=final_price,
+            )
+            return
+
+        # Проверяем существующую подписку
+        existing = await get_subscription_by_user_id(db, user.id)
+        if existing:
+            logger.info('Авто-подписка: у пользователя уже есть подписка, пропускаем', user_id=user.id)
+            return
+
+        # Списываем баланс
+        description = f'Покупка тарифа {tariff.name} на {duration_days} дней (авто)'
+        success = await subtract_user_balance(db, user, final_price, description)
+        if not success:
+            logger.error('Авто-подписка: не удалось списать баланс', user_id=user.id)
+            return
+
+        # Серверы из тарифа
+        squads = tariff.allowed_squads or []
+        if not squads:
+            all_servers, _ = await get_all_server_squads(db, available_only=True)
+            squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+
+        # Создаём подписку
+        subscription = await create_paid_subscription(
+            db=db,
+            user_id=user.id,
+            duration_days=duration_days,
+            traffic_limit_gb=tariff.traffic_limit_gb,
+            device_limit=tariff.device_limit,
+            connected_squads=squads,
+            tariff_id=tariff.id,
+        )
+
+        # Транзакция
+        try:
+            await create_transaction(
+                db=db,
+                user_id=user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=final_price,
+                description=description,
+            )
+        except Exception as tx_error:
+            logger.warning('Авто-подписка: не удалось создать транзакцию', error=tx_error)
+
+        # Remnawave
+        try:
+            subscription_service = SubscriptionService()
+            await subscription_service.create_remnawave_user(db, subscription, reset_traffic=True, reset_reason='авто-подписка API')
+        except Exception as rw_error:
+            logger.warning('Авто-подписка: не удалось обновить Remnawave', error=rw_error)
+
+        logger.info(
+            '✅ Авто-подписка создана',
+            user_id=user.id,
+            tariff_id=tariff_id,
+            duration_days=duration_days,
+            price=final_price,
+        )
 
     async def check_kassa_ai_payment_status(
         self,
