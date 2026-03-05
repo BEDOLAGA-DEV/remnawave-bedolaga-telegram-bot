@@ -1195,6 +1195,8 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
         if referrer:
             referrer_id = referrer.id
 
+    is_new_user_registration = False
+
     if existing_user and existing_user.status == UserStatus.DELETED.value:
         logger.info('🔄 Восстанавливаем удаленного пользователя', from_user_id=callback.from_user.id)
 
@@ -1235,6 +1237,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
             referral_code=referral_code,
         )
         await db.refresh(user, ['subscription'])
+        is_new_user_registration = True
     else:
         logger.info('🔄 Обновляем существующего пользователя', from_user_id=callback.from_user.id)
         existing_user.status = UserStatus.ACTIVE.value
@@ -1449,6 +1452,8 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
         if referrer:
             referrer_id = referrer.id
 
+    is_new_user_registration = False
+
     if existing_user and existing_user.status == UserStatus.DELETED.value:
         logger.info('🔄 Восстанавливаем удаленного пользователя', from_user_id=message.from_user.id)
 
@@ -1489,6 +1494,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
             referral_code=referral_code,
         )
         await db.refresh(user, ['subscription'])
+        is_new_user_registration = True
     else:
         logger.info('🔄 Обновляем существующего пользователя', from_user_id=message.from_user.id)
         existing_user.status = UserStatus.ACTIVE.value
