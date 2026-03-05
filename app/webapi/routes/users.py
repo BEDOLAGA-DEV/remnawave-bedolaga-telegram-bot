@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,8 @@ from app.services.subscription_service import SubscriptionService
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.users import (
     BalanceUpdateRequest,
+    PaymentLinkRequest,
+    PaymentLinkResponse,
     PromoGroupSummary,
     SubscriptionSummary,
     UserCreateRequest,
@@ -39,6 +42,8 @@ from ..schemas.users import (
     UserUpdateRequest,
 )
 
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -329,6 +334,83 @@ async def update_balance(
         found_user = await get_user_by_id(db, found_user.id)
 
     return _serialize_user(found_user)
+
+
+@router.post('/{user_id}/payment-link', response_model=PaymentLinkResponse)
+async def create_payment_link(
+    user_id: int,
+    payload: PaymentLinkRequest,
+    _: Any = Security(require_api_token),
+    db: AsyncSession = Depends(get_db_session),
+) -> PaymentLinkResponse:
+    """
+    Создать платёжную ссылку KassaAI для пользователя.
+    Если указан tariff_id + duration_days — после оплаты подписка создастся автоматически.
+    """
+    user = await get_user_by_telegram_id(db, user_id)
+    if not user:
+        user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+
+    amount_kopeks = payload.amount_kopeks
+    extra_metadata: dict[str, Any] = {}
+
+    if payload.tariff_id is not None:
+        from app.database.crud.tariff import get_tariff_by_id
+
+        tariff = await get_tariff_by_id(db, payload.tariff_id)
+        if not tariff:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, 'Tariff not found')
+        if not tariff.is_active:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Tariff is not active')
+
+        if payload.duration_days is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'duration_days is required when tariff_id is specified')
+
+        price = tariff.get_price_for_period(payload.duration_days)
+        if price is None:
+            available = tariff.get_available_periods()
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f'Period {payload.duration_days} days is not available for this tariff. Available: {available}',
+            )
+
+        if amount_kopeks is None:
+            amount_kopeks = int(price)
+
+        extra_metadata['tariff_id'] = payload.tariff_id
+        extra_metadata['duration_days'] = payload.duration_days
+
+    if amount_kopeks is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'amount_kopeks is required (or specify tariff_id)')
+
+    if amount_kopeks <= 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'amount_kopeks must be positive')
+
+    from app.services.payment_service import PaymentService
+
+    payment_service = PaymentService()
+    result = await payment_service.create_kassa_ai_payment(
+        db,
+        user_id=user.id,
+        amount_kopeks=amount_kopeks,
+        description=payload.description or 'Оплата через API',
+        payment_system_id=payload.payment_system_id,
+        extra_metadata=extra_metadata or None,
+    )
+
+    if not result:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, 'Failed to create payment link')
+
+    return PaymentLinkResponse(
+        payment_url=result['payment_url'],
+        order_id=result['order_id'],
+        amount_kopeks=result['amount_kopeks'],
+        amount_rubles=result['amount_rubles'],
+        expires_at=result['expires_at'],
+        local_payment_id=result['local_payment_id'],
+    )
 
 
 async def _get_user_by_id_or_telegram_id(db: AsyncSession, user_id: int) -> User:
