@@ -48,10 +48,10 @@ from .auth import _create_auth_response, _store_refresh_token, _user_to_response
 logger = structlog.get_logger(__name__)
 
 
-OAuthProviderName = Literal['google', 'yandex', 'discord', 'vk']
+OAuthProviderName = Literal['google', 'yandex', 'discord', 'vk', 'telegram']
 
 # Ensure OAuthProviderName Literal stays in sync with OAUTH_PROVIDER_COLUMNS
-_EXPECTED_PROVIDERS = {'google', 'yandex', 'discord', 'vk'}
+_EXPECTED_PROVIDERS = {'google', 'yandex', 'discord', 'vk', 'telegram'}
 if set(OAUTH_PROVIDER_COLUMNS.keys()) != _EXPECTED_PROVIDERS:
     raise RuntimeError(
         f'OAuthProviderName Literal is out of sync with OAUTH_PROVIDER_COLUMNS: '
