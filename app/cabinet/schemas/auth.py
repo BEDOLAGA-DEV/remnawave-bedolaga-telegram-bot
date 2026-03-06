@@ -138,6 +138,8 @@ class EmailRegisterStandaloneRequest(BaseModel):
     referral_code: str | None = Field(
         None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
     )
+    yandex_cid: str | None = Field(None, max_length=128, description='Yandex.Metrika ClientID')
+    auto_verify: bool = Field(False, description='Skip email verification and mark account as verified immediately')
 
 
 class CampaignBonusInfo(BaseModel):

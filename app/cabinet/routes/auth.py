@@ -868,8 +868,8 @@ async def register_email_standalone(
         referred_by_id=referrer.id if referrer else None,
     )
 
-    # Для тестового email или отключённой верификации - автоматически верифицировать
-    if is_test_email or not settings.is_cabinet_email_verification_enabled():
+    # Для тестового email, auto_verify или отключённой верификации - автоматически верифицировать
+    if is_test_email or request.auto_verify or not settings.is_cabinet_email_verification_enabled():
         user.email_verified = True
         user.email_verified_at = datetime.now(UTC)
         await db.commit()
@@ -927,9 +927,9 @@ async def register_email_standalone(
 
     # Для тестового email - сразу можно логиниться (уже verified)
     # Для обычного email - требуется верификация (если включена)
-    verification_required = not is_test_email and settings.is_cabinet_email_verification_enabled()
+    verification_required = not is_test_email and not request.auto_verify and settings.is_cabinet_email_verification_enabled()
     return RegisterResponse(
-        message='Verification email sent. Please check your inbox.',
+        message='Registration successful.' if not verification_required else 'Verification email sent. Please check your inbox.',
         email=request.email,
         requires_verification=verification_required,
     )
