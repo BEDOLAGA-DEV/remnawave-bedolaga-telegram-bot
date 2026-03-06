@@ -29,6 +29,7 @@ from app.database.crud.user import (
 )
 from app.database.models import CabinetRefreshToken, User
 from app.services.campaign_service import AdvertisingCampaignService
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.services.disposable_email_service import disposable_email_service
 from app.services.referral_service import process_referral_registration
 from app.utils.timezone import panel_datetime_to_utc
@@ -365,6 +366,18 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
         await db.refresh(user)
 
 
+
+async def _process_yandex_cid(db: AsyncSession, user: User, yandex_cid, source: str = 'web', is_new_user: bool = False) -> None:
+    if not yandex_cid:
+        return
+    try:
+        await yandex_conv.store_cid(db, user.id, yandex_cid, source=source)
+        if is_new_user:
+            await yandex_conv.on_registration(db, user.id)
+    except Exception as e:
+        logger.warning('Failed to process yandex CID', user_id=user.id, error=e)
+
+
 @router.post('/telegram', response_model=AuthResponse)
 async def auth_telegram(
     request: TelegramAuthRequest,
@@ -460,6 +473,10 @@ async def auth_telegram(
     if response.campaign_bonus:
         response.user = _user_to_response(user)
 
+    # Yandex offline conversions
+    is_new = user.created_at and (datetime.now(UTC) - user.created_at).total_seconds() < 10
+    await _process_yandex_cid(db, user, request.yandex_cid, source='web', is_new_user=is_new)
+
     return response
 
 
@@ -537,6 +554,10 @@ async def auth_telegram_widget(
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
     if response.campaign_bonus:
         response.user = _user_to_response(user)
+
+    # Yandex offline conversions
+    is_new = user.created_at and (datetime.now(UTC) - user.created_at).total_seconds() < 10
+    await _process_yandex_cid(db, user, request.yandex_cid, source='web', is_new_user=is_new)
 
     return response
 
@@ -766,6 +787,9 @@ async def register_email_standalone(
             logger.error('Failed to process referral registration', error=e)
             # Не прерываем регистрацию из-за ошибки реферальной системы
 
+    # Yandex offline conversions (store CID for new user)
+    await _process_yandex_cid(db, user, request.yandex_cid, source='web', is_new_user=True)
+
     # Для тестового email - сразу можно логиниться (уже verified)
     # Для обычного email - требуется верификация (если включена)
     verification_required = not is_test_email and settings.is_cabinet_email_verification_enabled()
@@ -965,6 +989,9 @@ async def login_email(
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
     if response.campaign_bonus:
         response.user = _user_to_response(user)
+
+    # Yandex offline conversions
+    await _process_yandex_cid(db, user, request.yandex_cid, source='web')
 
     return response
 

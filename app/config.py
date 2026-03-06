@@ -522,6 +522,15 @@ class Settings(BaseSettings):
     # Способ оплаты: 44 = СБП (QR код), 36 = Карты РФ, 43 = SberPay
     KASSA_AI_PAYMENT_SYSTEM_ID: int = 44
 
+    # Yandex.Metrika Offline Conversions
+    YANDEX_OFFLINE_CONV_ENABLED: bool = False
+    YANDEX_OFFLINE_CONV_COUNTER_ID: str = ''
+    YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET: str = ''
+    YANDEX_OFFLINE_CONV_START_PREFIX: str = 'utm_ya_'
+    YANDEX_OFFLINE_CONV_DL: str = ''
+    YANDEX_OFFLINE_CONV_DT: str = ''
+
+
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
     CABINET_BUTTON_STYLE: str = ''
@@ -734,6 +743,11 @@ class Settings(BaseSettings):
     OAUTH_VK_CLIENT_ID: str = ''
     OAUTH_VK_CLIENT_SECRET: str = ''
     OAUTH_VK_ENABLED: bool = False
+
+    # Telegram auth mode: "widget" (old Login Widget) or "oidc" (new OpenID Connect)
+    TELEGRAM_AUTH_MODE: str = "widget"
+    TELEGRAM_OIDC_CLIENT_ID: str = ""
+    TELEGRAM_OIDC_CLIENT_SECRET: str = ""
 
     # SMTP settings for cabinet email
     SMTP_HOST: str | None = None
@@ -2539,6 +2553,12 @@ class Settings(BaseSettings):
                 'client_secret': self.OAUTH_VK_CLIENT_SECRET,
                 'enabled': self.OAUTH_VK_ENABLED,
                 'display_name': 'VK',
+            },
+            'telegram': {
+                'client_id': self.TELEGRAM_OIDC_CLIENT_ID,
+                'client_secret': self.TELEGRAM_OIDC_CLIENT_SECRET,
+                'enabled': self.TELEGRAM_AUTH_MODE == 'oidc' and bool(self.TELEGRAM_OIDC_CLIENT_ID),
+                'display_name': 'Telegram',
             },
         }
 
