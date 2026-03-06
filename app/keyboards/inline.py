@@ -1620,6 +1620,18 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
+    if settings.is_shkeeper_enabled():
+        shkeeper_name = settings.get_shkeeper_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_SHKEEPER', f'💳 {shkeeper_name}'),
+                    callback_data=_build_callback('shkeeper'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
     if settings.is_support_topup_enabled():
         keyboard.append(
             [

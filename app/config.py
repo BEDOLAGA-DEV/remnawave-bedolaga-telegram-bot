@@ -317,6 +317,8 @@ class Settings(BaseSettings):
     TELEGRAM_STARS_ENABLED: bool = True
     TELEGRAM_STARS_RATE_RUB: float = 1.3
     TELEGRAM_STARS_DISPLAY_NAME: str = 'Telegram Stars'
+    # Fallback курс USD/RUB для аварийного режима (None = отключен, использовать только live/cache курс).
+    USD_RUB_FALLBACK_RATE: float | None = None
 
     TRIBUTE_ENABLED: bool = False
     TRIBUTE_API_KEY: str | None = None
@@ -461,6 +463,17 @@ class Settings(BaseSettings):
     WATA_WEBHOOK_PORT: int = 8085
     WATA_PUBLIC_KEY_URL: str | None = None
     WATA_PUBLIC_KEY_CACHE_SECONDS: int = 3600
+
+    SHKEEPER_ENABLED: bool = False
+    SHKEEPER_DISPLAY_NAME: str = 'SHKeeper'
+    SHKEEPER_BASE_URL: str = 'http://localhost:5000'
+    SHKEEPER_API_KEY: str | None = None
+    SHKEEPER_CALLBACK_API_KEY: str | None = None
+    SHKEEPER_CRYPTO: str = 'USDT'
+    SHKEEPER_MIN_AMOUNT_KOPEKS: int = 10000
+    SHKEEPER_MAX_AMOUNT_KOPEKS: int = 100000000
+    SHKEEPER_REQUEST_TIMEOUT: int = 30
+    SHKEEPER_WEBHOOK_PATH: str = '/shkeeper-webhook'
 
     # CloudPayments
     CLOUDPAYMENTS_ENABLED: bool = False
@@ -1731,6 +1744,13 @@ class Settings(BaseSettings):
     def get_wata_display_name(self) -> str:
         name = (self.WATA_DISPLAY_NAME or '').strip()
         return name if name else 'Wata'
+
+    def is_shkeeper_enabled(self) -> bool:
+        return self.SHKEEPER_ENABLED and bool((self.SHKEEPER_API_KEY or '').strip())
+
+    def get_shkeeper_display_name(self) -> str:
+        name = (self.SHKEEPER_DISPLAY_NAME or '').strip()
+        return name if name else 'SHKeeper'
 
     def is_cloudpayments_enabled(self) -> bool:
         return (

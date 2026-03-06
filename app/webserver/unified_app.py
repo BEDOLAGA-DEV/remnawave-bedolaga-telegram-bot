@@ -130,6 +130,7 @@ def create_unified_app(
         'wata': settings.is_wata_enabled(),
         'heleket': settings.is_heleket_enabled(),
         'freekassa': settings.is_freekassa_enabled(),
+        'shkeeper': settings.is_shkeeper_enabled(),
     }
 
     if enable_telegram_webhook:

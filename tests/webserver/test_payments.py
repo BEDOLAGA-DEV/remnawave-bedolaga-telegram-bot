@@ -28,6 +28,10 @@ def reset_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'YOOKASSA_SHOP_ID', 'shop', raising=False)
     monkeypatch.setattr(settings, 'YOOKASSA_SECRET_KEY', 'key', raising=False)
     monkeypatch.setattr(settings, 'YOOKASSA_TRUSTED_PROXY_NETWORKS', '', raising=False)
+    monkeypatch.setattr(settings, 'SHKEEPER_ENABLED', False, raising=False)
+    monkeypatch.setattr(settings, 'SHKEEPER_API_KEY', None, raising=False)
+    monkeypatch.setattr(settings, 'SHKEEPER_CALLBACK_API_KEY', None, raising=False)
+    monkeypatch.setattr(settings, 'SHKEEPER_WEBHOOK_PATH', '/shkeeper-webhook', raising=False)
     monkeypatch.setattr(settings, 'WEBHOOK_URL', 'http://test', raising=False)
 
 
@@ -504,3 +508,67 @@ async def test_cryptobot_invalid_signature(monkeypatch: pytest.MonkeyPatch) -> N
     response = await route.endpoint(request)
 
     assert response.status_code == 401
+    payload = json.loads(response.body.decode('utf-8'))
+    assert payload['reason'] == 'invalid_signature'
+
+
+@pytest.mark.anyio
+async def test_shkeeper_webhook_invalid_signature(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, 'SHKEEPER_ENABLED', True, raising=False)
+    monkeypatch.setattr(settings, 'SHKEEPER_API_KEY', 'api-key', raising=False)
+    monkeypatch.setattr(settings, 'SHKEEPER_CALLBACK_API_KEY', 'callback-key', raising=False)
+
+    service = SimpleNamespace(
+        shkeeper_service=SimpleNamespace(verify_callback_auth=lambda _header: False),
+        process_shkeeper_webhook=AsyncMock(return_value=True),
+    )
+
+    router = create_payment_router(DummyBot(), service)
+    assert router is not None
+
+    route = _get_route(router, settings.SHKEEPER_WEBHOOK_PATH)
+    request = _build_request(
+        settings.SHKEEPER_WEBHOOK_PATH,
+        body=json.dumps({'id': 'inv'}).encode('utf-8'),
+        headers={'X-Shkeeper-API-Key': 'wrong'},
+    )
+
+    response = await route.endpoint(request)
+
+    assert response.status_code == 401
+    payload = json.loads(response.body.decode('utf-8'))
+    assert payload['reason'] == 'invalid_signature'
+    service.process_shkeeper_webhook.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_shkeeper_webhook_processing_exception_returns_400(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, 'SHKEEPER_ENABLED', True, raising=False)
+    monkeypatch.setattr(settings, 'SHKEEPER_API_KEY', 'api-key', raising=False)
+    monkeypatch.setattr(settings, 'SHKEEPER_CALLBACK_API_KEY', 'callback-key', raising=False)
+
+    async def fake_get_db():
+        yield SimpleNamespace()
+
+    monkeypatch.setattr('app.webserver.payments.get_db', fake_get_db)
+
+    service = SimpleNamespace(
+        shkeeper_service=SimpleNamespace(verify_callback_auth=lambda _header: True),
+        process_shkeeper_webhook=AsyncMock(side_effect=RuntimeError('boom')),
+    )
+
+    router = create_payment_router(DummyBot(), service)
+    assert router is not None
+
+    route = _get_route(router, settings.SHKEEPER_WEBHOOK_PATH)
+    request = _build_request(
+        settings.SHKEEPER_WEBHOOK_PATH,
+        body=json.dumps({'id': 'inv'}).encode('utf-8'),
+        headers={'X-Shkeeper-API-Key': 'callback-key'},
+    )
+
+    response = await route.endpoint(request)
+
+    assert response.status_code == 400
+    payload = json.loads(response.body.decode('utf-8'))
+    assert payload['reason'] == 'not_processed'

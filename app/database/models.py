@@ -155,6 +155,7 @@ class PaymentMethod(Enum):
     CLOUDPAYMENTS = 'cloudpayments'
     FREEKASSA = 'freekassa'
     KASSA_AI = 'kassa_ai'
+    SHKEEPER = 'shkeeper'
     MANUAL = 'manual'
     BALANCE = 'balance'
 
@@ -712,6 +713,65 @@ class KassaAiPayment(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f'<KassaAiPayment(id={self.id}, order_id={self.order_id}, amount={self.amount_rubles}₽, status={self.status})>'
+
+
+class ShkeeperPayment(Base):
+    """Платежи через SHKeeper."""
+
+    __tablename__ = 'shkeeper_payments'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+
+    # Идентификаторы
+    order_id = Column(String(64), unique=True, nullable=False, index=True)  # Наш ID заказа
+    shkeeper_invoice_id = Column(String(64), unique=True, nullable=True, index=True)  # ID инвойса из SHKeeper
+    external_id = Column(String(64), nullable=True, index=True)  # external_id для callback/status API
+
+    # Суммы
+    amount_kopeks = Column(Integer, nullable=False)
+    currency = Column(String(10), nullable=False, default='RUB')
+    amount_crypto = Column(String(64), nullable=True)
+    crypto = Column(String(32), nullable=True)
+    display_amount = Column(String(64), nullable=True)
+
+    # Статусы
+    status = Column(String(32), nullable=False, default='new')
+    is_paid = Column(Boolean, default=False)
+
+    # Данные платежа
+    payment_url = Column(Text, nullable=True)
+    success_url = Column(Text, nullable=True)
+    fail_url = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+
+    # Метаданные
+    metadata_json = Column(JSON, nullable=True)
+    callback_payload = Column(JSON, nullable=True)
+
+    # Временные метки
+    paid_at = Column(AwareDateTime(), nullable=True)
+    expires_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    # Связь с транзакцией
+    transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+
+    # Relationships
+    user = relationship('User', backref='shkeeper_payments')
+    transaction = relationship('Transaction', backref='shkeeper_payment')
+
+    @property
+    def amount_rubles(self) -> float:
+        return self.amount_kopeks / 100
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status in {'new', 'pending', 'processing'}
+
+    def __repr__(self) -> str:  # pragma: no cover - debug helper
+        return f'<ShkeeperPayment(id={self.id}, order_id={self.order_id}, amount={self.amount_rubles}₽, status={self.status})>'
 
 
 class PromoGroup(Base):
