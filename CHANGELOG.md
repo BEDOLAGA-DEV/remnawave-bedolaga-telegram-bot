@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.23.2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.23.1...v3.23.2) (2026-03-06)
+
+
+### Bug Fixes
+
+* sync uv.lock version with pyproject.toml 3.23.1 ([bc52fd2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/bc52fd27113f95a4154b1990142d46ae606fd2e0))
+
 ## [3.23.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.23.0...v3.23.1) (2026-03-06)
 
 
