@@ -1,6 +1,6 @@
 [project]
 name = 'remnawave-bedolaga-telegram-bot'
-version = "3.23.2"
+version = "3.24.0"
 description = 'Telegram bot for RemnaWave VPN service'
 readme = 'README.md'
 license = { text = 'MIT' }
