@@ -347,11 +347,11 @@ class KassaAiPaymentMixin:
             except Exception as error:
                 logger.error('Ошибка отправки админ уведомления KassaAI', error=error)
 
-        # Отправка уведомления пользователю (только Telegram-пользователям)
-        if getattr(self, 'bot', None) and user.telegram_id:
-            try:
-                display_name = settings.get_kassa_ai_display_name()
+        # Отправка уведомления пользователю
+        try:
+            display_name = settings.get_kassa_ai_display_name()
 
+            if getattr(self, 'bot', None) and user.telegram_id:
                 keyboard = await self.build_topup_success_keyboard(user)
                 message = (
                     '✅ <b>Пополнение успешно!</b>\n\n'
@@ -367,8 +367,17 @@ class KassaAiPaymentMixin:
                     parse_mode='HTML',
                     reply_markup=keyboard,
                 )
-            except Exception as error:
-                logger.error('Ошибка отправки уведомления пользователю KassaAI', error=error)
+            elif user.email and user.email_verified:
+                from app.services.notification_delivery_service import notification_delivery_service
+
+                await notification_delivery_service.notify_balance_topup(
+                    user=user,
+                    amount_kopeks=payment.amount_kopeks,
+                    new_balance_kopeks=user.balance_kopeks,
+                    bot=getattr(self, 'bot', None),
+                )
+        except Exception as error:
+            logger.error('Ошибка отправки уведомления пользователю KassaAI', error=error)
 
         # Авто-подписка если в metadata указан тариф
         try:

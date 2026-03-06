@@ -819,6 +819,18 @@ class YooKassaPaymentMixin:
                             logger.info('Уведомление пользователю о платеже отправлено успешно')
                         except Exception as error:
                             logger.error('Ошибка отправки уведомления о платеже', error=error, exc_info=True)
+                    elif user.email and user.email_verified:
+                        try:
+                            from app.services.notification_delivery_service import notification_delivery_service
+
+                            await notification_delivery_service.notify_balance_topup(
+                                user=user,
+                                amount_kopeks=payment.amount_kopeks,
+                                new_balance_kopeks=user.balance_kopeks,
+                                bot=None,
+                            )
+                        except Exception as error:
+                            logger.error('Ошибка отправки email-уведомления пользователю YooKassa', error=error)
 
                     # Проверяем наличие сохраненной корзины для возврата к оформлению подписки
                     # ВАЖНО: этот код должен выполняться даже при ошибках в уведомлениях
@@ -911,10 +923,20 @@ class YooKassaPaymentMixin:
                                     reply_markup=keyboard,
                                     parse_mode='HTML',
                                 )
-                            elif not user.telegram_id:
-                                logger.info(
-                                    'Пропуск Telegram-уведомления о подписке для email-пользователя', user_id=user.id
-                                )
+                            elif user.email and user.email_verified:
+                                try:
+                                    from app.services.notification_delivery_service import notification_delivery_service
+
+                                    await notification_delivery_service.notify_balance_topup(
+                                        user=user,
+                                        amount_kopeks=payment.amount_kopeks,
+                                        new_balance_kopeks=user.balance_kopeks,
+                                        bot=None,
+                                    )
+                                except Exception as error:
+                                    logger.error(
+                                        'Ошибка отправки email-уведомления о подписке YooKassa', error=error
+                                    )
 
                             if getattr(self, 'bot', None):
                                 try:

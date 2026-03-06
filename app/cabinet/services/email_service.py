@@ -76,7 +76,7 @@ class EmailService:
             msg['From'] = f'{self.from_name} <{self.from_email}>'
             msg['To'] = to_email
             msg['Date'] = formatdate(localtime=False)
-            msg['Message-ID'] = make_msgid(domain=self.from_email.split('@')[-1])
+            msg['Message-ID'] = make_msgid(domain=(self.from_email or '').split('@')[-1] or 'localhost')
 
             # Plain text version
             if body_text is None:

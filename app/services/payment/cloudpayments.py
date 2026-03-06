@@ -382,9 +382,20 @@ class CloudPaymentsPaymentMixin:
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
 
-        # Skip email-only users (no telegram_id)
+        # Send email notification for email-only users
         if not user.telegram_id:
-            logger.debug('Skipping CloudPayments notification for email-only user', user_id=user.id)
+            if user.email and user.email_verified:
+                try:
+                    from app.services.notification_delivery_service import notification_delivery_service
+
+                    await notification_delivery_service.notify_balance_topup(
+                        user=user,
+                        amount_kopeks=amount_kopeks,
+                        new_balance_kopeks=user.balance_kopeks,
+                        bot=None,
+                    )
+                except Exception as error:
+                    logger.error('Ошибка отправки email-уведомления пользователю CloudPayments', error=error)
             return
 
         texts = get_texts(user.language)
