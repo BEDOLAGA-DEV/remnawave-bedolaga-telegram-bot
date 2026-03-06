@@ -406,6 +406,18 @@ class FreekassaPaymentMixin:
                 )
             except Exception as error:
                 logger.error('Ошибка отправки уведомления пользователю Freekassa', error=error)
+        elif user.email and user.email_verified:
+            try:
+                from app.services.notification_delivery_service import notification_delivery_service
+
+                await notification_delivery_service.notify_balance_topup(
+                    user=user,
+                    amount_kopeks=payment.amount_kopeks,
+                    new_balance_kopeks=user.balance_kopeks,
+                    bot=getattr(self, 'bot', None),
+                )
+            except Exception as error:
+                logger.error('Ошибка отправки email-уведомления пользователю Freekassa', error=error)
 
         # Автопокупка подписки и уведомление о корзине
         try:

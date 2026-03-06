@@ -449,8 +449,18 @@ class HeleketPaymentMixin:
                     )
                 except Exception as error:  # pragma: no cover
                     logger.error('Ошибка отправки уведомления пользователю Heleket', error=error)
-            else:
-                logger.info('Пропуск Telegram-уведомления Heleket для email-пользователя', user_id=user.id)
+            elif user.email and user.email_verified:
+                try:
+                    from app.services.notification_delivery_service import notification_delivery_service
+
+                    await notification_delivery_service.notify_balance_topup(
+                        user=user,
+                        amount_kopeks=amount_kopeks,
+                        new_balance_kopeks=user.balance_kopeks,
+                        bot=getattr(self, 'bot', None),
+                    )
+                except Exception as error:  # pragma: no cover
+                    logger.error('Ошибка отправки email-уведомления пользователю Heleket', error=error)
 
         # Автопокупка из сохранённой корзины и уведомление о корзине
         try:

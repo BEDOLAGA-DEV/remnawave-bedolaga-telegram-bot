@@ -371,6 +371,18 @@ class CryptoBotPaymentMixin:
 
                 if user_notification and bot_instance:
                     await self._deliver_user_topup_notification(user_notification)
+                elif not user.telegram_id and user.email and user.email_verified:
+                    try:
+                        from app.services.notification_delivery_service import notification_delivery_service
+
+                        await notification_delivery_service.notify_balance_topup(
+                            user=user,
+                            amount_kopeks=amount_kopeks,
+                            new_balance_kopeks=user.balance_kopeks,
+                            bot=None,
+                        )
+                    except Exception as error:
+                        logger.error('Ошибка отправки email-уведомления пользователю CryptoBot', error=error)
 
                 # Проверяем наличие сохраненной корзины для возврата к оформлению подписки
                 try:
