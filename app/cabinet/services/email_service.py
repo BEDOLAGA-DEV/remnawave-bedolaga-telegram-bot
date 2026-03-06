@@ -3,6 +3,7 @@
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formatdate, make_msgid
 
 import structlog
 
@@ -74,6 +75,8 @@ class EmailService:
             msg['Subject'] = subject
             msg['From'] = f'{self.from_name} <{self.from_email}>'
             msg['To'] = to_email
+            msg['Date'] = formatdate(localtime=False)
+            msg['Message-ID'] = make_msgid(domain=self.from_email.split('@')[-1])
 
             # Plain text version
             if body_text is None:
