@@ -664,16 +664,23 @@ class PaymentService(
             return None
 
         # --- KassaAI ----------------------------------------------------------
-        if payment_method == 'kassa_ai':
+        if payment_method in ('kassa_ai', 'kassa_ai_sbp', 'kassa_ai_card'):
             if not settings.is_kassa_ai_enabled():
                 logger.warning('KassaAI is not enabled, cannot create guest payment')
                 return None
+
+            ps_id: int | None = None
+            if payment_method == 'kassa_ai_sbp':
+                ps_id = settings.KASSA_AI_SBP_PAYMENT_SYSTEM_ID
+            elif payment_method == 'kassa_ai_card':
+                ps_id = settings.KASSA_AI_PAYMENT_SYSTEM_ID
 
             result = await self.create_kassa_ai_payment(
                 db=db,
                 user_id=None,
                 amount_kopeks=amount_kopeks,
                 description=description,
+                payment_system_id=ps_id,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'kassa_ai')

@@ -20,9 +20,10 @@ logger = structlog.get_logger(__name__)
 
 KASSA_AI_SUB_METHODS = {
     'kassa_ai_sbp': {'payment_system_id': 44, 'get_name': lambda: settings.get_kassa_ai_sbp_display_name()},
+    'kassa_ai_card': {'payment_system_id': 36, 'get_name': lambda: settings.get_kassa_ai_card_display_name()},
 }
 
-KASSA_AI_PAYMENT_METHODS = {'kassa_ai', 'kassa_ai_sbp'}
+KASSA_AI_PAYMENT_METHODS = {'kassa_ai', 'kassa_ai_sbp', 'kassa_ai_card'}
 
 
 def _resolve_kassa_ai_params(
@@ -527,4 +528,144 @@ async def process_kassa_ai_sbp_quick_amount(
         amount_kopeks=amount_kopeks,
         edit_message=True,
         payment_method='kassa_ai_sbp',
+    )
+
+
+@error_handler
+async def start_kassa_ai_card_topup(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Start KassaAI Card top-up process - ask for amount."""
+    texts = get_texts(db_user.language)
+
+    if not settings.is_kassa_ai_card_enabled():
+        await callback.answer(
+            texts.t('KASSA_AI_NOT_AVAILABLE', 'KassaAI Карта временно недоступна'),
+            show_alert=True,
+        )
+        return
+
+    if getattr(db_user, 'restriction_topup', False):
+        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        support_url = settings.get_support_contact_url()
+        keyboard = []
+        if support_url:
+            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+
+        await callback.message.edit_text(
+            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        )
+        return
+
+    await state.set_state(BalanceStates.waiting_for_amount)
+    await state.update_data(payment_method='kassa_ai_card')
+
+    min_amount = settings.KASSA_AI_MIN_AMOUNT_KOPEKS // 100
+    max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS // 100
+    display_name = settings.get_kassa_ai_card_display_name()
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=texts.t('BACK_BUTTON', '◀️ Назад'),
+                    callback_data='menu_balance',
+                )
+            ]
+        ]
+    )
+
+    await callback.message.edit_text(
+        texts.t(
+            'KASSA_AI_ENTER_AMOUNT',
+            '💳 <b>Пополнение через {name}</b>\n\n'
+            'Введите сумму пополнения в рублях.\n\n'
+            'Минимум: {min_amount}₽\n'
+            'Максимум: {max_amount}₽',
+        ).format(
+            name=display_name,
+            min_amount=min_amount,
+            max_amount=f'{max_amount:,}'.replace(',', ' '),
+        ),
+        parse_mode='HTML',
+        reply_markup=keyboard,
+    )
+
+
+@error_handler
+async def process_kassa_ai_card_quick_amount(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Process quick amount selection for KassaAI Card payment."""
+    texts = get_texts(db_user.language)
+
+    if not settings.is_kassa_ai_card_enabled():
+        await callback.answer(
+            texts.t('KASSA_AI_NOT_AVAILABLE', 'KassaAI Карта временно недоступна'),
+            show_alert=True,
+        )
+        return
+
+    try:
+        parts = callback.data.split('|')
+        if len(parts) >= 3:
+            amount_kopeks = int(parts[2])
+        else:
+            await callback.answer('Invalid callback data', show_alert=True)
+            return
+    except (ValueError, IndexError):
+        await callback.answer('Invalid amount', show_alert=True)
+        return
+
+    if getattr(db_user, 'restriction_topup', False):
+        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        support_url = settings.get_support_contact_url()
+        keyboard = []
+        if support_url:
+            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+
+        await callback.message.edit_text(
+            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        )
+        return
+
+    min_amount = settings.KASSA_AI_MIN_AMOUNT_KOPEKS
+    max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS
+
+    if amount_kopeks < min_amount:
+        await callback.answer(
+            texts.t('AMOUNT_TOO_LOW_SHORT', 'Сумма слишком мала'),
+            show_alert=True,
+        )
+        return
+
+    if amount_kopeks > max_amount:
+        await callback.answer(
+            texts.t('AMOUNT_TOO_HIGH_SHORT', 'Сумма слишком велика'),
+            show_alert=True,
+        )
+        return
+
+    await callback.answer()
+    await state.clear()
+
+    await _create_kassa_ai_payment_and_respond(
+        message_or_callback=callback.message,
+        db_user=db_user,
+        db=db,
+        amount_kopeks=amount_kopeks,
+        edit_message=True,
+        payment_method='kassa_ai_card',
     )

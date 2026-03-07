@@ -538,6 +538,9 @@ class Settings(BaseSettings):
     KASSA_AI_SBP_DISPLAY_NAME: str = 'СБП (KassaAI)'
     KASSA_AI_SBP_PAYMENT_SYSTEM_ID: int = 44
 
+    KASSA_AI_CARD_ENABLED: bool = False
+    KASSA_AI_CARD_DISPLAY_NAME: str = 'Карта (KassaAI)'
+
     # Yandex.Metrika Offline Conversions
     YANDEX_OFFLINE_CONV_ENABLED: bool = False
     YANDEX_OFFLINE_CONV_COUNTER_ID: str = ''
@@ -1833,6 +1836,16 @@ class Settings(BaseSettings):
 
     def get_kassa_ai_sbp_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_sbp_display_name())
+
+    def is_kassa_ai_card_enabled(self) -> bool:
+        return self.KASSA_AI_CARD_ENABLED and self.is_kassa_ai_enabled()
+
+    def get_kassa_ai_card_display_name(self) -> str:
+        name = (self.KASSA_AI_CARD_DISPLAY_NAME or '').strip()
+        return name if name else 'Карта (KassaAI)'
+
+    def get_kassa_ai_card_display_name_html(self) -> str:
+        return html.escape(self.get_kassa_ai_card_display_name())
 
     def is_payment_verification_auto_check_enabled(self) -> bool:
         return self.PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED

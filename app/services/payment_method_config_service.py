@@ -138,6 +138,13 @@ def _get_method_defaults() -> dict:
             'default_max': settings.KASSA_AI_MAX_AMOUNT_KOPEKS,
             'available_sub_options': None,
         },
+        'kassa_ai_card': {
+            'default_display_name': settings.get_kassa_ai_card_display_name(),
+            'is_configured': settings.is_kassa_ai_card_enabled(),
+            'default_min': settings.KASSA_AI_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.KASSA_AI_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': None,
+        },
     }
 
 
@@ -179,6 +186,7 @@ DEFAULT_METHOD_ORDER = [
     'cloudpayments',
     'kassa_ai',
     'kassa_ai_sbp',
+    'kassa_ai_card',
 ]
 
 
