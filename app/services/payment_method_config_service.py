@@ -126,7 +126,10 @@ def _get_method_defaults() -> dict:
             'is_configured': settings.is_kassa_ai_enabled(),
             'default_min': settings.KASSA_AI_MIN_AMOUNT_KOPEKS,
             'default_max': settings.KASSA_AI_MAX_AMOUNT_KOPEKS,
-            'available_sub_options': None,
+            'available_sub_options': [
+                {'id': 'sbp', 'name': 'СБП'},
+                {'id': 'card', 'name': 'Карта'},
+            ],
         },
     }
 
