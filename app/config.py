@@ -532,7 +532,11 @@ class Settings(BaseSettings):
     KASSA_AI_WEBHOOK_HOST: str = '0.0.0.0'
     KASSA_AI_WEBHOOK_PORT: int = 8089
     # Способ оплаты: 44 = СБП (QR код), 36 = Карты РФ, 43 = SberPay
-    KASSA_AI_PAYMENT_SYSTEM_ID: int = 44
+    KASSA_AI_PAYMENT_SYSTEM_ID: int = 36  # Карты РФ по умолчанию
+    # Отдельный метод для СБП
+    KASSA_AI_SBP_ENABLED: bool = False
+    KASSA_AI_SBP_DISPLAY_NAME: str = 'СБП (KassaAI)'
+    KASSA_AI_SBP_PAYMENT_SYSTEM_ID: int = 44
 
     # Yandex.Metrika Offline Conversions
     YANDEX_OFFLINE_CONV_ENABLED: bool = False
@@ -1819,6 +1823,16 @@ class Settings(BaseSettings):
 
     def get_kassa_ai_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_display_name())
+
+    def is_kassa_ai_sbp_enabled(self) -> bool:
+        return self.KASSA_AI_SBP_ENABLED and self.is_kassa_ai_enabled()
+
+    def get_kassa_ai_sbp_display_name(self) -> str:
+        name = (self.KASSA_AI_SBP_DISPLAY_NAME or '').strip()
+        return name if name else 'СБП (KassaAI)'
+
+    def get_kassa_ai_sbp_display_name_html(self) -> str:
+        return html.escape(self.get_kassa_ai_sbp_display_name())
 
     def is_payment_verification_auto_check_enabled(self) -> bool:
         return self.PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED

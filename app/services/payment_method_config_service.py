@@ -126,10 +126,14 @@ def _get_method_defaults() -> dict:
             'is_configured': settings.is_kassa_ai_enabled(),
             'default_min': settings.KASSA_AI_MIN_AMOUNT_KOPEKS,
             'default_max': settings.KASSA_AI_MAX_AMOUNT_KOPEKS,
-            'available_sub_options': [
-                {'id': 'sbp', 'name': 'СБП'},
-                {'id': 'card', 'name': 'Карта'},
-            ],
+            'available_sub_options': None,
+        },
+        'kassa_ai_sbp': {
+            'default_display_name': settings.get_kassa_ai_sbp_display_name(),
+            'is_configured': settings.is_kassa_ai_sbp_enabled(),
+            'default_min': settings.KASSA_AI_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.KASSA_AI_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': None,
         },
     }
 
@@ -171,6 +175,7 @@ DEFAULT_METHOD_ORDER = [
     'freekassa_card',
     'cloudpayments',
     'kassa_ai',
+    'kassa_ai_sbp',
 ]
 
 
