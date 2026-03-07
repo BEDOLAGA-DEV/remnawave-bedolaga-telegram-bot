@@ -21,6 +21,7 @@ from app.database.crud.yandex_client_id import (
     upsert_cid,
 )
 
+
 logger = structlog.get_logger(__name__)
 
 LOG_PREFIX = '[YandexOfflineConv]'
@@ -65,21 +66,25 @@ def _base_payload(cid: str) -> dict[str, str]:
 
 def _pageview_payload(cid: str) -> dict[str, str]:
     payload = _base_payload(cid)
-    payload.update({
-        't': 'pageview',
-        'dl': settings.YANDEX_OFFLINE_CONV_DL or 'https://web.mtrxvps.ru',
-        'dt': settings.YANDEX_OFFLINE_CONV_DT or 'Matrixxx VPN',
-    })
+    payload.update(
+        {
+            't': 'pageview',
+            'dl': settings.YANDEX_OFFLINE_CONV_DL or 'https://web.mtrxvps.ru',
+            'dt': settings.YANDEX_OFFLINE_CONV_DT or 'Matrixxx VPN',
+        }
+    )
     return payload
 
 
 def _event_payload(cid: str, event_action: str) -> dict[str, str]:
     payload = _base_payload(cid)
-    payload.update({
-        't': 'event',
-        'ea': event_action,
-        'dl': settings.YANDEX_OFFLINE_CONV_DL or 'https://web.mtrxvps.ru',
-    })
+    payload.update(
+        {
+            't': 'event',
+            'ea': event_action,
+            'dl': settings.YANDEX_OFFLINE_CONV_DL or 'https://web.mtrxvps.ru',
+        }
+    )
     return payload
 
 
@@ -98,21 +103,35 @@ async def _post_collect(payload: dict[str, str], kind: str, cid: str) -> bool:
             if 500 <= resp.status_code < 600 and attempt < MAX_RETRIES:
                 logger.warning(
                     '%s %s server error (attempt %s/%s, cid=%s, status=%s)',
-                    LOG_PREFIX, kind, attempt, MAX_RETRIES, masked, resp.status_code,
+                    LOG_PREFIX,
+                    kind,
+                    attempt,
+                    MAX_RETRIES,
+                    masked,
+                    resp.status_code,
                 )
                 await asyncio.sleep(RETRY_DELAY)
                 continue
 
             logger.error(
                 '%s %s rejected (cid=%s, status=%s, body=%s)',
-                LOG_PREFIX, kind, masked, resp.status_code, resp.text[:200],
+                LOG_PREFIX,
+                kind,
+                masked,
+                resp.status_code,
+                resp.text[:200],
             )
             return False
 
         except Exception as exc:
             logger.warning(
                 '%s %s request error (attempt %s/%s, cid=%s): %s',
-                LOG_PREFIX, kind, attempt, MAX_RETRIES, masked, exc,
+                LOG_PREFIX,
+                kind,
+                attempt,
+                MAX_RETRIES,
+                masked,
+                exc,
             )
             if attempt < MAX_RETRIES:
                 await asyncio.sleep(RETRY_DELAY)
@@ -148,8 +167,7 @@ async def store_cid(
         return False
 
     try:
-        await upsert_cid(db, user_id, normalized, source=source,
-                         counter_id=settings.YANDEX_OFFLINE_CONV_COUNTER_ID)
+        await upsert_cid(db, user_id, normalized, source=source, counter_id=settings.YANDEX_OFFLINE_CONV_COUNTER_ID)
         logger.info('%s Stored CID for user_id=%s source=%s', LOG_PREFIX, user_id, source)
         return True
     except Exception as exc:
@@ -209,7 +227,9 @@ async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> Non
         if success:
             logger.info(
                 '%s purchase event sent for user_id=%s amount=%s',
-                LOG_PREFIX, user_id, amount_kopeks / 100,
+                LOG_PREFIX,
+                user_id,
+                amount_kopeks / 100,
             )
     except Exception as exc:
         logger.error('%s purchase event failed for user_id=%s: %s', LOG_PREFIX, user_id, exc)
@@ -225,6 +245,6 @@ def parse_cid_from_start_param(param: str) -> tuple[str | None, str]:
     if not prefix or not param.startswith(prefix):
         return None, param
 
-    cid = param[len(prefix):]
+    cid = param[len(prefix) :]
     normalized = _normalize_cid(cid)
     return normalized, param  # Keep original param for UTM tracking

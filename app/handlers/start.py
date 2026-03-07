@@ -39,9 +39,9 @@ from app.middlewares.channel_checker import (
     delete_pending_payload_from_redis,
     get_pending_payload_from_redis,
 )
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.campaign_service import AdvertisingCampaignService
-from app.services import yandex_offline_conv_service as yandex_conv
 from app.services.channel_subscription_service import channel_subscription_service
 from app.services.main_menu_button_service import MainMenuButtonService
 from app.services.pinned_message_service import (
