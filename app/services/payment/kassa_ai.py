@@ -28,6 +28,7 @@ class KassaAiPaymentMixin:
         description: str = 'Пополнение баланса',
         email: str | None = None,
         language: str = 'ru',
+        payment_system_id: int | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж KassaAI.
@@ -96,7 +97,7 @@ class KassaAiPaymentMixin:
                 amount=amount_rubles,
                 currency=currency,
                 email=email,
-                payment_system_id=settings.KASSA_AI_PAYMENT_SYSTEM_ID,
+                payment_system_id=payment_system_id if payment_system_id is not None else settings.KASSA_AI_PAYMENT_SYSTEM_ID,
             )
 
             payment_url = result.get('location')
@@ -118,7 +119,7 @@ class KassaAiPaymentMixin:
                 currency=currency,
                 description=description,
                 payment_url=payment_url,
-                payment_system_id=settings.KASSA_AI_PAYMENT_SYSTEM_ID,
+                payment_system_id=payment_system_id if payment_system_id is not None else settings.KASSA_AI_PAYMENT_SYSTEM_ID,
                 expires_at=expires_at,
                 metadata_json=metadata,
             )
