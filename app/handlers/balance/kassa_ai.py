@@ -420,9 +420,7 @@ async def start_kassa_ai_sbp_topup(
     display_name = settings.get_kassa_ai_sbp_display_name()
 
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='menu_balance')]
-        ]
+        inline_keyboard=[[InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='menu_balance')]]
     )
 
     await callback.message.edit_text(
@@ -524,9 +522,7 @@ async def start_kassa_ai_card_topup(
     display_name = settings.get_kassa_ai_card_display_name()
 
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='menu_balance')]
-        ]
+        inline_keyboard=[[InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='menu_balance')]]
     )
 
     await callback.message.edit_text(
