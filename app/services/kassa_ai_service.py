@@ -14,6 +14,12 @@ from app.config import settings
 
 logger = structlog.get_logger(__name__)
 
+# Sub-method to payment_system_id mapping
+KASSA_AI_SUB_METHODS = {
+    "kassa_ai_sbp": {"payment_system_id": 44},
+    "kassa_ai_card": {"payment_system_id": 36},
+}
+
 # Кэш для публичного IP
 _cached_public_ip: str | None = None
 _ip_fetch_lock = asyncio.Lock()
