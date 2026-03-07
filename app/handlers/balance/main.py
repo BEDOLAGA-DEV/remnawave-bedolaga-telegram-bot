@@ -131,11 +131,13 @@ async def route_payment_by_method(
             )
         return True
 
-    if payment_method == 'kassa_ai':
+    if payment_method in ('kassa_ai', 'kassa_ai_sbp', 'kassa_ai_card'):
         from .kassa_ai import process_kassa_ai_payment_amount
 
         async with AsyncSessionLocal() as db:
-            await process_kassa_ai_payment_amount(message, db_user, db, amount_kopeks, state)
+            await process_kassa_ai_payment_amount(
+                message, db_user, db, amount_kopeks, state, payment_method=payment_method
+            )
         return True
 
     return False
@@ -868,10 +870,21 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_freekassa_card_topup, F.data == 'topup_freekassa_card')
     dp.callback_query.register(process_freekassa_card_quick_amount, F.data.startswith('topup_amount|freekassa_card|'))
 
-    from .kassa_ai import process_kassa_ai_quick_amount, start_kassa_ai_topup
+    from .kassa_ai import (
+        process_kassa_ai_card_quick_amount,
+        process_kassa_ai_quick_amount,
+        process_kassa_ai_sbp_quick_amount,
+        start_kassa_ai_card_topup,
+        start_kassa_ai_sbp_topup,
+        start_kassa_ai_topup,
+    )
 
     dp.callback_query.register(start_kassa_ai_topup, F.data == 'topup_kassa_ai')
     dp.callback_query.register(process_kassa_ai_quick_amount, F.data.startswith('topup_amount|kassa_ai|'))
+    dp.callback_query.register(start_kassa_ai_sbp_topup, F.data == 'topup_kassa_ai_sbp')
+    dp.callback_query.register(process_kassa_ai_sbp_quick_amount, F.data.startswith('topup_amount|kassa_ai_sbp|'))
+    dp.callback_query.register(start_kassa_ai_card_topup, F.data == 'topup_kassa_ai_card')
+    dp.callback_query.register(process_kassa_ai_card_quick_amount, F.data.startswith('topup_amount|kassa_ai_card|'))
 
     from .mulenpay import check_mulenpay_payment_status
 
