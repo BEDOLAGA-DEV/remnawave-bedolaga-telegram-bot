@@ -1040,6 +1040,35 @@ async def update_user_subscription(
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
+    if request.action == 'shorten':
+        if not request.days:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Days parameter is required for shorten action',
+            )
+
+        await extend_subscription(db, subscription, -request.days)
+        await db.refresh(subscription)
+
+        # Check if subscription expired after shortening
+        if subscription.end_date <= datetime.now(UTC):
+            subscription.status = SubscriptionStatus.EXPIRED.value
+            await db.commit()
+            await db.refresh(subscription)
+
+        # Sync to Remnawave panel
+        await _sync_subscription_to_panel(db, user, subscription)
+
+        logger.info(
+            'Admin shortened subscription for user by days', admin_id=admin.id, user_id=user_id, days=request.days
+        )
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message=f'Subscription shortened by {request.days} days',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
     if request.action == 'set_end_date':
         if not request.end_date:
             raise HTTPException(

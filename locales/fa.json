@@ -911,8 +911,6 @@
     "AUTOPAY_STATUS_ENABLED": "فعال",
     "AUTOPAY_SUCCESS": "\n✅ <b>پرداخت خودکار انجام شد</b>\n\nاشتراک {days} روز تمدید شد.\nکسر: {amount}\n",
     "AUTOPAY_TOGGLE_SUCCESS": "✅ پرداخت خودکار {status}!",
-    "RECURRENT_TOPUP_SUCCESS": "✅ <b>پرداخت خودکار انجام شد</b>\n\nموجودی به مبلغ {amount} برای تمدید اشتراک شارژ شد.",
-    "RECURRENT_TOPUP_FAILED": "❌ <b>پرداخت خودکار ناموفق بود</b>\n\nامکان کسر {amount} از هیچ کارت ذخیره شده‌ای برای تمدید اشتراک وجود نداشت.\n\nلطفاً موجودی را به صورت دستی شارژ کنید.",
     "BACK": "⬅️ قبلی",
     "BACK_BUTTON": "◀️ بازگشت",
     "BACK_TO_MAIN_MENU_BUTTON": "⬅️ منوی اصلی",

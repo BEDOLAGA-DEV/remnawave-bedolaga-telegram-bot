@@ -237,6 +237,37 @@ class YooKassaPayment(Base):
         return f'<YooKassaPayment(id={self.id}, yookassa_id={self.yookassa_payment_id}, amount={self.amount_rubles}₽, status={self.status})>'
 
 
+class SavedPaymentMethod(Base):
+    __tablename__ = 'saved_payment_methods'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+
+    # YooKassa payment_method.id — ключ для рекуррентных списаний
+    yookassa_payment_method_id = Column(String(255), unique=True, nullable=False, index=True)
+
+    # Тип метода: bank_card, yoo_money, sberbank, tinkoff_bank, sbp, mir_pay
+    method_type = Column(String(50), nullable=False, default='bank_card')
+
+    # Отображаемые данные карты (маскированные)
+    card_first6 = Column(String(6), nullable=True)
+    card_last4 = Column(String(4), nullable=True)
+    card_type = Column(String(50), nullable=True)  # Visa, MasterCard, Mir
+    card_expiry_month = Column(String(2), nullable=True)
+    card_expiry_year = Column(String(4), nullable=True)
+    title = Column(String(255), nullable=True)  # "Bank card *4444"
+
+    is_active = Column(Boolean, default=True)
+
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    user = relationship('User', backref='saved_payment_methods')
+
+    def __repr__(self):
+        return f'<SavedPaymentMethod(id={self.id}, user_id={self.user_id}, type={self.method_type}, last4={self.card_last4})>'
+
+
 class CryptoBotPayment(Base):
     __tablename__ = 'cryptobot_payments'
 

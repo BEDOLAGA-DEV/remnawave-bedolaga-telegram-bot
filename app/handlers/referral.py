@@ -78,24 +78,43 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
         ).format(amount=texts.format_price(summary['month_earned_kopeks']))
         + '\n\n'
         + texts.t('REFERRAL_REWARDS_HEADER', '🎁 <b>Как работают награды:</b>')
-        + '\n'
-        + texts.t(
-            'REFERRAL_REWARD_NEW_USER',
-            '• Новый пользователь получает: <b>{bonus}</b> при первом пополнении от <b>{minimum}</b>',
-        ).format(
-            bonus=texts.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS),
-            minimum=texts.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
+    )
+
+    if settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
+        referral_text += (
+            '\n'
+            + texts.t(
+                'REFERRAL_REWARD_NEW_USER',
+                '• Новый пользователь получает: <b>{bonus}</b> при первом пополнении от <b>{minimum}</b>',
+            ).format(
+                bonus=texts.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS),
+                minimum=texts.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
+            )
         )
-        + '\n'
-        + texts.t(
-            'REFERRAL_REWARD_INVITER',
-            '• Вы получаете при первом пополнении реферала: <b>{bonus}</b>',
-        ).format(bonus=texts.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS))
-        + '\n'
-        + texts.t(
+
+    if settings.REFERRAL_INVITER_BONUS_KOPEKS > 0:
+        referral_text += (
+            '\n'
+            + texts.t(
+                'REFERRAL_REWARD_INVITER',
+                '• Вы получаете при первом пополнении реферала: <b>{bonus}</b>',
+            ).format(bonus=texts.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS))
+        )
+
+    if settings.REFERRAL_MAX_COMMISSION_PAYMENTS > 0:
+        commission_line = texts.t(
+            'REFERRAL_REWARD_COMMISSION_LIMITED',
+            '• Комиссия с пополнений реферала: <b>{percent}%</b>',
+        ).format(percent=get_effective_referral_commission_percent(db_user))
+    else:
+        commission_line = texts.t(
             'REFERRAL_REWARD_COMMISSION',
             '• Комиссия с каждого пополнения реферала: <b>{percent}%</b>',
         ).format(percent=get_effective_referral_commission_percent(db_user))
+
+    referral_text += (
+        '\n'
+        + commission_line
         + '\n\n'
         + texts.t('REFERRAL_LINK_TITLE', '🔗 <b>Ваша реферальная ссылка:</b>')
         + f'\n<code>{referral_link}</code>\n\n'
@@ -459,15 +478,22 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User):
 
     invite_text = (
         texts.t('REFERRAL_INVITE_TITLE', '🎉 Присоединяйся к VPN сервису!')
-        + '\n\n'
-        + texts.t(
-            'REFERRAL_INVITE_BONUS',
-            '💎 При первом пополнении от {minimum} ты получишь {bonus} бонусом на баланс!',
-        ).format(
-            minimum=texts.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
-            bonus=texts.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS),
+    )
+
+    if settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
+        invite_text += (
+            '\n\n'
+            + texts.t(
+                'REFERRAL_INVITE_BONUS',
+                '💎 При первом пополнении от {minimum} ты получишь {bonus} бонусом на баланс!',
+            ).format(
+                minimum=texts.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
+                bonus=texts.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS),
+            )
         )
-        + '\n\n'
+
+    invite_text += (
+        '\n\n'
         + texts.t('REFERRAL_INVITE_FEATURE_FAST', '🚀 Быстрое подключение')
         + '\n'
         + texts.t('REFERRAL_INVITE_FEATURE_SERVERS', '🌍 Серверы по всему миру')

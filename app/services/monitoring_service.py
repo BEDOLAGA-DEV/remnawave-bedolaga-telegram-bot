@@ -220,6 +220,18 @@ class MonitoringService:
                 # экспайрятся до того, как autopay успеет их продлить
                 if settings.ENABLE_AUTOPAY:
                     await self._process_autopayments(db)
+                    # Рекуррентные автоплатежи: пополнение баланса с сохранённой карты
+                    if settings.YOOKASSA_RECURRENT_ENABLED:
+                        try:
+                            from app.services.recurrent_payment_service import process_recurrent_payments
+
+                            await process_recurrent_payments(bot=self.bot)
+                        except Exception as recurrent_error:
+                            logger.error(
+                                'Ошибка рекуррентных автоплатежей',
+                                error=recurrent_error,
+                                exc_info=True,
+                            )
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
@@ -427,6 +439,19 @@ class MonitoringService:
                             days=days,
                         )
                         continue
+
+                    # Пропускаем уведомление если autopay + рекуррентные платежи с карты настроены
+                    if subscription.autopay_enabled and settings.ENABLE_AUTOPAY and settings.YOOKASSA_RECURRENT_ENABLED:
+                        from app.database.crud.saved_payment_method import get_active_payment_methods_by_user
+
+                        saved_methods = await get_active_payment_methods_by_user(db, user.id)
+                        if saved_methods:
+                            logger.debug(
+                                'Пропускаем уведомление об истечении: autopay + сохранённая карта',
+                                user_identifier=user_identifier,
+                                days=days,
+                            )
+                            continue
 
                     should_send = True
                     for other_days in warning_days:
@@ -954,7 +979,7 @@ class MonitoringService:
 
             # Берём ACTIVE + недавно EXPIRED (middleware или check_and_update могли
             # экспайрить до того, как monitoring успел запустить autopay)
-            recently_expired_threshold = current_time - timedelta(hours=2)
+            recently_expired_threshold = current_time - timedelta(hours=48)
             result = await db.execute(
                 select(Subscription)
                 .options(

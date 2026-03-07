@@ -386,6 +386,7 @@ class YooKassaPaymentMixin:
         self,
         db: AsyncSession,
         payment: YooKassaPayment,
+        event_object: dict[str, Any] | None = None,
     ) -> bool:
         """Переносит успешный платёж YooKassa в транзакции и начисляет баланс пользователю."""
         try:
@@ -590,6 +591,7 @@ class YooKassaPaymentMixin:
             payment_type = payment_metadata.get('type', '')
             is_simple_subscription = payment_purpose == 'simple_subscription_purchase'
             is_trial_payment = payment_type == 'trial'
+            is_recurrent_topup = payment_metadata.get('purpose') == 'recurrent_topup'
 
             transaction_type = (
                 TransactionType.SUBSCRIPTION_PAYMENT
@@ -825,36 +827,38 @@ class YooKassaPaymentMixin:
                                 'Ошибка отправки уведомления админам о YooKassa пополнении', error=error, exc_info=True
                             )
 
-                    # Отправляем уведомление пользователю (только Telegram-пользователям)
-                    if getattr(self, 'bot', None) and user.telegram_id:
+                    # Для рекуррентных автоплатежей уведомления отправляет recurrent_payment_service
+                    if not is_recurrent_topup:
+                        # Отправляем уведомление пользователю (только Telegram-пользователям)
+                        if getattr(self, 'bot', None) and user.telegram_id:
+                            try:
+                                # Передаем только простые данные, чтобы избежать проблем с ленивой загрузкой
+                                await self._send_payment_success_notification(
+                                    user.telegram_id,
+                                    payment.amount_kopeks,
+                                    user=None,  # Передаем None, чтобы _ensure_user_snapshot загрузил данные сам
+                                    db=db,
+                                    payment_method_title='Банковская карта (YooKassa)',
+                                )
+                                logger.info('Уведомление пользователю о платеже отправлено успешно')
+                            except Exception as error:
+                                logger.error('Ошибка отправки уведомления о платеже', error=error, exc_info=True)
+
+                        # Проверяем наличие сохраненной корзины для возврата к оформлению подписки
+                        # ВАЖНО: этот код должен выполняться даже при ошибках в уведомлениях
                         try:
-                            # Передаем только простые данные, чтобы избежать проблем с ленивой загрузкой
-                            await self._send_payment_success_notification(
-                                user.telegram_id,
-                                payment.amount_kopeks,
-                                user=None,  # Передаем None, чтобы _ensure_user_snapshot загрузил данные сам
-                                db=db,
-                                payment_method_title='Банковская карта (YooKassa)',
+                            from app.services.payment.common import send_cart_notification_after_topup
+
+                            await send_cart_notification_after_topup(
+                                user, payment.amount_kopeks, db, getattr(self, 'bot', None)
                             )
-                            logger.info('Уведомление пользователю о платеже отправлено успешно')
-                        except Exception as error:
-                            logger.error('Ошибка отправки уведомления о платеже', error=error, exc_info=True)
-
-                    # Проверяем наличие сохраненной корзины для возврата к оформлению подписки
-                    # ВАЖНО: этот код должен выполняться даже при ошибках в уведомлениях
-                    try:
-                        from app.services.payment.common import send_cart_notification_after_topup
-
-                        await send_cart_notification_after_topup(
-                            user, payment.amount_kopeks, db, getattr(self, 'bot', None)
-                        )
-                    except Exception as e:
-                        logger.error(
-                            'Ошибка при работе с сохраненной корзиной для пользователя',
-                            user_id=user.id,
-                            error=e,
-                            exc_info=True,
-                        )
+                        except Exception as e:
+                            logger.error(
+                                'Ошибка при работе с сохраненной корзиной для пользователя',
+                                user_id=user.id,
+                                error=e,
+                                exc_info=True,
+                            )
 
                 if is_simple_subscription:
                     logger.info('Обнаружен платеж простой покупки подписки для пользователя', user_id=user.id)
@@ -1026,6 +1030,10 @@ class YooKassaPaymentMixin:
                     amount_rubles=payment.amount_kopeks / 100,
                 )
 
+            # Сохраняем привязанный метод оплаты для рекуррентных платежей
+            if settings.YOOKASSA_RECURRENT_ENABLED and event_object:
+                await self._save_payment_method_if_available(db, payment, event_object)
+
             # Создаем чек через NaloGO (если NALOGO_ENABLED=true)
             if hasattr(self, 'nalogo_service') and self.nalogo_service:
                 await self._create_nalogo_receipt(
@@ -1085,6 +1093,81 @@ class YooKassaPaymentMixin:
             )
 
         return updated_metadata
+
+    async def _save_payment_method_if_available(
+        self,
+        db: AsyncSession,
+        payment: YooKassaPayment,
+        event_object: dict[str, Any],
+    ) -> None:
+        """Сохраняет привязанный метод оплаты из ответа YooKassa, если карта была сохранена."""
+        try:
+            pm = event_object.get('payment_method') or {}
+            pm_id = pm.get('id')
+            pm_saved = pm.get('saved', False)
+
+            if not pm_id or not pm_saved:
+                return
+
+            from app.database.crud.saved_payment_method import (
+                create_saved_payment_method,
+                get_payment_method_by_yookassa_id,
+            )
+
+            # Проверяем, не сохранён ли уже
+            existing = await get_payment_method_by_yookassa_id(db, pm_id)
+            if existing:
+                logger.debug(
+                    'Метод оплаты уже сохранён',
+                    yookassa_payment_method_id=pm_id,
+                    user_id=payment.user_id,
+                )
+                return
+
+            # Извлекаем данные карты
+            card = pm.get('card') or {}
+            card_first6 = card.get('first6')
+            card_last4 = card.get('last4')
+            card_type = card.get('card_type')
+            expiry_month = card.get('expiry_month')
+            expiry_year = card.get('expiry_year')
+            method_type = pm.get('type', 'bank_card')
+
+            # Формируем название
+            title = None
+            if card_last4:
+                type_label = card_type or 'Card'
+                title = f'{type_label} *{card_last4}'
+
+            saved = await create_saved_payment_method(
+                db=db,
+                user_id=payment.user_id,
+                yookassa_payment_method_id=pm_id,
+                method_type=method_type,
+                card_first6=card_first6,
+                card_last4=card_last4,
+                card_type=card_type,
+                card_expiry_month=expiry_month,
+                card_expiry_year=expiry_year,
+                title=title,
+            )
+
+            if saved:
+                logger.info(
+                    'Метод оплаты сохранён для рекуррентных платежей',
+                    saved_method_id=saved.id,
+                    user_id=payment.user_id,
+                    card_last4=card_last4,
+                    method_type=method_type,
+                )
+
+        except Exception as save_error:
+            logger.error(
+                'Ошибка сохранения метода оплаты',
+                yookassa_payment_id=payment.yookassa_payment_id,
+                save_error=save_error,
+                exc_info=True,
+            )
 
     async def _create_nalogo_receipt(
         self,
@@ -1223,7 +1306,7 @@ class YooKassaPaymentMixin:
         await db.refresh(payment)
 
         if payment.status == 'succeeded' and payment.is_paid:
-            return await self._process_successful_yookassa_payment(db, payment)
+            return await self._process_successful_yookassa_payment(db, payment, event_object=event_object)
 
         logger.info(
             'Webhook YooKassa обновил платеж до статуса',

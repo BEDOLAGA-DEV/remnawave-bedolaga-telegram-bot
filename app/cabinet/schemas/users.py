@@ -281,7 +281,7 @@ class UpdateSubscriptionRequest(BaseModel):
     """Request to update user subscription."""
 
     action: str = Field(
-        ..., description='Action: extend, set_end_date, change_tariff, set_traffic, toggle_autopay, cancel'
+        ..., description='Action: extend, shorten, set_end_date, change_tariff, set_traffic, toggle_autopay, cancel'
     )
 
     # For extend action

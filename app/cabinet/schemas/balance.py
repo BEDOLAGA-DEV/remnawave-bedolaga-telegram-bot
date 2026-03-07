@@ -137,3 +137,24 @@ class ManualCheckResponse(BaseModel):
     status_changed: bool = False
     old_status: str | None = None
     new_status: str | None = None
+
+
+class SavedCardResponse(BaseModel):
+    """Saved payment method (card) for recurrent payments."""
+
+    id: int
+    method_type: str
+    card_last4: str | None = None
+    card_type: str | None = None
+    title: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SavedCardsListResponse(BaseModel):
+    """List of saved payment methods."""
+
+    cards: list[SavedCardResponse]
+    recurrent_enabled: bool = False

@@ -831,8 +831,6 @@
 "AUTOPAY_STATUS_ENABLED": "已启用",
 "AUTOPAY_SUCCESS": "\n✅<b>自动支付成功</b>\n\n您的订阅已自动延长{days}天。\n已从余额扣除：{amount}\n",
 "AUTOPAY_TOGGLE_SUCCESS": "✅自动支付{status}！",
-"RECURRENT_TOPUP_SUCCESS": "✅ <b>自动扣款成功</b>\n\n余额已充值{amount}，用于续订订阅。",
-"RECURRENT_TOPUP_FAILED": "❌ <b>自动扣款失败</b>\n\n无法从任何已保存的银行卡中扣除{amount}以续订订阅。\n\n请手动充值余额以避免服务中断。",
 "BACK": "⬅️返回",
 "BACK_TO_MAIN_MENU_BUTTON": "⬅️返回主菜单",
 "BACK_TO_MENU": "🏠返回主菜单",

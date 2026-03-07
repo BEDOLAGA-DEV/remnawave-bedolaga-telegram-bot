@@ -35,6 +35,8 @@ from ..schemas.balance import (
     PaymentMethodResponse,
     PendingPaymentListResponse,
     PendingPaymentResponse,
+    SavedCardResponse,
+    SavedCardsListResponse,
     StarsInvoiceRequest,
     StarsInvoiceResponse,
     TopUpRequest,
@@ -1075,3 +1077,59 @@ async def check_payment_status(
         old_status=old_status,
         new_status=updated.status,
     )
+
+
+@router.get('/saved-cards', response_model=SavedCardsListResponse)
+async def get_saved_cards(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get user's saved payment methods (cards) for recurrent payments."""
+    recurrent_enabled = settings.YOOKASSA_RECURRENT_ENABLED
+
+    if not recurrent_enabled:
+        return SavedCardsListResponse(cards=[], recurrent_enabled=False)
+
+    from app.database.crud.saved_payment_method import get_active_payment_methods_by_user
+
+    methods = await get_active_payment_methods_by_user(db, user.id)
+
+    cards = [
+        SavedCardResponse(
+            id=m.id,
+            method_type=m.method_type,
+            card_last4=m.card_last4,
+            card_type=m.card_type,
+            title=m.title,
+            created_at=m.created_at,
+        )
+        for m in methods
+    ]
+
+    return SavedCardsListResponse(cards=cards, recurrent_enabled=True)
+
+
+@router.delete('/saved-cards/{card_id}', status_code=status.HTTP_200_OK)
+async def delete_saved_card(
+    card_id: int,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Unlink (deactivate) a saved payment method."""
+    if not settings.YOOKASSA_RECURRENT_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Recurrent payments are not enabled',
+        )
+
+    from app.database.crud.saved_payment_method import deactivate_payment_method
+
+    success = await deactivate_payment_method(db, card_id, user.id)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Saved card not found',
+        )
+
+    return {'success': True, 'message': 'Card unlinked successfully'}

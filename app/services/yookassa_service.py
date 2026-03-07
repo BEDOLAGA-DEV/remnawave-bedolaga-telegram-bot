@@ -113,6 +113,12 @@ class YooKassaService:
 
             builder.set_receipt(receipt_data_dict)
 
+            # Рекуррентные платежи: сохранение карты
+            if settings.YOOKASSA_RECURRENT_ENABLED:
+                if settings.YOOKASSA_RECURRENT_REQUIRED:
+                    builder.set_save_payment_method(True)
+                # Если не required — не устанавливаем, YooKassa покажет чекбокс
+
             idempotence_key = str(uuid.uuid4())
             payment_request = builder.build()
 
@@ -308,6 +314,21 @@ class YooKassaService:
                     'payment_method_type': payment_info_yk.payment_method.type
                     if payment_info_yk.payment_method
                     else None,
+                    'payment_method_id': payment_info_yk.payment_method.id if payment_info_yk.payment_method else None,
+                    'payment_method_saved': payment_info_yk.payment_method.saved
+                    if payment_info_yk.payment_method and hasattr(payment_info_yk.payment_method, 'saved')
+                    else False,
+                    'payment_method_card': {
+                        'first6': payment_info_yk.payment_method.card.first6,
+                        'last4': payment_info_yk.payment_method.card.last4,
+                        'card_type': payment_info_yk.payment_method.card.card_type,
+                        'expiry_month': payment_info_yk.payment_method.card.expiry_month,
+                        'expiry_year': payment_info_yk.payment_method.card.expiry_year,
+                    }
+                    if payment_info_yk.payment_method
+                    and hasattr(payment_info_yk.payment_method, 'card')
+                    and payment_info_yk.payment_method.card
+                    else None,
                     'test_mode': payment_info_yk.test if hasattr(payment_info_yk, 'test') else None,
                 }
             logger.warning('Платеж не найден в YooKassa ID', payment_id_in_yookassa=payment_id_in_yookassa)
@@ -322,6 +343,104 @@ class YooKassaService:
             logger.error(
                 'Ошибка получения информации о платеже YooKassa',
                 payment_id_in_yookassa=payment_id_in_yookassa,
+                error=e,
+                exc_info=True,
+            )
+            return None
+
+    async def create_autopayment(
+        self,
+        amount: float,
+        currency: str,
+        description: str,
+        payment_method_id: str,
+        metadata: dict[str, Any],
+        receipt_email: str | None = None,
+        receipt_phone: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Создаёт рекуррентный автоплатёж через сохранённый payment_method_id (без confirmation)."""
+
+        if not self.configured:
+            logger.error('YooKassa не сконфигурирован. Невозможно создать автоплатёж.')
+            return None
+
+        customer_contact_for_receipt = {}
+        if receipt_email:
+            customer_contact_for_receipt['email'] = receipt_email
+        elif receipt_phone:
+            customer_contact_for_receipt['phone'] = receipt_phone
+        elif hasattr(settings, 'YOOKASSA_DEFAULT_RECEIPT_EMAIL') and settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL:
+            customer_contact_for_receipt['email'] = settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL
+        else:
+            logger.error(
+                'КРИТИЧНО: Не предоставлен email/телефон для чека автоплатежа и YOOKASSA_DEFAULT_RECEIPT_EMAIL не установлен.'
+            )
+            return None
+
+        try:
+            builder = PaymentRequestBuilder()
+            builder.set_amount({'value': str(round(amount, 2)), 'currency': currency.upper()})
+            builder.set_capture(True)
+            builder.set_payment_method_id(payment_method_id)
+            builder.set_description(description)
+            builder.set_metadata(metadata)
+
+            receipt_items_list: list[dict[str, Any]] = [
+                {
+                    'description': description[:128],
+                    'quantity': '1.00',
+                    'amount': {'value': str(round(amount, 2)), 'currency': currency.upper()},
+                    'vat_code': str(getattr(settings, 'YOOKASSA_VAT_CODE', 1)),
+                    'payment_mode': getattr(settings, 'YOOKASSA_PAYMENT_MODE', 'full_payment'),
+                    'payment_subject': getattr(settings, 'YOOKASSA_PAYMENT_SUBJECT', 'service'),
+                }
+            ]
+            receipt_data_dict: dict[str, Any] = {'customer': customer_contact_for_receipt, 'items': receipt_items_list}
+            builder.set_receipt(receipt_data_dict)
+
+            idempotence_key = str(uuid.uuid4())
+            payment_request = builder.build()
+
+            logger.info(
+                'Создание автоплатежа YooKassa. Сумма: . payment_method_id: . Метаданные: ',
+                amount=amount,
+                currency=currency,
+                payment_method_id=payment_method_id,
+                metadata=metadata,
+                idempotence_key=idempotence_key,
+            )
+
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None, lambda: YooKassaPayment.create(payment_request, idempotence_key)
+            )
+
+            logger.info(
+                'Ответ YooKassa автоплатёж: ID=, Status=, Paid',
+                response_id=response.id,
+                status=response.status,
+                paid=response.paid,
+            )
+
+            return {
+                'id': response.id,
+                'status': response.status,
+                'paid': response.paid,
+                'metadata': response.metadata,
+                'amount_value': float(response.amount.value),
+                'amount_currency': response.amount.currency,
+                'idempotence_key_used': idempotence_key,
+                'refundable': response.refundable,
+                'created_at': response.created_at.isoformat()
+                if hasattr(response.created_at, 'isoformat')
+                else str(response.created_at),
+                'description_from_yk': response.description,
+                'test_mode': response.test if hasattr(response, 'test') else None,
+            }
+        except Exception as e:
+            logger.error(
+                'Ошибка создания автоплатежа YooKassa',
+                payment_method_id=payment_method_id,
                 error=e,
                 exc_info=True,
             )

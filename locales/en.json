@@ -891,8 +891,6 @@
   "AUTOPAY_STATUS_ENABLED": "enabled",
   "AUTOPAY_SUCCESS": "\n✅ <b>Autopay completed</b>\n\nYour subscription was automatically renewed for {days} days.\nCharged from balance: {amount}\n",
   "AUTOPAY_TOGGLE_SUCCESS": "✅ Autopay {status}!",
-  "RECURRENT_TOPUP_SUCCESS": "✅ <b>Auto-payment completed</b>\n\nBalance topped up by {amount} for subscription renewal.",
-  "RECURRENT_TOPUP_FAILED": "❌ <b>Auto-payment failed</b>\n\nCould not charge {amount} from any saved card for subscription renewal.\n\nPlease top up your balance manually to avoid service interruption.",
   "BACK": "⬅️ Back",
   "BACK_BUTTON": "◀️ Back",
   "BACK_TO_MAIN_MENU_BUTTON": "⬅️ Back to main menu",
