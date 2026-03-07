@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import YandexClientIdMap
@@ -20,28 +21,36 @@ async def upsert_cid(
     cid: str,
     source: str = 'web',
     counter_id: str | None = None,
-) -> YandexClientIdMap:
+) -> None:
     """Insert or update Yandex ClientID for a user."""
-    result = await db.execute(select(YandexClientIdMap).where(YandexClientIdMap.user_id == user_id))
-    row = result.scalar_one_or_none()
+    now = datetime.now(UTC)
+    values: dict = {
+        'user_id': user_id,
+        'yandex_cid': cid,
+        'source': source,
+        'updated_at': now,
+    }
+    if counter_id:
+        values['counter_id'] = counter_id
 
-    if row:
-        row.yandex_cid = cid
-        row.source = source
-        row.updated_at = datetime.now(UTC)
-        if counter_id:
-            row.counter_id = counter_id
-    else:
-        row = YandexClientIdMap(
-            user_id=user_id,
-            yandex_cid=cid,
-            source=source,
-            counter_id=counter_id,
+    update_set: dict = {
+        'yandex_cid': cid,
+        'source': source,
+        'updated_at': now,
+    }
+    if counter_id:
+        update_set['counter_id'] = counter_id
+
+    stmt = (
+        pg_insert(YandexClientIdMap)
+        .values(**values)
+        .on_conflict_do_update(
+            index_elements=['user_id'],
+            set_=update_set,
         )
-        db.add(row)
-
+    )
+    await db.execute(stmt)
     await db.flush()
-    return row
 
 
 async def get_cid(db: AsyncSession, user_id: int) -> YandexClientIdMap | None:

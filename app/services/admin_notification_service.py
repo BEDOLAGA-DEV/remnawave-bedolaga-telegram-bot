@@ -1,3 +1,4 @@
+import asyncio
 import html
 from datetime import UTC, datetime
 from typing import Any
@@ -27,6 +28,18 @@ from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
+
+
+async def _fire_yandex_purchase(user_id: int, amount_kopeks: int) -> None:
+    """Background task: send purchase event to Yandex with its own DB session."""
+    try:
+        from app.database.database import AsyncSessionLocal
+        from app.services import yandex_offline_conv_service as yandex_conv
+
+        async with AsyncSessionLocal() as db:
+            await yandex_conv.on_purchase(db, user_id, amount_kopeks)
+    except Exception as e:
+        logger.debug('Yandex offline conv purchase hook error', user_id=user_id, error=e)
 
 
 class AdminNotificationService:
@@ -408,13 +421,8 @@ class AdminNotificationService:
                 amount_kopeks if amount_kopeks is not None else (abs(transaction.amount_kopeks) if transaction else 0)
             )
 
-            # Yandex offline conversion: purchase event
-            try:
-                from app.services import yandex_offline_conv_service as yandex_conv
-
-                await yandex_conv.on_purchase(db, user.id, total_amount)
-            except Exception as yandex_err:
-                logger.debug('Yandex offline conv purchase hook error', error=yandex_err)
+            # Yandex offline conversion: purchase event (fire-and-forget, uses own session)
+            asyncio.create_task(_fire_yandex_purchase(user.id, total_amount))
 
             await self._record_subscription_event(
                 db,

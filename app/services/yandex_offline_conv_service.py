@@ -7,7 +7,6 @@ using the Measurement Protocol. Each event is preceded by a warm-up pageview.
 from __future__ import annotations
 
 import asyncio
-import re
 
 import httpx
 import structlog
@@ -30,7 +29,15 @@ TIMEOUT = 10.0
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 
-_CID_RE = re.compile(r'^[A-Za-z0-9._:-]{4,64}$')
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Get or create a reusable httpx client."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=TIMEOUT)
+    return _http_client
 
 
 def _is_enabled() -> bool:
@@ -93,45 +100,37 @@ async def _post_collect(payload: dict[str, str], kind: str, cid: str) -> bool:
     masked = _mask_cid(cid)
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-                resp = await client.post(COLLECT_URL, data=payload)
+            client = _get_client()
+            resp = await client.post(COLLECT_URL, data=payload)
 
             if 200 <= resp.status_code < 300:
-                logger.info('%s %s sent (cid=%s, status=%s)', LOG_PREFIX, kind, masked, resp.status_code)
+                logger.info(f'{LOG_PREFIX} {kind} sent', cid=masked, status=resp.status_code)
                 return True
 
             if 500 <= resp.status_code < 600 and attempt < MAX_RETRIES:
                 logger.warning(
-                    '%s %s server error (attempt %s/%s, cid=%s, status=%s)',
-                    LOG_PREFIX,
-                    kind,
-                    attempt,
-                    MAX_RETRIES,
-                    masked,
-                    resp.status_code,
+                    f'{LOG_PREFIX} {kind} server error',
+                    attempt=f'{attempt}/{MAX_RETRIES}',
+                    cid=masked,
+                    status=resp.status_code,
                 )
                 await asyncio.sleep(RETRY_DELAY)
                 continue
 
             logger.error(
-                '%s %s rejected (cid=%s, status=%s, body=%s)',
-                LOG_PREFIX,
-                kind,
-                masked,
-                resp.status_code,
-                resp.text[:200],
+                f'{LOG_PREFIX} {kind} rejected',
+                cid=masked,
+                status=resp.status_code,
+                body=resp.text[:200],
             )
             return False
 
         except Exception as exc:
             logger.warning(
-                '%s %s request error (attempt %s/%s, cid=%s): %s',
-                LOG_PREFIX,
-                kind,
-                attempt,
-                MAX_RETRIES,
-                masked,
-                exc,
+                f'{LOG_PREFIX} {kind} request error',
+                attempt=f'{attempt}/{MAX_RETRIES}',
+                cid=masked,
+                error=str(exc),
             )
             if attempt < MAX_RETRIES:
                 await asyncio.sleep(RETRY_DELAY)
@@ -146,7 +145,7 @@ async def _send_event(cid: str, event_action: str) -> bool:
     # Warm-up pageview (required by Metrika to associate the CID)
     pv_ok = await _post_collect(_pageview_payload(cid), 'pageview', cid)
     if not pv_ok:
-        logger.warning('%s Pageview failed for %s, skipping event %s', LOG_PREFIX, _mask_cid(cid), event_action)
+        logger.warning(f'{LOG_PREFIX} Pageview failed, skipping event', cid=_mask_cid(cid), event=event_action)
         return False
 
     return await _post_collect(_event_payload(cid, event_action), event_action, cid)
@@ -168,10 +167,10 @@ async def store_cid(
 
     try:
         await upsert_cid(db, user_id, normalized, source=source, counter_id=settings.YANDEX_OFFLINE_CONV_COUNTER_ID)
-        logger.info('%s Stored CID for user_id=%s source=%s', LOG_PREFIX, user_id, source)
+        logger.info(f'{LOG_PREFIX} Stored CID', user_id=user_id, source=source)
         return True
     except Exception as exc:
-        logger.error('%s Failed to store CID for user_id=%s: %s', LOG_PREFIX, user_id, exc)
+        logger.error(f'{LOG_PREFIX} Failed to store CID', user_id=user_id, error=str(exc))
         return False
 
 
@@ -189,9 +188,9 @@ async def on_registration(db: AsyncSession, user_id: int) -> None:
         if success:
             await mark_registration_sent(db, user_id)
             await db.commit()
-            logger.info('%s registration event sent for user_id=%s', LOG_PREFIX, user_id)
+            logger.info(f'{LOG_PREFIX} registration event sent', user_id=user_id)
     except Exception as exc:
-        logger.error('%s registration event failed for user_id=%s: %s', LOG_PREFIX, user_id, exc)
+        logger.error(f'{LOG_PREFIX} registration event failed', user_id=user_id, error=str(exc))
 
 
 async def on_trial(db: AsyncSession, user_id: int) -> None:
@@ -208,9 +207,9 @@ async def on_trial(db: AsyncSession, user_id: int) -> None:
         if success:
             await mark_trial_sent(db, user_id)
             await db.commit()
-            logger.info('%s trial-add event sent for user_id=%s', LOG_PREFIX, user_id)
+            logger.info(f'{LOG_PREFIX} trial-add event sent', user_id=user_id)
     except Exception as exc:
-        logger.error('%s trial-add event failed for user_id=%s: %s', LOG_PREFIX, user_id, exc)
+        logger.error(f'{LOG_PREFIX} trial-add event failed', user_id=user_id, error=str(exc))
 
 
 async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> None:
@@ -225,14 +224,9 @@ async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> Non
 
         success = await _send_event(row.yandex_cid, 'purchase')
         if success:
-            logger.info(
-                '%s purchase event sent for user_id=%s amount=%s',
-                LOG_PREFIX,
-                user_id,
-                amount_kopeks / 100,
-            )
+            logger.info(f'{LOG_PREFIX} purchase event sent', user_id=user_id, amount=amount_kopeks / 100)
     except Exception as exc:
-        logger.error('%s purchase event failed for user_id=%s: %s', LOG_PREFIX, user_id, exc)
+        logger.error(f'{LOG_PREFIX} purchase event failed', user_id=user_id, error=str(exc))
 
 
 def parse_cid_from_start_param(param: str) -> tuple[str | None, str]:

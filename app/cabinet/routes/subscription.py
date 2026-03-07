@@ -1,5 +1,6 @@
 """Subscription management routes for cabinet."""
 
+import asyncio
 import base64
 import re
 from datetime import UTC, datetime, timedelta
@@ -65,6 +66,18 @@ from ..schemas.subscription import (
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/subscription', tags=['Cabinet Subscription'])
+
+
+async def _fire_yandex_trial(user_id: int) -> None:
+    """Background task: send trial event to Yandex with its own DB session."""
+    try:
+        from app.database.database import AsyncSessionLocal
+        from app.services import yandex_offline_conv_service as yandex_conv
+
+        async with AsyncSessionLocal() as db:
+            await yandex_conv.on_trial(db, user_id)
+    except Exception as e:
+        logger.debug('Yandex offline conv trial hook error', user_id=user_id, error=e)
 
 
 def _get_addon_discount_percent(
@@ -1335,13 +1348,8 @@ async def activate_trial(
 
     logger.info('Trial subscription activated for user', user_id=user.id)
 
-    # Yandex offline conversions: fire trial event
-    try:
-        from app.services import yandex_offline_conv_service as yandex_conv
-
-        await yandex_conv.on_trial(db, user.id)
-    except Exception as e:
-        logger.debug('Yandex offline conv trial hook error', error=e)
+    # Yandex offline conversions: fire trial event (background, uses own session)
+    asyncio.create_task(_fire_yandex_trial(user.id))
 
     # Create RemnaWave user
     try:

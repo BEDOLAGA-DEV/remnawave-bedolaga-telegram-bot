@@ -913,10 +913,8 @@ async def get_analytics_counters(
     google_label = await get_setting_value(db, GOOGLE_ADS_LABEL_KEY) or ''
 
     # Offline conversions status from env config
-    from app.config import settings as app_settings
-
-    oc_enabled = app_settings.YANDEX_OFFLINE_CONV_ENABLED and bool(app_settings.YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET)
-    oc_counter = app_settings.YANDEX_OFFLINE_CONV_COUNTER_ID if oc_enabled else ''
+    oc_enabled = settings.YANDEX_OFFLINE_CONV_ENABLED and bool(settings.YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET)
+    oc_counter = settings.YANDEX_OFFLINE_CONV_COUNTER_ID if oc_enabled else ''
     oc_goals = []
     if oc_enabled:
         oc_goals = [

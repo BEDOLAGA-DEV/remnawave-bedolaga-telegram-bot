@@ -28,6 +28,7 @@ from app.database.crud.user import (
     set_email_change_pending,
     verify_and_apply_email_change,
 )
+from app.database.database import AsyncSessionLocal
 from app.database.models import CabinetRefreshToken, User
 from app.services import yandex_offline_conv_service as yandex_conv
 from app.services.campaign_service import AdvertisingCampaignService
@@ -388,12 +389,25 @@ async def _process_yandex_cid(
     if not yandex_cid:
         return
     try:
+        # Store CID in the request session (fast DB write)
         await yandex_conv.store_cid(db, user.id, yandex_cid, source=source)
-        if is_new_user:
-            await yandex_conv.on_registration(db, user.id)
         await db.commit()
     except Exception as e:
-        logger.warning('Failed to process yandex CID', user_id=user.id, error=e)
+        logger.warning('Failed to store yandex CID', user_id=user.id, error=e)
+        return
+
+    if is_new_user:
+        # Fire registration event in background (slow HTTP calls)
+        asyncio.create_task(_fire_yandex_registration(user.id))
+
+
+async def _fire_yandex_registration(user_id: int) -> None:
+    """Background task: send registration event to Yandex with its own DB session."""
+    try:
+        async with AsyncSessionLocal() as db:
+            await yandex_conv.on_registration(db, user_id)
+    except Exception as e:
+        logger.warning('Background yandex registration event failed', user_id=user_id, error=e)
 
 
 @router.post('/telegram', response_model=AuthResponse)
