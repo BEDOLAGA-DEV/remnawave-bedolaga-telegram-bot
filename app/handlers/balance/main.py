@@ -138,6 +138,13 @@ async def route_payment_by_method(
             await process_kassa_ai_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method == 'riopay':
+        from .riopay import process_riopay_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_riopay_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
     return False
 
 
@@ -872,6 +879,11 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.callback_query.register(start_kassa_ai_topup, F.data == 'topup_kassa_ai')
     dp.callback_query.register(process_kassa_ai_quick_amount, F.data.startswith('topup_amount|kassa_ai|'))
+
+    from .riopay import process_riopay_quick_amount, start_riopay_topup
+
+    dp.callback_query.register(start_riopay_topup, F.data == 'topup_riopay')
+    dp.callback_query.register(process_riopay_quick_amount, F.data.startswith('topup_amount|riopay|'))
 
     from .mulenpay import check_mulenpay_payment_status
 

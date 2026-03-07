@@ -140,6 +140,7 @@ def create_unified_app(
         'wata': settings.is_wata_enabled(),
         'heleket': settings.is_heleket_enabled(),
         'freekassa': settings.is_freekassa_enabled(),
+        'riopay': settings.is_riopay_enabled(),
     }
 
     if enable_telegram_webhook:

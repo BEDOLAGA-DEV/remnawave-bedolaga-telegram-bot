@@ -1100,6 +1100,77 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
+    # RioPay webhook
+    if settings.is_riopay_enabled():
+
+        @router.get(settings.RIOPAY_WEBHOOK_PATH)
+        async def riopay_health() -> JSONResponse:
+            return JSONResponse(
+                {
+                    'status': 'ok',
+                    'service': 'riopay_webhook',
+                    'enabled': settings.is_riopay_enabled(),
+                }
+            )
+
+        @router.post(settings.RIOPAY_WEBHOOK_PATH)
+        async def riopay_webhook(request: Request) -> Response:
+            # Получаем JSON тело
+            try:
+                raw_body = await request.body()
+                payload = json.loads(raw_body)
+            except Exception as parse_error:
+                logger.error('RioPay webhook: не удалось прочитать JSON', parse_error=parse_error)
+                return Response('Error reading JSON', status_code=status.HTTP_400_BAD_REQUEST)
+
+            # Подпись из заголовка (обязательна)
+            signature = request.headers.get('X-Signature') or request.headers.get('x-signature')
+            if not signature:
+                logger.warning('RioPay webhook: отсутствует подпись')
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'missing_signature'},
+                    status_code=status.HTTP_403_FORBIDDEN,
+                )
+
+            from app.services.riopay_service import riopay_service
+
+            if not riopay_service.verify_webhook_signature(raw_body, signature):
+                logger.warning('RioPay webhook: неверная подпись')
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'invalid_signature'},
+                    status_code=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Обрабатываем webhook
+            db_generator = get_db()
+            try:
+                db = await db_generator.__anext__()
+            except StopAsyncIteration:
+                return Response('DB Error', status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            try:
+                success = await payment_service.process_riopay_webhook(
+                    db,
+                    payload=payload,
+                    raw_body=raw_body,
+                    signature=signature,
+                )
+                if success:
+                    return JSONResponse({'status': 'ok'}, status_code=status.HTTP_200_OK)
+
+                logger.error('RioPay webhook processing failed', payload=payload)
+                return Response('Error', status_code=status.HTTP_400_BAD_REQUEST)
+            except Exception as e:
+                logger.exception('RioPay webhook processing error', e=e)
+                return Response('Error', status_code=status.HTTP_400_BAD_REQUEST)
+            finally:
+                try:
+                    await db_generator.__anext__()
+                except StopAsyncIteration:
+                    pass
+
+        routes_registered = True
+
     if routes_registered:
 
         @router.get('/health/payment-webhooks')
@@ -1118,6 +1189,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     'cloudpayments_enabled': settings.is_cloudpayments_enabled(),
                     'freekassa_enabled': settings.is_freekassa_enabled(),
                     'kassa_ai_enabled': settings.is_kassa_ai_enabled(),
+                    'riopay_enabled': settings.is_riopay_enabled(),
                 }
             )
 

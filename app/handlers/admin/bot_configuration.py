@@ -63,7 +63,7 @@ CATEGORY_GROUP_METADATA: dict[str, dict[str, object]] = {
     },
     'payments': {
         'title': '💳 Платежные системы',
-        'description': 'YooKassa, CryptoBot, Heleket, CloudPayments, Freekassa, MulenPay, PAL24, Wata, Platega, Tribute, Kassa AI и Telegram Stars.',
+        'description': 'YooKassa, CryptoBot, Heleket, CloudPayments, Freekassa, MulenPay, PAL24, Wata, Platega, Tribute, Kassa AI, RioPay и Telegram Stars.',
         'icon': '💳',
         'categories': (
             'PAYMENT',
@@ -74,6 +74,7 @@ CATEGORY_GROUP_METADATA: dict[str, dict[str, object]] = {
             'CLOUDPAYMENTS',
             'FREEKASSA',
             'KASSA_AI',
+            'RIOPAY',
             'MULENPAY',
             'PAL24',
             'WATA',
@@ -263,6 +264,7 @@ def _get_group_status(group_key: str) -> tuple[str, str]:
             'CloudPayments': settings.is_cloudpayments_enabled(),
             'Freekassa': settings.is_freekassa_enabled(),
             'Kassa AI': settings.is_kassa_ai_enabled(),
+            'RioPay': settings.is_riopay_enabled(),
             'MulenPay': settings.is_mulenpay_enabled(),
             'PAL24': settings.is_pal24_enabled(),
             'Tribute': settings.TRIBUTE_ENABLED,
@@ -1251,6 +1253,9 @@ def _build_settings_keyboard(
     elif category_key == 'KASSA_AI':
         label = texts.t('PAYMENT_KASSA_AI', f'💳 {settings.get_kassa_ai_display_name()}')
         test_payment_buttons.append([_test_button(f'{label} · тест', 'kassa_ai')])
+    elif category_key == 'RIOPAY':
+        label = texts.t('PAYMENT_RIOPAY', f'💳 {settings.get_riopay_display_name()}')
+        test_payment_buttons.append([_test_button(f'{label} · тест', 'riopay')])
 
     if test_payment_buttons:
         rows.extend(test_payment_buttons)
@@ -2305,6 +2310,48 @@ async def test_payment_provider(
 
         payment_url = payment_result['payment_url']
         display_name = settings.get_kassa_ai_display_name()
+        message_text = (
+            f'🧪 <b>Тестовый платеж {display_name}</b>\n\n'
+            f'💰 Сумма: {texts.format_price(amount_kopeks)}\n'
+            f'🆔 Order ID: {payment_result["order_id"]}'
+        )
+        reply_markup = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text='💳 Перейти к оплате',
+                        url=payment_url,
+                    )
+                ]
+            ]
+        )
+        await callback.message.answer(message_text, reply_markup=reply_markup, parse_mode='HTML')
+        await callback.answer(f'✅ Ссылка на платеж {display_name} отправлена', show_alert=True)
+        await _refresh_markup()
+        return
+
+    if method == 'riopay':
+        if not settings.is_riopay_enabled():
+            await callback.answer('❌ RioPay отключена', show_alert=True)
+            return
+
+        amount_kopeks = settings.RIOPAY_MIN_AMOUNT_KOPEKS
+        payment_result = await payment_service.create_riopay_payment(
+            db=db,
+            user_id=db_user.id,
+            amount_kopeks=amount_kopeks,
+            description='Тестовый платеж RioPay (админ)',
+            email=getattr(db_user, 'email', None),
+            language=db_user.language or settings.DEFAULT_LANGUAGE,
+        )
+
+        if not payment_result or not payment_result.get('payment_url'):
+            await callback.answer('❌ Не удалось создать тестовый платеж RioPay', show_alert=True)
+            await _refresh_markup()
+            return
+
+        payment_url = payment_result['payment_url']
+        display_name = settings.get_riopay_display_name()
         message_text = (
             f'🧪 <b>Тестовый платеж {display_name}</b>\n\n'
             f'💰 Сумма: {texts.format_price(amount_kopeks)}\n'

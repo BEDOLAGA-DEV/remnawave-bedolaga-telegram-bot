@@ -48,6 +48,8 @@ def _method_display(method: PaymentMethod) -> str:
         return 'Telegram Stars'
     if method == PaymentMethod.KASSA_AI:
         return settings.get_kassa_ai_display_name()
+    if method == PaymentMethod.RIOPAY:
+        return settings.get_riopay_display_name()
     if method == PaymentMethod.FREEKASSA:
         return settings.get_freekassa_display_name()
     return method.value

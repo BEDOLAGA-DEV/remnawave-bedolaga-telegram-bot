@@ -715,6 +715,8 @@ async def main():
             webhook_lines.append(f'Freekassa: {_fmt(settings.FREEKASSA_WEBHOOK_PATH)}')
         if settings.is_kassa_ai_enabled():
             webhook_lines.append(f'Kassa.ai: {_fmt(settings.KASSA_AI_WEBHOOK_PATH)}')
+        if settings.is_riopay_enabled():
+            webhook_lines.append(f'RioPay: {_fmt(settings.RIOPAY_WEBHOOK_PATH)}')
         if settings.is_remnawave_webhook_enabled():
             webhook_lines.append(f'RemnaWave: {_fmt(settings.REMNAWAVE_WEBHOOK_PATH)}')
 
