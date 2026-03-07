@@ -18,11 +18,7 @@ from app.utils.decorators import error_handler
 logger = structlog.get_logger(__name__)
 
 
-KASSA_AI_SUB_METHODS = {
-    'kassa_ai_sbp': {'payment_system_id': 44},
-    'kassa_ai_card': {'payment_system_id': 36},
-}
-KASSA_AI_PAYMENT_METHODS = {'kassa_ai', 'kassa_ai_sbp', 'kassa_ai_card'}
+from app.services.kassa_ai_service import KASSA_AI_SUB_METHODS
 
 
 async def _create_kassa_ai_payment_and_respond(
@@ -398,6 +394,10 @@ async def start_kassa_ai_sbp_topup(
     """Start KassaAI SBP top-up process."""
     texts = get_texts(db_user.language)
 
+    if not settings.is_kassa_ai_sbp_enabled():
+        await callback.answer(texts.t('KASSA_AI_NOT_AVAILABLE', 'KassaAI СБП временно недоступен'), show_alert=True)
+        return
+
     if getattr(db_user, 'restriction_topup', False):
         reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
         support_url = settings.get_support_contact_url()
@@ -499,6 +499,10 @@ async def start_kassa_ai_card_topup(
 ):
     """Start KassaAI Card top-up process."""
     texts = get_texts(db_user.language)
+
+    if not settings.is_kassa_ai_card_enabled():
+        await callback.answer(texts.t('KASSA_AI_NOT_AVAILABLE', 'KassaAI Карта временно недоступна'), show_alert=True)
+        return
 
     if getattr(db_user, 'restriction_topup', False):
         reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
