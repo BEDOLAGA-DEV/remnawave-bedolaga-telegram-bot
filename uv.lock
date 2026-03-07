@@ -1115,7 +1115,7 @@ wheels = [
 
 [[package]]
 name = "remnawave-bedolaga-telegram-bot"
-version = "3.24.0"
+version = "3.25.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aiogram" },
