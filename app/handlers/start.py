@@ -284,9 +284,23 @@ async def _process_bot_yandex_cid(db, user, data, is_new_user):
     if yandex_cid and is_new_user:
         try:
             await yandex_conv.store_cid(db, user.id, yandex_cid, source='bot')
-            await yandex_conv.on_registration(db, user.id)
+            await db.commit()
         except Exception as e:
-            logger.warning('Failed to process yandex CID during registration', user_id=user.id, error=e)
+            logger.warning('Failed to store yandex CID', user_id=user.id, error=e)
+            return
+        # Fire registration event in background (HTTP calls, uses own session)
+        asyncio.create_task(_fire_bot_yandex_registration(user.id))
+
+
+async def _fire_bot_yandex_registration(user_id: int) -> None:
+    """Background task: send registration event to Yandex with its own DB session."""
+    try:
+        from app.database.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            await yandex_conv.on_registration(db, user_id)
+    except Exception as e:
+        logger.warning('Background yandex registration event failed', user_id=user_id, error=e)
 
 
 async def handle_potential_referral_code(message: types.Message, state: FSMContext, db: AsyncSession):

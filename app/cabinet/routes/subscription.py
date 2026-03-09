@@ -71,9 +71,6 @@ router = APIRouter(prefix='/subscription', tags=['Cabinet Subscription'])
 async def _fire_yandex_trial(user_id: int) -> None:
     """Background task: send trial event to Yandex with its own DB session."""
     try:
-        from app.database.database import AsyncSessionLocal
-        from app.services import yandex_offline_conv_service as yandex_conv
-
         async with AsyncSessionLocal() as db:
             await yandex_conv.on_trial(db, user_id)
     except Exception as e:

@@ -701,10 +701,12 @@ async def create_topup(
                     detail='KassaAI payment method is unavailable',
                 )
 
-            # Use payment_option to select sbp or card
-            KASSA_AI_OPTION_MAP = {'sbp': 44, 'card': 36}
+            # Use payment_option to select sbp or card (derive from canonical mapping)
+            from app.services.kassa_ai_service import KASSA_AI_SUB_METHODS
+
             option = (request.payment_option or '').strip().lower()
-            ps_id = KASSA_AI_OPTION_MAP.get(option)  # None = use env default
+            sub = KASSA_AI_SUB_METHODS.get(f'kassa_ai_{option}') if option else None
+            ps_id = sub['payment_system_id'] if sub else None  # None = use env default
 
             payment_service = PaymentService()
             result = await payment_service.create_kassa_ai_payment(
