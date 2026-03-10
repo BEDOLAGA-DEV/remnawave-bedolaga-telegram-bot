@@ -18,6 +18,7 @@ from app.database.crud.subscription import create_paid_subscription, get_subscri
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.models import GuestPurchase, GuestPurchaseStatus, LandingPage, Tariff, User
 from app.services.subscription_service import SubscriptionService
+from app.services import yandex_offline_conv_service as yandex_conv
 
 
 logger = structlog.get_logger(__name__)
@@ -156,6 +157,28 @@ async def create_purchase(
 
     return purchase
 
+
+
+async def _fire_yandex_conversions(purchase: GuestPurchase, user_id: int, is_new_user: bool) -> None:
+    """Store Yandex CID and fire offline conversions for guest purchases (best-effort)."""
+    if not purchase.yandex_cid:
+        return
+    try:
+        from app.database.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            stored = await yandex_conv.store_cid(db, user_id, purchase.yandex_cid, source='landing')
+            await db.commit()
+
+        if not stored:
+            return
+
+        # Use centralized spawn_bg for proper task tracking
+        yandex_conv.spawn_bg(yandex_conv.fire_purchase_bg(user_id, purchase.amount_kopeks))
+        if is_new_user:
+            yandex_conv.spawn_bg(yandex_conv.fire_registration_bg(user_id))
+    except Exception:
+        logger.warning('Failed to fire Yandex conversions for guest purchase', purchase_id=purchase.id, exc_info=True)
 
 async def fulfill_purchase(db: AsyncSession, purchase_token: str) -> GuestPurchase | None:
     """After payment: find/create user, create subscription, send notification.
@@ -319,6 +342,9 @@ async def fulfill_purchase(db: AsyncSession, purchase_token: str) -> GuestPurcha
             user_id=user.id,
             recipient_type=recipient_type,
         )
+
+        # Fire Yandex offline conversions in background
+        yandex_conv.spawn_bg(_fire_yandex_conversions(purchase, user.id, is_new_account))
 
     except GuestPurchaseError:
         await db.rollback()

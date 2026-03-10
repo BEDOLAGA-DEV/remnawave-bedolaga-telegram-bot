@@ -9,6 +9,7 @@ from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.database.crud.promo_group import get_promo_group_by_id
 from app.database.crud.subscription_event import create_subscription_event
 from app.database.crud.transaction import get_transaction_by_id
@@ -407,13 +408,8 @@ class AdminNotificationService:
                 amount_kopeks if amount_kopeks is not None else (abs(transaction.amount_kopeks) if transaction else 0)
             )
 
-            # Yandex offline conversion: purchase event
-            try:
-                from app.services import yandex_offline_conv_service as yandex_conv
-
-                await yandex_conv.on_purchase(db, user.id, total_amount)
-            except Exception as yandex_err:
-                logger.debug('Yandex offline conv purchase hook error', error=yandex_err)
+            # Yandex offline conversion: purchase event (fire-and-forget, uses own session)
+            yandex_conv.spawn_bg(yandex_conv.fire_purchase_bg(user.id, total_amount))
 
             await self._record_subscription_event(
                 db,

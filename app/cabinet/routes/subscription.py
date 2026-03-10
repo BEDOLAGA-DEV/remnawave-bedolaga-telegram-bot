@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import PERIOD_PRICES, settings
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.database.crud.server_squad import get_server_squad_by_uuid
 from app.database.crud.subscription import (
     create_paid_subscription,
@@ -1433,13 +1434,8 @@ async def activate_trial(
 
     logger.info('Trial subscription activated for user', user_id=user.id)
 
-    # Yandex offline conversions: fire trial event
-    try:
-        from app.services import yandex_offline_conv_service as yandex_conv
-
-        await yandex_conv.on_trial(db, user.id)
-    except Exception as e:
-        logger.debug('Yandex offline conv trial hook error', error=e)
+    # Yandex offline conversions: fire trial event (background, uses own session)
+    yandex_conv.spawn_bg(yandex_conv.fire_trial_bg(user.id))
 
     # Create RemnaWave user
     try:
