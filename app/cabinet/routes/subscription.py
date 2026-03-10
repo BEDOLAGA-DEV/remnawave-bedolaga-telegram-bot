@@ -11,7 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.config import PERIOD_PRICES, settings
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.database.crud.server_squad import get_server_squad_by_uuid
 from app.database.crud.subscription import (
     create_paid_subscription,
@@ -68,13 +69,7 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix='/subscription', tags=['Cabinet Subscription'])
 
 
-async def _fire_yandex_trial(user_id: int) -> None:
-    """Background task: send trial event to Yandex with its own DB session."""
-    try:
-        async with AsyncSessionLocal() as db:
-            await yandex_conv.on_trial(db, user_id)
-    except Exception as e:
-        logger.debug('Yandex offline conv trial hook error', user_id=user_id, error=e)
+
 
 
 def _get_addon_discount_percent(
@@ -1346,7 +1341,7 @@ async def activate_trial(
     logger.info('Trial subscription activated for user', user_id=user.id)
 
     # Yandex offline conversions: fire trial event (background, uses own session)
-    asyncio.create_task(_fire_yandex_trial(user.id))
+    yandex_conv.spawn_bg(yandex_conv.fire_trial_bg(user.id))
 
     # Create RemnaWave user
     try:

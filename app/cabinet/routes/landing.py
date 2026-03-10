@@ -123,6 +123,7 @@ class PurchaseRequest(BaseModel):
     gift_recipient_type: str | None = Field(default=None, pattern=r'^(email|telegram)$')
     gift_recipient_value: str | None = Field(default=None, max_length=255)
     gift_message: str | None = Field(default=None, max_length=1000)
+    yandex_cid: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode='after')
     def validate_contacts(self) -> 'PurchaseRequest':
@@ -642,6 +643,7 @@ async def create_landing_purchase(
         gift_recipient_type=body.gift_recipient_type,
         gift_recipient_value=body.gift_recipient_value,
         gift_message=body.gift_message,
+        yandex_cid=body.yandex_cid,
         commit=False,
     )
 

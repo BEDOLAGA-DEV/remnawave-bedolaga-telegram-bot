@@ -3219,6 +3219,7 @@ class GuestPurchase(Base):
     cabinet_password = Column(Text, nullable=True)
     auto_login_token = Column(Text, nullable=True)
     recipient_warning = Column(String(50), nullable=True)
+    yandex_cid = Column(String(128), nullable=True)
 
     landing = relationship('LandingPage', back_populates='guest_purchases', lazy='selectin')
     tariff = relationship('Tariff', lazy='selectin')

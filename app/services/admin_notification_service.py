@@ -10,6 +10,7 @@ from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.database.crud.promo_group import get_promo_group_by_id
 from app.database.crud.subscription_event import create_subscription_event
 from app.database.crud.transaction import get_transaction_by_id
@@ -30,16 +31,7 @@ from app.utils.timezone import format_local_datetime
 logger = structlog.get_logger(__name__)
 
 
-async def _fire_yandex_purchase(user_id: int, amount_kopeks: int) -> None:
-    """Background task: send purchase event to Yandex with its own DB session."""
-    try:
-        from app.database.database import AsyncSessionLocal
-        from app.services import yandex_offline_conv_service as yandex_conv
 
-        async with AsyncSessionLocal() as db:
-            await yandex_conv.on_purchase(db, user_id, amount_kopeks)
-    except Exception as e:
-        logger.debug('Yandex offline conv purchase hook error', user_id=user_id, error=e)
 
 
 class AdminNotificationService:
@@ -422,7 +414,7 @@ class AdminNotificationService:
             )
 
             # Yandex offline conversion: purchase event (fire-and-forget, uses own session)
-            asyncio.create_task(_fire_yandex_purchase(user.id, total_amount))
+            yandex_conv.spawn_bg(yandex_conv.fire_purchase_bg(user.id, total_amount))
 
             await self._record_subscription_event(
                 db,
