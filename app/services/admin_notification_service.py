@@ -825,7 +825,7 @@ class AdminNotificationService:
                 return False
 
         try:
-            return await self._send_message(message)
+            return await self._send_message(message, user=user, telegram_id=getattr(user, 'telegram_id', None))
         except Exception as e:
             logger.error('Ошибка отправки уведомления о пополнении', error=e, exc_info=True)
             return False
