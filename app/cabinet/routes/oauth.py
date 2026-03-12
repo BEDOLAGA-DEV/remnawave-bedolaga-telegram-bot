@@ -26,7 +26,14 @@ from ..auth.oauth_providers import (
 from ..dependencies import get_cabinet_db
 from ..routes.account_linking import OAuthProviderName
 from ..schemas.auth import AuthResponse
-from .auth import _create_auth_response, _process_campaign_bonus, _store_refresh_token
+from .auth import (
+    _create_auth_response,
+    _process_campaign_bonus,
+    _process_referral_code,
+    _process_yandex_cid,
+    _store_refresh_token,
+    _user_to_response,
+)
 
 
 logger = structlog.get_logger(__name__)
@@ -47,9 +54,6 @@ async def _finalize_oauth_login(
     await db.commit()
     auth_response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, auth_response.refresh_token, device_info=f'oauth:{provider}')
-
-    # Process referral code (before campaign bonus, which may also set referrer)
-    from .auth import _process_referral_code, _process_yandex_cid, _user_to_response
 
     await _process_referral_code(db, user, referral_code)
 
