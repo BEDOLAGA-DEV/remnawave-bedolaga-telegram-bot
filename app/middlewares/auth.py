@@ -7,6 +7,7 @@ import structlog
 from aiogram import BaseMiddleware
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import CallbackQuery, Message, TelegramObject, User as TgUser
 from sqlalchemy.exc import InterfaceError, OperationalError
 
@@ -34,6 +35,23 @@ async def _refresh_remnawave_description(remnawave_uuid: str, description: str, 
         )
 
 
+def _build_migration_keyboard() -> InlineKeyboardMarkup | None:
+    target_username = settings.get_migration_target_bot_username()
+    if not target_username:
+        return None
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text='Открыть нового бота',
+                    url=f'https://t.me/{target_username}?start=migrated',
+                )
+            ]
+        ]
+    )
+
+
 class AuthMiddleware(BaseMiddleware):
     async def __call__(
         self,
@@ -55,6 +73,10 @@ class AuthMiddleware(BaseMiddleware):
 
         if user.is_bot:
             return await handler(event, data)
+
+        bot_obj = data.get('bot')
+        current_bot_id = getattr(bot_obj, 'id', None)
+        migration_keyboard = _build_migration_keyboard()
 
         async with AsyncSessionLocal() as db:
             try:
@@ -157,6 +179,15 @@ class AuthMiddleware(BaseMiddleware):
                     logger.info('❌ Удаленный пользователь попытался использовать бота без /start', user_id=user.id)
                     return None
 
+                if settings.is_legacy_bot_readonly_enabled(current_bot_id=current_bot_id, user_id=user.id):
+                    if settings.is_migration_notice_enabled():
+                        notice_text = settings.get_migration_notice_text()
+                        if isinstance(event, Message):
+                            await event.answer(notice_text, reply_markup=migration_keyboard)
+                        elif isinstance(event, CallbackQuery):
+                            await event.answer(notice_text, show_alert=True)
+                    return None
+
                 profile_updated = False
 
                 if db_user.username != user.username:
@@ -195,6 +226,9 @@ class AuthMiddleware(BaseMiddleware):
                     profile_updated = True
 
                 db_user.last_activity = datetime.now(UTC)
+                if current_bot_id is not None and getattr(db_user, 'last_bot_id', None) != current_bot_id:
+                    db_user.last_bot_id = current_bot_id
+                    profile_updated = True
 
                 if profile_updated:
                     db_user.updated_at = datetime.now(UTC)

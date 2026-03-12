@@ -6,6 +6,9 @@ import sys
 from pathlib import Path
 
 import structlog
+from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 
 sys.path.append(str(Path(__file__).parent))
@@ -19,6 +22,7 @@ from app.localization.loader import ensure_locale_templates
 from app.logging_config import setup_logging
 from app.services.backup_service import backup_service
 from app.services.ban_notification_service import ban_notification_service
+from app.services.bot_router import init_runtime_bots
 from app.services.broadcast_service import broadcast_service
 from app.services.contest_rotation_service import contest_rotation_service
 from app.services.daily_subscription_service import daily_subscription_service
@@ -177,6 +181,8 @@ async def main():
     telegram_webhook_enabled = False
     polling_enabled = True
     payment_webhooks_enabled = False
+    telegram_webhook_routes: list[tuple[str, Bot]] = []
+    managed_bots: list[Bot] = []
 
     summary_logged = False
 
@@ -299,6 +305,23 @@ async def main():
         if bot_user.username and not settings.BOT_USERNAME:
             settings.BOT_USERNAME = bot_user.username
             logger.info('BOT_USERNAME auto-detected', bot_username=bot_user.username)
+
+        managed_bots = [bot]
+        if settings.is_multibot_enabled():
+            secondary_tokens = [
+                token for token in settings.get_all_bot_tokens() if token != settings.get_primary_bot_token()
+            ]
+            for token in secondary_tokens:
+                extra_bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                extra_user = await extra_bot.get_me()
+                managed_bots.append(extra_bot)
+                logger.info(
+                    'Дополнительный Telegram бот подключен',
+                    bot_id=extra_user.id,
+                    bot_username=extra_user.username,
+                )
+
+        init_runtime_bots(managed_bots, primary_bot_id=bot_user.id)
 
         monitoring_service.bot = bot
         maintenance_service.set_bot(bot)
@@ -537,6 +560,23 @@ async def main():
         polling_enabled = bot_run_mode == 'polling'
         telegram_webhook_enabled = bot_run_mode == 'webhook'
 
+        if settings.is_multibot_enabled():
+            if not telegram_webhook_enabled:
+                logger.warning('MULTIBOT_ENABLED=true требует BOT_RUN_MODE=webhook. Polling будет отключен.')
+                polling_enabled = False
+                telegram_webhook_enabled = True
+            telegram_webhook_routes = []
+            seen_paths: set[str] = set()
+            for runtime_bot in managed_bots:
+                runtime_bot_user = await runtime_bot.get_me()
+                route_path = settings.get_multibot_webhook_path(runtime_bot_user.id, runtime_bot_user.username)
+                if route_path in seen_paths:
+                    raise RuntimeError(f'Duplicate webhook path detected for multibot: {route_path}')
+                seen_paths.add(route_path)
+                telegram_webhook_routes.append((route_path, runtime_bot))
+        else:
+            telegram_webhook_routes = [(settings.get_telegram_webhook_path(), bot)]
+
         payment_webhooks_enabled = any(
             [
                 settings.TRIBUTE_ENABLED,
@@ -567,6 +607,7 @@ async def main():
                     dp,
                     payment_service,
                     enable_telegram_webhook=telegram_webhook_enabled,
+                    telegram_bots=telegram_webhook_routes if telegram_webhook_enabled else None,
                 )
 
                 web_api_server = WebAPIServer(app=web_app)
@@ -597,20 +638,29 @@ async def main():
             success_message='Telegram webhook настроен',
         ) as stage:
             if telegram_webhook_enabled:
-                webhook_url = settings.get_telegram_webhook_url()
-                if not webhook_url:
+                allowed_updates = dp.resolve_used_update_types()
+                configured_urls: list[str] = []
+                if not settings.WEBHOOK_URL:
                     stage.warning('WEBHOOK_URL не задан, пропускаем настройку webhook')
                 else:
-                    allowed_updates = dp.resolve_used_update_types()
-                    await bot.set_webhook(
-                        url=webhook_url,
-                        secret_token=settings.WEBHOOK_SECRET_TOKEN,
-                        drop_pending_updates=False,  # Обрабатываем накопившиеся обновления
-                        allowed_updates=allowed_updates,
-                    )
-                    stage.log(f'Webhook установлен: {webhook_url}')
+                    for webhook_path, webhook_bot in telegram_webhook_routes:
+                        webhook_url = settings.get_telegram_webhook_url_for_path(webhook_path)
+                        if not webhook_url:
+                            continue
+                        await webhook_bot.set_webhook(
+                            url=webhook_url,
+                            secret_token=settings.WEBHOOK_SECRET_TOKEN,
+                            drop_pending_updates=False,  # Обрабатываем накопившиеся обновления
+                            allowed_updates=allowed_updates,
+                        )
+                        configured_urls.append(webhook_url)
+                        stage.log(f'Webhook установлен: {webhook_url}')
+
+                if configured_urls:
                     stage.log(f'Allowed updates: {", ".join(sorted(allowed_updates)) if allowed_updates else "all"}')
                     stage.success('Telegram webhook активен')
+                elif settings.WEBHOOK_URL:
+                    stage.warning('Не удалось установить ни одного Telegram webhook')
             else:
                 stage.skip('Режим webhook отключен')
 
@@ -695,9 +745,11 @@ async def main():
         def _fmt(path: str) -> str:
             return f'{base_url}{path if path.startswith("/") else "/" + path}'
 
-        telegram_webhook_url = settings.get_telegram_webhook_url()
-        if telegram_webhook_enabled and telegram_webhook_url:
-            webhook_lines.append(f'Telegram: {telegram_webhook_url}')
+        if telegram_webhook_enabled:
+            for webhook_path, _ in telegram_webhook_routes:
+                telegram_webhook_url = settings.get_telegram_webhook_url_for_path(webhook_path)
+                if telegram_webhook_url:
+                    webhook_lines.append(f'Telegram: {telegram_webhook_url}')
         if settings.TRIBUTE_ENABLED:
             webhook_lines.append(f'Tribute: {_fmt(settings.TRIBUTE_WEBHOOK_PATH)}')
         if settings.is_mulenpay_enabled():
@@ -924,13 +976,14 @@ async def main():
             except asyncio.CancelledError:
                 pass
 
-        if telegram_webhook_enabled and 'bot' in locals():
+        if telegram_webhook_enabled and managed_bots:
             logger.info('ℹ️ Снятие Telegram webhook...')
-            try:
-                await bot.delete_webhook(drop_pending_updates=False)
-                logger.info('✅ Telegram webhook удалён')
-            except Exception as error:
-                logger.error('Ошибка удаления Telegram webhook', error=error)
+            for runtime_bot in managed_bots:
+                try:
+                    await runtime_bot.delete_webhook(drop_pending_updates=False)
+                    logger.info('✅ Telegram webhook удалён', bot_id=runtime_bot.id)
+                except Exception as error:
+                    logger.error('Ошибка удаления Telegram webhook', error=error, bot_id=getattr(runtime_bot, 'id', None))
 
         if web_api_server:
             try:
@@ -944,12 +997,12 @@ async def main():
         except Exception as e:
             logger.error('Ошибка закрытия сессии RioPay', error=e)
 
-        if 'bot' in locals():
+        for runtime_bot in managed_bots:
             try:
-                await bot.session.close()
-                logger.info('✅ Сессия бота закрыта')
+                await runtime_bot.session.close()
+                logger.info('✅ Сессия бота закрыта', bot_id=runtime_bot.id)
             except Exception as e:
-                logger.error('Ошибка закрытия сессии бота', error=e)
+                logger.error('Ошибка закрытия сессии бота', error=e, bot_id=getattr(runtime_bot, 'id', None))
 
         logger.info('✅ Завершение работы бота завершено')
 
@@ -960,15 +1013,14 @@ async def _send_crash_notification_on_error(error: Exception) -> None:
 
     from app.config import settings
 
-    if not getattr(settings, 'BOT_TOKEN', None):
+    primary_token = settings.get_primary_bot_token()
+    if not primary_token:
         return
 
     try:
-        from aiogram import Bot
-
         from app.services.startup_notification_service import send_crash_notification
 
-        bot = Bot(token=settings.BOT_TOKEN)
+        bot = Bot(token=primary_token)
         try:
             traceback_str = traceback.format_exc()
             await send_crash_notification(bot, error, traceback_str)

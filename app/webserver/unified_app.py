@@ -111,6 +111,7 @@ def create_unified_app(
     payment_service: PaymentService,
     *,
     enable_telegram_webhook: bool,
+    telegram_bots: list[tuple[str, Bot]] | None = None,
 ) -> FastAPI:
     app = _create_base_app()
 
@@ -145,7 +146,6 @@ def create_unified_app(
 
     if enable_telegram_webhook:
         telegram_processor = telegram.TelegramWebhookProcessor(
-            bot=bot,
             dispatcher=dispatcher,
             queue_maxsize=settings.get_webhook_queue_maxsize(),
             worker_count=settings.get_webhook_worker_count(),
@@ -162,7 +162,14 @@ def create_unified_app(
         async def stop_telegram_webhook_processor() -> None:  # pragma: no cover - event hook
             await telegram_processor.stop()
 
-        app.include_router(telegram.create_telegram_router(bot, dispatcher, processor=telegram_processor))
+        app.include_router(
+            telegram.create_telegram_router(
+                bot,
+                dispatcher,
+                processor=telegram_processor,
+                bot_routes=telegram_bots,
+            )
+        )
     else:
         telegram_processor = None
 

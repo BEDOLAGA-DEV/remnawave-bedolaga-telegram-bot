@@ -16,7 +16,7 @@ class TelegramWebAppAuthError(Exception):
 
 def parse_webapp_init_data(
     init_data: str,
-    bot_token: str,
+    bot_token: str | list[str],
     *,
     max_age_seconds: int = 86400,
 ) -> dict[str, Any]:
@@ -37,7 +37,14 @@ def parse_webapp_init_data(
     if not init_data:
         raise TelegramWebAppAuthError('Missing init data')
 
-    if not bot_token:
+    tokens: list[str]
+    if isinstance(bot_token, str):
+        normalized = bot_token.strip()
+        tokens = [normalized] if normalized else []
+    else:
+        tokens = [token.strip() for token in bot_token if token and token.strip()]
+
+    if not tokens:
         raise TelegramWebAppAuthError('Bot token is not configured')
 
     parsed_pairs = parse_qsl(init_data, strict_parsing=True, keep_blank_values=True)
@@ -49,19 +56,25 @@ def parse_webapp_init_data(
 
     data_check_string = '\n'.join(f'{key}={value}' for key, value in sorted(data.items()))
 
-    secret_key = hmac.new(
-        key=b'WebAppData',
-        msg=bot_token.encode('utf-8'),
-        digestmod=hashlib.sha256,
-    ).digest()
+    signature_is_valid = False
+    for token in tokens:
+        secret_key = hmac.new(
+            key=b'WebAppData',
+            msg=token.encode('utf-8'),
+            digestmod=hashlib.sha256,
+        ).digest()
 
-    computed_hash = hmac.new(
-        key=secret_key,
-        msg=data_check_string.encode('utf-8'),
-        digestmod=hashlib.sha256,
-    ).hexdigest()
+        computed_hash = hmac.new(
+            key=secret_key,
+            msg=data_check_string.encode('utf-8'),
+            digestmod=hashlib.sha256,
+        ).hexdigest()
 
-    if not hmac.compare_digest(computed_hash, received_hash):
+        if hmac.compare_digest(computed_hash, received_hash):
+            signature_is_valid = True
+            break
+
+    if not signature_is_valid:
         raise TelegramWebAppAuthError('Invalid init data signature')
 
     auth_date_raw = data.get('auth_date')

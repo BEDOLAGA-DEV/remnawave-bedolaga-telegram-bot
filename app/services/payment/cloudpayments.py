@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
+from app.services.bot_router import resolve_bot_for_user
 from app.services.cloudpayments_service import CloudPaymentsAPIError
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
@@ -452,21 +453,20 @@ class CloudPaymentsPaymentMixin:
         transaction: Any,
     ) -> None:
         """Send success notification to user via Telegram."""
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-
-        from app.config import settings
         from app.localization.texts import get_texts
-
-        bot = Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
 
         # Skip email-only users (no telegram_id)
         if not user.telegram_id:
             logger.debug('Skipping CloudPayments notification for email-only user', user_id=user.id)
+            return
+
+        bot = await resolve_bot_for_user(
+            user=user,
+            telegram_id=user.telegram_id,
+            fallback_bot=getattr(self, 'bot', None),
+        )
+        if bot is None:
+            logger.warning('Не удалось определить бота для CloudPayments уведомления', user_id=user.id)
             return
 
         texts = get_texts(user.language)
@@ -508,16 +508,16 @@ class CloudPaymentsPaymentMixin:
         message: str,
     ) -> None:
         """Send failure notification to user via Telegram."""
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-
-        from app.config import settings
-
-        bot = Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        bot = await resolve_bot_for_user(
+            telegram_id=telegram_id,
+            fallback_bot=getattr(self, 'bot', None),
         )
+        if bot is None:
+            logger.warning(
+                'Не удалось определить бота для CloudPayments fail-уведомления',
+                telegram_id=telegram_id,
+            )
+            return
 
         text = f'❌ <b>Оплата не прошла</b>\n\n{message}'
 

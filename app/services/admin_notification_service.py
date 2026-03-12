@@ -22,6 +22,7 @@ from app.database.models import (
     Transaction,
     User,
 )
+from app.services.bot_router import resolve_bot_for_user
 from app.utils.message_patch import caption_exceeds_telegram_limit
 from app.utils.timezone import format_local_datetime
 
@@ -371,7 +372,7 @@ class AdminNotificationService:
             message_lines.append('')
             message_lines.append(f'⏰ <i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}</i>')
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), user=user)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о триале', error=e)
@@ -502,7 +503,7 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), user=user)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о покупке', error=e)
@@ -565,7 +566,7 @@ class AdminNotificationService:
             else:
                 message = f'{message_prefix}{message_suffix}'
 
-            return await self._send_message(message)
+            return await self._send_message(message, user=user)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления об обновлении', error=e)
@@ -586,7 +587,7 @@ class AdminNotificationService:
 
     ⚙️ <i>Система автоматических обновлений • {format_local_datetime(datetime.now(UTC), '%d.%m.%Y %H:%M:%S')}</i>"""
 
-            return await self._send_message(message)
+            return await self._send_message(message, user=user)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления об ошибке проверки версий', error=e)
@@ -1008,7 +1009,7 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), user=user)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления об активации промокода', error=e)
@@ -1097,7 +1098,11 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message(
+                '\n'.join(message_lines),
+                user=user,
+                telegram_id=(telegram_user.id if not user else None),
+            )
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о переходе по кампании', error=e)
@@ -1187,14 +1192,21 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), user=user)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о смене промогруппы', error=e)
             return False
 
     async def _send_message(
-        self, text: str, reply_markup: types.InlineKeyboardMarkup | None = None, *, ticket_event: bool = False
+        self,
+        text: str,
+        reply_markup: types.InlineKeyboardMarkup | None = None,
+        *,
+        ticket_event: bool = False,
+        user: User | None = None,
+        telegram_id: int | None = None,
+        source_bot_id: int | None = None,
     ) -> bool:
         if not self.chat_id:
             logger.warning('ADMIN_NOTIFICATIONS_CHAT_ID не настроен')
@@ -1219,7 +1231,17 @@ class AdminNotificationService:
             if reply_markup is not None:
                 message_kwargs['reply_markup'] = reply_markup
 
-            await self.bot.send_message(**message_kwargs)
+            resolved_bot = await resolve_bot_for_user(
+                user=user,
+                telegram_id=telegram_id,
+                fallback_bot=self.bot,
+                explicit_bot_id=source_bot_id,
+            )
+            if resolved_bot is None:
+                logger.warning('Не удалось определить бота для отправки админ-уведомления')
+                return False
+
+            await resolved_bot.send_message(**message_kwargs)
             logger.info('Уведомление отправлено в чат', chat_id=self.chat_id)
             return True
 
@@ -1316,7 +1338,7 @@ class AdminNotificationService:
 
             message_lines.append(f'<i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M")}</i>')
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), user=user)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о гостевой покупке', error=e)
@@ -1694,7 +1716,7 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), user=user)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления об изменении подписки', error=e)
@@ -1928,6 +1950,10 @@ class AdminNotificationService:
         thread_id = self.ticket_topic_id or self.topic_id
 
         try:
+            resolved_bot = await resolve_bot_for_user(fallback_bot=self.bot)
+            if resolved_bot is None:
+                return False
+
             if not caption_exceeds_telegram_limit(text):
                 # Фото с caption — всё в одном сообщении
                 photo_kwargs: dict = {
@@ -1940,7 +1966,7 @@ class AdminNotificationService:
                     photo_kwargs['message_thread_id'] = thread_id
                 if keyboard:
                     photo_kwargs['reply_markup'] = keyboard
-                await self.bot.send_photo(**photo_kwargs)
+                await resolved_bot.send_photo(**photo_kwargs)
             else:
                 # Текст отдельно, фото следом в тот же топик
                 await self._send_message(text, reply_markup=keyboard, ticket_event=True)
@@ -1950,7 +1976,7 @@ class AdminNotificationService:
                 }
                 if thread_id:
                     photo_kwargs['message_thread_id'] = thread_id
-                await self.bot.send_photo(**photo_kwargs)
+                await resolved_bot.send_photo(**photo_kwargs)
 
             return True
         except Exception as e:

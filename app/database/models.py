@@ -1112,6 +1112,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     telegram_id = Column(BigInteger, unique=True, index=True, nullable=True)  # Nullable для email-only пользователей
+    last_bot_id = Column(BigInteger, nullable=True, index=True)
     auth_type = Column(String(20), default='telegram', nullable=False)  # "telegram" или "email"
     username = Column(String(255), nullable=True)
     first_name = Column(String(255), nullable=True)

@@ -7,6 +7,7 @@ from app.config import settings
 from app.database.crud.referral import create_referral_earning, get_commission_payment_count, get_user_campaign_id
 from app.database.crud.user import add_user_balance, get_user_by_id
 from app.database.models import ReferralEarning, TransactionType, User
+from app.services.bot_router import resolve_bot_for_user
 from app.services.notification_delivery_service import (
     notification_delivery_service,
 )
@@ -70,7 +71,16 @@ async def send_referral_notification(
         return
 
     try:
-        await bot.send_message(telegram_id, message, parse_mode='HTML')
+        target_bot = await resolve_bot_for_user(
+            user=user,
+            telegram_id=telegram_id,
+            fallback_bot=bot,
+        )
+        if target_bot is None:
+            logger.warning('Не удалось определить бота для реферального уведомления', telegram_id=telegram_id)
+            return
+
+        await target_bot.send_message(telegram_id, message, parse_mode='HTML')
         logger.info('✅ Уведомление отправлено пользователю', telegram_id=telegram_id)
     except Exception as e:
         logger.error('❌ Ошибка отправки уведомления пользователю', telegram_id=telegram_id, error=e)
