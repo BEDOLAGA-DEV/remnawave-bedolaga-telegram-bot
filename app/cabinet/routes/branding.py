@@ -303,6 +303,7 @@ class AnalyticsCountersResponse(BaseModel):
     google_ads_label: str = ''
     offline_conv_enabled: bool = False
     offline_conv_counter_id: str = ''
+    offline_conv_measurement_secret_masked: str = ''
     offline_conv_goals: list[OfflineConvGoal] = []
 
 
@@ -923,12 +924,22 @@ async def get_analytics_counters(
             OfflineConvGoal(name='Покупка', event_id='purchase', dedup='каждый'),
         ]
 
+    # Mask the measurement secret for display (show first 4 + last 3 chars)
+    oc_secret = settings.YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET or ''
+    oc_secret_masked = ''
+    if oc_enabled and oc_secret:
+        if len(oc_secret) > 7:
+            oc_secret_masked = oc_secret[:4] + '****' + oc_secret[-3:]
+        else:
+            oc_secret_masked = '****'
+
     return AnalyticsCountersResponse(
         yandex_metrika_id=yandex_id,
         google_ads_id=google_id,
         google_ads_label=google_label,
         offline_conv_enabled=oc_enabled,
         offline_conv_counter_id=oc_counter,
+        offline_conv_measurement_secret_masked=oc_secret_masked,
         offline_conv_goals=oc_goals,
     )
 
