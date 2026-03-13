@@ -709,7 +709,8 @@ http {
     # Hooks + API домен
     server {
         listen 80;
-        listen 443 ssl http2;
+        listen 443 ssl;
+        http2 on;
         server_name hooks.domain.com;
 
         ssl_certificate /etc/ssl/private/hooks.fullchain.pem;
@@ -889,7 +890,8 @@ http {
     # Miniapp домен (статика + API)
     server {
         listen 80;
-        listen 443 ssl http2;
+        listen 443 ssl;
+        http2 on;
         server_name miniapp.domain.com;
 
         ssl_certificate /etc/ssl/private/miniapp.fullchain.pem;
