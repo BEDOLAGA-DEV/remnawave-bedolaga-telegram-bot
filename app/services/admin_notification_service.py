@@ -1,4 +1,3 @@
-import asyncio
 import html
 from datetime import UTC, datetime
 from typing import Any
@@ -10,9 +9,8 @@ from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.services import yandex_offline_conv_service as yandex_conv
-from app.database.crud.promo_group import get_promo_group_by_id
 from app.database.crud.campaign import get_campaign_registration_by_user
+from app.database.crud.promo_group import get_promo_group_by_id
 from app.database.crud.subscription_event import create_subscription_event
 from app.database.crud.transaction import get_transaction_by_id
 from app.database.crud.user import get_user_by_id
@@ -25,14 +23,12 @@ from app.database.models import (
     Transaction,
     User,
 )
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.utils.message_patch import caption_exceeds_telegram_limit
 from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
-
-
-
 
 
 class AdminNotificationService:
