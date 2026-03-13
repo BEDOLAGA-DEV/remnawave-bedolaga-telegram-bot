@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.crud.promo_group import get_promo_group_by_id
+from app.database.crud.campaign import get_campaign_registration_by_user
 from app.database.crud.subscription_event import create_subscription_event
 from app.database.crud.transaction import get_transaction_by_id
 from app.database.crud.user import get_user_by_id
@@ -398,6 +399,14 @@ class AdminNotificationService:
                 if referrer_info != 'Нет':
                     message_lines.append(f'🔗 <b>Реферер:</b> {referrer_info}')
 
+            # Рекламная кампания — только если есть
+            try:
+                camp_reg = await get_campaign_registration_by_user(db, user.id)
+                if camp_reg and camp_reg.campaign:
+                    message_lines.append(f'📢 <b>Кампания:</b> {camp_reg.campaign.name}')
+            except Exception:
+                logger.warning('Ошибка получения кампании', user_id=user.id)
+
             message_lines.append('')
             message_lines.append(f'⏰ <i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}</i>')
 
@@ -527,6 +536,14 @@ class AdminNotificationService:
                 referrer_info = await self._get_referrer_info(db, user.referred_by_id)
                 if referrer_info != 'Нет':
                     message_lines.append(f'🔗 Реф: {referrer_info}')
+
+            # Рекламная кампания — только если есть
+            try:
+                camp_reg = await get_campaign_registration_by_user(db, user.id)
+                if camp_reg and camp_reg.campaign:
+                    message_lines.append(f'📢 {camp_reg.campaign.name}')
+            except Exception:
+                logger.warning('Ошибка получения кампании', user_id=user.id)
 
             # ID транзакции (только если есть)
             if transaction:
