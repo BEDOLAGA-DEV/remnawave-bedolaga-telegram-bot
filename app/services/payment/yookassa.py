@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
+from app.services.bot_router import resolve_bot_for_user
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
 
@@ -689,7 +690,16 @@ class YooKassaPaymentMixin:
                                 # Уведомление пользователю (только для Telegram-пользователей)
                                 if getattr(self, 'bot', None) and user.telegram_id:
                                     try:
-                                        await self.bot.send_message(
+                                        target_bot = await resolve_bot_for_user(
+                                            user=user,
+                                            telegram_id=user.telegram_id,
+                                            fallback_bot=getattr(self, 'bot', None),
+                                            db=db,
+                                        )
+                                        if target_bot is None:
+                                            raise RuntimeError('No target bot for YooKassa trial notification')
+
+                                        await target_bot.send_message(
                                             chat_id=user.telegram_id,
                                             text=(
                                                 f'🎉 <b>Пробная подписка активирована!</b>\n\n'
@@ -953,7 +963,16 @@ class YooKassaPaymentMixin:
                                     ]
                                 )
 
-                                await self.bot.send_message(
+                                target_bot = await resolve_bot_for_user(
+                                    user=user,
+                                    telegram_id=user.telegram_id,
+                                    fallback_bot=getattr(self, 'bot', None),
+                                    db=db,
+                                )
+                                if target_bot is None:
+                                    raise RuntimeError('No target bot for YooKassa subscription notification')
+
+                                await target_bot.send_message(
                                     chat_id=user.telegram_id,
                                     text=success_message,
                                     reply_markup=keyboard,

@@ -574,7 +574,7 @@ async def _resolve_user_from_init_data(
         )
 
     try:
-        webapp_data = parse_webapp_init_data(init_data, settings.BOT_TOKEN)
+        webapp_data = parse_webapp_init_data(init_data, settings.get_telegram_auth_tokens())
     except TelegramWebAppAuthError as error:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
@@ -3009,7 +3009,7 @@ async def get_subscription_details(
         )
 
     try:
-        webapp_data = parse_webapp_init_data(payload.init_data, settings.BOT_TOKEN)
+        webapp_data = parse_webapp_init_data(payload.init_data, settings.get_telegram_auth_tokens())
     except TelegramWebAppAuthError as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -4008,7 +4008,7 @@ async def activate_promo_code(
     db: AsyncSession = Depends(get_db_session),
 ) -> MiniAppPromoCodeActivationResponse:
     try:
-        webapp_data = parse_webapp_init_data(payload.init_data, settings.BOT_TOKEN)
+        webapp_data = parse_webapp_init_data(payload.init_data, settings.get_telegram_auth_tokens())
     except TelegramWebAppAuthError as error:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
@@ -4120,7 +4120,7 @@ async def claim_promo_offer(
     db: AsyncSession = Depends(get_db_session),
 ) -> MiniAppPromoOfferClaimResponse:
     try:
-        webapp_data = parse_webapp_init_data(payload.init_data, settings.BOT_TOKEN)
+        webapp_data = parse_webapp_init_data(payload.init_data, settings.get_telegram_auth_tokens())
     except TelegramWebAppAuthError as error:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
@@ -4265,7 +4265,7 @@ async def remove_connected_device(
     db: AsyncSession = Depends(get_db_session),
 ) -> MiniAppDeviceRemovalResponse:
     try:
-        webapp_data = parse_webapp_init_data(payload.init_data, settings.BOT_TOKEN)
+        webapp_data = parse_webapp_init_data(payload.init_data, settings.get_telegram_auth_tokens())
     except TelegramWebAppAuthError as error:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
@@ -4692,7 +4692,7 @@ async def _authorize_miniapp_user(
         )
 
     try:
-        webapp_data = parse_webapp_init_data(init_data, settings.BOT_TOKEN)
+        webapp_data = parse_webapp_init_data(init_data, settings.get_telegram_auth_tokens())
     except TelegramWebAppAuthError as error:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,

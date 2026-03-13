@@ -57,14 +57,13 @@ def validate_telegram_login_widget(data: dict[str, Any], max_age_seconds: int = 
     data_check_arr = [f'{k}={v}' for k, v in sorted(auth_data.items()) if v is not None]
     data_check_string = '\n'.join(data_check_arr)
 
-    # Create secret key from bot token using SHA256
-    bot_token = settings.BOT_TOKEN
-    secret_key = hashlib.sha256(bot_token.encode()).digest()
+    for bot_token in settings.get_telegram_auth_tokens():
+        secret_key = hashlib.sha256(bot_token.encode()).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(calculated_hash, check_hash):
+            return True
 
-    # Calculate expected hash
-    calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-
-    return hmac.compare_digest(calculated_hash, check_hash)
+    return False
 
 
 def validate_telegram_init_data(init_data: str, max_age_seconds: int = 86400) -> dict[str, Any] | None:
@@ -104,14 +103,15 @@ def validate_telegram_init_data(init_data: str, max_age_seconds: int = 86400) ->
         data_check_arr = [f'{k}={v}' for k, v in sorted(parsed.items())]
         data_check_string = '\n'.join(data_check_arr)
 
-        # Create secret key: HMAC_SHA256(bot_token, "WebAppData")
-        bot_token = settings.BOT_TOKEN
-        secret_key = hmac.new(b'WebAppData', bot_token.encode(), hashlib.sha256).digest()
+        signature_is_valid = False
+        for bot_token in settings.get_telegram_auth_tokens():
+            secret_key = hmac.new(b'WebAppData', bot_token.encode(), hashlib.sha256).digest()
+            calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(calculated_hash, received_hash):
+                signature_is_valid = True
+                break
 
-        # Calculate expected hash
-        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-
-        if not hmac.compare_digest(calculated_hash, received_hash):
+        if not signature_is_valid:
             return None
 
         # Parse user data from the validated data

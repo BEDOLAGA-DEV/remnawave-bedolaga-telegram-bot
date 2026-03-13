@@ -25,6 +25,7 @@ from app.services.subscription_checkout_service import (
     has_subscription_checkout_draft,
     should_offer_checkout_resume,
 )
+from app.services.bot_router import resolve_bot_for_user
 from app.services.user_cart_service import user_cart_service
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 from app.utils.payment_logger import payment_logger as logger
@@ -174,10 +175,6 @@ class PaymentCommonMixin:
                     ws_error=ws_error,
                 )
 
-        if not getattr(self, 'bot', None):
-            # Если бот не передан (например, внутри фоновых задач), уведомление пропускаем.
-            return
-
         # Skip email-only users (no telegram_id)
         if not telegram_id:
             return
@@ -187,6 +184,15 @@ class PaymentCommonMixin:
             user,
             db=db,
         )
+
+        target_bot = await resolve_bot_for_user(
+            user=user_snapshot or user,
+            telegram_id=telegram_id,
+            fallback_bot=getattr(self, 'bot', None),
+            db=db,
+        )
+        if not target_bot:
+            return
 
         try:
             payment_method = payment_method_title or 'Банковская карта (YooKassa)'
@@ -200,7 +206,7 @@ class PaymentCommonMixin:
                 'Средства зачислены на ваш баланс!'
             )
 
-            await self.bot.send_message(
+            await target_bot.send_message(
                 chat_id=telegram_id,
                 text=message,
                 parse_mode='HTML',
@@ -361,7 +367,16 @@ async def send_cart_notification_after_topup(
     if auto_purchase_success:
         return False
 
-    if not bot or not getattr(user, 'telegram_id', None):
+    if not getattr(user, 'telegram_id', None):
+        return False
+
+    target_bot = await resolve_bot_for_user(
+        user=user,
+        telegram_id=getattr(user, 'telegram_id', None),
+        fallback_bot=bot,
+        db=db,
+    )
+    if not target_bot:
         return False
 
     # Refresh balance from DB to account for any changes during auto-purchase attempt
@@ -420,7 +435,7 @@ async def send_cart_notification_after_topup(
                 ],
             ]
         )
-        await bot.send_message(
+        await target_bot.send_message(
             chat_id=user.telegram_id,
             text=message_text,
             reply_markup=keyboard,

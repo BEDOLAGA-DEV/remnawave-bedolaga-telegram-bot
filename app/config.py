@@ -28,6 +28,10 @@ logger = structlog.get_logger(__name__)
 
 class Settings(BaseSettings):
     BOT_TOKEN: str
+    BOT_TOKENS: str = ''
+    MULTIBOT_ENABLED: bool = False
+    PRIMARY_BOT_TOKEN: str | None = None
+    MULTIBOT_WEBHOOK_PATH_TEMPLATE: str = '/webhook/{bot_id}'
     BOT_USERNAME: str | None = None
     ADMIN_IDS: str = ''
     ADMIN_EMAILS: str = ''  # Comma-separated admin emails for email-only users
@@ -691,6 +695,12 @@ class Settings(BaseSettings):
     WEBHOOK_ENQUEUE_TIMEOUT: float = 0.1
     WEBHOOK_WORKER_SHUTDOWN_TIMEOUT: float = 30.0
     BOT_RUN_MODE: str = 'polling'
+    LEGACY_BOT_READONLY_MODE: bool = False
+    LEGACY_BOT_ID: int | None = None
+    MIGRATION_NOTICE_ENABLED: bool = False
+    MIGRATION_NOTICE_TEXT: str = 'Мы переехали в нового бота. Все данные сохранены.'
+    MIGRATION_NOTICE_NEW_BOT_USERNAME: str = ''
+    MIGRATION_NOTICE_SHOW_ON_START: bool = True
 
     WEB_API_ENABLED: bool = False
     WEB_API_HOST: str = '0.0.0.0'
@@ -2468,6 +2478,55 @@ class Settings(BaseSettings):
             return 'polling'
         return mode
 
+    def get_all_bot_tokens(self) -> list[str]:
+        tokens: list[str] = []
+
+        primary = (self.BOT_TOKEN or '').strip()
+        if primary:
+            tokens.append(primary)
+
+        raw = (self.BOT_TOKENS or '').split(',')
+        for token in raw:
+            normalized = token.strip()
+            if normalized and normalized not in tokens:
+                tokens.append(normalized)
+
+        return tokens
+
+    def get_primary_bot_token(self) -> str:
+        preferred = (self.PRIMARY_BOT_TOKEN or '').strip()
+        all_tokens = self.get_all_bot_tokens()
+
+        if preferred:
+            return preferred
+        if all_tokens:
+            return all_tokens[0]
+        return self.BOT_TOKEN
+
+    def get_telegram_auth_tokens(self) -> list[str]:
+        tokens = self.get_all_bot_tokens()
+        if tokens:
+            return tokens
+        return [self.BOT_TOKEN]
+
+    def is_multibot_enabled(self) -> bool:
+        return bool(self.MULTIBOT_ENABLED and len(self.get_all_bot_tokens()) > 1)
+
+    def get_multibot_webhook_path(self, bot_id: int, bot_username: str | None = None) -> str:
+        template = (self.MULTIBOT_WEBHOOK_PATH_TEMPLATE or '/webhook/{bot_id}').strip()
+        if not template:
+            template = '/webhook/{bot_id}'
+
+        try:
+            path = template.format(bot_id=bot_id, bot_username=(bot_username or '').strip('@'))
+        except Exception:
+            path = f'/webhook/{bot_id}'
+
+        path = path.strip()
+        if not path.startswith('/'):
+            path = '/' + path
+        return path
+
     def get_telegram_webhook_path(self) -> str:
         raw_path = (self.WEBHOOK_PATH or '/webhook').strip()
         if not raw_path:
@@ -2510,6 +2569,50 @@ class Settings(BaseSettings):
             return None
         path = self.get_telegram_webhook_path()
         return f'{base_url.rstrip("/")}{path}'
+
+    def get_telegram_webhook_url_for_path(self, webhook_path: str) -> str | None:
+        base_url = (self.WEBHOOK_URL or '').strip()
+        if not base_url:
+            return None
+
+        path = (webhook_path or '').strip() or self.get_telegram_webhook_path()
+        if not path.startswith('/'):
+            path = '/' + path
+        return f'{base_url.rstrip("/")}{path}'
+
+    def get_legacy_bot_id(self) -> int | None:
+        if self.LEGACY_BOT_ID is None:
+            return None
+        try:
+            return int(self.LEGACY_BOT_ID)
+        except (TypeError, ValueError):
+            return None
+
+    def is_legacy_bot_readonly_enabled(self, current_bot_id: int | None, user_id: int | None = None) -> bool:
+        if not self.LEGACY_BOT_READONLY_MODE:
+            return False
+
+        legacy_bot_id = self.get_legacy_bot_id()
+        if legacy_bot_id is None or current_bot_id is None or int(current_bot_id) != legacy_bot_id:
+            return False
+
+        if user_id is not None and self.is_admin(user_id):
+            return False
+
+        return True
+
+    def is_migration_notice_enabled(self) -> bool:
+        return bool(self.MIGRATION_NOTICE_ENABLED)
+
+    def get_migration_notice_text(self) -> str:
+        text = (self.MIGRATION_NOTICE_TEXT or '').strip()
+        if text:
+            return text
+        return 'Мы переехали в нового бота. Все данные сохранены.'
+
+    def get_migration_target_bot_username(self) -> str | None:
+        username = (self.MIGRATION_NOTICE_NEW_BOT_USERNAME or '').strip().lstrip('@')
+        return username or None
 
     def get_miniapp_static_path(self) -> Path:
         raw_path = (self.MINIAPP_STATIC_PATH or 'miniapp').strip()
@@ -2638,6 +2741,13 @@ class Settings(BaseSettings):
             ZoneInfo(value)
         except Exception as exc:  # pragma: no cover - defensive validation
             raise ValueError(f'Некорректный идентификатор часового пояса: {value}') from exc
+        return value
+
+    @field_validator('LEGACY_BOT_ID', mode='before')
+    @classmethod
+    def validate_legacy_bot_id(cls, value):
+        if value in (None, ''):
+            return None
         return value
 
 

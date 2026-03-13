@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
+from app.services.bot_router import resolve_bot_for_user
 from app.services.platega_service import PlategaService
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
@@ -470,7 +471,16 @@ class PlategaPaymentMixin:
         if getattr(self, 'bot', None) and user.telegram_id:
             try:
                 keyboard = await self.build_topup_success_keyboard(user)
-                await self.bot.send_message(
+                target_bot = await resolve_bot_for_user(
+                    user=user,
+                    telegram_id=user.telegram_id,
+                    fallback_bot=getattr(self, 'bot', None),
+                    db=db,
+                )
+                if target_bot is None:
+                    raise RuntimeError('No target bot for Platega notification')
+
+                await target_bot.send_message(
                     user.telegram_id,
                     (
                         '✅ <b>Пополнение успешно!</b>\n\n'
