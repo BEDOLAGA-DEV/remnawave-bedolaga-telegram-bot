@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TikTok без ограничений — Matrixxx</title>
+<meta name="description" content="Смотри и публикуй TikTok без блокировок. Персональный доступ к сервису через быстрый прокси.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<!-- Yandex.Metrika -->
+<script type="text/javascript">
+(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+m[i].l=1*new Date();
+for(var j=0;j<document.scripts.length;j++){if(document.scripts[j].src===r){return;}}
+k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+(window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+ym(107095606, "init", { clickmap:true, trackLinks:true, accurateTrackBounce:true });
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/107095606" style="position:absolute;left:-9999px;" alt="" /></div></noscript>
+<!-- /Yandex.Metrika -->
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --pink: #FE2C55;
+    --cyan: #25F4EE;
+    --dark: #000;
+    --surface: #0a0a0a;
+    --surface2: #141414;
+    --border: rgba(255,255,255,0.06);
+    --text: #fff;
+    --muted: rgba(255,255,255,0.4);
+  }
+
+  html, body {
+    min-height: 100vh;
+    background: var(--dark);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    overflow-x: hidden;
+  }
+
+  /* Diagonal neon streaks */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background:
+      linear-gradient(125deg, rgba(254,44,85,0.08) 0%, transparent 30%),
+      linear-gradient(235deg, rgba(37,244,238,0.06) 0%, transparent 30%),
+      linear-gradient(180deg, transparent 60%, rgba(254,44,85,0.04) 100%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Noise grain overlay */
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 128px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap {
+    position: relative; z-index: 1;
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+    gap: 40px;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 48px 32px;
+  }
+
+  /* Left: content */
+  .content { animation: fadeUp 0.5s ease both; }
+
+  .logo-mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 36px;
+    animation: fadeUp 0.5s ease both;
+  }
+
+  .tt-icon {
+    width: 36px; height: 36px;
+    position: relative;
+  }
+
+  .tt-note {
+    width: 20px; height: 20px;
+    position: absolute;
+    top: 2px; left: 8px;
+  }
+
+  /* Glitch-style double note */
+  .tt-note-pink {
+    fill: var(--pink);
+    position: absolute; top: 0; left: 0;
+    transform: translate(2px, -1px);
+  }
+
+  .tt-note-cyan {
+    fill: var(--cyan);
+    position: absolute; top: 0; left: 0;
+    transform: translate(-2px, 1px);
+    mix-blend-mode: screen;
+  }
+
+  .tt-note-white {
+    fill: #fff;
+    position: absolute; top: 0; left: 0;
+  }
+
+  .tt-label {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.05em;
+    background: linear-gradient(90deg, var(--cyan), var(--pink));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  h1 {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 900;
+    font-size: clamp(36px, 5vw, 64px);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin-bottom: 20px;
+    animation: fadeUp 0.5s ease 0.1s both;
+  }
+
+  .grad-text {
+    background: linear-gradient(135deg, var(--pink), var(--cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .desc {
+    font-size: 13px;
+    font-weight: 300;
+    color: var(--muted);
+    line-height: 1.9;
+    max-width: 400px;
+    margin-bottom: 32px;
+    animation: fadeUp 0.5s ease 0.2s both;
+  }
+
+  /* Stats row */
+  .stats {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 32px;
+    animation: fadeUp 0.5s ease 0.25s both;
+  }
+
+  .stat {
+    text-align: center;
+  }
+
+  .stat-num {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 700;
+    font-size: 28px;
+    display: block;
+  }
+
+  .stat-num.pink { color: var(--pink); }
+  .stat-num.cyan { color: var(--cyan); }
+
+  .stat-label {
+    font-size: 10px;
+    font-weight: 300;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-top: 4px;
+  }
+
+  /* Feature chips */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 36px;
+    animation: fadeUp 0.5s ease 0.3s both;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.7);
+    transition: border-color 0.3s;
+  }
+
+  .chip:hover { border-color: var(--pink); }
+
+  .chip-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .chip-dot.p { background: var(--pink); }
+  .chip-dot.c { background: var(--cyan); }
+
+  /* CTA */
+  .cta-wrap { animation: fadeUp 0.5s ease 0.38s both; }
+
+  .btn-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: linear-gradient(135deg, var(--pink), #d6265a);
+    border: none;
+    border-radius: 50px;
+    padding: 15px 36px;
+    color: #fff;
+    font-family: 'Unbounded', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.15s, box-shadow 0.3s;
+  }
+
+  .btn-cta::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, transparent 40%, rgba(37,244,238,0.3));
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .btn-cta:hover::before { opacity: 1; }
+  .btn-cta:hover { transform: scale(1.03); box-shadow: 0 8px 40px rgba(254,44,85,0.35); }
+  .btn-cta:active { transform: scale(0.97); }
+
+  .btn-cta svg { width: 16px; height: 16px; position: relative; z-index: 1; }
+  .btn-cta span { position: relative; z-index: 1; }
+
+  .price-note {
+    font-size: 10px;
+    font-weight: 300;
+    color: rgba(255,255,255,0.2);
+    margin-top: 14px;
+    line-height: 1.7;
+  }
+
+  /* Right: phone mockup */
+  .phone-col {
+    display: flex;
+    justify-content: center;
+    animation: fadeIn 0.7s ease 0.15s both;
+  }
+
+  .phone {
+    width: 260px;
+    height: 520px;
+    background: var(--surface);
+    border: 2px solid rgba(255,255,255,0.08);
+    border-radius: 36px;
+    position: relative;
+    overflow: hidden;
+    box-shadow:
+      0 0 60px rgba(254,44,85,0.12),
+      0 0 120px rgba(37,244,238,0.06),
+      0 40px 80px rgba(0,0,0,0.6);
+  }
+
+  /* Phone notch */
+  .phone::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 100px; height: 24px;
+    background: var(--dark);
+    border-radius: 0 0 16px 16px;
+    z-index: 5;
+  }
+
+  /* Scrolling feed inside phone */
+  .feed {
+    position: absolute;
+    inset: 12px 0;
+    overflow: hidden;
+    border-radius: 28px;
+  }
+
+  .feed-track {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    animation: scrollFeed 12s linear infinite;
+  }
+
+  .feed-item {
+    width: 100%;
+    height: 460px;
+    flex-shrink: 0;
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    padding: 20px 16px;
+  }
+
+  .feed-item:nth-child(1) {
+    background: linear-gradient(170deg, #1a0a1e 0%, #0d0515 40%, var(--pink) 200%);
+  }
+
+  .feed-item:nth-child(2) {
+    background: linear-gradient(170deg, #0a1a1e 0%, #050d15 40%, var(--cyan) 200%);
+  }
+
+  .feed-item:nth-child(3) {
+    background: linear-gradient(170deg, #1a1a0a 0%, #15100d 40%, #ff8c00 200%);
+  }
+
+  .feed-item:nth-child(4) {
+    background: linear-gradient(170deg, #1a0a1e 0%, #0d0515 40%, var(--pink) 200%);
+  }
+
+  .feed-meta {
+    color: #fff;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    line-height: 1.6;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  }
+
+  .feed-user { font-weight: 500; font-size: 11px; }
+  .feed-desc { font-weight: 300; color: rgba(255,255,255,0.7); margin-top: 4px; }
+
+  /* Phone sidebar icons */
+  .phone-sidebar {
+    position: absolute;
+    right: 14px;
+    bottom: 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    z-index: 4;
+  }
+
+  .sb-icon {
+    width: 28px; height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+  }
+
+  .sb-icon svg { width: 20px; height: 20px; }
+
+  .sb-count {
+    font-size: 8px;
+    font-weight: 300;
+    color: rgba(255,255,255,0.6);
+    margin-top: 2px;
+  }
+
+  /* Music bar at bottom of phone */
+  .music-bar {
+    position: absolute;
+    bottom: 12px; left: 12px; right: 12px;
+    height: 36px;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(8px);
+    border-radius: 0 0 22px 22px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 14px;
+    z-index: 4;
+  }
+
+  .music-bar svg { width: 12px; height: 12px; flex-shrink: 0; }
+
+  .music-text {
+    font-size: 9px;
+    font-weight: 300;
+    color: rgba(255,255,255,0.5);
+    white-space: nowrap;
+    overflow: hidden;
+    animation: marquee 8s linear infinite;
+  }
+
+  .spinning-disc {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: conic-gradient(var(--pink), var(--cyan), var(--pink));
+    animation: spin 3s linear infinite;
+    flex-shrink: 0;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .spinning-disc::after {
+    content: '';
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--dark);
+  }
+
+  @keyframes scrollFeed {
+    0% { transform: translateY(0); }
+    25% { transform: translateY(-464px); }
+    50% { transform: translateY(-928px); }
+    75% { transform: translateY(-1392px); }
+    100% { transform: translateY(0); }
+  }
+
+  @keyframes marquee {
+    0% { transform: translateX(100%); }
+    100% { transform: translateX(-100%); }
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+
+  @media (max-width: 800px) {
+    .wrap {
+      grid-template-columns: 1fr;
+      gap: 40px;
+      padding: 40px 20px;
+      text-align: center;
+    }
+
+    .phone-col { order: -1; }
+
+    .phone {
+      width: 220px;
+      height: 440px;
+    }
+
+    .feed-item { height: 390px; }
+
+    @keyframes scrollFeed {
+      0% { transform: translateY(0); }
+      25% { transform: translateY(-394px); }
+      50% { transform: translateY(-788px); }
+      75% { transform: translateY(-1182px); }
+      100% { transform: translateY(0); }
+    }
+
+    .desc { max-width: 100%; }
+    .stats { justify-content: center; }
+    .chips { justify-content: center; }
+    .logo-mark { justify-content: center; }
+
+    h1 { font-size: clamp(32px, 9vw, 48px); }
+  }
+
+  @media (max-width: 400px) {
+    .stats { gap: 16px; }
+    .stat-num { font-size: 22px; }
+    .chip { font-size: 10px; padding: 6px 10px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="content">
+    <div class="logo-mark">
+      <div class="tt-icon">
+        <svg class="tt-note" viewBox="0 0 24 24">
+          <path class="tt-note-cyan" d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.11v-3.5a6.37 6.37 0 00-.79-.05A6.34 6.34 0 003.15 15.2a6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.34-6.34V8.75a8.18 8.18 0 004.76 1.52V6.84a4.84 4.84 0 01-1-.15z"/>
+          <path class="tt-note-pink" d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.11v-3.5a6.37 6.37 0 00-.79-.05A6.34 6.34 0 003.15 15.2a6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.34-6.34V8.75a8.18 8.18 0 004.76 1.52V6.84a4.84 4.84 0 01-1-.15z"/>
+          <path class="tt-note-white" d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.11v-3.5a6.37 6.37 0 00-.79-.05A6.34 6.34 0 003.15 15.2a6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.34-6.34V8.75a8.18 8.18 0 004.76 1.52V6.84a4.84 4.84 0 01-1-.15z"/>
+        </svg>
+      </div>
+      <span class="tt-label">TIKTOK</span>
+    </div>
+
+    <h1>Смотри.<br><span class="grad-text">Снимай.<br>Публикуй.</span></h1>
+
+    <p class="desc">
+      Полный доступ к TikTok без ограничений.<br>
+      Лента, сторис, прямые эфиры, публикация —<br>
+      всё работает через персональный прокси.
+    </p>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-num pink">6</span>
+        <div class="stat-label">Стран</div>
+      </div>
+      <div class="stat">
+        <span class="stat-num cyan">1</span>
+        <div class="stat-label">Гбит/с</div>
+      </div>
+      <div class="stat">
+        <span class="stat-num pink">2</span>
+        <div class="stat-label">Минуты</div>
+      </div>
+    </div>
+
+    <div class="chips">
+      <div class="chip"><span class="chip-dot p"></span>iPhone / Android</div>
+      <div class="chip"><span class="chip-dot c"></span>Windows / Mac</div>
+      <div class="chip"><span class="chip-dot p"></span>Без логов</div>
+      <div class="chip"><span class="chip-dot c"></span>Шифрование</div>
+    </div>
+
+    <div class="cta-wrap">
+      <a href="https://web.mtrxvps.ru/buy/tiktok" class="btn-cta" id="cta-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        <span>Подключиться</span>
+      </a>
+      <p class="price-note">
+        от 199 руб/мес  ·  карта или СБП  ·  подключение за 2 минуты
+      </p>
+    </div>
+  </div>
+
+  <!-- Phone mockup -->
+  <div class="phone-col">
+    <div class="phone">
+      <div class="feed">
+        <div class="feed-track">
+          <div class="feed-item">
+            <div class="feed-meta">
+              <div class="feed-user">@creative_studio</div>
+              <div class="feed-desc">Новый тренд этой недели #fyp</div>
+            </div>
+          </div>
+          <div class="feed-item">
+            <div class="feed-meta">
+              <div class="feed-user">@travel_vibes</div>
+              <div class="feed-desc">Закат в Стамбуле #travel</div>
+            </div>
+          </div>
+          <div class="feed-item">
+            <div class="feed-meta">
+              <div class="feed-user">@music_prod</div>
+              <div class="feed-desc">Beat making process #studio</div>
+            </div>
+          </div>
+          <div class="feed-item">
+            <div class="feed-meta">
+              <div class="feed-user">@creative_studio</div>
+              <div class="feed-desc">Новый тренд этой недели #fyp</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="phone-sidebar">
+        <div class="sb-icon">
+          <svg viewBox="0 0 24 24" fill="white"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+        </div>
+        <div class="sb-count">24.3K</div>
+        <div class="sb-icon">
+          <svg viewBox="0 0 24 24" fill="white"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        </div>
+        <div class="sb-count">1.2K</div>
+        <div class="sb-icon">
+          <svg viewBox="0 0 24 24" fill="white"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+        </div>
+      </div>
+
+      <div class="music-bar">
+        <svg viewBox="0 0 24 24" fill="white"><circle cx="12" cy="12" r="3"/><path d="M12 1a11 11 0 0111 11h-3a8 8 0 00-8-8V1z" fill="rgba(255,255,255,0.3)"/></svg>
+        <span class="music-text">original sound — creative_studio</span>
+        <div class="spinning-disc"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function() {
+  var btn = document.getElementById('cta-btn');
+  var qs = location.search;
+  if (qs) {
+    var sep = btn.href.indexOf('?') !== -1 ? '&' : '?';
+    btn.href += sep + qs.slice(1);
+  }
+  btn.addEventListener('click', function() {
+    if (typeof ym !== 'undefined') ym(107095606, 'reachGoal', 'landing_cta_click');
+  });
+})();
+</script>
+</body>
+</html>
