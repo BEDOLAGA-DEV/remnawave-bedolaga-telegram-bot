@@ -3957,6 +3957,8 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_happ_download_back, F.data == 'happ_download_back')
 
     dp.callback_query.register(handle_connect_subscription, F.data == 'subscription_connect')
+    # Backward compatibility for custom main-menu button callback in forks.
+    dp.callback_query.register(handle_connect_subscription, F.data == 'subscription_connect_main')
 
     dp.callback_query.register(handle_device_guide, F.data.startswith('device_guide_'))
     dp.callback_query.register(handle_android_tv_connect, F.data == 'android_tv_connect')
