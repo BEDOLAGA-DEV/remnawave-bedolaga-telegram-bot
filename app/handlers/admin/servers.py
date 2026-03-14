@@ -44,8 +44,8 @@ def _build_server_edit_view(server):
 <b>Информация:</b>
 • ID: {server.id}
 • UUID: <code>{server.squad_uuid}</code>
-• Название: {server.display_name}
-• Оригинальное: {server.original_name or 'Не указано'}
+• Название: {html.escape(server.display_name)}
+• Оригинальное: {html.escape(server.original_name) if server.original_name else 'Не указано'}
 • Статус: {status_emoji}
 
 <b>Настройки:</b>
@@ -172,7 +172,7 @@ async def show_servers_list(callback: types.CallbackQuery, db_user: User, db: As
             status_emoji = '✅' if server.is_available else '❌'
             price_text = f'{int(server.price_rubles)} ₽' if server.price_kopeks > 0 else 'Бесплатно'
 
-            text += f'{i}. {status_emoji} {server.display_name}\n'
+            text += f'{i}. {status_emoji} {html.escape(server.display_name)}\n'
             text += f'   💰 Цена: {price_text}'
 
             if server.max_users:
@@ -559,7 +559,7 @@ async def start_server_edit_name(callback: types.CallbackQuery, state: FSMContex
 
     await callback.message.edit_text(
         f'✏️ <b>Редактирование названия</b>\n\n'
-        f'Текущее название: <b>{server.display_name}</b>\n\n'
+        f'Текущее название: <b>{html.escape(server.display_name)}</b>\n\n'
         f'Отправьте новое название для сервера:',
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
@@ -621,7 +621,7 @@ async def delete_server_confirm(callback: types.CallbackQuery, db_user: User, db
 🗑️ <b>Удаление сервера</b>
 
 Вы действительно хотите удалить сервер:
-<b>{server.display_name}</b>
+<b>{html.escape(server.display_name)}</b>
 
 ⚠️ <b>Внимание!</b>
 Сервер можно удалить только если к нему нет активных подключений.
@@ -658,7 +658,7 @@ async def delete_server_execute(callback: types.CallbackQuery, db_user: User, db
         await cache.delete_pattern('available_countries*')
 
         await callback.message.edit_text(
-            f'✅ Сервер <b>{server.display_name}</b> успешно удален!',
+            f'✅ Сервер <b>{html.escape(server.display_name)}</b> успешно удален!',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
                     [types.InlineKeyboardButton(text='📋 К списку серверов', callback_data='admin_servers_list')]
@@ -668,7 +668,7 @@ async def delete_server_execute(callback: types.CallbackQuery, db_user: User, db
         )
     else:
         await callback.message.edit_text(
-            f'❌ Не удалось удалить сервер <b>{server.display_name}</b>\n\nВозможно, к нему есть активные подключения.',
+            f'❌ Не удалось удалить сервер <b>{html.escape(server.display_name)}</b>\n\nВозможно, к нему есть активные подключения.',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
                     [types.InlineKeyboardButton(text='🔙 К серверу', callback_data=f'admin_server_edit_{server_id}')]
@@ -706,7 +706,7 @@ async def show_server_detailed_stats(callback: types.CallbackQuery, db_user: Use
 
     for i, server in enumerate(sorted_servers[:5], 1):
         price_text = f'{int(server.price_rubles)} ₽' if server.price_kopeks > 0 else 'Бесплатно'
-        text += f'{i}. {server.display_name} - {price_text}\n'
+        text += f'{i}. {html.escape(server.display_name)} - {price_text}\n'
 
     if not sorted_servers:
         text += 'Нет доступных серверов\n'
@@ -968,7 +968,7 @@ async def start_server_edit_promo_groups(
 
     text = (
         '🎯 <b>Настройка промогрупп</b>\n\n'
-        f'Сервер: <b>{server.display_name}</b>\n\n'
+        f'Сервер: <b>{html.escape(server.display_name)}</b>\n\n'
         'Выберите промогруппы, которым будет доступен этот сервер.\n'
         'Должна быть выбрана минимум одна промогруппа.'
     )

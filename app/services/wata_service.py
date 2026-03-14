@@ -15,6 +15,10 @@ from app.config import settings
 
 logger = structlog.get_logger(__name__)
 
+# WATA API rejects expirationDateTime <= now + 10 minutes (exclusive lower bound).
+# 15 minutes provides a 5-minute buffer against clock skew and request latency.
+_MIN_EXPIRATION_MINUTES = 15
+
 
 class WataAPIError(RuntimeError):
     """Raised when the WATA API returns an error response."""
@@ -180,7 +184,9 @@ class WataService:
             'orderId': order_id,
         }
 
-        payload['type'] = link_type or settings.WATA_PAYMENT_TYPE or 'OneTime'
+        payment_type = link_type or settings.WATA_PAYMENT_TYPE
+        if payment_type:
+            payload['type'] = payment_type
 
         if success_url or settings.WATA_SUCCESS_REDIRECT_URL:
             payload['successRedirectUrl'] = success_url or settings.WATA_SUCCESS_REDIRECT_URL
@@ -192,7 +198,10 @@ class WataService:
             expiration_minutes = int(ttl) if ttl is not None else None
 
         if expiration_minutes:
-            expiration_time = datetime.now(UTC) + timedelta(minutes=expiration_minutes)
+            # WATA API требует expirationDateTime строго > now + 10 минут.
+            # Принудительный минимум 15 минут, чтобы не попасть на границу.
+            safe_minutes = max(expiration_minutes, _MIN_EXPIRATION_MINUTES)
+            expiration_time = datetime.now(UTC) + timedelta(minutes=safe_minutes)
             payload['expirationDateTime'] = self._format_datetime(expiration_time)
 
         if allow_arbitrary_amount:

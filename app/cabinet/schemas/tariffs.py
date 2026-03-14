@@ -54,6 +54,7 @@ class TariffListItem(BaseModel):
     is_daily: bool = False
     daily_price_kopeks: int = 0
     allow_traffic_topup: bool = True
+    show_in_gift: bool = True
     traffic_limit_gb: int
     device_limit: int
     tier_level: int
@@ -112,11 +113,26 @@ class TariffDetailResponse(BaseModel):
     daily_price_kopeks: int = 0
     # Режим сброса трафика
     traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, NO_RESET, None = глобальная настройка
+    # Внешний сквад RemnaWave
+    external_squad_uuid: str | None = None
+    # Показывать в подарках
+    show_in_gift: bool = True
     created_at: datetime
     updated_at: datetime | None = None
 
     class Config:
         from_attributes = True
+
+
+class ExternalSquadInfoResponse(BaseModel):
+    """External squad info from RemnaWave."""
+
+    uuid: str
+    name: str
+    members_count: int
+
+
+UUID_PATTERN = r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 
 
 class TariffCreateRequest(BaseModel):
@@ -155,6 +171,10 @@ class TariffCreateRequest(BaseModel):
     daily_price_kopeks: int = Field(0, ge=0)
     # Режим сброса трафика
     traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, NO_RESET, None = глобальная настройка
+    # Внешний сквад RemnaWave
+    external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
+    # Показывать в подарках
+    show_in_gift: bool = True
 
 
 class TariffUpdateRequest(BaseModel):
@@ -192,6 +212,10 @@ class TariffUpdateRequest(BaseModel):
     daily_price_kopeks: int | None = Field(None, ge=0)
     # Режим сброса трафика
     traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, NO_RESET, None = глобальная настройка
+    # Внешний сквад RemnaWave
+    external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
+    # Показывать в подарках
+    show_in_gift: bool | None = None
 
 
 class TariffSortOrderRequest(BaseModel):
@@ -226,3 +250,15 @@ class TariffStatsResponse(BaseModel):
     trial_subscriptions: int
     revenue_kopeks: int
     revenue_rubles: float
+
+
+class SyncSquadsResponse(BaseModel):
+    """Response after syncing squads for tariff subscriptions."""
+
+    tariff_id: int
+    tariff_name: str
+    total_subscriptions: int
+    updated_count: int
+    failed_count: int
+    skipped_count: int
+    errors: list[str] = Field(default_factory=list)

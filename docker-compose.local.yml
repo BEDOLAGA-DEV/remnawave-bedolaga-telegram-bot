@@ -2,7 +2,7 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: remnawave_bot_db
-    restart: no
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-remnawave_bot}
       POSTGRES_USER: ${POSTGRES_USER:-remnawave_user}
@@ -27,7 +27,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: remnawave_bot_redis
-    restart: no
+    restart: unless-stopped
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
@@ -43,7 +43,7 @@ services:
   bot:
     build: .
     container_name: remnawave_bot
-    restart: no
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,7 +71,7 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - ./vpn_logo.png:/app/vpn_logo.png:ro
     ports:
-      - '100.76.73.31:${WEB_API_PORT:-8080}:8080'
+      - '${WEB_API_PORT:-8080}:8080'
     networks:
       - bot_network
       - remnawave-network # Подключаем к сети панели
@@ -95,13 +95,14 @@ volumes:
 networks:
   bot_network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
-          gateway: 172.20.0.1
+#    ipam:
+#      config:
+#        - subnet: 172.20.0.0/16
+#          gateway: 172.20.0.1
     driver_opts:
       com.docker.network.driver.mtu: 1350
 
   remnawave-network:
     name: remnawave-network
-    external: true # Используем существующую сеть панели
+    driver: bridge
+#    external: true # Используем существующую сеть панели

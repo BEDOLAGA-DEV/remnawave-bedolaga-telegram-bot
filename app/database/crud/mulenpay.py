@@ -14,7 +14,7 @@ logger = structlog.get_logger(__name__)
 async def create_mulenpay_payment(
     db: AsyncSession,
     *,
-    user_id: int,
+    user_id: int | None,
     amount_kopeks: int,
     uuid: str,
     description: str,
@@ -54,6 +54,11 @@ async def create_mulenpay_payment(
 
 async def get_mulenpay_payment_by_local_id(db: AsyncSession, payment_id: int) -> MulenPayPayment | None:
     result = await db.execute(select(MulenPayPayment).where(MulenPayPayment.id == payment_id))
+    return result.scalar_one_or_none()
+
+
+async def get_mulenpay_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> MulenPayPayment | None:
+    result = await db.execute(select(MulenPayPayment).where(MulenPayPayment.id == payment_id).with_for_update())
     return result.scalar_one_or_none()
 
 
@@ -117,6 +122,6 @@ async def link_mulenpay_payment_to_transaction(
 ) -> MulenPayPayment:
     payment.transaction_id = transaction_id
     payment.updated_at = datetime.now(UTC)
-    await db.commit()
+    await db.flush()
     await db.refresh(payment)
     return payment

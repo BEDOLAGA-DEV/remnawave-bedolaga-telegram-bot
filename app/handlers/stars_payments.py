@@ -285,6 +285,90 @@ async def _handle_trial_payment(
         return False
 
 
+_PURCHASE_TOKEN_RE = __import__('re').compile(r'^[A-Za-z0-9_\-]{10,100}$')
+
+
+async def _handle_guest_purchase_payment(
+    message: types.Message,
+    db: AsyncSession,
+    user,
+    stars_amount: int,
+    payload: str,
+    telegram_payment_charge_id: str,
+):
+    """Обработка Stars платежа для гостевой покупки (подарочная подписка из кабинета)."""
+    from app.database.crud.landing import get_purchase_by_token
+    from app.services.payment.common import try_fulfill_guest_purchase
+
+    try:
+        purchase_token = payload[len('guest_purchase_') :]
+        if not purchase_token or not _PURCHASE_TOKEN_RE.match(purchase_token):
+            logger.error('Invalid purchase_token format in guest_purchase payload', payload=payload)
+            await message.answer('❌ Ошибка: неверный формат платежа.')
+            return
+
+        # Verify Stars amount matches expected price (±5% tolerance for conversion rounding)
+        existing = await get_purchase_by_token(db, purchase_token)
+        if existing and existing.amount_kopeks:
+            expected_stars = max(1, settings.rubles_to_stars(existing.amount_kopeks / 100))
+            tolerance = max(1, round(expected_stars * 0.05))
+            if abs(stars_amount - expected_stars) > tolerance:
+                logger.error(
+                    'Stars amount mismatch for guest purchase',
+                    paid_stars=stars_amount,
+                    expected_stars=expected_stars,
+                    purchase_token_prefix=purchase_token[:5],
+                )
+                await message.answer('❌ Сумма оплаты не совпадает с ожидаемой.')
+                return
+
+        # Calculate kopeks from stars
+        rubles_amount = TelegramStarsService.calculate_rubles_from_stars(stars_amount)
+        amount_kopeks = int((rubles_amount * Decimal(100)).to_integral_value(rounding=ROUND_HALF_UP))
+
+        # Build metadata matching what other providers use
+        metadata = {
+            'purpose': 'guest_purchase',
+            'purchase_token': purchase_token,
+        }
+
+        result = await try_fulfill_guest_purchase(
+            db,
+            metadata=metadata,
+            payment_amount_kopeks=amount_kopeks,
+            provider_payment_id=telegram_payment_charge_id,
+            provider_name='telegram_stars',
+            skip_amount_check=True,
+        )
+
+        if result is True:
+            await message.answer(
+                '🎁 <b>Подарочная подписка успешно оплачена!</b>\n\n'
+                f'⭐ Потрачено: {stars_amount} Stars\n\n'
+                'Подарок будет доставлен получателю.',
+                parse_mode='HTML',
+            )
+            logger.info(
+                '✅ Guest purchase fulfilled via Stars',
+                user_id=user.id,
+                stars_amount=stars_amount,
+                purchase_token_prefix=purchase_token[:5],
+            )
+        elif result is False:
+            await message.answer(
+                '❌ Произошла ошибка при обработке подарочной подписки. Обратитесь в поддержку.',
+            )
+        else:
+            logger.error('try_fulfill_guest_purchase returned None for Stars gift', payload=payload)
+            await message.answer('❌ Ошибка обработки платежа. Обратитесь в поддержку.')
+
+    except Exception as e:
+        logger.error('Error handling guest purchase Stars payment', error=e, exc_info=True)
+        await message.answer(
+            '❌ Произошла ошибка при обработке подарочной подписки. Обратитесь в поддержку.',
+        )
+
+
 async def handle_pre_checkout_query(query: types.PreCheckoutQuery):
     texts = get_texts(DEFAULT_LANGUAGE)
 
@@ -296,7 +380,7 @@ async def handle_pre_checkout_query(query: types.PreCheckoutQuery):
             invoice_payload=query.invoice_payload,
         )
 
-        allowed_prefixes = ('balance_', 'admin_stars_test_', 'simple_sub_', 'wheel_spin_', 'trial_')
+        allowed_prefixes = ('balance_', 'admin_stars_test_', 'simple_sub_', 'wheel_spin_', 'trial_', 'guest_purchase_')
 
         if not query.invoice_payload or not query.invoice_payload.startswith(allowed_prefixes):
             logger.warning('Невалидный payload', invoice_payload=query.invoice_payload)
@@ -399,6 +483,18 @@ async def handle_successful_payment(message: types.Message, db: AsyncSession, st
                 stars_amount=payment.total_amount,
                 payload=payment.invoice_payload,
                 texts=texts,
+            )
+            return
+
+        # Обработка оплаты гостевой покупки (подарочная подписка из кабинета)
+        if payment.invoice_payload and payment.invoice_payload.startswith('guest_purchase_'):
+            await _handle_guest_purchase_payment(
+                message=message,
+                db=db,
+                user=user,
+                stars_amount=payment.total_amount,
+                payload=payment.invoice_payload,
+                telegram_payment_charge_id=payment.telegram_payment_charge_id,
             )
             return
 

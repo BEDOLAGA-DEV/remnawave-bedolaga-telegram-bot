@@ -78,8 +78,8 @@ class LogRotationService:
 
     async def initialize(self) -> None:
         """Создать необходимые директории."""
-        self.current_dir.mkdir(parents=True, exist_ok=True)
-        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(lambda: self.current_dir.mkdir(parents=True, exist_ok=True))
+        await asyncio.to_thread(lambda: self.archive_dir.mkdir(parents=True, exist_ok=True))
 
     async def start(self) -> None:
         """Запустить сервис ротации."""
@@ -170,7 +170,7 @@ class LogRotationService:
             # Собираем файлы для архивации
             files_to_archive: list[tuple[Path, str]] = []
             for name, log_path in self.log_files.items():
-                if log_path.exists() and log_path.stat().st_size > 0:
+                if await asyncio.to_thread(log_path.exists) and (await asyncio.to_thread(log_path.stat)).st_size > 0:
                     files_to_archive.append((log_path, f'{name}.log'))
 
             if not files_to_archive:
@@ -184,7 +184,7 @@ class LogRotationService:
             if archive_path:
                 # Очищаем текущие лог-файлы
                 for log_path, _ in files_to_archive:
-                    log_path.write_text('')
+                    await asyncio.to_thread(log_path.write_text, '')
 
                 # Очистка старых архивов
                 await self._cleanup_old_archives()
@@ -247,12 +247,12 @@ class LogRotationService:
         keep_days = settings.LOG_ROTATION_KEEP_DAYS
         cutoff_date = datetime.now(get_local_timezone()) - timedelta(days=keep_days)
 
-        if not self.archive_dir.exists():
+        if not await asyncio.to_thread(self.archive_dir.exists):
             return
 
         # Ищем файлы вида logs_YYYY-MM-DD.tar.gz или logs_YYYY-MM-DD.tar
-        for archive_file in self.archive_dir.iterdir():
-            if not archive_file.is_file():
+        for archive_file in await asyncio.to_thread(lambda: list(self.archive_dir.iterdir())):
+            if not await asyncio.to_thread(archive_file.is_file):
                 continue
 
             # Извлекаем дату из имени файла logs_YYYY-MM-DD.tar.gz
@@ -267,7 +267,7 @@ class LogRotationService:
                 file_date = file_date.replace(tzinfo=get_local_timezone())
 
                 if file_date < cutoff_date:
-                    archive_file.unlink()
+                    await asyncio.to_thread(archive_file.unlink)
                     logger.info('Удален старый архив логов', archive_file_name=archive_file.name)
             except ValueError:
                 # Пропускаем файлы с некорректным форматом имени
@@ -287,7 +287,7 @@ class LogRotationService:
         topic_id = settings.get_log_rotation_topic_id()
 
         try:
-            file_size_kb = archive_path.stat().st_size / 1024
+            file_size_kb = (await asyncio.to_thread(archive_path.stat)).st_size / 1024
             caption = (
                 f'<b>Логи бота</b>\n'
                 f'Дата: {date_str}\n'

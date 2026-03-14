@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.transaction import get_user_transactions
 from app.database.models import TransactionType, User
+from app.handlers.subscription.autopay import handle_confirm_unlink, handle_saved_cards_list, handle_unlink_card
 from app.keyboards.inline import (
     get_back_keyboard,
     get_balance_keyboard,
@@ -138,12 +139,21 @@ async def route_payment_by_method(
             await process_kassa_ai_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method == 'riopay':
+        from .riopay import process_riopay_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_riopay_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
     return False
 
 
 async def get_quick_amount_buttons(language: str, user: User) -> list:
     """
     Generate quick amount buttons with user-specific pricing and discounts.
+
+    Includes full subscription cost: base period price + devices + servers + traffic.
 
     Args:
         language: User's language for formatting
@@ -156,25 +166,63 @@ async def get_quick_amount_buttons(language: str, user: User) -> list:
         return []
 
     from app.config import PERIOD_PRICES
-    from app.localization.texts import get_texts
+    from app.database.crud.subscription import get_subscription_by_user_id
+    from app.database.database import AsyncSessionLocal
+    from app.utils.pricing_utils import apply_percentage_discount, calculate_months_from_days
 
     texts = get_texts(language)
 
-    # В режиме тарифов получаем цены из тарифа пользователя
+    tariff = None
     tariff_prices = None
     tariff_periods = None
-    if settings.is_tariffs_mode():
-        from app.database.crud.subscription import get_subscription_by_user_id
-        from app.database.crud.tariff import get_tariff_by_id
-        from app.database.database import AsyncSessionLocal
+    devices_price_per_month = 0
+    servers_per_month_prices: list[int] = []
+    traffic_price_per_month = 0
 
-        async with AsyncSessionLocal() as db:
-            subscription = await get_subscription_by_user_id(db, user.id)
-            if subscription and subscription.tariff_id:
-                tariff = await get_tariff_by_id(db, subscription.tariff_id)
-                if tariff and tariff.period_prices:
-                    tariff_prices = {int(k): v for k, v in tariff.period_prices.items()}
-                    tariff_periods = sorted(tariff_prices.keys())
+    async with AsyncSessionLocal() as db:
+        subscription = await get_subscription_by_user_id(db, user.id)
+
+        # В режиме тарифов получаем цены из тарифа пользователя
+        if settings.is_tariffs_mode() and subscription and subscription.tariff_id:
+            from app.database.crud.tariff import get_tariff_by_id
+
+            tariff = await get_tariff_by_id(db, subscription.tariff_id)
+            if tariff and tariff.period_prices:
+                tariff_prices = {int(k): v for k, v in tariff.period_prices.items()}
+                tariff_periods = sorted(tariff_prices.keys())
+
+        # Получаем стоимость устройств, серверов и трафика из подписки
+        if subscription and not subscription.is_trial:
+            # Устройства: в режиме тарифов используем цену и базовый лимит из тарифа
+            if settings.is_tariffs_mode() and tariff and tariff_prices:
+                tariff_device_price = getattr(tariff, 'device_price_kopeks', None)
+                if tariff_device_price and tariff_device_price > 0:
+                    device_unit_price = tariff_device_price
+                    base_device_limit = tariff.device_limit or 0
+                else:
+                    device_unit_price = settings.PRICE_PER_DEVICE
+                    base_device_limit = settings.DEFAULT_DEVICE_LIMIT
+            else:
+                device_unit_price = settings.PRICE_PER_DEVICE
+                base_device_limit = settings.DEFAULT_DEVICE_LIMIT
+
+            device_limit = subscription.device_limit or base_device_limit
+            additional_devices = max(0, device_limit - base_device_limit)
+            if additional_devices > 0:
+                devices_price_per_month = additional_devices * device_unit_price
+
+            # Серверы
+            connected_squads = subscription.connected_squads or []
+            if connected_squads:
+                from app.services.subscription_service import SubscriptionService
+
+                subscription_service = SubscriptionService()
+                _, servers_per_month_prices = await subscription_service.get_countries_price_by_uuids(
+                    connected_squads, db, promo_group_id=user.promo_group_id
+                )
+
+            # Трафик
+            traffic_price_per_month = settings.get_traffic_price(subscription.traffic_limit_gb)
 
     buttons = []
 
@@ -192,23 +240,58 @@ async def get_quick_amount_buttons(language: str, user: User) -> list:
             base_price_kopeks = PERIOD_PRICES.get(period, 0)
 
         if base_price_kopeks > 0:
-            # Calculate price with user's promo group discount using unified system
+            # Базовая цена периода с промо-скидками
             price_info = calculate_user_price(user, base_price_kopeks, period, 'period')
 
-            callback_data = f'quick_amount_{price_info.final_price}'
+            months = calculate_months_from_days(period)
 
-            # Format button text with discount display
+            # Стоимость устройств со скидкой
+            devices_addon = 0
+            if devices_price_per_month > 0:
+                devices_discount = user.get_promo_discount('devices', period)
+                devices_discounted, _ = apply_percentage_discount(devices_price_per_month, devices_discount)
+                devices_addon = devices_discounted * months
+
+            # Стоимость серверов со скидкой
+            servers_addon = 0
+            if servers_per_month_prices:
+                servers_discount = user.get_promo_discount('servers', period)
+                for server_price in servers_per_month_prices:
+                    discounted, _ = apply_percentage_discount(server_price, servers_discount)
+                    servers_addon += discounted
+                servers_addon *= months
+
+            # Стоимость трафика со скидкой
+            traffic_addon = 0
+            if traffic_price_per_month > 0:
+                traffic_discount = user.get_promo_discount('traffic', period)
+                traffic_discounted, _ = apply_percentage_discount(traffic_price_per_month, traffic_discount)
+                traffic_addon = traffic_discounted * months
+
+            total_price = price_info.final_price + devices_addon + servers_addon + traffic_addon
+            callback_data = f'quick_amount_{total_price}'
+
             period_label = f'{period} дней'
 
-            # For balance buttons, use simpler format without emoji and period label prefix
-            if price_info.has_discount:
-                button_text = (
-                    f'{texts.format_price(price_info.base_price)} ➜ '
-                    f'{texts.format_price(price_info.final_price)} '
-                    f'(-{price_info.discount_percent}%) • {period_label}'
-                )
+            # Скидка считается от полной базовой стоимости (период + аддоны без скидок)
+            total_base = (
+                base_price_kopeks
+                + (devices_price_per_month + sum(servers_per_month_prices) + traffic_price_per_month) * months
+            )
+            has_discount = total_base > total_price and total_base > 0
+
+            if has_discount:
+                discount_pct = round((total_base - total_price) * 100 / total_base)
+                if discount_pct > 0:
+                    button_text = (
+                        f'{texts.format_price(total_base)} ➜ '
+                        f'{texts.format_price(total_price)} '
+                        f'(-{discount_pct}%) • {period_label}'
+                    )
+                else:
+                    button_text = f'{texts.format_price(total_price)} • {period_label}'
             else:
-                button_text = f'{texts.format_price(price_info.final_price)} • {period_label}'
+                button_text = f'{texts.format_price(total_price)} • {period_label}'
 
             buttons.append(types.InlineKeyboardButton(text=button_text, callback_data=callback_data))
 
@@ -229,8 +312,8 @@ async def show_balance_menu(callback: types.CallbackQuery, db_user: User, db: As
     texts = get_texts(db_user.language)
 
     balance_text = texts.BALANCE_INFO.format(balance=texts.format_price(db_user.balance_kopeks))
-    back_cb = 'menu_subscription' if callback.data == 'subscription_balance' else 'back_to_menu'
-    reply_markup = get_balance_keyboard(db_user.language, back_callback=back_cb)
+
+    reply_markup = get_balance_keyboard(db_user.language)
 
     try:
         if callback.message and callback.message.text:
@@ -322,10 +405,7 @@ async def handle_balance_history_pagination(callback: types.CallbackQuery, db_us
 @error_handler
 async def show_payment_methods(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
     from app.config import settings
-    from app.database.crud.subscription import get_subscription_by_user_id
-    from app.services.subscription_service import SubscriptionService
     from app.utils.payment_utils import get_payment_methods_text
-    from app.utils.pricing_utils import apply_percentage_discount, calculate_months_from_days
 
     texts = get_texts(db_user.language)
 
@@ -348,107 +428,7 @@ async def show_payment_methods(callback: types.CallbackQuery, db_user: User, db:
 
     payment_text = get_payment_methods_text(db_user.language)
 
-    # Добавляем информацию о текущем тарифе пользователя
-    subscription = await get_subscription_by_user_id(db, db_user.id)
-    tariff_info = ''
-    if subscription and not subscription.is_trial:
-        # Рассчитываем приблизительную стоимость продления на 30 дней
-        duration_days = 30  # Берем для примера 30 дней
-        current_traffic = subscription.traffic_limit_gb
-        current_connected_squads = subscription.connected_squads or []
-        current_device_limit = subscription.device_limit or settings.DEFAULT_DEVICE_LIMIT
-
-        try:
-            # Получаем цены для текущих параметров
-            from app.config import PERIOD_PRICES
-            from app.database.crud.tariff import get_tariff_by_id
-
-            # В режиме тарифов берём цену из тарифа пользователя
-            base_price_original = 0
-            if settings.is_tariffs_mode() and subscription.tariff_id:
-                tariff = await get_tariff_by_id(db, subscription.tariff_id)
-                if tariff and tariff.period_prices:
-                    base_price_original = tariff.period_prices.get(str(duration_days), 0)
-
-            # Если не нашли в тарифе - используем PERIOD_PRICES
-            if base_price_original <= 0:
-                base_price_original = PERIOD_PRICES.get(duration_days, 0)
-
-            period_discount_percent = db_user.get_promo_discount('period', duration_days)
-            base_price, base_discount_total = apply_percentage_discount(
-                base_price_original,
-                period_discount_percent,
-            )
-
-            # Рассчитываем стоимость серверов
-            from app.services.subscription_service import SubscriptionService
-
-            subscription_service = SubscriptionService()
-            (
-                servers_price_per_month,
-                per_server_monthly_prices,
-            ) = await subscription_service.get_countries_price_by_uuids(
-                current_connected_squads,
-                db,
-                promo_group_id=db_user.promo_group_id,
-            )
-            servers_discount_percent = db_user.get_promo_discount('servers', duration_days)
-            total_servers_price = 0
-            for server_price in per_server_monthly_prices:
-                discounted_per_month, discount_per_month = apply_percentage_discount(
-                    server_price,
-                    servers_discount_percent,
-                )
-                total_servers_price += discounted_per_month
-
-            # Рассчитываем стоимость трафика
-            traffic_price_per_month = settings.get_traffic_price(current_traffic)
-            traffic_discount_percent = db_user.get_promo_discount('traffic', duration_days)
-            traffic_discounted_per_month, traffic_discount_per_month = apply_percentage_discount(
-                traffic_price_per_month,
-                traffic_discount_percent,
-            )
-
-            # Рассчитываем стоимость устройств
-            additional_devices = max(0, (current_device_limit or 0) - settings.DEFAULT_DEVICE_LIMIT)
-            devices_price_per_month = additional_devices * settings.PRICE_PER_DEVICE
-            devices_discount_percent = db_user.get_promo_discount('devices', duration_days)
-            devices_discounted_per_month, devices_discount_per_month = apply_percentage_discount(
-                devices_price_per_month,
-                devices_discount_percent,
-            )
-
-            # Общая стоимость
-            months_in_period = calculate_months_from_days(duration_days)
-            total_price = (
-                base_price
-                + total_servers_price * months_in_period
-                + traffic_discounted_per_month * months_in_period
-                + devices_discounted_per_month * months_in_period
-            )
-
-            traffic_value = current_traffic or 0
-            if traffic_value <= 0:
-                traffic_display = texts.t('TRAFFIC_UNLIMITED_SHORT', 'Безлимит')
-            else:
-                traffic_display = texts.format_traffic(traffic_value)
-
-            current_tariff_desc = (
-                f'📱 Подписка: {len(current_connected_squads)} серверов, '
-                f'{traffic_display}, {current_device_limit} устр.'
-            )
-            estimated_price_info = (
-                f'💰 Стоимость продления (примерно): {texts.format_price(total_price)} за {duration_days} дней'
-            )
-
-            tariff_info = f'\n\n📋 <b>Ваш текущий тариф:</b>\n{current_tariff_desc}\n{estimated_price_info}'
-        except Exception as e:
-            logger.warning(
-                'Не удалось рассчитать стоимость текущей подписки для пользователя', db_user_id=db_user.id, error=e
-            )
-            tariff_info = ''
-
-    full_text = payment_text + tariff_info
+    full_text = payment_text
 
     keyboard = get_payment_methods_keyboard(0, db_user.language)
 
@@ -772,7 +752,7 @@ async def handle_topup_amount_callback(
 
 
 def register_balance_handlers(dp: Dispatcher):
-    dp.callback_query.register(show_balance_menu, F.data.in_(['menu_balance', 'subscription_balance']))
+    dp.callback_query.register(show_balance_menu, F.data == 'menu_balance')
 
     dp.callback_query.register(show_balance_history, F.data == 'balance_history')
 
@@ -873,6 +853,11 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_kassa_ai_topup, F.data == 'topup_kassa_ai')
     dp.callback_query.register(process_kassa_ai_quick_amount, F.data.startswith('topup_amount|kassa_ai|'))
 
+    from .riopay import process_riopay_quick_amount, start_riopay_topup
+
+    dp.callback_query.register(start_riopay_topup, F.data == 'topup_riopay')
+    dp.callback_query.register(process_riopay_quick_amount, F.data.startswith('topup_amount|riopay|'))
+
     from .mulenpay import check_mulenpay_payment_status
 
     dp.callback_query.register(check_mulenpay_payment_status, F.data.startswith('check_mulenpay_'))
@@ -895,3 +880,7 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_quick_amount_selection, F.data.startswith('quick_amount_'))
 
     dp.callback_query.register(handle_topup_amount_callback, F.data.startswith('topup_amount|'))
+
+    dp.callback_query.register(handle_saved_cards_list, F.data == 'saved_cards_list')
+    dp.callback_query.register(handle_unlink_card, F.data.startswith('unlink_card_'))
+    dp.callback_query.register(handle_confirm_unlink, F.data.startswith('confirm_unlink_'))

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ButtonType(str, Enum):
+class ButtonType(StrEnum):
     """Тип кнопки меню."""
 
     BUILTIN = 'builtin'  # Встроенная кнопка с callback_data
@@ -18,7 +18,7 @@ class ButtonType(str, Enum):
     CALLBACK = 'callback'  # Кастомная кнопка с любым callback_data
 
 
-class ButtonVisibility(str, Enum):
+class ButtonVisibility(StrEnum):
     """Видимость кнопки."""
 
     ALL = 'all'  # Видна всем
@@ -27,7 +27,7 @@ class ButtonVisibility(str, Enum):
     SUBSCRIBERS = 'subscribers'  # Только подписчикам
 
 
-class ButtonOpenMode(str, Enum):
+class ButtonOpenMode(StrEnum):
     """Режим открытия кнопки."""
 
     CALLBACK = 'callback'  # Отправляет callback_data боту (по умолчанию)
@@ -51,7 +51,6 @@ class ButtonConditions(BaseModel):
     language_selection_enabled: bool | None = Field(default=None, description='Выбор языка включен')
     happ_enabled: bool | None = Field(default=None, description='Кнопка Happ включена')
     simple_subscription_enabled: bool | None = Field(default=None, description='Простая подписка включена')
-    traffic_topup_enabled: bool | None = Field(default=None, description='Докупка трафика включена')
     show_trial: bool | None = Field(default=None, description='Показать пробный период')
     show_buy: bool | None = Field(default=None, description='Показать кнопку покупки')
     has_saved_cart: bool | None = Field(default=None, description='Есть сохраненная корзина')

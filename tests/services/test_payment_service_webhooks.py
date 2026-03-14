@@ -341,7 +341,7 @@ async def test_process_cryptobot_webhook_success(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=lambda bot: DummyAdminService2(bot)),
+        SimpleNamespace(AdminNotificationService=DummyAdminService2),
     )
 
     class DummyAsyncSession:
@@ -354,7 +354,7 @@ async def test_process_cryptobot_webhook_success(monkeypatch: pytest.MonkeyPatch
         async def rollback(self):  # pragma: no cover - defensive stub
             return None
 
-    monkeypatch.setattr(cryptobot_module, 'AsyncSessionLocal', lambda: DummyAsyncSession())
+    monkeypatch.setattr(cryptobot_module, 'AsyncSessionLocal', DummyAsyncSession)
     monkeypatch.setattr(payment_service_module.currency_converter, 'usd_to_rub', AsyncMock(return_value=140.0))
     monkeypatch.setattr(type(settings), 'format_price', lambda self, amount: f'{amount / 100:.2f}₽', raising=False)
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
@@ -490,7 +490,7 @@ async def test_process_heleket_webhook_success(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=lambda bot: DummyAdminService(bot)),
+        SimpleNamespace(AdminNotificationService=DummyAdminService),
     )
 
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
@@ -597,7 +597,7 @@ async def test_process_yookassa_webhook_success(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=lambda bot: DummyAdminService(bot)),
+        SimpleNamespace(AdminNotificationService=DummyAdminService),
     )
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
 
@@ -694,7 +694,7 @@ async def test_process_yookassa_webhook_uses_remote_status(monkeypatch: pytest.M
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=lambda bot: DummyAdminService(bot)),
+        SimpleNamespace(AdminNotificationService=DummyAdminService),
     )
 
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
@@ -895,7 +895,7 @@ async def test_process_yookassa_webhook_restores_missing_payment(
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=lambda bot: DummyAdminService(bot)),
+        SimpleNamespace(AdminNotificationService=DummyAdminService),
     )
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
 
@@ -1050,7 +1050,7 @@ async def test_process_pal24_callback_success(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=lambda bot: DummyAdminServicePal(bot)),
+        SimpleNamespace(AdminNotificationService=DummyAdminServicePal),
     )
 
     user_cart_stub = SimpleNamespace(user_cart_service=SimpleNamespace(has_user_cart=AsyncMock(return_value=True)))
@@ -1215,7 +1215,7 @@ async def test_get_pal24_payment_status_auto_finalize(monkeypatch: pytest.Monkey
     monkeypatch.setitem(
         sys.modules,
         'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=lambda bot: DummyAdminService(bot)),
+        SimpleNamespace(AdminNotificationService=DummyAdminService),
     )
 
     user_cart_stub = SimpleNamespace(user_cart_service=SimpleNamespace(has_user_cart=AsyncMock(return_value=False)))

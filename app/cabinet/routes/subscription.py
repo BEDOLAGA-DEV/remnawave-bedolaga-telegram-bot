@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import PERIOD_PRICES, settings
+from app.config import settings
 from app.database.crud.server_squad import get_server_squad_by_uuid
 from app.database.crud.subscription import (
     create_paid_subscription,
@@ -23,16 +23,21 @@ from app.database.crud.subscription import (
 from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
-from app.database.models import ServerSquad, Subscription, Tariff, TransactionType, User
+from app.database.models import PaymentMethod, ServerSquad, Subscription, Tariff, TransactionType, User
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
 )
+from app.services.pricing_engine import pricing_engine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_purchase_service import (
     MiniAppSubscriptionPurchaseService,
     PurchaseBalanceError,
     PurchaseValidationError,
+)
+from app.services.subscription_renewal_service import (
+    SubscriptionRenewalChargeError,
+    SubscriptionRenewalService,
 )
 from app.services.subscription_service import SubscriptionService
 from app.services.system_settings_service import bot_configuration_service
@@ -100,12 +105,13 @@ def _apply_addon_discount(
 
     Returns dict with keys: discounted, discount, percent
     """
+    from app.utils.pricing_utils import apply_percentage_discount
+
     percent = _get_addon_discount_percent(user, category, period_days)
     if percent <= 0 or amount <= 0:
         return {'discounted': amount, 'discount': 0, 'percent': 0}
 
-    discount_value = int(amount * percent / 100)
-    discounted_amount = amount - discount_value
+    discounted_amount, discount_value = apply_percentage_discount(amount, percent)
     return {
         'discounted': discounted_amount,
         'discount': discount_value,
@@ -142,6 +148,7 @@ def _subscription_to_response(
     actual_status = subscription.actual_status
     is_expired = actual_status == 'expired'
     is_active = actual_status in ('active', 'trial')
+    is_limited = actual_status == 'limited'
 
     # Calculate time remaining
     days_left = 0
@@ -227,7 +234,7 @@ def _subscription_to_response(
         traffic_limit_gb=traffic_limit_gb,
         traffic_used_gb=round(traffic_used_gb, 2),
         traffic_used_percent=round(traffic_used_percent, 1),
-        device_limit=subscription.device_limit or 1,
+        device_limit=subscription.device_limit or 0,
         connected_squads=subscription.connected_squads or [],
         servers=servers or [],
         autopay_enabled=subscription.autopay_enabled or False,
@@ -236,6 +243,7 @@ def _subscription_to_response(
         hide_subscription_link=hide_link,
         is_active=is_active,
         is_expired=is_expired,
+        is_limited=is_limited,
         traffic_purchases=traffic_purchases or [],
         is_daily=is_daily,
         is_daily_paused=is_daily_paused,
@@ -325,66 +333,36 @@ async def get_renewal_options(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get available subscription renewal options with prices."""
-    options = []
+    subscription = await get_subscription_by_user_id(db, user.id)
+    if not subscription:
+        return []
 
-    # В режиме тарифов берём цены из тарифа пользователя
-    tariff_prices = None
-    tariff_periods = None
-    extra_devices = 0
-    tariff_device_price = 0
-    if settings.is_tariffs_mode():
-        subscription = await get_subscription_by_user_id(db, user.id)
-        if subscription and subscription.tariff_id:
-            tariff = await get_tariff_by_id(db, subscription.tariff_id)
-            if tariff and tariff.period_prices:
-                tariff_prices = {int(k): v for k, v in tariff.period_prices.items()}
-                tariff_periods = sorted(tariff_prices.keys())
-                # Учитываем докупленные устройства сверх тарифа
-                extra_devices = max(0, (subscription.device_limit or 0) - (tariff.device_limit or 0))
-                if extra_devices > 0:
-                    tariff_device_price = tariff.device_price_kopeks or settings.PRICE_PER_DEVICE
-
-    # Используем периоды тарифа или стандартные
-    if tariff_periods:
-        periods = tariff_periods
+    # Determine available periods
+    if subscription.tariff_id and subscription.tariff and subscription.tariff.period_prices:
+        periods = sorted(int(k) for k in subscription.tariff.period_prices.keys())
     else:
         periods = settings.get_available_renewal_periods()
 
-    for period in periods:
-        # Получаем цену из тарифа или из PERIOD_PRICES
-        if tariff_prices and period in tariff_prices:
-            price_kopeks = tariff_prices[period]
-        else:
-            price_kopeks = PERIOD_PRICES.get(period, 0)
+    options = []
 
-        if price_kopeks <= 0:
+    for period in periods:
+        pricing = await pricing_engine.calculate_renewal_price(db, subscription, period, user=user)
+
+        if pricing.final_total <= 0 and pricing.base_price <= 0:
             continue
 
-        # Добавляем стоимость докупленных устройств за период продления
-        if extra_devices > 0 and tariff_device_price > 0:
-            from app.utils.pricing_utils import calculate_months_from_days
-
-            months = calculate_months_from_days(period)
-            price_kopeks += extra_devices * tariff_device_price * months
-
-        # Apply user's discount if any
-        discount_percent = 0
-        if hasattr(user, 'get_promo_discount'):
-            discount_percent = user.get_promo_discount('period', period)
-
-        if discount_percent > 0:
-            original_price = price_kopeks
-            price_kopeks = int(price_kopeks * (100 - discount_percent) / 100)
-        else:
-            original_price = None
+        original_price = pricing.original_total
+        combined_discount = 0
+        if original_price > 0 and original_price != pricing.final_total:
+            combined_discount = int((original_price - pricing.final_total) * 100 / original_price)
 
         options.append(
             RenewalOptionResponse(
                 period_days=period,
-                price_kopeks=price_kopeks,
-                price_rubles=price_kopeks / 100,
-                discount_percent=discount_percent,
-                original_price_kopeks=original_price,
+                price_kopeks=pricing.final_total,
+                price_rubles=pricing.final_total / 100,
+                discount_percent=combined_discount,
+                original_price_kopeks=original_price if combined_discount > 0 else None,
             )
         )
 
@@ -412,55 +390,42 @@ async def renew_subscription(
             detail='No subscription found',
         )
 
-    # В режиме тарифов берём цену из тарифа пользователя
-    price_kopeks = 0
-    tariff = None
-    if settings.is_tariffs_mode() and user.subscription.tariff_id:
-        tariff = await get_tariff_by_id(db, user.subscription.tariff_id)
-        if tariff and tariff.period_prices:
-            price_kopeks = tariff.period_prices.get(str(request.period_days), 0)
+    # Validate period_days against available periods (prevent arbitrary periods)
+    subscription = user.subscription
+    if subscription.tariff_id and subscription.tariff and subscription.tariff.period_prices:
+        available_periods = [int(p) for p in subscription.tariff.period_prices.keys()]
+    else:
+        available_periods = settings.get_available_renewal_periods()
 
-    # Fallback на PERIOD_PRICES
-    if price_kopeks <= 0:
-        price_kopeks = PERIOD_PRICES.get(request.period_days, 0)
+    if request.period_days not in available_periods:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Selected renewal period is not available',
+        )
 
-    if price_kopeks <= 0:
+    # Unified pricing via PricingEngine
+    pricing = await pricing_engine.calculate_renewal_price(
+        db,
+        subscription,
+        request.period_days,
+        user=user,
+    )
+    price_kopeks = pricing.final_total
+    promo_offer_discount_value = pricing.promo_offer_discount
+    promo_offer_discount_percent = pricing.breakdown.get('offer_discount_pct', 0)
+
+    if price_kopeks <= 0 and pricing.base_price <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Invalid renewal period',
         )
 
-    # Добавляем стоимость докупленных устройств сверх тарифа
-    if tariff:
-        extra_devices = max(0, (user.subscription.device_limit or 0) - (tariff.device_limit or 0))
-        if extra_devices > 0:
-            from app.utils.pricing_utils import calculate_months_from_days
+    original_price_kopeks = pricing.original_total
+    discount_percent = 0
+    if original_price_kopeks > 0 and original_price_kopeks != price_kopeks:
+        discount_percent = int((original_price_kopeks - price_kopeks) * 100 / original_price_kopeks)
 
-            device_price = tariff.device_price_kopeks or settings.PRICE_PER_DEVICE
-            months = calculate_months_from_days(request.period_days)
-            price_kopeks += extra_devices * device_price * months
-
-    # Apply promo group discount
-    original_price_kopeks = price_kopeks
-    promo_group_discount_percent = 0
-    if hasattr(user, 'get_promo_discount'):
-        promo_group_discount_percent = user.get_promo_discount('period', request.period_days)
-
-    if promo_group_discount_percent > 0:
-        price_kopeks = int(price_kopeks * (100 - promo_group_discount_percent) / 100)
-
-    # Apply promo offer discount (temporary discount from promo offers)
-    promo_offer_discount_percent = get_user_active_promo_discount_percent(user)
-    promo_offer_discount_value = 0
-    if promo_offer_discount_percent > 0:
-        promo_offer_discount_value = price_kopeks * promo_offer_discount_percent // 100
-        price_kopeks = price_kopeks - promo_offer_discount_value
-
-    # Combined discount percent for display
-    discount_percent = promo_group_discount_percent
-    if promo_offer_discount_percent > 0 and original_price_kopeks > 0:
-        total_discount = original_price_kopeks - price_kopeks
-        discount_percent = int(total_discount * 100 / original_price_kopeks)
+    tariff = user.subscription.tariff if user.subscription.tariff_id else None
 
     # Check balance
     if user.balance_kopeks < price_kopeks:
@@ -493,15 +458,20 @@ async def renew_subscription(
             'description': f'Продление подписки на {request.period_days} дней'
             + (f' ({tariff_name})' if tariff_name else ''),
             'discount_percent': discount_percent,
+            'consume_promo_offer': promo_offer_discount_value > 0,
             'source': 'cabinet',
         }
 
-        # Add tariff parameters for tariffs mode
+        # Add subscription parameters for auto-purchase
         if tariff_id:
             cart_data['traffic_limit_gb'] = tariff_traffic_limit_gb
             # Сохраняем актуальный device_limit подписки (включая докупленные устройства)
             cart_data['device_limit'] = user.subscription.device_limit
             cart_data['allowed_squads'] = tariff_allowed_squads
+        else:
+            # Classic mode: сохраняем текущие параметры подписки для корректной автопокупки
+            cart_data['device_limit'] = user.subscription.device_limit
+            cart_data['traffic_limit_gb'] = user.subscription.traffic_limit_gb
 
         try:
             await user_cart_service.save_user_cart(user.id, cart_data)
@@ -520,56 +490,32 @@ async def renew_subscription(
             },
         )
 
-    # Deduct balance and extend subscription
-    user.balance_kopeks -= price_kopeks
+    # Centralized renewal: balance deduction, extension, RemnaWave sync, admin notification,
+    # server price recording, and compensating refund on failure.
+    renewal_description = f'Продление подписки на {request.period_days} дней' + (f' ({tariff.name})' if tariff else '')
+    renewal_service = SubscriptionRenewalService()
 
-    # Consume promo offer discount if it was used
-    if promo_offer_discount_value > 0:
-        user.promo_offer_discount_percent = 0
-        user.promo_offer_discount_source = None
-        user.promo_offer_discount_expires_at = None
-
-    # Extend from end_date or now if expired
-    now = datetime.now(UTC)
-    if user.subscription.end_date and user.subscription.end_date > now:
-        user.subscription.end_date = user.subscription.end_date + timedelta(days=request.period_days)
-    else:
-        user.subscription.end_date = now + timedelta(days=request.period_days)
-        user.subscription.start_date = now
-
-    user.subscription.status = 'active'
-    user.subscription.is_trial = False
-
-    await db.commit()
-
-    # Отправляем уведомление админам о продлении подписки
     try:
-        from aiogram import Bot
-
-        from app.services.admin_notification_service import AdminNotificationService
-
-        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
-            try:
-                notification_service = AdminNotificationService(bot)
-                await notification_service.send_subscription_purchase_notification(
-                    db=db,
-                    user=user,
-                    subscription=user.subscription,
-                    transaction=None,
-                    period_days=request.period_days,
-                    was_trial_conversion=False,
-                    amount_kopeks=price_kopeks,
-                    purchase_type='renewal',
-                )
-            finally:
-                await bot.session.close()
-    except Exception as e:
-        logger.error('Failed to send admin notification for subscription renewal', error=e)
+        result = await renewal_service.finalize(
+            db,
+            user,
+            subscription,
+            pricing,
+            description=renewal_description,
+            payment_method=PaymentMethod.BALANCE,
+        )
+    except SubscriptionRenewalChargeError:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                'code': 'insufficient_funds',
+                'message': 'Недостаточно средств (concurrent check)',
+            },
+        )
 
     response = {
         'message': 'Subscription renewed successfully',
-        'new_end_date': user.subscription.end_date.isoformat(),
+        'new_end_date': result.subscription.end_date.isoformat(),
         'amount_paid_kopeks': price_kopeks,
     }
 
@@ -773,15 +719,15 @@ async def purchase_traffic(
     # Пропорциональный расчёт применяем только в классическом режиме.
     if is_tariff_mode:
         prorated_price = base_price_kopeks
-        months_charged = 1
+        days_charged = 30
     else:
-        prorated_price, months_charged = calculate_prorated_price(
+        prorated_price, days_charged = calculate_prorated_price(
             base_price_kopeks,
             subscription.end_date,
         )
 
     # Apply discount from promo group using proper method
-    period_hint_days = months_charged * 30 if months_charged > 0 else 30
+    period_hint_days = days_charged if days_charged > 0 else 30
     discount_result = _apply_addon_discount(user, 'traffic', prorated_price, period_hint_days)
     final_price = discount_result['discounted']
     traffic_discount_percent = discount_result['percent']
@@ -843,30 +789,22 @@ async def purchase_traffic(
             detail='Failed to charge balance',
         )
 
-    # Добавляем трафик
+    # Добавляем трафик (add_subscription_traffic обновляет purchased_traffic_gb, traffic_reset_at и коммитит)
     await add_subscription_traffic(db, subscription, request.gb)
 
-    # Обновляем purchased_traffic_gb
-    current_purchased = getattr(subscription, 'purchased_traffic_gb', 0) or 0
-    subscription.purchased_traffic_gb = current_purchased + request.gb
+    # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
+    from app.database.crud.subscription import reactivate_subscription
 
-    # Устанавливаем дату сброса трафика (только при первой докупке)
-    # При повторной докупке дата НЕ продлевается
-    if not subscription.traffic_reset_at:
-        subscription.traffic_reset_at = datetime.now(UTC) + timedelta(days=30)
-        logger.info(
-            'Set traffic_reset_at for subscription',
-            subscription_id=subscription.id,
-            traffic_reset_at=subscription.traffic_reset_at,
-        )
-
-    await db.commit()
+    await reactivate_subscription(db, subscription)
 
     # Синхронизируем с RemnaWave
     try:
         subscription_service = SubscriptionService()
         if getattr(user, 'remnawave_uuid', None):
             await subscription_service.update_remnawave_user(db, subscription)
+            # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
+            if subscription.status == 'active':
+                await subscription_service.enable_remnawave_user(user.remnawave_uuid)
         else:
             await subscription_service.create_remnawave_user(db, subscription)
     except Exception as e:
@@ -932,9 +870,10 @@ async def purchase_devices_legacy(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Purchase additional device slots (legacy endpoint without tariff support).
+    """Purchase additional device slots (legacy endpoint).
 
     DEPRECATED: Use /devices/purchase instead for full tariff and discount support.
+    Now uses tariff-aware pricing when subscription has a tariff_id.
     """
     if getattr(user, 'restriction_subscription', False):
         raise HTTPException(
@@ -942,16 +881,49 @@ async def purchase_devices_legacy(
             detail='Subscription purchases are restricted for this account',
         )
 
-    await db.refresh(user, ['subscription'])
+    # Lock subscription row to prevent concurrent device purchases exceeding the limit
+    result = await db.execute(
+        select(Subscription)
+        .where(Subscription.user_id == user.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    subscription = result.scalar_one_or_none()
 
-    if not user.subscription:
+    if not subscription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='No subscription found',
         )
 
-    price_per_device = settings.PRICE_PER_DEVICE
-    base_total_price = price_per_device * request.devices
+    if subscription.status not in ['active', 'trial']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Ваша подписка неактивна',
+        )
+
+    # Get tariff for device price (if exists)
+    tariff = None
+    if subscription.tariff_id:
+        from app.database.crud.tariff import get_tariff_by_id
+
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+
+    # Determine device price and max limit from tariff or settings
+    if tariff and tariff.device_price_kopeks is not None:
+        device_price = tariff.device_price_kopeks
+        max_device_limit = tariff.max_device_limit
+    else:
+        device_price = settings.PRICE_PER_DEVICE
+        max_device_limit = settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None
+
+    if not device_price or device_price <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Докупка устройств недоступна',
+        )
+
+    base_total_price = device_price * request.devices
 
     # Apply discount from promo group
     discount_result = _apply_addon_discount(user, 'devices', base_total_price, 30)
@@ -961,6 +933,16 @@ async def purchase_devices_legacy(
     # Ensure minimum price after discount (except for 100% discount)
     if devices_discount_percent < 100 and total_price > 0:
         total_price = max(100, total_price)
+
+    # Check max devices limit (under row lock — prevents concurrent purchases exceeding limit)
+    current_devices = subscription.device_limit or 1
+    new_devices = current_devices + request.devices
+
+    if max_device_limit and new_devices > max_device_limit:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Максимальное количество устройств: {max_device_limit}',
+        )
 
     # Check balance
     if user.balance_kopeks < total_price:
@@ -997,17 +979,6 @@ async def purchase_devices_legacy(
             },
         )
 
-    # Check max devices limit
-    current_devices = user.subscription.device_limit or 1
-    new_devices = current_devices + request.devices
-    max_devices = settings.MAX_DEVICES_LIMIT
-
-    if new_devices > max_devices:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Maximum device limit is {max_devices}',
-        )
-
     # Deduct balance and create transaction
     from app.database.crud.user import subtract_user_balance
     from app.database.models import PaymentMethod
@@ -1018,20 +989,61 @@ async def purchase_devices_legacy(
     else:
         description = f'Покупка {request.devices} доп. устройств'
 
-    await subtract_user_balance(
+    success = await subtract_user_balance(
         db=db,
         user=user,
         amount_kopeks=total_price,
         description=description,
         create_transaction=True,
         payment_method=PaymentMethod.BALANCE,
+        transaction_type=TransactionType.SUBSCRIPTION_PAYMENT,
     )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail='Insufficient funds',
+        )
 
-    # Add devices
-    user.subscription.device_limit = new_devices
+    # Re-lock subscription after subtract_user_balance committed (which released all locks).
+    # Re-validate max device limit to prevent concurrent purchases exceeding the limit.
+    relock_result = await db.execute(
+        select(Subscription)
+        .where(Subscription.id == subscription.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    subscription = relock_result.scalar_one()
 
+    actual_current = subscription.device_limit or 1
+    actual_new = actual_current + request.devices
+    if max_device_limit and actual_new > max_device_limit:
+        # Concurrent purchase already exceeded limit — refund balance
+        user_refund = await db.execute(
+            select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True)
+        )
+        refund_user = user_refund.scalar_one()
+        refund_user.balance_kopeks += total_price
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'Максимальное количество устройств: {max_device_limit}. Баланс возвращён.',
+        )
+
+    # Add devices (under lock)
+    subscription.device_limit = actual_new
     await db.commit()
+    await db.refresh(subscription)
     await db.refresh(user)
+
+    # Sync with RemnaWave
+    try:
+        service = SubscriptionService()
+        if getattr(user, 'remnawave_uuid', None):
+            await service.update_remnawave_user(db, subscription)
+        else:
+            await service.create_remnawave_user(db, subscription)
+    except Exception as e:
+        logger.error('Failed to sync devices with RemnaWave (legacy endpoint)', error=e)
 
     # Отправляем уведомление админам
     try:
@@ -1046,10 +1058,10 @@ async def purchase_devices_legacy(
                 await notification_service.send_subscription_update_notification(
                     db=db,
                     user=user,
-                    subscription=user.subscription,
+                    subscription=subscription,
                     update_type='devices',
                     old_value=current_devices,
-                    new_value=new_devices,
+                    new_value=actual_new,
                     price_paid=total_price,
                 )
             finally:
@@ -1060,7 +1072,7 @@ async def purchase_devices_legacy(
     response = {
         'message': 'Devices added successfully',
         'devices_added': request.devices,
-        'new_device_limit': new_devices,
+        'new_device_limit': actual_new,
         'amount_paid_kopeks': total_price,
     }
 
@@ -1239,13 +1251,38 @@ async def activate_trial(
     # Check if trial requires payment
     requires_payment = bool(settings.TRIAL_PAYMENT_ENABLED)
     if requires_payment:
+        from app.database.crud.user import subtract_user_balance
+
         price_kopeks = settings.TRIAL_ACTIVATION_PRICE
         if user.balance_kopeks < price_kopeks:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f'Insufficient balance. Need {price_kopeks / 100:.2f} RUB',
             )
-        user.balance_kopeks -= price_kopeks
+        trial_description = 'Активация триальной подписки'
+        success = await subtract_user_balance(
+            db,
+            user,
+            price_kopeks,
+            trial_description,
+            mark_as_paid_subscription=True,
+        )
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail='Failed to charge trial activation fee',
+            )
+
+        # Создаём транзакцию для учёта списания за триал
+        await create_transaction(
+            db,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=price_kopeks,
+            description=trial_description,
+            payment_method=PaymentMethod.BALANCE,
+        )
+
         logger.info('User paid kopeks for trial activation', user_id=user.id, price_kopeks=price_kopeks)
 
     # Get trial parameters from tariff if configured (same logic as bot handler)
@@ -1294,7 +1331,7 @@ async def activate_trial(
         duration_days=trial_duration,
         traffic_limit_gb=trial_traffic_limit,
         device_limit=trial_device_limit,
-        connected_squads=trial_squads if trial_squads else None,
+        connected_squads=trial_squads or None,
         tariff_id=tariff_id_for_trial,
     )
 
@@ -1374,7 +1411,9 @@ async def _build_tariff_response(
     if subscription and subscription.tariff_id == tariff.id:
         extra_devices_count = max(0, (subscription.device_limit or 0) - (tariff.device_limit or 0))
         if extra_devices_count > 0:
-            extra_device_price_per_month = tariff.device_price_kopeks or settings.PRICE_PER_DEVICE
+            extra_device_price_per_month = (
+                tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
+            )
 
     periods = []
     if tariff.period_prices:
@@ -1459,7 +1498,7 @@ async def _build_tariff_response(
             price_per_day = price_per_day - discount_amount
 
     # Apply discount to device price if applicable
-    device_price = tariff.device_price_kopeks or 0
+    device_price = tariff.device_price_kopeks if tariff.device_price_kopeks is not None else 0
     original_device_price = device_price
     device_discount_percent = 0
     if promo_group and device_price > 0:
@@ -1697,11 +1736,11 @@ async def submit_purchase(
                     user=user,
                     notification_type=notification_type,
                     context={
-                        'subscription': subscription,
                         'expires_at': end_date_str,  # for SUBSCRIPTION_ACTIVATED
                         'new_expires_at': end_date_str,  # for SUBSCRIPTION_RENEWED
                         'traffic_limit_gb': subscription.traffic_limit_gb,
                         'device_limit': subscription.device_limit,
+                        'tariff_name': '',  # classic mode has no tariff
                     },
                     bot=None,
                 )
@@ -1723,11 +1762,11 @@ async def submit_purchase(
                         db=db,
                         user=user,
                         subscription=subscription,
-                        transaction=None,
+                        transaction=result.get('transaction'),
                         period_days=selection.period.days,
                         was_trial_conversion=result.get('was_trial_conversion', False),
                         amount_kopeks=pricing.final_total,
-                        purchase_type='renewal' if not is_new_subscription else None,
+                        purchase_type='renewal' if not is_new_subscription else 'first_purchase',
                     )
                 finally:
                     await bot.session.close()
@@ -1906,7 +1945,11 @@ async def purchase_tariff(
                 if not is_daily_tariff:
                     from app.utils.pricing_utils import calculate_months_from_days
 
-                    device_price_per_month = tariff.device_price_kopeks or settings.PRICE_PER_DEVICE
+                    device_price_per_month = (
+                        tariff.device_price_kopeks
+                        if tariff.device_price_kopeks is not None
+                        else settings.PRICE_PER_DEVICE
+                    )
                     months = calculate_months_from_days(period_days)
                     extra_devices_cost = extra_devices * device_price_per_month * months
                     # Применяем скидку промогруппы на устройства
@@ -1944,6 +1987,7 @@ async def purchase_tariff(
                     'traffic_limit_gb': tariff.traffic_limit_gb,
                     'device_limit': effective_device_limit,
                     'allowed_squads': tariff.allowed_squads or [],
+                    'consume_promo_offer': promo_offer_discount_value > 0,
                     'source': 'cabinet',
                 }
             else:
@@ -1961,6 +2005,7 @@ async def purchase_tariff(
                     'device_limit': effective_device_limit,
                     'allowed_squads': tariff.allowed_squads or [],
                     'discount_percent': discount_percent,
+                    'consume_promo_offer': promo_offer_discount_value > 0,
                     'source': 'cabinet',
                 }
 
@@ -2002,26 +2047,28 @@ async def purchase_tariff(
             description += f' (скидка {discount_percent}%)'
         if promo_offer_discount_value > 0:
             description += f' (промо -{promo_offer_discount_percent}%)'
-        success = await subtract_user_balance(db, user, price_kopeks, description)
+        success = await subtract_user_balance(
+            db,
+            user,
+            price_kopeks,
+            description,
+            consume_promo_offer=promo_offer_discount_value > 0,
+            mark_as_paid_subscription=True,
+        )
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail='Failed to charge balance',
             )
 
-        # Consume promo offer discount if it was used
-        if promo_offer_discount_value > 0:
-            user.promo_offer_discount_percent = 0
-            user.promo_offer_discount_source = None
-            user.promo_offer_discount_expires_at = None
-
         # Create transaction
-        await create_transaction(
+        transaction = await create_transaction(
             db=db,
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=price_kopeks,
             description=description,
+            payment_method=PaymentMethod.BALANCE,
         )
 
         if subscription:
@@ -2139,7 +2186,6 @@ async def purchase_tariff(
                     user=user,
                     notification_type=notification_type,
                     context={
-                        'subscription': subscription,
                         'expires_at': end_date_str,  # for SUBSCRIPTION_ACTIVATED
                         'new_expires_at': end_date_str,  # for SUBSCRIPTION_RENEWED
                         'traffic_limit_gb': subscription.traffic_limit_gb,
@@ -2169,11 +2215,11 @@ async def purchase_tariff(
                         db=db,
                         user=user,
                         subscription=subscription,
-                        transaction=None,
+                        transaction=transaction,
                         period_days=period_days,
                         was_trial_conversion=False,
                         amount_kopeks=price_kopeks,
-                        purchase_type='renewal' if not was_new_subscription else None,
+                        purchase_type='renewal' if not was_new_subscription else 'first_purchase',
                     )
                 finally:
                     await bot.session.close()
@@ -2209,8 +2255,14 @@ async def purchase_devices(
         )
 
     try:
-        await db.refresh(user, ['subscription'])
-        subscription = user.subscription
+        # Lock subscription row to prevent concurrent device purchases exceeding the limit
+        result = await db.execute(
+            select(Subscription)
+            .where(Subscription.user_id == user.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        subscription = result.scalar_one_or_none()
 
         if not subscription:
             raise HTTPException(
@@ -2232,7 +2284,7 @@ async def purchase_devices(
             tariff = await get_tariff_by_id(db, subscription.tariff_id)
 
         # Determine device price and max limit from tariff or settings
-        if tariff and tariff.device_price_kopeks:
+        if tariff and tariff.device_price_kopeks is not None:
             device_price = tariff.device_price_kopeks
             max_device_limit = tariff.max_device_limit
         else:
@@ -2246,7 +2298,7 @@ async def purchase_devices(
                 detail='Докупка устройств недоступна',
             )
 
-        # Check max device limit
+        # Check max device limit (under row lock — prevents concurrent purchases exceeding limit)
         current_devices = subscription.device_limit or 1
         new_device_count = current_devices + request.devices
         if max_device_limit and new_device_count > max_device_limit:
@@ -2326,17 +2378,48 @@ async def purchase_devices(
         else:
             description = f'Покупка {request.devices} доп. устройств'
 
-        await subtract_user_balance(
+        success = await subtract_user_balance(
             db=db,
             user=user,
             amount_kopeks=price_kopeks,
             description=description,
             create_transaction=True,
             payment_method=PaymentMethod.BALANCE,
+            transaction_type=TransactionType.SUBSCRIPTION_PAYMENT,
         )
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail='Insufficient funds',
+            )
 
-        # Increase device limit
-        subscription.device_limit += request.devices
+        # Re-lock subscription after subtract_user_balance committed (which released all locks).
+        # Re-validate max device limit to prevent concurrent purchases exceeding the limit.
+        relock_result = await db.execute(
+            select(Subscription)
+            .where(Subscription.id == subscription.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        subscription = relock_result.scalar_one()
+
+        actual_current = subscription.device_limit or 1
+        actual_new = actual_current + request.devices
+        if max_device_limit and actual_new > max_device_limit:
+            # Concurrent purchase already exceeded limit — refund balance
+            user_refund = await db.execute(
+                select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True)
+            )
+            refund_user = user_refund.scalar_one()
+            refund_user.balance_kopeks += price_kopeks
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f'Максимальное количество устройств: {max_device_limit}. Баланс возвращён.',
+            )
+
+        # Increase device limit (under lock)
+        subscription.device_limit = actual_new
         await db.commit()
         await db.refresh(subscription)
 
@@ -2425,7 +2508,6 @@ async def save_traffic_cart(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, bool]:
     """Save cart for traffic purchase (for insufficient balance flow)."""
-    from app.utils.pricing_utils import calculate_prorated_price
 
     await db.refresh(user, ['subscription'])
     subscription = user.subscription
@@ -2496,26 +2578,18 @@ async def save_traffic_cart(
             )
         base_price_kopeks = matching_pkg['price']
 
-    # Apply promo group discount
-    traffic_discount_percent = 0
-    promo_group = (
-        user.get_primary_promo_group()
-        if hasattr(user, 'get_primary_promo_group')
-        else getattr(user, 'promo_group', None)
-    )
-    if promo_group:
-        apply_to_addons = getattr(promo_group, 'apply_discounts_to_addons', True)
-        if apply_to_addons:
-            traffic_discount_percent = max(0, min(100, int(getattr(promo_group, 'traffic_discount_percent', 0) or 0)))
+    # Calculate prorated price (days-based), then apply discount
+    from app.utils.pricing_utils import calculate_prorated_price as _calc_prorated
 
-    if traffic_discount_percent > 0:
-        base_price_kopeks = int(base_price_kopeks * (100 - traffic_discount_percent) / 100)
-
-    # Calculate prorated price
-    final_price, _ = calculate_prorated_price(
+    now = datetime.now(UTC)
+    days_left = max(1, (subscription.end_date - now).days)
+    prorated_price, _ = _calc_prorated(
         base_price_kopeks,
         subscription.end_date,
     )
+    discount_result = _apply_addon_discount(user, 'traffic', prorated_price, days_left)
+    final_price = discount_result['discounted']
+    traffic_discount_percent = discount_result['percent']
 
     # Save cart for auto-purchase after balance top-up
     cart_data = {
@@ -2562,7 +2636,7 @@ async def save_devices_cart(
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
 
     # Determine device price and max limit from tariff or settings
-    if tariff and tariff.device_price_kopeks:
+    if tariff and tariff.device_price_kopeks is not None:
         device_price = tariff.device_price_kopeks
         max_device_limit = tariff.max_device_limit
     else:
@@ -2593,14 +2667,26 @@ async def save_devices_cart(
     days_left = max(1, (end_date - now).days)
     total_days = 30
 
-    price_kopeks = int(device_price * request.devices * days_left / total_days)
-    price_kopeks = max(100, price_kopeks)  # Minimum 1 ruble
+    base_total_price = int(device_price * request.devices * days_left / total_days)
+    base_total_price = max(100, base_total_price)  # Minimum 1 ruble
+
+    # Apply discount from promo group
+    period_hint_days = days_left
+    discount_result = _apply_addon_discount(user, 'devices', base_total_price, period_hint_days)
+    price_kopeks = discount_result['discounted']
+    devices_discount_percent = discount_result['percent']
+
+    # Ensure minimum price after discount (except for 100% discount)
+    if devices_discount_percent < 100 and price_kopeks > 0:
+        price_kopeks = max(100, price_kopeks)
 
     # Save cart for auto-purchase after balance top-up
     cart_data = {
         'cart_mode': 'add_devices',
         'devices_to_add': request.devices,
         'price_kopeks': price_kopeks,
+        'base_price_kopeks': base_total_price,
+        'discount_percent': devices_discount_percent,
         'source': 'cabinet',
     }
     await user_cart_service.save_user_cart(user.id, cart_data)
@@ -2634,7 +2720,7 @@ async def get_device_price(
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
 
     # Determine device price and max limit from tariff or settings
-    if tariff and tariff.device_price_kopeks:
+    if tariff and tariff.device_price_kopeks is not None:
         device_price = tariff.device_price_kopeks
         max_device_limit = tariff.max_device_limit
     else:
@@ -2678,10 +2764,9 @@ async def get_device_price(
     days_left = max(1, (end_date - now).days)
     total_days = 30
 
-    # Calculate base price before discount
-    base_price_per_device = int(device_price * days_left / total_days)
-    base_price_per_device = max(100, base_price_per_device)
-    base_total_price = base_price_per_device * devices
+    # Calculate base price before discount (total first, then floor)
+    base_total_price = int(device_price * devices * days_left / total_days)
+    base_total_price = max(100, base_total_price)
 
     # Apply discount from promo group
     period_hint_days = days_left
@@ -2690,7 +2775,7 @@ async def get_device_price(
     devices_discount_percent = discount_result['percent']
     discount_value = discount_result['discount']
 
-    # Calculate per-device price after discount
+    # Ensure minimum price after discount (except for 100% discount)
     if devices_discount_percent < 100 and total_price_kopeks > 0:
         total_price_kopeks = max(100, total_price_kopeks)
     price_per_device_kopeks = total_price_kopeks // devices if devices > 0 else 0
@@ -3074,7 +3159,7 @@ async def update_countries(
             else:
                 discounted_per_month = server_price_per_month
 
-            charged_price, charged_months = calculate_prorated_price(
+            charged_price, charged_days = calculate_prorated_price(
                 discounted_per_month,
                 user.subscription.end_date,
             )
@@ -3307,8 +3392,7 @@ async def get_app_config(
             detail='App configuration not set up.',
         )
 
-    is_remnawave = bool(config.get('_isRemnawave', False))
-    config = {k: v for k, v in config.items() if k != '_isRemnawave'}
+    config.pop('_isRemnawave', None)
     hide_link = settings.should_hide_subscription_link()
 
     # Build platformNames from displayName of each platform
@@ -3378,7 +3462,7 @@ async def get_app_config(
             platforms[platform_key] = platform_output
 
     return {
-        'isRemnawave': is_remnawave,
+        'isRemnawave': True,
         'platforms': platforms,
         'svgLibrary': config.get('svgLibrary', {}),
         'baseTranslations': config.get('baseTranslations'),
@@ -3416,7 +3500,7 @@ async def get_devices(
         return {
             'devices': [],
             'total': 0,
-            'device_limit': user.subscription.device_limit or 1,
+            'device_limit': user.subscription.device_limit or 0,
         }
 
     try:
@@ -3444,7 +3528,7 @@ async def get_devices(
             return {
                 'devices': formatted_devices,
                 'total': response.get('total', len(formatted_devices)),
-                'device_limit': user.subscription.device_limit or 1,
+                'device_limit': user.subscription.device_limit or 0,
             }
 
     except Exception as e:
@@ -3452,7 +3536,7 @@ async def get_devices(
         return {
             'devices': [],
             'total': 0,
-            'device_limit': user.subscription.device_limit or 1,
+            'device_limit': user.subscription.device_limit or 0,
         }
 
 
@@ -3663,15 +3747,20 @@ async def reduce_devices(
             detail='Invalid new_device_limit',
         )
 
-    await db.refresh(user, ['subscription'])
+    # Lock subscription to prevent concurrent device modifications
+    result = await db.execute(
+        select(Subscription)
+        .where(Subscription.user_id == user.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    subscription = result.scalar_one_or_none()
 
-    if not user.subscription:
+    if not subscription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='No subscription found',
         )
-
-    subscription = user.subscription
 
     if subscription.is_trial:
         raise HTTPException(
@@ -3981,6 +4070,16 @@ async def switch_tariff(
             detail='No active subscription with tariff',
         )
 
+    # Lock subscription row to prevent concurrent tariff switches
+    locked_result = await db.execute(
+        select(Subscription)
+        .where(Subscription.id == user.subscription.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    subscription = locked_result.scalar_one()
+    user.subscription = subscription
+
     # Use actual_status for correct status check (handles time-based expiration)
     actual_status = user.subscription.actual_status
     if actual_status == 'expired':
@@ -4137,68 +4236,118 @@ async def switch_tariff(
         if period_discount_percent > 0 and discount_value > 0:
             description += f' (скидка {period_discount_percent}%)'
 
-        success = await subtract_user_balance(db, user, upgrade_cost, description)
+        success = await subtract_user_balance(
+            db,
+            user,
+            upgrade_cost,
+            description,
+            mark_as_paid_subscription=True,
+            commit=False,
+        )
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail='Failed to charge balance',
             )
 
-        # Create transaction
-        await create_transaction(
+        # Create transaction (commit=False to keep FOR UPDATE lock held)
+        switch_transaction = await create_transaction(
             db=db,
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=upgrade_cost,
             description=description,
+            payment_method=PaymentMethod.BALANCE,
+            commit=False,
+        )
+    else:
+        # Free switch (downgrade) — record in history
+        description = f"Переход на тариф '{new_tariff.name}'"
+        await create_transaction(
+            db=db,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=0,
+            description=description,
+            commit=False,
         )
 
     # Update subscription
     old_tariff_name = current_tariff.name if current_tariff else 'Unknown'
-    user.subscription.tariff_id = new_tariff.id
-    user.subscription.traffic_limit_gb = new_tariff.traffic_limit_gb
-    user.subscription.device_limit = new_tariff.device_limit
-    user.subscription.connected_squads = new_tariff.allowed_squads or []
+
+    # Preserve extra purchased devices above the old tariff's base limit
+    from app.database.crud.subscription import calc_device_limit_on_tariff_switch
+
+    # Re-load subscription to avoid MissingGreenlet from expired lazy relationship
+    # (subtract_user_balance re-selects User with populate_existing=True which expires relationships)
+    await db.refresh(user, ['subscription'])
+    subscription = user.subscription
+
+    subscription.tariff_id = new_tariff.id
+    subscription.traffic_limit_gb = new_tariff.traffic_limit_gb
+    subscription.device_limit = calc_device_limit_on_tariff_switch(
+        current_device_limit=subscription.device_limit,
+        old_tariff_device_limit=current_tariff.device_limit if current_tariff else None,
+        new_tariff_device_limit=new_tariff.device_limit,
+        max_device_limit=new_tariff.max_device_limit,
+    )
+    subscription.connected_squads = new_tariff.allowed_squads or []
 
     # Reset purchased traffic and delete TrafficPurchase records on tariff switch
     from sqlalchemy import delete as sql_delete
 
     from app.database.models import TrafficPurchase
 
-    await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == user.subscription.id))
-    user.subscription.purchased_traffic_gb = 0
-    user.subscription.traffic_reset_at = None
+    await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
+    subscription.purchased_traffic_gb = 0
+    subscription.traffic_reset_at = None
 
     if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
-        user.subscription.traffic_used_gb = 0.0
+        subscription.traffic_used_gb = 0.0
 
     if switching_to_daily:
         # Switching TO daily - reset end_date to 1 day, set last_daily_charge_at
-        user.subscription.end_date = datetime.now(UTC) + timedelta(days=1)
-        user.subscription.last_daily_charge_at = datetime.now(UTC)
-        user.subscription.is_daily_paused = False
+        subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+        subscription.last_daily_charge_at = datetime.now(UTC)
+        subscription.is_daily_paused = False
     elif switching_from_daily:
-        user.subscription.end_date = datetime.now(UTC) + timedelta(days=new_period_days)
-        user.subscription.is_daily_paused = False
+        subscription.end_date = datetime.now(UTC) + timedelta(days=new_period_days)
+        subscription.is_daily_paused = False
 
-    user.subscription.updated_at = datetime.now(UTC)
+    subscription.updated_at = datetime.now(UTC)
     await db.commit()
+
+    # Emit deferred side-effects after atomic commit
+    if upgrade_cost > 0 and switch_transaction:
+        from app.database.crud.transaction import emit_transaction_side_effects
+
+        await emit_transaction_side_effects(
+            db,
+            switch_transaction,
+            amount_kopeks=upgrade_cost,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            payment_method=PaymentMethod.BALANCE,
+        )
 
     # Sync with RemnaWave (optionally reset traffic based on admin setting)
     should_reset_traffic = settings.RESET_TRAFFIC_ON_TARIFF_SWITCH
+    # Refresh subscription after commit (all objects are expired)
+    await db.refresh(subscription)
+
     try:
         subscription_service = SubscriptionService()
         if getattr(user, 'remnawave_uuid', None):
             await subscription_service.update_remnawave_user(
                 db,
-                user.subscription,
+                subscription,
                 reset_traffic=should_reset_traffic,
                 reset_reason='смена тарифа',
             )
         else:
             await subscription_service.create_remnawave_user(
                 db,
-                user.subscription,
+                subscription,
                 reset_traffic=should_reset_traffic,
                 reset_reason='смена тарифа',
             )
@@ -4218,7 +4367,7 @@ async def switch_tariff(
             logger.error('Failed to reset devices on tariff switch', error=e)
 
     await db.refresh(user)
-    await db.refresh(user.subscription)
+    await db.refresh(subscription)
 
     # Отправляем уведомление админам о смене тарифа
     try:
@@ -4233,8 +4382,8 @@ async def switch_tariff(
                 await notification_service.send_subscription_purchase_notification(
                     db=db,
                     user=user,
-                    subscription=user.subscription,
-                    transaction=None,
+                    subscription=subscription,
+                    transaction=switch_transaction if upgrade_cost > 0 else None,
                     period_days=remaining_days if remaining_days > 0 else new_period_days,
                     was_trial_conversion=False,
                     amount_kopeks=upgrade_cost,
@@ -4249,7 +4398,7 @@ async def switch_tariff(
         'success': True,
         'message': f"Switched from '{old_tariff_name}' to '{new_tariff.name}'"
         + (' (devices reset)' if devices_reset else ''),
-        'subscription': _subscription_to_response(user.subscription),
+        'subscription': _subscription_to_response(subscription),
         'old_tariff_name': old_tariff_name,
         'new_tariff_id': new_tariff.id,
         'new_tariff_name': new_tariff.name,
@@ -4298,19 +4447,28 @@ async def toggle_subscription_pause(
             detail='Pause is only available for daily tariffs',
         )
 
-    # Toggle pause state
-    is_currently_paused = getattr(user.subscription, 'is_daily_paused', False)
-    new_paused_state = not is_currently_paused
-    user.subscription.is_daily_paused = new_paused_state
-
-    # Сохраняем статус ДО изменения для проверки RemnaWave
+    # Determine current state
     from app.database.models import SubscriptionStatus
 
-    was_disabled = user.subscription.status == SubscriptionStatus.DISABLED.value
+    is_currently_paused = getattr(user.subscription, 'is_daily_paused', False)
+    was_disabled = user.subscription.status in (
+        SubscriptionStatus.DISABLED.value,
+        SubscriptionStatus.EXPIRED.value,
+        SubscriptionStatus.LIMITED.value,
+    )
 
-    # If resuming, check balance
+    # System-DISABLED subs (insufficient balance) should always be treated as needing resume,
+    # even if is_daily_paused is False (it's set by the system, not the user)
+    if was_disabled and not is_currently_paused:
+        new_paused_state = False  # Force resume path
+    else:
+        new_paused_state = not is_currently_paused
+    user.subscription.is_daily_paused = new_paused_state
+
+    daily_price = getattr(tariff, 'daily_price_kopeks', 0)
+
+    # If resuming, check balance and charge
     if not new_paused_state:
-        daily_price = getattr(tariff, 'daily_price_kopeks', 0)
         if daily_price > 0 and user.balance_kopeks < daily_price:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -4322,8 +4480,44 @@ async def toggle_subscription_pause(
                 },
             )
 
-        # Restore ACTIVE status if was DISABLED
+        # Charge daily fee FIRST, then restore ACTIVE status
         if was_disabled:
+            if daily_price > 0:
+                from app.database.crud.user import subtract_user_balance
+
+                deducted = await subtract_user_balance(
+                    db,
+                    user,
+                    daily_price,
+                    f'Суточная оплата тарифа «{tariff.name}» (возобновление)',
+                    mark_as_paid_subscription=True,
+                )
+                if not deducted:
+                    raise HTTPException(
+                        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                        detail={
+                            'code': 'insufficient_balance',
+                            'message': 'Balance deduction failed',
+                            'required': daily_price,
+                            'balance': user.balance_kopeks,
+                        },
+                    )
+
+                from app.database.crud.transaction import create_transaction
+                from app.database.models import TransactionType
+
+                try:
+                    await create_transaction(
+                        db=db,
+                        user_id=user.id,
+                        type=TransactionType.SUBSCRIPTION_PAYMENT,
+                        amount_kopeks=daily_price,
+                        description=f'Суточная оплата тарифа «{tariff.name}» (возобновление)',
+                    )
+                except Exception as exc:
+                    logger.warning('Failed to create resume transaction', error=exc)
+
+            # Balance deducted successfully — now activate
             user.subscription.status = SubscriptionStatus.ACTIVE.value
             user.subscription.last_daily_charge_at = datetime.now(UTC)
             user.subscription.end_date = datetime.now(UTC) + timedelta(days=1)
@@ -4333,14 +4527,17 @@ async def toggle_subscription_pause(
     await db.refresh(user)
 
     # Sync with RemnaWave only when resuming from DISABLED state
-    # При паузе НЕ отключаем - пользователь может пользоваться до конца оплаченного периода
-    # При возобновлении включаем только если подписка была отключена (DISABLED)
-    if not new_paused_state and user.remnawave_uuid and was_disabled:
+    if not new_paused_state and was_disabled:
         try:
             subscription_service = SubscriptionService()
-            await subscription_service.enable_remnawave_user(user.remnawave_uuid)
+            await subscription_service.create_remnawave_user(
+                db,
+                user.subscription,
+                reset_traffic=False,
+                reset_reason=None,
+            )
         except Exception as e:
-            logger.error('Error enabling RemnaWave user on resume', error=e)
+            logger.error('Error syncing RemnaWave user on resume', error=e)
 
     if new_paused_state:
         message = 'Daily subscription paused'
@@ -4428,7 +4625,7 @@ async def switch_traffic_package(
             price_diff = int(price_diff * (100 - traffic_discount_percent) / 100)
 
         # Prorated calculation
-        final_price, months_charged = calculate_prorated_price(price_diff, user.subscription.end_date)
+        final_price, days_charged = calculate_prorated_price(price_diff, user.subscription.end_date)
 
         if user.balance_kopeks < final_price:
             raise HTTPException(
@@ -4459,7 +4656,12 @@ async def switch_traffic_package(
         # Downgrade - no charge, no refund
         charged = 0
 
-    # Update subscription
+    # Update subscription — delete TrafficPurchase records before resetting purchased_traffic_gb
+    from sqlalchemy import delete as sql_delete
+
+    from app.database.models import TrafficPurchase
+
+    await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == user.subscription.id))
     user.subscription.traffic_limit_gb = new_traffic
     user.subscription.purchased_traffic_gb = 0  # Reset purchased traffic on switch
     user.subscription.traffic_reset_at = None  # Reset traffic reset date

@@ -14,7 +14,7 @@ logger = structlog.get_logger(__name__)
 
 async def create_yookassa_payment(
     db: AsyncSession,
-    user_id: int,
+    user_id: int | None,
     yookassa_payment_id: str,
     amount_kopeks: int,
     currency: str,
@@ -127,7 +127,7 @@ async def link_yookassa_payment_to_transaction(
         .where(YooKassaPayment.yookassa_payment_id == yookassa_payment_id)
         .values(transaction_id=transaction_id, updated_at=datetime.now(UTC))
     )
-    await db.commit()
+    await db.flush()
 
     result = await db.execute(
         select(YooKassaPayment)

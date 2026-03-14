@@ -160,7 +160,7 @@ async def get_rules(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get service rules - uses same function as bot."""
-    requested_lang = language.split('-')[0].lower()
+    requested_lang = language.split('-', maxsplit=1)[0].lower()
 
     # Use the same function as bot to ensure consistent content
     content = await get_current_rules_content(db, requested_lang)

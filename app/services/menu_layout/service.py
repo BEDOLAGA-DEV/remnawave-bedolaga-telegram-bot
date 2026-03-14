@@ -1015,9 +1015,6 @@ class MenuLayoutService:
             or 'connect' in str(action).lower()
         )
 
-        if is_connect_button and action == 'subscription_connect':
-            action = 'subscription_connect_main'
-
         if is_connect_button:
             logger.info(
                 '🔗 Построение кнопки connect: button_id=, type=, open_mode=, action=, webapp_url',

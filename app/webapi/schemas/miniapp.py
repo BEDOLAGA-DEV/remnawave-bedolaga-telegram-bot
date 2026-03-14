@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from urllib.parse import urlparse
 
@@ -386,7 +386,7 @@ class MiniAppPaymentMethodsRequest(BaseModel):
     init_data: str = Field(..., alias='initData')
 
 
-class MiniAppPaymentIntegrationType(str, Enum):
+class MiniAppPaymentIntegrationType(StrEnum):
     IFRAME = 'iframe'
     REDIRECT = 'redirect'
 

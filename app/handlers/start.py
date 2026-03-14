@@ -1,10 +1,14 @@
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from aiogram import Bot, Dispatcher, F, types
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -15,11 +19,12 @@ from app.database.crud.campaign import (
 from app.database.crud.subscription import decrement_subscription_server_counts
 from app.database.crud.user import (
     create_user,
+    find_phantom_user_by_username,
     get_user_by_referral_code,
     get_user_by_telegram_id,
 )
 from app.database.crud.user_message import get_random_active_message
-from app.database.models import PinnedMessage, SubscriptionStatus, UserStatus
+from app.database.models import GuestPurchase, GuestPurchaseStatus, PinnedMessage, SubscriptionStatus, UserStatus
 from app.keyboards.inline import (
     get_back_keyboard,
     get_language_selection_keyboard,
@@ -56,6 +61,140 @@ from app.utils.user_utils import generate_unique_referral_code
 
 
 logger = structlog.get_logger(__name__)
+
+
+async def _activate_pending_gift_after_registration(
+    db: AsyncSession,
+    state: FSMContext,
+    user: 'User',
+    answer_func: Callable[..., Any],
+) -> None:
+    """Extract pending_gift_token from FSM state and activate it for the newly registered user.
+
+    Must be called BEFORE state.clear() to preserve the token.
+    """
+    gift_token: str | None = None
+    try:
+        fresh_state = await state.get_data()
+        gift_token = fresh_state.get('pending_gift_token')
+        if not gift_token:
+            return
+
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.services.guest_purchase_service import activate_purchase as svc_activate
+
+        # Support both full token and prefix-based lookup (Telegram truncates long start params)
+        if len(gift_token) >= 64:
+            token_filter = GuestPurchase.token == gift_token
+        else:
+            token_filter = GuestPurchase.token.startswith(gift_token)
+
+        gift_result = await db.execute(
+            select(GuestPurchase)
+            .options(selectinload(GuestPurchase.tariff))
+            .where(token_filter, GuestPurchase.is_gift.is_(True))
+            .with_for_update()
+        )
+        gift_purchase = gift_result.scalars().first()
+        if (
+            gift_purchase
+            and gift_purchase.is_gift
+            and gift_purchase.status
+            in (
+                GuestPurchaseStatus.PENDING_ACTIVATION.value,
+                GuestPurchaseStatus.PAID.value,
+            )
+            and (gift_purchase.user_id is None or gift_purchase.user_id == user.id)
+            and gift_purchase.buyer_user_id != user.id  # prevent self-activation
+        ):
+            if gift_purchase.user_id is None:
+                gift_purchase.user_id = user.id
+            # Transition PAID → PENDING_ACTIVATION so activate_purchase() accepts it
+            if gift_purchase.status == GuestPurchaseStatus.PAID.value:
+                gift_purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
+            await db.flush()
+            await svc_activate(db, gift_purchase.token, skip_notification=True)
+            tariff_name = gift_purchase.tariff.name if gift_purchase.tariff else ''
+            await answer_func(
+                f'🎁 <b>Подарок активирован!</b>\n'
+                f'{tariff_name} — {gift_purchase.period_days} дн.\n\n'
+                f'Ваша подписка обновлена.',
+                parse_mode=ParseMode.HTML,
+            )
+    except Exception:
+        logger.exception(
+            'Failed to auto-activate gift after registration',
+            token_prefix=(gift_token or '')[:5],
+        )
+
+
+async def _claim_phantom_user(
+    db: AsyncSession,
+    phantom: 'User',
+    *,
+    telegram_id: int,
+    username: str | None,
+    first_name: str | None,
+    last_name: str | None,
+    language: str,
+    referrer_id: int | None,
+) -> tuple[bool, 'User | None']:
+    """Claim a phantom user by backfilling Telegram profile data.
+
+    Returns (success, user). On IntegrityError falls back to existing user lookup.
+
+    Note: Phantom users created when Bot.get_chat() fails at purchase time are matched
+    by username only. Since Telegram usernames are changeable and reassignable, this is
+    inherently vulnerable to username change attacks. When Bot.get_chat() succeeds at
+    purchase time, telegram_id is stored on the user and the phantom path is not used.
+    """
+    from app.utils.validators import sanitize_telegram_name
+
+    phantom.telegram_id = telegram_id
+    phantom.username = username
+    phantom.first_name = sanitize_telegram_name(first_name)
+    phantom.last_name = sanitize_telegram_name(last_name)
+    phantom.language = language
+    phantom.status = UserStatus.ACTIVE.value
+    if referrer_id and referrer_id != phantom.id:
+        phantom.referred_by_id = referrer_id
+    if not phantom.referral_code:
+        phantom.referral_code = await generate_unique_referral_code(db, telegram_id)
+    phantom.updated_at = datetime.now(UTC)
+    phantom.last_activity = datetime.now(UTC)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.warning(
+            'IntegrityError claiming phantom user, falling back to existing user lookup',
+            phantom_user_id=phantom.id,
+            telegram_id=telegram_id,
+        )
+        existing = await get_user_by_telegram_id(db, telegram_id)
+        return False, existing
+    await db.refresh(phantom, ['subscription'])
+    logger.info(
+        'Claimed phantom user from guest purchase',
+        phantom_user_id=phantom.id,
+        telegram_id=telegram_id,
+    )
+
+    # Sync Remnawave panel with updated user data (telegram_id, username, etc.)
+    if phantom.subscription:
+        try:
+            subscription_service = SubscriptionService()
+            await subscription_service.update_remnawave_user(db, phantom.subscription)
+        except Exception as exc:
+            logger.warning(
+                'Failed to update Remnawave panel after phantom claim',
+                phantom_user_id=phantom.id,
+                error=str(exc),
+            )
+
+    return True, phantom
 
 
 def _calculate_subscription_flags(subscription):
@@ -377,6 +516,20 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
     if state_needs_update:
         await state.set_data(data)
 
+    # Handle gift code deep links: /start GIFT_{token}
+    if start_parameter and start_parameter.startswith('GIFT_'):
+        gift_token = start_parameter[5:]  # Strip "GIFT_" prefix
+        if len(gift_token) >= 8:
+            logger.info(
+                'Gift code deep link detected',
+                token_prefix=gift_token[:5],
+                telegram_id=message.from_user.id,
+            )
+            # For new users, gift is auto-activated via
+            # _activate_pending_gift_after_registration() before state.clear().
+            await state.update_data(pending_gift_token=gift_token)
+            start_parameter = None  # Don't treat as campaign or referral
+
     if start_parameter:
         campaign = await get_campaign_by_start_parameter(
             db,
@@ -412,7 +565,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
     if referral_code:
         await state.update_data(referral_code=referral_code)
 
-    user = db_user if db_user else await get_user_by_telegram_id(db, message.from_user.id)
+    user = db_user or await get_user_by_telegram_id(db, message.from_user.id)
 
     if campaign and not campaign_notification_sent:
         try:
@@ -483,6 +636,13 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 )
             except Exception as e:
                 logger.error('Ошибка отправки уведомления о рекламной кампании', error=e)
+
+        # Auto-activate pending gift if deep link contained GIFT_
+        if user:
+            await _activate_pending_gift_after_registration(db, state, user, message.answer)
+            await state.update_data(pending_gift_token=None)
+            # Refresh user to pick up newly created subscription
+            await db.refresh(user, attribute_names=['subscription'])
 
         has_active_subscription, subscription_is_active = _calculate_subscription_flags(user.subscription)
 
@@ -593,6 +753,13 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 )
 
             await db.execute(delete(Transaction).where(Transaction.user_id == user.id))
+
+            if user.balance_kopeks > 0:
+                logger.warning(
+                    '⚠️ DELETED-восстановление: обнуляем ненулевой баланс',
+                    telegram_id=user.telegram_id,
+                    balance_kopeks=user.balance_kopeks,
+                )
 
             user.status = UserStatus.ACTIVE.value
             user.balance_kopeks = 0
@@ -1136,6 +1303,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                 subscription_is_active=subscription_is_active,
             )
 
+        pinned_message = await get_active_pinned_message(db)
         try:
             keyboard = await get_main_menu_keyboard_async(
                 db=db,
@@ -1150,8 +1318,11 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                 is_moderator=is_moderator,
                 custom_buttons=custom_buttons,
             )
+            if pinned_message and pinned_message.send_before_menu:
+                await _send_pinned_message(callback.bot, db, existing_user, pinned_message)
             await callback.message.answer(menu_text, reply_markup=keyboard, parse_mode='HTML')
-            await _send_pinned_message(callback.bot, db, existing_user)
+            if pinned_message and not pinned_message.send_before_menu:
+                await _send_pinned_message(callback.bot, db, existing_user, pinned_message)
         except Exception as e:
             logger.error('Ошибка при показе главного меню существующему пользователю', error=e)
             await callback.message.answer(
@@ -1168,11 +1339,6 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
     language = data.get('language', DEFAULT_LANGUAGE)
     texts = get_texts(language)
 
-    campaign_id = data.get('campaign_id')
-    is_new_user_registration = existing_user is None or (
-        existing_user and existing_user.status == UserStatus.DELETED.value
-    )
-
     referrer_id = data.get('referrer_id')
     if not referrer_id and data.get('referral_code'):
         referrer = await get_user_by_referral_code(db, data['referral_code'])
@@ -1184,6 +1350,13 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
 
         # Prevent self-referral when partner re-registers via own campaign link
         safe_referrer_id = referrer_id if referrer_id != existing_user.id else None
+
+        if existing_user.balance_kopeks > 0:
+            logger.warning(
+                '⚠️ DELETED-восстановление: обнуляем ненулевой баланс',
+                telegram_id=existing_user.telegram_id,
+                balance_kopeks=existing_user.balance_kopeks,
+            )
 
         existing_user.username = callback.from_user.username
         existing_user.first_name = callback.from_user.first_name
@@ -1204,21 +1377,50 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
         logger.info('✅ Пользователь восстановлен', from_user_id=callback.from_user.id)
 
     elif not existing_user:
-        logger.info('🆕 Создаем нового пользователя', from_user_id=callback.from_user.id)
-
-        referral_code = await generate_unique_referral_code(db, callback.from_user.id)
-
-        user = await create_user(
-            db=db,
-            telegram_id=callback.from_user.id,
-            username=callback.from_user.username,
-            first_name=callback.from_user.first_name,
-            last_name=callback.from_user.last_name,
-            language=language,
-            referred_by_id=referrer_id,
-            referral_code=referral_code,
+        # Check for phantom user created by guest purchase (gift by @username)
+        phantom = (
+            await find_phantom_user_by_username(db, callback.from_user.username)
+            if callback.from_user.username
+            else None
         )
-        await db.refresh(user, ['subscription'])
+        if phantom:
+            claimed, user = await _claim_phantom_user(
+                db,
+                phantom,
+                telegram_id=callback.from_user.id,
+                username=callback.from_user.username,
+                first_name=callback.from_user.first_name,
+                last_name=callback.from_user.last_name,
+                language=language,
+                referrer_id=referrer_id,
+            )
+            if not claimed and user:
+                # IntegrityError fallback — use existing user
+                await db.refresh(user, ['subscription'])
+            elif not claimed:
+                logger.critical(
+                    'Phantom claim failed with no fallback user, proceeding to normal registration',
+                    telegram_id=callback.from_user.id,
+                    phantom_user_id=phantom.id,
+                )
+                phantom = None
+
+        if not phantom:
+            logger.info('🆕 Создаем нового пользователя', from_user_id=callback.from_user.id)
+
+            referral_code = await generate_unique_referral_code(db, callback.from_user.id)
+
+            user = await create_user(
+                db=db,
+                telegram_id=callback.from_user.id,
+                username=callback.from_user.username,
+                first_name=callback.from_user.first_name,
+                last_name=callback.from_user.last_name,
+                language=language,
+                referred_by_id=referrer_id,
+                referral_code=referral_code,
+            )
+            await db.refresh(user, ['subscription'])
     else:
         logger.info('🔄 Обновляем существующего пользователя', from_user_id=callback.from_user.id)
         existing_user.status = UserStatus.ACTIVE.value
@@ -1267,6 +1469,9 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
         telegram_id=user.telegram_id,
     )
 
+    # Auto-activate pending gift for newly registered user (before state.clear() wipes the token)
+    await _activate_pending_gift_after_registration(db, state, user, callback.message.answer)
+
     await state.clear()
 
     if campaign_message:
@@ -1278,24 +1483,19 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
     from app.database.crud.welcome_text import get_welcome_text_for_user
 
     offer_text = await get_welcome_text_for_user(db, callback.from_user)
+    pinned_message = await get_active_pinned_message(db)
 
-    skip_welcome_offer = bool(campaign_id) and is_new_user_registration
-
-    if skip_welcome_offer:
-        logger.info(
-            'ℹ️ Пропускаем приветственное предложение для нового пользователя из рекламной кампании',
-            telegram_id=user.telegram_id,
-            campaign_id=campaign_id,
-        )
-
-    if offer_text and not skip_welcome_offer:
+    if offer_text:
         try:
+            if pinned_message and pinned_message.send_before_menu:
+                await _send_pinned_message(callback.bot, db, user, pinned_message)
             await callback.message.answer(
                 offer_text,
                 reply_markup=get_post_registration_keyboard(user.language),
             )
             logger.info('✅ Приветственное сообщение отправлено пользователю', telegram_id=user.telegram_id)
-            await _send_pinned_message(callback.bot, db, user)
+            if pinned_message and not pinned_message.send_before_menu:
+                await _send_pinned_message(callback.bot, db, user, pinned_message)
         except TelegramBadRequest as e:
             if 'parse entities' in str(e).lower() or "can't parse" in str(e).lower():
                 logger.warning('HTML parse error в приветственном сообщении, повтор без parse_mode', error=e)
@@ -1305,7 +1505,8 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                         reply_markup=get_post_registration_keyboard(user.language),
                         parse_mode=None,
                     )
-                    await _send_pinned_message(callback.bot, db, user)
+                    if pinned_message and not pinned_message.send_before_menu:
+                        await _send_pinned_message(callback.bot, db, user, pinned_message)
                 except Exception as fallback_err:
                     logger.error('Ошибка при повторной отправке приветственного сообщения', fallback_err=fallback_err)
             else:
@@ -1350,8 +1551,11 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                 is_moderator=is_moderator,
                 custom_buttons=custom_buttons,
             )
+            if pinned_message and pinned_message.send_before_menu:
+                await _send_pinned_message(callback.bot, db, user, pinned_message)
             await callback.message.answer(menu_text, reply_markup=keyboard, parse_mode='HTML')
-            await _send_pinned_message(callback.bot, db, user)
+            if pinned_message and not pinned_message.send_before_menu:
+                await _send_pinned_message(callback.bot, db, user, pinned_message)
             logger.info('✅ Главное меню показано пользователю', telegram_id=user.telegram_id)
         except Exception as e:
             logger.error('Ошибка при показе главного меню', error=e)
@@ -1401,6 +1605,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                 subscription_is_active=subscription_is_active,
             )
 
+        pinned_message = await get_active_pinned_message(db)
         try:
             keyboard = await get_main_menu_keyboard_async(
                 db=db,
@@ -1415,8 +1620,11 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                 is_moderator=is_moderator,
                 custom_buttons=custom_buttons,
             )
+            if pinned_message and pinned_message.send_before_menu:
+                await _send_pinned_message(message.bot, db, existing_user, pinned_message)
             await message.answer(menu_text, reply_markup=keyboard, parse_mode='HTML')
-            await _send_pinned_message(message.bot, db, existing_user)
+            if pinned_message and not pinned_message.send_before_menu:
+                await _send_pinned_message(message.bot, db, existing_user, pinned_message)
         except Exception as e:
             logger.error('Ошибка при показе главного меню существующему пользователю', error=e)
             await message.answer(
@@ -1433,11 +1641,6 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
     language = data.get('language', DEFAULT_LANGUAGE)
     texts = get_texts(language)
 
-    campaign_id = data.get('campaign_id')
-    is_new_user_registration = existing_user is None or (
-        existing_user and existing_user.status == UserStatus.DELETED.value
-    )
-
     referrer_id = data.get('referrer_id')
     if not referrer_id and data.get('referral_code'):
         referrer = await get_user_by_referral_code(db, data['referral_code'])
@@ -1449,6 +1652,13 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
         # Prevent self-referral when partner re-registers via own campaign link
         safe_referrer_id = referrer_id if referrer_id != existing_user.id else None
+
+        if existing_user.balance_kopeks > 0:
+            logger.warning(
+                '⚠️ DELETED-восстановление: обнуляем ненулевой баланс',
+                telegram_id=existing_user.telegram_id,
+                balance_kopeks=existing_user.balance_kopeks,
+            )
 
         existing_user.username = message.from_user.username
         existing_user.first_name = message.from_user.first_name
@@ -1469,21 +1679,47 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
         logger.info('✅ Пользователь восстановлен', from_user_id=message.from_user.id)
 
     elif not existing_user:
-        logger.info('🆕 Создаем нового пользователя', from_user_id=message.from_user.id)
-
-        referral_code = await generate_unique_referral_code(db, message.from_user.id)
-
-        user = await create_user(
-            db=db,
-            telegram_id=message.from_user.id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-            last_name=message.from_user.last_name,
-            language=language,
-            referred_by_id=referrer_id,
-            referral_code=referral_code,
+        # Check for phantom user created by guest purchase (gift by @username)
+        phantom = (
+            await find_phantom_user_by_username(db, message.from_user.username) if message.from_user.username else None
         )
-        await db.refresh(user, ['subscription'])
+        if phantom:
+            claimed, user = await _claim_phantom_user(
+                db,
+                phantom,
+                telegram_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                last_name=message.from_user.last_name,
+                language=language,
+                referrer_id=referrer_id,
+            )
+            if not claimed and user:
+                await db.refresh(user, ['subscription'])
+            elif not claimed:
+                logger.critical(
+                    'Phantom claim failed with no fallback user, proceeding to normal registration',
+                    telegram_id=message.from_user.id,
+                    phantom_user_id=phantom.id,
+                )
+                phantom = None
+
+        if not phantom:
+            logger.info('🆕 Создаем нового пользователя', from_user_id=message.from_user.id)
+
+            referral_code = await generate_unique_referral_code(db, message.from_user.id)
+
+            user = await create_user(
+                db=db,
+                telegram_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                last_name=message.from_user.last_name,
+                language=language,
+                referred_by_id=referrer_id,
+                referral_code=referral_code,
+            )
+            await db.refresh(user, ['subscription'])
     else:
         logger.info('🔄 Обновляем существующего пользователя', from_user_id=message.from_user.id)
         existing_user.status = UserStatus.ACTIVE.value
@@ -1561,6 +1797,9 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
         '🗑️ COMPLETE: Redis payload удален после успешной регистрации пользователя', telegram_id=user.telegram_id
     )
 
+    # Auto-activate pending gift for newly registered user (before state.clear() wipes the token)
+    await _activate_pending_gift_after_registration(db, state, user, message.answer)
+
     await state.clear()
 
     if campaign_message:
@@ -1572,17 +1811,9 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
     from app.database.crud.welcome_text import get_welcome_text_for_user
 
     offer_text = await get_welcome_text_for_user(db, message.from_user)
+    pinned_message = await get_active_pinned_message(db)
 
-    skip_welcome_offer = bool(campaign_id) and is_new_user_registration
-
-    if skip_welcome_offer:
-        logger.info(
-            'ℹ️ Пропускаем приветственное предложение для нового пользователя из рекламной кампании',
-            telegram_id=user.telegram_id,
-            campaign_id=campaign_id,
-        )
-
-    if offer_text and not skip_welcome_offer:
+    if offer_text:
         try:
             # Если у пользователя уже есть подписка (например, от промокода), не предлагаем триал
             user_has_subscription = user.subscription and getattr(user.subscription, 'is_active', False)
@@ -1591,12 +1822,15 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
             else:
                 keyboard = get_post_registration_keyboard(user.language)
 
+            if pinned_message and pinned_message.send_before_menu:
+                await _send_pinned_message(message.bot, db, user, pinned_message)
             await message.answer(
                 offer_text,
                 reply_markup=keyboard,
             )
             logger.info('✅ Приветственное сообщение отправлено пользователю', telegram_id=user.telegram_id)
-            await _send_pinned_message(message.bot, db, user)
+            if pinned_message and not pinned_message.send_before_menu:
+                await _send_pinned_message(message.bot, db, user, pinned_message)
         except TelegramBadRequest as e:
             if 'parse entities' in str(e).lower() or "can't parse" in str(e).lower():
                 logger.warning('HTML parse error в приветственном сообщении, повтор без parse_mode', error=e)
@@ -1606,7 +1840,8 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                         reply_markup=keyboard,
                         parse_mode=None,
                     )
-                    await _send_pinned_message(message.bot, db, user)
+                    if pinned_message and not pinned_message.send_before_menu:
+                        await _send_pinned_message(message.bot, db, user, pinned_message)
                 except Exception as fallback_err:
                     logger.error('Ошибка при повторной отправке приветственного сообщения', fallback_err=fallback_err)
             else:
@@ -1651,9 +1886,12 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                 is_moderator=is_moderator,
                 custom_buttons=custom_buttons,
             )
+            if pinned_message and pinned_message.send_before_menu:
+                await _send_pinned_message(message.bot, db, user, pinned_message)
             await message.answer(menu_text, reply_markup=keyboard, parse_mode='HTML')
             logger.info('✅ Главное меню показано пользователю', telegram_id=user.telegram_id)
-            await _send_pinned_message(message.bot, db, user)
+            if pinned_message and not pinned_message.send_before_menu:
+                await _send_pinned_message(message.bot, db, user, pinned_message)
         except Exception as e:
             logger.error('Ошибка при показе главного меню', error=e)
             await message.answer(
@@ -1679,6 +1917,9 @@ def _get_subscription_status(user, texts):
 
     if actual_status == 'disabled':
         return texts.t('SUB_STATUS_DISABLED', '⚫ Отключена')
+
+    if actual_status == 'limited':
+        return texts.t('SUB_STATUS_LIMITED', '⚠️ Трафик исчерпан')
 
     if actual_status == 'pending':
         return texts.t('SUB_STATUS_PENDING', '⏳ Ожидает активации')
@@ -1838,47 +2079,7 @@ async def get_main_menu_text_simple(user_name, texts, db: AsyncSession):
 async def required_sub_channel_check(
     query: types.CallbackQuery, bot: Bot, state: FSMContext, db: AsyncSession, db_user=None
 ):
-    from app.utils.message_patch import _cache_logo_file_id, get_logo_media
-
-    async def _send_logo_or_text(
-        text: str,
-        reply_markup: types.InlineKeyboardMarkup | None = None,
-        *,
-        parse_mode: str | None = 'HTML',
-    ) -> None:
-        # Telegram caption limit for photos is much lower than message text limit.
-        # Fallback to plain text when caption is too long or photo send fails.
-        if settings.ENABLE_LOGO_MODE and text and len(text) <= 1000:
-            photo_kwargs: dict[str, object] = {
-                'chat_id': query.from_user.id,
-                'photo': get_logo_media(),
-                'caption': text,
-            }
-            if reply_markup is not None:
-                photo_kwargs['reply_markup'] = reply_markup
-            if parse_mode is not None:
-                photo_kwargs['parse_mode'] = parse_mode
-            try:
-                _result = await bot.send_photo(**photo_kwargs)
-                _cache_logo_file_id(_result)
-                return
-            except TelegramBadRequest as send_error:
-                logger.warning(
-                    'Не удалось отправить фото с caption в required_sub_channel_check (len=%s): %s. '
-                    'Отправляем обычный текст.',
-                    len(text),
-                    send_error,
-                )
-
-        message_kwargs: dict[str, object] = {
-            'chat_id': query.from_user.id,
-            'text': text,
-        }
-        if reply_markup is not None:
-            message_kwargs['reply_markup'] = reply_markup
-        if parse_mode is not None:
-            message_kwargs['parse_mode'] = parse_mode
-        await bot.send_message(**message_kwargs)
+    from app.utils.message_patch import _cache_logo_file_id, caption_exceeds_telegram_limit, get_logo_media
 
     language = DEFAULT_LANGUAGE
     texts = get_texts(language)
@@ -1941,14 +2142,6 @@ async def required_sub_channel_check(
             # Очищаем Redis после успешной проверки подписки
             await delete_pending_payload_from_redis(query.from_user.id)
 
-            # Всегда обновляем referral_code если есть новый payload
-            # (исправление бага с устаревшими данными в state)
-            campaign = await get_campaign_by_start_parameter(
-                db,
-                pending_start_payload,
-                only_active=True,
-            )
-
             # Обрабатываем payload только если ещё не обработан
             # (проверяем по наличию referral_code или campaign_id в state)
             if not state_data.get('referral_code') and not state_data.get('campaign_id'):
@@ -1960,7 +2153,13 @@ async def required_sub_channel_check(
 
                 if campaign:
                     state_data['campaign_id'] = campaign.id
-                    logger.info('📣 CHANNEL CHECK: Кампания восстановлена из payload', campaign_id=campaign.id)
+                    if campaign.partner_user_id:
+                        state_data['referrer_id'] = campaign.partner_user_id
+                    logger.info(
+                        '📣 CHANNEL CHECK: Кампания восстановлена из payload',
+                        campaign_id=campaign.id,
+                        partner_user_id=campaign.partner_user_id,
+                    )
                 else:
                     state_data['referral_code'] = pending_start_payload
                     logger.info(
@@ -2045,12 +2244,28 @@ async def required_sub_channel_check(
                 custom_buttons=custom_buttons,
             )
 
-            await _send_logo_or_text(
-                menu_text,
-                keyboard,
-                parse_mode='HTML',
-            )
-            await _send_pinned_message(bot, db, user)
+            pinned_message = await get_active_pinned_message(db)
+            if pinned_message and pinned_message.send_before_menu:
+                await _send_pinned_message(bot, db, user, pinned_message)
+
+            if settings.ENABLE_LOGO_MODE and not caption_exceeds_telegram_limit(menu_text):
+                _result = await bot.send_photo(
+                    chat_id=query.from_user.id,
+                    photo=get_logo_media(),
+                    caption=menu_text,
+                    reply_markup=keyboard,
+                    parse_mode='HTML',
+                )
+                _cache_logo_file_id(_result)
+            else:
+                await bot.send_message(
+                    chat_id=query.from_user.id,
+                    text=menu_text,
+                    reply_markup=keyboard,
+                    parse_mode='HTML',
+                )
+            if pinned_message and not pinned_message.send_before_menu:
+                await _send_pinned_message(bot, db, user, pinned_message)
         else:
             from app.keyboards.inline import get_rules_keyboard
 
@@ -2071,19 +2286,47 @@ async def required_sub_channel_check(
                                 referrer_id = referrer.id
                                 logger.info('✅ CHANNEL CHECK: Реферер найден из ссылки', referrer_id=referrer.id)
 
-                    referral_code = await generate_unique_referral_code(db, query.from_user.id)
-
-                    user = await create_user(
-                        db=db,
-                        telegram_id=query.from_user.id,
-                        username=query.from_user.username,
-                        first_name=query.from_user.first_name,
-                        last_name=query.from_user.last_name,
-                        language=language,
-                        referral_code=referral_code,
-                        referred_by_id=referrer_id,
+                    # Check for phantom user created by guest purchase (gift by @username)
+                    phantom = (
+                        await find_phantom_user_by_username(db, query.from_user.username)
+                        if query.from_user.username
+                        else None
                     )
-                    await db.refresh(user, ['subscription'])
+                    if phantom:
+                        claimed, user = await _claim_phantom_user(
+                            db,
+                            phantom,
+                            telegram_id=query.from_user.id,
+                            username=query.from_user.username,
+                            first_name=query.from_user.first_name,
+                            last_name=query.from_user.last_name,
+                            language=language,
+                            referrer_id=referrer_id,
+                        )
+                        if not claimed and user:
+                            await db.refresh(user, ['subscription'])
+                        elif not claimed:
+                            logger.critical(
+                                'Phantom claim failed with no fallback user, proceeding to normal registration',
+                                telegram_id=query.from_user.id,
+                                phantom_user_id=phantom.id,
+                            )
+                            phantom = None
+
+                    if not phantom:
+                        referral_code = await generate_unique_referral_code(db, query.from_user.id)
+
+                        user = await create_user(
+                            db=db,
+                            telegram_id=query.from_user.id,
+                            username=query.from_user.username,
+                            first_name=query.from_user.first_name,
+                            last_name=query.from_user.last_name,
+                            language=language,
+                            referral_code=referral_code,
+                            referred_by_id=referrer_id,
+                        )
+                        await db.refresh(user, ['subscription'])
 
                     # ИСПРАВЛЕНИЕ БАГА: Очищаем pending_start_payload из state после создания пользователя
                     state_data.pop('pending_start_payload', None)
@@ -2127,12 +2370,28 @@ async def required_sub_channel_check(
                         custom_buttons=custom_buttons,
                     )
 
-                    await _send_logo_or_text(
-                        menu_text,
-                        keyboard,
-                        parse_mode='HTML',
-                    )
-                    await _send_pinned_message(bot, db, user)
+                    pinned_message = await get_active_pinned_message(db)
+                    if pinned_message and pinned_message.send_before_menu:
+                        await _send_pinned_message(bot, db, user, pinned_message)
+
+                    if settings.ENABLE_LOGO_MODE and not caption_exceeds_telegram_limit(menu_text):
+                        _result = await bot.send_photo(
+                            chat_id=query.from_user.id,
+                            photo=get_logo_media(),
+                            caption=menu_text,
+                            reply_markup=keyboard,
+                            parse_mode='HTML',
+                        )
+                        _cache_logo_file_id(_result)
+                    else:
+                        await bot.send_message(
+                            chat_id=query.from_user.id,
+                            text=menu_text,
+                            reply_markup=keyboard,
+                            parse_mode='HTML',
+                        )
+                    if pinned_message and not pinned_message.send_before_menu:
+                        await _send_pinned_message(bot, db, user, pinned_message)
                 else:
                     await bot.send_message(
                         chat_id=query.from_user.id,
@@ -2145,30 +2404,21 @@ async def required_sub_channel_check(
                     await state.set_state(RegistrationStates.waiting_for_referral_code)
             else:
                 rules_text = await get_rules(language)
-                # Для правил всегда используем текст (не caption у фото), чтобы не упираться в лимит.
-                try:
+
+                if settings.ENABLE_LOGO_MODE and not caption_exceeds_telegram_limit(rules_text):
+                    _result = await bot.send_photo(
+                        chat_id=query.from_user.id,
+                        photo=get_logo_media(),
+                        caption=rules_text,
+                        reply_markup=get_rules_keyboard(language),
+                    )
+                    _cache_logo_file_id(_result)
+                else:
                     await bot.send_message(
                         chat_id=query.from_user.id,
                         text=rules_text,
                         reply_markup=get_rules_keyboard(language),
-                        parse_mode='HTML',
                     )
-                except TelegramBadRequest as rules_error:
-                    # Если в правилах некорректная HTML-разметка, отправим без parse_mode.
-                    if 'parse entities' in str(rules_error).lower() or "can't parse" in str(rules_error).lower():
-                        logger.warning(
-                            'Ошибка HTML-разметки в тексте правил (required_sub_channel_check): %s. '
-                            'Повторная отправка без parse_mode.',
-                            rules_error,
-                        )
-                        await bot.send_message(
-                            chat_id=query.from_user.id,
-                            text=rules_text,
-                            reply_markup=get_rules_keyboard(language),
-                            parse_mode=None,
-                        )
-                    else:
-                        raise
                 await state.set_state(RegistrationStates.waiting_for_rules_accept)
 
     except TelegramBadRequest as e:

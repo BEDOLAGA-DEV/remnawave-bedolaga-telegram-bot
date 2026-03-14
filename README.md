@@ -610,6 +610,16 @@ hooks.domain.com {
         }
     }
 
+    handle /riopay-webhook {
+        reverse_proxy remnawave_bot:8080 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            transport http {
+                read_buffer 0
+            }
+        }
+    }
+    
     handle /remnawave-webhook {
         reverse_proxy remnawave_bot:8080 {
             header_up Host {host}
@@ -817,6 +827,18 @@ http {
         }
 
         location = /cloudpayments-webhook {
+            proxy_pass http://remnawave_bot_unified;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 120s;
+            proxy_send_timeout 120s;
+            proxy_buffering off;
+            proxy_request_buffering off;
+        }
+        
+        location = /riopay-webhook {
             proxy_pass http://remnawave_bot_unified;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -1455,6 +1477,7 @@ CONTEST_BUTTON_VISIBLE=true
 - 💳 **WATA**
 - 💳 **Freekassa** (NSPK СБП + карты)
 - 💳 **CloudPayments** (карты + СБП)
+- 💳 **RioPay** (карты + СБП)
 - 🔥 Автогенерация счетов и webhook-уведомления
 - 💼 История операций
 - 🔄 Автоплатёж с настройкой дня списания

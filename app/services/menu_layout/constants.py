@@ -93,8 +93,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'connect': {
             'type': 'builtin',
             'builtin_id': 'connect',
-            'text': {'ru': '🚀 Подключиться', 'en': '🚀 Connect'},
-            'action': 'subscription_connect_main',
+            'text': {'ru': '🔗 Подключиться', 'en': '🔗 Connect'},
+            'action': 'subscription_connect',
             'enabled': True,
             'visibility': 'subscribers',
             'conditions': {'has_active_subscription': True, 'subscription_is_active': True},
@@ -270,8 +270,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
 BUILTIN_BUTTONS_INFO: list[dict[str, Any]] = [
     {
         'id': 'connect',
-        'default_text': {'ru': '🚀 Подключиться', 'en': '🚀 Connect'},
-        'callback_data': 'subscription_connect_main',
+        'default_text': {'ru': '🔗 Подключиться', 'en': '🔗 Connect'},
+        'callback_data': 'subscription_connect',
         'default_conditions': {'has_active_subscription': True, 'subscription_is_active': True},
         'supports_dynamic_text': False,
         'supports_direct_open': True,

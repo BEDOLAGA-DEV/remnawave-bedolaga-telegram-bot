@@ -14,7 +14,7 @@ from app.database.crud.promocode import (
 from app.database.crud.subscription import extend_subscription, get_subscription_by_user_id
 from app.database.crud.user import add_user_balance, get_user_by_id
 from app.database.crud.user_promo_group import add_user_to_promo_group, has_user_promo_group
-from app.database.models import PromoCode, PromoCodeType, User
+from app.database.models import PromoCode, PromoCodeType, SubscriptionStatus, User
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 
@@ -74,14 +74,22 @@ class PromoCodeService:
 
             balance_before_kopeks = user.balance_kopeks
 
+            # Резервируем запись использования ДО применения эффектов (защита от race condition)
+            promo_use = await create_promocode_use(db, promocode.id, user_id)
+            if promo_use is None:
+                return {'success': False, 'error': 'already_used_by_user'}
+
             try:
                 result_description = await self._apply_promocode_effects(db, user, promocode)
             except ValueError as e:
+                # Эффекты не применены — удаляем зарезервированную запись использования
+                async with db.begin_nested():
+                    await db.delete(promo_use)
+                    await db.flush()
                 error_key = str(e)
                 if error_key in (
                     'active_discount_exists',
                     'no_subscription_for_days',
-                    'trial_subscription_not_eligible',
                 ):
                     return {'success': False, 'error': error_key}
                 raise
@@ -145,9 +153,13 @@ class PromoCodeService:
                     )
                     # Don't fail the whole promocode activation if promo group assignment fails
 
-            await create_promocode_use(db, promocode.id, user_id)
+            from sqlalchemy import update as sql_update
 
-            promocode.current_uses += 1
+            await db.execute(
+                sql_update(PromoCode)
+                .where(PromoCode.id == promocode.id)
+                .values(current_uses=PromoCode.current_uses + 1)
+            )
             await db.commit()
 
             logger.info('✅ Пользователь активировал промокод', _format_user_log=self._format_user_log(user), code=code)
@@ -248,13 +260,20 @@ class PromoCodeService:
         if promocode.type == PromoCodeType.SUBSCRIPTION_DAYS.value and promocode.subscription_days > 0:
             subscription = await get_subscription_by_user_id(db, user.id)
 
-            # Промокод на дни работает только для пользователей с НЕтриальной подпиской
-            # (активной или просроченной). Без подписки или с триалом — отклоняем.
             if not subscription:
                 raise ValueError('no_subscription_for_days')
 
+            # Конвертация триала в платную подписку при активации промокода на дни
             if subscription.is_trial:
-                raise ValueError('trial_subscription_not_eligible')
+                subscription.is_trial = False
+                if subscription.status == SubscriptionStatus.TRIAL.value:
+                    subscription.status = SubscriptionStatus.ACTIVE.value
+                subscription.updated_at = datetime.now(UTC)
+                logger.info(
+                    '🎓 Промокод: конвертация триала в платную подписку',
+                    subscription_id=subscription.id,
+                    code=promocode.code,
+                )
 
             await extend_subscription(db, subscription, promocode.subscription_days)
 

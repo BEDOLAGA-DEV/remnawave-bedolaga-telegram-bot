@@ -306,6 +306,9 @@ class ContestAttemptService:
                 return ''
             kopeks = int(prize_value) if prize_value.isdigit() else 0
             if kopeks > 0:
+                from app.database.crud.user import lock_user_for_update
+
+                user = await lock_user_for_update(db, user)
                 user.balance_kopeks += kopeks
                 await db.commit()
                 return texts.t('CONTEST_BALANCE_GRANTED', 'Бонус {amount} зачислен!').format(

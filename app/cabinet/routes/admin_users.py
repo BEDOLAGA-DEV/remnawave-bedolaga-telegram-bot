@@ -4,9 +4,11 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Integer, and_, func, or_, select
+from sqlalchemy import Integer, and_, delete as sa_delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database.crud.campaign import get_campaign_registration_by_user
 from app.database.crud.subscription import (
     extend_subscription,
@@ -24,7 +26,9 @@ from app.database.crud.user import (
     get_users_statistics,
     subtract_user_balance,
 )
+from app.database.crud.user_promo_group import sync_user_primary_promo_group
 from app.database.models import (
+    GuestPurchase,
     PromoGroup,
     ReferralEarning,
     Subscription,
@@ -34,12 +38,15 @@ from app.database.models import (
     Transaction,
     TransactionType,
     User,
+    UserPromoGroup,
     UserStatus,
 )
 from app.utils.timezone import panel_datetime_to_utc
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.users import (
+    AdminUserGiftItem,
+    AdminUserGiftsResponse,
     DeleteDeviceResponse,
     DeleteUserRequest,
     DeleteUserResponse,
@@ -260,6 +267,13 @@ async def _sync_subscription_to_panel(
         hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
         traffic_limit_bytes = subscription.traffic_limit_gb * (1024**3) if subscription.traffic_limit_gb > 0 else 0
 
+        # Загружаем tariff для определения внешнего сквада
+        try:
+            await db.refresh(subscription, ['tariff'])
+        except Exception:
+            pass
+        ext_squad_uuid = subscription.tariff.external_squad_uuid if subscription.tariff else None
+
         changes = {}
         async with service.get_api_client() as api:
             panel_uuid = user.remnawave_uuid
@@ -304,6 +318,12 @@ async def _sync_subscription_to_panel(
                 if hwid_limit is not None:
                     update_kwargs['hwid_device_limit'] = hwid_limit
 
+                # Внешний сквад: синхронизируем из тарифа или сбрасываем
+                if ext_squad_uuid is not None:
+                    update_kwargs['external_squad_uuid'] = ext_squad_uuid
+                else:
+                    update_kwargs['external_squad_uuid'] = None
+
                 try:
                     updated_panel_user = await api.update_user(**update_kwargs)
                     subscription.subscription_url = updated_panel_user.subscription_url
@@ -332,6 +352,8 @@ async def _sync_subscription_to_panel(
                 }
                 if hwid_limit is not None:
                     create_kwargs['hwid_device_limit'] = hwid_limit
+                if ext_squad_uuid is not None:
+                    create_kwargs['external_squad_uuid'] = ext_squad_uuid
 
                 new_panel_user = await api.create_user(**create_kwargs)
                 user.remnawave_uuid = new_panel_user.uuid
@@ -359,7 +381,7 @@ async def _sync_subscription_to_panel(
 
     except Exception as e:
         logger.error('Error syncing user to panel', user_id=user.id, error=e)
-        return {'error': str(e)}
+        return {'error': 'Ошибка синхронизации пользователя с панелью'}
 
 
 # === List & Search ===
@@ -595,14 +617,18 @@ async def get_user_detail(
     transactions_result = await db.execute(transactions_q)
     transactions = transactions_result.scalars().all()
 
-    _EXPENSE_TYPES = {TransactionType.WITHDRAWAL.value, TransactionType.SUBSCRIPTION_PAYMENT.value}
+    _EXPENSE_TYPES = {
+        TransactionType.WITHDRAWAL.value,
+        TransactionType.SUBSCRIPTION_PAYMENT.value,
+        TransactionType.GIFT_PAYMENT.value,
+    }
 
     recent_transactions = [
         UserTransactionItem(
             id=t.id,
             type=t.type,
-            amount_kopeks=-t.amount_kopeks if t.type in _EXPENSE_TYPES else t.amount_kopeks,
-            amount_rubles=-t.amount_kopeks / 100 if t.type in _EXPENSE_TYPES else t.amount_kopeks / 100,
+            amount_kopeks=-abs(t.amount_kopeks) if t.type in _EXPENSE_TYPES else t.amount_kopeks,
+            amount_rubles=-abs(t.amount_kopeks) / 100 if t.type in _EXPENSE_TYPES else t.amount_kopeks / 100,
             description=t.description,
             payment_method=t.payment_method,
             is_completed=t.is_completed,
@@ -1003,10 +1029,10 @@ async def update_user_subscription(
         )
 
     if request.action == 'extend':
-        if not request.days:
+        if not request.days or request.days <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Days parameter is required for extend action',
+                detail='Days must be a positive integer',
             )
 
         await extend_subscription(db, subscription, request.days)
@@ -1022,6 +1048,36 @@ async def update_user_subscription(
         return UpdateSubscriptionResponse(
             success=True,
             message=f'Subscription extended by {request.days} days',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
+    if request.action == 'shorten':
+        if not request.days or request.days <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Days must be a positive integer',
+            )
+
+        # Сокращение через отрицательный аргумент: extend_subscription(-N) уменьшает end_date
+        await extend_subscription(db, subscription, -request.days)
+        await db.refresh(subscription)
+
+        # Check if subscription expired after shortening
+        if subscription.end_date <= datetime.now(UTC):
+            subscription.status = SubscriptionStatus.EXPIRED.value
+            await db.commit()
+            await db.refresh(subscription)
+
+        # Sync to Remnawave panel
+        await _sync_subscription_to_panel(db, user, subscription)
+
+        logger.info(
+            'Admin shortened subscription for user by days', admin_id=admin.id, user_id=user_id, days=request.days
+        )
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message=f'Subscription shortened by {request.days} days',
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
@@ -1066,26 +1122,51 @@ async def update_user_subscription(
                 detail='Tariff not found',
             )
 
+        # Preserve extra purchased devices above the old tariff's base limit
+        from app.database.crud.subscription import calc_device_limit_on_tariff_switch
+
+        old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
+
         subscription.tariff_id = request.tariff_id
         subscription.traffic_limit_gb = tariff.traffic_limit_gb
-        subscription.device_limit = tariff.device_limit
+        subscription.device_limit = calc_device_limit_on_tariff_switch(
+            current_device_limit=subscription.device_limit,
+            old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
+            new_tariff_device_limit=tariff.device_limit,
+            max_device_limit=tariff.max_device_limit,
+        )
         # Set squads from tariff
         if tariff.allowed_squads:
             subscription.connected_squads = tariff.allowed_squads
 
+        # Convert trial subscription to paid when switching to a non-trial tariff
+        if subscription.is_trial and not tariff.is_trial_available:
+            subscription.is_trial = False
+            if subscription.end_date and subscription.end_date > datetime.now(UTC):
+                subscription.status = SubscriptionStatus.ACTIVE.value
+            logger.info('Converted trial subscription to paid', user_id=user_id, tariff_name=tariff.name)
+
         # Сбрасываем докупленный трафик при смене тарифа
         from sqlalchemy import delete as sql_delete
-
-        from app.database.models import TrafficPurchase
 
         await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
         subscription.purchased_traffic_gb = 0
         subscription.traffic_reset_at = None
 
-        from app.config import settings
-
         if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
             subscription.traffic_used_gb = 0.0
+
+        # Записываем транзакцию о смене тарифа
+        from app.database.crud.transaction import create_transaction
+
+        await create_transaction(
+            db=db,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=0,
+            description=f"Смена тарифа администратором на '{tariff.name}'",
+            commit=False,
+        )
 
         await db.commit()
         await db.refresh(subscription)
@@ -1194,14 +1275,24 @@ async def update_user_subscription(
                 detail='traffic_gb parameter is required for add_traffic action',
             )
 
-        from app.database.crud.subscription import add_subscription_traffic
+        from app.database.crud.subscription import add_subscription_traffic, reactivate_subscription
 
         await add_subscription_traffic(db, subscription, request.traffic_gb)
-        await db.commit()
+
+        # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
+        await reactivate_subscription(db, subscription)
+
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
         await _sync_subscription_to_panel(db, user, subscription)
+
+        # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
+        if getattr(user, 'remnawave_uuid', None) and subscription.status == 'active':
+            from app.services.subscription_service import SubscriptionService
+
+            subscription_service = SubscriptionService()
+            await subscription_service.enable_remnawave_user(user.remnawave_uuid)
 
         logger.info('Admin added traffic for user', admin_id=admin.id, traffic_gb=request.traffic_gb, user_id=user_id)
 
@@ -1556,8 +1647,22 @@ async def update_user_promo_group(
             )
         promo_group_name = promo_group.name
 
-    user.promo_group_id = new_promo_group_id
-    user.updated_at = datetime.now(UTC)
+    # Update M2M table (authoritative source) — not just the legacy FK column.
+    # Without this, sync_user_primary_promo_group overwrites the admin change
+    # on the next transaction.
+    await db.execute(sa_delete(UserPromoGroup).where(UserPromoGroup.user_id == user_id))
+
+    if new_promo_group_id is not None:
+        db.add(
+            UserPromoGroup(
+                user_id=user_id,
+                promo_group_id=new_promo_group_id,
+                assigned_by='admin',
+            )
+        )
+
+    await db.flush()
+    await sync_user_primary_promo_group(db, user_id)
     await db.commit()
     await db.refresh(user)
 
@@ -1702,7 +1807,7 @@ async def delete_user_device(
 
     except Exception as e:
         logger.error('Error deleting device for user', hwid=hwid, user_id=user_id, error=e)
-        return DeleteDeviceResponse(success=False, message=str(e))
+        return DeleteDeviceResponse(success=False, message='Ошибка удаления устройства')
 
 
 @router.delete('/{user_id}/devices', response_model=ResetDevicesResponse)
@@ -1746,7 +1851,7 @@ async def reset_user_devices(
 
     except Exception as e:
         logger.error('Error resetting devices for user', user_id=user_id, error=e)
-        return ResetDevicesResponse(success=False, message=str(e))
+        return ResetDevicesResponse(success=False, message='Ошибка сброса устройств')
 
 
 # === Delete User ===
@@ -1814,28 +1919,32 @@ async def full_delete_user(
             detail='User not found',
         )
 
-    panel_error: str | None = None
-    deleted_from_panel = False
-
     # Pre-fetch admin.id to avoid MissingGreenlet after transaction rollback
     admin_id_val = admin.id
 
     # UserService.delete_user_account handles both bot DB and Remnawave panel
     user_service = UserService()
-    success = await user_service.delete_user_account(db, user_id, admin_id_val)
-
-    if success:
-        deleted_from_panel = request.delete_from_panel and user.remnawave_uuid is not None
+    delete_result = await user_service.delete_user_account(
+        db, user_id, admin_id_val, force_panel_delete=request.delete_from_panel
+    )
 
     reason_text = f' (reason: {request.reason})' if request.reason else ''
-    logger.info('Admin fully deleted user', admin_id=admin_id_val, user_id=user_id, reason_text=reason_text)
+    logger.info(
+        'Admin fully deleted user',
+        admin_id=admin_id_val,
+        user_id=user_id,
+        reason_text=reason_text,
+        bot_deleted=delete_result.bot_deleted,
+        panel_deleted=delete_result.panel_deleted,
+        panel_error=delete_result.panel_error,
+    )
 
     return FullDeleteUserResponse(
-        success=success,
-        message='User fully deleted from bot and panel' if success else 'Failed to delete user',
-        deleted_from_bot=success,
-        deleted_from_panel=deleted_from_panel,
-        panel_error=panel_error,
+        success=delete_result.bot_deleted,
+        message='User fully deleted from bot and panel' if delete_result.bot_deleted else 'Failed to delete user',
+        deleted_from_bot=delete_result.bot_deleted,
+        deleted_from_panel=delete_result.panel_deleted,
+        panel_error=delete_result.panel_error,
     )
 
 
@@ -1944,21 +2053,6 @@ async def reset_user_subscription(
             panel_deactivated=False,
         )
 
-    from app.database.crud.subscription import is_active_paid_subscription
-
-    if is_active_paid_subscription(user.subscription):
-        logger.info(
-            '⏭️ Пропуск сброса подписки: у пользователя активная оплаченная подписка',
-            user_id=user_id,
-            remnawave_uuid=user.remnawave_uuid,
-        )
-        return ResetSubscriptionResponse(
-            success=False,
-            message='Cannot reset active paid subscription. Subscription is still active and paid.',
-            subscription_deleted=False,
-            panel_deactivated=False,
-        )
-
     # Deactivate in Remnawave panel if requested
     if request.deactivate_in_panel and user.remnawave_uuid:
         try:
@@ -1969,7 +2063,7 @@ async def reset_user_subscription(
             if panel_deactivated:
                 logger.info('Disabled Remnawave user for subscription reset', remnawave_uuid=user.remnawave_uuid)
         except Exception as e:
-            panel_error = str(e)
+            panel_error = 'Ошибка обработки пользователя в Remnawave'
             logger.warning('Failed to disable Remnawave user during subscription reset', error=e)
 
     # Delete subscription from database
@@ -2039,7 +2133,7 @@ async def disable_user(
             if panel_deactivated:
                 logger.info('Disabled Remnawave user', remnawave_uuid=user.remnawave_uuid)
         except Exception as e:
-            panel_error = str(e)
+            panel_error = 'Ошибка обработки пользователя в Remnawave'
             logger.warning('Failed to disable Remnawave user', error=e)
 
     # Deactivate subscription in bot database (skip if active paid subscription)
@@ -2143,14 +2237,18 @@ async def get_user_transactions(
     result = await db.execute(query)
     transactions = result.scalars().all()
 
-    _EXPENSE_TYPES = {TransactionType.WITHDRAWAL.value, TransactionType.SUBSCRIPTION_PAYMENT.value}
+    _EXPENSE_TYPES = {
+        TransactionType.WITHDRAWAL.value,
+        TransactionType.SUBSCRIPTION_PAYMENT.value,
+        TransactionType.GIFT_PAYMENT.value,
+    }
 
     items = [
         UserTransactionItem(
             id=t.id,
             type=t.type,
-            amount_kopeks=-t.amount_kopeks if t.type in _EXPENSE_TYPES else t.amount_kopeks,
-            amount_rubles=-t.amount_kopeks / 100 if t.type in _EXPENSE_TYPES else t.amount_kopeks / 100,
+            amount_kopeks=-abs(t.amount_kopeks) if t.type in _EXPENSE_TYPES else t.amount_kopeks,
+            amount_rubles=-abs(t.amount_kopeks) / 100 if t.type in _EXPENSE_TYPES else t.amount_kopeks / 100,
             description=t.description,
             payment_method=t.payment_method,
             is_completed=t.is_completed,
@@ -2418,8 +2516,25 @@ async def sync_user_from_panel(
                 if panel_user.expire_at:
                     panel_expire_utc = panel_datetime_to_utc(panel_user.expire_at)
 
-                    sub_end_utc = sub.end_date if sub.end_date and sub.end_date.tzinfo else sub.end_date
+                    sub_end_utc = sub.end_date
+                    if sub_end_utc is not None and sub_end_utc.tzinfo is None:
+                        sub_end_utc = sub_end_utc.replace(tzinfo=UTC)
                     if sub_end_utc != panel_expire_utc:
+                        # Предупреждаем если локальная дата новее панельной
+                        # (например, автопокупка уже продлила подписку)
+                        if sub_end_utc and panel_expire_utc and sub_end_utc > panel_expire_utc:
+                            logger.warning(
+                                'Sync: локальная end_date новее панельной, перезаписываем. '
+                                'Возможно автопокупка уже продлила подписку.',
+                                user_id=user_id,
+                                local_end_date=sub_end_utc.isoformat(),
+                                panel_expire_at=panel_expire_utc.isoformat(),
+                            )
+                            errors.append(
+                                f'Warning: local end_date ({sub_end_utc.isoformat()}) is newer than '
+                                f'panel expire_at ({panel_expire_utc.isoformat()}). '
+                                f'Panel value applied — check if auto-purchase extended subscription.'
+                            )
                         changes['end_date'] = {
                             'old': sub.end_date.isoformat() if sub.end_date else None,
                             'new': panel_expire_utc.isoformat(),
@@ -2604,6 +2719,13 @@ async def sync_user_to_panel(
         hwid_limit = resolve_hwid_device_limit_for_payload(sub)
         traffic_limit_bytes = sub.traffic_limit_gb * (1024**3) if sub.traffic_limit_gb > 0 else 0
 
+        # Загружаем tariff для внешнего сквада
+        try:
+            await db.refresh(sub, ['tariff'])
+        except Exception:
+            pass
+        ext_squad_uuid = sub.tariff.external_squad_uuid if sub.tariff else None
+
         async with service.get_api_client() as api:
             # Validate existing UUID
             if panel_uuid:
@@ -2655,6 +2777,12 @@ async def sync_user_to_panel(
                     update_kwargs['hwid_device_limit'] = hwid_limit
                     changes['device_limit'] = hwid_limit
 
+                # Внешний сквад: синхронизируем из тарифа или сбрасываем
+                if ext_squad_uuid is not None:
+                    update_kwargs['external_squad_uuid'] = ext_squad_uuid
+                else:
+                    update_kwargs['external_squad_uuid'] = None
+
                 try:
                     await api.update_user(**update_kwargs)
                     action = 'updated'
@@ -2681,6 +2809,8 @@ async def sync_user_to_panel(
 
                 if hwid_limit is not None:
                     create_kwargs['hwid_device_limit'] = hwid_limit
+                if ext_squad_uuid is not None:
+                    create_kwargs['external_squad_uuid'] = ext_squad_uuid
 
                 new_panel_user = await api.create_user(**create_kwargs)
                 panel_uuid = new_panel_user.uuid
@@ -2718,3 +2848,118 @@ async def sync_user_to_panel(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f'Sync error: {e!s}',
         )
+
+
+# === User Gifts ===
+
+
+@router.get('/{user_id}/gifts', response_model=AdminUserGiftsResponse)
+async def get_user_gifts(
+    user_id: int,
+    admin: User = Depends(require_permission('users:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> AdminUserGiftsResponse:
+    """Get all gift subscriptions sent and received by user."""
+    from sqlalchemy.orm import noload
+
+    # Lightweight existence check (avoids eager-loading all User relationships)
+    user_exists = await db.execute(select(User.id).where(User.id == user_id))
+    if not user_exists.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    # True totals via COUNT queries
+    sent_total = (
+        await db.execute(
+            select(func.count(GuestPurchase.id)).where(
+                GuestPurchase.buyer_user_id == user_id,
+                GuestPurchase.is_gift.is_(True),
+            )
+        )
+    ).scalar() or 0
+
+    received_total = (
+        await db.execute(
+            select(func.count(GuestPurchase.id)).where(
+                GuestPurchase.user_id == user_id,
+                GuestPurchase.is_gift.is_(True),
+            )
+        )
+    ).scalar() or 0
+
+    # Sent gifts (user is buyer) — suppress unneeded relationships
+    sent_result = await db.execute(
+        select(GuestPurchase)
+        .options(
+            selectinload(GuestPurchase.tariff),
+            selectinload(GuestPurchase.user),
+            noload(GuestPurchase.buyer),
+            noload(GuestPurchase.landing),
+        )
+        .where(
+            GuestPurchase.buyer_user_id == user_id,
+            GuestPurchase.is_gift.is_(True),
+        )
+        .order_by(GuestPurchase.created_at.desc())
+        .limit(200)
+    )
+    sent_purchases = sent_result.scalars().all()
+
+    # Received gifts (user is recipient) — suppress unneeded relationships
+    received_result = await db.execute(
+        select(GuestPurchase)
+        .options(
+            selectinload(GuestPurchase.tariff),
+            selectinload(GuestPurchase.buyer),
+            noload(GuestPurchase.user),
+            noload(GuestPurchase.landing),
+        )
+        .where(
+            GuestPurchase.user_id == user_id,
+            GuestPurchase.is_gift.is_(True),
+        )
+        .order_by(GuestPurchase.created_at.desc())
+        .limit(200)
+    )
+    received_purchases = received_result.scalars().all()
+
+    sent_items = [_build_gift_item(p, receiver=p.user) for p in sent_purchases]
+    received_items = [_build_gift_item(p, buyer=p.buyer) for p in received_purchases]
+
+    return AdminUserGiftsResponse(
+        sent=sent_items,
+        received=received_items,
+        sent_total=sent_total,
+        received_total=received_total,
+    )
+
+
+def _build_gift_item(
+    p: GuestPurchase,
+    receiver: User | None = None,
+    buyer: User | None = None,
+) -> AdminUserGiftItem:
+    """Build an admin gift item from a GuestPurchase."""
+    tariff_name = p.tariff.name if p.tariff else None
+    device_limit = p.tariff.device_limit if p.tariff else 1
+    return AdminUserGiftItem(
+        id=p.id,
+        token=p.token[:12],
+        status=p.status,
+        tariff_name=tariff_name,
+        period_days=p.period_days,
+        device_limit=device_limit,
+        amount_kopeks=p.amount_kopeks,
+        payment_method=p.payment_method,
+        gift_recipient_type=p.gift_recipient_type,
+        gift_recipient_value=p.gift_recipient_value,
+        gift_message=p.gift_message,
+        buyer_user_id=p.buyer_user_id,
+        buyer_username=buyer.username if buyer else None,
+        buyer_full_name=buyer.full_name if buyer else None,
+        receiver_user_id=p.user_id,
+        receiver_username=receiver.username if receiver else None,
+        receiver_full_name=receiver.full_name if receiver else None,
+        created_at=p.created_at,
+        paid_at=p.paid_at,
+        delivered_at=p.delivered_at,
+    )

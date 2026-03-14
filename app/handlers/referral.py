@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -37,10 +38,14 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
 
     texts = get_texts(db_user.language)
 
+    if not db_user.referral_code:
+        await callback.answer(texts.t('REFERRAL_CODE_NOT_ASSIGNED', 'Реферальный код не назначен'), show_alert=True)
+        return
+
     summary = await get_user_referral_summary(db, db_user.id)
 
     bot_username = (await callback.bot.get_me()).username
-    referral_link = f'https://t.me/{bot_username}?start={db_user.referral_code}'
+    referral_link = settings.get_referral_link(db_user.referral_code, bot_username)
 
     referral_text = (
         texts.t('REFERRAL_PROGRAM_TITLE', '👥 <b>Реферальная программа</b>')
@@ -78,24 +83,40 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
         ).format(amount=texts.format_price(summary['month_earned_kopeks']))
         + '\n\n'
         + texts.t('REFERRAL_REWARDS_HEADER', '🎁 <b>Как работают награды:</b>')
-        + '\n'
-        + texts.t(
+    )
+
+    if settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
+        referral_text += '\n' + texts.t(
             'REFERRAL_REWARD_NEW_USER',
             '• Новый пользователь получает: <b>{bonus}</b> при первом пополнении от <b>{minimum}</b>',
         ).format(
             bonus=texts.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS),
             minimum=texts.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
         )
-        + '\n'
-        + texts.t(
+
+    if settings.REFERRAL_INVITER_BONUS_KOPEKS > 0:
+        referral_text += '\n' + texts.t(
             'REFERRAL_REWARD_INVITER',
             '• Вы получаете при первом пополнении реферала: <b>{bonus}</b>',
         ).format(bonus=texts.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS))
-        + '\n'
-        + texts.t(
+
+    if settings.REFERRAL_MAX_COMMISSION_PAYMENTS > 0:
+        commission_line = texts.t(
+            'REFERRAL_REWARD_COMMISSION_LIMITED',
+            '• Комиссия с первых {max_payments} пополнений реферала: <b>{percent}%</b>',
+        ).format(
+            percent=get_effective_referral_commission_percent(db_user),
+            max_payments=settings.REFERRAL_MAX_COMMISSION_PAYMENTS,
+        )
+    else:
+        commission_line = texts.t(
             'REFERRAL_REWARD_COMMISSION',
             '• Комиссия с каждого пополнения реферала: <b>{percent}%</b>',
         ).format(percent=get_effective_referral_commission_percent(db_user))
+
+    referral_text += (
+        '\n'
+        + commission_line
         + '\n\n'
         + texts.t('REFERRAL_LINK_TITLE', '🔗 <b>Ваша реферальная ссылка:</b>')
         + f'\n<code>{referral_link}</code>\n\n'
@@ -213,17 +234,22 @@ async def show_referral_qr(
     callback: types.CallbackQuery,
     db_user: User,
 ):
-    await callback.answer()
-
     texts = get_texts(db_user.language)
 
+    if not db_user.referral_code:
+        await callback.answer(texts.t('REFERRAL_CODE_NOT_ASSIGNED', 'Реферальный код не назначен'), show_alert=True)
+        return
+
+    await callback.answer()
+
     bot_username = (await callback.bot.get_me()).username
-    referral_link = f'https://t.me/{bot_username}?start={db_user.referral_code}'
+    referral_link = settings.get_referral_link(db_user.referral_code, bot_username)
 
     qr_dir = Path('data') / 'referral_qr'
     qr_dir.mkdir(parents=True, exist_ok=True)
 
-    file_path = qr_dir / f'{db_user.id}.png'
+    link_hash = hashlib.md5(referral_link.encode()).hexdigest()[:8]
+    file_path = qr_dir / f'{db_user.id}_{link_hash}.png'
     if not file_path.exists():
         img = qrcode.make(referral_link)
         img.save(file_path)
@@ -454,20 +480,26 @@ async def show_referral_analytics(callback: types.CallbackQuery, db_user: User, 
 async def create_invite_message(callback: types.CallbackQuery, db_user: User):
     texts = get_texts(db_user.language)
 
-    bot_username = (await callback.bot.get_me()).username
-    referral_link = f'https://t.me/{bot_username}?start={db_user.referral_code}'
+    if not db_user.referral_code:
+        await callback.answer(texts.t('REFERRAL_CODE_NOT_ASSIGNED', 'Реферальный код не назначен'), show_alert=True)
+        return
 
-    invite_text = (
-        texts.t('REFERRAL_INVITE_TITLE', '🎉 Присоединяйся к VPN сервису!')
-        + '\n\n'
-        + texts.t(
+    bot_username = (await callback.bot.get_me()).username
+    referral_link = settings.get_referral_link(db_user.referral_code, bot_username)
+
+    invite_text = texts.t('REFERRAL_INVITE_TITLE', '🎉 Присоединяйся к VPN сервису!')
+
+    if settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
+        invite_text += '\n\n' + texts.t(
             'REFERRAL_INVITE_BONUS',
             '💎 При первом пополнении от {minimum} ты получишь {bonus} бонусом на баланс!',
         ).format(
             minimum=texts.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
             bonus=texts.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS),
         )
-        + '\n\n'
+
+    invite_text += (
+        '\n\n'
         + texts.t('REFERRAL_INVITE_FEATURE_FAST', '🚀 Быстрое подключение')
         + '\n'
         + texts.t('REFERRAL_INVITE_FEATURE_SERVERS', '🌍 Серверы по всему миру')

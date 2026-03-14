@@ -55,6 +55,7 @@ PERMISSION_REGISTRY: dict[str, list[str]] = {
     ],
     'tickets': ['read', 'reply', 'close', 'settings'],
     'stats': ['read', 'export'],
+    'sales_stats': ['read', 'export'],
     'broadcasts': ['read', 'create', 'edit', 'delete', 'send'],
     'tariffs': ['read', 'create', 'edit', 'delete'],
     'promocodes': ['read', 'create', 'edit', 'delete', 'stats'],
@@ -77,6 +78,7 @@ PERMISSION_REGISTRY: dict[str, list[str]] = {
     'apps': ['read', 'edit'],
     'email_templates': ['read', 'edit'],
     'pinned_messages': ['read', 'create', 'edit', 'delete'],
+    'landings': ['read', 'create', 'edit', 'delete'],
     'updates': ['read', 'manage'],
 }
 

@@ -60,6 +60,7 @@ from app.handlers.admin import (
     welcome_text as admin_welcome_text,
 )
 from app.handlers.channel_member import register_handlers as register_channel_member_handlers
+from app.handlers.gift_activation import register_handlers as register_gift_activation_handlers
 from app.handlers.stars_payments import register_stars_handlers
 from app.middlewares.auth import AuthMiddleware
 from app.middlewares.blacklist import BlacklistMiddleware
@@ -199,6 +200,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_blocked_users.register_handlers(dp)
     admin_required_channels.register_handlers(dp)
     register_channel_member_handlers(dp)
+    register_gift_activation_handlers(dp)
     common.register_handlers(dp)
     register_stars_handlers(dp)
     user_contests.register_handlers(dp)
@@ -246,7 +248,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     elif settings.is_cabinet_mode():
         logger.info('🏠 Режим Cabinet активен, базовый URL', MINIAPP_CUSTOM_URL=settings.MINIAPP_CUSTOM_URL)
 
-    # Load per-section button styles cache
+    # Load per-section button styles cache and menu layout cache
     if settings.is_cabinet_mode():
         try:
             from app.utils.button_styles_cache import load_button_styles_cache
@@ -254,6 +256,13 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
             await load_button_styles_cache()
         except Exception as e:
             logger.warning('Failed to load button styles cache', error=e)
+
+        try:
+            from app.utils.menu_layout_cache import load_menu_layout_cache
+
+            await load_menu_layout_cache()
+        except Exception as e:
+            logger.warning('Failed to load menu layout cache', error=e)
 
     logger.info('Бот успешно настроен')
 

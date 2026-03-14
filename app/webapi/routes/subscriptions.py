@@ -19,9 +19,11 @@ from app.database.crud.subscription import (
     deactivate_subscription,
     extend_subscription,
     get_subscription_by_user_id,
+    reactivate_subscription,
     remove_subscription_squad,
     replace_subscription,
 )
+from app.database.crud.user import get_user_by_id
 from app.database.models import Subscription, SubscriptionStatus
 from app.services.subscription_service import SubscriptionService
 
@@ -253,6 +255,18 @@ async def add_subscription_traffic_endpoint(
 ) -> SubscriptionResponse:
     subscription = await _get_subscription(db, subscription_id)
     subscription = await add_subscription_traffic(db, subscription, payload.gb)
+
+    # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
+    await reactivate_subscription(db, subscription)
+
+    # Синхронизируем с RemnaWave и явно включаем пользователя на панели
+    service = SubscriptionService()
+    await service.update_remnawave_user(db, subscription)
+
+    user = await get_user_by_id(db, subscription.user_id)
+    if user and user.remnawave_uuid and subscription.status == 'active':
+        await service.enable_remnawave_user(user.remnawave_uuid)
+
     subscription = await _get_subscription(db, subscription.id)
     return _serialize_subscription(subscription)
 
@@ -266,6 +280,18 @@ async def add_subscription_devices_endpoint(
 ) -> SubscriptionResponse:
     subscription = await _get_subscription(db, subscription_id)
     subscription = await add_subscription_devices(db, subscription, payload.devices)
+
+    # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
+    await reactivate_subscription(db, subscription)
+
+    # Синхронизируем с RemnaWave и явно включаем пользователя на панели
+    service = SubscriptionService()
+    await service.update_remnawave_user(db, subscription)
+
+    user = await get_user_by_id(db, subscription.user_id)
+    if user and user.remnawave_uuid and subscription.status == 'active':
+        await service.enable_remnawave_user(user.remnawave_uuid)
+
     subscription = await _get_subscription(db, subscription.id)
     return _serialize_subscription(subscription)
 
@@ -311,16 +337,6 @@ async def delete_subscription(
     Также деактивируется пользователь в RemnaWave, если есть UUID.
     """
     subscription = await _get_subscription(db, subscription_id)
-
-    from app.database.crud.subscription import is_active_paid_subscription
-
-    if is_active_paid_subscription(subscription):
-        logger.info(
-            '⏭️ Пропуск деактивации: у пользователя активная оплаченная подписка',
-            subscription_id=subscription_id,
-        )
-        subscription = await _get_subscription(db, subscription.id)
-        return _serialize_subscription(subscription)
 
     await deactivate_subscription(db, subscription)
 

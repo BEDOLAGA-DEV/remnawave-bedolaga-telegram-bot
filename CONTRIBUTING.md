@@ -197,28 +197,17 @@ async def create_subscription(
 ### Документация кода
 
 ```python
-async def calculate_subscription_price(
-    period_days: int,
-    traffic_gb: int,
-    devices_count: int,
-    servers_count: int
-) -> int:
-    """
-    Рассчитывает стоимость подписки.
-    
-    Args:
-        period_days: Период подписки в днях
-        traffic_gb: Лимит трафика в ГБ (0 = безлимит)
-        devices_count: Количество устройств
-        servers_count: Количество серверов
-        
-    Returns:
-        Стоимость в копейках
-        
-    Raises:
-        ValueError: Если переданы некорректные параметры
-    """
-    # implementation
+from app.services.pricing_engine import PricingEngine
+
+pricing = PricingEngine.calculate_renewal_price(
+    subscription=subscription,
+    period_days=30,
+    user=user,
+)
+# pricing.final_total — стоимость в копейках
+# pricing.original_total — цена до скидок
+# pricing.promo_group_discount — скидка промогруппы
+# pricing.promo_offer_discount — скидка промо-оффера
 ```
 
 ### Обработка ошибок
@@ -341,20 +330,18 @@ python main.py
 ### Тестирование компонентов
 
 ```python
-# tests/test_subscription_service.py
+# tests/services/test_pricing_engine.py
 import pytest
-from app.services.subscription_service import SubscriptionService
+from app.services.pricing_engine import PricingEngine
 
-@pytest.mark.asyncio
-async def test_calculate_price():
-    price = await SubscriptionService.calculate_subscription_price(
+def test_calculate_renewal_price():
+    pricing = PricingEngine.calculate_renewal_price(
+        subscription=mock_subscription,
         period_days=30,
-        traffic_gb=100,
-        devices_count=3,
-        servers_count=1
+        user=mock_user,
     )
-    assert price > 0
-    assert isinstance(price, int)
+    assert pricing.final_total > 0
+    assert isinstance(pricing.final_total, int)
 ```
 
 ### Integration тесты

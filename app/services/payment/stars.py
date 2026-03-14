@@ -345,6 +345,7 @@ class TelegramStarsMixin:
                     transaction,
                     period_display,
                     was_trial_conversion=False,
+                    purchase_type='renewal' if user.has_had_paid_subscription else 'first_purchase',
                 )
             except Exception as admin_error:  # pragma: no cover - диагностический лог
                 logger.error(
@@ -382,6 +383,11 @@ class TelegramStarsMixin:
         telegram_payment_charge_id: str,
     ) -> bool:
         """Начисляет баланс пользователю после оплаты Stars и запускает автопокупку."""
+
+        # Lock user row to prevent concurrent balance race conditions
+        from app.database.crud.user import lock_user_for_update
+
+        user = await lock_user_for_update(db, user)
 
         # Запоминаем старые значения, чтобы корректно построить уведомления.
         old_balance = user.balance_kopeks

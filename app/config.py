@@ -1,12 +1,12 @@
 import hashlib
 import hmac
 import html
-import math
 import os
 import re
 from collections import defaultdict
 from datetime import time
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -121,7 +121,6 @@ class Settings(BaseSettings):
     WEBHOOK_NOTIFY_NOT_CONNECTED: bool = True
     WEBHOOK_NOTIFY_BANDWIDTH_THRESHOLD: bool = True
     WEBHOOK_NOTIFY_DEVICES: bool = True
-    WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS: bool = False
 
     TRIAL_DURATION_DAYS: int = 3
     TRIAL_TRAFFIC_LIMIT_GB: int = 10
@@ -220,6 +219,7 @@ class Settings(BaseSettings):
     REFERRAL_FIRST_TOPUP_BONUS_KOPEKS: int = 10000
     REFERRAL_INVITER_BONUS_KOPEKS: int = 10000
     REFERRAL_COMMISSION_PERCENT: int = 25
+    REFERRAL_MAX_COMMISSION_PAYMENTS: int = 0  # Макс. кол-во платежей реферала с комиссией (0 = без лимита)
 
     REFERRAL_PROGRAM_ENABLED: bool = True
     REFERRAL_NOTIFICATIONS_ENABLED: bool = True
@@ -319,6 +319,17 @@ class Settings(BaseSettings):
     TELEGRAM_STARS_RATE_RUB: float = 1.3
     TELEGRAM_STARS_DISPLAY_NAME: str = 'Telegram Stars'
 
+    # Telegram Login Widget (cabinet auth page)
+    TELEGRAM_WIDGET_SIZE: Literal['large', 'medium', 'small'] = 'large'
+    TELEGRAM_WIDGET_RADIUS: int = Field(default=8, ge=0, le=20)
+    TELEGRAM_WIDGET_USERPIC: bool = True
+    TELEGRAM_WIDGET_REQUEST_ACCESS: bool = True
+
+    # Telegram Login OIDC (new system via oauth.telegram.org)
+    TELEGRAM_OIDC_ENABLED: bool = False
+    TELEGRAM_OIDC_CLIENT_ID: str = ''
+    TELEGRAM_OIDC_CLIENT_SECRET: str = ''
+
     TRIBUTE_ENABLED: bool = False
     TRIBUTE_API_KEY: str | None = None
     TRIBUTE_DONATE_LINK: str | None = None
@@ -343,6 +354,8 @@ class Settings(BaseSettings):
     YOOKASSA_MIN_AMOUNT_KOPEKS: int = 5000
     YOOKASSA_MAX_AMOUNT_KOPEKS: int = 1000000
     YOOKASSA_QUICK_AMOUNT_SELECTION_ENABLED: bool = False
+    YOOKASSA_RECURRENT_ENABLED: bool = False
+    YOOKASSA_RECURRENT_REQUIRED: bool = False
     DISABLE_TOPUP_BUTTONS: bool = False
     SUPPORT_TOPUP_ENABLED: bool = True
     PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED: bool = False
@@ -522,6 +535,18 @@ class Settings(BaseSettings):
     KASSA_AI_WEBHOOK_PORT: int = 8089
     # Способ оплаты: 44 = СБП (QR код), 36 = Карты РФ, 43 = SberPay
     KASSA_AI_PAYMENT_SYSTEM_ID: int = 44
+
+    # RioPay (api.riopay.online) v2.0.1
+    RIOPAY_ENABLED: bool = False
+    RIOPAY_API_TOKEN: str | None = None  # x-api-token header
+    RIOPAY_WEBHOOK_SECRET: str | None = None  # HMAC-SHA512 ключ для вебхуков (по умолчанию = API_TOKEN)
+    RIOPAY_DISPLAY_NAME: str = 'RioPay'
+    RIOPAY_CURRENCY: str = 'RUB'
+    RIOPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
+    RIOPAY_MAX_AMOUNT_KOPEKS: int = 100000000  # 1 000 000₽
+    RIOPAY_WEBHOOK_PATH: str = '/riopay-webhook'
+    RIOPAY_SUCCESS_URL: str | None = None
+    RIOPAY_FAIL_URL: str | None = None
 
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
@@ -725,6 +750,9 @@ class Settings(BaseSettings):
     CABINET_EMAIL_CHANGE_CODE_EXPIRE_MINUTES: int = 15  # Email change verification code expiration
     CABINET_EMAIL_AUTH_ENABLED: bool = True  # Enable email registration/login in cabinet
     CABINET_URL: str = 'https://example.com/cabinet'  # Base URL for cabinet (used in verification emails)
+    CABINET_TRUSTED_PROXIES: str = (
+        ''  # Comma-separated IPs/CIDRs of trusted reverse proxies (e.g. '127.0.0.1,10.0.0.0/8')
+    )
 
     # OAuth 2.0 provider settings for cabinet
     OAUTH_GOOGLE_CLIENT_ID: str = ''
@@ -933,12 +961,12 @@ class Settings(BaseSettings):
     def get_test_email(self) -> str | None:
         """Get test email for development/testing."""
         email = (self.TEST_EMAIL or '').strip().lower()
-        return email if email else None
+        return email or None
 
     def get_test_email_password(self) -> str | None:
         """Get test email password."""
         password = (self.TEST_EMAIL_PASSWORD or '').strip()
-        return password if password else None
+        return password or None
 
     def is_test_email(self, email: str) -> bool:
         """Check if email is the configured test email."""
@@ -1397,15 +1425,35 @@ class Settings(BaseSettings):
                 return value
         return None
 
+    _CABINET_URL_DEFAULT = 'https://example.com/cabinet'
+
+    def get_referral_link(self, referral_code: str, bot_username: str | None = None) -> str:
+        """Build a referral link pointing to the web cabinet.
+
+        Falls back to a Telegram bot deep link when CABINET_URL is not configured.
+        """
+        from urllib.parse import quote
+
+        if not referral_code:
+            raise ValueError('referral_code must not be empty or None')
+
+        safe_code = quote(referral_code, safe='')
+        cabinet_url = (self.CABINET_URL or '').strip().rstrip('/')
+        if cabinet_url and cabinet_url != self._CABINET_URL_DEFAULT:
+            sep = '&' if '?' in cabinet_url else '?'
+            return f'{cabinet_url}{sep}ref={safe_code}'
+        username = bot_username or self.get_bot_username() or 'bot'
+        return f'https://t.me/{username}?start={safe_code}'
+
+    def is_deep_links_enabled(self) -> bool:
+        return self.ENABLE_DEEP_LINKS
+
     def get_app_config_path(self) -> str:
         if os.path.isabs(self.APP_CONFIG_PATH):
             return self.APP_CONFIG_PATH
 
         project_root = Path(__file__).parent.parent
         return str(project_root / self.APP_CONFIG_PATH)
-
-    def is_deep_links_enabled(self) -> bool:
-        return self.ENABLE_DEEP_LINKS
 
     def get_miniapp_branding(self) -> dict[str, dict[str, str | None]]:
         def _clean(value: str | None) -> str | None:
@@ -1510,7 +1558,7 @@ class Settings(BaseSettings):
                 except (ValueError, IndexError):
                     continue
 
-        return packages if packages else self.get_traffic_packages()
+        return packages or self.get_traffic_packages()
 
     def get_traffic_topup_price(self, gb: int | None) -> int:
         """Возвращает цену докупки для указанного количества ГБ."""
@@ -1600,7 +1648,7 @@ class Settings(BaseSettings):
 
     def get_yookassa_display_name(self) -> str:
         name = (self.YOOKASSA_DISPLAY_NAME or '').strip()
-        return name if name else 'YooKassa'
+        return name or 'YooKassa'
 
     def is_nalogo_enabled(self) -> bool:
         return self.NALOGO_ENABLED and self.NALOGO_INN is not None and self.NALOGO_PASSWORD is not None
@@ -1620,14 +1668,14 @@ class Settings(BaseSettings):
 
     def get_cryptobot_display_name(self) -> str:
         name = (self.CRYPTOBOT_DISPLAY_NAME or '').strip()
-        return name if name else 'CryptoBot'
+        return name or 'CryptoBot'
 
     def is_heleket_enabled(self) -> bool:
         return self.HELEKET_ENABLED and self.HELEKET_MERCHANT_ID is not None and self.HELEKET_API_KEY is not None
 
     def get_heleket_display_name(self) -> str:
         name = (self.HELEKET_DISPLAY_NAME or '').strip()
-        return name if name else 'Heleket Crypto'
+        return name or 'Heleket Crypto'
 
     def is_mulenpay_enabled(self) -> bool:
         return (
@@ -1665,7 +1713,7 @@ class Settings(BaseSettings):
 
     def get_pal24_display_name(self) -> str:
         name = (self.PAL24_DISPLAY_NAME or '').strip()
-        return name if name else 'PAL24'
+        return name or 'PAL24'
 
     def is_platega_enabled(self) -> bool:
         return self.PLATEGA_ENABLED and self.PLATEGA_MERCHANT_ID is not None and self.PLATEGA_SECRET is not None
@@ -1741,11 +1789,11 @@ class Settings(BaseSettings):
         return info.get('title') or info.get('name') or f'Platega {method_code}'
 
     def is_wata_enabled(self) -> bool:
-        return self.WATA_ENABLED and self.WATA_ACCESS_TOKEN is not None and self.WATA_TERMINAL_PUBLIC_ID is not None
+        return self.WATA_ENABLED and self.WATA_ACCESS_TOKEN is not None
 
     def get_wata_display_name(self) -> str:
         name = (self.WATA_DISPLAY_NAME or '').strip()
-        return name if name else 'Wata'
+        return name or 'Wata'
 
     def is_cloudpayments_enabled(self) -> bool:
         return (
@@ -1756,7 +1804,7 @@ class Settings(BaseSettings):
 
     def get_cloudpayments_display_name(self) -> str:
         name = (self.CLOUDPAYMENTS_DISPLAY_NAME or '').strip()
-        return name if name else 'CloudPayments'
+        return name or 'CloudPayments'
 
     def is_freekassa_enabled(self) -> bool:
         return (
@@ -1769,7 +1817,7 @@ class Settings(BaseSettings):
 
     def get_freekassa_display_name(self) -> str:
         name = (self.FREEKASSA_DISPLAY_NAME or '').strip()
-        return name if name else 'Freekassa'
+        return name or 'Freekassa'
 
     def get_freekassa_display_name_html(self) -> str:
         return html.escape(self.get_freekassa_display_name())
@@ -1779,7 +1827,7 @@ class Settings(BaseSettings):
 
     def get_freekassa_sbp_display_name(self) -> str:
         name = (self.FREEKASSA_SBP_DISPLAY_NAME or '').strip()
-        return name if name else 'СБП (QR код)'
+        return name or 'СБП (QR код)'
 
     def get_freekassa_sbp_display_name_html(self) -> str:
         return html.escape(self.get_freekassa_sbp_display_name())
@@ -1789,7 +1837,7 @@ class Settings(BaseSettings):
 
     def get_freekassa_card_display_name(self) -> str:
         name = (self.FREEKASSA_CARD_DISPLAY_NAME or '').strip()
-        return name if name else 'Карта РФ'
+        return name or 'Карта РФ'
 
     def get_freekassa_card_display_name_html(self) -> str:
         return html.escape(self.get_freekassa_card_display_name())
@@ -1804,10 +1852,20 @@ class Settings(BaseSettings):
 
     def get_kassa_ai_display_name(self) -> str:
         name = (self.KASSA_AI_DISPLAY_NAME or '').strip()
-        return name if name else 'KassaAI'
+        return name or 'KassaAI'
 
     def get_kassa_ai_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_display_name())
+
+    def is_riopay_enabled(self) -> bool:
+        return self.RIOPAY_ENABLED and self.RIOPAY_API_TOKEN is not None
+
+    def get_riopay_display_name(self) -> str:
+        name = (self.RIOPAY_DISPLAY_NAME or '').strip()
+        return name or 'RioPay'
+
+    def get_riopay_display_name_html(self) -> str:
+        return html.escape(self.get_riopay_display_name())
 
     def is_payment_verification_auto_check_enabled(self) -> bool:
         return self.PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED
@@ -1904,7 +1962,7 @@ class Settings(BaseSettings):
             'windows': ((self.HAPP_DOWNLOAD_LINK_WINDOWS or '').strip() or (self.HAPP_DOWNLOAD_LINK_PC or '').strip()),
         }
         link = links.get(platform_key)
-        return link if link else None
+        return link or None
 
     def is_maintenance_mode(self) -> bool:
         return self.MAINTENANCE_MODE
@@ -1992,7 +2050,7 @@ class Settings(BaseSettings):
         # т.к. в режиме classic цена складывается из серверов/трафика/устройств)
         periods = sorted(allowed_periods)
 
-        return periods if periods else [30, 90, 180]
+        return periods or [30, 90, 180]
 
     def get_available_renewal_periods(self) -> list[int]:
         """
@@ -2017,7 +2075,7 @@ class Settings(BaseSettings):
         # Возвращаем только разрешённые периоды (без фильтрации по цене)
         periods = sorted(allowed_periods)
 
-        return periods if periods else [30, 90, 180]
+        return periods or [30, 90, 180]
 
     def get_configured_subscription_periods(self) -> list[int]:
         """
@@ -2082,7 +2140,7 @@ class Settings(BaseSettings):
 
     def get_telegram_stars_display_name(self) -> str:
         name = (self.TELEGRAM_STARS_DISPLAY_NAME or '').strip()
-        return name if name else 'Telegram Stars'
+        return name or 'Telegram Stars'
 
     def stars_to_rubles(self, stars: int) -> float:
         return stars * self.get_stars_rate()
@@ -2091,7 +2149,7 @@ class Settings(BaseSettings):
         rate = self.get_stars_rate()
         if rate <= 0:
             raise ValueError('Stars rate must be positive')
-        return max(1, math.ceil(rubles / rate))
+        return max(1, round(rubles / rate))
 
     def get_admin_notifications_chat_id(self) -> int | None:
         if not self.ADMIN_NOTIFICATIONS_CHAT_ID:
@@ -2119,7 +2177,7 @@ class Settings(BaseSettings):
 
     def get_backup_archive_password(self) -> str | None:
         password = (self.BACKUP_ARCHIVE_PASSWORD or '').strip()
-        return password if password else None
+        return password or None
 
     # === Log Rotation Methods ===
 
@@ -2200,7 +2258,7 @@ class Settings(BaseSettings):
                 except ValueError:
                     continue
 
-            return packages if packages else self._get_fallback_traffic_packages()
+            return packages or self._get_fallback_traffic_packages()
 
         except Exception as e:
             logger.warning('ERROR PARSING CONFIG', error=e)
@@ -2333,13 +2391,13 @@ class Settings(BaseSettings):
 
         if contact.startswith(('t.me/', 'telegram.me/', 'telegram.dog/')):
             url = self.get_support_contact_url()
-            return url if url else contact
+            return url or contact
 
         contact_without_prefix = contact.lstrip('@')
 
         if '.' in contact_without_prefix:
             url = self.get_support_contact_url()
-            return url if url else contact
+            return url or contact
 
         if re.fullmatch(r'[A-Za-z0-9_]{3,}', contact_without_prefix):
             return f'@{contact_without_prefix}'
@@ -2483,6 +2541,15 @@ class Settings(BaseSettings):
     def get_cabinet_jwt_secret(self) -> str:
         if self.CABINET_JWT_SECRET:
             return self.CABINET_JWT_SECRET
+        import warnings
+
+        warnings.warn(
+            'CABINET_JWT_SECRET is not set, falling back to BOT_TOKEN. '
+            'Set CABINET_JWT_SECRET to a unique secret in production: '
+            'python -c "import secrets; print(secrets.token_urlsafe(64))"',
+            UserWarning,
+            stacklevel=2,
+        )
         return self.BOT_TOKEN
 
     def get_cabinet_access_token_expire_minutes(self) -> int:
@@ -2510,6 +2577,12 @@ class Settings(BaseSettings):
 
     def is_cabinet_email_auth_enabled(self) -> bool:
         return bool(self.CABINET_EMAIL_AUTH_ENABLED)
+
+    def get_cabinet_trusted_proxies(self) -> set[str]:
+        """Parse CABINET_TRUSTED_PROXIES into a set of IP strings/CIDRs."""
+        if not self.CABINET_TRUSTED_PROXIES:
+            return set()
+        return {p.strip() for p in self.CABINET_TRUSTED_PROXIES.split(',') if p.strip()}
 
     def is_smtp_configured(self) -> bool:
         # For servers without AUTH, only host and from_email are required
@@ -2616,18 +2689,25 @@ def get_db_period_prices() -> dict[int, int] | None:
     return _DB_PERIOD_PRICES
 
 
+def clear_db_period_prices() -> None:
+    """Очищает кеш цен из тарифов (при переключении в classic mode)."""
+    global _DB_PERIOD_PRICES
+    _DB_PERIOD_PRICES = None
+
+
 def refresh_period_prices() -> None:
     """
     Rebuild cached period price mapping.
-    Приоритет: БД > .env
+    В режиме tariffs: приоритет у _DB_PERIOD_PRICES (из таблицы Tariff).
+    В режиме classic: ВСЕГДА используются settings.PRICE_*_DAYS.
     """
     PERIOD_PRICES.clear()
 
-    if _DB_PERIOD_PRICES:
-        # Используем цены из БД
+    if _DB_PERIOD_PRICES and settings.is_tariffs_mode():
+        # Используем цены из БД тарифов (только в режиме tariffs)
         PERIOD_PRICES.update(_DB_PERIOD_PRICES)
     else:
-        # Fallback на .env
+        # Classic mode или нет цен в БД — берём из settings
         PERIOD_PRICES.update(
             {days: getattr(settings, field_name, 0) for days, field_name in _PERIOD_PRICE_FIELDS.items()}
         )
@@ -2635,6 +2715,25 @@ def refresh_period_prices() -> None:
 
 PERIOD_PRICES: dict[int, int] = {}
 refresh_period_prices()
+
+
+def _build_classic_period_prices() -> dict[int, int]:
+    """Build classic-mode period prices directly from PRICE_*_DAYS settings.
+
+    Unlike PERIOD_PRICES (which may use DB tariff prices in tariffs mode),
+    this always reflects the env/settings values — the canonical prices for
+    classic (non-tariff) subscriptions.
+    """
+    return {days: getattr(settings, field_name, 0) for days, field_name in _PERIOD_PRICE_FIELDS.items()}
+
+
+CLASSIC_PERIOD_PRICES: dict[int, int] = _build_classic_period_prices()
+
+
+def refresh_classic_period_prices() -> None:
+    """Rebuild CLASSIC_PERIOD_PRICES from current settings."""
+    CLASSIC_PERIOD_PRICES.clear()
+    CLASSIC_PERIOD_PRICES.update(_build_classic_period_prices())
 
 
 def get_traffic_prices() -> dict[int, int]:

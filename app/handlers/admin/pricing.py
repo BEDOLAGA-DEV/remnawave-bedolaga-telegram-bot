@@ -363,7 +363,7 @@ def _format_core_summary(lang_code: str) -> str:
     else:
         traffic_mode = '⚙️ selectable'
     traffic_label = _format_traffic_label(traffic_limit, lang_code, short=True)
-    return f'{base_price}, {device_limit}📱, {traffic_label}, {traffic_mode}'
+    return f'{base_price}, {device_limit} 📱, {traffic_label}, {traffic_mode}'
 
 
 def _get_period_items(lang_code: str) -> list[PriceItem]:

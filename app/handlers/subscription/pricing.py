@@ -1,3 +1,4 @@
+import html
 from datetime import UTC, datetime
 from typing import Any
 
@@ -74,7 +75,7 @@ async def _prepare_subscription_summary(
         if country['uuid'] in selected_country_ids:
             server_price_per_month = country['price_kopeks']
             countries_price_per_month += server_price_per_month
-            selected_countries_names.append(country['name'])
+            selected_countries_names.append(html.escape(country['name']))
             server_monthly_prices.append(server_price_per_month)
 
     servers_discount_percent = db_user.get_promo_discount(
@@ -309,11 +310,11 @@ async def get_subscription_cost(subscription, db: AsyncSession) -> int:
             return 0
 
         from app.config import settings
+        from app.database.crud.tariff import get_tariff_by_id
         from app.services.subscription_service import SubscriptionService
 
         subscription_service = SubscriptionService()
 
-        base_cost_original = PERIOD_PRICES.get(30, 0)
         try:
             owner = subscription.user
         except AttributeError:
@@ -321,65 +322,101 @@ async def get_subscription_cost(subscription, db: AsyncSession) -> int:
 
         promo_group_id = getattr(owner, 'promo_group_id', None) if owner else None
 
-        period_discount_percent = 0
-        if owner:
+        # В тарифном режиме цена тарифа уже включает серверы и трафик
+        tariff = None
+        tariff_price_found = False
+        if settings.is_tariffs_mode() and subscription.tariff_id:
+            tariff = await get_tariff_by_id(db, subscription.tariff_id)
+            if tariff and tariff.period_prices:
+                base_cost_original = tariff.period_prices.get('30', 0) or tariff.period_prices.get(30, 0)
+                if base_cost_original > 0:
+                    tariff_price_found = True
+
+        if not tariff_price_found:
+            base_cost_original = PERIOD_PRICES.get(30, 0)
+
+        if tariff_price_found:
+            # Тарифный режим: серверы и трафик включены в цену.
+            # Порядок: база + устройства → скидка на полную сумму (как в calculate_renewal_price).
+            from app.utils.promo_offer import get_user_active_promo_discount_percent
+
+            original_price = base_cost_original
+
+            tariff_device_limit = tariff.device_limit if tariff.device_limit is not None else 0
+            device_limit = subscription.device_limit if subscription.device_limit is not None else tariff_device_limit
+            extra_devices = max(0, device_limit - tariff_device_limit)
+            device_price_per_unit = (
+                tariff.device_price_kopeks
+                if tariff and tariff.device_price_kopeks is not None
+                else settings.PRICE_PER_DEVICE
+            )
+            devices_price = extra_devices * device_price_per_unit
+            original_price += devices_price
+
+            # Скидка промогруппы на полную сумму (база + устройства)
+            period_discount_percent = 0
+            if owner:
+                try:
+                    period_discount_percent = owner.get_promo_discount('period', 30)
+                except AttributeError:
+                    pass
+            discount_total = original_price * period_discount_percent // 100
+            total_cost = original_price - discount_total
+
+            # Promo-offer скидка (временная)
+            promo_offer_percent = get_user_active_promo_discount_percent(owner)
+            if promo_offer_percent > 0:
+                promo_offer_discount = total_cost * promo_offer_percent // 100
+                total_cost = total_cost - promo_offer_discount
+        else:
+            # Классический режим: серверы + трафик + устройства считаются отдельно
+            period_discount_percent = 0
+            if owner:
+                try:
+                    period_discount_percent = owner.get_promo_discount('period', 30)
+                except AttributeError:
+                    period_discount_percent = 0
+
+            base_cost, _ = apply_percentage_discount(
+                base_cost_original,
+                period_discount_percent,
+            )
+
             try:
-                period_discount_percent = owner.get_promo_discount('period', 30)
+                servers_cost, _ = await subscription_service.get_countries_price_by_uuids(
+                    subscription.connected_squads,
+                    db,
+                    promo_group_id=promo_group_id,
+                )
             except AttributeError:
-                period_discount_percent = 0
+                servers_cost, _ = await get_countries_price_by_uuids_fallback(
+                    subscription.connected_squads,
+                    db,
+                    promo_group_id=promo_group_id,
+                )
 
-        base_cost, _ = apply_percentage_discount(
-            base_cost_original,
-            period_discount_percent,
-        )
-
-        try:
-            servers_cost, _ = await subscription_service.get_countries_price_by_uuids(
-                subscription.connected_squads,
-                db,
-                promo_group_id=promo_group_id,
-            )
-        except AttributeError:
-            servers_cost, _ = await get_countries_price_by_uuids_fallback(
-                subscription.connected_squads,
-                db,
-                promo_group_id=promo_group_id,
-            )
-
-        traffic_cost = settings.get_traffic_price(subscription.traffic_limit_gb)
-        device_limit = subscription.device_limit
-        if device_limit is None:
-            if settings.is_devices_selection_enabled():
-                device_limit = settings.DEFAULT_DEVICE_LIMIT
-            else:
-                forced_limit = settings.get_disabled_mode_device_limit()
-                if forced_limit is None:
+            traffic_cost = settings.get_traffic_price(subscription.traffic_limit_gb)
+            device_limit = subscription.device_limit
+            if device_limit is None:
+                if settings.is_devices_selection_enabled():
                     device_limit = settings.DEFAULT_DEVICE_LIMIT
                 else:
-                    device_limit = forced_limit
+                    forced_limit = settings.get_disabled_mode_device_limit()
+                    if forced_limit is None:
+                        device_limit = settings.DEFAULT_DEVICE_LIMIT
+                    else:
+                        device_limit = forced_limit
 
-        devices_cost = max(0, (device_limit or 0) - settings.DEFAULT_DEVICE_LIMIT) * settings.PRICE_PER_DEVICE
+            devices_cost = max(0, (device_limit or 0) - settings.DEFAULT_DEVICE_LIMIT) * settings.PRICE_PER_DEVICE
 
-        total_cost = base_cost + servers_cost + traffic_cost + devices_cost
+            total_cost = base_cost + servers_cost + traffic_cost + devices_cost
 
-        logger.info('📊 Месячная стоимость конфигурации подписки', subscription_id=subscription.id)
-        base_log = f'   📅 Базовый тариф (30 дней): {base_cost_original / 100}₽'
-        if period_discount_percent > 0:
-            discount_value = base_cost_original * period_discount_percent // 100
-            base_log += f' → {base_cost / 100}₽ (скидка {period_discount_percent}%: -{discount_value / 100}₽)'
-        logger.info(base_log)
-        if servers_cost > 0:
-            logger.info('🌍 Серверы: ₽', servers_cost=servers_cost / 100)
-        if traffic_cost > 0:
-            logger.info('📊 Трафик: ₽', traffic_cost=traffic_cost / 100)
-        if devices_cost > 0:
-            logger.info('📱 Устройства: ₽', devices_cost=devices_cost / 100)
-        logger.info('💎 ИТОГО: ₽', total_cost=total_cost / 100)
+        logger.info('Месячная стоимость подписки', subscription_id=subscription.id, total_cost_kopeks=total_cost)
 
         return total_cost
 
     except Exception as e:
-        logger.error('⚠️ Ошибка расчета стоимости подписки', error=e)
+        logger.error('Ошибка расчета стоимости подписки', error=e)
         return 0
 
 
@@ -436,7 +473,7 @@ async def get_subscription_info_text(subscription, texts, db_user, db: AsyncSess
         days_left=max(0, subscription.days_left),
         traffic_used=texts.format_traffic(subscription.traffic_used_gb, is_limit=False),
         traffic_limit=traffic_text,
-        countries_count=len(subscription.connected_squads),
+        countries_count=len(subscription.connected_squads or []),
         devices_used=devices_used,
         devices_limit=subscription.device_limit,
         autopay_status='✅ Включен' if subscription.autopay_enabled else '⌛ Выключен',

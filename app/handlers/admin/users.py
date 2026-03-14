@@ -1,3 +1,4 @@
+import html
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -19,7 +20,6 @@ from app.database.crud.campaign import (
 from app.database.crud.promo_group import get_promo_groups_with_counts
 from app.database.crud.server_squad import (
     get_all_server_squads,
-    get_server_ids_by_uuids,
     get_server_squad_by_id,
     get_server_squad_by_uuid,
 )
@@ -869,7 +869,7 @@ async def _render_user_subscription_overview(callback: types.CallbackQuery, db: 
                 try:
                     server = await get_server_squad_by_uuid(db, squad_uuid)
                     if server:
-                        text += f'• {server.display_name}\n'
+                        text += f'• {html.escape(server.display_name)}\n'
                     else:
                         text += f'• {squad_uuid[:8]}... (неизвестный)\n'
                 except Exception as e:
@@ -1019,9 +1019,9 @@ async def delete_user_account(callback: types.CallbackQuery, db_user: User, db: 
     user_id = int(callback.data.split('_')[-1])
 
     user_service = UserService()
-    success = await user_service.delete_user_account(db, user_id, db_user.id)
+    delete_result = await user_service.delete_user_account(db, user_id, db_user.id)
 
-    if success:
+    if delete_result.bot_deleted:
         await callback.message.edit_text(
             '✅ Пользователь успешно удален',
             reply_markup=types.InlineKeyboardMarkup(
@@ -1210,7 +1210,7 @@ async def show_user_management(callback: types.CallbackQuery, db_user: User, db:
                 end_date=format_datetime(subscription.end_date),
                 traffic=traffic_usage,
                 devices=subscription.device_limit,
-                countries=len(subscription.connected_squads),
+                countries=len(subscription.connected_squads or []),
             )
         )
     else:
@@ -2712,7 +2712,7 @@ async def show_user_statistics(callback: types.CallbackQuery, db_user: User, db:
         text += f'• Статус: {sub_status}{sub_type}\n'
         text += f'• Трафик: {subscription.traffic_used_gb:.1f}/{subscription.traffic_limit_gb} ГБ\n'
         text += f'• Устройства: {subscription.device_limit}\n'
-        text += f'• Стран: {len(subscription.connected_squads)}\n'
+        text += f'• Стран: {len(subscription.connected_squads or [])}\n'
     else:
         text += '• Отсутствует\n'
 
@@ -3985,7 +3985,11 @@ async def _extend_subscription_by_days(db: AsyncSession, user_id: int, days: int
 
 async def _add_subscription_traffic(db: AsyncSession, user_id: int, gb: int, admin_id: int) -> bool:
     try:
-        from app.database.crud.subscription import add_subscription_traffic, get_subscription_by_user_id
+        from app.database.crud.subscription import (
+            add_subscription_traffic,
+            get_subscription_by_user_id,
+            reactivate_subscription,
+        )
         from app.services.subscription_service import SubscriptionService
 
         subscription = await get_subscription_by_user_id(db, user_id)
@@ -3999,8 +4003,19 @@ async def _add_subscription_traffic(db: AsyncSession, user_id: int, gb: int, adm
         else:
             await add_subscription_traffic(db, subscription, gb)
 
+        # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
+        await reactivate_subscription(db, subscription)
+
         subscription_service = SubscriptionService()
         await subscription_service.update_remnawave_user(db, subscription)
+
+        # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
+        if subscription.status == 'active':
+            from app.database.crud.user import get_user_by_id
+
+            user = await get_user_by_id(db, user_id)
+            if user and user.remnawave_uuid:
+                await subscription_service.enable_remnawave_user(user.remnawave_uuid)
 
         traffic_text = 'безлимитный' if gb == 0 else f'{gb} ГБ'
         logger.info('Админ добавил трафик пользователю', admin_id=admin_id, traffic_text=traffic_text, user_id=user_id)
@@ -4016,20 +4031,12 @@ async def _deactivate_user_subscription(db: AsyncSession, user_id: int, admin_id
         from app.database.crud.subscription import (
             deactivate_subscription,
             get_subscription_by_user_id,
-            is_active_paid_subscription,
         )
         from app.services.subscription_service import SubscriptionService
 
         subscription = await get_subscription_by_user_id(db, user_id)
         if not subscription:
             logger.error('Подписка не найдена для пользователя', user_id=user_id)
-            return False
-
-        if is_active_paid_subscription(subscription):
-            logger.info(
-                '⏭️ Пропуск деактивации: у пользователя активная оплаченная подписка',
-                user_id=user_id,
-            )
             return False
 
         await deactivate_subscription(db, subscription)
@@ -4166,46 +4173,22 @@ async def _calculate_subscription_period_price(
     subscription_service: SubscriptionService | None = None,
 ) -> int:
     """Рассчитывает стоимость подписки для администратора с учётом всех параметров."""
+    from app.services.pricing_engine import pricing_engine
 
-    service = subscription_service or SubscriptionService()
-
-    connected_squads = list(subscription.connected_squads or [])
-    server_ids = []
-
-    if connected_squads:
+    # Загружаем тариф для корректного расчёта в тарифном режиме
+    if subscription.tariff_id:
         try:
-            server_ids = await get_server_ids_by_uuids(db, connected_squads)
-            if len(server_ids) != len(connected_squads):
-                logger.warning(
-                    'Не удалось сопоставить все сервера подписки пользователя для расчёта цены',
-                    telegram_id=target_user.telegram_id,
-                )
+            await db.refresh(subscription, ['tariff'])
         except Exception as e:
-            logger.error(
-                'Не удалось получить идентификаторы серверов для расчёта цены подписки пользователя',
-                telegram_id=target_user.telegram_id,
-                e=e,
-            )
-            server_ids = []
-    traffic_limit_gb = subscription.traffic_limit_gb
-    if traffic_limit_gb is None:
-        traffic_limit_gb = settings.DEFAULT_TRAFFIC_LIMIT_GB
+            logger.warning('Не удалось загрузить тариф для расчёта цены', error=e)
 
-    device_limit = subscription.device_limit
-    if not device_limit or device_limit < 0:
-        device_limit = settings.DEFAULT_DEVICE_LIMIT
-
-    total_price, _ = await service.calculate_subscription_price(
-        period_days=period_days,
-        traffic_gb=traffic_limit_gb,
-        server_squad_ids=server_ids,
-        devices=device_limit,
-        db=db,
+    pricing = await pricing_engine.calculate_renewal_price(
+        db,
+        subscription,
+        period_days,
         user=target_user,
-        promo_group=target_user.promo_group,
     )
-
-    return total_price
+    return pricing.final_total
 
 
 @admin_required
@@ -4507,7 +4490,11 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
         from app.database.crud.user import subtract_user_balance
 
         success = await subtract_user_balance(
-            db, target_user, price_kopeks, f'Покупка подписки на {period_days} дней (администратор)'
+            db,
+            target_user,
+            price_kopeks,
+            f'Покупка подписки на {period_days} дней (администратор)',
+            mark_as_paid_subscription=True,
         )
 
         if not success:
@@ -4568,6 +4555,13 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
 
                 hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
 
+                # Загружаем tariff для внешнего сквада
+                try:
+                    await db.refresh(subscription, ['tariff'])
+                except Exception:
+                    pass
+                ext_squad_uuid = subscription.tariff.external_squad_uuid if subscription.tariff else None
+
                 if target_user.remnawave_uuid:
                     async with remnawave_service.get_api_client() as api:
                         update_kwargs = dict(
@@ -4590,6 +4584,12 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
 
                         if hwid_limit is not None:
                             update_kwargs['hwid_device_limit'] = hwid_limit
+
+                        # Внешний сквад: синхронизируем из тарифа или сбрасываем
+                        if ext_squad_uuid is not None:
+                            update_kwargs['external_squad_uuid'] = ext_squad_uuid
+                        else:
+                            update_kwargs['external_squad_uuid'] = None
 
                         remnawave_user = await api.update_user(**update_kwargs)
                 else:
@@ -4622,6 +4622,8 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
 
                         if hwid_limit is not None:
                             create_kwargs['hwid_device_limit'] = hwid_limit
+                        if ext_squad_uuid is not None:
+                            create_kwargs['external_squad_uuid'] = ext_squad_uuid
 
                         remnawave_user = await api.create_user(**create_kwargs)
 
@@ -4736,7 +4738,7 @@ async def admin_buy_tariff(callback: types.CallbackQuery, db_user: User, db: Asy
         traffic = '♾️' if tariff.traffic_limit_gb == 0 else f'{tariff.traffic_limit_gb} ГБ'
         prices = tariff.period_prices or {}
         min_price = min(prices.values()) if prices else 0
-        text += f'<b>{tariff.name}</b> — {traffic}/{tariff.device_limit}📱 от {settings.format_price(min_price)}\n'
+        text += f'<b>{tariff.name}</b> — {traffic} / {tariff.device_limit} 📱 от {settings.format_price(min_price)}\n'
 
     keyboard = []
     for tariff in tariffs:
@@ -4948,7 +4950,11 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
 
         # Списываем баланс
         success = await subtract_user_balance(
-            db, target_user, price_kopeks, f'Покупка тарифа {tariff.name} на {period} дней (администратор)'
+            db,
+            target_user,
+            price_kopeks,
+            f'Покупка тарифа {tariff.name} на {period} дней (администратор)',
+            mark_as_paid_subscription=True,
         )
 
         if not success:
@@ -5001,7 +5007,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
             db,
             user_id=target_user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=-price_kopeks,
+            amount_kopeks=price_kopeks,
             description=f'Покупка тарифа {tariff.name} на {period} дней (администратор)',
         )
 
@@ -5311,9 +5317,24 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
     try:
         old_tariff_id = subscription.tariff_id
 
-        # Обновляем параметры подписки в соответствии с тарифом
+        # Preserve extra purchased devices above the old tariff's base limit
+        extra_devices = 0
+        if subscription.tariff_id:
+            old_tariff = await get_tariff_by_id(db, subscription.tariff_id)
+            if old_tariff and old_tariff.device_limit:
+                extra_devices = max(0, (subscription.device_limit or old_tariff.device_limit) - old_tariff.device_limit)
+
         subscription.tariff_id = tariff.id
-        subscription.device_limit = tariff.device_limit
+
+        new_base = tariff.device_limit or 1
+        new_total = new_base + extra_devices
+        effective_max = tariff.max_device_limit or (
+            settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None
+        )
+        if effective_max and new_total > effective_max:
+            new_total = effective_max
+        subscription.device_limit = new_total
+
         subscription.traffic_limit_gb = tariff.traffic_limit_gb
         subscription.connected_squads = tariff.allowed_squads or []
         subscription.updated_at = datetime.now(UTC)
@@ -5330,6 +5351,18 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         # Сброс использованного трафика по админ-настройке
         if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
             subscription.traffic_used_gb = 0.0
+
+        # Записываем транзакцию о смене тарифа
+        from app.database.crud.transaction import create_transaction
+
+        await create_transaction(
+            db=db,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=0,
+            description=f"Смена тарифа администратором на '{tariff.name}'",
+            commit=False,
+        )
 
         await db.commit()
 
@@ -5354,7 +5387,7 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         await callback.message.edit_text(
             f'✅ <b>Тариф успешно изменен</b>\n\n'
             f'Новый тариф: <b>{tariff.name}</b>\n'
-            f'• Устройства: {tariff.device_limit}\n'
+            f'• Устройства: {subscription.device_limit}\n'
             f'• Трафик: {"♾️" if tariff.traffic_limit_gb == 0 else f"{tariff.traffic_limit_gb} ГБ"}\n'
             f'• Серверы: {len(tariff.allowed_squads) if tariff.allowed_squads else 0}',
             reply_markup=types.InlineKeyboardMarkup(

@@ -177,6 +177,45 @@ async def get_permission_registry(
     ]
 
 
+@router.get('/users', response_model=list[AdminWithRolesResponse])
+async def list_rbac_users(
+    admin: User = Depends(require_permission('roles:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """List all users that have at least one active RBAC role."""
+    from sqlalchemy import select as _sa_select
+    from sqlalchemy.orm import selectinload as _sel
+
+    from app.database.models import UserRole as _UserRole
+
+    result = await db.execute(
+        _sa_select(_UserRole)
+        .options(_sel(_UserRole.user), _sel(_UserRole.role))
+        .where(_UserRole.is_active.is_(True))
+        .order_by(_UserRole.user_id)
+    )
+    assignments = result.scalars().all()
+
+    users_map: dict[int, AdminWithRolesResponse] = {}
+    for a in assignments:
+        if not a.user:
+            continue
+        if a.user_id not in users_map:
+            users_map[a.user_id] = AdminWithRolesResponse(
+                user_id=a.user_id,
+                telegram_id=a.user.telegram_id,
+                username=a.user.username,
+                first_name=a.user.first_name,
+                last_name=a.user.last_name,
+                email=a.user.email,
+                role_names=[],
+            )
+        if a.role:
+            users_map[a.user_id].role_names.append(a.role.name)
+
+    return list(users_map.values())
+
+
 @router.get('/roles/{role_id}/users', response_model=list[UserRoleResponse])
 async def list_role_users(
     role_id: int,

@@ -276,6 +276,10 @@ class FortuneWheelService:
         rubles = Decimal(config.spin_cost_stars) * stars_rate
         kopeks = int(rubles * 100)
 
+        from app.database.crud.user import lock_user_for_update
+
+        user = await lock_user_for_update(db, user)
+
         if user.balance_kopeks < kopeks:
             raise ValueError('Недостаточно средств на балансе')
 

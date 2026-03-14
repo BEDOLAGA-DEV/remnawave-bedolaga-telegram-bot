@@ -84,6 +84,12 @@ class NotificationType(Enum):
     BROADCAST = 'broadcast'
     PAYMENT_RECEIVED = 'payment_received'
 
+    # Guest purchase notifications
+    GUEST_SUBSCRIPTION_DELIVERED = 'guest_subscription_delivered'
+    GUEST_ACTIVATION_REQUIRED = 'guest_activation_required'
+    GUEST_GIFT_RECEIVED = 'guest_gift_received'
+    GUEST_CABINET_CREDENTIALS = 'guest_cabinet_credentials'
+
 
 class NotificationDeliveryService:
     """
@@ -262,18 +268,17 @@ class NotificationDeliveryService:
             # Get email template (check DB override first, then fall back to hardcoded)
             language = user.language or 'ru'
 
-            # Try DB override
+            # Try DB override (get_rendered_override substitutes context vars and wraps in base template)
             template = None
             try:
-                from app.cabinet.services.email_template_overrides import get_template_override
+                from app.cabinet.services.email_template_overrides import get_rendered_override
 
-                override = await get_template_override(notification_type.value, language)
-                if override:
-                    # Wrap custom body in base template
-                    full_html = self.email_templates._get_base_template(override['body_html'], language)
+                rendered = await get_rendered_override(notification_type.value, language, context)
+                if rendered:
+                    subject, body_html = rendered
                     template = {
-                        'subject': override['subject'],
-                        'body_html': full_html,
+                        'subject': subject,
+                        'body_html': body_html,
                     }
             except Exception as e:
                 logger.debug('Не удалось проверить override шаблона', e=e)

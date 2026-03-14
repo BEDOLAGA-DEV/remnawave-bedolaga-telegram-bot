@@ -18,7 +18,7 @@ logger = structlog.get_logger(__name__)
 async def create_pal24_payment(
     db: AsyncSession,
     *,
-    user_id: int,
+    user_id: int | None,
     bill_id: str,
     amount_kopeks: int,
     description: str | None,
@@ -63,6 +63,11 @@ async def create_pal24_payment(
 
 async def get_pal24_payment_by_id(db: AsyncSession, payment_id: int) -> Pal24Payment | None:
     result = await db.execute(select(Pal24Payment).where(Pal24Payment.id == payment_id))
+    return result.scalar_one_or_none()
+
+
+async def get_pal24_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> Pal24Payment | None:
+    result = await db.execute(select(Pal24Payment).where(Pal24Payment.id == payment_id).with_for_update())
     return result.scalar_one_or_none()
 
 
@@ -143,7 +148,7 @@ async def link_pal24_payment_to_transaction(
     transaction_id: int,
 ) -> Pal24Payment:
     await db.execute(update(Pal24Payment).where(Pal24Payment.id == payment.id).values(transaction_id=transaction_id))
-    await db.commit()
+    await db.flush()
     await db.refresh(payment)
     logger.info('Pal24 платеж привязан к транзакции', bill_id=payment.bill_id, transaction_id=transaction_id)
     return payment

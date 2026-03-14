@@ -6,11 +6,18 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import httpx
 import structlog
+from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.crud.saved_payment_method import (
+    deactivate_payment_method,
+    get_active_payment_methods_by_user,
+)
 from app.database.crud.user import get_user_by_id
 from app.database.models import PaymentMethod, Transaction, User
 from app.services.payment_method_config_service import get_enabled_methods_for_user
@@ -32,6 +39,8 @@ from ..schemas.balance import (
     PaymentMethodResponse,
     PendingPaymentListResponse,
     PendingPaymentResponse,
+    SavedCardResponse,
+    SavedCardsListResponse,
     StarsInvoiceRequest,
     StarsInvoiceResponse,
     TopUpRequest,
@@ -99,8 +108,8 @@ async def get_transactions(
     for t in transactions:
         # Determine sign based on transaction type
         # Credits (positive): DEPOSIT, REFERRAL_REWARD, REFUND, POLL_REWARD
-        # Debits (negative): SUBSCRIPTION_PAYMENT, WITHDRAWAL
-        is_debit = t.type in ['subscription_payment', 'withdrawal']
+        # Debits (negative): SUBSCRIPTION_PAYMENT, WITHDRAWAL, GIFT_PAYMENT
+        is_debit = t.type in ['subscription_payment', 'withdrawal', 'gift_payment']
         amount_kopeks = -abs(t.amount_kopeks) if is_debit else abs(t.amount_kopeks)
 
         items.append(
@@ -195,7 +204,7 @@ async def get_payment_methods(
                         'description': description,
                     }
                 )
-            options = formatted_options if formatted_options else None
+            options = formatted_options or None
 
         methods.append(
             PaymentMethodResponse(
@@ -241,13 +250,16 @@ async def create_stars_invoice(
             detail='Maximum amount is 10,000.00 RUB',
         )
 
-    # Calculate Stars amount
+    # Calculate Stars amount and normalize kopeks to match exact star value
     try:
         amount_rubles = request.amount_kopeks / 100
         stars_amount = settings.rubles_to_stars(amount_rubles)
 
         if stars_amount <= 0:
             stars_amount = 1
+
+        # Normalize kopeks so credited amount = stars * rate (no rounding mismatch)
+        normalized_kopeks = round(stars_amount * settings.get_stars_rate() * 100)
     except Exception as e:
         logger.error('Error calculating Stars amount', error=e)
         raise HTTPException(
@@ -256,7 +268,7 @@ async def create_stars_invoice(
         )
 
     # Create payload for tracking payment
-    payload = f'balance_topup_{user.id}_{request.amount_kopeks}_{int(time.time())}'
+    payload = f'balance_topup_{user.id}_{normalized_kopeks}_{int(time.time())}'
 
     # Create invoice through Telegram Bot API
     try:
@@ -268,7 +280,7 @@ async def create_stars_invoice(
                 api_url,
                 json={
                     'title': 'Пополнение баланса VPN',
-                    'description': f'Пополнение баланса на {amount_rubles:.2f} ₽ ({stars_amount} ⭐)',
+                    'description': f'Пополнение баланса на {normalized_kopeks / 100:.2f} ₽ ({stars_amount} ⭐)',
                     'payload': payload,
                     'provider_token': '',  # Empty for Stars
                     'currency': 'XTR',
@@ -296,7 +308,7 @@ async def create_stars_invoice(
             return StarsInvoiceResponse(
                 invoice_url=invoice_url,
                 stars_amount=stars_amount,
-                amount_kopeks=request.amount_kopeks,
+                amount_kopeks=normalized_kopeks,
             )
 
     except httpx.HTTPError as e:
@@ -346,6 +358,9 @@ async def create_topup(
     amount_rubles = request.amount_kopeks / 100
     payment_url = None
     payment_id = None
+    cabinet_return_url = f'{settings.CABINET_URL.rstrip("/")}/balance/top-up/result?method={request.payment_method}'
+    cabinet_success_url = f'{cabinet_return_url}&status=success'
+    cabinet_failed_url = f'{cabinet_return_url}&status=failed'
 
     try:
         if request.payment_method == 'yookassa':
@@ -370,6 +385,7 @@ async def create_topup(
                     amount_kopeks=request.amount_kopeks,
                     description=description,
                     metadata=yookassa_metadata,
+                    return_url=cabinet_return_url,
                 )
             else:
                 result = await payment_service.create_yookassa_payment(
@@ -378,11 +394,12 @@ async def create_topup(
                     amount_kopeks=request.amount_kopeks,
                     description=description,
                     metadata=yookassa_metadata,
+                    return_url=cabinet_return_url,
                 )
 
             if result:
                 payment_url = result.get('confirmation_url')
-                payment_id = result.get('yookassa_payment_id')
+                payment_id = str(result.get('local_payment_id') or result.get('yookassa_payment_id') or 'pending')
             else:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -487,6 +504,8 @@ async def create_topup(
                 ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_method_code=method_code,
+                return_url=cabinet_success_url,
+                failed_url=cabinet_failed_url,
             )
 
             if result and result.get('redirect_url'):
@@ -512,6 +531,8 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(request.amount_kopeks),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                return_url=cabinet_return_url,
+                success_url=cabinet_success_url,
             )
 
             if result and result.get('payment_url'):
@@ -559,7 +580,6 @@ async def create_topup(
             option = (request.payment_option or '').strip().lower()
             if option not in {'card', 'sbp'}:
                 option = 'sbp'
-            provider_method = 'card' if option == 'card' else 'sbp'
 
             payment_service = PaymentService()
             result = await payment_service.create_pal24_payment(
@@ -568,7 +588,6 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(request.amount_kopeks),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
-                payment_method=provider_method,
             )
 
             if result:
@@ -609,6 +628,8 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(request.amount_kopeks),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                return_url=cabinet_success_url,
+                failed_url=cabinet_failed_url,
             )
 
             if result and result.get('payment_url'):
@@ -635,6 +656,8 @@ async def create_topup(
                 description=settings.get_balance_payment_description(request.amount_kopeks),
                 telegram_id=user.telegram_id,
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                return_url=cabinet_success_url,
+                failed_url=cabinet_failed_url,
             )
 
             if result and result.get('payment_url'):
@@ -871,7 +894,7 @@ def _is_checkable(record: PendingPayment) -> bool:
     if record.method == PaymentMethod.YOOKASSA:
         return status in {'pending', 'waiting_for_capture'}
     if record.method == PaymentMethod.CRYPTOBOT:
-        return status in {'active'}
+        return status == 'active'
     if record.method == PaymentMethod.CLOUDPAYMENTS:
         return status in {'pending', 'authorized'}
     if record.method == PaymentMethod.FREEKASSA:
@@ -962,6 +985,91 @@ async def get_pending_payments(
     )
 
 
+@router.get('/pending-payments/{method}/latest', response_model=PendingPaymentResponse)
+async def get_latest_payment_by_method(
+    method: str,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get user's most recent payment for a given method (any status, not just pending)."""
+    try:
+        payment_method = PaymentMethod(method)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Invalid payment method: {method}',
+        )
+
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy.orm import selectinload
+
+    from app.database.models import (
+        CloudPaymentsPayment,
+        CryptoBotPayment,
+        FreekassaPayment,
+        HeleketPayment,
+        KassaAiPayment,
+        MulenPayPayment,
+        Pal24Payment,
+        PlategaPayment,
+        WataPayment,
+        YooKassaPayment,
+    )
+
+    model_map: dict[PaymentMethod, type] = {
+        PaymentMethod.YOOKASSA: YooKassaPayment,
+        PaymentMethod.CRYPTOBOT: CryptoBotPayment,
+        PaymentMethod.HELEKET: HeleketPayment,
+        PaymentMethod.MULENPAY: MulenPayPayment,
+        PaymentMethod.PAL24: Pal24Payment,
+        PaymentMethod.WATA: WataPayment,
+        PaymentMethod.PLATEGA: PlategaPayment,
+        PaymentMethod.CLOUDPAYMENTS: CloudPaymentsPayment,
+        PaymentMethod.FREEKASSA: FreekassaPayment,
+        PaymentMethod.KASSA_AI: KassaAiPayment,
+    }
+
+    model = model_map.get(payment_method)
+    if not model:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Unsupported payment method: {method}',
+        )
+
+    cutoff = datetime.now(UTC) - timedelta(hours=1)
+    stmt = (
+        select(model)
+        .options(selectinload(model.user))
+        .where(model.user_id == user.id, model.created_at >= cutoff)
+        .order_by(desc(model.created_at))
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    payment = result.scalars().first()
+
+    if not payment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='No recent payments found',
+        )
+
+    record = PendingPayment(
+        local_id=payment.id,
+        method=payment_method,
+        identifier=str(getattr(payment, 'correlation_id', None) or payment.id),
+        amount_kopeks=payment.amount_kopeks,
+        status=payment.status or '',
+        is_paid=bool(payment.is_paid),
+        created_at=payment.created_at,
+        expires_at=getattr(payment, 'expires_at', None),
+        user=payment.user,
+        payment=payment,
+    )
+
+    return _record_to_response(record)
+
+
 @router.get('/pending-payments/{method}/{payment_id}', response_model=PendingPaymentResponse)
 async def get_pending_payment_details(
     method: str,
@@ -1041,8 +1149,12 @@ async def check_payment_status(
     old_is_paid = record.is_paid
 
     # Run manual check
-    payment_service = PaymentService()
-    updated = await run_manual_check(db, payment_method, payment_id, payment_service)
+    bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    try:
+        payment_service = PaymentService(bot=bot)
+        updated = await run_manual_check(db, payment_method, payment_id, payment_service)
+    finally:
+        await bot.session.close()
 
     if not updated:
         return ManualCheckResponse(
@@ -1068,3 +1180,55 @@ async def check_payment_status(
         old_status=old_status,
         new_status=updated.status,
     )
+
+
+@router.get('/saved-cards', response_model=SavedCardsListResponse)
+async def get_saved_cards(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get user's saved payment methods (cards) for recurrent payments."""
+    recurrent_enabled = settings.YOOKASSA_RECURRENT_ENABLED
+
+    if not recurrent_enabled:
+        return SavedCardsListResponse(cards=[], recurrent_enabled=False)
+
+    methods = await get_active_payment_methods_by_user(db, user.id)
+
+    cards = [
+        SavedCardResponse(
+            id=m.id,
+            method_type=m.method_type,
+            card_last4=m.card_last4,
+            card_type=m.card_type,
+            title=m.title,
+            created_at=m.created_at,
+        )
+        for m in methods
+    ]
+
+    return SavedCardsListResponse(cards=cards, recurrent_enabled=True)
+
+
+@router.delete('/saved-cards/{card_id}', status_code=status.HTTP_200_OK)
+async def delete_saved_card(
+    card_id: int,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Unlink (deactivate) a saved payment method."""
+    if not settings.YOOKASSA_RECURRENT_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Recurrent payments are not enabled',
+        )
+
+    success = await deactivate_payment_method(db, card_id, user.id)
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Saved card not found',
+        )
+
+    return {'success': True, 'message': 'Card unlinked successfully'}

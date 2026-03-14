@@ -1,9 +1,9 @@
 """Enum classes for contest system."""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class GameType(str, Enum):
+class GameType(StrEnum):
     """Types of daily contest games."""
 
     QUEST_BUTTONS = 'quest_buttons'
@@ -30,14 +30,14 @@ class GameType(str, Enum):
         }
 
 
-class RoundStatus(str, Enum):
+class RoundStatus(StrEnum):
     """Contest round status."""
 
     ACTIVE = 'active'
     FINISHED = 'finished'
 
 
-class PrizeType(str, Enum):
+class PrizeType(StrEnum):
     """Types of prizes for contests."""
 
     DAYS = 'days'

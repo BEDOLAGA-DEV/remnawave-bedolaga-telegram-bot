@@ -2,6 +2,15 @@ from app.config import settings
 from app.localization.texts import get_texts
 
 
+def verify_payment_amount(
+    received_kopeks: int,
+    expected_kopeks: int,
+    tolerance_kopeks: int = 1,
+) -> bool:
+    """Check that the received amount matches the expected amount within tolerance."""
+    return abs(received_kopeks - expected_kopeks) <= tolerance_kopeks
+
+
 def get_available_payment_methods() -> list[dict[str, str]]:
     """
     Возвращает список доступных способов оплаты с их настройками
@@ -150,6 +159,18 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    if settings.is_riopay_enabled():
+        riopay_name = settings.get_riopay_display_name()
+        methods.append(
+            {
+                'id': 'riopay',
+                'name': f'Банковская карта ({riopay_name})',
+                'icon': '💳',
+                'description': f'через {riopay_name}',
+                'callback': 'topup_riopay',
+            }
+        )
+
     if settings.is_support_topup_enabled():
         methods.append(
             {
@@ -267,6 +288,8 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_freekassa_enabled()
     if method_id == 'kassa_ai':
         return settings.is_kassa_ai_enabled()
+    if method_id == 'riopay':
+        return settings.is_riopay_enabled()
     if method_id == 'support':
         return settings.is_support_topup_enabled()
     return False

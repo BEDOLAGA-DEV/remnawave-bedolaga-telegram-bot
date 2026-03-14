@@ -4,10 +4,14 @@ import math
 from datetime import datetime
 
 import structlog
+from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database.models import PaymentMethod, User
 from app.services.payment_service import PaymentService
 from app.services.payment_verification_service import (
@@ -206,7 +210,7 @@ def _is_checkable(record: PendingPayment) -> bool:
     if record.method == PaymentMethod.YOOKASSA:
         return status_str in {'pending', 'waiting_for_capture'}
     if record.method == PaymentMethod.CRYPTOBOT:
-        return status_str in {'active'}
+        return status_str == 'active'
     if record.method == PaymentMethod.CLOUDPAYMENTS:
         return status_str in {'pending', 'authorized'}
     if record.method == PaymentMethod.FREEKASSA:
@@ -390,8 +394,12 @@ async def check_payment_status(
     old_is_paid = record.is_paid
 
     # Run manual check
-    payment_service = PaymentService()
-    updated = await run_manual_check(db, payment_method, payment_id, payment_service)
+    bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    try:
+        payment_service = PaymentService(bot=bot)
+        updated = await run_manual_check(db, payment_method, payment_id, payment_service)
+    finally:
+        await bot.session.close()
 
     if not updated:
         return ManualCheckResponse(

@@ -429,7 +429,7 @@ async def get_service_rules(
     language: str = Query('ru', min_length=2, max_length=10),
     fallback: bool = Query(True),
 ) -> ServiceRulesResponse:
-    requested_lang = language.split('-')[0].lower()
+    requested_lang = language.split('-', maxsplit=1)[0].lower()
     rules = await get_rules_by_language(db, requested_lang)
 
     if not rules and fallback:
@@ -467,7 +467,7 @@ async def clear_service_rules(
     db: AsyncSession = Depends(get_db_session),
     language: str = Query('ru', min_length=2, max_length=10),
 ) -> Response:
-    lang = language.split('-')[0].lower()
+    lang = language.split('-', maxsplit=1)[0].lower()
     await clear_all_rules(db, lang)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -479,7 +479,7 @@ async def get_service_rules_history(
     language: str = Query('ru', min_length=2, max_length=10),
     limit: int = Query(10, ge=1, le=100),
 ) -> ServiceRulesHistoryResponse:
-    lang = language.split('-')[0].lower()
+    lang = language.split('-', maxsplit=1)[0].lower()
     history = await get_all_rules_versions(db, lang, limit=limit)
     items = [_serialize_rules(item) for item in history]
     return ServiceRulesHistoryResponse(
@@ -500,7 +500,7 @@ async def restore_service_rules_version(
     db: AsyncSession = Depends(get_db_session),
     language: str = Query('ru', min_length=2, max_length=10),
 ) -> ServiceRulesResponse:
-    lang = language.split('-')[0].lower()
+    lang = language.split('-', maxsplit=1)[0].lower()
     restored = await restore_rules_version(db, rule_id, language=lang)
     if not restored:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'Rules version not found')

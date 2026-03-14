@@ -246,6 +246,7 @@ async def update_ticket_settings(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Update ticket system settings."""
+    import asyncio
     from pathlib import Path
 
     from app.services.support_settings_service import SupportSettingsService
@@ -280,8 +281,8 @@ async def update_ticket_settings(
     # Try to persist to .env file
     try:
         env_file = Path('.env')
-        if env_file.exists():
-            lines = env_file.read_text().splitlines()
+        if await asyncio.to_thread(env_file.exists):
+            lines = (await asyncio.to_thread(env_file.read_text)).splitlines()
             updates = {}
 
             if request.sla_enabled is not None:
@@ -314,7 +315,7 @@ async def update_ticket_settings(
                 if key not in updated_keys:
                     new_lines.append(f'{key}={value}')
 
-            env_file.write_text('\n'.join(new_lines) + '\n')
+            await asyncio.to_thread(env_file.write_text, '\n'.join(new_lines) + '\n')
             logger.info('Updated ticket settings in .env file')
     except Exception as e:
         logger.warning('Failed to update .env file', error=e)

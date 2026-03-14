@@ -4,8 +4,6 @@ import base64
 import hashlib
 import hmac
 import json
-import logging
-import ipaddress
 from collections.abc import Iterable
 
 import structlog
@@ -23,61 +21,6 @@ from app.external.wata_webhook import WataWebhookHandler
 from app.services.pal24_service import Pal24Service
 from app.services.payment_service import PaymentService
 from app.services.tribute_service import TributeService
-
-
-# --- Reverse-proxy aware IP resolution for webhooks (YooKassa) ---
-# We only trust X-Forwarded-For / X-Real-IP when the direct peer is a trusted
-# reverse proxy (e.g., Caddy on an internal / overlay network). This prevents
-# header spoofing from the public internet.
-_CGNAT_NET = ipaddress.ip_network("100.64.0.0/10")
-
-
-def _is_trusted_reverse_proxy_ip(ip: str | None) -> bool:
-    if not ip:
-        return False
-    try:
-        addr = ipaddress.ip_address(ip)
-    except ValueError:
-        return False
-    # Common internal paths: loopback, RFC1918, Docker bridges, link-local, etc.
-    if addr.is_loopback or addr.is_private or addr.is_link_local:
-        return True
-    # NetBird and some overlays commonly use CGNAT space 100.64.0.0/10
-    if addr in _CGNAT_NET:
-        return True
-    return False
-
-
-def _first_valid_ip(value: str | None) -> str | None:
-    if not value:
-        return None
-    # X-Forwarded-For may be a comma-separated chain, we want the left-most IP.
-    for part in value.split(","):
-        candidate = part.strip()
-        if not candidate:
-            continue
-        try:
-            ipaddress.ip_address(candidate)
-            return candidate
-        except ValueError:
-            continue
-    return None
-
-
-def _resolve_webhook_client_ip(remote_ip: str | None, x_forwarded_for: str | None, x_real_ip: str | None, cf_connecting_ip: str | None) -> ipaddress._BaseAddress | None:
-    # Trust proxy headers only if the direct peer is a trusted reverse proxy.
-    if _is_trusted_reverse_proxy_ip(remote_ip):
-        ip_str = _first_valid_ip(x_real_ip) or _first_valid_ip(cf_connecting_ip) or _first_valid_ip(x_forwarded_for) or remote_ip
-    else:
-        # Untrusted peer: ignore headers to prevent spoofing
-        ip_str = remote_ip
-
-    if not ip_str:
-        return None
-    try:
-        return ipaddress.ip_address(ip_str)
-    except ValueError:
-        return None
 
 
 logger = structlog.get_logger(__name__)
@@ -436,41 +379,26 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         @router.post(settings.YOOKASSA_WEBHOOK_PATH)
         async def yookassa_webhook(request: Request) -> JSONResponse:
-            x_forwarded_for = request.headers.get('X-Forwarded-For')
-            x_real_ip = request.headers.get('X-Real-IP')
-            cf_connecting_ip = request.headers.get('Cf-Connecting-Ip')
-
             header_ip_candidates = yookassa_webhook_module.collect_yookassa_ip_candidates(
-                x_forwarded_for,
-                x_real_ip,
-                cf_connecting_ip,
+                request.headers.get('X-Forwarded-For'),
+                request.headers.get('X-Real-IP'),
+                request.headers.get('Cf-Connecting-Ip'),
             )
-
             remote_ip = request.client.host if request.client else None
-            client_ip = _resolve_webhook_client_ip(
-                remote_ip=remote_ip,
-                x_forwarded_for=x_forwarded_for,
-                x_real_ip=x_real_ip,
-                cf_connecting_ip=cf_connecting_ip,
+            client_ip = yookassa_webhook_module.resolve_yookassa_ip(
+                header_ip_candidates,
+                remote=remote_ip,
             )
 
             if client_ip is None:
                 return JSONResponse(
-                    {
-                        'status': 'error',
-                        'reason': 'unknown_ip',
-                        'candidates': header_ip_candidates + ([remote_ip] if remote_ip else []),
-                    },
+                    {'status': 'error', 'reason': 'unknown_ip'},
                     status_code=status.HTTP_403_FORBIDDEN,
                 )
 
             if not yookassa_webhook_module.is_yookassa_ip_allowed(client_ip):
                 return JSONResponse(
-                    {
-                        'status': 'error',
-                        'reason': 'forbidden_ip',
-                        'ip': str(client_ip),
-                    },
+                    {'status': 'error', 'reason': 'forbidden_ip'},
                     status_code=status.HTTP_403_FORBIDDEN,
                 )
 
@@ -777,8 +705,10 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 if success:
                     return JSONResponse({'status': 'ok'})
 
-                transaction_id = payload.get('transactionId', 'unknown')
-                logger.error('Platega webhook processing failed: transactionId', transaction_id=transaction_id)
+                transaction_id = (
+                    payload.get('id') or payload.get('transactionId') or payload.get('transaction_id') or 'unknown'
+                )
+                logger.error('Platega webhook processing failed', transaction_id=transaction_id)
                 return JSONResponse(
                     {'status': 'error', 'reason': 'not_processed'},
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -1172,6 +1102,79 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
+    # RioPay webhook
+    if settings.is_riopay_enabled():
+
+        @router.get(settings.RIOPAY_WEBHOOK_PATH)
+        async def riopay_health() -> JSONResponse:
+            return JSONResponse(
+                {
+                    'status': 'ok',
+                    'service': 'riopay_webhook',
+                    'enabled': settings.is_riopay_enabled(),
+                }
+            )
+
+        @router.post(settings.RIOPAY_WEBHOOK_PATH)
+        async def riopay_webhook(request: Request) -> Response:
+            # Получаем JSON тело
+            try:
+                raw_body = await request.body()
+                payload = json.loads(raw_body)
+            except Exception as parse_error:
+                logger.error('RioPay webhook: не удалось прочитать JSON', parse_error=parse_error)
+                return Response('Error reading JSON', status_code=status.HTTP_400_BAD_REQUEST)
+
+            # Подпись из заголовка (обязательна)
+            signature = request.headers.get('X-Signature') or request.headers.get('x-signature')
+            if not signature:
+                logger.warning('RioPay webhook: отсутствует подпись')
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'missing_signature'},
+                    status_code=status.HTTP_403_FORBIDDEN,
+                )
+
+            from app.services.riopay_service import riopay_service
+
+            if not riopay_service.verify_webhook_signature(raw_body, signature):
+                logger.warning('RioPay webhook: неверная подпись')
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'invalid_signature'},
+                    status_code=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Обрабатываем webhook
+            db_generator = get_db()
+            try:
+                db = await db_generator.__anext__()
+            except StopAsyncIteration:
+                return Response('DB Error', status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            try:
+                success = await payment_service.process_riopay_webhook(
+                    db,
+                    payload=payload,
+                )
+                if success:
+                    return JSONResponse({'status': 'ok'}, status_code=status.HTTP_200_OK)
+
+                logger.error(
+                    'RioPay webhook processing failed',
+                    order_id=payload.get('id'),
+                    status=payload.get('status'),
+                )
+                return Response('Error', status_code=status.HTTP_400_BAD_REQUEST)
+            except Exception as e:
+                logger.exception('RioPay webhook processing error', e=e)
+                return Response('Error', status_code=status.HTTP_400_BAD_REQUEST)
+            finally:
+                try:
+                    await db_generator.__anext__()
+                except StopAsyncIteration:
+                    pass
+
+        routes_registered = True
+
     if routes_registered:
 
         @router.get('/health/payment-webhooks')
@@ -1190,6 +1193,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     'cloudpayments_enabled': settings.is_cloudpayments_enabled(),
                     'freekassa_enabled': settings.is_freekassa_enabled(),
                     'kassa_ai_enabled': settings.is_kassa_ai_enabled(),
+                    'riopay_enabled': settings.is_riopay_enabled(),
                 }
             )
 

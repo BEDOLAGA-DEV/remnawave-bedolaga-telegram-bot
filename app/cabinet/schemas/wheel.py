@@ -1,7 +1,7 @@
 """Схемы для колеса удачи (Fortune Wheel)."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
@@ -9,14 +9,14 @@ from pydantic import BaseModel, Field
 # ==================== ENUMS ====================
 
 
-class WheelPaymentType(str, Enum):
+class WheelPaymentType(StrEnum):
     """Способы оплаты спина."""
 
     TELEGRAM_STARS = 'telegram_stars'
     SUBSCRIPTION_DAYS = 'subscription_days'
 
 
-class WheelPrizeType(str, Enum):
+class WheelPrizeType(StrEnum):
     """Типы призов."""
 
     SUBSCRIPTION_DAYS = 'subscription_days'

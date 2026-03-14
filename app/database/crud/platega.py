@@ -18,7 +18,7 @@ logger = structlog.get_logger(__name__)
 async def create_platega_payment(
     db: AsyncSession,
     *,
-    user_id: int,
+    user_id: int | None,
     amount_kopeks: int,
     currency: str,
     description: str | None,
@@ -130,6 +130,6 @@ async def link_platega_payment_to_transaction(
 ) -> PlategaPayment:
     payment.transaction_id = transaction_id
     payment.updated_at = datetime.now(UTC)
-    await db.commit()
+    await db.flush()
     await db.refresh(payment)
     return payment

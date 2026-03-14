@@ -23,6 +23,7 @@ DEFAULT_BUTTON_STYLES: dict[str, dict] = {
     'support': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
     'info': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
     'admin': {'style': 'danger', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'language': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
 }
 
 BOT_LOCALES = ('ru', 'en', 'ua', 'zh', 'fa')

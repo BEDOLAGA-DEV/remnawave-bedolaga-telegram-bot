@@ -24,6 +24,8 @@ def format_referrer_info(user: User) -> str:
 
     try:
         # Проверяем, является ли referrer обычным объектом или InstrumentedList
+        # getattr default does NOT catch MissingGreenlet (not an AttributeError),
+        # so we wrap in try/except to handle lazy-load failures in async context.
         referrer = getattr(user, 'referrer', None)
 
         # Если referrer это InstrumentedList или None, то возвращаем информацию по ID
@@ -39,8 +41,9 @@ def format_referrer_info(user: User) -> str:
 
         return f'ID {referrer_telegram_id or referred_by_id}'
 
-    except (AttributeError, TypeError):
-        # Если возникла ошибка при обращении к атрибутам, просто возвращаем ID
+    except Exception:
+        # MissingGreenlet is not a subclass of AttributeError/TypeError,
+        # so we must catch broadly to handle lazy-load failures in async context.
         return f'ID {referred_by_id} (ошибка загрузки)'
 
 
@@ -91,20 +94,18 @@ async def mark_user_as_had_paid_subscription(db: AsyncSession, user: User) -> bo
             logger.debug('Пользователь уже отмечен как имевший платную подписку', user_id=user.id)
             return True
 
-        await db.execute(
-            update(User).where(User.id == user.id).values(has_had_paid_subscription=True, updated_at=datetime.now(UTC))
-        )
+        async with db.begin_nested():
+            await db.execute(
+                update(User)
+                .where(User.id == user.id)
+                .values(has_had_paid_subscription=True, updated_at=datetime.now(UTC))
+            )
 
-        await db.commit()
         logger.info('✅ Пользователь отмечен как имевший платную подписку', user_id=user.id)
         return True
 
     except Exception as e:
         logger.error('Ошибка отметки пользователя как имевшего платную подписку', user_id=user.id, error=e)
-        try:
-            await db.rollback()
-        except Exception as rollback_error:
-            logger.error('Ошибка отката транзакции', rollback_error=rollback_error)
         return False
 
 

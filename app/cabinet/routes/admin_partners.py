@@ -85,6 +85,7 @@ async def update_partner_settings(
     admin: User = Depends(require_permission('partners:settings')),
 ):
     """Update partner system settings."""
+    import asyncio
     from pathlib import Path
 
     # Update in-memory settings
@@ -104,8 +105,8 @@ async def update_partner_settings(
     # Persist to .env file
     try:
         env_file = Path('.env')
-        if env_file.exists():
-            lines = env_file.read_text().splitlines()
+        if await asyncio.to_thread(env_file.exists):
+            lines = (await asyncio.to_thread(env_file.read_text)).splitlines()
             updates: dict[str, str] = {}
 
             if request.withdrawal_enabled is not None:
@@ -143,7 +144,7 @@ async def update_partner_settings(
                 if key not in updated_keys:
                     new_lines.append(f'{key}={value}')
 
-            env_file.write_text('\n'.join(new_lines) + '\n')
+            await asyncio.to_thread(env_file.write_text, '\n'.join(new_lines) + '\n')
             logger.info('Updated partner settings in .env file', admin_id=admin.id)
     except Exception as e:
         logger.warning('Failed to update .env file', error=e)

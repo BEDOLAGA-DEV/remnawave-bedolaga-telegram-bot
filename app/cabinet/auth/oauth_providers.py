@@ -122,17 +122,24 @@ async def generate_oauth_state(provider: str, extra_data: dict[str, str] | None 
     return state
 
 
-async def validate_oauth_state(state: str, provider: str) -> dict[str, Any] | None:
+async def validate_oauth_state(state: str, provider: str | None = None) -> dict[str, Any] | None:
     """Validate and consume a CSRF state token from Redis.
 
     Uses atomic GETDEL to prevent TOCTOU race conditions.
     Returns the stored data dict (with 'provider' key + any extra data) or None if invalid.
+
+    Args:
+        state: The state token to validate.
+        provider: If provided, verifies it matches the stored provider.
+                  If None, skips provider check (used for server-complete flow).
     """
     key = cache_key('oauth_state', state)
     data: Any = await cache.getdel(key)
     if data is None:
         return None
-    if not isinstance(data, dict) or data.get('provider') != provider:
+    if not isinstance(data, dict):
+        return None
+    if provider is not None and data.get('provider') != provider:
         return None
     return data
 

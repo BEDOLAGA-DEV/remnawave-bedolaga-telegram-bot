@@ -3,6 +3,7 @@ import re
 import structlog
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.fsm.context import FSMContext
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -237,8 +238,10 @@ async def show_campaigns_list(
     text_lines = ['📋 <b>Список кампаний</b>\n']
 
     for campaign in campaigns:
-        registrations = len(campaign.registrations or [])
-        total_balance = sum(r.balance_bonus_kopeks or 0 for r in campaign.registrations or [])
+        # Access from instance dict to avoid MissingGreenlet on lazy load
+        regs = sa_inspect(campaign).dict.get('registrations', []) or []
+        registrations = len(regs)
+        total_balance = sum(r.balance_bonus_kopeks or 0 for r in regs)
         status = '🟢' if campaign.is_active else '⚪'
         line = (
             f'{status} <b>{campaign.name}</b> — <code>{campaign.start_parameter}</code>\n'

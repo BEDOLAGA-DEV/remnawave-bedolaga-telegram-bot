@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.crud.subscription import decrement_subscription_server_counts
+from app.database.crud.transaction import create_transaction
 from app.database.crud.user import add_user_balance, subtract_user_balance
-from app.database.models import Subscription, TransactionType, User
+from app.database.models import PaymentMethod, Subscription, TransactionType, User
 
 
 logger = structlog.get_logger(__name__)
@@ -89,11 +90,21 @@ async def charge_trial_activation_if_required(
         user,
         price_kopeks,
         charge_description,
+        mark_as_paid_subscription=True,
     )
     if not success:
         raise TrialPaymentChargeFailed
 
-    # subtract_user_balance обновляет пользователя, но на всякий случай приводим к int
+    # Создаём транзакцию для учёта списания за триал
+    await create_transaction(
+        db,
+        user_id=user.id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        amount_kopeks=price_kopeks,
+        description=charge_description,
+        payment_method=PaymentMethod.BALANCE,
+    )
+
     return int(price_kopeks)
 
 

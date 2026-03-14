@@ -107,7 +107,7 @@ async def test_initialize_skips_db_value_for_env_override(monkeypatch):
 
     monkeypatch.setattr(
         'app.services.system_settings_service.AsyncSessionLocal',
-        lambda: DummySession(),
+        DummySession,
     )
 
     async def fake_sync():

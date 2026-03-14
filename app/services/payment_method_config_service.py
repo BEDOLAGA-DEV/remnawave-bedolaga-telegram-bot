@@ -117,16 +117,22 @@ def _get_method_defaults() -> dict:
             'is_configured': settings.is_cloudpayments_enabled(),
             'default_min': settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS,
             'default_max': settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS,
-            'available_sub_options': [
-                {'id': 'card', 'name': 'Карта'},
-                {'id': 'sbp', 'name': 'СБП'},
-            ],
+            # CloudPayments doesn't support programmatic card/sbp routing —
+            # user selects payment method on the provider's payment page.
+            'available_sub_options': None,
         },
         'kassa_ai': {
             'default_display_name': settings.get_kassa_ai_display_name(),
             'is_configured': settings.is_kassa_ai_enabled(),
             'default_min': settings.KASSA_AI_MIN_AMOUNT_KOPEKS,
             'default_max': settings.KASSA_AI_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': None,
+        },
+        'riopay': {
+            'default_display_name': settings.get_riopay_display_name(),
+            'is_configured': settings.is_riopay_enabled(),
+            'default_min': settings.RIOPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.RIOPAY_MAX_AMOUNT_KOPEKS,
             'available_sub_options': None,
         },
     }
@@ -148,7 +154,7 @@ def _get_platega_sub_options() -> list[dict] | None:
                     'name': info.get('title') or info.get('name') or f'Platega {method_code}',
                 }
             )
-        return options if options else None
+        return options or None
     except Exception:
         return None
 
@@ -169,6 +175,7 @@ DEFAULT_METHOD_ORDER = [
     'freekassa_card',
     'cloudpayments',
     'kassa_ai',
+    'riopay',
 ]
 
 

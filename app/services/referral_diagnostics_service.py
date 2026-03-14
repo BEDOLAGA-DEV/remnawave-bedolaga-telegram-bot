@@ -612,6 +612,9 @@ class ReferralDiagnosticsService:
                 user_created_at = referral.created_at
                 contest_start = contest.start_at
                 contest_end = contest.end_at
+                # Нормализация конца дня (полночь → 23:59:59) как в CRUD-слое
+                if contest_end.hour == 0 and contest_end.minute == 0 and contest_end.second == 0:
+                    contest_end = contest_end.replace(hour=23, minute=59, second=59, microsecond=999999)
 
                 if user_created_at < contest_start or user_created_at > contest_end:
                     logger.debug(
@@ -645,6 +648,9 @@ class ReferralDiagnosticsService:
                 user_created_at = referral.created_at
                 contest_start = contest.start_at
                 contest_end = contest.end_at
+                # Нормализация конца дня (полночь → 23:59:59) как в CRUD-слое
+                if contest_end.hour == 0 and contest_end.minute == 0 and contest_end.second == 0:
+                    contest_end = contest_end.replace(hour=23, minute=59, second=59, microsecond=999999)
 
                 if user_created_at < contest_start or user_created_at > contest_end:
                     continue

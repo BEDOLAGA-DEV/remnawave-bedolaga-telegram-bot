@@ -24,7 +24,7 @@ class FreekassaPaymentMixin:
         self,
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None,
         amount_kopeks: int,
         description: str = 'Пополнение баланса',
         email: str | None = None,
@@ -68,7 +68,7 @@ class FreekassaPaymentMixin:
             return None
 
         # Генерируем уникальный order_id
-        order_id = f'fk_{user_id}_{uuid.uuid4().hex[:12]}'
+        order_id = f'fk_{user_id or "guest"}_{uuid.uuid4().hex[:12]}'
         amount_rubles = amount_kopeks / 100
         currency = settings.FREEKASSA_CURRENCY
 
@@ -124,7 +124,7 @@ class FreekassaPaymentMixin:
                 description=description,
                 payment_url=payment_url,
                 expires_at=expires_at,
-                metadata_json=json.dumps(metadata, ensure_ascii=False),
+                metadata_json=metadata,
             )
 
             logger.info(
@@ -250,10 +250,31 @@ class FreekassaPaymentMixin:
         """Создаёт транзакцию, начисляет баланс и отправляет уведомления."""
         payment_module = import_module('app.services.payment_service')
 
+        freekassa_lock_crud = import_module('app.database.crud.freekassa')
+        locked = await freekassa_lock_crud.get_freekassa_payment_by_id_for_update(db, payment.id)
+        if not locked:
+            logger.error('Freekassa: не удалось заблокировать платёж', payment_id=payment.id)
+            return False
+        payment = locked
+
         if payment.transaction_id:
             logger.info(
                 'Freekassa платеж уже привязан к транзакции (trigger=)', order_id=payment.order_id, trigger=trigger
             )
+            return True
+
+        # --- Guest purchase flow (landing page) ---
+        fk_metadata = dict(getattr(payment, 'metadata_json', {}) or {})
+        from app.services.payment.common import try_fulfill_guest_purchase
+
+        guest_result = await try_fulfill_guest_purchase(
+            db,
+            metadata=fk_metadata,
+            payment_amount_kopeks=payment.amount_kopeks,
+            provider_payment_id=str(intid) if intid else payment.order_id,
+            provider_name='freekassa',
+        )
+        if guest_result is not None:
             return True
 
         # Получаем пользователя
@@ -278,16 +299,18 @@ class FreekassaPaymentMixin:
             external_id=str(intid) if intid else payment.order_id,
             is_completed=True,
             created_at=getattr(payment, 'created_at', None),
+            commit=False,
         )
 
-        # Связываем платеж с транзакцией
-        freekassa_crud = import_module('app.database.crud.freekassa')
-        await freekassa_crud.update_freekassa_payment_status(
-            db=db,
-            payment=payment,
-            status=payment.status,
-            transaction_id=transaction.id,
-        )
+        # Связываем платеж с транзакцией (без commit, чтобы сохранить атомарность)
+        payment.transaction_id = transaction.id
+        payment.updated_at = datetime.now(UTC)
+        await db.flush()
+
+        # Lock user row to prevent concurrent balance race conditions
+        from app.database.crud.user import lock_user_for_update
+
+        user = await lock_user_for_update(db, user)
 
         old_balance = user.balance_kopeks
         was_first_topup = not user.has_made_first_topup
@@ -302,6 +325,19 @@ class FreekassaPaymentMixin:
         topup_status = 'Первое пополнение' if was_first_topup else 'Пополнение'
 
         await db.commit()
+
+        # Emit deferred side-effects after atomic commit
+        from app.database.crud.transaction import emit_transaction_side_effects
+
+        await emit_transaction_side_effects(
+            db,
+            transaction,
+            amount_kopeks=payment.amount_kopeks,
+            user_id=payment.user_id,
+            type=TransactionType.DEPOSIT,
+            payment_method=PaymentMethod.FREEKASSA,
+            external_id=str(intid) if intid else payment.order_id,
+        )
 
         # Обработка реферального пополнения
         try:

@@ -50,6 +50,20 @@ async def create_referral_earning(
     return earning
 
 
+async def get_commission_payment_count(db: AsyncSession, referrer_id: int, referral_id: int) -> int:
+    """Подсчитать количество комиссионных начислений реферера за платежи конкретного реферала."""
+    result = await db.execute(
+        select(func.count(ReferralEarning.id)).where(
+            and_(
+                ReferralEarning.user_id == referrer_id,
+                ReferralEarning.referral_id == referral_id,
+                ReferralEarning.reason == 'referral_commission_topup',
+            )
+        )
+    )
+    return result.scalar() or 0
+
+
 async def get_referral_earnings_by_user(
     db: AsyncSession, user_id: int, limit: int = 50, offset: int = 0
 ) -> list[ReferralEarning]:

@@ -246,7 +246,7 @@ class TestPayloadIntegration:
 
         mock_state = AsyncMock()
         mock_state.get_data = AsyncMock(return_value=state_storage)
-        mock_state.set_data = AsyncMock(side_effect=lambda d: state_storage.update(d))
+        mock_state.set_data = AsyncMock(side_effect=state_storage.update)
 
         mock_message = _create_mock_message('/start ref_flow_test', 111222)
 

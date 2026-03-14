@@ -137,7 +137,7 @@ async def show_revenue_statistics(callback: types.CallbackQuery, db_user: User, 
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     month_stats = await get_transactions_statistics(db, month_start, now)
-    all_time_stats = await get_transactions_statistics(db)
+    all_time_stats = await get_transactions_statistics(db, start_date=datetime(2020, 1, 1, tzinfo=UTC), end_date=now)
     current_time = format_datetime(datetime.now(UTC))
 
     text = f"""
@@ -147,7 +147,7 @@ async def show_revenue_statistics(callback: types.CallbackQuery, db_user: User, 
 - Доходы: {settings.format_price(month_stats['totals']['income_kopeks'])}
 - Расходы: {settings.format_price(month_stats['totals']['expenses_kopeks'])}
 - Прибыль: {settings.format_price(month_stats['totals']['profit_kopeks'])}
-- От подписок: {settings.format_price(month_stats['totals']['subscription_income_kopeks'])}
+- От подписок: {settings.format_price(abs(month_stats['totals']['subscription_income_kopeks']))}
 
 <b>Сегодня:</b>
 - Транзакций: {month_stats['today']['transactions_count']}

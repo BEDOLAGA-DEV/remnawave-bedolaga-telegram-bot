@@ -1,3 +1,4 @@
+import html
 import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -175,7 +176,7 @@ def _format_migration_server_label(texts, server) -> str:
     return texts.t(
         'ADMIN_SQUAD_MIGRATION_SERVER_LABEL',
         '{name} — 👥 {users} ({status})',
-    ).format(name=server.display_name, users=server.current_users, status=status)
+    ).format(name=html.escape(server.display_name), users=server.current_users, status=status)
 
 
 def _build_migration_keyboard(

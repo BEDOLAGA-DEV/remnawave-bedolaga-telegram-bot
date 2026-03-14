@@ -453,19 +453,9 @@ async def delete_user_subscription(
     """
     user = await _get_user_by_id_or_telegram_id(db, user_id)
 
-    from app.database.crud.subscription import is_active_paid_subscription
-
     subscription = await get_subscription_by_user_id(db, user.id)
     if not subscription:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'User has no subscription')
-
-    if is_active_paid_subscription(subscription):
-        logger.info(
-            '⏭️ Пропуск деактивации: у пользователя активная оплаченная подписка',
-            user_id=user.id,
-        )
-        user = await get_user_by_id(db, user.id)
-        return _serialize_user(user)
 
     await deactivate_subscription(db, subscription)
 

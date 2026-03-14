@@ -92,8 +92,7 @@ async def get_referral_info(
     available_balance = min(user.balance_kopeks, referral_entitlement)
 
     # Build referral link
-    bot_username = settings.get_bot_username() or 'bot'
-    referral_link = f'https://t.me/{bot_username}?start={user.referral_code}'
+    referral_link = settings.get_referral_link(user.referral_code) if user.referral_code else ''
 
     return ReferralInfoResponse(
         referral_code=user.referral_code or '',
@@ -243,5 +242,6 @@ async def get_referral_terms():
         first_topup_bonus_rubles=settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS / 100,
         inviter_bonus_kopeks=settings.REFERRAL_INVITER_BONUS_KOPEKS,
         inviter_bonus_rubles=settings.REFERRAL_INVITER_BONUS_KOPEKS / 100,
+        max_commission_payments=settings.REFERRAL_MAX_COMMISSION_PAYMENTS,
         partner_section_visible=settings.REFERRAL_PARTNER_SECTION_VISIBLE,
     )

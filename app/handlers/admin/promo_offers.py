@@ -977,7 +977,7 @@ async def _render_squad_selection(
         if not selected_server:
             selected_server = await get_server_squad_by_uuid(db, selected_uuid)
         if selected_server:
-            selected_server_name = selected_server.display_name
+            selected_server_name = html.escape(selected_server.display_name)
 
     header = texts.t('ADMIN_PROMO_OFFER_SELECT_SQUAD_TITLE', '🌍 <b>Выберите сквад</b>')
     if selected_server_name:

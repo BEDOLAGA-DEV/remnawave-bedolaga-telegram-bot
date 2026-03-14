@@ -141,7 +141,7 @@ async def test_auto_purchase_saved_cart_after_topup_success(monkeypatch):
 
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.MiniAppSubscriptionPurchaseService',
-        lambda: DummyMiniAppService(),
+        DummyMiniAppService,
     )
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.user_cart_service.get_user_cart',

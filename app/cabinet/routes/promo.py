@@ -204,15 +204,11 @@ async def get_loyalty_tiers(
     total_spent_kopeks = await get_user_total_spent_kopeks(db, user.id)
     total_spent_rubles = total_spent_kopeks / 100
 
-    # Get user's current promo group
-    await db.refresh(user, ['promo_group', 'user_promo_groups'])
-    current_promo_group = user.get_primary_promo_group() if hasattr(user, 'get_primary_promo_group') else None
-    current_tier_name = current_promo_group.name if current_promo_group else None
-
     # Get all auto-assign promo groups (sorted by threshold ascending)
     auto_groups = await get_auto_assign_promo_groups(db)
 
     tiers: list[LoyaltyTierInfo] = []
+    current_tier_name: str | None = None
     next_tier_name: str | None = None
     next_tier_threshold: float | None = None
 
@@ -220,7 +216,15 @@ async def get_loyalty_tiers(
         threshold_kopeks = group.auto_assign_total_spent_kopeks or 0
         threshold_rubles = threshold_kopeks / 100
         is_achieved = total_spent_kopeks >= threshold_kopeks
-        is_current = current_promo_group and current_promo_group.id == group.id
+
+        # Track highest achieved tier as "current" (by spending, not by assignment)
+        if is_achieved:
+            current_tier_name = group.name
+
+        # Find next tier (first not achieved)
+        if not is_achieved and next_tier_name is None:
+            next_tier_name = group.name
+            next_tier_threshold = threshold_rubles
 
         # Get period discounts
         period_discounts = {}
@@ -241,15 +245,16 @@ async def get_loyalty_tiers(
                 traffic_discount_percent=group.traffic_discount_percent or 0,
                 device_discount_percent=group.device_discount_percent or 0,
                 period_discounts=period_discounts,
-                is_current=is_current,
+                is_current=False,
                 is_achieved=is_achieved,
             )
         )
 
-        # Find next tier (first not achieved)
-        if not is_achieved and next_tier_name is None:
-            next_tier_name = group.name
-            next_tier_threshold = threshold_rubles
+    # Mark only the highest achieved tier as "current"
+    for tier in reversed(tiers):
+        if tier.is_achieved:
+            tier.is_current = True
+            break
 
     # Calculate progress to next tier
     progress_percent = 0.0

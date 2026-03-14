@@ -1,6 +1,6 @@
 [project]
 name = 'remnawave-bedolaga-telegram-bot'
-version = "3.21.0"
+version = "3.32.2"
 description = 'Telegram bot for RemnaWave VPN service'
 readme = 'README.md'
 license = { text = 'MIT' }
@@ -167,6 +167,7 @@ ignore = [
     'TC001',
     'TC002',
     'TC003',
+    'A003',
     'N805',
     'N815',
     'RET504',

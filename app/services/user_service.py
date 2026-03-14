@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -60,6 +61,15 @@ from app.services.notification_delivery_service import (
 
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass
+class DeleteUserResult:
+    """Результат удаления пользователя."""
+
+    bot_deleted: bool = False
+    panel_deleted: bool = False
+    panel_error: str | None = None
 
 
 class UserService:
@@ -735,12 +745,21 @@ class UserService:
             logger.error('Ошибка разблокировки пользователя', error=e)
             return False
 
-    async def delete_user_account(self, db: AsyncSession, user_id: int, admin_id: int) -> bool:
+    async def delete_user_account(
+        self, db: AsyncSession, user_id: int, admin_id: int, *, force_panel_delete: bool = False
+    ) -> DeleteUserResult:
+        """Полное удаление пользователя из бота и (опционально) из панели RemnaWave.
+
+        force_panel_delete=True: пропускает проверку активной подписки и принудительно
+        удаляет (не деактивирует) пользователя из панели RemnaWave. Используется
+        при полном удалении через кабинет администратора.
+        """
+        result = DeleteUserResult()
         try:
             user = await get_user_by_id(db, user_id)
             if not user:
                 logger.warning('Пользователь не найден для удаления', user_id=user_id)
-                return False
+                return result
 
             user_id_display = user.telegram_id or user.email or f'#{user.id}'
             logger.info(
@@ -751,14 +770,14 @@ class UserService:
                 from app.config import settings
                 from app.database.crud.subscription import is_active_paid_subscription
 
-                if is_active_paid_subscription(user.subscription):
+                if not force_panel_delete and is_active_paid_subscription(user.subscription):
                     logger.info(
                         '⏭️ Пропуск отключения RemnaWave при удалении: у пользователя активная оплаченная подписка',
                         user_id=user_id,
                         remnawave_uuid=user.remnawave_uuid,
                     )
                 else:
-                    delete_mode = settings.get_remnawave_user_delete_mode()
+                    delete_mode = 'delete' if force_panel_delete else settings.get_remnawave_user_delete_mode()
 
                     try:
                         from app.services.remnawave_service import RemnaWaveService
@@ -770,11 +789,13 @@ class UserService:
                             async with remnawave_service.get_api_client() as api:
                                 delete_success = await api.delete_user(user.remnawave_uuid)
                                 if delete_success:
+                                    result.panel_deleted = True
                                     logger.info(
                                         '✅ RemnaWave пользователь удален из панели',
                                         remnawave_uuid=user.remnawave_uuid,
                                     )
                                 else:
+                                    result.panel_error = 'Remnawave API вернул ошибку удаления'
                                     logger.warning(
                                         '⚠️ Не удалось удалить пользователя из панели Remnawave',
                                         remnawave_uuid=user.remnawave_uuid,
@@ -784,14 +805,24 @@ class UserService:
                             from app.services.subscription_service import SubscriptionService
 
                             subscription_service = SubscriptionService()
-                            await subscription_service.disable_remnawave_user(user.remnawave_uuid)
-                            logger.info(
-                                '✅ RemnaWave пользователь деактивирован (режим: )',
-                                remnawave_uuid=user.remnawave_uuid,
-                                delete_mode=delete_mode,
-                            )
+                            disabled = await subscription_service.disable_remnawave_user(user.remnawave_uuid)
+                            result.panel_deleted = disabled
+                            if disabled:
+                                logger.info(
+                                    '✅ RemnaWave пользователь деактивирован',
+                                    remnawave_uuid=user.remnawave_uuid,
+                                    delete_mode=delete_mode,
+                                )
+                            else:
+                                result.panel_error = 'disable_remnawave_user вернул False'
+                                logger.warning(
+                                    '⚠️ Не удалось деактивировать пользователя в RemnaWave',
+                                    remnawave_uuid=user.remnawave_uuid,
+                                    delete_mode=delete_mode,
+                                )
 
                     except Exception as e:
+                        result.panel_error = 'Ошибка обработки пользователя в Remnawave'
                         logger.warning(
                             '⚠️ Ошибка обработки пользователя в Remnawave (режим: )',
                             delete_mode=delete_mode,
@@ -803,11 +834,19 @@ class UserService:
                                 from app.services.subscription_service import SubscriptionService
 
                                 subscription_service = SubscriptionService()
-                                await subscription_service.disable_remnawave_user(user.remnawave_uuid)
-                                logger.info(
-                                    '✅ RemnaWave пользователь деактивирован как fallback',
-                                    remnawave_uuid=user.remnawave_uuid,
-                                )
+                                disabled = await subscription_service.disable_remnawave_user(user.remnawave_uuid)
+                                if disabled:
+                                    result.panel_deleted = True
+                                    result.panel_error = 'Удаление не удалось, пользователь деактивирован'
+                                    logger.info(
+                                        '✅ RemnaWave пользователь деактивирован как fallback',
+                                        remnawave_uuid=user.remnawave_uuid,
+                                    )
+                                else:
+                                    logger.warning(
+                                        '⚠️ Fallback деактивация RemnaWave тоже не удалась',
+                                        remnawave_uuid=user.remnawave_uuid,
+                                    )
                             except Exception as fallback_e:
                                 logger.error('❌ Ошибка деактивации RemnaWave как fallback', fallback_e=fallback_e)
 
@@ -1207,10 +1246,14 @@ class UserService:
                     AccessPolicy,
                     AdminAuditLog,
                     AdminRole,
+                    RioPayPayment,
+                    SavedPaymentMethod,
                     UserRole,
                     WithdrawalRequest,
                 )
 
+                await db.execute(delete(SavedPaymentMethod).where(SavedPaymentMethod.user_id == user_id))
+                await db.execute(delete(RioPayPayment).where(RioPayPayment.user_id == user_id))
                 await db.execute(delete(AdminAuditLog).where(AdminAuditLog.user_id == user_id))
                 await db.execute(delete(WithdrawalRequest).where(WithdrawalRequest.user_id == user_id))
                 await db.execute(
@@ -1225,20 +1268,21 @@ class UserService:
             except Exception as e:
                 logger.error('❌ Ошибка финального удаления пользователя', error=e)
                 await db.rollback()
-                return False
+                return result
 
+            result.bot_deleted = True
             logger.info(
                 '✅ Пользователь (ID: ) полностью удален администратором',
                 user_id_display=user_id_display,
                 user_id=user_id,
                 admin_id=admin_id,
             )
-            return True
+            return result
 
         except Exception as e:
             logger.error('❌ Критическая ошибка удаления пользователя', user_id=user_id, error=e)
             await db.rollback()
-            return False
+            return result
 
     async def get_user_statistics(self, db: AsyncSession) -> dict[str, Any]:
         try:
@@ -1276,8 +1320,8 @@ class UserService:
                     skipped_active_sub += 1
                     continue
 
-                success = await self.delete_user_account(db, user.id, 0)
-                if success:
+                delete_result = await self.delete_user_account(db, user.id, 0)
+                if delete_result.bot_deleted:
                     deleted_count += 1
 
             if skipped_active_sub > 0:

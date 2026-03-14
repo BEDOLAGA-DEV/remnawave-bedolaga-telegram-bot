@@ -14,6 +14,7 @@ from app.services.maintenance_service import maintenance_service
 
 from .auth.jwt_handler import get_token_payload
 from .auth.telegram_auth import validate_telegram_init_data
+from .ip_utils import get_client_ip
 
 
 logger = structlog.get_logger(__name__)
@@ -289,11 +290,11 @@ def require_permission(*permissions: str):
     ) -> User:
         from app.services.permission_service import PermissionService
 
-        ip_address = (
-            request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
-            or request.headers.get('X-Real-IP', '').strip()
-            or (request.client.host if request.client else None)
-        )
+        try:
+            client_ip = get_client_ip(request)
+        except HTTPException:
+            logger.warning('Unable to determine client IP in require_permission')
+            client_ip = 'unknown'
         user_agent = request.headers.get('user-agent', '')
 
         # Extract resource_type from the first permission (section before ':')
@@ -308,7 +309,7 @@ def require_permission(*permissions: str):
                 db,
                 user,
                 perm,
-                ip_address=ip_address,
+                ip_address=client_ip,
             )
             if not allowed:
                 await PermissionService.log_action(
@@ -317,7 +318,7 @@ def require_permission(*permissions: str):
                     action=perm,
                     resource_type=resource_type,
                     status='denied',
-                    ip_address=ip_address,
+                    ip_address=client_ip,
                     user_agent=user_agent,
                     request_method=request.method,
                     request_path=str(request.url.path),
@@ -354,7 +355,7 @@ def require_permission(*permissions: str):
             action=','.join(permissions),
             resource_type=resource_type,
             status='success',
-            ip_address=ip_address,
+            ip_address=client_ip,
             user_agent=user_agent,
             request_method=request.method,
             request_path=str(request.url.path),

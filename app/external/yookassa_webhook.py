@@ -207,7 +207,6 @@ class YooKassaWebhookHandler:
     async def handle_webhook(self, request: web.Request) -> web.Response:
         try:
             logger.info('📥 Получен YooKassa webhook', method=request.method, path=request.path)
-            logger.info('📋 Headers', value=dict(request.headers))
 
             header_ip_candidates = collect_yookassa_ip_candidates(
                 request.headers.get('X-Forwarded-For'),
@@ -242,7 +241,7 @@ class YooKassaWebhookHandler:
                 logger.warning('⚠️ Получен пустой webhook от YooKassa')
                 return web.Response(status=400, text='Empty body')
 
-            logger.info('📄 Body', body=body)
+            logger.debug('📄 Body received', length=len(body))
 
             signature = request.headers.get('Signature') or request.headers.get('X-YooKassa-Signature')
             if signature:

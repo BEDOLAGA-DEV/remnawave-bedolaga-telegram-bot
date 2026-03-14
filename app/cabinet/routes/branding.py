@@ -1,5 +1,6 @@
 """Branding routes for cabinet - logo, project name, and theme colors management."""
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.crud.system_setting import get_setting_value
 from app.database.models import SystemSetting, User
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -38,7 +40,14 @@ YANDEX_METRIKA_ID_KEY = 'CABINET_YANDEX_METRIKA_ID'  # Stores counter ID (numeri
 GOOGLE_ADS_ID_KEY = 'CABINET_GOOGLE_ADS_ID'  # Stores conversion ID (e.g. "AW-123456789")
 GOOGLE_ADS_LABEL_KEY = 'CABINET_GOOGLE_ADS_LABEL'  # Stores conversion label (alphanumeric)
 LITE_MODE_ENABLED_KEY = 'CABINET_LITE_MODE_ENABLED'  # Stores "true" or "false"
+GIFT_ENABLED_KEY = 'CABINET_GIFT_ENABLED'  # Stores "true" or "false"
 ANIMATION_CONFIG_KEY = 'CABINET_ANIMATION_CONFIG'  # Stores JSON with animation config
+TELEGRAM_WIDGET_SIZE_KEY = 'TELEGRAM_WIDGET_SIZE'
+TELEGRAM_WIDGET_RADIUS_KEY = 'TELEGRAM_WIDGET_RADIUS'
+TELEGRAM_WIDGET_USERPIC_KEY = 'TELEGRAM_WIDGET_USERPIC'
+TELEGRAM_WIDGET_REQUEST_ACCESS_KEY = 'TELEGRAM_WIDGET_REQUEST_ACCESS'
+TELEGRAM_OIDC_ENABLED_KEY = 'TELEGRAM_OIDC_ENABLED'
+TELEGRAM_OIDC_CLIENT_ID_KEY = 'TELEGRAM_OIDC_CLIENT_ID'
 
 # Default animation config
 DEFAULT_ANIMATION_CONFIG = {
@@ -243,6 +252,20 @@ class EmailAuthEnabledUpdate(BaseModel):
     enabled: bool
 
 
+class TelegramWidgetConfigResponse(BaseModel):
+    """Public Telegram Login Widget configuration."""
+
+    bot_username: str
+    size: Literal['large', 'medium', 'small'] = 'large'
+    radius: int = Field(default=8, ge=0, le=20)
+    userpic: bool = True
+    request_access: bool = True
+
+    # OIDC fields (frontend decides which flow to use)
+    oidc_enabled: bool = False
+    oidc_client_id: str = ''
+
+
 class LiteModeEnabledResponse(BaseModel):
     """Lite mode enabled setting."""
 
@@ -251,6 +274,18 @@ class LiteModeEnabledResponse(BaseModel):
 
 class LiteModeEnabledUpdate(BaseModel):
     """Request to update lite mode setting."""
+
+    enabled: bool
+
+
+class GiftEnabledResponse(BaseModel):
+    """Gift feature enabled setting."""
+
+    enabled: bool = False
+
+
+class GiftEnabledUpdate(BaseModel):
+    """Request to update gift feature setting."""
 
     enabled: bool
 
@@ -294,13 +329,6 @@ DEFAULT_THEME_COLORS = {
 def ensure_branding_dir():
     """Ensure branding directory exists."""
     BRANDING_DIR.mkdir(parents=True, exist_ok=True)
-
-
-async def get_setting_value(db: AsyncSession, key: str) -> str | None:
-    """Get a setting value from database."""
-    result = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
-    setting = result.scalar_one_or_none()
-    return setting.value if setting else None
 
 
 async def set_setting_value(db: AsyncSession, key: str, value: str):
@@ -374,7 +402,7 @@ async def get_logo():
     """
     logo_path = get_logo_path()
 
-    if logo_path is None or not logo_path.exists():
+    if logo_path is None or not await asyncio.to_thread(logo_path.exists):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No custom logo set')
 
     # Determine media type from file extension
@@ -443,7 +471,7 @@ async def upload_logo(
         )
 
     # Ensure directory exists
-    ensure_branding_dir()
+    await asyncio.to_thread(ensure_branding_dir)
 
     # Determine file extension from content type
     ext_map = {
@@ -456,12 +484,12 @@ async def upload_logo(
     extension = ext_map.get(file.content_type, '.png')
 
     # Remove old logo files with any extension
-    for old_file in BRANDING_DIR.glob('logo.*'):
-        old_file.unlink()
+    for old_file in await asyncio.to_thread(lambda: list(BRANDING_DIR.glob('logo.*'))):
+        await asyncio.to_thread(old_file.unlink)
 
     # Save new logo
     logo_path = BRANDING_DIR / f'logo{extension}'
-    logo_path.write_bytes(content)
+    await asyncio.to_thread(logo_path.write_bytes, content)
 
     # Mark that we have a custom logo
     await set_setting_value(db, BRANDING_LOGO_KEY, 'custom')
@@ -490,8 +518,8 @@ async def delete_logo(
 ):
     """Delete custom logo and revert to letter. Admin only."""
     # Remove logo files
-    for old_file in BRANDING_DIR.glob('logo.*'):
-        old_file.unlink()
+    for old_file in await asyncio.to_thread(lambda: list(BRANDING_DIR.glob('logo.*'))):
+        await asyncio.to_thread(old_file.unlink)
 
     # Update setting
     await set_setting_value(db, BRANDING_LOGO_KEY, 'default')
@@ -830,6 +858,47 @@ async def update_email_auth_enabled(
     return EmailAuthEnabledResponse(enabled=payload.enabled)
 
 
+# ============ Telegram Widget Config Routes ============
+
+
+@router.get('/telegram-widget', response_model=TelegramWidgetConfigResponse)
+async def get_telegram_widget_config(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """
+    Get Telegram Login Widget configuration.
+    This is a public endpoint - no authentication required.
+    Returns widget display settings and bot username for the login page.
+    """
+    bot_username = settings.BOT_USERNAME or ''
+
+    size_val = await get_setting_value(db, TELEGRAM_WIDGET_SIZE_KEY)
+    radius_val = await get_setting_value(db, TELEGRAM_WIDGET_RADIUS_KEY)
+    userpic_val = await get_setting_value(db, TELEGRAM_WIDGET_USERPIC_KEY)
+    request_access_val = await get_setting_value(db, TELEGRAM_WIDGET_REQUEST_ACCESS_KEY)
+
+    oidc_enabled_val = await get_setting_value(db, TELEGRAM_OIDC_ENABLED_KEY)
+    oidc_client_id_val = await get_setting_value(db, TELEGRAM_OIDC_CLIENT_ID_KEY)
+    oidc_client_id = oidc_client_id_val or settings.TELEGRAM_OIDC_CLIENT_ID
+    oidc_enabled = (
+        oidc_enabled_val.lower() == 'true' if oidc_enabled_val is not None else settings.TELEGRAM_OIDC_ENABLED
+    ) and bool(oidc_client_id)
+
+    return TelegramWidgetConfigResponse(
+        bot_username=bot_username,
+        size=size_val if size_val in ('large', 'medium', 'small') else settings.TELEGRAM_WIDGET_SIZE,
+        radius=max(0, min(int(radius_val), 20))
+        if radius_val and radius_val.isdigit()
+        else settings.TELEGRAM_WIDGET_RADIUS,
+        userpic=userpic_val.lower() == 'true' if userpic_val is not None else settings.TELEGRAM_WIDGET_USERPIC,
+        request_access=request_access_val.lower() == 'true'
+        if request_access_val is not None
+        else settings.TELEGRAM_WIDGET_REQUEST_ACCESS,
+        oidc_enabled=oidc_enabled,
+        oidc_client_id=oidc_client_id if oidc_enabled else '',
+    )
+
+
 # ============ Analytics Counters Routes ============
 
 
@@ -928,3 +997,30 @@ async def update_lite_mode_enabled(
     logger.info('Admin set lite mode enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
 
     return LiteModeEnabledResponse(enabled=payload.enabled)
+
+
+# ============ Gift Feature Routes ============
+
+
+@router.get('/gift-enabled', response_model=GiftEnabledResponse)
+async def get_gift_enabled(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get gift feature enabled setting. Public endpoint."""
+    value = await get_setting_value(db, GIFT_ENABLED_KEY)
+    if value is not None:
+        enabled = value.lower() == 'true'
+        return GiftEnabledResponse(enabled=enabled)
+    return GiftEnabledResponse(enabled=False)
+
+
+@router.patch('/gift-enabled', response_model=GiftEnabledResponse)
+async def update_gift_enabled(
+    payload: GiftEnabledUpdate,
+    admin: User = Depends(require_permission('settings:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update gift feature enabled setting. Admin only."""
+    await set_setting_value(db, GIFT_ENABLED_KEY, str(payload.enabled).lower())
+    logger.info('Admin set gift enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
+    return GiftEnabledResponse(enabled=payload.enabled)

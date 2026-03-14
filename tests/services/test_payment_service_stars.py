@@ -273,6 +273,7 @@ async def test_process_stars_payment_simple_subscription_success(
             transaction: Any,
             period_days: int,
             was_trial_conversion: bool,
+            **kwargs: Any,
         ) -> None:
             admin_calls.append(
                 {

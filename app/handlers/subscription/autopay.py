@@ -3,13 +3,20 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.crud.saved_payment_method import (
+    deactivate_payment_method,
+    get_active_payment_methods_by_user,
+)
 from app.database.crud.subscription import update_subscription_autopay
 from app.database.models import User
 from app.keyboards.inline import (
+    _get_payment_method_display_name,
     get_autopay_days_keyboard,
     get_autopay_keyboard,
+    get_confirm_unlink_keyboard,
     get_countries_keyboard,
     get_devices_keyboard,
+    get_saved_cards_keyboard,
     get_subscription_period_keyboard,
     get_traffic_packages_keyboard,
 )
@@ -132,6 +139,89 @@ async def set_autopay_days(callback: types.CallbackQuery, db_user: User, db: Asy
     await callback.answer(texts.t('AUTOPAY_DAYS_SET', '✅ Установлено {days} дней!').format(days=days))
 
     await handle_autopay_menu(callback, db_user, db)
+
+
+async def handle_saved_cards_list(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
+    cards = await get_active_payment_methods_by_user(db, db_user.id)
+
+    if not cards:
+        await callback.message.edit_text(
+            texts.t(
+                'SAVED_CARDS_EMPTY',
+                '💳 <b>Привязанные карты</b>\n\nНет привязанных карт.\n'
+                'Карта привяжется автоматически при следующем пополнении баланса.',
+            ),
+            reply_markup=get_saved_cards_keyboard([], db_user.language),
+            parse_mode='HTML',
+        )
+    else:
+        await callback.message.edit_text(
+            texts.t(
+                'SAVED_CARDS_TITLE',
+                '💳 <b>Привязанные карты</b>\n\nВыберите карту для отвязки:',
+            ),
+            reply_markup=get_saved_cards_keyboard(cards, db_user.language),
+            parse_mode='HTML',
+        )
+    await callback.answer()
+
+
+async def handle_unlink_card(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
+    card_id = int(callback.data.split('_')[-1])
+
+    cards = await get_active_payment_methods_by_user(db, db_user.id)
+    card = next((c for c in cards if c.id == card_id), None)
+
+    if not card:
+        await callback.answer(
+            texts.t('SAVED_CARDS_UNLINK_ERROR', '❌ Не удалось отвязать карту'),
+            show_alert=True,
+        )
+        return
+
+    card_label = _get_payment_method_display_name(card, db_user.language)
+    text = texts.t(
+        'SAVED_CARDS_CONFIRM_UNLINK',
+        'Вы уверены, что хотите отвязать карту <b>{card}</b>?\n\n'
+        'После отвязки автоплатеж не сможет использовать эту карту.',
+    ).format(card=card_label)
+
+    if len(cards) == 1:
+        text += texts.t(
+            'SAVED_CARDS_LAST_CARD_WARNING',
+            '\n\n⚠️ <b>Внимание:</b> это ваша последняя привязанная карта. '
+            'После отвязки автоплатеж не сможет списывать средства.',
+        )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_confirm_unlink_keyboard(card_id, db_user.language),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+async def handle_confirm_unlink(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
+    card_id = int(callback.data.split('_')[-1])
+
+    success = await deactivate_payment_method(db, card_id, db_user.id)
+
+    if success:
+        await callback.answer(
+            texts.t('SAVED_CARDS_UNLINKED', '✅ Карта отвязана'),
+        )
+    else:
+        await callback.answer(
+            texts.t('SAVED_CARDS_UNLINK_ERROR', '❌ Не удалось отвязать карту'),
+            show_alert=True,
+        )
+        return
+
+    # Return to the updated cards list
+    await handle_saved_cards_list(callback, db_user, db)
 
 
 async def handle_subscription_config_back(

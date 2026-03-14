@@ -4,7 +4,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.crud.referral import create_referral_earning, get_user_campaign_id
+from app.database.crud.referral import create_referral_earning, get_commission_payment_count, get_user_campaign_id
 from app.database.crud.user import add_user_balance, get_user_by_id
 from app.database.models import ReferralEarning, TransactionType, User
 from app.services.notification_delivery_service import (
@@ -14,6 +14,23 @@ from app.utils.user_utils import get_effective_referral_commission_percent
 
 
 logger = structlog.get_logger(__name__)
+
+
+async def _is_commission_limit_reached(db: AsyncSession, referrer_id: int, referral_id: int) -> bool:
+    """Проверяет, исчерпан ли лимит комиссионных платежей для пары реферер-реферал."""
+    if settings.REFERRAL_MAX_COMMISSION_PAYMENTS <= 0:
+        return False
+    paid_count = await get_commission_payment_count(db, referrer_id, referral_id)
+    if paid_count >= settings.REFERRAL_MAX_COMMISSION_PAYMENTS:
+        logger.info(
+            'Лимит комиссионных платежей исчерпан',
+            referrer_id=referrer_id,
+            referral_id=referral_id,
+            paid_count=paid_count,
+            max_payments=settings.REFERRAL_MAX_COMMISSION_PAYMENTS,
+        )
+        return True
+    return False
 
 
 async def send_referral_notification(
@@ -99,19 +116,28 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
             commission_percent = get_effective_referral_commission_percent(referrer)
             referral_notification = (
                 f'🎉 <b>Добро пожаловать!</b>\n\n'
-                f'Вы перешли по реферальной ссылке пользователя <b>{referrer.full_name}</b>!\n\n'
-                f'💰 При первом пополнении от {settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS)} '
-                f'вы получите бонус {settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS)}!\n\n'
-                # f"🎁 Ваш реферер также получит награду за ваше первое пополнение."
+                f'Вы перешли по реферальной ссылке пользователя <b>{referrer.full_name}</b>!'
             )
+            if settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
+                referral_notification += (
+                    f'\n\n💰 При первом пополнении от {settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS)} '
+                    f'вы получите бонус {settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS)}!'
+                )
             await send_referral_notification(bot, new_user.telegram_id, referral_notification, user=new_user)
 
             inviter_notification = (
                 f'👥 <b>Новый реферал!</b>\n\n'
                 f'По вашей ссылке зарегистрировался пользователь <b>{new_user.full_name}</b>!\n\n'
                 f'💰 Когда он пополнит баланс от {settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS)}, '
-                f'вы получите минимум {settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS)} или '
-                f'{commission_percent}% от суммы (что больше).\n\n'
+            )
+            if settings.REFERRAL_INVITER_BONUS_KOPEKS > 0:
+                inviter_notification += (
+                    f'вы получите минимум {settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS)} или '
+                    f'{commission_percent}% от суммы (что больше).\n\n'
+                )
+            else:
+                inviter_notification += f'вы получите {commission_percent}% от суммы.\n\n'
+            inviter_notification += (
                 f'📈 С каждого последующего пополнения вы будете получать {commission_percent}% комиссии.'
             )
             await send_referral_notification(
@@ -168,6 +194,9 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
                     user_id=user_id,
                     topup_amount_kopeks=topup_amount_kopeks / 100,
                 )
+
+                if commission_amount > 0 and await _is_commission_limit_reached(db, referrer.id, user.id):
+                    return True
 
                 if commission_amount > 0:
                     balance_ok = await add_user_balance(
@@ -325,6 +354,9 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
                     )
 
         elif commission_amount > 0:
+            if await _is_commission_limit_reached(db, referrer.id, user.id):
+                return True
+
             balance_ok = await add_user_balance(
                 db,
                 referrer,

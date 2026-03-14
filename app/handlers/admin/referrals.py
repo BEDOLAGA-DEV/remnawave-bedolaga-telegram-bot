@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -628,6 +629,9 @@ async def process_test_referral_earning(message: types.Message, db_user: User, d
     db.add(earning)
 
     # Добавляем на баланс пользователя
+    from app.database.crud.user import lock_user_for_update
+
+    target_user = await lock_user_for_update(db, target_user)
     target_user.balance_kopeks += amount_kopeks
 
     await db.commit()
@@ -756,8 +760,8 @@ async def _show_diagnostics_for_period(callback: types.CallbackQuery, db: AsyncS
 
         # Информация о логах
         log_path = referral_diagnostics_service.log_path
-        log_exists = log_path.exists()
-        log_size = log_path.stat().st_size if log_exists else 0
+        log_exists = await asyncio.to_thread(log_path.exists)
+        log_size = (await asyncio.to_thread(log_path.stat)).st_size if log_exists else 0
 
         text += f'\n<i>📂 {log_path.name}'
         if log_exists:
@@ -1434,9 +1438,9 @@ async def receive_log_file(message: types.Message, db_user: User, db: AsyncSessi
 
     finally:
         # Удаляем временный файл
-        if temp_file_path and Path(temp_file_path).exists():
+        if temp_file_path and await asyncio.to_thread(Path(temp_file_path).exists):
             try:
-                Path(temp_file_path).unlink()
+                await asyncio.to_thread(Path(temp_file_path).unlink)
                 logger.info('🗑️ Временный файл удалён', temp_file_path=temp_file_path)
             except Exception as e:
                 logger.error('Ошибка удаления временного файла', error=e)

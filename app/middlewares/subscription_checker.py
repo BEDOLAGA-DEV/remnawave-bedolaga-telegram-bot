@@ -40,10 +40,15 @@ class SubscriptionStatusMiddleware(BaseMiddleware):
                 current_time = datetime.now(UTC)
                 subscription = user.subscription
 
+                # Суточные подписки управляются DailySubscriptionService — не экспайрим их тут
+                tariff = getattr(subscription, 'tariff', None)
+                is_active_daily = tariff and getattr(tariff, 'is_daily', False) and not subscription.is_daily_paused
+
                 if (
                     subscription.status == SubscriptionStatus.ACTIVE.value
                     and subscription.end_date
                     and subscription.end_date <= current_time
+                    and not is_active_daily
                 ):
                     # Вычисляем насколько давно истекла подписка
                     time_since_expiry = current_time - subscription.end_date

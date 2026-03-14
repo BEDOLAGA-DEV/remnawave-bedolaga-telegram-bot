@@ -1,9 +1,11 @@
+import functools
 import json
 from datetime import timedelta
 from typing import Any
 
 import redis.asyncio as redis
 import structlog
+from redis.exceptions import NoScriptError
 
 from app.config import settings
 
@@ -21,6 +23,8 @@ class CacheService:
             self.redis_client = redis.from_url(settings.REDIS_URL)
             await self.redis_client.ping()
             self._connected = True
+            # Invalidate cached Lua script SHA (new connection = new script cache)
+            RateLimitCache._rate_limit_sha = None
             logger.info('✅ Подключение к Redis кешу установлено')
         except Exception as e:
             logger.warning('⚠️ Не удалось подключиться к Redis', error=e)
@@ -263,8 +267,9 @@ def cache_key(*parts) -> str:
     return ':'.join(str(part) for part in parts)
 
 
-async def cached_function(key: str, expire: int = 300):
+def cached_function(key: str, expire: int = 300):
     def decorator(func):
+        @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             cache_result = await cache.get(key)
             if cache_result is not None:
@@ -340,25 +345,96 @@ class SystemCache:
 
 
 class RateLimitCache:
+    # Lua script: atomic INCR + conditional EXPIRE (only on key creation).
+    # Prevents sliding window — TTL is set once, not refreshed on every request.
+    _RATE_LIMIT_SCRIPT = """
+local c = redis.call('INCR', KEYS[1])
+if c == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return c
+"""
+    _rate_limit_sha: str | None = None
+
+    @staticmethod
+    async def _atomic_rate_check(key: str, limit: int, window: int, *, fail_closed: bool = False) -> bool:
+        """Atomic rate limit check using Lua INCR + conditional EXPIRE.
+
+        Returns True if rate limited, False if allowed.
+        EXPIRE is set only on key creation (INCR returns 1), preventing
+        sliding window where each request would reset the TTL.
+        When fail_closed=True, blocks requests when Redis is unavailable
+        (use for security-critical unauthenticated endpoints).
+        """
+        if not cache._connected or cache.redis_client is None:
+            logger.warning('Rate limiter unavailable: Redis disconnected', key=key)
+            return fail_closed
+
+        try:
+            # Cache the script SHA for performance (avoids sending script body every time)
+            if RateLimitCache._rate_limit_sha is None:
+                RateLimitCache._rate_limit_sha = await cache.redis_client.script_load(
+                    RateLimitCache._RATE_LIMIT_SCRIPT,
+                )
+            try:
+                current = await cache.redis_client.evalsha(
+                    RateLimitCache._rate_limit_sha,
+                    1,
+                    key,
+                    window,
+                )
+            except NoScriptError:
+                # SHA evicted from Redis script cache — reload and retry
+                RateLimitCache._rate_limit_sha = await cache.redis_client.script_load(
+                    RateLimitCache._RATE_LIMIT_SCRIPT,
+                )
+                current = await cache.redis_client.evalsha(
+                    RateLimitCache._rate_limit_sha,
+                    1,
+                    key,
+                    window,
+                )
+            return int(current) > limit
+        except Exception:
+            logger.warning('Rate limiter error', key=key, exc_info=True)
+            return fail_closed
+
     @staticmethod
     async def is_rate_limited(user_id: int, action: str, limit: int, window: int) -> bool:
         key = cache_key('rate_limit', user_id, action)
-        current = await cache.get(key)
-
-        if current is None:
-            await cache.set(key, 1, window)
-            return False
-
-        if current >= limit:
-            return True
-
-        await cache.increment(key)
-        return False
+        return await RateLimitCache._atomic_rate_check(key, limit, window)
 
     @staticmethod
     async def reset_rate_limit(user_id: int, action: str) -> bool:
         key = cache_key('rate_limit', user_id, action)
         return await cache.delete(key)
+
+    @staticmethod
+    async def is_ip_rate_limited(ip: str, action: str, limit: int, window: int, *, fail_closed: bool = False) -> bool:
+        """IP-based rate limiting for unauthenticated endpoints."""
+        key = cache_key('rate_limit', 'ip', ip, action)
+        return await RateLimitCache._atomic_rate_check(key, limit, window, fail_closed=fail_closed)
+
+
+class TokenReplayCache:
+    """Prevents OIDC id_token replay by storing token hashes with TTL."""
+
+    @staticmethod
+    async def is_token_replayed(token_hash: str, ttl: int = 300) -> bool:
+        """Check if token was already used. Returns True if replayed.
+
+        Sets the token hash in Redis with TTL on first use.
+        If Redis is unavailable, allows the request (fail-open,
+        since rate limiting already provides protection).
+        """
+        if not cache._connected or cache.redis_client is None:
+            return False
+        try:
+            key = cache_key('oidc_token', token_hash)
+            was_set = await cache.redis_client.set(key, '1', ex=ttl, nx=True)
+            return not was_set  # nx=True returns None if key already exists
+        except Exception:
+            return False
 
 
 class ChannelSubCache:

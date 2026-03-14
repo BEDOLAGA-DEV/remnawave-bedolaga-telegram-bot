@@ -48,6 +48,7 @@ class SubscriptionData(BaseModel):
     hide_subscription_link: bool = False  # Скрывать ли отображение ссылки (но кнопки работают)
     is_active: bool
     is_expired: bool
+    is_limited: bool = False
     traffic_purchases: list[TrafficPurchaseInfo] = []
     # Daily tariff fields
     is_daily: bool = False

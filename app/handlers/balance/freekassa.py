@@ -21,8 +21,8 @@ logger = structlog.get_logger(__name__)
 
 
 FREEKASSA_SUB_METHODS = {
-    'freekassa_sbp': {'payment_system_id': 44, 'get_name': lambda: settings.get_freekassa_sbp_display_name()},
-    'freekassa_card': {'payment_system_id': 36, 'get_name': lambda: settings.get_freekassa_card_display_name()},
+    'freekassa_sbp': {'payment_system_id': 44, 'get_name': settings.get_freekassa_sbp_display_name},
+    'freekassa_card': {'payment_system_id': 36, 'get_name': settings.get_freekassa_card_display_name},
 }
 
 

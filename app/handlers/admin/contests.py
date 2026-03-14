@@ -1242,7 +1242,7 @@ async def process_mass_virtual_count(
                 '❌ Введите число от 1 до 50:',
                 reply_markup=types.InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_contests_ref')],
+                        [types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_contests_referral')],
                     ]
                 ),
             )
@@ -1252,7 +1252,7 @@ async def process_mass_virtual_count(
             '❌ Введите корректное число от 1 до 50:',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_contests_ref')],
+                    [types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_contests_referral')],
                 ]
             ),
         )
@@ -1427,13 +1427,15 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(prompt_edit_summary_times, F.data.startswith('admin_contest_edit_times_'))
     dp.callback_query.register(delete_contest, F.data.startswith('admin_contest_delete_'))
     dp.callback_query.register(show_leaderboard, F.data.startswith('admin_contest_leaderboard_'))
-    dp.callback_query.register(show_detailed_stats, F.data.startswith('admin_contest_detailed_stats_'))
     dp.callback_query.register(show_detailed_stats_page, F.data.startswith('admin_contest_detailed_stats_page_'))
+    dp.callback_query.register(show_detailed_stats, F.data.startswith('admin_contest_detailed_stats_'))
     dp.callback_query.register(sync_contest, F.data.startswith('admin_contest_sync_'))
     dp.callback_query.register(debug_contest_transactions, F.data.startswith('admin_contest_debug_'))
     dp.callback_query.register(start_contest_creation, F.data == 'admin_contests_create')
     dp.callback_query.register(
-        select_contest_mode, F.data.in_(['admin_contest_mode_paid', 'admin_contest_mode_registered'])
+        select_contest_mode,
+        F.data.in_(['admin_contest_mode_paid', 'admin_contest_mode_registered']),
+        AdminStates.creating_referral_contest_mode,
     )
 
     dp.message.register(process_title, AdminStates.creating_referral_contest_title)

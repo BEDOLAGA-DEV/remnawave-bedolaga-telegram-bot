@@ -16,6 +16,10 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+.venv/
+tests/
+.mypy_cache/
+.ruff_cache/
 
 # Environment files
 .env

@@ -489,44 +489,63 @@ async def admin_deactivate_discount_promocode(
     admin: User = Depends(require_permission('promocodes:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> DeactivateDiscountResponse:
-    """Admin: deactivate a user's active discount promo code."""
+    """Admin: deactivate a user's active discount (promo code or promo offer)."""
     from app.database.crud.user import get_user_by_id as get_user
 
     target_user = await get_user(db, user_id)
     if not target_user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
 
-    from app.services.promocode_service import PromoCodeService
+    current_discount = getattr(target_user, 'promo_offer_discount_percent', 0) or 0
+    source = getattr(target_user, 'promo_offer_discount_source', None)
 
-    service = PromoCodeService()
-    result = await service.deactivate_discount_promocode(
-        db=db,
-        user_id=user_id,
-        admin_initiated=True,
-    )
+    if current_discount <= 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'User has no active discount')
 
-    if result['success']:
-        return DeactivateDiscountResponse(
-            success=True,
-            message=f'Discount promo code deactivated for user {user_id}',
-            deactivated_code=result.get('deactivated_code'),
-            discount_percent=result.get('discount_percent', 0),
+    # If source is a promo code, use the service to properly rollback usage
+    if source and source.startswith('promocode:'):
+        from app.services.promocode_service import PromoCodeService
+
+        service = PromoCodeService()
+        result = await service.deactivate_discount_promocode(
+            db=db,
             user_id=user_id,
+            admin_initiated=True,
         )
 
-    error_messages = {
-        'user_not_found': 'User not found',
-        'no_active_discount_promocode': 'User has no active discount from a promo code',
-        'discount_already_expired': 'Discount has already expired (cleaned up)',
-        'server_error': 'Server error occurred',
-    }
+        if result['success']:
+            return DeactivateDiscountResponse(
+                success=True,
+                message=f'Discount promo code deactivated for user {user_id}',
+                deactivated_code=result.get('deactivated_code'),
+                discount_percent=result.get('discount_percent', 0),
+                user_id=user_id,
+            )
 
-    error_code = result.get('error', 'server_error')
-    error_message = error_messages.get(error_code, 'Failed to deactivate promo code')
+        error_messages = {
+            'user_not_found': 'User not found',
+            'no_active_discount_promocode': 'User has no active discount from a promo code',
+            'discount_already_expired': 'Discount has already expired (cleaned up)',
+            'server_error': 'Server error occurred',
+        }
 
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=error_message,
+        error_code = result.get('error', 'server_error')
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, error_messages.get(error_code, 'Failed to deactivate'))
+
+    # For non-promocode offers (admin offers, etc.) — just clear the fields
+    old_percent = target_user.promo_offer_discount_percent
+    target_user.promo_offer_discount_percent = 0
+    target_user.promo_offer_discount_source = None
+    target_user.promo_offer_discount_expires_at = None
+    target_user.updated_at = datetime.now(UTC)
+    await db.commit()
+
+    return DeactivateDiscountResponse(
+        success=True,
+        message=f'Promo offer deactivated for user {user_id}',
+        deactivated_code=None,
+        discount_percent=old_percent,
+        user_id=user_id,
     )
 
 

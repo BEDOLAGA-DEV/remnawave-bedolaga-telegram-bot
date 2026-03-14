@@ -278,7 +278,8 @@ class ReferralWithdrawalService:
         if referral_ids:
             month_ago = datetime.now(UTC) - timedelta(days=30)
 
-            # Одним запросом получаем статистику пополнений всех рефералов за месяц
+            # Одним запросом получаем статистику реальных пополнений всех рефералов за месяц
+            # (исключаем промо-бонусы с payment_method=NULL)
             ref_deposits_result = await db.execute(
                 select(
                     Transaction.user_id,
@@ -290,6 +291,7 @@ class ReferralWithdrawalService:
                     Transaction.type == TransactionType.DEPOSIT.value,
                     Transaction.is_completed == True,
                     Transaction.created_at >= month_ago,
+                    Transaction.payment_method.isnot(None),
                 )
                 .group_by(Transaction.user_id)
             )
@@ -328,7 +330,7 @@ class ReferralWithdrawalService:
             if suspicious_referrals:
                 analysis['flags'].append(f'⚠️ Подозрительная активность у {len(suspicious_referrals)} реферала(ов)')
 
-            # Общая статистика по рефералам (за всё время)
+            # Общая статистика по рефералам (за всё время, только реальные платежи)
             all_ref_deposits = await db.execute(
                 select(
                     func.count(func.distinct(Transaction.user_id)).label('paying_count'),
@@ -338,6 +340,7 @@ class ReferralWithdrawalService:
                     Transaction.user_id.in_(referral_ids),
                     Transaction.type == TransactionType.DEPOSIT.value,
                     Transaction.is_completed == True,
+                    Transaction.payment_method.isnot(None),
                 )
             )
             ref_stats = all_ref_deposits.fetchone()

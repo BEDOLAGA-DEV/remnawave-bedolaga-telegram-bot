@@ -20,6 +20,7 @@ os.environ.setdefault('BOT_TOKEN', 'test-token')
 from app.config import settings
 from app.database.models import PaymentMethod
 from app.services.payment.cryptobot import CryptoBotPaymentMixin
+from app.services.pricing_engine import PricingEngine
 from app.services.subscription_renewal_service import (
     SubscriptionRenewalPricing,
     SubscriptionRenewalResult,
@@ -348,7 +349,9 @@ async def test_cryptobot_renewal_uses_pricing_snapshot(monkeypatch):
     module = sys.modules['app.services.payment.cryptobot']
     mixin = CryptoBotPaymentMixin()
 
-    subscription = types.SimpleNamespace(id=77, connected_squads=[], traffic_limit_gb=100, device_limit=5)
+    subscription = types.SimpleNamespace(
+        id=77, connected_squads=[], traffic_limit_gb=100, device_limit=5, tariff=None, tariff_id=None
+    )
     user = types.SimpleNamespace(id=5, balance_kopeks=7000, subscription=subscription)
 
     pricing_model = SubscriptionRenewalPricing(
@@ -385,9 +388,9 @@ async def test_cryptobot_renewal_uses_pricing_snapshot(monkeypatch):
     )
 
     async def fail_calculate(*args, **kwargs):
-        raise AssertionError('calculate_pricing should not be called when snapshot is present')
+        raise AssertionError('PricingEngine.calculate_renewal_price should not be called when snapshot is present')
 
-    monkeypatch.setattr(module.renewal_service, 'calculate_pricing', fail_calculate)
+    monkeypatch.setattr(PricingEngine, 'calculate_renewal_price', fail_calculate)
 
     captured: dict[str, Any] = {}
 
@@ -431,7 +434,9 @@ async def test_cryptobot_renewal_accepts_changed_pricing_without_snapshot(monkey
     module = sys.modules['app.services.payment.cryptobot']
     mixin = CryptoBotPaymentMixin()
 
-    subscription = types.SimpleNamespace(id=55, connected_squads=[], traffic_limit_gb=50, device_limit=3)
+    subscription = types.SimpleNamespace(
+        id=55, connected_squads=[], traffic_limit_gb=50, device_limit=3, tariff=None, tariff_id=None
+    )
     user = types.SimpleNamespace(id=8, balance_kopeks=4000, subscription=subscription)
 
     descriptor = build_payment_descriptor(
@@ -451,25 +456,26 @@ async def test_cryptobot_renewal_accepts_changed_pricing_without_snapshot(monkey
         sys.modules, 'app.services.payment_service', types.SimpleNamespace(get_user_by_id=fake_get_user_by_id)
     )
 
+    # Recalculated price is LOWER than descriptor — user benefits, should proceed
     recalculated_pricing = SubscriptionRenewalPricing(
         period_days=30,
         period_id='days:30',
         months=1,
-        base_original_total=5200,
-        discounted_total=5200,
-        final_total=5200,
+        base_original_total=4800,
+        discounted_total=4800,
+        final_total=4800,
         promo_discount_value=0,
         promo_discount_percent=0,
         overall_discount_percent=0,
-        per_month=5200,
+        per_month=4800,
         server_ids=[],
         details={},
     )
 
-    async def fake_calculate(db, u, sub, period):
+    async def fake_calculate(self, db, sub, period_days, *, user=None):
         return recalculated_pricing
 
-    monkeypatch.setattr(module.renewal_service, 'calculate_pricing', fake_calculate)
+    monkeypatch.setattr(PricingEngine, 'calculate_renewal_price', fake_calculate)
 
     captured: dict[str, Any] = {}
 
@@ -499,8 +505,10 @@ async def test_cryptobot_renewal_accepts_changed_pricing_without_snapshot(monkey
     )
 
     assert result is True
-    assert captured['pricing'].final_total == 5000
-    assert captured['charge'] == 4000
+    # With C-4 fix: recalculated price (4800) < descriptor (5000) → use recalculated
+    assert captured['pricing'].final_total == 4800
+    # M-5 fix: required_balance = max(0, final_total - missing) = max(0, 4800 - 1000) = 3800
+    assert captured['charge'] == 3800
 
 
 @pytest.mark.anyio('asyncio')
@@ -508,7 +516,9 @@ async def test_cryptobot_webhook_uses_inline_payload_when_db_missing(monkeypatch
     module = sys.modules['app.services.payment.cryptobot']
     mixin = CryptoBotPaymentMixin()
 
-    subscription = types.SimpleNamespace(id=91, connected_squads=[], traffic_limit_gb=80, device_limit=4)
+    subscription = types.SimpleNamespace(
+        id=91, connected_squads=[], traffic_limit_gb=80, device_limit=4, tariff=None, tariff_id=None
+    )
     user = types.SimpleNamespace(id=21, balance_kopeks=6000, subscription=subscription)
 
     pricing_model = SubscriptionRenewalPricing(
@@ -560,9 +570,9 @@ async def test_cryptobot_webhook_uses_inline_payload_when_db_missing(monkeypatch
     )
 
     async def fail_calculate(*args, **kwargs):
-        raise AssertionError('calculate_pricing should not be called')
+        raise AssertionError('PricingEngine.calculate_renewal_price should not be called')
 
-    monkeypatch.setattr(module.renewal_service, 'calculate_pricing', fail_calculate)
+    monkeypatch.setattr(PricingEngine, 'calculate_renewal_price', fail_calculate)
 
     captured: dict[str, Any] = {}
 
@@ -1032,7 +1042,7 @@ async def test_create_payment_link_stars_normalizes_amount(monkeypatch):
     async def fake_resolve_user(db, init_data):
         return types.SimpleNamespace(id=7, language='ru'), {}
 
-    monkeypatch.setattr(miniapp, 'PaymentService', lambda bot: DummyPaymentService(bot))
+    monkeypatch.setattr(miniapp, 'PaymentService', DummyPaymentService)
     monkeypatch.setattr(miniapp, 'Bot', DummyBot)
     monkeypatch.setattr(miniapp, '_resolve_user_from_init_data', fake_resolve_user)
 

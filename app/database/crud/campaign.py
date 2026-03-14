@@ -5,6 +5,7 @@ from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.database.crud.transaction import REAL_PAYMENT_METHODS
 from app.database.models import (
     AdvertisingCampaign,
     AdvertisingCampaignRegistration,
@@ -106,6 +107,7 @@ async def get_campaigns_list(
         .options(
             selectinload(AdvertisingCampaign.tariff),
             selectinload(AdvertisingCampaign.partner),
+            selectinload(AdvertisingCampaign.registrations),
         )
         .order_by(AdvertisingCampaign.created_at.desc())
         .offset(offset)
@@ -267,11 +269,13 @@ async def get_campaign_statistics(
     )
     subscription_bonuses_issued = subscription_count_result.scalar() or 0
 
+    # Only count real deposits (exclude promo bonuses, wheel prizes, admin top-ups)
     deposits_result = await db.execute(
         select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
             Transaction.user_id.in_(select(registrations_subquery.c.user_id)),
             Transaction.type == TransactionType.DEPOSIT.value,
             Transaction.is_completed.is_(True),
+            Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
         )
     )
     deposits_total = deposits_result.scalar() or 0

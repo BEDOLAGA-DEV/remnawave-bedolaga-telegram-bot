@@ -1,3 +1,4 @@
+import html
 from datetime import UTC, datetime
 
 import structlog
@@ -169,7 +170,7 @@ def _split_into_pages(
 
         pages.append((current_online, current_offline))
 
-    return pages if pages else [([], [])]
+    return pages or [([], [])]
 
 
 def _format_server_lines(
@@ -189,7 +190,7 @@ def _format_server_lines(
         else:
             latency_text = texts.t('SERVER_STATUS_OFFLINE', 'нет ответа')
 
-        name = server.display_name or server.name
+        name = html.escape(server.display_name or server.name)
         flag_prefix = f'{server.flag} ' if server.flag else ''
         server_line = f'{flag_prefix}{name} — {latency_text}'
         lines.append(f'<blockquote>{server_line}</blockquote>')

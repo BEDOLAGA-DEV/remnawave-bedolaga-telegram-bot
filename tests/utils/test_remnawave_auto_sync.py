@@ -103,7 +103,7 @@ def test_perform_sync_rebuilds_service_on_each_run(monkeypatch):
 
     monkeypatch.setattr(
         'app.services.remnawave_sync_service.AsyncSessionLocal',
-        lambda: DummySession(),
+        DummySession,
     )
     monkeypatch.setattr(
         'app.services.remnawave_sync_service.sync_with_remnawave',

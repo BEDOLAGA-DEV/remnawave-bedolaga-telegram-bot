@@ -1,3 +1,4 @@
+import html
 from datetime import UTC, datetime
 
 from aiogram import types
@@ -25,7 +26,6 @@ from app.states import SubscriptionStates
 from app.utils.pricing_utils import (
     apply_percentage_discount,
     calculate_prorated_price,
-    get_remaining_months,
 )
 
 from .common import _get_addon_discount_percent_for_user, _get_period_hint_from_subscription, logger
@@ -67,7 +67,7 @@ async def handle_add_countries(callback: types.CallbackQuery, db_user: User, db:
     current_countries_names = []
     for country in countries:
         if country['uuid'] in current_countries:
-            current_countries_names.append(country['name'])
+            current_countries_names.append(html.escape(country['name']))
 
     current_list = (
         '\n'.join(f'• {name}' for name in current_countries_names)
@@ -253,9 +253,10 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
 
     logger.info('🔧 Добавлено: Удалено', added=added, removed=removed)
 
-    months_to_pay = get_remaining_months(subscription.end_date)
+    now = datetime.now(UTC)
+    days_to_pay = max(1, (subscription.end_date - now).days)
 
-    period_hint_days = months_to_pay * 30 if months_to_pay > 0 else None
+    period_hint_days = days_to_pay if days_to_pay > 0 else None
     servers_discount_percent = _get_addon_discount_percent_for_user(
         db_user,
         'servers',
@@ -290,24 +291,28 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
         if country['uuid'] in removed:
             removed_names.append(country['name'])
 
-    total_cost, charged_months = calculate_prorated_price(cost_per_month, subscription.end_date)
+    total_cost, charged_days = calculate_prorated_price(cost_per_month, subscription.end_date)
 
-    added_server_prices = [component['discounted_per_month'] * charged_months for component in added_server_components]
+    added_server_prices = [
+        int(component['discounted_per_month'] * charged_days / 30) for component in added_server_components
+    ]
 
-    total_discount = sum(component['discount_per_month'] * charged_months for component in added_server_components)
+    total_discount = sum(
+        int(component['discount_per_month'] * charged_days / 30) for component in added_server_components
+    )
 
     if added_names:
         logger.info(
-            'Стоимость новых серверов: ₽/мес × мес = ₽ (скидка ₽)',
+            'Стоимость новых серверов: ₽/мес × дн./30 = ₽ (скидка ₽)',
             cost_per_month=cost_per_month / 100,
-            charged_months=charged_months,
+            charged_days=charged_days,
             total_cost=total_cost / 100,
             total_discount=total_discount / 100,
         )
 
     if total_cost > 0 and db_user.balance_kopeks < total_cost:
         missing_kopeks = total_cost - db_user.balance_kopeks
-        required_text = f'{texts.format_price(total_cost)} (за {charged_months} мес)'
+        required_text = f'{texts.format_price(total_cost)} (за {charged_days} дн.)'
         message_text = texts.t(
             'ADDON_INSUFFICIENT_FUNDS_MESSAGE',
             (
@@ -349,7 +354,7 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
     try:
         if added and total_cost > 0:
             success = await subtract_user_balance(
-                db, db_user, total_cost, f'Добавление стран: {", ".join(added_names)} на {charged_months} мес'
+                db, db_user, total_cost, f'Добавление стран: {", ".join(added_names)} за {charged_days} дн.'
             )
             if not success:
                 await callback.answer(
@@ -363,7 +368,7 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
                 user_id=db_user.id,
                 type=TransactionType.SUBSCRIPTION_PAYMENT,
                 amount_kopeks=total_cost,
-                description=f'Добавление стран к подписке: {", ".join(added_names)} на {charged_months} мес',
+                description=f'Добавление стран к подписке: {", ".join(added_names)} за {charged_days} дн.',
             )
 
         if added:
@@ -377,8 +382,8 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
                 await add_user_to_servers(db, added_server_ids)
 
                 logger.info(
-                    '📊 Добавлены серверы с ценами за мес',
-                    charged_months=charged_months,
+                    '📊 Добавлены серверы с ценами за дн.',
+                    charged_days=charged_days,
                     value=list(zip(added_server_ids, added_server_prices, strict=False)),
                 )
 
@@ -415,10 +420,10 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
             if total_cost > 0:
                 success_text += '\n' + texts.t(
                     'COUNTRY_CHANGES_CHARGED',
-                    '💰 Списано: {amount} (за {months} мес)',
+                    '💰 Списано: {amount} (за {days} дн.)',
                 ).format(
                     amount=texts.format_price(total_cost),
-                    months=charged_months,
+                    days=charged_days,
                 )
                 if total_discount > 0:
                     success_text += texts.t(
@@ -655,8 +660,8 @@ def _build_countries_selection_text(countries: list[dict], base_text: str) -> st
             continue
         desc = country.get('description', '').strip()
         if desc:
-            name = country.get('name', '')
-            descriptions.append(f'<b>{name}</b>\n{desc}')
+            name = html.escape(country.get('name', ''))
+            descriptions.append(f'<b>{name}</b>\n{html.escape(desc)}')
 
     if not descriptions:
         return base_text
@@ -830,16 +835,16 @@ async def confirm_add_countries_to_subscription(
                 discounted_per_month = server_price
                 discount_per_month = 0
 
-            charged_price, charged_months = calculate_prorated_price(
+            charged_price, charged_days = calculate_prorated_price(
                 discounted_per_month,
                 subscription.end_date,
             )
 
             total_price += charged_price
-            total_discount_value += discount_per_month * charged_months
-            new_countries_names.append(country['name'])
+            total_discount_value += int(discount_per_month * charged_days / 30)
+            new_countries_names.append(html.escape(country['name']))
         if country['uuid'] in removed_countries:
-            removed_countries_names.append(country['name'])
+            removed_countries_names.append(html.escape(country['name']))
 
     if new_countries and db_user.balance_kopeks < total_price:
         missing_kopeks = total_price - db_user.balance_kopeks

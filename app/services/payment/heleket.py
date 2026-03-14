@@ -22,11 +22,13 @@ class HeleketPaymentMixin:
     async def create_heleket_payment(
         self,
         db: AsyncSession,
-        user_id: int,
+        user_id: int | None,
         amount_kopeks: int,
         description: str,
         *,
         language: str | None = None,
+        return_url: str | None = None,
+        success_url: str | None = None,
     ) -> dict[str, Any] | None:
         if not getattr(self, 'heleket_service', None):
             logger.error('Heleket сервис не инициализирован')
@@ -39,7 +41,7 @@ class HeleketPaymentMixin:
         amount_rubles = amount_kopeks / 100
         amount_str = f'{amount_rubles:.2f}'
 
-        order_id = f'heleket_{user_id}_{int(time.time())}_{secrets.token_hex(3)}'
+        order_id = f'heleket_{user_id or "guest"}_{int(time.time())}_{secrets.token_hex(3)}'
 
         markup_percent = settings.get_heleket_markup_percent()
         discount_percent: int | None = None
@@ -70,10 +72,12 @@ class HeleketPaymentMixin:
         if callback_url:
             payload['url_callback'] = callback_url
 
-        if settings.HELEKET_RETURN_URL:
-            payload['url_return'] = settings.HELEKET_RETURN_URL
-        if settings.HELEKET_SUCCESS_URL:
-            payload['url_success'] = settings.HELEKET_SUCCESS_URL
+        effective_return = return_url or settings.HELEKET_RETURN_URL
+        effective_success = success_url or return_url or settings.HELEKET_SUCCESS_URL
+        if effective_return:
+            payload['url_return'] = effective_return
+        if effective_success:
+            payload['url_success'] = effective_success
 
         if discount_percent is not None:
             payload['discount_percent'] = discount_percent
@@ -276,6 +280,13 @@ class HeleketPaymentMixin:
             except Exception as error:  # pragma: no cover - diagnostics
                 logger.warning('Не удалось обновить метаданные Heleket после удаления счёта', error=error)
 
+        heleket_lock_crud = import_module('app.database.crud.heleket')
+        locked = await heleket_lock_crud.get_heleket_payment_by_id_for_update(db, updated_payment.id)
+        if not locked:
+            logger.error('Heleket: не удалось заблокировать платёж', payment_id=updated_payment.id)
+            return None
+        updated_payment = locked
+
         if updated_payment.transaction_id:
             logger.info(
                 'Heleket платеж уже связан с транзакцией',
@@ -295,6 +306,21 @@ class HeleketPaymentMixin:
             )
             return None
 
+        # --- Guest purchase flow (landing page) ---
+        # Re-read metadata from the locked row to avoid stale data
+        locked_metadata = dict(getattr(updated_payment, 'metadata_json', {}) or {})
+        from app.services.payment.common import try_fulfill_guest_purchase
+
+        guest_result = await try_fulfill_guest_purchase(
+            db,
+            metadata=locked_metadata,
+            payment_amount_kopeks=amount_kopeks,
+            provider_payment_id=updated_payment.uuid,
+            provider_name='heleket',
+        )
+        if guest_result is not None:
+            return updated_payment
+
         transaction = await payment_module.create_transaction(
             db,
             user_id=updated_payment.user_id,
@@ -309,6 +335,7 @@ class HeleketPaymentMixin:
             external_id=updated_payment.uuid,
             is_completed=True,
             created_at=getattr(updated_payment, 'created_at', None),
+            commit=False,
         )
 
         linked_payment = await heleket_crud.link_heleket_payment_to_transaction(
@@ -325,6 +352,11 @@ class HeleketPaymentMixin:
             logger.error('Пользователь не найден для Heleket платежа', user_id=updated_payment.user_id)
             return None
 
+        # Lock user row to prevent concurrent balance race conditions
+        from app.database.crud.user import lock_user_for_update
+
+        user = await lock_user_for_update(db, user)
+
         old_balance = user.balance_kopeks
         was_first_topup = not user.has_made_first_topup
 
@@ -333,6 +365,19 @@ class HeleketPaymentMixin:
 
         await db.commit()
         await db.refresh(user)
+
+        # Emit deferred side-effects after atomic commit
+        from app.database.crud.transaction import emit_transaction_side_effects
+
+        await emit_transaction_side_effects(
+            db,
+            transaction,
+            amount_kopeks=amount_kopeks,
+            user_id=updated_payment.user_id,
+            type=TransactionType.DEPOSIT,
+            payment_method=PaymentMethod.HELEKET,
+            external_id=updated_payment.uuid,
+        )
 
         try:
             from app.services.referral_service import process_referral_topup

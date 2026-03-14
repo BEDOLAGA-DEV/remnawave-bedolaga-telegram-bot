@@ -23,26 +23,58 @@ def _get_alembic_config() -> Config:
     return cfg
 
 
-async def _needs_auto_stamp() -> bool:
-    """Check if DB has existing tables but no alembic_version (transition from universal_migration)."""
+async def _detect_db_state() -> str:
+    """Detect database state: 'fresh', 'legacy', or 'managed'.
+
+    - fresh: no tables at all — brand new database
+    - legacy: has tables but no alembic_version (transition from universal_migration)
+    - managed: has alembic_version — already managed by Alembic
+    """
     from app.database.database import engine
 
     async with engine.connect() as conn:
         has_alembic = await conn.run_sync(lambda sync_conn: inspect(sync_conn).has_table('alembic_version'))
         if has_alembic:
-            return False
+            return 'managed'
         has_users = await conn.run_sync(lambda sync_conn: inspect(sync_conn).has_table('users'))
-        return has_users
+        return 'legacy' if has_users else 'fresh'
 
 
 _INITIAL_REVISION = '0001'
 
 
+async def _bootstrap_fresh_db() -> None:
+    """Bootstrap a fresh database: create all tables from models and stamp at head.
+
+    On a fresh DB, running all migrations sequentially would fail because
+    migration 0001 uses Base.metadata.create_all() which creates ALL tables
+    from the current models.py (including columns/constraints/indexes added
+    by later migrations), and then those later migrations try to re-create
+    the same objects.  Instead, we create the full schema directly and stamp
+    the migration history at HEAD so Alembic considers all migrations applied.
+    """
+    from app.database.database import engine
+    from app.database.models import Base
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    logger.info('Свежая БД: все таблицы созданы из моделей')
+
+
 async def run_alembic_upgrade() -> None:
-    """Run ``alembic upgrade head``, auto-stamping existing databases first."""
+    """Run ``alembic upgrade head``, handling fresh and legacy databases."""
     import asyncio
 
-    if await _needs_auto_stamp():
+    db_state = await _detect_db_state()
+
+    if db_state == 'fresh':
+        logger.warning('Обнаружена пустая БД — создание схемы из моделей + stamp head')
+        await _bootstrap_fresh_db()
+        await _stamp_alembic_revision('head')
+        return
+
+    if db_state == 'legacy':
         logger.warning(
             'Обнаружена существующая БД без alembic_version — автоматический stamp 0001 (переход с universal_migration)'
         )

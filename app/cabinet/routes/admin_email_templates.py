@@ -37,7 +37,7 @@ TEMPLATE_TYPES = [
             'zh': '余额充值通知',
             'ua': 'Сповіщення про поповнення балансу',
         },
-        'context_vars': ['amount', 'balance'],
+        'context_vars': ['formatted_amount', 'formatted_balance', 'amount_rubles', 'new_balance_rubles'],
     },
     {
         'type': 'balance_change',
@@ -48,7 +48,7 @@ TEMPLATE_TYPES = [
             'zh': '余额变动通知',
             'ua': 'Сповіщення про зміну балансу',
         },
-        'context_vars': ['amount', 'balance'],
+        'context_vars': ['formatted_amount', 'formatted_balance', 'amount_rubles', 'new_balance_rubles'],
     },
     {
         'type': 'subscription_expiring',
@@ -96,7 +96,7 @@ TEMPLATE_TYPES = [
             'zh': '订阅已续期通知',
             'ua': 'Сповіщення про продовження підписки',
         },
-        'context_vars': ['new_end_date', 'tariff_name'],
+        'context_vars': ['new_expires_at', 'tariff_name', 'traffic_limit_gb', 'device_limit'],
     },
     {
         'type': 'subscription_activated',
@@ -112,7 +112,7 @@ TEMPLATE_TYPES = [
             'zh': '订阅已激活通知',
             'ua': 'Сповіщення про активацію підписки',
         },
-        'context_vars': ['tariff_name', 'end_date'],
+        'context_vars': ['expires_at', 'tariff_name', 'traffic_limit_gb', 'device_limit'],
     },
     {
         'type': 'autopay_success',
@@ -128,7 +128,7 @@ TEMPLATE_TYPES = [
             'zh': '自动续费成功通知',
             'ua': 'Сповіщення про успішний автоплатіж',
         },
-        'context_vars': ['amount', 'balance', 'new_end_date'],
+        'context_vars': ['formatted_amount', 'amount_rubles', 'new_expires_at'],
     },
     {
         'type': 'autopay_failed',
@@ -160,7 +160,7 @@ TEMPLATE_TYPES = [
             'zh': '自动续费余额不足通知',
             'ua': 'Сповіщення про нестачу коштів для автоплатежу',
         },
-        'context_vars': ['required_amount', 'balance'],
+        'context_vars': ['required_amount', 'current_balance'],
     },
     {
         'type': 'daily_debit',
@@ -171,7 +171,7 @@ TEMPLATE_TYPES = [
             'zh': '每日扣费通知',
             'ua': 'Сповіщення про добове списання',
         },
-        'context_vars': ['amount', 'balance'],
+        'context_vars': ['formatted_amount', 'formatted_balance', 'amount_rubles', 'new_balance_rubles'],
     },
     {
         'type': 'daily_insufficient_funds',
@@ -187,7 +187,7 @@ TEMPLATE_TYPES = [
             'zh': '每日扣费余额不足通知',
             'ua': 'Сповіщення про нестачу коштів для добового списання',
         },
-        'context_vars': ['required_amount', 'balance'],
+        'context_vars': ['required_amount', 'current_balance'],
     },
     {
         'type': 'ban_notification',
@@ -236,7 +236,7 @@ TEMPLATE_TYPES = [
             'zh': '推荐奖励通知',
             'ua': 'Сповіщення про нарахування реферального бонусу',
         },
-        'context_vars': ['amount', 'referral_name'],
+        'context_vars': ['formatted_bonus', 'bonus_rubles', 'referral_name'],
     },
     {
         'type': 'referral_registered',
@@ -258,7 +258,7 @@ TEMPLATE_TYPES = [
             'zh': '流量重置通知',
             'ua': 'Сповіщення про скидання трафіку',
         },
-        'context_vars': ['traffic_limit'],
+        'context_vars': ['reset_gb', 'current_limit_gb'],
     },
     {
         'type': 'payment_received',
@@ -269,7 +269,7 @@ TEMPLATE_TYPES = [
             'zh': '收到付款通知',
             'ua': 'Сповіщення про отримання платежу',
         },
-        'context_vars': ['amount', 'payment_method'],
+        'context_vars': ['formatted_amount', 'payment_method'],
     },
     {
         'type': 'email_verification',
@@ -298,6 +298,77 @@ TEMPLATE_TYPES = [
         },
         'context_vars': ['username', 'reset_url', 'expire_hours'],
     },
+    {
+        'type': 'guest_subscription_delivered',
+        'label': {
+            'ru': 'Быстрая покупка: подписка доставлена',
+            'en': 'Quick Purchase: Subscription Delivered',
+            'zh': '快捷购买：订阅已交付',
+            'ua': 'Швидка покупка: підписка доставлена',
+        },
+        'description': {
+            'ru': 'Письмо покупателю после успешной оплаты через лендинг',
+            'en': 'Email to buyer after successful landing page payment',
+            'zh': '通过落地页成功付款后发送给买家的邮件',
+            'ua': 'Лист покупцю після успішної оплати через лендінг',
+        },
+        'context_vars': ['tariff_name', 'period_days', 'cabinet_url'],
+    },
+    {
+        'type': 'guest_activation_required',
+        'label': {
+            'ru': 'Быстрая покупка: требуется активация',
+            'en': 'Quick Purchase: Activation Required',
+            'zh': '快捷购买：需要激活',
+            'ua': 'Швидка покупка: потрібна активація',
+        },
+        'description': {
+            'ru': 'Письмо когда у покупателя уже есть активная подписка',
+            'en': 'Email when buyer already has an active subscription',
+            'zh': '买家已有活跃订阅时发送的邮件',
+            'ua': 'Лист коли у покупця вже є активна підписка',
+        },
+        'context_vars': ['tariff_name', 'period_days', 'success_page_url', 'gift_message', 'is_gift'],
+    },
+    {
+        'type': 'guest_gift_received',
+        'label': {
+            'ru': 'Быстрая покупка: подарок получен',
+            'en': 'Quick Purchase: Gift Received',
+            'zh': '快捷购买：收到礼物',
+            'ua': 'Швидка покупка: подарунок отримано',
+        },
+        'description': {
+            'ru': 'Письмо получателю подарочной подписки',
+            'en': 'Email to gift subscription recipient',
+            'zh': '发送给礼物订阅接收者的邮件',
+            'ua': 'Лист отримувачу подарункової підписки',
+        },
+        'context_vars': [
+            'tariff_name',
+            'period_days',
+            'cabinet_url',
+            'gift_message',
+            'cabinet_email',
+            'cabinet_password',
+        ],
+    },
+    {
+        'type': 'guest_cabinet_credentials',
+        'label': {
+            'ru': 'Быстрая покупка: данные для входа',
+            'en': 'Quick Purchase: Login Credentials',
+            'zh': '快捷购买：登录凭据',
+            'ua': 'Швидка покупка: дані для входу',
+        },
+        'description': {
+            'ru': 'Письмо с логином и паролем для личного кабинета',
+            'en': 'Email with login credentials for the cabinet',
+            'zh': '包含个人中心登录信息的邮件',
+            'ua': 'Лист з логіном та паролем для особистого кабінету',
+        },
+        'context_vars': ['tariff_name', 'period_days', 'cabinet_url', 'cabinet_email', 'cabinet_password'],
+    },
 ]
 
 SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
@@ -315,26 +386,68 @@ SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
     },
     'subscription_expiring': {'days_left': 3, 'expires_at': '2025-01-30'},
     'subscription_expired': {},
-    'subscription_renewed': {'new_end_date': '2025-02-28', 'tariff_name': 'Premium'},
-    'subscription_activated': {'tariff_name': 'Premium', 'end_date': '2025-02-28'},
-    'autopay_success': {'formatted_amount': '300.00 ₽', 'formatted_balance': '200.00 ₽', 'new_end_date': '2025-02-28'},
+    'subscription_renewed': {
+        'new_expires_at': '2025-02-28',
+        'tariff_name': 'Premium',
+        'traffic_limit_gb': 100,
+        'device_limit': 3,
+    },
+    'subscription_activated': {
+        'expires_at': '2025-02-28',
+        'tariff_name': 'Premium',
+        'traffic_limit_gb': 100,
+        'device_limit': 3,
+    },
+    'autopay_success': {'formatted_amount': '300.00 ₽', 'amount_rubles': 300, 'new_expires_at': '2025-02-28'},
     'autopay_failed': {'reason': 'Card declined'},
-    'autopay_insufficient_funds': {'formatted_required': '300.00 ₽', 'formatted_balance': '50.00 ₽'},
-    'daily_debit': {'formatted_amount': '10.00 ₽', 'formatted_balance': '490.00 ₽'},
-    'daily_insufficient_funds': {'formatted_required': '10.00 ₽', 'formatted_balance': '5.00 ₽'},
+    'autopay_insufficient_funds': {'required_amount': '300.00 ₽', 'current_balance': '50.00 ₽'},
+    'daily_debit': {
+        'formatted_amount': '10.00 ₽',
+        'formatted_balance': '490.00 ₽',
+        'amount_rubles': 10,
+        'new_balance_rubles': 490,
+    },
+    'daily_insufficient_funds': {'required_amount': '10.00 ₽', 'current_balance': '5.00 ₽'},
     'ban_notification': {'reason': 'Violation of terms of service'},
     'unban_notification': {},
     'warning_notification': {'message': 'Please review our terms of service'},
-    'referral_bonus': {'formatted_amount': '100.00 ₽', 'referral_name': 'John'},
+    'referral_bonus': {'formatted_bonus': '100.00 ₽', 'bonus_rubles': 100, 'referral_name': 'John'},
     'referral_registered': {'referral_name': 'John'},
-    'traffic_reset': {'traffic_limit': '100 GB'},
-    'payment_received': {'formatted_amount': '500.00 ₽', 'payment_method': 'YooKassa'},
+    'traffic_reset': {'reset_gb': 50, 'current_limit_gb': 100},
+    'payment_received': {'formatted_amount': '500.00 ₽', 'amount_rubles': 500, 'payment_method': 'YooKassa'},
     'email_verification': {
         'username': 'John',
         'verification_url': 'https://example.com/verify?token=abc123',
         'expire_hours': 24,
     },
     'password_reset': {'username': 'John', 'reset_url': 'https://example.com/reset?token=abc123', 'expire_hours': 1},
+    'guest_subscription_delivered': {
+        'tariff_name': 'Premium',
+        'period_days': 30,
+        'cabinet_url': 'https://example.com/cabinet',
+    },
+    'guest_activation_required': {
+        'tariff_name': 'Premium',
+        'period_days': 30,
+        'success_page_url': 'https://example.com/cabinet/buy/success/abc123',
+        'is_gift': True,
+        'gift_message': 'Happy birthday!',
+    },
+    'guest_gift_received': {
+        'tariff_name': 'Premium',
+        'period_days': 30,
+        'cabinet_url': 'https://example.com/cabinet',
+        'gift_message': 'Happy birthday!',
+        'cabinet_email': 'recipient@example.com',
+        'cabinet_password': 'SecurePass123',
+    },
+    'guest_cabinet_credentials': {
+        'tariff_name': 'Premium',
+        'period_days': 30,
+        'cabinet_url': 'https://example.com/cabinet',
+        'cabinet_email': 'user@example.com',
+        'cabinet_password': 'SecurePass123',
+    },
 }
 
 AVAILABLE_LANGUAGES = ['ru', 'en', 'zh', 'ua', 'fa']
@@ -618,14 +731,13 @@ async def send_test_email(
     sample_context = SAMPLE_CONTEXTS.get(notification_type, {})
     templates_instance = EmailNotificationTemplates()
 
-    # Check for DB override
-    from ..services.email_template_overrides import get_template_override
+    # Check for DB override (get_rendered_override substitutes sample context vars)
+    from ..services.email_template_overrides import get_rendered_override
 
-    override = await get_template_override(notification_type, language, db)
+    rendered = await get_rendered_override(notification_type, language, sample_context, db)
 
-    if override:
-        subject = override['subject']
-        body_html = templates_instance._get_base_template(override['body_html'], language)
+    if rendered:
+        subject, body_html = rendered
     else:
         try:
             from app.services.notification_delivery_service import NotificationType

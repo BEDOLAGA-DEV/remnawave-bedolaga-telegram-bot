@@ -48,6 +48,8 @@ def _method_display(method: PaymentMethod) -> str:
         return 'Telegram Stars'
     if method == PaymentMethod.KASSA_AI:
         return settings.get_kassa_ai_display_name()
+    if method == PaymentMethod.RIOPAY:
+        return settings.get_riopay_display_name()
     if method == PaymentMethod.FREEKASSA:
         return settings.get_freekassa_display_name()
     return method.value
@@ -186,7 +188,7 @@ def _is_checkable(record: PendingPayment) -> bool:
     if record.method == PaymentMethod.YOOKASSA:
         return status in {'pending', 'waiting_for_capture'}
     if record.method == PaymentMethod.CRYPTOBOT:
-        return status in {'active'}
+        return status == 'active'
     if record.method == PaymentMethod.FREEKASSA:
         return status in {'pending', 'created', ''}
     if record.method == PaymentMethod.KASSA_AI:
@@ -378,7 +380,7 @@ def _build_payment_details_text(record: PendingPayment, *, texts, language: str)
             amount = f'{crypto_amount} {crypto_asset}'
     created = format_datetime(record.created_at)
     age = format_time_ago(record.created_at, language)
-    raw_identifier = record.identifier if record.identifier else record.local_id
+    raw_identifier = record.identifier or record.local_id
     identifier = html.escape(str(raw_identifier)) if raw_identifier is not None else '—'
     lines = [
         texts.t('ADMIN_PAYMENT_DETAILS_TITLE', '💳 <b>Payment details</b>'),

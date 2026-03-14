@@ -40,6 +40,7 @@ async def _sync_user_primary_promo_group(
 
     except Exception as error:
         logger.error('Ошибка синхронизации primary промогруппы пользователя', user_id=user_id, error=error)
+        raise
 
 
 async def sync_user_primary_promo_group(
@@ -187,7 +188,7 @@ async def get_primary_user_promo_group(db: AsyncSession, user_id: int) -> PromoG
             return None
 
         # Первая в списке имеет максимальный приоритет (список уже отсортирован)
-        return user_promo_groups[0].promo_group if user_promo_groups[0].promo_group else None
+        return user_promo_groups[0].promo_group or None
 
     except Exception as error:
         logger.error('Ошибка получения primary промогруппы пользователя', user_id=user_id, error=error)

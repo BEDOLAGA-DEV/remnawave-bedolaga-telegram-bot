@@ -16,7 +16,7 @@ logger = structlog.get_logger(__name__)
 async def create_wata_payment(
     db: AsyncSession,
     *,
-    user_id: int,
+    user_id: int | None,
     payment_link_id: str,
     amount_kopeks: int,
     currency: str,
@@ -68,6 +68,11 @@ async def get_wata_payment_by_id(
     payment_id: int,
 ) -> WataPayment | None:
     result = await db.execute(select(WataPayment).where(WataPayment.id == payment_id))
+    return result.scalar_one_or_none()
+
+
+async def get_wata_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> WataPayment | None:
+    result = await db.execute(select(WataPayment).where(WataPayment.id == payment_id).with_for_update())
     return result.scalar_one_or_none()
 
 
@@ -143,7 +148,7 @@ async def link_wata_payment_to_transaction(
     transaction_id: int,
 ) -> WataPayment:
     await db.execute(update(WataPayment).where(WataPayment.id == payment.id).values(transaction_id=transaction_id))
-    await db.commit()
+    await db.flush()
     await db.refresh(payment)
 
     logger.info(

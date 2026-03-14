@@ -23,7 +23,7 @@ class Pal24PaymentMixin:
         self,
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None,
         amount_kopeks: int,
         description: str,
         language: str,
@@ -53,7 +53,7 @@ class Pal24PaymentMixin:
             )
             return None
 
-        order_id = f'pal24_{user_id}_{uuid.uuid4().hex}'
+        order_id = f'pal24_{user_id or "guest"}_{uuid.uuid4().hex}'
 
         custom_payload = {
             'user_id': user_id,
@@ -346,8 +346,29 @@ class Pal24PaymentMixin:
             except Exception as error:  # pragma: no cover - diagnostics
                 logger.warning('Не удалось обновить метаданные PayPalych после удаления счёта', error=error)
 
+        pal24_lock_crud = import_module('app.database.crud.pal24')
+        locked = await pal24_lock_crud.get_pal24_payment_by_id_for_update(db, payment.id)
+        if not locked:
+            logger.error('Pal24: не удалось заблокировать платёж', payment_id=payment.id)
+            return False
+        payment = locked
+
         if payment.transaction_id:
             logger.info('Pal24 платеж уже привязан к транзакции (trigger=)', bill_id=payment.bill_id, trigger=trigger)
+            return True
+
+        # --- Guest purchase flow (landing page) ---
+        payment_meta = dict(getattr(payment, 'metadata_json', {}) or {})
+        from app.services.payment.common import try_fulfill_guest_purchase
+
+        guest_result = await try_fulfill_guest_purchase(
+            db,
+            metadata=payment_meta,
+            payment_amount_kopeks=payment.amount_kopeks,
+            provider_payment_id=payment.bill_id,
+            provider_name='pal24',
+        )
+        if guest_result is not None:
             return True
 
         user = await payment_module.get_user_by_id(db, payment.user_id)
@@ -370,9 +391,15 @@ class Pal24PaymentMixin:
             external_id=str(payment_id) if payment_id else payment.bill_id,
             is_completed=True,
             created_at=getattr(payment, 'created_at', None),
+            commit=False,
         )
 
         await payment_module.link_pal24_payment_to_transaction(db, payment, transaction.id)
+
+        # Lock user row to prevent concurrent balance race conditions
+        from app.database.crud.user import lock_user_for_update
+
+        user = await lock_user_for_update(db, user)
 
         old_balance = user.balance_kopeks
         was_first_topup = not user.has_made_first_topup
@@ -386,6 +413,19 @@ class Pal24PaymentMixin:
         topup_status = '🆕 Первое пополнение' if was_first_topup else '🔄 Пополнение'
 
         await db.commit()
+
+        # Emit deferred side-effects after atomic commit
+        from app.database.crud.transaction import emit_transaction_side_effects
+
+        await emit_transaction_side_effects(
+            db,
+            transaction,
+            amount_kopeks=payment.amount_kopeks,
+            user_id=payment.user_id,
+            type=TransactionType.DEPOSIT,
+            payment_method=PaymentMethod.PAL24,
+            external_id=payment.bill_id,
+        )
 
         try:
             from app.services.referral_service import process_referral_topup

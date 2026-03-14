@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 
 import structlog
 from sqlalchemy import and_, desc, func, select
@@ -120,18 +120,29 @@ async def get_contests_for_events(
     *,
     contest_types: list[str] | None = None,
 ) -> list[ReferralContest]:
+    # Расширяем SQL-фильтр на 1 день для полночных end_at (нормализуются в 23:59:59)
     query = select(ReferralContest).where(
         and_(
             ReferralContest.is_active.is_(True),
             ReferralContest.start_at <= now_utc,
-            ReferralContest.end_at >= now_utc,
+            ReferralContest.end_at >= now_utc - timedelta(days=1),
         )
     )
     if contest_types:
         query = query.where(ReferralContest.contest_type.in_(contest_types))
 
     result = await db.execute(query)
-    return list(result.scalars().all())
+    contests = list(result.scalars().all())
+
+    # Точная фильтрация с нормализацией полночных end_at
+    filtered = []
+    for contest in contests:
+        contest_end = contest.end_at
+        if contest_end.hour == 0 and contest_end.minute == 0 and contest_end.second == 0:
+            contest_end = contest_end.replace(hour=23, minute=59, second=59, microsecond=999999)
+        if contest_end >= now_utc:
+            filtered.append(contest)
+    return filtered
 
 
 async def get_contests_for_summaries(db: AsyncSession) -> list[ReferralContest]:
@@ -148,7 +159,7 @@ async def add_contest_event(
     amount_kopeks: int = 0,
     event_type: str = 'subscription_purchase',
 ) -> ReferralContestEvent | None:
-    existing = await db.execute(
+    existing_result = await db.execute(
         select(ReferralContestEvent).where(
             and_(
                 ReferralContestEvent.contest_id == contest_id,
@@ -156,7 +167,13 @@ async def add_contest_event(
             )
         )
     )
-    if existing.scalar_one_or_none():
+    existing = existing_result.scalar_one_or_none()
+    if existing:
+        # Обновляем amount_kopeks если повторная покупка (upsert)
+        if amount_kopeks and existing.amount_kopeks != amount_kopeks:
+            existing.amount_kopeks = amount_kopeks
+            await db.commit()
+            await db.refresh(existing)
         return None
 
     event = ReferralContestEvent(
@@ -197,7 +214,7 @@ async def get_contest_leaderboard(
         select(
             User,
             func.count(ReferralContestEvent.id).label('referral_count'),
-            func.coalesce(func.sum(ReferralContestEvent.amount_kopeks), 0).label('total_amount'),
+            func.coalesce(func.sum(func.abs(ReferralContestEvent.amount_kopeks)), 0).label('total_amount'),
         )
         .join(User, User.id == ReferralContestEvent.referrer_id)
         .where(
@@ -383,7 +400,7 @@ async def get_contest_payment_stats(
 
     # Общая сумма (только за рефералов зарегистрированных в период конкурса)
     total_result = await db.execute(
-        select(func.coalesce(func.sum(ReferralContestEvent.amount_kopeks), 0)).where(
+        select(func.coalesce(func.sum(func.abs(ReferralContestEvent.amount_kopeks)), 0)).where(
             and_(
                 ReferralContestEvent.contest_id == contest_id,
                 ReferralContestEvent.occurred_at >= contest_start,

@@ -18,69 +18,42 @@ def calculate_months_from_days(days: int) -> int:
     return max(1, round(days / 30))
 
 
-def get_remaining_months(end_date: datetime) -> int:
-    current_time = datetime.now(UTC)
-    if end_date <= current_time:
-        return 1
+def calculate_prorated_price(monthly_price: int, end_date: datetime, min_charge_days: int = 30) -> tuple[int, int]:
+    """Calculate prorated price based on remaining days.
 
-    remaining_days = (end_date - current_time).days
-    return max(1, round(remaining_days / 30))
+    Returns:
+        tuple of (total_price_kopeks, days_charged)
+    """
+    now = datetime.now(UTC)
+    days_remaining = max(1, (end_date - now).days)
+    days_to_charge = max(min_charge_days, days_remaining)
 
-
-def calculate_period_multiplier(period_days: int) -> tuple[int, float]:
-    exact_months = period_days / 30
-    months_count = max(1, round(exact_months))
-
-    logger.debug(
-        'Период дней точных месяцев ≈ месяцев для расчета',
-        period_days=period_days,
-        exact_months=round(exact_months, 2),
-        months_count=months_count,
-    )
-
-    return months_count, exact_months
-
-
-def calculate_prorated_price(monthly_price: int, end_date: datetime, min_charge_months: int = 1) -> tuple[int, int]:
-    months_remaining = get_remaining_months(end_date)
-    months_to_charge = max(min_charge_months, months_remaining)
-
-    total_price = monthly_price * months_to_charge
+    total_price = monthly_price * days_to_charge // 30
+    if monthly_price > 0:
+        total_price = max(100, total_price)  # Минимум 1 рубль
 
     logger.debug(
-        'Расчет пропорциональной цены: ₽/мес × мес ₽',
+        'Расчет пропорциональной цены: ₽/мес × дн./30 = ₽',
         monthly_price=monthly_price / 100,
-        months_to_charge=months_to_charge,
+        days_to_charge=days_to_charge,
         total_price=total_price / 100,
     )
 
-    return total_price, months_to_charge
+    return total_price, days_to_charge
 
 
 def apply_percentage_discount(amount: int, percent: int) -> tuple[int, int]:
+    """Apply percentage discount using PricingEngine's floor division.
+
+    Returns (discounted_amount, discount_value).
+    """
+    from app.services.pricing_engine import PricingEngine
+
     if amount <= 0 or percent <= 0:
         return amount, 0
 
-    clamped_percent = max(0, min(100, percent))
-    discount_value = amount * clamped_percent // 100
-    discounted_amount = amount - discount_value
-
-    # Round the discounted price up to the nearest full ruble (100 kopeks)
-    # to avoid undercharging users because of fractional kopeks.
-    if discount_value >= 100 and discounted_amount % 100:
-        discounted_amount += 100 - (discounted_amount % 100)
-        discounted_amount = min(discounted_amount, amount)
-        discount_value = amount - discounted_amount
-
-    logger.debug(
-        'Применена скидка %: → (скидка)',
-        clamped_percent=clamped_percent,
-        amount=amount,
-        discounted_amount=discounted_amount,
-        discount_value=discount_value,
-    )
-
-    return discounted_amount, discount_value
+    discounted = PricingEngine.apply_discount(amount, percent)
+    return discounted, amount - discounted
 
 
 def resolve_discount_percent(
@@ -156,7 +129,6 @@ async def compute_simple_subscription_price(
         period_days=period_days,
     )
     base_discount = base_price_original * period_discount_percent // 100
-    base_price_original - base_discount
 
     traffic_discount_percent = resolve_discount_percent(
         user,
@@ -165,7 +137,6 @@ async def compute_simple_subscription_price(
         period_days=period_days,
     )
     traffic_discount = traffic_price_original * traffic_discount_percent // 100
-    traffic_price_original - traffic_discount
 
     devices_discount_percent = resolve_discount_percent(
         user,
@@ -174,7 +145,6 @@ async def compute_simple_subscription_price(
         period_days=period_days,
     )
     devices_discount = devices_price_original * devices_discount_percent // 100
-    devices_price_original - devices_discount
 
     servers_discount_percent = resolve_discount_percent(
         user,
@@ -193,14 +163,20 @@ async def compute_simple_subscription_price(
         elif raw_squad:
             resolved_uuids.append(str(raw_squad))
 
-    from app.database.crud.server_squad import get_server_squad_by_uuid
+    from app.database.crud.server_squad import get_server_squads_by_uuids
 
     server_breakdown: list[dict[str, Any]] = []
     servers_price_original = 0
     servers_discount_total = 0
 
+    if resolved_uuids:
+        servers = await get_server_squads_by_uuids(db, resolved_uuids)
+        server_map = {s.squad_uuid: s for s in servers}
+    else:
+        server_map = {}
+
     for squad_uuid in resolved_uuids:
-        server = await get_server_squad_by_uuid(db, squad_uuid)
+        server = server_map.get(squad_uuid)
         if not server:
             logger.warning('SIMPLE_SUBSCRIPTION_PRICE_SERVER_NOT_FOUND | squad', squad_uuid=squad_uuid)
             server_breakdown.append(
@@ -344,17 +320,3 @@ def validate_pricing_calculation(base_price: int, monthly_additions: int, months
         )
 
     return is_valid
-
-
-STANDARD_PERIODS = {
-    14: {'months': 0.5, 'display_ru': '2 недели', 'display_en': '2 weeks'},
-    30: {'months': 1, 'display_ru': '1 месяц', 'display_en': '1 month'},
-    60: {'months': 2, 'display_ru': '2 месяца', 'display_en': '2 months'},
-    90: {'months': 3, 'display_ru': '3 месяца', 'display_en': '3 months'},
-    180: {'months': 6, 'display_ru': '6 месяцев', 'display_en': '6 months'},
-    360: {'months': 12, 'display_ru': '1 год', 'display_en': '1 year'},
-}
-
-
-def get_period_info(days: int) -> dict:
-    return STANDARD_PERIODS.get(days)

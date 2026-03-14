@@ -123,6 +123,18 @@ def get_token_payload(token: str, expected_type: str = 'access') -> dict[str, An
     return payload
 
 
+def create_auto_login_token(user_id: int, ttl_hours: int = 72) -> str:
+    """Short-lived JWT for auto-login from guest purchase success page."""
+    expires = datetime.now(UTC) + timedelta(hours=ttl_hours)
+    payload = {
+        'sub': str(user_id),
+        'type': 'auto_login',
+        'exp': expires,
+        'iat': datetime.now(UTC),
+    }
+    return jwt.encode(payload, settings.get_cabinet_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
 def get_refresh_token_expires_at() -> datetime:
     """Get the expiration datetime for a new refresh token."""
     expire_days = settings.get_cabinet_refresh_token_expire_days()

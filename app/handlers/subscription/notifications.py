@@ -27,6 +27,7 @@ async def send_purchase_notification(
     transaction_id: int,
     period_days: int,
     was_trial_conversion: bool = False,
+    purchase_type: str | None = None,
 ):
     try:
         from app.database.crud.transaction import get_transaction_by_id
@@ -35,7 +36,13 @@ async def send_purchase_notification(
         if transaction:
             notification_service = AdminNotificationService(callback.bot)
             await notification_service.send_subscription_purchase_notification(
-                db, db_user, subscription, transaction, period_days, was_trial_conversion
+                db,
+                db_user,
+                subscription,
+                transaction,
+                period_days,
+                was_trial_conversion,
+                purchase_type=purchase_type,
             )
     except Exception as e:
         logger.error('Ошибка отправки уведомления о покупке', error=e)

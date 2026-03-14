@@ -114,11 +114,6 @@ _ADMIN_ERROR_EVENTS: dict[str, str] = {
     'errors.bandwidth_usage_threshold_reached_max_notifications': '⚠️ Достигнут лимит уведомлений о трафике',
 }
 
-_NODE_CONNECTION_EVENTS: set[str] = {
-    'node.connection_lost',
-    'node.connection_restored',
-}
-
 
 class RemnaWaveWebhookService:
     """Processes incoming webhooks from RemnaWave backend."""
@@ -223,14 +218,6 @@ class RemnaWaveWebhookService:
         """Format and send admin notification for infrastructure events."""
         if not self._admin_service.is_enabled:
             logger.debug('Admin notifications disabled, skipping event', event_name=event_name)
-            return True
-
-        notify_node_status = bool(getattr(settings, 'WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS', False))
-        if event_name in _NODE_CONNECTION_EVENTS and not notify_node_status:
-            logger.debug(
-                'Admin webhook notification skipped for node connection status event',
-                event_name=event_name,
-            )
             return True
 
         title = self._admin_handlers.get(event_name, event_name)
@@ -480,6 +467,25 @@ class RemnaWaveWebhookService:
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
     ) -> None:
         if subscription:
+            # Суточные подписки управляются DailySubscriptionService.
+            # Remnawave может прислать user.expired если sync не дошёл (старый end_date),
+            # но локально подписка ещё жива — не экспайрим её.
+            tariff = getattr(subscription, 'tariff', None)
+            is_active_daily = (
+                tariff is not None
+                and getattr(tariff, 'is_daily', False)
+                and not getattr(subscription, 'is_daily_paused', False)
+            )
+            if is_active_daily:
+                logger.info(
+                    'Webhook: пропуск expire для суточной подписки (управляет DailySubscriptionService)',
+                    subscription_id=subscription.id,
+                    user_id=user.id,
+                )
+                self._stamp_webhook_update(subscription)
+                await db.commit()
+                return
+
             self._stamp_webhook_update(subscription)
             if subscription.status != SubscriptionStatus.EXPIRED.value:
                 await expire_subscription(db, subscription)
@@ -493,6 +499,23 @@ class RemnaWaveWebhookService:
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
     ) -> None:
         if subscription:
+            # Суточные подписки управляются DailySubscriptionService — не деактивируем
+            tariff = getattr(subscription, 'tariff', None)
+            is_active_daily = (
+                tariff is not None
+                and getattr(tariff, 'is_daily', False)
+                and not getattr(subscription, 'is_daily_paused', False)
+            )
+            if is_active_daily:
+                logger.info(
+                    'Webhook: пропуск disabled для суточной подписки',
+                    subscription_id=subscription.id,
+                    user_id=user.id,
+                )
+                self._stamp_webhook_update(subscription)
+                await db.commit()
+                return
+
             self._stamp_webhook_update(subscription)
             if subscription.status != SubscriptionStatus.DISABLED.value:
                 await deactivate_subscription(db, subscription)
@@ -507,7 +530,7 @@ class RemnaWaveWebhookService:
     ) -> None:
         if subscription:
             self._stamp_webhook_update(subscription)
-            if subscription.status == SubscriptionStatus.DISABLED.value:
+            if subscription.status in (SubscriptionStatus.DISABLED.value, SubscriptionStatus.LIMITED.value):
                 await reactivate_subscription(db, subscription)
                 logger.info(
                     'Webhook: subscription re-enabled for user', subscription_id=subscription.id, user_id=user.id
@@ -522,8 +545,11 @@ class RemnaWaveWebhookService:
     ) -> None:
         if subscription:
             self._stamp_webhook_update(subscription)
-            if subscription.status == SubscriptionStatus.ACTIVE.value:
-                await deactivate_subscription(db, subscription)
+            if subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value):
+                subscription.status = SubscriptionStatus.LIMITED.value
+                subscription.updated_at = datetime.now(UTC)
+                await db.commit()
+                await db.refresh(subscription)
                 logger.info(
                     'Webhook: subscription limited (traffic) for user', subscription_id=subscription.id, user_id=user.id
                 )
@@ -538,8 +564,8 @@ class RemnaWaveWebhookService:
         if subscription:
             self._stamp_webhook_update(subscription)
             await update_subscription_usage(db, subscription, 0.0)
-            # Re-enable if was disabled due to traffic limit
-            if subscription.status == SubscriptionStatus.DISABLED.value:
+            # Re-enable if was disabled/limited due to traffic limit
+            if subscription.status in (SubscriptionStatus.DISABLED.value, SubscriptionStatus.LIMITED.value):
                 await reactivate_subscription(db, subscription)
             logger.info(
                 'Webhook: traffic reset for subscription , user', subscription_id=subscription.id, user_id=user.id
@@ -577,23 +603,22 @@ class RemnaWaveWebhookService:
             except (ValueError, TypeError):
                 pass
 
-        # Sync expire date (only if panel date is LATER than local to prevent race condition
-        # where webhook with stale expireAt overwrites a freshly extended subscription)
+        # Sync expire date — panel is the source of truth for user.modified events
         expire_at = data.get('expireAt')
         if expire_at:
             try:
                 parsed_dt = datetime.fromisoformat(expire_at.replace('Z', '+00:00'))
                 new_end_date = parsed_dt.astimezone(UTC)
                 if subscription.end_date != new_end_date:
-                    if not subscription.end_date or new_end_date > subscription.end_date:
-                        subscription.end_date = new_end_date
-                        changed = True
-                    else:
-                        logger.warning(
-                            'Webhook: пропуск перезаписи end_date — локальная дата позже',
+                    old_end_date = subscription.end_date
+                    subscription.end_date = new_end_date
+                    changed = True
+                    if old_end_date and new_end_date < old_end_date:
+                        logger.info(
+                            'Webhook: end_date обновлена назад (панель авторитетна): → ',
                             subscription_id=subscription.id,
-                            local_end_date=subscription.end_date,
-                            webhook_end_date=new_end_date,
+                            old_end_date=old_end_date,
+                            new_end_date=new_end_date,
                         )
             except (ValueError, TypeError):
                 pass
@@ -626,6 +651,16 @@ class RemnaWaveWebhookService:
             and subscription.subscription_url != subscription_url
         ):
             subscription.subscription_url = subscription_url
+            changed = True
+
+        # Sync subscription crypto link (for HAPP_CRYPT4_LINK)
+        subscription_crypto_link = data.get('subscriptionCryptoLink')
+        if (
+            subscription_crypto_link
+            and self._is_valid_link(subscription_crypto_link)
+            and subscription.subscription_crypto_link != subscription_crypto_link
+        ):
+            subscription.subscription_crypto_link = subscription_crypto_link
             changed = True
 
         # Always stamp to protect from sync overwrite, even if no fields changed
@@ -689,7 +724,7 @@ class RemnaWaveWebhookService:
             subscription.subscription_url = None
             subscription.subscription_crypto_link = None
             subscription.remnawave_short_uuid = None
-            subscription.connected_squads = None
+            subscription.connected_squads = []
             subscription.updated_at = datetime.now(UTC)
 
             # Remove SubscriptionServer link rows

@@ -4,6 +4,7 @@ Service for managing email template overrides stored in the database.
 Custom templates override the hardcoded defaults from email_templates.py.
 """
 
+import html
 from datetime import UTC, datetime
 from typing import Any
 
@@ -195,7 +196,7 @@ async def get_rendered_override(
     # Simple variable substitution for context vars like {username}, {verification_url}, etc.
     if context:
         for key, value in context.items():
-            body_html = body_html.replace(f'{{{key}}}', str(value))
+            body_html = body_html.replace(f'{{{key}}}', html.escape(str(value)))
 
     rendered = templates._get_base_template(body_html, language)
     subject = override['subject']
@@ -203,7 +204,8 @@ async def get_rendered_override(
     # Also substitute in subject
     if context:
         for key, value in context.items():
-            subject = subject.replace(f'{{{key}}}', str(value))
+            safe_value = str(value).replace('\r', '').replace('\n', '')
+            subject = subject.replace(f'{{{key}}}', safe_value)
 
     return (subject, rendered)
 

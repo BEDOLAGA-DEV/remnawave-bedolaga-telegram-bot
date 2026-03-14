@@ -504,7 +504,7 @@ def _split_text_into_pages(header: str, message_blocks: list[str], max_len: int 
     if current.strip():
         pages.append(current)
 
-    return pages if pages else [header]
+    return pages or [header]
 
 
 async def view_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSession):

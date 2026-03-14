@@ -103,7 +103,7 @@ async def get_sales_summary(
     days: int | None = Query(default=30, description='Preset period in days (7, 30, 90, 0=all)'),
     start_date: str | None = Query(default=None, description='Custom start date ISO format'),
     end_date: str | None = Query(default=None, description='Custom end date ISO format'),
-    admin: User = Depends(require_permission('stats:read')),
+    admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SalesSummary:
     """Get summary statistics for sales dashboard cards."""
@@ -272,7 +272,7 @@ async def get_trials_stats(
     days: int | None = Query(default=30),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
-    admin: User = Depends(require_permission('stats:read')),
+    admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> TrialsStatsResponse:
     """Get trial registration statistics with provider breakdown."""
@@ -465,7 +465,7 @@ async def get_sales_stats(
     days: int | None = Query(default=30),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
-    admin: User = Depends(require_permission('stats:read')),
+    admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SalesStatsResponse:
     """Get subscription sales statistics."""
@@ -644,7 +644,7 @@ async def get_renewals_stats(
     days: int | None = Query(default=30),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
-    admin: User = Depends(require_permission('stats:read')),
+    admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> RenewalsStatsResponse:
     """Get renewal statistics with period comparison."""
@@ -859,7 +859,7 @@ async def get_addons_stats(
     days: int | None = Query(default=30),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
-    admin: User = Depends(require_permission('stats:read')),
+    admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> AddonsStatsResponse:
     """Get add-on purchase statistics."""
@@ -1015,7 +1015,7 @@ async def get_deposits_stats(
     days: int | None = Query(default=30),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
-    admin: User = Depends(require_permission('stats:read')),
+    admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> DepositsStatsResponse:
     """Get deposit statistics with payment method breakdown."""

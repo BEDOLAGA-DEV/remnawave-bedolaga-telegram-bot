@@ -38,6 +38,7 @@ from app.services.payment_verification_service import (
 from app.services.referral_contest_service import referral_contest_service
 from app.services.remnawave_sync_service import remnawave_sync_service
 from app.services.reporting_service import reporting_service
+from app.services.riopay_service import riopay_service
 from app.services.system_settings_service import bot_configuration_service
 from app.services.traffic_monitoring_service import traffic_monitoring_scheduler
 from app.services.version_service import version_service
@@ -294,6 +295,11 @@ async def main():
             bot, dp = await setup_bot()
             stage.log('Кеш и FSM подготовлены')
 
+        bot_user = await bot.get_me()
+        if bot_user.username and not settings.BOT_USERNAME:
+            settings.BOT_USERNAME = bot_user.username
+            logger.info('BOT_USERNAME auto-detected', bot_username=bot_user.username)
+
         monitoring_service.bot = bot
         maintenance_service.set_bot(bot)
         broadcast_service.set_bot(bot)
@@ -515,7 +521,6 @@ async def main():
             success_message='Токен внешней админки готов',
         ) as stage:
             try:
-                bot_user = await bot.get_me()
                 token = await ensure_external_admin_token(
                     bot_user.username,
                     bot_user.id,
@@ -715,12 +720,14 @@ async def main():
             webhook_lines.append(f'Freekassa: {_fmt(settings.FREEKASSA_WEBHOOK_PATH)}')
         if settings.is_kassa_ai_enabled():
             webhook_lines.append(f'Kassa.ai: {_fmt(settings.KASSA_AI_WEBHOOK_PATH)}')
+        if settings.is_riopay_enabled():
+            webhook_lines.append(f'RioPay: {_fmt(settings.RIOPAY_WEBHOOK_PATH)}')
         if settings.is_remnawave_webhook_enabled():
             webhook_lines.append(f'RemnaWave: {_fmt(settings.REMNAWAVE_WEBHOOK_PATH)}')
 
         timeline.log_section(
             'Активные webhook endpoints',
-            webhook_lines if webhook_lines else ['Нет активных endpoints'],
+            webhook_lines or ['Нет активных endpoints'],
             icon='🎯',
         )
 
@@ -931,6 +938,11 @@ async def main():
                 logger.info('✅ Административное веб-API остановлено')
             except Exception as error:
                 logger.error('Ошибка остановки веб-API', error=error)
+
+        try:
+            await riopay_service.close()
+        except Exception as e:
+            logger.error('Ошибка закрытия сессии RioPay', error=e)
 
         if 'bot' in locals():
             try:

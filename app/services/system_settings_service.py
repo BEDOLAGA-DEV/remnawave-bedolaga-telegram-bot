@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import (
     ENV_OVERRIDE_KEYS,
     Settings,
+    clear_db_period_prices,
     refresh_period_prices,
     refresh_traffic_prices,
     settings,
@@ -80,11 +81,14 @@ class BotConfigurationService:
         'PAYMENT': '💳 Общие платежные настройки',
         'PAYMENT_VERIFICATION': '🕵️ Проверка платежей',
         'TELEGRAM': '⭐ Telegram Stars',
+        'TELEGRAM_WIDGET': '🔐 Telegram Login Widget',
+        'TELEGRAM_OIDC': '🔑 Telegram Login (OIDC)',
         'CRYPTOBOT': '🪙 CryptoBot',
         'HELEKET': '🪙 Heleket',
         'CLOUDPAYMENTS': '💳 CloudPayments',
         'FREEKASSA': '💳 Freekassa',
         'KASSA_AI': '💳 KassaAI',
+        'RIOPAY': '💳 RioPay',
         'YOOKASSA': '🟣 YooKassa',
         'PLATEGA': '💳 {platega_name}',
         'TRIBUTE': '🎁 Tribute',
@@ -145,11 +149,14 @@ class BotConfigurationService:
         'CLOUDPAYMENTS': 'CloudPayments: оплата банковскими картами, Public ID, API Secret и вебхуки.',
         'FREEKASSA': 'Freekassa: ID магазина, API ключ, секретные слова и вебхуки.',
         'KASSA_AI': 'KassaAI: отдельная платёжка api.fk.life с СБП, картами и SberPay.',
+        'RIOPAY': 'RioPay: платёжная система api.riopay.online с поддержкой карт и СБП.',
         'PLATEGA': '{platega_name}: merchant ID, секрет, ссылки возврата и методы оплаты.',
         'MULENPAY': 'Платежи {mulenpay_name} и параметры магазина.',
         'PAL24': 'PAL24 / PayPalych подключения и лимиты.',
         'TRIBUTE': 'Tribute и донат-сервисы.',
         'TELEGRAM': 'Telegram Stars и их стоимость.',
+        'TELEGRAM_WIDGET': 'Внешний вид виджета авторизации Telegram на странице входа в кабинет.',
+        'TELEGRAM_OIDC': 'OpenID Connect авторизация через Telegram (новая система). Требует настройки в BotFather > Bot Settings > Web Login.',
         'WATA': 'Wata: токен доступа, тип платежа и пределы сумм.',
         'EXTERNAL_ADMIN': 'Токен внешней админки для проверки запросов.',
         'SUBSCRIPTIONS_CORE': 'Лимиты устройств, трафика и базовые цены подписок.',
@@ -331,6 +338,8 @@ class BotConfigurationService:
         'TRAFFIC_': 'TRAFFIC',
         'REFERRAL_': 'REFERRAL',
         'AUTOPAY_': 'AUTOPAY',
+        'TELEGRAM_OIDC_': 'TELEGRAM_OIDC',
+        'TELEGRAM_WIDGET_': 'TELEGRAM_WIDGET',
         'TELEGRAM_STARS': 'TELEGRAM',
         'TRIBUTE_': 'TRIBUTE',
         'YOOKASSA_': 'YOOKASSA',
@@ -339,6 +348,7 @@ class BotConfigurationService:
         'CLOUDPAYMENTS_': 'CLOUDPAYMENTS',
         'FREEKASSA_': 'FREEKASSA',
         'KASSA_AI_': 'KASSA_AI',
+        'RIOPAY_': 'RIOPAY',
         'PLATEGA_': 'PLATEGA',
         'MULENPAY_': 'MULENPAY',
         'PAL24_': 'PAL24',
@@ -477,6 +487,11 @@ class BotConfigurationService:
             ChoiceOption('email', '📧 Отключён для Email'),
             ChoiceOption('telegram', '📱 Отключён для Telegram'),
             ChoiceOption('all', '🚫 Отключён для всех'),
+        ],
+        'TELEGRAM_WIDGET_SIZE': [
+            ChoiceOption('large', '🔵 Large'),
+            ChoiceOption('medium', '🟡 Medium'),
+            ChoiceOption('small', '🟢 Small'),
         ],
     }
 
@@ -880,11 +895,6 @@ class BotConfigurationService:
             'format': 'Булево значение.',
             'example': 'true',
         },
-        'WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS': {
-            'description': 'Админ-уведомления о событиях ноды: connection_lost / connection_restored.',
-            'format': 'Булево значение.',
-            'example': 'false',
-        },
         'RESET_TRAFFIC_ON_TARIFF_SWITCH': {
             'description': (
                 'Автоматически сбрасывает счётчик использованного трафика '
@@ -902,6 +912,46 @@ class BotConfigurationService:
             'format': 'Булево значение: выберите "Включить" или "Выключить".',
             'example': 'Выключено по умолчанию.',
             'warning': 'При включении трафик будет обнуляться при каждом продлении подписки.',
+        },
+        'TELEGRAM_WIDGET_SIZE': {
+            'description': 'Размер кнопки виджета Telegram на странице авторизации.',
+            'format': 'Выберите один из доступных размеров.',
+            'example': 'large',
+        },
+        'TELEGRAM_WIDGET_RADIUS': {
+            'description': 'Радиус скругления углов кнопки виджета Telegram (в пикселях).',
+            'format': 'Целое число от 0 до 20.',
+            'example': '8',
+            'warning': 'Максимум: 20 для large, 14 для medium, 10 для small.',
+        },
+        'TELEGRAM_WIDGET_USERPIC': {
+            'description': 'Показывать ли аватар пользователя в виджете Telegram после авторизации.',
+            'format': 'Булево значение.',
+            'example': 'true',
+        },
+        'TELEGRAM_WIDGET_REQUEST_ACCESS': {
+            'description': 'Запрашивать ли у пользователя разрешение на отправку сообщений боту.',
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': 'При отключении бот не сможет писать пользователю первым.',
+        },
+        'TELEGRAM_OIDC_ENABLED': {
+            'description': 'Включить авторизацию через новый Telegram Login (OpenID Connect). При включении заменяет legacy виджет.',
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': 'Требует заполнения CLIENT_ID и CLIENT_SECRET из BotFather.',
+        },
+        'TELEGRAM_OIDC_CLIENT_ID': {
+            'description': 'ID бота (числовой) из BotFather > Bot Settings > Web Login.',
+            'format': 'Числовой ID бота.',
+            'example': '8521897198',
+            'warning': 'Должен совпадать с ID бота, используемого для авторизации.',
+        },
+        'TELEGRAM_OIDC_CLIENT_SECRET': {
+            'description': 'Секрет для OIDC из BotFather > Bot Settings > Web Login.',
+            'format': 'Строка-секрет.',
+            'example': 'xxxxxxxxxxxxxxxxxxxxxxxx',
+            'warning': 'НЕ совпадает с BOT_TOKEN. Получается отдельно в BotFather.',
         },
     }
 
@@ -1463,6 +1513,11 @@ class BotConfigurationService:
 
         await cls._sync_default_web_api_token()
 
+        # После загрузки всех overrides (включая SALES_MODE) — пересчитать цены,
+        # т.к. ensure_tariffs_synced мог загрузить тарифные цены до того как
+        # SALES_MODE=classic был применён из system_settings
+        refresh_period_prices()
+
     @classmethod
     async def reload(cls) -> None:
         cls._overrides_raw.clear()
@@ -1575,6 +1630,11 @@ class BotConfigurationService:
         if key in {'WEB_API_DEFAULT_TOKEN', 'WEB_API_DEFAULT_TOKEN_NAME'}:
             await cls._sync_default_web_api_token()
 
+        if key == 'SALES_MODE' and settings.is_tariffs_mode():
+            from app.database.crud.tariff import load_period_prices_from_db
+
+            await load_period_prices_from_db(db)
+
     @classmethod
     async def reset_value(
         cls,
@@ -1597,6 +1657,11 @@ class BotConfigurationService:
         if key in {'WEB_API_DEFAULT_TOKEN', 'WEB_API_DEFAULT_TOKEN_NAME'}:
             await cls._sync_default_web_api_token()
 
+        if key == 'SALES_MODE' and settings.is_tariffs_mode():
+            from app.database.crud.tariff import load_period_prices_from_db
+
+            await load_period_prices_from_db(db)
+
     @classmethod
     def _apply_to_settings(cls, key: str, value: Any) -> None:
         if cls._is_env_override(key):
@@ -1604,7 +1669,11 @@ class BotConfigurationService:
             return
         try:
             setattr(settings, key, value)
-            if key in {
+            if key == 'SALES_MODE':
+                if settings.is_classic_mode():
+                    clear_db_period_prices()
+                refresh_period_prices()
+            elif key in {
                 'PRICE_14_DAYS',
                 'PRICE_30_DAYS',
                 'PRICE_60_DAYS',

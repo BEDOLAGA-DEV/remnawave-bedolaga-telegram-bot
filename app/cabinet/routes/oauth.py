@@ -24,6 +24,7 @@ from ..auth.oauth_providers import (
     validate_oauth_state,
 )
 from ..dependencies import get_cabinet_db
+from ..routes.account_linking import OAuthProviderName
 from ..schemas.auth import AuthResponse
 from .auth import _create_auth_response, _process_campaign_bonus, _store_refresh_token
 
@@ -81,7 +82,9 @@ class OAuthCallbackRequest(BaseModel):
     campaign_slug: str | None = Field(
         None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description='Campaign slug from web link'
     )
-    referral_code: str | None = Field(None, max_length=32, description='Referral code of inviter')
+    referral_code: str | None = Field(
+        None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
+    )
 
 
 # --- Endpoints ---
@@ -100,7 +103,7 @@ async def get_oauth_providers():
 
 
 @router.get('/{provider}/authorize', response_model=OAuthAuthorizeResponse)
-async def get_oauth_authorize_url(provider: str):
+async def get_oauth_authorize_url(provider: OAuthProviderName):
     """Get authorization URL for an OAuth provider."""
     oauth_provider = get_provider(provider)
     if not oauth_provider:
@@ -112,14 +115,16 @@ async def get_oauth_authorize_url(provider: str):
     # Generate extra state data (e.g., PKCE code_verifier for VK)
     auth_extra = oauth_provider.prepare_auth_state()
     state = await generate_oauth_state(provider, extra_data=auth_extra or None)
-    authorize_url = oauth_provider.get_authorization_url(state, **auth_extra)
+    # Only pass URL-safe params (prefixed with _) to authorize URL; exclude secrets like code_verifier
+    url_params = {k: v for k, v in auth_extra.items() if k.startswith('_')} if auth_extra else {}
+    authorize_url = oauth_provider.get_authorization_url(state, **url_params)
 
     return OAuthAuthorizeResponse(authorize_url=authorize_url, state=state)
 
 
 @router.post('/{provider}/callback', response_model=AuthResponse)
 async def oauth_callback(
-    provider: str,
+    provider: OAuthProviderName,
     request: OAuthCallbackRequest,
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -130,6 +135,14 @@ async def oauth_callback(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Invalid or expired OAuth state',
+        )
+
+    # 1b. Reject linking-flow state tokens (must use link_provider_callback instead)
+    if state_data.get('linking') == 'true':
+        logger.warning('Linking-flow state token used in login callback', provider=provider)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='OAuth state was initiated for account linking, not login',
         )
 
     # 2. Get provider instance
@@ -151,7 +164,7 @@ async def oauth_callback(
     try:
         token_data = await oauth_provider.exchange_code(request.code, **exchange_kwargs)
     except Exception as exc:
-        logger.error('OAuth code exchange failed', provider=provider, exc_info=exc)
+        logger.error('OAuth code exchange failed', provider=provider, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Failed to exchange authorization code',
@@ -161,7 +174,7 @@ async def oauth_callback(
     try:
         user_info: OAuthUserInfo = await oauth_provider.get_user_info(token_data)
     except Exception as exc:
-        logger.error('OAuth user info fetch failed', provider=provider, exc_info=exc)
+        logger.error('OAuth user info fetch failed', provider=provider, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Failed to fetch user information from provider',
@@ -201,9 +214,9 @@ async def oauth_callback(
                     )
                 else:
                     referrer_id = referrer.id
-        except Exception as e:
+        except Exception:
             logger.warning(
-                'Failed to resolve referral code during OAuth', referral_code=request.referral_code, exc_info=e
+                'Failed to resolve referral code during OAuth', referral_code=request.referral_code, exc_info=True
             )
 
     # 8. Create new user

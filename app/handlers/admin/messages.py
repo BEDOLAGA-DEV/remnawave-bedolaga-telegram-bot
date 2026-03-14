@@ -1557,7 +1557,11 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
     if target == 'expired':
         # Истекшие подписки
         now = datetime.now(UTC)
-        expired_statuses = [SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value]
+        expired_statuses = [
+            SubscriptionStatus.EXPIRED.value,
+            SubscriptionStatus.DISABLED.value,
+            SubscriptionStatus.LIMITED.value,
+        ]
         query = (
             select(sql_func.count(distinct(User.id)))
             .outerjoin(Subscription, User.id == Subscription.user_id)
@@ -1576,7 +1580,11 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
     if target == 'expired_subscribers':
         # То же что и expired
         now = datetime.now(UTC)
-        expired_statuses = [SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value]
+        expired_statuses = [
+            SubscriptionStatus.EXPIRED.value,
+            SubscriptionStatus.DISABLED.value,
+            SubscriptionStatus.LIMITED.value,
+        ]
         query = (
             select(sql_func.count(distinct(User.id)))
             .outerjoin(Subscription, User.id == Subscription.user_id)

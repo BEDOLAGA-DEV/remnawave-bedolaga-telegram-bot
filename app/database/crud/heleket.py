@@ -15,7 +15,7 @@ logger = structlog.get_logger(__name__)
 async def create_heleket_payment(
     db: AsyncSession,
     *,
-    user_id: int,
+    user_id: int | None,
     uuid: str,
     order_id: str,
     amount: str,
@@ -91,6 +91,11 @@ async def get_heleket_payment_by_id(
     return result.scalar_one_or_none()
 
 
+async def get_heleket_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> HeleketPayment | None:
+    result = await db.execute(select(HeleketPayment).where(HeleketPayment.id == payment_id).with_for_update())
+    return result.scalar_one_or_none()
+
+
 async def update_heleket_payment(
     db: AsyncSession,
     uuid: str,
@@ -159,7 +164,7 @@ async def link_heleket_payment_to_transaction(
     payment.transaction_id = transaction_id
     payment.updated_at = datetime.now(UTC)
 
-    await db.commit()
+    await db.flush()
     await db.refresh(payment)
 
     logger.info('Heleket платеж связан с транзакцией', uuid=uuid, transaction_id=transaction_id)
