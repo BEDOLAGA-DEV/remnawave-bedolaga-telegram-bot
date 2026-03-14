@@ -84,6 +84,8 @@ class EmailService:
             msg['To'] = to_email
             msg['Date'] = formatdate(localtime=False)
             msg['Message-ID'] = make_msgid(domain=self.from_email.split('@')[-1])
+            msg['List-Unsubscribe'] = f'<mailto:{safe_from_email}?subject=unsubscribe>'
+            msg['Precedence'] = 'bulk'
 
             # Plain text version
             if body_text is None:
@@ -203,42 +205,28 @@ class EmailService:
         t = texts.get(language, texts['ru'])
 
         subject = t['subject']
-        body_html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .button {{
-                    display: inline-block;
-                    padding: 12px 24px;
-                    background-color: #007bff;
-                    color: white !important;
-                    text-decoration: none;
-                    border-radius: 5px;
-                    margin: 20px 0;
-                }}
-                .footer {{ margin-top: 30px; font-size: 12px; color: #666; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2>{t['greeting']}</h2>
-                <p>{t['intro']}</p>
-                <a href="{full_url}" class="button">{t['button']}</a>
-                <p>{t['or_copy']}</p>
-                <p><a href="{full_url}">{full_url}</a></p>
-                <p>{t['expires']}</p>
-                <p>{t['ignore']}</p>
-                <div class="footer">
-                    <p>{t['regards']}<br>{self.from_name}</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
+        body_html = f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#222;background:#f5f5f5">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5"><tr><td align="center" style="padding:30px 10px">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;border:1px solid #e0e0e0">
+<tr><td style="padding:32px 36px">
+<p style="margin:0 0 18px;font-size:16px">{t['greeting']}</p>
+<p style="margin:0 0 24px">{t['intro']}</p>
+<table cellpadding="0" cellspacing="0"><tr><td style="background:#2563eb;border-radius:6px;padding:12px 28px">
+<a href="{full_url}" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:15px">{t['button']}</a>
+</td></tr></table>
+<p style="margin:24px 0 8px;font-size:13px;color:#666">{t['or_copy']}</p>
+<p style="margin:0 0 20px;font-size:13px;word-break:break-all"><a href="{full_url}" style="color:#2563eb">{full_url}</a></p>
+<p style="margin:0 0 8px;font-size:13px;color:#888">{t['expires']}</p>
+<p style="margin:0;font-size:13px;color:#888">{t['ignore']}</p>
+</td></tr>
+<tr><td style="padding:16px 36px;border-top:1px solid #eee;font-size:12px;color:#999">
+{t['regards']} {self.from_name}
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>'''
 
         return self.send_email(to_email, subject, body_html)
 

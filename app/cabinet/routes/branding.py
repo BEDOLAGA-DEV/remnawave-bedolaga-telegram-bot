@@ -64,7 +64,6 @@ ALLOWED_CONTENT_TYPES = {'image/png', 'image/jpeg', 'image/jpg', 'image/webp', '
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB for larger logos
 
 
-# ============ Schemas ============
 
 
 class BrandingResponse(BaseModel):
@@ -288,6 +287,12 @@ class GiftEnabledUpdate(BaseModel):
     """Request to update gift feature setting."""
 
     enabled: bool
+class OfflineConvGoal(BaseModel):
+    """Offline conversion goal info."""
+
+    name: str
+    event_id: str
+    dedup: str
 
 
 class AnalyticsCountersResponse(BaseModel):
@@ -296,6 +301,10 @@ class AnalyticsCountersResponse(BaseModel):
     yandex_metrika_id: str = ''
     google_ads_id: str = ''
     google_ads_label: str = ''
+    offline_conv_enabled: bool = False
+    offline_conv_counter_id: str = ''
+    offline_conv_measurement_secret_masked: str = ''
+    offline_conv_goals: list[OfflineConvGoal] = []
 
 
 class AnalyticsCountersUpdate(BaseModel):
@@ -323,7 +332,6 @@ DEFAULT_THEME_COLORS = {
 }
 
 
-# ============ Helper Functions ============
 
 
 def ensure_branding_dir():
@@ -364,7 +372,6 @@ def has_custom_logo() -> bool:
     return get_logo_path() is not None
 
 
-# ============ Routes ============
 
 
 @router.get('', response_model=BrandingResponse)
@@ -541,7 +548,6 @@ async def delete_logo(
     )
 
 
-# ============ Theme Colors Routes ============
 
 
 def validate_hex_color(color: str) -> bool:
@@ -631,7 +637,6 @@ async def reset_theme_colors(
     return ThemeColorsResponse(**DEFAULT_THEME_COLORS)
 
 
-# ============ Enabled Themes Routes ============
 
 DEFAULT_ENABLED_THEMES = {'dark': True, 'light': True}
 
@@ -689,7 +694,6 @@ async def update_enabled_themes(
     return EnabledThemesResponse(**current_themes)
 
 
-# ============ Animation Routes ============
 
 
 @router.get('/animation', response_model=AnimationEnabledResponse)
@@ -724,7 +728,6 @@ async def update_animation_enabled(
     return AnimationEnabledResponse(enabled=payload.enabled)
 
 
-# ============ Animation Config Routes (new JSON-based) ============
 
 
 @router.get('/animation-config', response_model=AnimationConfigResponse)
@@ -787,7 +790,6 @@ async def update_animation_config(
     return AnimationConfigResponse(**current)
 
 
-# ============ Fullscreen Routes ============
 
 
 @router.get('/fullscreen', response_model=FullscreenEnabledResponse)
@@ -822,7 +824,6 @@ async def update_fullscreen_enabled(
     return FullscreenEnabledResponse(enabled=payload.enabled)
 
 
-# ============ Email Auth Routes ============
 
 
 @router.get('/email-auth', response_model=EmailAuthEnabledResponse)
@@ -858,7 +859,6 @@ async def update_email_auth_enabled(
     return EmailAuthEnabledResponse(enabled=payload.enabled)
 
 
-# ============ Telegram Widget Config Routes ============
 
 
 @router.get('/telegram-widget', response_model=TelegramWidgetConfigResponse)
@@ -899,7 +899,6 @@ async def get_telegram_widget_config(
     )
 
 
-# ============ Analytics Counters Routes ============
 
 
 @router.get('/analytics', response_model=AnalyticsCountersResponse)
@@ -914,10 +913,34 @@ async def get_analytics_counters(
     google_id = await get_setting_value(db, GOOGLE_ADS_ID_KEY) or ''
     google_label = await get_setting_value(db, GOOGLE_ADS_LABEL_KEY) or ''
 
+    # Offline conversions status from env config
+    oc_enabled = settings.YANDEX_OFFLINE_CONV_ENABLED and bool(settings.YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET)
+    oc_counter = settings.YANDEX_OFFLINE_CONV_COUNTER_ID if oc_enabled else ''
+    oc_goals = []
+    if oc_enabled:
+        oc_goals = [
+            OfflineConvGoal(name='Регистрация', event_id='registration', dedup='1 раз'),
+            OfflineConvGoal(name='Триал', event_id='trial-add', dedup='1 раз'),
+            OfflineConvGoal(name='Покупка', event_id='purchase', dedup='каждый'),
+        ]
+
+    # Mask the measurement secret for display (show first 4 + last 3 chars)
+    oc_secret = settings.YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET or ''
+    oc_secret_masked = ''
+    if oc_enabled and oc_secret:
+        if len(oc_secret) > 7:
+            oc_secret_masked = oc_secret[:4] + '****' + oc_secret[-3:]
+        else:
+            oc_secret_masked = '****'
+
     return AnalyticsCountersResponse(
         yandex_metrika_id=yandex_id,
         google_ads_id=google_id,
         google_ads_label=google_label,
+        offline_conv_enabled=oc_enabled,
+        offline_conv_counter_id=oc_counter,
+        offline_conv_measurement_secret_masked=oc_secret_masked,
+        offline_conv_goals=oc_goals,
     )
 
 
@@ -963,7 +986,6 @@ async def update_analytics_counters(
     )
 
 
-# ============ Lite Mode Routes ============
 
 
 @router.get('/lite-mode', response_model=LiteModeEnabledResponse)
@@ -999,7 +1021,6 @@ async def update_lite_mode_enabled(
     return LiteModeEnabledResponse(enabled=payload.enabled)
 
 
-# ============ Gift Feature Routes ============
 
 
 @router.get('/gift-enabled', response_model=GiftEnabledResponse)

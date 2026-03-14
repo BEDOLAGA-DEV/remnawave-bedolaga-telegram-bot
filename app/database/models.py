@@ -3219,6 +3219,7 @@ class GuestPurchase(Base):
     cabinet_password = Column(Text, nullable=True)
     auto_login_token = Column(Text, nullable=True)
     recipient_warning = Column(String(50), nullable=True)
+    yandex_cid = Column(String(128), nullable=True)
 
     landing = relationship('LandingPage', back_populates='guest_purchases', lazy='selectin')
     tariff = relationship('Tariff', lazy='selectin')
@@ -3228,3 +3229,24 @@ class GuestPurchase(Base):
     def __repr__(self) -> str:
         token_prefix = self.token[:5] if self.token else '?'
         return f"<GuestPurchase token='{token_prefix}...' status='{self.status}'>"
+
+
+class YandexClientIdMap(Base):
+    """Mapping between users and Yandex.Metrika ClientIDs for offline conversions."""
+
+    __tablename__ = 'yandex_client_id_map'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), unique=True, nullable=False)
+    yandex_cid = Column(String(128), nullable=False)
+    source = Column(String(10), nullable=False, default='web')
+    counter_id = Column(String(32), nullable=True)
+    registration_sent = Column(Boolean, default=False, nullable=False)
+    trial_sent = Column(Boolean, default=False, nullable=False)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+    user = relationship('User', foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return f'<YandexClientIdMap user_id={self.user_id} cid={self.yandex_cid[:8]}...>'
