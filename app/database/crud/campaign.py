@@ -366,7 +366,8 @@ async def get_campaign_statistics(
                 first_payment_amount_by_user[user_id] = amount_value
                 first_payment_time_by_user[user_id] = created_at
 
-    total_revenue = deposits_total + subscription_payments_total
+    # Revenue = only real deposits (exclude bonus-funded subscription spending)
+    total_revenue = deposits_total
 
     paid_user_ids = set(paid_users_from_transactions)
     paid_user_ids.update(conversion_user_ids)

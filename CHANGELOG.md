@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.32.3](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.32.2...v3.32.3) (2026-03-14)
+
+
+### Bug Fixes
+
+* campaign registration, revenue calculation, backup restore, autopay errors, referral links ([7648707](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/7648707ca26d6cd2703b50b0fe8c4697e6155784))
+* implement case-insensitive email checks in authentication and user retrieval ([7e466ef](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/7e466ef464ce918d885bd6297d1e605a633fd43e))
+* implement case-insensitive email checks in authentication and user retrieval ([ebee834](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ebee8348ca338b9be5f044537e5e2b4740dc6441))
+* **payment:** prioritize saved cart after topup over expired auto-extend ([28321df](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/28321df4d274269536efebcf3da870f2e7d07d90))
+* refresh CLASSIC_PERIOD_PRICES when admin changes PRICE_*_DAYS or SALES_MODE ([6adf70b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6adf70b2da6e2250cc8e909dbb497b355302e72f))
+
 ## [3.32.2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.32.1...v3.32.2) (2026-03-13)
 
 

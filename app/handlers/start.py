@@ -302,6 +302,9 @@ async def handle_potential_referral_code(message: types.Message, state: FSMConte
     language = data.get('language') or (getattr(user, 'language', None) if user else None) or DEFAULT_LANGUAGE
     texts = get_texts(language)
 
+    if not message.text:
+        return False
+
     from app.utils.promo_rate_limiter import promo_limiter, validate_promo_format
 
     potential_code = message.text.strip()
@@ -1185,6 +1188,10 @@ async def process_referral_code_input(message: types.Message, state: FSMContext,
     data = await state.get_data() or {}
     language = data.get('language', DEFAULT_LANGUAGE)
     texts = get_texts(language)
+
+    if not message.text:
+        await message.answer(texts.t('REFERRAL_OR_PROMO_CODE_INVALID', '❌ Неверный реферальный код или промокод'))
+        return
 
     from app.utils.promo_rate_limiter import promo_limiter, validate_promo_format
 
@@ -2340,6 +2347,33 @@ async def required_sub_channel_check(
                             logger.info('✅ CHANNEL CHECK: Реферальная регистрация обработана для', user_id=user.id)
                         except Exception as e:
                             logger.error('Ошибка при обработке реферальной регистрации', error=e)
+
+                    # Применяем бонус рекламной кампании (record_campaign_registration)
+                    campaign_message = await _apply_campaign_bonus_if_needed(db, user, state_data, texts)
+                    try:
+                        await db.refresh(user)
+                    except Exception as refresh_error:
+                        logger.error(
+                            'Ошибка обновления данных пользователя после бонуса кампании',
+                            telegram_id=user.telegram_id,
+                            refresh_error=refresh_error,
+                        )
+                    try:
+                        await db.refresh(user, ['subscription'])
+                    except Exception as refresh_sub_error:
+                        logger.error(
+                            'Ошибка обновления подписки после бонуса кампании',
+                            telegram_id=user.telegram_id,
+                            refresh_sub_error=refresh_sub_error,
+                        )
+                    if campaign_message:
+                        try:
+                            await bot.send_message(
+                                chat_id=query.from_user.id,
+                                text=campaign_message,
+                            )
+                        except Exception as e:
+                            logger.error('Ошибка отправки сообщения о бонусе кампании', error=e)
 
                     # Показываем главное меню после создания пользователя
                     has_active_subscription, subscription_is_active = _calculate_subscription_flags(user.subscription)

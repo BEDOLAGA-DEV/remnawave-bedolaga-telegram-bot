@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -721,8 +721,9 @@ async def register_email(
             detail='Disposable email addresses are not allowed',
         )
 
-    # Check if email already exists
-    existing_user = await db.execute(select(User).where(User.email == request.email))
+    # Check if email already exists (case-insensitive)
+    email_lower = (request.email or '').strip().lower()
+    existing_user = await db.execute(select(User).where(func.lower(User.email) == email_lower))
     if existing_user.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -837,8 +838,9 @@ async def register_email_standalone(
             detail='Disposable email addresses are not allowed',
         )
 
-    # Проверить что email не занят
-    existing = await db.execute(select(User).where(User.email == request.email))
+    # Проверить что email не занят (без учёта регистра)
+    email_lower = (request.email or '').strip().lower()
+    existing = await db.execute(select(User).where(func.lower(User.email) == email_lower))
     if existing.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1096,8 +1098,9 @@ async def login_email(
     # Check if this is a test email login
     is_test_email = settings.is_test_email(request.email)
 
-    # Find user by email
-    result = await db.execute(select(User).where(User.email == request.email))
+    # Find user by email (case-insensitive)
+    email_lower = (request.email or '').strip().lower()
+    result = await db.execute(select(User).where(func.lower(User.email) == email_lower))
     user = result.scalar_one_or_none()
 
     if not user:
@@ -1317,7 +1320,8 @@ async def forgot_password(
             detail='Too many requests',
             headers={'Retry-After': '60'},
         )
-    result = await db.execute(select(User).where(User.email == request.email))
+    email_lower = (request.email or '').strip().lower()
+    result = await db.execute(select(User).where(func.lower(User.email) == email_lower))
     user = result.scalar_one_or_none()
 
     # Always return success to prevent email enumeration

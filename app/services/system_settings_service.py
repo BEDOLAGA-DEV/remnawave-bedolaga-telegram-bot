@@ -11,6 +11,7 @@ from app.config import (
     ENV_OVERRIDE_KEYS,
     Settings,
     clear_db_period_prices,
+    refresh_classic_period_prices,
     refresh_period_prices,
     refresh_traffic_prices,
     settings,
@@ -1517,6 +1518,7 @@ class BotConfigurationService:
         # т.к. ensure_tariffs_synced мог загрузить тарифные цены до того как
         # SALES_MODE=classic был применён из system_settings
         refresh_period_prices()
+        refresh_classic_period_prices()
 
     @classmethod
     async def reload(cls) -> None:
@@ -1673,6 +1675,7 @@ class BotConfigurationService:
                 if settings.is_classic_mode():
                     clear_db_period_prices()
                 refresh_period_prices()
+                refresh_classic_period_prices()
             elif key in {
                 'PRICE_14_DAYS',
                 'PRICE_30_DAYS',
@@ -1682,6 +1685,7 @@ class BotConfigurationService:
                 'PRICE_360_DAYS',
             }:
                 refresh_period_prices()
+                refresh_classic_period_prices()
             elif key.startswith('PRICE_TRAFFIC_') or key == 'TRAFFIC_PACKAGES_CONFIG':
                 refresh_traffic_prices()
             elif key in {'REMNAWAVE_AUTO_SYNC_ENABLED', 'REMNAWAVE_AUTO_SYNC_TIMES'}:

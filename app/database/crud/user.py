@@ -1191,8 +1191,11 @@ async def create_user_by_email(
 
 
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
-    """Get user by email address."""
-    result = await db.execute(select(User).where(User.email == email))
+    """Get user by email address (case-insensitive)."""
+    if not email or not email.strip():
+        return None
+    email_lower = email.strip().lower()
+    result = await db.execute(select(User).where(func.lower(User.email) == email_lower))
     return result.scalar_one_or_none()
 
 
@@ -1208,7 +1211,10 @@ async def is_email_taken(db: AsyncSession, email: str, exclude_user_id: int | No
     Returns:
         True if email is taken, False otherwise
     """
-    query = select(User.id).where(User.email == email)
+    if not email or not email.strip():
+        return False
+    email_lower = email.strip().lower()
+    query = select(User.id).where(func.lower(User.email) == email_lower)
     if exclude_user_id:
         query = query.where(User.id != exclude_user_id)
     result = await db.execute(query)

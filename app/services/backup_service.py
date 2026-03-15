@@ -1105,9 +1105,20 @@ class BackupService:
                     existing = existing_user.scalar_one_or_none()
 
                     if existing:
-                        for key, value in processed_data.items():
-                            if key != 'id':
-                                setattr(existing, key, value)
+                        try:
+                            async with db.begin_nested():
+                                for key, value in processed_data.items():
+                                    if key != 'id':
+                                        setattr(existing, key, value)
+                                await db.flush()
+                        except IntegrityError:
+                            db.expire(existing)
+                            logger.warning(
+                                'Конфликт уникального ключа при обновлении пользователя, пропускаем',
+                                user_id=processed_data.get('id'),
+                                telegram_id=processed_data.get('telegram_id'),
+                            )
+                            continue
                     else:
                         instance = User(**processed_data)
                         try:
@@ -1376,9 +1387,20 @@ class BackupService:
                     existing = existing_record.scalar_one_or_none()
 
                     if existing:
-                        for key, value in processed_data.items():
-                            if key not in pk_cols:
-                                setattr(existing, key, value)
+                        try:
+                            async with db.begin_nested():
+                                for key, value in processed_data.items():
+                                    if key not in pk_cols:
+                                        setattr(existing, key, value)
+                                await db.flush()
+                        except IntegrityError:
+                            db.expire(existing)
+                            logger.warning(
+                                'Конфликт уникального ключа при обновлении записи, пропускаем',
+                                table_name=table_name,
+                                pk={col: processed_data.get(col) for col in pk_cols},
+                            )
+                            continue
                     else:
                         instance = model(**processed_data)
                         try:

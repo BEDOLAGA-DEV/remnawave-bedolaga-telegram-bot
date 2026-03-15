@@ -1,4 +1,5 @@
 from aiogram import types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -114,7 +115,13 @@ async def toggle_autopay(callback: types.CallbackQuery, db_user: User, db: Async
     status = texts.t('AUTOPAY_STATUS_ENABLED', 'включен') if enable else texts.t('AUTOPAY_STATUS_DISABLED', 'выключен')
     await callback.answer(texts.t('AUTOPAY_TOGGLE_SUCCESS', '✅ Автоплатеж {status}!').format(status=status))
 
-    await handle_autopay_menu(callback, db_user, db)
+    try:
+        await handle_autopay_menu(callback, db_user, db)
+    except TelegramBadRequest as e:
+        if 'message is not modified' in str(e):
+            pass
+        else:
+            raise
 
 
 async def show_autopay_days(callback: types.CallbackQuery, db_user: User):

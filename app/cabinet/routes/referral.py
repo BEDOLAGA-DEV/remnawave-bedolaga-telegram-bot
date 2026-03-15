@@ -91,12 +91,20 @@ async def get_referral_info(
     referral_entitlement = max(0, total_earnings - withdrawn - pending)
     available_balance = min(user.balance_kopeks, referral_entitlement)
 
-    # Build referral link
+    # Build referral links
     referral_link = settings.get_referral_link(user.referral_code) if user.referral_code else ''
+    bot_username = settings.get_bot_username()
+    bot_referral_link = ''
+    if user.referral_code and bot_username:
+        from urllib.parse import quote
+
+        safe_code = quote(user.referral_code, safe='')
+        bot_referral_link = f'https://t.me/{bot_username}?start={safe_code}'
 
     return ReferralInfoResponse(
         referral_code=user.referral_code or '',
         referral_link=referral_link,
+        bot_referral_link=bot_referral_link,
         total_referrals=total_referrals,
         active_referrals=active_referrals,
         total_earnings_kopeks=total_earnings,
