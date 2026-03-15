@@ -19,11 +19,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.13-slim
 
-<<<<<<< HEAD
-ARG VERSION="v3.32.2" # x-release-please-version
-=======
 ARG VERSION="v3.32.3" # x-release-please-version
->>>>>>> upstream/main
 ARG BUILD_DATE
 ARG VCS_REF
 
