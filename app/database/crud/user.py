@@ -936,6 +936,34 @@ async def get_users_spending_stats(db: AsyncSession, user_ids: list[int]) -> dic
     }
 
 
+async def get_referrers_with_counts(
+    db: AsyncSession, limit: int = 500
+) -> tuple[list[User], dict[int, int]]:
+    """Return (list of users who have at least one referral, dict user_id -> referrals_count)."""
+    count_stmt = (
+        select(User.referred_by_id.label('referrer_id'), func.count(User.id).label('cnt'))
+        .where(User.referred_by_id.isnot(None))
+        .group_by(User.referred_by_id)
+    )
+    ref_result = await db.execute(count_stmt)
+    ref_rows = ref_result.all()
+    if not ref_rows:
+        return [], {}
+    referrals_count_by_id = {row.referrer_id: row.cnt for row in ref_rows}
+    referrer_ids = list(referrals_count_by_id.keys())[:limit]
+    users_result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.subscription).selectinload(Subscription.tariff),
+            selectinload(User.promo_group),
+        )
+        .where(User.id.in_(referrer_ids))
+        .order_by(User.created_at.desc())
+    )
+    users = list(users_result.scalars().all())
+    return users, referrals_count_by_id
+
+
 async def get_referrals(db: AsyncSession, user_id: int) -> list[User]:
     result = await db.execute(
         select(User)

@@ -18,6 +18,7 @@ from app.database.crud.user import (
     add_user_balance,
     delete_user as soft_delete_user,
     get_referrals,
+    get_referrers_with_counts,
     get_user_by_id,
     get_user_by_telegram_id,
     get_users_count,
@@ -475,6 +476,32 @@ async def list_users(
         users=items,
         total=total,
         offset=offset,
+        limit=limit,
+    )
+
+
+@router.get('/referrers', response_model=UsersListResponse)
+async def list_referrers(
+    limit: int = Query(500, ge=1, le=1000),
+    admin: User = Depends(require_permission('users:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """List users who have at least one referral (for referral tree page)."""
+    users, referrals_count_by_id = await get_referrers_with_counts(db=db, limit=limit)
+    user_ids = [u.id for u in users]
+    spending_stats = await get_users_spending_stats(db, user_ids) if user_ids else {}
+    items = [
+        _build_user_list_item(
+            u,
+            spending_stats,
+            referrals_count=referrals_count_by_id.get(u.id, 0),
+        )
+        for u in users
+    ]
+    return UsersListResponse(
+        users=items,
+        total=len(items),
+        offset=0,
         limit=limit,
     )
 
