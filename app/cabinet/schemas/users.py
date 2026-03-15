@@ -83,9 +83,10 @@ class UserPromoGroupInfo(BaseModel):
 
 
 class UserListItemReferral(BaseModel):
-    """Referral summary for user list (referrals_count only)."""
+    """Referral summary for user list."""
 
     referrals_count: int = 0
+    total_earnings_kopeks: int = 0
 
 
 class UserListItem(BaseModel):

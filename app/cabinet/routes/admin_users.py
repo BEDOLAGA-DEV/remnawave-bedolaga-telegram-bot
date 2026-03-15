@@ -110,6 +110,7 @@ def _build_user_list_item(
     user: User,
     spending_stats: dict = None,
     referrals_count: int = 0,
+    total_earnings_kopeks: int = 0,
 ) -> UserListItem:
     """Build UserListItem from User model."""
     stats = spending_stats or {}
@@ -127,7 +128,10 @@ def _build_user_list_item(
         subscription_end_date = user.subscription.end_date
 
     referral = (
-        UserListItemReferral(referrals_count=referrals_count)
+        UserListItemReferral(
+            referrals_count=referrals_count,
+            total_earnings_kopeks=total_earnings_kopeks,
+        )
         if referrals_count > 0
         else None
     )
@@ -482,12 +486,16 @@ async def list_users(
 
 @router.get('/referrers', response_model=UsersListResponse)
 async def list_referrers(
+    top: int | None = Query(None, ge=1, le=1000, description='Top N by referrals count'),
     limit: int = Query(500, ge=1, le=1000),
     admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """List users who have at least one referral (for referral tree page)."""
-    users, referrals_count_by_id = await get_referrers_with_counts(db=db, limit=limit)
+    """List users who have at least one referral, sorted by referrals count desc (for referral tree)."""
+    effective_limit = top if top is not None else limit
+    users, referrals_count_by_id, earnings_by_id = await get_referrers_with_counts(
+        db=db, limit=effective_limit
+    )
     user_ids = [u.id for u in users]
     spending_stats = await get_users_spending_stats(db, user_ids) if user_ids else {}
     items = [
@@ -495,6 +503,7 @@ async def list_referrers(
             u,
             spending_stats,
             referrals_count=referrals_count_by_id.get(u.id, 0),
+            total_earnings_kopeks=earnings_by_id.get(u.id, 0),
         )
         for u in users
     ]
@@ -502,7 +511,7 @@ async def list_referrers(
         users=items,
         total=len(items),
         offset=0,
-        limit=limit,
+        limit=effective_limit,
     )
 
 

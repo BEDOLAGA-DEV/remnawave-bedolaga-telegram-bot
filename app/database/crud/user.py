@@ -938,8 +938,10 @@ async def get_users_spending_stats(db: AsyncSession, user_ids: list[int]) -> dic
 
 async def get_referrers_with_counts(
     db: AsyncSession, limit: int = 500
-) -> tuple[list[User], dict[int, int]]:
-    """Return (list of users who have at least one referral, dict user_id -> referrals_count)."""
+) -> tuple[list[User], dict[int, int], dict[int, int]]:
+    """Return (users sorted by referrals_count desc, user_id -> referrals_count, user_id -> total_earnings_kopeks)."""
+    from app.database.models import ReferralEarning
+
     count_stmt = (
         select(User.referred_by_id.label('referrer_id'), func.count(User.id).label('cnt'))
         .where(User.referred_by_id.isnot(None))
@@ -948,20 +950,35 @@ async def get_referrers_with_counts(
     ref_result = await db.execute(count_stmt)
     ref_rows = ref_result.all()
     if not ref_rows:
-        return [], {}
+        return [], {}, {}
     referrals_count_by_id = {row.referrer_id: row.cnt for row in ref_rows}
-    referrer_ids = list(referrals_count_by_id.keys())[:limit]
+    sorted_ids = sorted(
+        referrals_count_by_id.keys(),
+        key=lambda uid: referrals_count_by_id[uid],
+        reverse=True,
+    )[:limit]
+    if not sorted_ids:
+        return [], {}, {}
+
+    earnings_stmt = (
+        select(ReferralEarning.user_id.label('referrer_id'), func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0).label('total'))
+        .where(ReferralEarning.user_id.in_(sorted_ids))
+        .group_by(ReferralEarning.user_id)
+    )
+    earn_result = await db.execute(earnings_stmt)
+    earnings_by_id = {row.referrer_id: int(row.total) for row in earn_result.all()}
+
     users_result = await db.execute(
         select(User)
         .options(
             selectinload(User.subscription).selectinload(Subscription.tariff),
             selectinload(User.promo_group),
         )
-        .where(User.id.in_(referrer_ids))
-        .order_by(User.created_at.desc())
+        .where(User.id.in_(sorted_ids))
     )
-    users = list(users_result.scalars().all())
-    return users, referrals_count_by_id
+    users_by_id = {u.id: u for u in users_result.scalars().all()}
+    users = [users_by_id[uid] for uid in sorted_ids if uid in users_by_id]
+    return users, referrals_count_by_id, earnings_by_id
 
 
 async def get_referrals(db: AsyncSession, user_id: int) -> list[User]:
