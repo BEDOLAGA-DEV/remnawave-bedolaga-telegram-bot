@@ -82,6 +82,12 @@ class UserPromoGroupInfo(BaseModel):
 # === User List ===
 
 
+class UserListItemReferral(BaseModel):
+    """Referral summary for user list (referrals_count only)."""
+
+    referrals_count: int = 0
+
+
 class UserListItem(BaseModel):
     """User item in list."""
 
@@ -115,6 +121,9 @@ class UserListItem(BaseModel):
     has_restrictions: bool = False
     restriction_topup: bool = False
     restriction_subscription: bool = False
+
+    # Referral (only when referrals_count > 0)
+    referral: UserListItemReferral | None = None
 
 
 class UsersListResponse(BaseModel):

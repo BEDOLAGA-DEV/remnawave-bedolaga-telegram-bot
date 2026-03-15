@@ -86,6 +86,7 @@ from ..schemas.users import (
     UserDetailResponse,
     UserDevicesResponse,
     UserListItem,
+    UserListItemReferral,
     UserNodeUsageItem,
     UserNodeUsageResponse,
     UserPanelInfoResponse,
@@ -104,7 +105,11 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix='/admin/users', tags=['Cabinet Admin Users'])
 
 
-def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListItem:
+def _build_user_list_item(
+    user: User,
+    spending_stats: dict = None,
+    referrals_count: int = 0,
+) -> UserListItem:
     """Build UserListItem from User model."""
     stats = spending_stats or {}
     user_stats = stats.get(user.id, {'total_spent': 0, 'purchase_count': 0})
@@ -119,6 +124,12 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
         subscription_status = user.subscription.status
         subscription_is_trial = user.subscription.is_trial
         subscription_end_date = user.subscription.end_date
+
+    referral = (
+        UserListItemReferral(referrals_count=referrals_count)
+        if referrals_count > 0
+        else None
+    )
 
     return UserListItem(
         id=user.id,
@@ -143,6 +154,7 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
         has_restrictions=user.has_restrictions,
         restriction_topup=user.restriction_topup,
         restriction_subscription=user.restriction_subscription,
+        referral=referral,
     )
 
 
@@ -440,7 +452,24 @@ async def list_users(
     user_ids = [u.id for u in users]
     spending_stats = await get_users_spending_stats(db, user_ids) if user_ids else {}
 
-    items = [_build_user_list_item(u, spending_stats) for u in users]
+    # Get referrals count per user (for referral tree / list)
+    referrals_count_stmt = (
+        select(User.referred_by_id.label('referrer_id'), func.count(User.id).label('cnt'))
+        .where(User.referred_by_id.isnot(None), User.referred_by_id.in_(user_ids))
+        .group_by(User.referred_by_id)
+    )
+    ref_result = await db.execute(referrals_count_stmt)
+    ref_rows = ref_result.all()
+    referrals_count_by_id = {row.referrer_id: row.cnt for row in ref_rows}
+
+    items = [
+        _build_user_list_item(
+            u,
+            spending_stats,
+            referrals_count=referrals_count_by_id.get(u.id, 0),
+        )
+        for u in users
+    ]
 
     return UsersListResponse(
         users=items,
