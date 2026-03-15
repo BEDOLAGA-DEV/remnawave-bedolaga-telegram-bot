@@ -493,9 +493,7 @@ async def list_referrers(
 ):
     """List users who have at least one referral, sorted by referrals count desc (for referral tree)."""
     effective_limit = top if top is not None else limit
-    users, referrals_count_by_id, earnings_by_id = await get_referrers_with_counts(
-        db=db, limit=effective_limit
-    )
+    users, referrals_count_by_id, earnings_by_id = await get_referrers_with_counts(db=db, limit=effective_limit)
     user_ids = [u.id for u in users]
     spending_stats = await get_users_spending_stats(db, user_ids) if user_ids else {}
     items = [

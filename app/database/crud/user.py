@@ -961,7 +961,10 @@ async def get_referrers_with_counts(
         return [], {}, {}
 
     earnings_stmt = (
-        select(ReferralEarning.user_id.label('referrer_id'), func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0).label('total'))
+        select(
+            ReferralEarning.user_id.label('referrer_id'),
+            func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0).label('total'),
+        )
         .where(ReferralEarning.user_id.in_(sorted_ids))
         .group_by(ReferralEarning.user_id)
     )
