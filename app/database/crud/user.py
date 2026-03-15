@@ -937,39 +937,61 @@ async def get_users_spending_stats(db: AsyncSession, user_ids: list[int]) -> dic
 
 
 async def get_referrers_with_counts(
-    db: AsyncSession, limit: int = 500
+    db: AsyncSession,
+    limit: int = 500,
+    days: int | None = None,
+    sort_by: str = 'referrals',
 ) -> tuple[list[User], dict[int, int], dict[int, int]]:
-    """Return (users sorted by referrals_count desc, user_id -> referrals_count, user_id -> total_earnings_kopeks)."""
+    """Return (users sorted by sort_by, user_id -> referrals_count, user_id -> total_earnings_kopeks).
+
+    days: 7, 30, 60 or None for all time (filters both referral count and earnings by period).
+    sort_by: 'referrals' (by count) or 'earnings'.
+    """
     from app.database.models import ReferralEarning
+
+    since = (datetime.now(UTC) - timedelta(days=days)) if days else None
 
     count_stmt = (
         select(User.referred_by_id.label('referrer_id'), func.count(User.id).label('cnt'))
         .where(User.referred_by_id.isnot(None))
-        .group_by(User.referred_by_id)
     )
+    if since is not None:
+        count_stmt = count_stmt.where(User.created_at >= since)
+    count_stmt = count_stmt.group_by(User.referred_by_id)
     ref_result = await db.execute(count_stmt)
     ref_rows = ref_result.all()
     if not ref_rows:
         return [], {}, {}
     referrals_count_by_id = {row.referrer_id: row.cnt for row in ref_rows}
-    sorted_ids = sorted(
-        referrals_count_by_id.keys(),
-        key=lambda uid: referrals_count_by_id[uid],
-        reverse=True,
-    )[:limit]
-    if not sorted_ids:
-        return [], {}, {}
+    referrer_ids = list(referrals_count_by_id.keys())
 
     earnings_stmt = (
         select(
             ReferralEarning.user_id.label('referrer_id'),
             func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0).label('total'),
         )
-        .where(ReferralEarning.user_id.in_(sorted_ids))
-        .group_by(ReferralEarning.user_id)
+        .where(ReferralEarning.user_id.in_(referrer_ids))
     )
+    if since is not None:
+        earnings_stmt = earnings_stmt.where(ReferralEarning.created_at >= since)
+    earnings_stmt = earnings_stmt.group_by(ReferralEarning.user_id)
     earn_result = await db.execute(earnings_stmt)
     earnings_by_id = {row.referrer_id: int(row.total) for row in earn_result.all()}
+
+    if sort_by == 'earnings':
+        sorted_ids = sorted(
+            referrer_ids,
+            key=lambda uid: (earnings_by_id.get(uid, 0), referrals_count_by_id.get(uid, 0)),
+            reverse=True,
+        )[:limit]
+    else:
+        sorted_ids = sorted(
+            referrer_ids,
+            key=lambda uid: (referrals_count_by_id.get(uid, 0), earnings_by_id.get(uid, 0)),
+            reverse=True,
+        )[:limit]
+    if not sorted_ids:
+        return [], {}, {}
 
     users_result = await db.execute(
         select(User)

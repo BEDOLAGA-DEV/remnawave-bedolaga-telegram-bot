@@ -486,14 +486,21 @@ async def list_users(
 
 @router.get('/referrers', response_model=UsersListResponse)
 async def list_referrers(
-    top: int | None = Query(None, ge=1, le=1000, description='Top N by referrals count'),
+    top: int | None = Query(None, ge=1, le=1000, description='Top N'),
     limit: int = Query(500, ge=1, le=1000),
+    days: int | None = Query(None, description='Period: 7, 30, 60 or omit for all time'),
+    sort_by: str = Query('referrals', description='Sort: referrals or earnings'),
     admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """List users who have at least one referral, sorted by referrals count desc (for referral tree)."""
+    """List users who have at least one referral (for referral tree). Optional period and sort."""
+    if days is not None and days not in (7, 30, 60):
+        days = None
+    effective_sort = 'earnings' if sort_by == 'earnings' else 'referrals'
     effective_limit = top if top is not None else limit
-    users, referrals_count_by_id, earnings_by_id = await get_referrers_with_counts(db=db, limit=effective_limit)
+    users, referrals_count_by_id, earnings_by_id = await get_referrers_with_counts(
+        db=db, limit=effective_limit, days=days, sort_by=effective_sort
+    )
     user_ids = [u.id for u in users]
     spending_stats = await get_users_spending_stats(db, user_ids) if user_ids else {}
     items = [
