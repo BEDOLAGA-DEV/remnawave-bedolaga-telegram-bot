@@ -951,9 +951,8 @@ async def get_referrers_with_counts(
 
     since = (datetime.now(UTC) - timedelta(days=days)) if days else None
 
-    count_stmt = (
-        select(User.referred_by_id.label('referrer_id'), func.count(User.id).label('cnt'))
-        .where(User.referred_by_id.isnot(None))
+    count_stmt = select(User.referred_by_id.label('referrer_id'), func.count(User.id).label('cnt')).where(
+        User.referred_by_id.isnot(None)
     )
     if since is not None:
         count_stmt = count_stmt.where(User.created_at >= since)
@@ -965,13 +964,10 @@ async def get_referrers_with_counts(
     referrals_count_by_id = {row.referrer_id: row.cnt for row in ref_rows}
     referrer_ids = list(referrals_count_by_id.keys())
 
-    earnings_stmt = (
-        select(
-            ReferralEarning.user_id.label('referrer_id'),
-            func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0).label('total'),
-        )
-        .where(ReferralEarning.user_id.in_(referrer_ids))
-    )
+    earnings_stmt = select(
+        ReferralEarning.user_id.label('referrer_id'),
+        func.coalesce(func.sum(ReferralEarning.amount_kopeks), 0).label('total'),
+    ).where(ReferralEarning.user_id.in_(referrer_ids))
     if since is not None:
         earnings_stmt = earnings_stmt.where(ReferralEarning.created_at >= since)
     earnings_stmt = earnings_stmt.group_by(ReferralEarning.user_id)
