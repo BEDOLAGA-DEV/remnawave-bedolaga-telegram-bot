@@ -698,6 +698,10 @@ async def auth_telegram_oidc(
 
     await _process_referral_code(db, user, request.referral_code)
 
+    # Store Yandex.Metrika CID and fire registration event
+    if request.yandex_cid:
+        await _process_yandex_cid(db, user, request.yandex_cid, source='web')
+
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
     if response.campaign_bonus:
         response.user = _user_to_response(user)
