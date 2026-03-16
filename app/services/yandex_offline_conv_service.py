@@ -48,6 +48,8 @@ def _normalize_cid(cid: str | None) -> str | None:
     cid = cid.strip()
     if not cid:
         return None
+    if not _CID_RE.match(cid):
+        return None
     return cid
 
 
@@ -77,7 +79,7 @@ def _pageview_payload(cid: str) -> dict[str, str]:
     return payload
 
 
-def _event_payload(cid: str, event_action: str) -> dict[str, str]:
+def _event_payload(cid: str, event_action: str, *, ev: str | None = None) -> dict[str, str]:
     payload = _base_payload(cid)
     payload.update(
         {
@@ -86,63 +88,65 @@ def _event_payload(cid: str, event_action: str) -> dict[str, str]:
             'dl': settings.YANDEX_OFFLINE_CONV_DL or 'https://web.mtrxvps.ru',
         }
     )
+    if ev is not None:
+        payload['ev'] = ev
     return payload
 
 
 async def _post_collect(payload: dict[str, str], kind: str, cid: str) -> bool:
     """POST to mc.yandex.ru/collect with retries. Returns True on success."""
     masked = _mask_cid(cid)
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
                 resp = await client.post(COLLECT_URL, data=payload)
 
-            if 200 <= resp.status_code < 300:
-                logger.info('%s %s sent (cid=%s, status=%s)', LOG_PREFIX, kind, masked, resp.status_code)
-                return True
+                if 200 <= resp.status_code < 300:
+                    logger.info('%s %s sent (cid=%s, status=%s)', LOG_PREFIX, kind, masked, resp.status_code)
+                    return True
 
-            if 500 <= resp.status_code < 600 and attempt < MAX_RETRIES:
+                if 500 <= resp.status_code < 600 and attempt < MAX_RETRIES:
+                    logger.warning(
+                        '%s %s server error (attempt %s/%s, cid=%s, status=%s)',
+                        LOG_PREFIX,
+                        kind,
+                        attempt,
+                        MAX_RETRIES,
+                        masked,
+                        resp.status_code,
+                    )
+                    await asyncio.sleep(RETRY_DELAY)
+                    continue
+
+                logger.error(
+                    '%s %s rejected (cid=%s, status=%s, body=%s)',
+                    LOG_PREFIX,
+                    kind,
+                    masked,
+                    resp.status_code,
+                    resp.text[:200],
+                )
+                return False
+
+            except Exception as exc:
                 logger.warning(
-                    '%s %s server error (attempt %s/%s, cid=%s, status=%s)',
+                    '%s %s request error (attempt %s/%s, cid=%s): %s',
                     LOG_PREFIX,
                     kind,
                     attempt,
                     MAX_RETRIES,
                     masked,
-                    resp.status_code,
+                    exc,
                 )
-                await asyncio.sleep(RETRY_DELAY)
-                continue
-
-            logger.error(
-                '%s %s rejected (cid=%s, status=%s, body=%s)',
-                LOG_PREFIX,
-                kind,
-                masked,
-                resp.status_code,
-                resp.text[:200],
-            )
-            return False
-
-        except Exception as exc:
-            logger.warning(
-                '%s %s request error (attempt %s/%s, cid=%s): %s',
-                LOG_PREFIX,
-                kind,
-                attempt,
-                MAX_RETRIES,
-                masked,
-                exc,
-            )
-            if attempt < MAX_RETRIES:
-                await asyncio.sleep(RETRY_DELAY)
-                continue
-            return False
+                if attempt < MAX_RETRIES:
+                    await asyncio.sleep(RETRY_DELAY)
+                    continue
+                return False
 
     return False
 
 
-async def _send_event(cid: str, event_action: str) -> bool:
+async def _send_event(cid: str, event_action: str, *, ev: str | None = None) -> bool:
     """Send a warm-up pageview followed by the actual event."""
     # Warm-up pageview (required by Metrika to associate the CID)
     pv_ok = await _post_collect(_pageview_payload(cid), 'pageview', cid)
@@ -150,8 +154,7 @@ async def _send_event(cid: str, event_action: str) -> bool:
         logger.warning('%s Pageview failed for %s, skipping event %s', LOG_PREFIX, _mask_cid(cid), event_action)
         return False
 
-    return await _post_collect(_event_payload(cid, event_action), event_action, cid)
-
+    return await _post_collect(_event_payload(cid, event_action, ev=ev), event_action, cid)
 
 
 # --- Background task helpers ---
@@ -233,7 +236,7 @@ async def store_cid_and_fire_registration(
     try:
         stored = await store_cid(db, user_id, cid, source=source)
         if stored:
-            await db.commit()
+            await db.flush()
             spawn_bg(fire_registration_bg(user_id))
     except Exception as exc:
         logger.warning(f'{LOG_PREFIX} Failed to store CID and fire registration', user_id=user_id, error=str(exc))
@@ -287,7 +290,7 @@ async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> Non
         if not row:
             return
 
-        success = await _send_event(row.yandex_cid, 'purchase')
+        success = await _send_event(row.yandex_cid, 'purchase', ev=str(amount_kopeks / 100))
         if success:
             logger.info(
                 '%s purchase event sent for user_id=%s amount=%s',
