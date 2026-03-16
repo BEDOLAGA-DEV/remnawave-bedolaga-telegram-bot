@@ -310,6 +310,8 @@ class KassaAiPaymentMixin:
 
         # Начисляем баланс
         user.balance_kopeks += payment.amount_kopeks
+        if was_first_topup:
+            user.has_made_first_topup = True
         user.updated_at = datetime.now(UTC)
 
         promo_group = user.get_primary_promo_group()
@@ -339,10 +341,6 @@ class KassaAiPaymentMixin:
             await process_referral_topup(db, user.id, payment.amount_kopeks, getattr(self, 'bot', None))
         except Exception as error:
             logger.error('Ошибка обработки реферального пополнения KassaAI', error=error)
-
-        if was_first_topup and not user.has_made_first_topup:
-            user.has_made_first_topup = True
-            await db.commit()
 
         await db.refresh(user)
         await db.refresh(payment)
