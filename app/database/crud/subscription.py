@@ -1,6 +1,5 @@
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
-from typing import Optional
 
 import structlog
 from sqlalchemy import and_, delete, func, select
@@ -11,7 +10,6 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.config import settings
 from app.database.crud.notification import clear_notifications
 from app.database.models import (
-    PromoGroup,
     Subscription,
     SubscriptionServer,
     SubscriptionStatus,
@@ -20,7 +18,6 @@ from app.database.models import (
     User,
     UserStatus,
 )
-from app.utils.pricing_utils import calculate_months_from_days
 from app.utils.timezone import format_local_datetime
 
 
@@ -221,6 +218,23 @@ async def create_paid_subscription(
     if device_limit is None:
         device_limit = settings.DEFAULT_DEVICE_LIMIT
 
+    # Fallback: если connected_squads пустой — берём первый доступный сквад
+    final_squads = list(connected_squads or [])
+    if not final_squads:
+        try:
+            from app.database.crud.server_squad import get_available_server_squads
+
+            available = await get_available_server_squads(db)
+            if available:
+                final_squads = [available[0].squad_uuid]
+                logger.warning(
+                    '⚠️ connected_squads пустой при создании подписки, используем fallback сквад',
+                    user_id=user_id,
+                    fallback_squad=final_squads[0],
+                )
+        except Exception as error:
+            logger.error('❌ Не удалось получить fallback сквад', user_id=user_id, error=error)
+
     subscription = Subscription(
         user_id=user_id,
         status=SubscriptionStatus.ACTIVE.value,
@@ -229,7 +243,7 @@ async def create_paid_subscription(
         end_date=end_date,
         traffic_limit_gb=traffic_limit_gb,
         device_limit=device_limit,
-        connected_squads=connected_squads or [],
+        connected_squads=final_squads,
         autopay_enabled=settings.is_autopay_enabled_by_default(),
         autopay_days_before=settings.DEFAULT_AUTOPAY_DAYS_BEFORE,
         tariff_id=tariff_id,
@@ -249,7 +263,7 @@ async def create_paid_subscription(
         status=subscription.status,
     )
 
-    squad_uuids = list(connected_squads or [])
+    squad_uuids = list(final_squads)
     if update_server_counters and squad_uuids:
         try:
             from app.database.crud.server_squad import (
@@ -299,7 +313,25 @@ async def replace_subscription(
 
     current_time = datetime.now(UTC)
     old_squads = set(subscription.connected_squads or [])
-    new_squads = set(connected_squads or [])
+
+    # Fallback: если connected_squads пустой — берём первый доступный сквад
+    final_connected = list(connected_squads or [])
+    if not final_connected:
+        try:
+            from app.database.crud.server_squad import get_available_server_squads
+
+            available = await get_available_server_squads(db)
+            if available:
+                final_connected = [available[0].squad_uuid]
+                logger.warning(
+                    '⚠️ connected_squads пустой при замене подписки, используем fallback сквад',
+                    subscription_id=subscription.id,
+                    fallback_squad=final_connected[0],
+                )
+        except Exception as error:
+            logger.error('❌ Не удалось получить fallback сквад', subscription_id=subscription.id, error=error)
+
+    new_squads = set(final_connected)
 
     new_autopay_enabled = subscription.autopay_enabled if autopay_enabled is None else autopay_enabled
     new_autopay_days_before = subscription.autopay_days_before if autopay_days_before is None else autopay_days_before
@@ -549,9 +581,17 @@ async def extend_subscription(
         logger.info('📱 Обновлен лимит устройств: →', old_devices=old_devices, device_limit=device_limit)
 
     if connected_squads is not None:
-        old_squads = subscription.connected_squads
-        subscription.connected_squads = connected_squads
-        logger.info('🌍 Обновлены сквады: →', old_squads=old_squads, connected_squads=connected_squads)
+        # Не перезаписываем существующие сквады пустым списком
+        if connected_squads or not subscription.connected_squads:
+            old_squads = subscription.connected_squads
+            subscription.connected_squads = connected_squads
+            logger.info('🌍 Обновлены сквады: →', old_squads=old_squads, connected_squads=connected_squads)
+        else:
+            logger.warning(
+                '⚠️ Попытка перезаписать сквады пустым списком, сохраняем текущие',
+                subscription_id=subscription.id,
+                current_squads=subscription.connected_squads,
+            )
 
     # Обработка daily полей при смене тарифа
     if is_tariff_change and tariff_id is not None:
@@ -1198,212 +1238,6 @@ async def add_subscription_servers(
     return subscription
 
 
-async def get_server_monthly_price(db: AsyncSession, server_squad_id: int) -> int:
-    from app.database.models import ServerSquad
-
-    result = await db.execute(select(ServerSquad.price_kopeks).where(ServerSquad.id == server_squad_id))
-    return result.scalar() or 0
-
-
-async def get_servers_monthly_prices(
-    db: AsyncSession,
-    server_squad_ids: list[int],
-    *,
-    user: Optional['User'] = None,
-) -> list[int]:
-    """Получает месячные цены серверов с проверкой доступности для промогруппы пользователя."""
-    from sqlalchemy.orm import selectinload
-
-    from app.database.models import ServerSquad
-
-    prices = []
-
-    # Загружаем промогруппы пользователя если нужно
-    user_promo_group = None
-    user_promo_group_id = None
-    if user:
-        try:
-            # Пробуем загрузить промогруппы если ещё не загружены
-            await db.refresh(user, ['user_promo_groups', 'promo_group'])
-        except Exception:
-            pass
-        try:
-            user_promo_group = user.get_primary_promo_group()
-            user_promo_group_id = user_promo_group.id if user_promo_group else None
-        except Exception as e:
-            logger.warning('Не удалось получить промогруппу пользователя', error=e)
-
-    for server_id in server_squad_ids:
-        # Загружаем сервер с промогруппами
-        result = await db.execute(
-            select(ServerSquad)
-            .options(selectinload(ServerSquad.allowed_promo_groups))
-            .where(ServerSquad.id == server_id)
-        )
-        server = result.scalar_one_or_none()
-
-        if not server:
-            prices.append(0)
-            continue
-
-        # Проверяем доступность сервера для промогруппы пользователя
-        is_allowed = True
-        if user_promo_group_id is not None and server.allowed_promo_groups:
-            allowed_ids = {pg.id for pg in server.allowed_promo_groups}
-            is_allowed = user_promo_group_id in allowed_ids
-
-        if server.is_available and is_allowed:
-            prices.append(server.price_kopeks)
-        else:
-            # Сервер недоступен для промогруппы пользователя
-            logger.warning(
-                '⚠️ Сервер (id=) недоступен для промогруппы пользователя (promo_group_id=), allowed_promo_groups',
-                display_name=server.display_name,
-                server_id=server_id,
-                user_promo_group_id=user_promo_group_id,
-                value=[pg.id for pg in server.allowed_promo_groups] if server.allowed_promo_groups else [],
-            )
-            prices.append(server.price_kopeks)  # Всё равно берём реальную цену
-
-    return prices
-
-
-def _get_discount_percent(
-    user: User | None,
-    promo_group: PromoGroup | None,
-    category: str,
-    *,
-    period_days: int | None = None,
-) -> int:
-    if user is not None:
-        try:
-            return user.get_promo_discount(category, period_days)
-        except AttributeError:
-            pass
-
-    if promo_group is not None:
-        return promo_group.get_discount_percent(category, period_days)
-
-    return 0
-
-
-async def calculate_subscription_total_cost(
-    db: AsyncSession,
-    period_days: int,
-    traffic_gb: int,
-    server_squad_ids: list[int],
-    devices: int,
-    *,
-    user: User | None = None,
-    promo_group: PromoGroup | None = None,
-) -> tuple[int, dict]:
-    from app.config import PERIOD_PRICES
-
-    months_in_period = calculate_months_from_days(period_days)
-
-    base_price_original = PERIOD_PRICES.get(period_days, 0)
-    period_discount_percent = _get_discount_percent(
-        user,
-        promo_group,
-        'period',
-        period_days=period_days,
-    )
-    base_discount_total = base_price_original * period_discount_percent // 100
-    base_price = base_price_original - base_discount_total
-
-    promo_group = promo_group or (user.promo_group if user else None)
-
-    traffic_price_per_month = settings.get_traffic_price(traffic_gb)
-    traffic_discount_percent = _get_discount_percent(
-        user,
-        promo_group,
-        'traffic',
-        period_days=period_days,
-    )
-    traffic_discount_per_month = traffic_price_per_month * traffic_discount_percent // 100
-    discounted_traffic_per_month = traffic_price_per_month - traffic_discount_per_month
-    total_traffic_price = discounted_traffic_per_month * months_in_period
-    total_traffic_discount = traffic_discount_per_month * months_in_period
-
-    servers_prices = await get_servers_monthly_prices(db, server_squad_ids, user=user)
-    servers_price_per_month = sum(servers_prices)
-    servers_discount_percent = _get_discount_percent(
-        user,
-        promo_group,
-        'servers',
-        period_days=period_days,
-    )
-    servers_discount_per_month = servers_price_per_month * servers_discount_percent // 100
-    discounted_servers_per_month = servers_price_per_month - servers_discount_per_month
-    total_servers_price = discounted_servers_per_month * months_in_period
-    total_servers_discount = servers_discount_per_month * months_in_period
-
-    additional_devices = max(0, devices - settings.DEFAULT_DEVICE_LIMIT)
-    devices_price_per_month = additional_devices * settings.PRICE_PER_DEVICE
-    devices_discount_percent = _get_discount_percent(
-        user,
-        promo_group,
-        'devices',
-        period_days=period_days,
-    )
-    devices_discount_per_month = devices_price_per_month * devices_discount_percent // 100
-    discounted_devices_per_month = devices_price_per_month - devices_discount_per_month
-    total_devices_price = discounted_devices_per_month * months_in_period
-    total_devices_discount = devices_discount_per_month * months_in_period
-
-    total_cost = base_price + total_traffic_price + total_servers_price + total_devices_price
-
-    details = {
-        'base_price': base_price,
-        'base_price_original': base_price_original,
-        'base_discount_percent': period_discount_percent,
-        'base_discount_total': base_discount_total,
-        'traffic_price_per_month': traffic_price_per_month,
-        'traffic_discount_percent': traffic_discount_percent,
-        'traffic_discount_total': total_traffic_discount,
-        'total_traffic_price': total_traffic_price,
-        'servers_price_per_month': servers_price_per_month,
-        'servers_discount_percent': servers_discount_percent,
-        'servers_discount_total': total_servers_discount,
-        'total_servers_price': total_servers_price,
-        'devices_price_per_month': devices_price_per_month,
-        'devices_discount_percent': devices_discount_percent,
-        'devices_discount_total': total_devices_discount,
-        'total_devices_price': total_devices_price,
-        'months_in_period': months_in_period,
-        'servers_individual_prices': [
-            (price - (price * servers_discount_percent // 100)) * months_in_period for price in servers_prices
-        ],
-    }
-
-    logger.debug(
-        '📊 Расчет стоимости подписки на дней ( мес)', period_days=period_days, months_in_period=months_in_period
-    )
-    logger.debug('Базовый период: ₽', base_price=base_price / 100)
-    if total_traffic_price > 0:
-        message = f'   Трафик: {traffic_price_per_month / 100}₽/мес × {months_in_period} = {total_traffic_price / 100}₽'
-        if total_traffic_discount > 0:
-            message += f' (скидка {traffic_discount_percent}%: -{total_traffic_discount / 100}₽)'
-        logger.debug(message)
-    if total_servers_price > 0:
-        message = (
-            f'   Серверы: {servers_price_per_month / 100}₽/мес × {months_in_period} = {total_servers_price / 100}₽'
-        )
-        if total_servers_discount > 0:
-            message += f' (скидка {servers_discount_percent}%: -{total_servers_discount / 100}₽)'
-        logger.debug(message)
-    if total_devices_price > 0:
-        message = (
-            f'   Устройства: {devices_price_per_month / 100}₽/мес × {months_in_period} = {total_devices_price / 100}₽'
-        )
-        if total_devices_discount > 0:
-            message += f' (скидка {devices_discount_percent}%: -{total_devices_discount / 100}₽)'
-        logger.debug(message)
-    logger.debug('ИТОГО: ₽', total_cost=total_cost / 100)
-
-    return total_cost, details
-
-
 async def get_subscription_server_ids(db: AsyncSession, subscription_id: int) -> list[int]:
     result = await db.execute(
         select(SubscriptionServer.server_squad_id).where(SubscriptionServer.subscription_id == subscription_id)
@@ -1901,8 +1735,9 @@ async def get_disabled_daily_subscriptions_for_resume(
                 # Не возобновляем подписки, приостановленные пользователем вручную
                 # is_(False) не ловит NULL, поэтому добавляем OR is_(None)
                 (Subscription.is_daily_paused.is_(False) | Subscription.is_daily_paused.is_(None)),
-                # Баланс пользователя >= суточной цены тарифа
-                User.balance_kopeks >= Tariff.daily_price_kopeks,
+                # Баланс пользователя > 0 (permissive pre-filter;
+                # actual discounted price check happens in _process_single_charge)
+                User.balance_kopeks > 0,
             )
         )
     )
@@ -1947,8 +1782,9 @@ async def get_expired_daily_subscriptions_for_recovery(db: AsyncSession) -> list
                 Subscription.is_trial.is_(False),
                 # Только недавно экспайренные
                 Subscription.updated_at >= recovery_threshold,
-                # Баланс достаточен для списания
-                User.balance_kopeks >= Tariff.daily_price_kopeks,
+                # Баланс > 0 (permissive pre-filter;
+                # actual discounted price check happens in _process_single_charge)
+                User.balance_kopeks > 0,
             )
         )
     )

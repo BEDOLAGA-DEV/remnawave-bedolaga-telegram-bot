@@ -115,6 +115,7 @@ class PromoOfferService:
             remnawave_user = await self.subscription_service.update_remnawave_user(
                 db,
                 subscription,
+                sync_squads=True,
             )
             if remnawave_user is None:
                 await db.rollback()
@@ -188,7 +189,7 @@ class PromoOfferService:
                 subscription.connected_squads = list(updated)
                 subscription.updated_at = now
                 try:
-                    await self.subscription_service.update_remnawave_user(db, subscription)
+                    await self.subscription_service.update_remnawave_user(db, subscription, sync_squads=True)
                 except Exception as exc:  # pragma: no cover - defensive logging
                     logger.error(
                         'Ошибка обновления Remnawave при отзыве тестового доступа подписки',

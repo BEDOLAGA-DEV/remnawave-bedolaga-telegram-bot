@@ -58,6 +58,7 @@ from app.database.models import (
 from app.services.faq_service import FaqService
 from app.services.maintenance_service import maintenance_service
 from app.services.payment_service import PaymentService, get_wata_payment_by_link_id
+from app.services.pricing_engine import PricingEngine
 from app.services.privacy_policy_service import PrivacyPolicyService
 from app.services.promo_offer_service import promo_offer_service
 from app.services.promocode_service import PromoCodeService
@@ -210,12 +211,11 @@ _CRYPTOBOT_FALLBACK_RATE = 95.0
 
 
 def _get_tariff_monthly_price(tariff) -> int:
-    """Получает месячную цену тарифа (30 дней) с fallback на пропорциональный расчёт."""
+    """Получает месячную цену тарифа (30 дней) для отображения в UI."""
     price = tariff.get_price_for_period(30)
     if price is not None:
         return price
 
-    # Fallback: пропорционально пересчитываем из первого доступного периода
     periods = tariff.get_available_periods()
     if periods:
         first_period = periods[0]
@@ -3341,6 +3341,15 @@ async def get_subscription_details(
             is_daily_paused = getattr(subscription, 'is_daily_paused', False)
             daily_tariff_name = tariff.name
             daily_price_kopeks = getattr(tariff, 'daily_price_kopeks', 0)
+            # Применяем скидку промогруппы + promo-offer для отображения
+            if daily_price_kopeks > 0:
+                _promo_group = user.get_primary_promo_group() if hasattr(user, 'get_primary_promo_group') else None
+                _group_pct = _promo_group.get_discount_percent('period', 1) if _promo_group else 0
+                _offer_pct = get_user_active_promo_discount_percent(user) if user else 0
+                if _group_pct > 0 or _offer_pct > 0:
+                    daily_price_kopeks, _, _ = PricingEngine.apply_stacked_discounts(
+                        daily_price_kopeks, _group_pct, _offer_pct
+                    )
             daily_price_label = settings.format_price(daily_price_kopeks) + '/день' if daily_price_kopeks > 0 else None
             # Оставшееся время подписки (показываем даже при паузе)
             if subscription.end_date:
@@ -3510,21 +3519,10 @@ async def _get_current_tariff_model(db: AsyncSession, subscription, user=None) -
 
     servers_count = len(tariff.allowed_squads) if tariff.allowed_squads else 0
 
-    # Получаем скидку на трафик из промогруппы
-    traffic_discount_percent = 0
-    promo_group = (
-        (
-            user.get_primary_promo_group()
-            if hasattr(user, 'get_primary_promo_group')
-            else getattr(user, 'promo_group', None)
-        )
-        if user
-        else None
-    )
-    if promo_group:
-        apply_to_addons = getattr(promo_group, 'apply_discounts_to_addons', True)
-        if apply_to_addons:
-            traffic_discount_percent = max(0, min(100, int(getattr(promo_group, 'traffic_discount_percent', 0) or 0)))
+    # Скидка на трафик через PricingEngine
+    from app.services.pricing_engine import PricingEngine, pricing_engine
+
+    promo_group = PricingEngine.resolve_promo_group(user) if user else None
 
     # Лимит докупки трафика
     max_topup_traffic_gb = getattr(tariff, 'max_topup_traffic_gb', 0) or 0
@@ -3547,9 +3545,12 @@ async def _get_current_tariff_model(db: AsyncSession, subscription, user=None) -
                 continue
 
             base_price = packages[gb]
-            # Применяем скидку
-            if traffic_discount_percent > 0:
-                discounted_price = int(base_price * (100 - traffic_discount_percent) / 100)
+            # Применяем скидку через PricingEngine
+            discounted_price, _discount_val, traffic_discount_pct = pricing_engine.calculate_traffic_discount(
+                base_price,
+                user,
+            )
+            if traffic_discount_pct > 0:
                 traffic_topup_packages.append(
                     MiniAppTrafficTopupPackage(
                         gb=gb,
@@ -3557,7 +3558,7 @@ async def _get_current_tariff_model(db: AsyncSession, subscription, user=None) -
                         price_label=settings.format_price(discounted_price),
                         original_price_kopeks=base_price,
                         original_price_label=settings.format_price(base_price),
-                        discount_percent=traffic_discount_percent,
+                        discount_percent=traffic_discount_pct,
                     )
                 )
             else:
@@ -3577,15 +3578,9 @@ async def _get_current_tariff_model(db: AsyncSession, subscription, user=None) -
 
     # Применяем скидку промогруппы для 30-дневного периода
     if promo_group:
-        raw_discounts = getattr(promo_group, 'period_discounts', None) or {}
-        for k, v in raw_discounts.items():
-            try:
-                if int(k) == 30:
-                    discount = max(0, min(100, int(v)))
-                    monthly_price = int(monthly_price * (100 - discount) / 100)
-                    break
-            except (TypeError, ValueError):
-                pass
+        discount = promo_group.get_discount_percent('period', 30)
+        if discount > 0:
+            monthly_price = PricingEngine.apply_discount(monthly_price, discount)
 
     return MiniAppCurrentTariff(
         id=tariff.id,
@@ -4613,32 +4608,6 @@ async def _prepare_subscription_renewal_options(
     return periods, pricing_map, recommended_option[0].id
 
 
-def _get_addon_discount_percent_for_user(
-    user: User | None,
-    category: str,
-    period_days_hint: int | None = None,
-) -> int:
-    if user is None:
-        return 0
-
-    promo_group = getattr(user, 'promo_group', None)
-    if promo_group is None:
-        return 0
-
-    if not getattr(promo_group, 'apply_discounts_to_addons', True):
-        return 0
-
-    try:
-        percent = user.get_promo_discount(category, period_days_hint)
-    except AttributeError:
-        return 0
-
-    try:
-        return int(percent)
-    except (TypeError, ValueError):
-        return 0
-
-
 def _get_period_hint_from_subscription(
     subscription: Subscription | None,
 ) -> int | None:
@@ -4916,21 +4885,9 @@ async def _build_subscription_settings(
 ) -> MiniAppSubscriptionSettings:
     period_hint_days = _get_period_hint_from_subscription(subscription)
     months_remaining = max(1, math.ceil((period_hint_days or 0) / 30))
-    servers_discount = _get_addon_discount_percent_for_user(
-        user,
-        'servers',
-        period_hint_days,
-    )
-    traffic_discount = _get_addon_discount_percent_for_user(
-        user,
-        'traffic',
-        period_hint_days,
-    )
-    devices_discount = _get_addon_discount_percent_for_user(
-        user,
-        'devices',
-        period_hint_days,
-    )
+    servers_discount = PricingEngine.get_addon_discount_percent(user, 'servers', period_hint_days)
+    traffic_discount = PricingEngine.get_addon_discount_percent(user, 'traffic', period_hint_days)
+    devices_discount = PricingEngine.get_addon_discount_percent(user, 'devices', period_hint_days)
 
     current_servers, server_options, _ = await _prepare_server_catalog(
         db,
@@ -5193,6 +5150,10 @@ async def submit_subscription_renewal_endpoint(
                 detail={'code': 'period_unavailable', 'message': 'Selected renewal period is not available'},
             )
 
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
+
     try:
         pricing_result = await pricing_engine.calculate_renewal_price(db, subscription, period_days, user=user)
     except HTTPException:
@@ -5450,6 +5411,10 @@ async def subscription_purchase_endpoint(
     db: AsyncSession = Depends(get_db_session),
 ) -> MiniAppSubscriptionPurchaseResponse:
     user = await _authorize_miniapp_user(payload.init_data, db)
+
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
     context = await purchase_service.build_options(db, user)
 
     selection_payload = _merge_purchase_selection_from_request(payload)
@@ -5593,12 +5558,13 @@ async def update_subscription_servers_endpoint(
             message='No changes',
         )
 
+    # Lock user BEFORE price computation to prevent TOCTOU on promo discount
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
+
     period_hint_days = _get_period_hint_from_subscription(subscription)
-    servers_discount = _get_addon_discount_percent_for_user(
-        user,
-        'servers',
-        period_hint_days,
-    )
+    servers_discount = PricingEngine.get_addon_discount_percent(user, 'servers', period_hint_days)
 
     _, _, catalog = await _prepare_server_catalog(
         db,
@@ -5816,23 +5782,18 @@ async def update_subscription_traffic_endpoint(
 
     days_remaining = max(1, (subscription.end_date - datetime.now(UTC)).days)
     period_hint_days = days_remaining
-    traffic_discount = _get_addon_discount_percent_for_user(
-        user,
-        'traffic',
-        period_hint_days,
-    )
+
+    # Lock user BEFORE discount computation to prevent TOCTOU on promo group
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
+    traffic_discount = PricingEngine.get_addon_discount_percent(user, 'traffic', period_hint_days)
 
     old_price_per_month = settings.get_traffic_price(subscription.traffic_limit_gb)
     new_price_per_month = settings.get_traffic_price(new_traffic)
 
-    discounted_old_per_month, _ = apply_percentage_discount(
-        old_price_per_month,
-        traffic_discount,
-    )
-    discounted_new_per_month, _ = apply_percentage_discount(
-        new_price_per_month,
-        traffic_discount,
-    )
+    discounted_old_per_month = PricingEngine.apply_discount(old_price_per_month, traffic_discount)
+    discounted_new_per_month = PricingEngine.apply_discount(new_price_per_month, traffic_discount)
 
     price_difference_per_month = discounted_new_per_month - discounted_old_per_month
     total_price_difference = 0
@@ -5998,16 +5959,15 @@ async def update_subscription_devices_endpoint(
         price_per_month = chargeable_diff * tariff_device_price
         days_remaining = max(1, (subscription.end_date - datetime.now(UTC)).days)
         period_hint_days = days_remaining
-        devices_discount = _get_addon_discount_percent_for_user(
-            user,
-            'devices',
-            period_hint_days,
-        )
 
-        discounted_per_month, _ = apply_percentage_discount(
-            price_per_month,
-            devices_discount,
-        )
+        # Lock user BEFORE price computation to prevent TOCTOU on promo discount
+        from app.database.crud.user import lock_user_for_pricing
+
+        user = await lock_user_for_pricing(db, user.id)
+
+        devices_discount = PricingEngine.get_addon_discount_percent(user, 'devices', period_hint_days)
+
+        discounted_per_month = PricingEngine.apply_discount(price_per_month, devices_discount)
         price_to_charge, charged_days = calculate_prorated_price(
             discounted_per_month,
             subscription.end_date,
@@ -6150,27 +6110,22 @@ async def _build_tariff_model(
                     )
                 )
 
-    # Получаем скидки промогруппы по периодам
-    period_discounts = {}
-    if promo_group:
-        raw_discounts = getattr(promo_group, 'period_discounts', None) or {}
-        for k, v in raw_discounts.items():
-            try:
-                period_discounts[int(k)] = max(0, min(100, int(v)))
-            except (TypeError, ValueError):
-                pass
-
     periods: list[MiniAppTariffPeriod] = []
     if tariff.period_prices:
         for period_str, original_price_kopeks in sorted(tariff.period_prices.items(), key=lambda x: int(x[0])):
             period_days = int(period_str)
 
-            # Применяем скидку промогруппы
-            discount_percent = period_discounts.get(period_days, 0)
-            if discount_percent > 0:
-                price_kopeks = int(original_price_kopeks * (100 - discount_percent) / 100)
+            # Применяем скидку промогруппы + promo-offer (stacked)
+            group_pct = promo_group.get_discount_percent('period', period_days) if promo_group else 0
+            offer_pct = get_user_active_promo_discount_percent(user) if user else 0
+            if group_pct > 0 or offer_pct > 0:
+                price_kopeks, _, _ = PricingEngine.apply_stacked_discounts(original_price_kopeks, group_pct, offer_pct)
+                # Комбинированный процент для отображения
+                remaining = (100 - group_pct) * (100 - offer_pct)
+                discount_percent = 100 - remaining // 100
             else:
                 price_kopeks = original_price_kopeks
+                discount_percent = 0
 
             months = max(1, period_days // 30)
             per_month = price_kopeks // months if months > 0 else price_kopeks
@@ -6197,31 +6152,31 @@ async def _build_tariff_model(
     is_switch_free = None
 
     if current_tariff and current_tariff.id != tariff.id:
-        current_is_daily = getattr(current_tariff, 'is_daily', False)
-        new_is_daily = getattr(tariff, 'is_daily', False)
-
-        if current_is_daily and not new_is_daily:
-            # Переключение С суточного НА периодный - полная оплата нового тарифа
-            # Берём минимальную цену из периодов нового тарифа
-            min_period_price = None
-            if periods:
-                min_period_price = min(p.price_kopeks for p in periods)
-            if min_period_price and min_period_price > 0:
-                switch_cost_kopeks = min_period_price
-                switch_cost_label = settings.format_price(min_period_price)
-                is_upgrade = True  # Показываем как платный переход
-                is_switch_free = False
-        elif remaining_days > 0:
-            # Обычный расчёт для периодных тарифов
-            cost, upgrade = _calculate_tariff_switch_cost(current_tariff, tariff, remaining_days, promo_group, user)
-            switch_cost_kopeks = cost
-            switch_cost_label = settings.format_price(cost) if cost > 0 else None
-            is_upgrade = upgrade
-            is_switch_free = cost == 0
+        # PricingEngine обрабатывает все случаи: periodic↔periodic, daily→periodic, periodic→daily
+        result = _calculate_tariff_switch(current_tariff, tariff, remaining_days, user=user)
+        switch_cost_kopeks = result.upgrade_cost
+        switch_cost_label = settings.format_price(result.upgrade_cost) if result.upgrade_cost > 0 else None
+        is_upgrade = result.is_upgrade
+        is_switch_free = result.upgrade_cost == 0
 
     # Суточный тариф
     is_daily = getattr(tariff, 'is_daily', False)
-    daily_price_kopeks = getattr(tariff, 'daily_price_kopeks', 0) if is_daily else 0
+    raw_daily_price_kopeks = getattr(tariff, 'daily_price_kopeks', 0) if is_daily else 0
+    daily_price_kopeks = raw_daily_price_kopeks
+
+    # Применяем скидку промогруппы + promo-offer для суточного тарифа (period_hint=1)
+    if is_daily and daily_price_kopeks > 0:
+        daily_group_pct = (
+            promo_group.get_discount_percent('period', 1)
+            if promo_group and hasattr(promo_group, 'get_discount_percent')
+            else 0
+        )
+        daily_offer_pct = get_user_active_promo_discount_percent(user) if user else 0
+        if daily_group_pct > 0 or daily_offer_pct > 0:
+            daily_price_kopeks, _, _ = PricingEngine.apply_stacked_discounts(
+                raw_daily_price_kopeks, daily_group_pct, daily_offer_pct
+            )
+
     daily_price_label = (
         settings.format_price(daily_price_kopeks) + '/день' if is_daily and daily_price_kopeks > 0 else None
     )
@@ -6250,26 +6205,31 @@ async def _build_tariff_model(
     )
 
 
-async def _build_current_tariff_model(db: AsyncSession, tariff, promo_group=None) -> MiniAppCurrentTariff:
+async def _build_current_tariff_model(db: AsyncSession, tariff, promo_group=None, user=None) -> MiniAppCurrentTariff:
     """Создаёт модель текущего тарифа."""
     servers_count = len(tariff.allowed_squads) if tariff.allowed_squads else 0
     monthly_price = _get_tariff_monthly_price(tariff)
 
-    # Применяем скидку промогруппы для 30-дневного периода
-    if promo_group:
-        raw_discounts = getattr(promo_group, 'period_discounts', None) or {}
-        for k, v in raw_discounts.items():
-            try:
-                if int(k) == 30:
-                    discount = max(0, min(100, int(v)))
-                    monthly_price = int(monthly_price * (100 - discount) / 100)
-                    break
-            except (TypeError, ValueError):
-                pass
+    # Применяем скидку промогруппы + promo-offer для 30-дневного периода
+    group_pct = promo_group.get_discount_percent('period', 30) if promo_group else 0
+    offer_pct = get_user_active_promo_discount_percent(user) if user else 0
+    if group_pct > 0 or offer_pct > 0:
+        monthly_price, _, _ = PricingEngine.apply_stacked_discounts(monthly_price, group_pct, offer_pct)
 
     # Суточный тариф
     is_daily = getattr(tariff, 'is_daily', False)
-    daily_price_kopeks = getattr(tariff, 'daily_price_kopeks', 0) if is_daily else 0
+    raw_daily_price_kopeks = getattr(tariff, 'daily_price_kopeks', 0) if is_daily else 0
+    daily_price_kopeks = raw_daily_price_kopeks
+
+    # Применяем скидку промогруппы + promo-offer для суточного тарифа (period_hint=1)
+    if is_daily and daily_price_kopeks > 0:
+        daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
+        daily_offer_pct = get_user_active_promo_discount_percent(user) if user else 0
+        if daily_group_pct > 0 or daily_offer_pct > 0:
+            daily_price_kopeks, _, _ = PricingEngine.apply_stacked_discounts(
+                raw_daily_price_kopeks, daily_group_pct, daily_offer_pct
+            )
+
     daily_price_label = (
         settings.format_price(daily_price_kopeks) + '/день' if is_daily and daily_price_kopeks > 0 else None
     )
@@ -6310,11 +6270,9 @@ async def get_tariffs_endpoint(
         )
 
     # Получаем промогруппу пользователя (с приоритетом)
-    promo_group = (
-        user.get_primary_promo_group()
-        if hasattr(user, 'get_primary_promo_group')
-        else getattr(user, 'promo_group', None)
-    )
+    from app.services.pricing_engine import PricingEngine
+
+    promo_group = PricingEngine.resolve_promo_group(user)
     promo_group_id = promo_group.id if promo_group else None
 
     # Получаем тарифы, доступные пользователю
@@ -6335,7 +6293,7 @@ async def get_tariffs_endpoint(
     if current_tariff_id:
         current_tariff = await get_tariff_by_id(db, current_tariff_id)
         if current_tariff:
-            current_tariff_model = await _build_current_tariff_model(db, current_tariff, promo_group)
+            current_tariff_model = await _build_current_tariff_model(db, current_tariff, promo_group, user=user)
 
     # Формируем список тарифов
     tariff_models: list[MiniAppTariff] = []
@@ -6398,12 +6356,14 @@ async def purchase_tariff_endpoint(
             },
         )
 
+    # Lock user BEFORE price computation to prevent TOCTOU on promo offer
+    from app.database.crud.user import lock_user_for_pricing
+    from app.services.pricing_engine import PricingEngine, pricing_engine
+
+    user = await lock_user_for_pricing(db, user.id)
+
     # Проверяем доступность тарифа для пользователя
-    promo_group = (
-        user.get_primary_promo_group()
-        if hasattr(user, 'get_primary_promo_group')
-        else getattr(user, 'promo_group', None)
-    )
+    promo_group = PricingEngine.resolve_promo_group(user)
     promo_group_id = promo_group.id if promo_group else None
     if not tariff.is_available_for_promo_group(promo_group_id):
         raise HTTPException(
@@ -6414,67 +6374,28 @@ async def purchase_tariff_endpoint(
             },
         )
 
-    # Получаем цену
+    # For daily tariffs, force period_days=1 (protect against client manipulation)
     is_daily_tariff = getattr(tariff, 'is_daily', False)
     if is_daily_tariff:
-        # Для суточного тарифа принудительно 1 день (защита от манипуляций с period_days)
         payload.period_days = 1
-        # Для суточного тарифа берём daily_price_kopeks (первый день)
-        base_price_kopeks = getattr(tariff, 'daily_price_kopeks', 0)
-        if base_price_kopeks <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    'code': 'invalid_daily_price',
-                    'message': 'Daily tariff has no price configured',
-                },
-            )
-    else:
-        # Для обычного тарифа получаем цену за выбранный период
-        base_price_kopeks = tariff.get_price_for_period(payload.period_days)
-        if base_price_kopeks is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    'code': 'invalid_period',
-                    'message': 'Invalid period for this tariff',
-                },
-            )
 
-    # Add extra device cost if user renews same tariff with purchased extra devices
+    # Calculate price via PricingEngine (single source of truth)
     subscription = getattr(user, 'subscription', None)
-    if not is_daily_tariff and subscription and subscription.tariff_id == tariff.id:
-        device_price_per_unit = (
-            tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
-        )
-        extra_devices = max(0, (subscription.device_limit or 0) - (tariff.device_limit or 0))
-        base_price_kopeks += extra_devices * device_price_per_unit
+    device_limit = None
+    if subscription and subscription.tariff_id == tariff.id:
+        device_limit = subscription.device_limit
 
-    # Применяем скидку промогруппы (только для обычных тарифов, не для суточных)
-    price_kopeks = base_price_kopeks
-    discount_percent = 0
-    if not is_daily_tariff and promo_group:
-        raw_discounts = getattr(promo_group, 'period_discounts', None) or {}
-        for k, v in raw_discounts.items():
-            try:
-                if int(k) == payload.period_days:
-                    discount_percent = max(0, min(100, int(v)))
-                    break
-            except (TypeError, ValueError):
-                pass
-        if discount_percent > 0:
-            from app.services.pricing_engine import PricingEngine
-
-            price_kopeks = PricingEngine.apply_discount(base_price_kopeks, discount_percent)
-
-    # Apply personal promo_offer discount on top of group discount
-    consume_promo_offer = False
-    if not is_daily_tariff:
-        promo_offer_pct = get_user_active_promo_discount_percent(user)
-        if promo_offer_pct > 0:
-            offer_discount_value = price_kopeks * promo_offer_pct // 100
-            price_kopeks = price_kopeks - offer_discount_value
-            consume_promo_offer = True
+    result = await pricing_engine.calculate_tariff_purchase_price(
+        tariff,
+        payload.period_days,
+        device_limit=device_limit,
+        user=user,
+    )
+    price_kopeks = result.final_total
+    consume_promo_offer = result.promo_offer_discount > 0
+    bd = result.breakdown
+    group_pcts = bd.get('group_discount_pct', {})
+    discount_percent = group_pcts.get('period', 0)
 
     # Проверяем баланс
     if user.balance_kopeks < price_kopeks:
@@ -6615,70 +6536,28 @@ async def purchase_tariff_endpoint(
     )
 
 
-def _get_user_period_discount(user, period_days: int) -> int:
-    """Получает скидку пользователя на период (унифицировано с ботом)."""
-    promo_group = getattr(user, 'promo_group', None) if user else None
-
-    if promo_group:
-        discount = promo_group.get_discount_percent('period', period_days)
-        if discount > 0:
-            return discount
-
-    personal_discount = get_user_active_promo_discount_percent(user) if user else 0
-    return personal_discount
-
-
-def _apply_promo_discount(price: int, discount_percent: int) -> int:
-    """Применяет скидку к цене (через PricingEngine для единообразия)."""
-    from app.services.pricing_engine import PricingEngine
-
-    return PricingEngine.apply_discount(price, discount_percent)
-
-
-def _calculate_tariff_switch_cost(
+def _calculate_tariff_switch(
     current_tariff,
     new_tariff,
     remaining_days: int,
-    promo_group=None,
     user=None,
-) -> tuple[int, bool]:
-    """
-    Рассчитывает стоимость переключения тарифа.
-    Логика унифицирована с ботом (tariff_purchase.py).
+):
+    """Рассчитывает стоимость переключения тарифа.
 
-    Формула: (new_monthly - current_monthly) * remaining_days / 30
-    Скидка применяется к обоим тарифам одинаково.
-
+    Делегирует расчёт в PricingEngine.calculate_tariff_switch_cost().
+    PricingEngine автоматически определяет тип переключения
+    (periodic↔periodic, daily→periodic, periodic→daily).
     Returns:
-        (cost_kopeks, is_upgrade) - стоимость доплаты и флаг апгрейда
+        TariffSwitchResult
     """
-    current_monthly = _get_tariff_monthly_price(current_tariff)
-    new_monthly = _get_tariff_monthly_price(new_tariff)
+    from app.services.pricing_engine import pricing_engine
 
-    discount_percent = _get_user_period_discount(user, 30) if user else 0
-
-    # Fallback на promo_group.period_discounts если user не передан
-    if discount_percent == 0 and promo_group:
-        raw_discounts = getattr(promo_group, 'period_discounts', None) or {}
-        for k, v in raw_discounts.items():
-            try:
-                if int(k) == 30:
-                    discount_percent = max(0, min(100, int(v)))
-                    break
-            except (TypeError, ValueError):
-                pass
-
-    if discount_percent > 0:
-        current_monthly = _apply_promo_discount(current_monthly, discount_percent)
-        new_monthly = _apply_promo_discount(new_monthly, discount_percent)
-
-    price_diff = new_monthly - current_monthly
-
-    if price_diff <= 0:
-        return 0, False
-
-    upgrade_cost = int(price_diff * remaining_days / 30)
-    return upgrade_cost, True
+    return pricing_engine.calculate_tariff_switch_cost(
+        current_tariff,
+        new_tariff,
+        remaining_days,
+        user=user,
+    )
 
 
 @router.post('/subscription/tariff/switch/preview')
@@ -6725,11 +6604,9 @@ async def preview_tariff_switch_endpoint(
         )
 
     # Проверяем доступность тарифа для пользователя
-    promo_group = (
-        user.get_primary_promo_group()
-        if hasattr(user, 'get_primary_promo_group')
-        else getattr(user, 'promo_group', None)
-    )
+    from app.services.pricing_engine import PricingEngine
+
+    promo_group = PricingEngine.resolve_promo_group(user)
     promo_group_id = promo_group.id if promo_group else None
     if not new_tariff.is_available_for_promo_group(promo_group_id):
         raise HTTPException(
@@ -6743,22 +6620,10 @@ async def preview_tariff_switch_endpoint(
         delta = subscription.end_date - datetime.now(UTC)
         remaining_days = max(0, delta.days)
 
-    # Рассчитываем стоимость переключения
-    current_is_daily = getattr(current_tariff, 'is_daily', False) if current_tariff else False
-    new_is_daily = getattr(new_tariff, 'is_daily', False)
-
-    if current_is_daily and not new_is_daily:
-        # Переключение С суточного НА периодный - полная оплата нового тарифа
-        # Берём минимальную цену из периодов нового тарифа
-        min_period_price = 0
-        if new_tariff.period_prices:
-            min_period_price = min(new_tariff.period_prices.values())
-        upgrade_cost = min_period_price
-        is_upgrade = min_period_price > 0
-    else:
-        upgrade_cost, is_upgrade = _calculate_tariff_switch_cost(
-            current_tariff, new_tariff, remaining_days, promo_group, user
-        )
+    # Рассчитываем стоимость переключения (PricingEngine обрабатывает все случаи: periodic↔periodic, daily↔periodic)
+    switch_result = _calculate_tariff_switch(current_tariff, new_tariff, remaining_days, user=user)
+    upgrade_cost = switch_result.upgrade_cost
+    is_upgrade = switch_result.is_upgrade
 
     balance = user.balance_kopeks or 0
     has_enough = balance >= upgrade_cost
@@ -6836,11 +6701,9 @@ async def switch_tariff_endpoint(
         )
 
     # Проверяем доступность тарифа
-    promo_group = (
-        user.get_primary_promo_group()
-        if hasattr(user, 'get_primary_promo_group')
-        else getattr(user, 'promo_group', None)
-    )
+    from app.services.pricing_engine import PricingEngine
+
+    promo_group = PricingEngine.resolve_promo_group(user)
     promo_group_id = promo_group.id if promo_group else None
     if not new_tariff.is_available_for_promo_group(promo_group_id):
         raise HTTPException(
@@ -6848,34 +6711,25 @@ async def switch_tariff_endpoint(
             detail={'code': 'tariff_not_available', 'message': 'Tariff not available'},
         )
 
+    # Lock user BEFORE price computation to prevent TOCTOU on promo offer
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
+
     # Рассчитываем оставшиеся дни
     remaining_days = 0
     if subscription.end_date and subscription.end_date > datetime.now(UTC):
         delta = subscription.end_date - datetime.now(UTC)
         remaining_days = max(0, delta.days)
 
-    # Рассчитываем стоимость
+    # Рассчитываем стоимость (PricingEngine обрабатывает все случаи)
+    switch_result = _calculate_tariff_switch(current_tariff, new_tariff, remaining_days, user=user)
+    upgrade_cost = switch_result.upgrade_cost
+    new_period_days = switch_result.new_period_days
+
     current_is_daily = getattr(current_tariff, 'is_daily', False) if current_tariff else False
     new_is_daily = getattr(new_tariff, 'is_daily', False)
     switching_from_daily = current_is_daily and not new_is_daily
-
-    if switching_from_daily:
-        # Переключение С суточного НА периодный - полная оплата нового тарифа (минимальный период)
-        min_period_days = 30  # По умолчанию месяц
-        min_period_price = 0
-        if new_tariff.period_prices:
-            # Находим минимальный период и его цену
-            min_period_days = min(int(k) for k in new_tariff.period_prices.keys())
-            min_period_price = new_tariff.period_prices.get(str(min_period_days), 0)
-        upgrade_cost = min_period_price
-        is_upgrade = min_period_price > 0
-        # remaining_days для нового тарифа будет равен min_period_days после покупки
-        new_period_days = min_period_days
-    else:
-        upgrade_cost, is_upgrade = _calculate_tariff_switch_cost(
-            current_tariff, new_tariff, remaining_days, promo_group, user
-        )
-        new_period_days = 0  # Не меняем дату окончания
 
     # Списываем доплату если апгрейд
     if upgrade_cost > 0:
@@ -6899,6 +6753,7 @@ async def switch_tariff_endpoint(
             user,
             upgrade_cost,
             description,
+            consume_promo_offer=switch_result.offer_discount_pct > 0,
             mark_as_paid_subscription=True,
             commit=False,
         )
@@ -7143,20 +6998,18 @@ async def purchase_traffic_topup_endpoint(
 
     base_price_kopeks = packages[payload.gb]
 
-    # Применяем скидку промогруппы на трафик
-    traffic_discount_percent = 0
-    promo_group = (
-        user.get_primary_promo_group()
-        if hasattr(user, 'get_primary_promo_group')
-        else getattr(user, 'promo_group', None)
-    )
-    if promo_group:
-        apply_to_addons = getattr(promo_group, 'apply_discounts_to_addons', True)
-        if apply_to_addons:
-            traffic_discount_percent = max(0, min(100, int(getattr(promo_group, 'traffic_discount_percent', 0) or 0)))
+    # Lock user BEFORE price computation to prevent TOCTOU on promo discount
+    from app.database.crud.user import lock_user_for_pricing
 
-    if traffic_discount_percent > 0:
-        base_price_kopeks = int(base_price_kopeks * (100 - traffic_discount_percent) / 100)
+    user = await lock_user_for_pricing(db, user.id)
+
+    # Применяем скидку промогруппы на трафик через PricingEngine
+    from app.services.pricing_engine import pricing_engine
+
+    base_price_kopeks, _discount_val, traffic_discount_percent = pricing_engine.calculate_traffic_discount(
+        base_price_kopeks,
+        user,
+    )
 
     # Пропорциональный расчет цены с учетом оставшегося времени подписки
     final_price, days_charged = calculate_prorated_price(
@@ -7280,7 +7133,21 @@ async def toggle_daily_subscription_pause_endpoint(
         new_paused_state = not is_currently_paused
     subscription.is_daily_paused = new_paused_state
 
-    daily_price = getattr(tariff, 'daily_price_kopeks', 0)
+    raw_daily_price = getattr(tariff, 'daily_price_kopeks', 0)
+
+    # Lock user BEFORE price computation to prevent TOCTOU on promo discount
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
+
+    # Apply group discount to daily price (consistent with DailySubscriptionService and resume-after-topup)
+    from app.services.pricing_engine import PricingEngine
+
+    promo_group = PricingEngine.resolve_promo_group(user)
+    daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
+    daily_price = (
+        PricingEngine.apply_discount(raw_daily_price, daily_group_pct) if daily_group_pct > 0 else raw_daily_price
+    )
 
     # Если снимаем с паузы, проверяем баланс и списываем оплату
     if not new_paused_state:

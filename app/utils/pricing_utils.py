@@ -10,6 +10,7 @@ from app.config import settings
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.database.models import PromoGroup, User
+    from app.services.pricing_engine import RenewalPricing
 
 logger = structlog.get_logger(__name__)
 
@@ -84,32 +85,45 @@ async def compute_simple_subscription_price(
     user: Optional['User'] = None,
     resolved_squad_uuids: Sequence[str] | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    """Вычисляет стоимость простой подписки с учетом всех доплат и скидок."""
+    """Вычисляет стоимость простой подписки с учетом всех доплат и скидок.
+
+    Delegates to PricingEngine.calculate_classic_new_subscription_price()
+    and converts the RenewalPricing result to the legacy breakdown dict
+    expected by callers.
+    """
+    from app.services.pricing_engine import PricingEngine
 
     period_days = int(params.get('period_days', 30) or 30)
-    attr_name = f'PRICE_{period_days}_DAYS'
-    base_price_original = getattr(settings, attr_name, settings.BASE_SUBSCRIPTION_PRICE)
 
     traffic_limit_raw = params.get('traffic_limit_gb')
     try:
-        traffic_limit = int(traffic_limit_raw) if traffic_limit_raw is not None else None
+        traffic_limit_gb = int(traffic_limit_raw) if traffic_limit_raw is not None else 0
     except (TypeError, ValueError):  # pragma: no cover - defensive conversion
-        traffic_limit = None
-
-    if traffic_limit is None or traffic_limit <= 0:
-        # Default simple subscriptions already include unlimited traffic.
-        traffic_price_original = 0
-    else:
-        traffic_price_original = settings.get_traffic_price(traffic_limit)
+        traffic_limit_gb = 0
+    # Treat None / non-positive as unlimited (0 GB → price = 0 in PricingEngine)
+    traffic_limit_gb = max(traffic_limit_gb, 0)
 
     device_limit_raw = params.get('device_limit', settings.DEFAULT_DEVICE_LIMIT)
     try:
         device_limit = int(device_limit_raw)
     except (TypeError, ValueError):  # pragma: no cover - defensive conversion
         device_limit = settings.DEFAULT_DEVICE_LIMIT
-    additional_devices = max(0, device_limit - settings.DEFAULT_DEVICE_LIMIT)
-    devices_price_original = additional_devices * settings.PRICE_PER_DEVICE
 
+    # --- Resolve squad UUIDs from explicit arg or params ---
+    resolved_uuids: list[str] = []
+    if resolved_squad_uuids:
+        resolved_uuids.extend([uuid for uuid in resolved_squad_uuids if uuid])
+    else:
+        raw_squad = params.get('squad_uuid')
+        if isinstance(raw_squad, (list, tuple, set)):
+            resolved_uuids.extend([str(uuid) for uuid in raw_squad if uuid])
+        elif raw_squad:
+            resolved_uuids.append(str(raw_squad))
+
+    # --- Resolve promo_group from params (backward compat) ---
+    # Callers may pass promo_group or promo_group_id via params dict.
+    # PricingEngine resolves promo_group from user internally, so we only
+    # need this for the applied_promo_group_id field in the breakdown.
     promo_group: PromoGroup | None = params.get('promo_group')
 
     if promo_group is None:
@@ -122,131 +136,103 @@ async def compute_simple_subscription_price(
     if promo_group is None and user is not None:
         promo_group = user.get_primary_promo_group()
 
-    period_discount_percent = resolve_discount_percent(
-        user,
-        promo_group,
-        'period',
-        period_days=period_days,
-    )
-    base_discount = base_price_original * period_discount_percent // 100
-
-    traffic_discount_percent = resolve_discount_percent(
-        user,
-        promo_group,
-        'traffic',
-        period_days=period_days,
-    )
-    traffic_discount = traffic_price_original * traffic_discount_percent // 100
-
-    devices_discount_percent = resolve_discount_percent(
-        user,
-        promo_group,
-        'devices',
-        period_days=period_days,
-    )
-    devices_discount = devices_price_original * devices_discount_percent // 100
-
-    servers_discount_percent = resolve_discount_percent(
-        user,
-        promo_group,
-        'servers',
-        period_days=period_days,
+    # --- Delegate to PricingEngine ---
+    engine = PricingEngine()
+    pricing = await engine.calculate_classic_new_subscription_price(
+        db,
+        period_days,
+        resolved_uuids,
+        traffic_limit_gb,
+        device_limit,
+        user=user,
     )
 
-    resolved_uuids: list[str] = []
-    if resolved_squad_uuids:
-        resolved_uuids.extend([uuid for uuid in resolved_squad_uuids if uuid])
-    else:
-        raw_squad = params.get('squad_uuid')
-        if isinstance(raw_squad, (list, tuple, set)):
-            resolved_uuids.extend([str(uuid) for uuid in raw_squad if uuid])
-        elif raw_squad:
-            resolved_uuids.append(str(raw_squad))
+    # --- Build legacy breakdown dict from RenewalPricing + ClassicBreakdown ---
+    breakdown = _build_simple_subscription_breakdown(pricing, resolved_uuids, promo_group)
 
-    from app.database.crud.server_squad import get_server_squads_by_uuids
+    return pricing.final_total, breakdown
 
-    server_breakdown: list[dict[str, Any]] = []
-    servers_price_original = 0
-    servers_discount_total = 0
 
-    if resolved_uuids:
-        servers = await get_server_squads_by_uuids(db, resolved_uuids)
-        server_map = {s.squad_uuid: s for s in servers}
-    else:
-        server_map = {}
+def _build_simple_subscription_breakdown(
+    pricing: 'RenewalPricing',
+    resolved_uuids: list[str],
+    promo_group: Optional['PromoGroup'],
+) -> dict[str, Any]:
+    """Convert PricingEngine's RenewalPricing to the legacy breakdown dict.
 
-    for squad_uuid in resolved_uuids:
-        server = server_map.get(squad_uuid)
-        if not server:
-            logger.warning('SIMPLE_SUBSCRIPTION_PRICE_SERVER_NOT_FOUND | squad', squad_uuid=squad_uuid)
-            server_breakdown.append(
-                {
-                    'uuid': squad_uuid,
-                    'name': None,
-                    'available': False,
-                    'original_price': 0,
-                    'discount': 0,
-                    'final_price': 0,
-                }
-            )
-            continue
+    Preserves all keys that callers depend on:
+    base_price, base_discount, traffic_price, traffic_discount,
+    devices_price, devices_discount, servers_price, servers_discount,
+    servers_final, server_details, total_before_discount, total_discount,
+    resolved_squad_uuids, applied_promo_group_id, *_discount_percent.
+    """
+    from app.services.pricing_engine import PricingEngine
 
-        if not server.is_available or server.is_full:
-            logger.warning(
-                'SIMPLE_SUBSCRIPTION_PRICE_SERVER_UNAVAILABLE | squad= | available= | full',
-                squad_uuid=squad_uuid,
-                is_available=server.is_available,
-                is_full=server.is_full,
-            )
-            server_breakdown.append(
-                {
-                    'uuid': squad_uuid,
-                    'name': server.display_name,
-                    'available': False,
-                    'original_price': 0,
-                    'discount': 0,
-                    'final_price': 0,
-                }
-            )
-            continue
+    bd = pricing.breakdown
+    months = bd.get('months_in_period', 1) or 1
+    group_pct: dict[str, int] = bd.get('group_discount_pct', {})
 
-        original_price = server.price_kopeks
-        discount_value = original_price * servers_discount_percent // 100
-        final_price = original_price - discount_value
+    # Original (pre-discount) prices from ClassicBreakdown
+    base_price_original: int = bd.get('base_price_original', 0)
+    traffic_price_per_month: int = bd.get('traffic_price_per_month', 0)
+    servers_price_per_month: int = bd.get('servers_price_per_month', 0)
+    devices_price_per_month: int = bd.get('devices_price_per_month', 0)
 
-        servers_price_original += original_price
-        servers_discount_total += discount_value
+    # Per-category discount percents
+    period_discount_percent: int = group_pct.get('period', 0)
+    traffic_discount_percent: int = group_pct.get('traffic', 0)
+    servers_discount_percent: int = group_pct.get('servers', 0)
+    devices_discount_percent: int = group_pct.get('devices', 0)
 
-        server_breakdown.append(
+    # Total original prices (traffic/servers/devices are monthly × months)
+    traffic_price_total = traffic_price_per_month * months
+    servers_price_total = servers_price_per_month * months
+    devices_price_total = devices_price_per_month * months
+
+    # Discount values
+    base_discount = base_price_original - pricing.base_price
+    traffic_discount = traffic_price_total - pricing.traffic_price
+    servers_discount = servers_price_total - pricing.servers_price
+    devices_discount = devices_price_total - pricing.devices_price
+
+    total_before_discount = base_price_original + traffic_price_total + servers_price_total + devices_price_total
+    # Group discounts only (promo_offer_discount is separate and already
+    # reflected in final_total but NOT in per-category values above).
+    total_discount = base_discount + traffic_discount + servers_discount + devices_discount
+
+    # Build server_details in legacy format from PricingEngine's server list
+    server_details: list[dict[str, Any]] = []
+    servers_final = 0
+    for srv in bd.get('servers', []):
+        original_price = srv.get('price', 0)
+        status = srv.get('status', 'available')
+        is_available = status == 'available'
+        final_price = PricingEngine.apply_discount(original_price, servers_discount_percent) if is_available else 0
+        discount_value = original_price - final_price if is_available else 0
+        servers_final += final_price
+
+        server_details.append(
             {
-                'uuid': squad_uuid,
-                'name': server.display_name,
-                'available': True,
-                'original_price': original_price,
+                'uuid': srv.get('uuid', ''),
+                'name': None,  # PricingEngine._calculate_servers_price doesn't return display_name
+                'available': is_available,
+                'original_price': original_price if is_available else 0,
                 'discount': discount_value,
                 'final_price': final_price,
             }
         )
 
-    total_before_discount = (
-        base_price_original + traffic_price_original + devices_price_original + servers_price_original
-    )
-
-    total_discount = base_discount + traffic_discount + devices_discount + servers_discount_total
-
-    total_price = max(0, total_before_discount - total_discount)
-
-    breakdown = {
+    return {
         'base_price': base_price_original,
         'base_discount': base_discount,
-        'traffic_price': traffic_price_original,
+        'traffic_price': traffic_price_total,
         'traffic_discount': traffic_discount,
-        'devices_price': devices_price_original,
+        'devices_price': devices_price_total,
         'devices_discount': devices_discount,
-        'servers_price': servers_price_original,
-        'servers_discount': servers_discount_total,
-        'servers_final': sum(item['final_price'] for item in server_breakdown),
-        'server_details': server_breakdown,
+        'servers_price': servers_price_total,
+        'servers_discount': servers_discount,
+        'servers_final': servers_final,
+        'server_details': server_details,
         'total_before_discount': total_before_discount,
         'total_discount': total_discount,
         'resolved_squad_uuids': resolved_uuids,
@@ -256,8 +242,6 @@ async def compute_simple_subscription_price(
         'devices_discount_percent': devices_discount_percent,
         'servers_discount_percent': servers_discount_percent,
     }
-
-    return total_price, breakdown
 
 
 def _pluralize_days_ru(n: int) -> str:

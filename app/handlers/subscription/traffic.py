@@ -19,18 +19,16 @@ from app.keyboards.inline import (
     get_reset_traffic_confirm_keyboard,
 )
 from app.localization.texts import get_texts
+from app.services.pricing_engine import PricingEngine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 from app.states import SubscriptionStates
 from app.utils.pricing_utils import (
-    apply_percentage_discount,
     calculate_prorated_price,
 )
 
 from .common import (
-    _apply_addon_discount,
-    _get_addon_discount_percent_for_user,
     _get_period_hint_from_subscription,
     get_confirm_switch_traffic_keyboard,
     get_traffic_switch_keyboard,
@@ -84,7 +82,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
         packages = tariff.get_traffic_topup_packages()
 
         period_hint_days = _get_period_hint_from_subscription(subscription)
-        traffic_discount_percent = _get_addon_discount_percent_for_user(
+        traffic_discount_percent = PricingEngine.get_addon_discount_percent(
             db_user,
             'traffic',
             period_hint_days,
@@ -136,7 +134,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
 
     current_traffic = subscription.traffic_limit_gb
     period_hint_days = _get_period_hint_from_subscription(subscription)
-    traffic_discount_percent = _get_addon_discount_percent_for_user(
+    traffic_discount_percent = PricingEngine.get_addon_discount_percent(
         db_user,
         'traffic',
         period_hint_days,
@@ -260,6 +258,10 @@ async def confirm_reset_traffic(callback: types.CallbackQuery, db_user: User, db
     if settings.is_traffic_topup_blocked():
         await callback.answer('⚠️ В текущем режиме трафик фиксированный', show_alert=True)
         return
+
+    from app.database.crud.user import lock_user_for_pricing
+
+    db_user = await lock_user_for_pricing(db, db_user.id)
 
     texts = get_texts(db_user.language)
     subscription = db_user.subscription
@@ -471,16 +473,18 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         await callback.answer('⚠️ Цена для этого пакета не настроена', show_alert=True)
         return
 
+    # Lock user BEFORE price computation to prevent TOCTOU on group discount
+    from app.database.crud.user import lock_user_for_pricing
+
+    db_user = await lock_user_for_pricing(db, db_user.id)
+    subscription = db_user.subscription
+
     period_hint_days = _get_period_hint_from_subscription(subscription)
-    discount_result = _apply_addon_discount(
-        db_user,
-        'traffic',
+    discounted_per_month, discount_per_month, traffic_discount_pct = PricingEngine.calculate_traffic_discount(
         base_price,
+        db_user,
         period_hint_days,
     )
-
-    discounted_per_month = discount_result['discounted']
-    discount_per_month = discount_result['discount']
     charged_days = 30
 
     # На тарифах пакеты трафика покупаются на 1 месяц (30 дней),
@@ -510,7 +514,7 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             'traffic_gb': traffic_gb,
             'price_kopeks': price,
             'base_price_kopeks': discounted_per_month,
-            'discount_percent': discount_result['percent'],
+            'discount_percent': traffic_discount_pct,
             'source': 'bot',
             'description': f'Докупка {traffic_gb} ГБ трафика',
         }
@@ -619,7 +623,7 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         if price > 0:
             success_text += f'\n💰 Списано: {texts.format_price(price)}'
             if total_discount_value > 0:
-                success_text += f' (скидка {discount_result["percent"]}%: -{texts.format_price(total_discount_value)})'
+                success_text += f' (скидка {traffic_discount_pct}%: -{texts.format_price(total_discount_value)})'
 
         await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(db_user.language))
 
@@ -668,7 +672,7 @@ async def handle_switch_traffic(callback: types.CallbackQuery, db_user: User, db
     base_traffic = current_traffic - purchased_traffic
 
     period_hint_days = _get_period_hint_from_subscription(subscription)
-    traffic_discount_percent = _get_addon_discount_percent_for_user(
+    traffic_discount_percent = PricingEngine.get_addon_discount_percent(
         db_user,
         'traffic',
         period_hint_days,
@@ -722,17 +726,17 @@ async def confirm_switch_traffic(callback: types.CallbackQuery, db_user: User, d
     now = datetime.now(UTC)
     days_remaining = max(1, (subscription.end_date - now).days)
     period_hint_days = days_remaining if days_remaining > 0 else None
-    traffic_discount_percent = _get_addon_discount_percent_for_user(
+    traffic_discount_percent = PricingEngine.get_addon_discount_percent(
         db_user,
         'traffic',
         period_hint_days,
     )
 
-    discounted_old_per_month, _ = apply_percentage_discount(
+    discounted_old_per_month = PricingEngine.apply_discount(
         old_price_per_month,
         traffic_discount_percent,
     )
-    discounted_new_per_month, _ = apply_percentage_discount(
+    discounted_new_per_month = PricingEngine.apply_discount(
         new_price_per_month,
         traffic_discount_percent,
     )
@@ -800,11 +804,34 @@ async def confirm_switch_traffic(callback: types.CallbackQuery, db_user: User, d
 async def execute_switch_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     callback_parts = callback.data.split('_')
     new_traffic_gb = int(callback_parts[3])
-    price_difference = int(callback_parts[4])
+
+    from app.database.crud.user import lock_user_for_pricing
+
+    db_user = await lock_user_for_pricing(db, db_user.id)
 
     texts = get_texts(db_user.language)
     subscription = db_user.subscription
     current_traffic = subscription.traffic_limit_gb
+
+    # Recompute price under lock (callback-baked value may be stale)
+    purchased_traffic = getattr(subscription, 'purchased_traffic_gb', 0) or 0
+    base_traffic = current_traffic - purchased_traffic
+    old_price_per_month = settings.get_traffic_price(base_traffic)
+    new_price_per_month = settings.get_traffic_price(new_traffic_gb)
+    days_remaining = max(1, (subscription.end_date - datetime.now(UTC)).days)
+    traffic_discount_percent = PricingEngine.get_addon_discount_percent(
+        db_user,
+        'traffic',
+        days_remaining,
+    )
+    discounted_old = PricingEngine.apply_discount(old_price_per_month, traffic_discount_percent)
+    discounted_new = PricingEngine.apply_discount(new_price_per_month, traffic_discount_percent)
+    price_diff_per_month = discounted_new - discounted_old
+    if price_diff_per_month > 0:
+        price_difference = int(price_diff_per_month * days_remaining / 30)
+        price_difference = max(100, price_difference)
+    else:
+        price_difference = 0
 
     try:
         if price_difference > 0:

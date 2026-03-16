@@ -265,6 +265,7 @@ class TestCalculateRenewalPriceTariffMode:
         subscription.purchased_traffic_gb = 0
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
         user.promo_offer_discount_percent = 0
         user.promo_offer_expires_at = None
         with (
@@ -293,6 +294,7 @@ class TestCalculateRenewalPriceTariffMode:
         subscription.purchased_traffic_gb = 0
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
         user.promo_offer_discount_percent = 0
         user.promo_offer_expires_at = None
         with (
@@ -319,6 +321,7 @@ class TestCalculateRenewalPriceTariffMode:
         subscription.device_limit = 4  # 2 extra devices
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
         with (
             patch('app.services.pricing_engine.get_user_active_promo_discount_percent', return_value=0),
             patch('app.services.pricing_engine.settings') as ms,
@@ -344,13 +347,14 @@ class TestCalculateRenewalPriceTariffMode:
         promo_group.get_discount_percent.return_value = 10
         user = MagicMock()
         user.promo_group = promo_group
+        user.get_primary_promo_group.return_value = promo_group
         with (
             patch('app.services.pricing_engine.get_user_active_promo_discount_percent', return_value=5),
             patch('app.services.pricing_engine.settings') as ms,
         ):
             ms.PRICE_PER_DEVICE = 5000
             result = await engine.calculate_renewal_price(db, subscription, 30, user=user)
-        assert result.base_price == 20000
+        assert result.base_price == 18000  # 20000 discounted by 10%
         assert result.promo_group_discount == 2000
         # After group: 18000, then 5% off 18000 = 900
         assert result.promo_offer_discount == 900
@@ -367,9 +371,12 @@ class TestCalculateRenewalPriceTariffMode:
         subscription.tariff.device_limit = 1
         subscription.tariff.device_price_kopeks = None
         subscription.tariff.id = 1
+        subscription.tariff.is_daily = False
+        subscription.tariff.can_purchase_custom_days.return_value = False
         subscription.device_limit = 1
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
         with (
             patch('app.services.pricing_engine.get_user_active_promo_discount_percent', return_value=0),
             patch('app.services.pricing_engine.settings') as ms,
@@ -395,6 +402,7 @@ class TestCalculateRenewalPriceTariffMode:
         sub.device_limit = 2  # less than tariff's 5
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
 
         with patch('app.services.pricing_engine.get_user_active_promo_discount_percent', return_value=0):
             result = await engine.calculate_renewal_price(db, sub, 30, user=user)
@@ -441,6 +449,7 @@ class TestCalculateRenewalPriceClassicMode:
         subscription.device_limit = 2
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
         user.promo_group_id = None
         user.promo_offer_discount_percent = 0
         user.promo_offer_expires_at = None
@@ -479,6 +488,7 @@ class TestCalculateRenewalPriceClassicMode:
         promo_group.get_discount_percent.return_value = 20
         user = MagicMock()
         user.promo_group = promo_group
+        user.get_primary_promo_group.return_value = promo_group
         user.promo_group_id = 1
         user.promo_offer_discount_percent = 10
         user.promo_offer_expires_at = None
@@ -511,6 +521,7 @@ class TestCalculateRenewalPriceClassicMode:
         subscription.device_limit = 1
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
         user.promo_group_id = None
         with (
             patch('app.services.pricing_engine.get_user_active_promo_discount_percent', return_value=0),
@@ -539,6 +550,7 @@ class TestCalculateRenewalPriceClassicMode:
         subscription.device_limit = 5
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
         user.promo_group_id = None
         with (
             patch('app.services.pricing_engine.get_user_active_promo_discount_percent', return_value=0),
@@ -569,6 +581,7 @@ class TestCalculateRenewalPriceClassicMode:
         subscription.device_limit = 1
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
         user.promo_group_id = None
         s1 = _make_server(price_kopeks=5000, server_id=10, squad_uuid='uuid-found')
         s3 = _make_server(price_kopeks=3000, server_id=30, squad_uuid='uuid-found2')
@@ -610,6 +623,7 @@ class TestCalculateRenewalPriceClassicMode:
         subscription.device_limit = 1
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
         user.promo_group_id = None
         with (
             patch('app.services.pricing_engine.get_user_active_promo_discount_percent', return_value=0),
@@ -640,6 +654,7 @@ class TestCalculateRenewalPriceClassicMode:
         subscription.device_limit = 1
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
         user.promo_group_id = None
         with (
             patch('app.services.pricing_engine.get_user_active_promo_discount_percent', return_value=0),
@@ -669,6 +684,7 @@ class TestCalculateRenewalPriceClassicMode:
         sub.device_limit = 1
         user = MagicMock()
         user.promo_group = None
+        user.get_primary_promo_group.return_value = None
         user.promo_group_id = None
 
         server = _make_server(price_kopeks=3000, squad_uuid='uuid-s1')
@@ -717,6 +733,7 @@ class TestCalculateRenewalPriceClassicMode:
 
         promo_group.get_discount_percent = MagicMock(side_effect=discount_by_category)
         user.promo_group = promo_group
+        user.get_primary_promo_group.return_value = promo_group
         user.promo_group_id = 1
 
         server = _make_server(price_kopeks=6000, squad_uuid='uuid-s1')
@@ -898,6 +915,7 @@ class TestOriginalPriceIdentity:
         promo_group = MagicMock()
         promo_group.get_discount_percent = MagicMock(return_value=25)
         user.promo_group = promo_group
+        user.get_primary_promo_group.return_value = promo_group
 
         with patch('app.services.pricing_engine.get_user_active_promo_discount_percent', return_value=15):
             result = await engine.calculate_renewal_price(db, sub, 30, user=user)
@@ -922,6 +940,7 @@ class TestOriginalPriceIdentity:
         promo_group = MagicMock()
         promo_group.get_discount_percent = MagicMock(return_value=20)
         user.promo_group = promo_group
+        user.get_primary_promo_group.return_value = promo_group
         user.promo_group_id = 1
 
         server = _make_server(price_kopeks=4000, squad_uuid='uuid-s1')
@@ -965,6 +984,9 @@ class TestOriginalPriceIdentity:
         promo_group = MagicMock()
         promo_group.get_discount_percent = MagicMock(return_value=10)
         user.promo_group = promo_group
+        user.get_primary_promo_group.return_value = promo_group
+        sub.tariff.is_daily = False
+        sub.tariff.can_purchase_custom_days.return_value = False
         with patch('app.services.pricing_engine.get_user_active_promo_discount_percent', return_value=5):
             result = await engine.calculate_renewal_price(db, sub, 30, user=user)
         assert result.original_total == 20000  # undiscounted subtotal

@@ -123,10 +123,24 @@ class DailySubscriptionService:
             logger.warning('Тариф не найден для подписки', subscription_id=subscription.id)
             return 'error'
 
-        daily_price = tariff.daily_price_kopeks
-        if daily_price <= 0:
+        raw_daily_price = tariff.daily_price_kopeks
+        if raw_daily_price <= 0:
             logger.warning('Некорректная суточная цена для тарифа', tariff_id=tariff.id)
             return 'error'
+
+        # Lock user row to prevent TOCTOU between discount read and balance charge
+        from app.database.crud.user import lock_user_for_pricing
+
+        user = await lock_user_for_pricing(db, user.id)
+
+        # Apply group discount to daily price (consistent with PricingEngine._calculate_switch_to_daily)
+        from app.services.pricing_engine import PricingEngine
+
+        promo_group = PricingEngine.resolve_promo_group(user)
+        daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
+        daily_price = (
+            PricingEngine.apply_discount(raw_daily_price, daily_group_pct) if daily_group_pct > 0 else raw_daily_price
+        )
 
         # Проверяем баланс
         if user.balance_kopeks < daily_price:

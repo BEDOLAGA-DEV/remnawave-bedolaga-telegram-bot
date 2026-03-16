@@ -141,8 +141,12 @@ async def get_available_server_squads(
         .order_by(ServerSquad.sort_order, ServerSquad.display_name)
     )
 
-    if exclude_trial_only:
-        query = query.where(ServerSquad.is_trial_eligible.is_(False))
+    # НЕ фильтруем по is_trial_eligible — это поле означает "доступен для триала",
+    # а НЕ "только для триала". Сквад может быть одновременно триальным и платным.
+    # Фильтр exclude_trial_only убирал единственный доступный сквад, из-за чего
+    # пользователи без триала получали пустой connected_squads при покупке.
+    # Параметр exclude_trial_only сохранён для обратной совместимости, но не используется.
+    # TODO: если нужна логика "только для триала", добавить отдельное поле is_trial_only
 
     if promo_group_id is not None:
         query = query.join(ServerSquad.allowed_promo_groups).where(PromoGroup.id == promo_group_id)

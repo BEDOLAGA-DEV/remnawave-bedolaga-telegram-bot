@@ -4,18 +4,15 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import PERIOD_PRICES, settings
+from app.config import settings
 from app.database.models import User
 from app.utils.pricing_utils import (
-    apply_percentage_discount,
-    calculate_months_from_days,
     format_period_description,
-    validate_pricing_calculation,
 )
 from app.utils.timezone import format_local_datetime
 
-from .common import _apply_discount_to_monthly_component, _apply_promo_offer_discount, logger
-from .countries import _get_available_countries, _get_countries_info, get_countries_price_by_uuids_fallback
+from .common import logger
+from .countries import _get_available_countries, _get_countries_info
 from .devices import get_current_devices_count
 from .promo import _build_promo_group_discount_text, _get_promo_offer_hint
 
@@ -25,82 +22,18 @@ async def _prepare_subscription_summary(
     data: dict[str, Any],
     texts,
 ) -> tuple[str, dict[str, Any]]:
+    from app.database.database import AsyncSessionLocal
+    from app.services.pricing_engine import PricingEngine, pricing_engine
+
     summary_data = dict(data)
 
     if 'period_days' not in summary_data:
         raise KeyError('period_days missing from subscription data — FSM state likely expired')
 
-    countries = await _get_available_countries(db_user.promo_group_id)
+    period_days = summary_data['period_days']
 
-    months_in_period = calculate_months_from_days(summary_data['period_days'])
-    period_display = format_period_description(summary_data['period_days'], db_user.language)
-
-    base_price_original = PERIOD_PRICES.get(summary_data['period_days'], 0)
-    period_discount_percent = db_user.get_promo_discount(
-        'period',
-        summary_data['period_days'],
-    )
-    base_price, base_discount_total = apply_percentage_discount(
-        base_price_original,
-        period_discount_percent,
-    )
-
-    if settings.is_traffic_fixed():
-        traffic_limit = settings.get_fixed_traffic_limit()
-        traffic_price_per_month = settings.get_traffic_price(traffic_limit)
-        final_traffic_gb = traffic_limit
-    else:
-        traffic_gb = summary_data.get('traffic_gb', 0)
-        traffic_price_per_month = settings.get_traffic_price(traffic_gb)
-        final_traffic_gb = traffic_gb
-
-    traffic_discount_percent = db_user.get_promo_discount(
-        'traffic',
-        summary_data['period_days'],
-    )
-    traffic_component = _apply_discount_to_monthly_component(
-        traffic_price_per_month,
-        traffic_discount_percent,
-        months_in_period,
-    )
-    total_traffic_price = traffic_component['total']
-
-    countries_price_per_month = 0
-    selected_countries_names: list[str] = []
-    selected_server_prices: list[int] = []
-    server_monthly_prices: list[int] = []
-
-    selected_country_ids = set(summary_data.get('countries', []))
-    for country in countries:
-        if country['uuid'] in selected_country_ids:
-            server_price_per_month = country['price_kopeks']
-            countries_price_per_month += server_price_per_month
-            selected_countries_names.append(html.escape(country['name']))
-            server_monthly_prices.append(server_price_per_month)
-
-    servers_discount_percent = db_user.get_promo_discount(
-        'servers',
-        summary_data['period_days'],
-    )
-    total_countries_price = 0
-    total_servers_discount = 0
-    discounted_servers_price_per_month = 0
-
-    for server_price_per_month in server_monthly_prices:
-        discounted_per_month, discount_per_month = apply_percentage_discount(
-            server_price_per_month,
-            servers_discount_percent,
-        )
-        total_price_for_server = discounted_per_month * months_in_period
-        total_discount_for_server = discount_per_month * months_in_period
-
-        discounted_servers_price_per_month += discounted_per_month
-        total_countries_price += total_price_for_server
-        total_servers_discount += total_discount_for_server
-        selected_server_prices.append(total_price_for_server)
-
+    # --- Resolve device limit (same logic as before) ---
     devices_selection_enabled = settings.is_devices_selection_enabled()
-    forced_disabled_limit: int | None = None
     if devices_selection_enabled:
         devices_selected = summary_data.get('devices', settings.DEFAULT_DEVICE_LIMIT)
     else:
@@ -109,54 +42,75 @@ async def _prepare_subscription_summary(
             devices_selected = settings.DEFAULT_DEVICE_LIMIT
         else:
             devices_selected = forced_disabled_limit
-
     summary_data['devices'] = devices_selected
-    additional_devices = max(0, devices_selected - settings.DEFAULT_DEVICE_LIMIT)
-    devices_price_per_month = additional_devices * settings.PRICE_PER_DEVICE
-    devices_discount_percent = db_user.get_promo_discount(
-        'devices',
-        summary_data['period_days'],
-    )
-    devices_component = _apply_discount_to_monthly_component(
-        devices_price_per_month,
-        devices_discount_percent,
-        months_in_period,
-    )
-    total_devices_price = devices_component['total']
 
-    total_price = base_price + total_traffic_price + total_countries_price + total_devices_price
+    # --- Resolve traffic ---
+    if settings.is_traffic_fixed():
+        final_traffic_gb = settings.get_fixed_traffic_limit()
+    else:
+        final_traffic_gb = summary_data.get('traffic_gb', 0)
 
+    # --- Resolve connected squads ---
+    connected_squads = list(summary_data.get('countries', []))
+
+    # --- Delegate pricing to PricingEngine ---
+    async with AsyncSessionLocal() as db:
+        pricing = await pricing_engine.calculate_classic_new_subscription_price(
+            db,
+            period_days,
+            connected_squads,
+            final_traffic_gb,
+            devices_selected,
+            user=db_user,
+        )
+
+    # --- Build legacy dict from PricingEngine result ---
+    details = PricingEngine.classic_pricing_to_purchase_details(pricing)
+    bd = pricing.breakdown
+
+    months_in_period = details['months_in_period']
+    base_price = details['base_price']
+    base_price_original = details['base_price_original']
+    base_discount_total = details['base_discount_total']
+    period_discount_percent = details['base_discount_percent']
+    traffic_price_per_month = details['traffic_price_per_month']
+    traffic_discount_percent = details['traffic_discount_percent']
+    traffic_discount_total = details['traffic_discount_total']
+    total_traffic_price = details['total_traffic_price']
+    servers_price_per_month = details['servers_price_per_month']
+    servers_discount_percent = details['servers_discount_percent']
+    servers_discount_total = details['servers_discount_total']
+    total_servers_price = details['total_servers_price']
+    devices_price_per_month = details['devices_price_per_month']
+    devices_discount_percent = details['devices_discount_percent']
+    devices_discount_total = details['devices_discount_total']
+    total_devices_price = details['total_devices_price']
+
+    # Compute discounted per-month values (not in classic_pricing_to_purchase_details)
+    traffic_discounted_per_month = PricingEngine.apply_discount(traffic_price_per_month, traffic_discount_percent)
+    servers_discounted_per_month = PricingEngine.apply_discount(servers_price_per_month, servers_discount_percent)
+    devices_discounted_per_month = PricingEngine.apply_discount(devices_price_per_month, devices_discount_percent)
     discounted_monthly_additions = (
-        traffic_component['discounted_per_month']
-        + discounted_servers_price_per_month
-        + devices_component['discounted_per_month']
+        traffic_discounted_per_month + servers_discounted_per_month + devices_discounted_per_month
     )
 
-    is_valid = validate_pricing_calculation(
-        base_price,
-        discounted_monthly_additions,
-        months_in_period,
-        total_price,
-    )
-
-    if not is_valid:
-        raise ValueError('Subscription price calculation validation failed')
-
-    original_total_price = total_price
-    promo_offer_component = _apply_promo_offer_discount(db_user, total_price)
-    if promo_offer_component['discount'] > 0:
-        total_price = promo_offer_component['discounted']
+    # --- Promo offer discount (already computed by PricingEngine) ---
+    promo_offer_discount = pricing.promo_offer_discount
+    offer_pct = bd.get('offer_discount_pct', 0)
+    # subtotal before promo offer = final_total + promo_offer_discount
+    subtotal_before_offer = pricing.final_total + promo_offer_discount
+    total_price = pricing.final_total
 
     summary_data['total_price'] = total_price
-    if promo_offer_component['discount'] > 0:
-        summary_data['promo_offer_discount_percent'] = promo_offer_component['percent']
-        summary_data['promo_offer_discount_value'] = promo_offer_component['discount']
-        summary_data['total_price_before_promo_offer'] = original_total_price
+    if promo_offer_discount > 0:
+        summary_data['promo_offer_discount_percent'] = offer_pct
+        summary_data['promo_offer_discount_value'] = promo_offer_discount
+        summary_data['total_price_before_promo_offer'] = subtotal_before_offer
     else:
         summary_data.pop('promo_offer_discount_percent', None)
         summary_data.pop('promo_offer_discount_value', None)
         summary_data.pop('total_price_before_promo_offer', None)
-    summary_data['server_prices_for_period'] = selected_server_prices
+    summary_data['server_prices_for_period'] = details['servers_individual_prices']
     summary_data['months_in_period'] = months_in_period
     summary_data['base_price'] = base_price
     summary_data['base_price_original'] = base_price_original
@@ -164,23 +118,26 @@ async def _prepare_subscription_summary(
     summary_data['base_discount_total'] = base_discount_total
     summary_data['final_traffic_gb'] = final_traffic_gb
     summary_data['traffic_price_per_month'] = traffic_price_per_month
-    summary_data['traffic_discount_percent'] = traffic_component['discount_percent']
-    summary_data['traffic_discount_total'] = traffic_component['discount_total']
-    summary_data['traffic_discounted_price_per_month'] = traffic_component['discounted_per_month']
+    summary_data['traffic_discount_percent'] = traffic_discount_percent
+    summary_data['traffic_discount_total'] = traffic_discount_total
+    summary_data['traffic_discounted_price_per_month'] = traffic_discounted_per_month
     summary_data['total_traffic_price'] = total_traffic_price
-    summary_data['servers_price_per_month'] = countries_price_per_month
-    summary_data['countries_price_per_month'] = countries_price_per_month
+    summary_data['servers_price_per_month'] = servers_price_per_month
+    summary_data['countries_price_per_month'] = servers_price_per_month
     summary_data['servers_discount_percent'] = servers_discount_percent
-    summary_data['servers_discount_total'] = total_servers_discount
-    summary_data['servers_discounted_price_per_month'] = discounted_servers_price_per_month
-    summary_data['total_servers_price'] = total_countries_price
-    summary_data['total_countries_price'] = total_countries_price
+    summary_data['servers_discount_total'] = servers_discount_total
+    summary_data['servers_discounted_price_per_month'] = servers_discounted_per_month
+    summary_data['total_servers_price'] = total_servers_price
+    summary_data['total_countries_price'] = total_servers_price
     summary_data['devices_price_per_month'] = devices_price_per_month
-    summary_data['devices_discount_percent'] = devices_component['discount_percent']
-    summary_data['devices_discount_total'] = devices_component['discount_total']
-    summary_data['devices_discounted_price_per_month'] = devices_component['discounted_per_month']
+    summary_data['devices_discount_percent'] = devices_discount_percent
+    summary_data['devices_discount_total'] = devices_discount_total
+    summary_data['devices_discounted_price_per_month'] = devices_discounted_per_month
     summary_data['total_devices_price'] = total_devices_price
     summary_data['discounted_monthly_additions'] = discounted_monthly_additions
+
+    # --- Build display text ---
+    period_display = format_period_description(period_days, db_user.language)
 
     if settings.is_traffic_fixed():
         if final_traffic_gb == 0:
@@ -191,6 +148,13 @@ async def _prepare_subscription_summary(
         traffic_display = 'Безлимитный'
     else:
         traffic_display = f'{summary_data.get("traffic_gb", 0)} ГБ'
+
+    # Resolve country display names (still needed for the summary text)
+    countries = await _get_available_countries(db_user.promo_group_id)
+    selected_country_ids = set(connected_squads)
+    selected_countries_names: list[str] = [
+        html.escape(country['name']) for country in countries if country['uuid'] in selected_country_ids
+    ]
 
     details_lines = []
 
@@ -212,40 +176,34 @@ async def _prepare_subscription_summary(
             f'- Трафик: {texts.format_price(traffic_price_per_month)}/мес × {months_in_period}'
             f' = {texts.format_price(total_traffic_price)}'
         )
-        if traffic_component['discount_total'] > 0:
-            traffic_line += (
-                f' (скидка {traffic_component["discount_percent"]}%:'
-                f' -{texts.format_price(traffic_component["discount_total"])})'
-            )
+        if traffic_discount_total > 0:
+            traffic_line += f' (скидка {traffic_discount_percent}%: -{texts.format_price(traffic_discount_total)})'
         details_lines.append(traffic_line)
-    if total_countries_price > 0:
+    if total_servers_price > 0:
         servers_line = (
-            f'- Серверы: {texts.format_price(countries_price_per_month)}/мес × {months_in_period}'
-            f' = {texts.format_price(total_countries_price)}'
+            f'- Серверы: {texts.format_price(servers_price_per_month)}/мес × {months_in_period}'
+            f' = {texts.format_price(total_servers_price)}'
         )
-        if total_servers_discount > 0:
-            servers_line += f' (скидка {servers_discount_percent}%: -{texts.format_price(total_servers_discount)})'
+        if servers_discount_total > 0:
+            servers_line += f' (скидка {servers_discount_percent}%: -{texts.format_price(servers_discount_total)})'
         details_lines.append(servers_line)
     if devices_selection_enabled and total_devices_price > 0:
         devices_line = (
             f'- Доп. устройства: {texts.format_price(devices_price_per_month)}/мес × {months_in_period}'
             f' = {texts.format_price(total_devices_price)}'
         )
-        if devices_component['discount_total'] > 0:
-            devices_line += (
-                f' (скидка {devices_component["discount_percent"]}%:'
-                f' -{texts.format_price(devices_component["discount_total"])})'
-            )
+        if devices_discount_total > 0:
+            devices_line += f' (скидка {devices_discount_percent}%: -{texts.format_price(devices_discount_total)})'
         details_lines.append(devices_line)
 
-    if promo_offer_component['discount'] > 0:
+    if promo_offer_discount > 0:
         details_lines.append(
             texts.t(
                 'SUBSCRIPTION_SUMMARY_PROMO_DISCOUNT',
                 '- Промо-предложение: -{amount} ({percent}% дополнительно)',
             ).format(
-                amount=texts.format_price(promo_offer_component['discount']),
-                percent=promo_offer_component['percent'],
+                amount=texts.format_price(promo_offer_discount),
+                percent=offer_pct,
             )
         )
 
@@ -309,114 +267,21 @@ async def get_subscription_cost(subscription, db: AsyncSession) -> int:
         if subscription.is_trial:
             return 0
 
-        from app.config import settings
-        from app.database.crud.tariff import get_tariff_by_id
-        from app.services.subscription_service import SubscriptionService
-
-        subscription_service = SubscriptionService()
+        from app.services.pricing_engine import pricing_engine
 
         try:
             owner = subscription.user
         except AttributeError:
             owner = None
 
-        promo_group_id = getattr(owner, 'promo_group_id', None) if owner else None
+        result = await pricing_engine.calculate_renewal_price(db, subscription, 30, user=owner)
+        total_cost = result.final_total
 
-        # В тарифном режиме цена тарифа уже включает серверы и трафик
-        tariff = None
-        tariff_price_found = False
-        if settings.is_tariffs_mode() and subscription.tariff_id:
-            tariff = await get_tariff_by_id(db, subscription.tariff_id)
-            if tariff and tariff.period_prices:
-                base_cost_original = tariff.period_prices.get('30', 0) or tariff.period_prices.get(30, 0)
-                if base_cost_original > 0:
-                    tariff_price_found = True
-
-        if not tariff_price_found:
-            base_cost_original = PERIOD_PRICES.get(30, 0)
-
-        if tariff_price_found:
-            # Тарифный режим: серверы и трафик включены в цену.
-            # Порядок: база + устройства → скидка на полную сумму (как в calculate_renewal_price).
-            from app.utils.promo_offer import get_user_active_promo_discount_percent
-
-            original_price = base_cost_original
-
-            tariff_device_limit = tariff.device_limit if tariff.device_limit is not None else 0
-            device_limit = subscription.device_limit if subscription.device_limit is not None else tariff_device_limit
-            extra_devices = max(0, device_limit - tariff_device_limit)
-            device_price_per_unit = (
-                tariff.device_price_kopeks
-                if tariff and tariff.device_price_kopeks is not None
-                else settings.PRICE_PER_DEVICE
-            )
-            devices_price = extra_devices * device_price_per_unit
-            original_price += devices_price
-
-            # Скидка промогруппы на полную сумму (база + устройства)
-            period_discount_percent = 0
-            if owner:
-                try:
-                    period_discount_percent = owner.get_promo_discount('period', 30)
-                except AttributeError:
-                    pass
-            discount_total = original_price * period_discount_percent // 100
-            total_cost = original_price - discount_total
-
-            # Promo-offer скидка (временная)
-            promo_offer_percent = get_user_active_promo_discount_percent(owner)
-            if promo_offer_percent > 0:
-                promo_offer_discount = total_cost * promo_offer_percent // 100
-                total_cost = total_cost - promo_offer_discount
-        else:
-            # Классический режим: серверы + трафик + устройства считаются отдельно
-            period_discount_percent = 0
-            if owner:
-                try:
-                    period_discount_percent = owner.get_promo_discount('period', 30)
-                except AttributeError:
-                    period_discount_percent = 0
-
-            base_cost, _ = apply_percentage_discount(
-                base_cost_original,
-                period_discount_percent,
-            )
-
-            try:
-                servers_cost, _ = await subscription_service.get_countries_price_by_uuids(
-                    subscription.connected_squads,
-                    db,
-                    promo_group_id=promo_group_id,
-                )
-            except AttributeError:
-                servers_cost, _ = await get_countries_price_by_uuids_fallback(
-                    subscription.connected_squads,
-                    db,
-                    promo_group_id=promo_group_id,
-                )
-
-            traffic_cost = settings.get_traffic_price(subscription.traffic_limit_gb)
-            device_limit = subscription.device_limit
-            if device_limit is None:
-                if settings.is_devices_selection_enabled():
-                    device_limit = settings.DEFAULT_DEVICE_LIMIT
-                else:
-                    forced_limit = settings.get_disabled_mode_device_limit()
-                    if forced_limit is None:
-                        device_limit = settings.DEFAULT_DEVICE_LIMIT
-                    else:
-                        device_limit = forced_limit
-
-            devices_cost = max(0, (device_limit or 0) - settings.DEFAULT_DEVICE_LIMIT) * settings.PRICE_PER_DEVICE
-
-            total_cost = base_cost + servers_cost + traffic_cost + devices_cost
-
-        logger.info('Месячная стоимость подписки', subscription_id=subscription.id, total_cost_kopeks=total_cost)
-
+        logger.info('Monthly subscription cost', subscription_id=subscription.id, total_cost_kopeks=total_cost)
         return total_cost
 
     except Exception as e:
-        logger.error('Ошибка расчета стоимости подписки', error=e)
+        logger.error('Error calculating subscription cost', error=e)
         return 0
 
 

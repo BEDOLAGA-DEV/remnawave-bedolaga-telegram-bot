@@ -224,7 +224,11 @@ async def _process_single_subscription(
         autopay_period = 30
 
     try:
+        from app.database.crud.user import lock_user_for_pricing
         from app.services.pricing_engine import pricing_engine
+
+        # TOCTOU: lock user row before pricing to prevent concurrent promo/balance races
+        user = await lock_user_for_pricing(db, user.id)
 
         pricing = await pricing_engine.calculate_renewal_price(
             db,

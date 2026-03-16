@@ -223,20 +223,20 @@ class MonitoringService:
 
                 # ВАЖНО: autopay ПЕРЕД check_expired — иначе подписки с автоплатой
                 # экспайрятся до того, как autopay успеет их продлить
-                if settings.ENABLE_AUTOPAY:
-                    await self._process_autopayments(db)
-                    # Рекуррентные автоплатежи: пополнение баланса с сохранённой карты
-                    if settings.YOOKASSA_RECURRENT_ENABLED:
-                        try:
-                            from app.services.recurrent_payment_service import process_recurrent_payments
+                # Продление с баланса работает всегда, если у подписки autopay_enabled=True
+                await self._process_autopayments(db)
+                # Рекуррентные автоплатежи с карты: требуют ENABLE_AUTOPAY + YOOKASSA_RECURRENT_ENABLED
+                if settings.ENABLE_AUTOPAY and settings.YOOKASSA_RECURRENT_ENABLED:
+                    try:
+                        from app.services.recurrent_payment_service import process_recurrent_payments
 
-                            await process_recurrent_payments(db=db, bot=self.bot)
-                        except Exception as recurrent_error:
-                            logger.error(
-                                'Ошибка рекуррентных автоплатежей',
-                                error=recurrent_error,
-                                exc_info=True,
-                            )
+                        await process_recurrent_payments(db=db, bot=self.bot)
+                    except Exception as recurrent_error:
+                        logger.error(
+                            'Ошибка рекуррентных автоплатежей',
+                            error=recurrent_error,
+                            exc_info=True,
+                        )
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
@@ -384,17 +384,16 @@ class MonitoringService:
                     description=settings.format_remnawave_user_description(
                         full_name=user.full_name, username=user.username, telegram_id=user.telegram_id
                     ),
-                    active_internal_squads=subscription.connected_squads,
                 )
+
+                # Не пересылаем activeInternalSquads в рутинном sync — сквады уже назначены
+                # при создании подписки, пересылка стейловых UUID вызывает FK violation → A039
 
                 if hwid_limit is not None:
                     update_kwargs['hwid_device_limit'] = hwid_limit
 
-                # Внешний сквад: синхронизируем из тарифа или сбрасываем
-                if subscription.tariff and subscription.tariff.external_squad_uuid:
-                    update_kwargs['external_squad_uuid'] = subscription.tariff.external_squad_uuid
-                else:
-                    update_kwargs['external_squad_uuid'] = None
+                # Внешний сквад НЕ пересылаем в рутинном sync — стейловый UUID
+                # вызывает FK violation → A039. Назначается при создании подписки.
 
                 updated_user = await api.update_user(**update_kwargs)
 
@@ -1053,7 +1052,10 @@ class MonitoringService:
                     autopay_period = 30
 
                 try:
+                    from app.database.crud.user import lock_user_for_pricing
                     from app.services.pricing_engine import pricing_engine
+
+                    user = await lock_user_for_pricing(db, user.id)
 
                     pricing = await pricing_engine.calculate_renewal_price(
                         db,
@@ -1301,43 +1303,39 @@ class MonitoringService:
             texts = get_texts(user.language)
             days_text = format_days_declension(days, user.language)
 
-            if settings.ENABLE_AUTOPAY:
-                if subscription.autopay_enabled and has_saved_card:
-                    autopay_status = texts.t(
-                        'AUTOPAY_STATUS_CARD_ACTIVE',
-                        '✅ Включен — будет автоматическое списание с карты',
-                    )
-                    action_text = texts.t(
-                        'AUTOPAY_ACTION_CHECK_BALANCE',
-                        '💰 Убедитесь, что на балансе достаточно средств: {balance}',
-                    ).format(balance=texts.format_price(user.balance_kopeks))
-                elif subscription.autopay_enabled:
-                    autopay_status = texts.t(
-                        'AUTOPAY_STATUS_NO_CARD',
-                        '✅ Включен — подписка продлится автоматически',
-                    )
-                    action_text = texts.t(
-                        'AUTOPAY_ACTION_CHECK_BALANCE',
-                        '💰 Убедитесь, что на балансе достаточно средств: {balance}',
-                    ).format(balance=texts.format_price(user.balance_kopeks))
-                else:
-                    autopay_status = texts.t(
-                        'AUTOPAY_STATUS_OFF',
-                        '❌ Отключен — не забудьте продлить вручную!',
-                    )
-                    action_text = texts.t(
-                        'AUTOPAY_ACTION_ENABLE',
-                        '💡 Включите автоплатеж или продлите подписку вручную',
-                    )
+            if subscription.autopay_enabled and has_saved_card:
+                autopay_status = texts.t(
+                    'AUTOPAY_STATUS_CARD_ACTIVE',
+                    '✅ Включен — будет автоматическое списание с карты',
+                )
+                action_text = texts.t(
+                    'AUTOPAY_ACTION_CHECK_BALANCE',
+                    '💰 Убедитесь, что на балансе достаточно средств: {balance}',
+                ).format(balance=texts.format_price(user.balance_kopeks))
+            elif subscription.autopay_enabled:
+                autopay_status = texts.t(
+                    'AUTOPAY_STATUS_NO_CARD',
+                    '✅ Включен — подписка продлится автоматически',
+                )
+                action_text = texts.t(
+                    'AUTOPAY_ACTION_CHECK_BALANCE',
+                    '💰 Убедитесь, что на балансе достаточно средств: {balance}',
+                ).format(balance=texts.format_price(user.balance_kopeks))
             else:
                 autopay_status = texts.t(
                     'AUTOPAY_STATUS_OFF',
                     '❌ Отключен — не забудьте продлить вручную!',
                 )
-                action_text = texts.t(
-                    'AUTOPAY_ACTION_RENEW',
-                    '💡 Продлите подписку вручную',
-                )
+                if settings.ENABLE_AUTOPAY:
+                    action_text = texts.t(
+                        'AUTOPAY_ACTION_ENABLE',
+                        '💡 Включите автоплатеж или продлите подписку вручную',
+                    )
+                else:
+                    action_text = texts.t(
+                        'AUTOPAY_ACTION_RENEW',
+                        '💡 Продлите подписку вручную',
+                    )
 
             end_date = format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M')
             message = texts.t(

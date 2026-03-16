@@ -1281,7 +1281,7 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
     """
     texts = get_texts(db_user.language)
 
-    from app.database.crud.server_squad import get_available_server_squads, get_server_ids_by_uuids
+    from app.database.crud.server_squad import get_available_server_squads
     from app.database.crud.subscription import create_paid_subscription, get_subscription_by_user_id
     from app.database.crud.transaction import create_transaction
     from app.database.crud.user import subtract_user_balance
@@ -1319,7 +1319,9 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
         if not connected_squads and available_servers:
             connected_squads = [available_servers[0].squad_uuid]
 
-    server_ids = await get_server_ids_by_uuids(db, connected_squads) if connected_squads else []
+    from app.database.crud.user import lock_user_for_pricing
+
+    db_user = await lock_user_for_pricing(db, db_user.id)
 
     balance = db_user.balance_kopeks
     available_periods = sorted(settings.get_available_subscription_periods(), reverse=True)
@@ -1331,7 +1333,7 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
     best_price = 0
     best_pricing = None  # Cache pricing result for reuse in finalize()
 
-    # Для продления используем PricingEngine (единый расчёт для всех поверхностей).
+    # PricingEngine — единый расчёт для всех поверхностей (и продление, и новая подписка).
     from app.services.pricing_engine import pricing_engine
 
     renewal_service = SubscriptionRenewalService() if subscription else None
@@ -1342,9 +1344,15 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
                 pricing_result = await pricing_engine.calculate_renewal_price(db, subscription, period, user=db_user)
                 price = pricing_result.final_total
             else:
-                price, _ = await subscription_service.calculate_subscription_price_with_months(
-                    period, traffic_limit_gb, server_ids, device_limit, db, user=db_user
+                new_pricing = await pricing_engine.calculate_classic_new_subscription_price(
+                    db,
+                    period,
+                    connected_squads,
+                    traffic_limit_gb,
+                    device_limit,
+                    user=db_user,
                 )
+                price = new_pricing.final_total
             if price <= balance:
                 best_period = period
                 best_price = price
@@ -1358,9 +1366,15 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
                 min_pricing = await pricing_engine.calculate_renewal_price(db, subscription, min_period, user=db_user)
                 min_price = min_pricing.final_total
             else:
-                min_price, _ = await subscription_service.calculate_subscription_price_with_months(
-                    min_period, traffic_limit_gb, server_ids, device_limit, db, user=db_user
+                min_new_pricing = await pricing_engine.calculate_classic_new_subscription_price(
+                    db,
+                    min_period,
+                    connected_squads,
+                    traffic_limit_gb,
+                    device_limit,
+                    user=db_user,
                 )
+                min_price = min_new_pricing.final_total
             missing = min_price - balance
             await callback.answer(
                 texts.t('INSUFFICIENT_FUNDS_DETAILED', f'❌ Недостаточно средств. Не хватает {missing // 100} ₽'),
@@ -1397,12 +1411,14 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
             )
         else:
             # Списать баланс ДО создания подписки (чтобы не было orphaned subscription при неудаче)
+            consume_promo = get_user_active_promo_discount_percent(db_user) > 0
             success = await subtract_user_balance(
                 db,
                 db_user,
                 best_price,
                 f'Активация подписки на {best_period} дней',
                 mark_as_paid_subscription=True,
+                consume_promo_offer=consume_promo,
             )
             if not success:
                 await callback.answer('❌ Недостаточно средств', show_alert=True)

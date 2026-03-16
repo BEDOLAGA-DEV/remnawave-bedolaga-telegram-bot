@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.32.4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.32.3...v3.32.4) (2026-03-16)
+
+
+### Bug Fixes
+
+* лог полного payload при ошибке PATCH /api/users для диагностики A039 ([8d7f0ee](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8d7f0eea0fecd9e66bf199bd2c288e073f1354c0))
+* не пересылать activeInternalSquads в рутинных обновлениях RemnaWave (A039) ([4aaf0dd](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4aaf0ddd25527ec23fa6a479ac3826d6b6266761))
+* не пересылать externalSquadUuid в рутинных обновлениях RemnaWave ([3d68db0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3d68db0a51fac55640d44be784c832875ca2da17))
+* расширен лог PATCH /api/users payload для диагностики A039 ([db2f0c9](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/db2f0c93f2974410e744411fb9111c6de1f0f0be))
+* режим «Контакт и тикеты» возвращает support_type='both' вместо 'tickets' ([2f33e55](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2f33e5514469f2686c4b35e2105f4188a41d4145))
+* реферальный бонус инвайтера — сумма вместо максимума, защита флага первого пополнения ([e1bcb1b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e1bcb1ba910ef3a79dec5fa974ae8e6c09494aa7))
+* сохранение user_id до rollback чтобы избежать MissingGreenlet при lazy load ([3f8e899](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3f8e8993b2949b5a5e04b1d8a468ef7dc1170e08))
+* убрана отправка externalSquadUuid=null в RemnaWave API и исправлен ложный лог синхронизации рулетки ([f80912e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f80912e444ab5706c809e689ca5ed2a38da118d0))
+* уведомление об истечении подписки теперь учитывает autopay_enabled пользователя ([c0b282a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c0b282a189a2b761c68fc70886edd91d9c807ff6))
+* устранена отправка externalSquadUuid=null в RemnaWave API (A039) и исправлен reduce_devices ([e453521](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e4535210982351413cb82483000fe441e7b7300a))
+
+
+### Refactoring
+
+* централизация всех расчётов цен в PricingEngine ([8d3cd50](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8d3cd500980f4f640cb1ba493150f1f20e8bd58c))
+
 ## [3.32.3](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.32.2...v3.32.3) (2026-03-14)
 
 

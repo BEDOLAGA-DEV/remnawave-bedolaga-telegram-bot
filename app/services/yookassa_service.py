@@ -133,9 +133,10 @@ class YooKassaService:
             )
 
             loop = asyncio.get_running_loop()
-            response = await loop.run_in_executor(
-                None, lambda: YooKassaPayment.create(payment_request, idempotence_key)
-            )
+            async with asyncio.timeout(30):
+                response = await loop.run_in_executor(
+                    None, lambda: YooKassaPayment.create(payment_request, idempotence_key)
+                )
 
             logger.info(
                 'Ответ YooKassa Payment.create: ID=, Status=, Paid',
@@ -241,9 +242,10 @@ class YooKassaService:
             )
 
             loop = asyncio.get_running_loop()
-            response = await loop.run_in_executor(
-                None, lambda: YooKassaPayment.create(payment_request, idempotence_key)
-            )
+            async with asyncio.timeout(30):
+                response = await loop.run_in_executor(
+                    None, lambda: YooKassaPayment.create(payment_request, idempotence_key)
+                )
 
             logger.info(
                 'Ответ YooKassa Payment.create (СБП, redirect): ID=, Status=, Paid',
@@ -288,7 +290,10 @@ class YooKassaService:
             logger.info('Получение информации о платеже YooKassa ID', payment_id_in_yookassa=payment_id_in_yookassa)
 
             loop = asyncio.get_running_loop()
-            payment_info_yk = await loop.run_in_executor(None, lambda: YooKassaPayment.find_one(payment_id_in_yookassa))
+            async with asyncio.timeout(30):
+                payment_info_yk = await loop.run_in_executor(
+                    None, lambda: YooKassaPayment.find_one(payment_id_in_yookassa)
+                )
 
             if payment_info_yk:
                 logger.info(
@@ -415,9 +420,10 @@ class YooKassaService:
             )
 
             loop = asyncio.get_running_loop()
-            response = await loop.run_in_executor(
-                None, lambda: YooKassaPayment.create(payment_request, idempotence_key)
-            )
+            async with asyncio.timeout(30):
+                response = await loop.run_in_executor(
+                    None, lambda: YooKassaPayment.create(payment_request, idempotence_key)
+                )
 
             logger.info(
                 'Ответ YooKassa автоплатёж',

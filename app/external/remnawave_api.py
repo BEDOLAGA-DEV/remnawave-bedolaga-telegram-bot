@@ -574,13 +574,12 @@ class RemnaWaveAPI:
         if external_squad_uuid is not ...:
             data['externalSquadUuid'] = external_squad_uuid
 
-        logger.info(
-            'PATCH /api/users payload',
-            uuid=uuid,
-            hwidDeviceLimit=data.get('hwidDeviceLimit'),
-            status=data.get('status'),
-        )
-        response = await self._make_request('PATCH', '/api/users', data)
+        try:
+            response = await self._make_request('PATCH', '/api/users', data)
+        except Exception:
+            # Логируем полный payload при ошибке для диагностики A039
+            logger.error('PATCH /api/users FAILED — full payload', payload=data)
+            raise
         user = self._parse_user(response['response'])
         logger.info(
             'PATCH /api/users response',

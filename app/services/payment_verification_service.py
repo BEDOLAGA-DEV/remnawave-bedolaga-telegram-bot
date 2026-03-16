@@ -242,12 +242,23 @@ class AutoPaymentVerificationService:
                 )
 
                 for record in candidates:
-                    refreshed = await run_manual_check(
-                        session,
-                        record.method,
-                        record.local_id,
-                        self._payment_service,
-                    )
+                    try:
+                        refreshed = await run_manual_check(
+                            session,
+                            record.method,
+                            record.local_id,
+                            self._payment_service,
+                        )
+                    except Exception as check_error:
+                        logger.error(
+                            'Ошибка проверки платежа, откатываем сессию',
+                            method_display_name=method_display_name(record.method),
+                            identifier=record.identifier,
+                            error=check_error,
+                        )
+                        if session.in_transaction():
+                            await session.rollback()
+                        continue
 
                     if not refreshed:
                         logger.debug(
@@ -972,6 +983,9 @@ async def run_manual_check(
             error=error,
             exc_info=True,
         )
+        # Откатываем сессию чтобы не оставлять её в грязном состоянии
+        if db.in_transaction():
+            await db.rollback()
         return None
 
 

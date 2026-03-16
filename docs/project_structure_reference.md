@@ -127,7 +127,7 @@
   Функции: нет
 - `app/database/crud/subscription.py` — Python-модуль
   Классы: нет
-  Функции: `_get_discount_percent`
+  Функции: нет (ранее `_get_discount_percent` — удалена при консолидации в PricingEngine; см. `PricingEngine.resolve_promo_group()` и `PromoGroup.get_discount_percent()`)
 - `app/database/crud/subscription_conversion.py` — Python-модуль
   Классы: нет
   Функции: нет

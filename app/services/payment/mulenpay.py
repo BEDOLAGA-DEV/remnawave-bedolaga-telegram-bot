@@ -322,7 +322,7 @@ class MulenPayPaymentMixin:
                 except Exception as error:
                     logger.error('Ошибка обработки реферального пополнения', display_name=display_name, error=error)
 
-                if was_first_topup and not user.has_made_first_topup:
+                if was_first_topup and not user.has_made_first_topup and not user.referred_by_id:
                     user.has_made_first_topup = True
                     await db.commit()
 

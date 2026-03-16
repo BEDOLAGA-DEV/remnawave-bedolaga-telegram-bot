@@ -1961,11 +1961,10 @@ class RemnaWaveService:
                                 if hwid_limit is not None:
                                     create_kwargs['hwid_device_limit'] = hwid_limit
 
-                                # Внешний сквад: синхронизируем из тарифа или сбрасываем
+                                # Внешний сквад: синхронизируем из тарифа (если задан)
+                                # Не отправляем null — RemnaWave API не принимает null для externalSquadUuid (A039)
                                 if sub.tariff and sub.tariff.external_squad_uuid:
                                     create_kwargs['external_squad_uuid'] = sub.tariff.external_squad_uuid
-                                else:
-                                    create_kwargs['external_squad_uuid'] = None
 
                                 # Определяем UUID для обновления
                                 panel_uuid = user.remnawave_uuid
@@ -2007,11 +2006,10 @@ class RemnaWaveService:
                                     if hwid_limit is not None:
                                         update_kwargs['hwid_device_limit'] = hwid_limit
 
-                                    # Внешний сквад: синхронизируем из тарифа или сбрасываем
+                                    # Внешний сквад: синхронизируем из тарифа (если задан)
+                                    # Не отправляем null — RemnaWave API не принимает null для externalSquadUuid (A039)
                                     if sub.tariff and sub.tariff.external_squad_uuid:
                                         update_kwargs['external_squad_uuid'] = sub.tariff.external_squad_uuid
-                                    else:
-                                        update_kwargs['external_squad_uuid'] = None
 
                                     try:
                                         await api.update_user(**update_kwargs)

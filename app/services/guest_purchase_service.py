@@ -118,7 +118,9 @@ async def validate_and_calculate(
             overrides = landing.discount_overrides or {}
             tariff_override = overrides.get(str(tariff_id))
             effective_discount = tariff_override if tariff_override is not None else landing.discount_percent
-            price_kopeks = max(1, price_kopeks - (price_kopeks * effective_discount // 100))
+            from app.services.pricing_engine import PricingEngine
+
+            price_kopeks = max(1, PricingEngine.apply_discount(price_kopeks, effective_discount))
 
     return tariff, price_kopeks
 
@@ -283,6 +285,13 @@ async def fulfill_purchase(
             )
             return purchase
 
+        squads = list(tariff.allowed_squads or [])
+        if not squads:
+            from app.database.crud.server_squad import get_all_server_squads
+
+            all_servers, _ = await get_all_server_squads(db, available_only=True)
+            squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+
         if existing_subscription is not None:
             # Expired/inactive subscription — replace it
             existing_subscription.tariff_id = tariff.id
@@ -292,7 +301,7 @@ async def fulfill_purchase(
                 duration_days=purchase.period_days,
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=tariff.device_limit,
-                connected_squads=tariff.allowed_squads or [],
+                connected_squads=squads,
                 is_trial=False,
                 update_server_counters=True,
             )
@@ -304,7 +313,7 @@ async def fulfill_purchase(
                 duration_days=purchase.period_days,
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=tariff.device_limit,
-                connected_squads=tariff.allowed_squads or [],
+                connected_squads=squads,
                 tariff_id=tariff.id,
                 update_server_counters=True,
             )
@@ -888,6 +897,13 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
         existing_subscription = await get_subscription_by_user_id(db, user.id)
         subscription_service = SubscriptionService()
 
+        squads = list(tariff.allowed_squads or [])
+        if not squads:
+            from app.database.crud.server_squad import get_all_server_squads
+
+            all_servers, _ = await get_all_server_squads(db, available_only=True)
+            squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+
         if existing_subscription is not None:
             subscription = await replace_subscription(
                 db,
@@ -895,7 +911,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                 duration_days=purchase.period_days,
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=tariff.device_limit,
-                connected_squads=tariff.allowed_squads or [],
+                connected_squads=squads,
                 is_trial=False,
                 update_server_counters=True,
                 commit=False,
@@ -908,7 +924,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                 duration_days=purchase.period_days,
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=tariff.device_limit,
-                connected_squads=tariff.allowed_squads or [],
+                connected_squads=squads,
                 tariff_id=tariff.id,
                 update_server_counters=True,
                 commit=False,

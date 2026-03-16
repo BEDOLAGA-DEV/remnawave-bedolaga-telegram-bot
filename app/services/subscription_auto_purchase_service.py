@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.subscription import extend_subscription
 from app.database.crud.transaction import create_transaction
-from app.database.crud.user import get_user_by_id, subtract_user_balance
+from app.database.crud.user import subtract_user_balance
 from app.database.models import Subscription, SubscriptionStatus, TransactionType, User
 from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService
@@ -83,13 +83,11 @@ async def _prepare_auto_purchase(
         )
         return None
 
-    # Перезагружаем user с нужными связями (user_promo_groups),
+    # Блокируем user с нужными связями (user_promo_groups) для защиты от TOCTOU,
     # т.к. после db.refresh() в payment-сервисах связи сбрасываются
-    fresh_user = await get_user_by_id(db, user.id)
-    if not fresh_user:
-        logger.warning('🔁 Автопокупка: не удалось перезагрузить пользователя', format_user_id=_format_user_id(user))
-        return None
-    user = fresh_user
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
 
     miniapp_service = MiniAppSubscriptionPurchaseService()
     context = await miniapp_service.build_options(db, user)
@@ -141,11 +139,6 @@ def _safe_int(value: object | None, default: int = 0) -> int:
         return default
 
 
-def _apply_promo_discount_for_tariff(price: int, discount_percent: int) -> int:
-    """Применяет скидку промогруппы к цене тарифа."""
-    return PricingEngine.apply_discount(price, discount_percent)
-
-
 async def _prepare_auto_extend_context(
     db: AsyncSession,
     user: User,
@@ -187,7 +180,11 @@ async def _prepare_auto_extend_context(
     if tariff_id:
         tariff_id = _safe_int(tariff_id)
 
+    from app.database.crud.user import lock_user_for_pricing
     from app.services.pricing_engine import pricing_engine as _pricing_engine
+    from app.utils.promo_offer import get_user_active_promo_discount_percent
+
+    user = await lock_user_for_pricing(db, user.id)
 
     try:
         pricing = await _pricing_engine.calculate_renewal_price(
@@ -232,8 +229,6 @@ async def _prepare_auto_extend_context(
         traffic_limit_gb = _safe_int(traffic_limit_gb, subscription.traffic_limit_gb or 0)
 
     squad_uuid = cart_data.get('squad_uuid')
-    from app.utils.promo_offer import get_user_active_promo_discount_percent
-
     consume_promo_offer = get_user_active_promo_discount_percent(user) > 0
     allowed_squads = cart_data.get('allowed_squads')
 
@@ -625,44 +620,26 @@ async def _auto_purchase_tariff(
         )
         return False
 
-    # Получаем актуальную цену тарифа
-    prices = tariff.period_prices or {}
-    base_price = prices.get(str(period_days))
-    if base_price is None:
-        logger.warning(
-            '🔁 Автопокупка тарифа: период дней недоступен для тарифа', period_days=period_days, tariff_id=tariff_id
-        )
-        return False
+    # Lock user BEFORE price computation to prevent TOCTOU on promo offer
+    from app.database.crud.user import lock_user_for_pricing
 
-    final_price = int(base_price)
-
-    # Проверяем есть ли уже подписка (нужно до расчёта цены для учёта доп. устройств)
     existing_subscription = await get_subscription_by_user_id(db, user.id)
 
-    # Добавляем стоимость докупленных устройств ДО скидки (как в cabinet)
+    user = await lock_user_for_pricing(db, user.id)
+
+    # Calculate price via PricingEngine (single source of truth)
+    device_limit = None
     if existing_subscription and existing_subscription.tariff_id == tariff_id:
-        extra_devices = max(0, (existing_subscription.device_limit or 0) - (tariff.device_limit or 0))
-        if extra_devices > 0:
-            device_price_per_unit = (
-                tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
-            )
-            extra_devices_cost = extra_devices * device_price_per_unit
-            final_price += extra_devices_cost
+        device_limit = existing_subscription.device_limit
 
-    # Пересчитываем скидку из актуальных данных пользователя (не из stale корзины)
-    # Promo_group и promo_offer применяются последовательно (как в cabinet)
-    from app.utils.promo_offer import get_user_active_promo_discount_percent
-
-    discount_percent = 0
-    if hasattr(user, 'get_promo_discount'):
-        discount_percent = user.get_promo_discount('period', period_days)
-
-    if discount_percent > 0:
-        final_price = _apply_promo_discount_for_tariff(final_price, discount_percent)
-
-    promo_offer_percent = get_user_active_promo_discount_percent(user)
-    if promo_offer_percent > 0:
-        final_price = _apply_promo_discount_for_tariff(final_price, promo_offer_percent)
+    result = await pricing_engine.calculate_tariff_purchase_price(
+        tariff,
+        period_days,
+        device_limit=device_limit,
+        user=user,
+    )
+    final_price = result.final_total
+    consume_promo = result.promo_offer_discount > 0
 
     if user.balance_kopeks < final_price:
         logger.info(
@@ -674,7 +651,6 @@ async def _auto_purchase_tariff(
         return False
 
     # Save promo offer state before deduction (for restore on failure)
-    consume_promo = promo_offer_percent > 0
     saved_promo_percent = int(getattr(user, 'promo_offer_discount_percent', 0) or 0) if consume_promo else 0
     saved_promo_source = getattr(user, 'promo_offer_discount_source', None) if consume_promo else None
     saved_promo_expires = getattr(user, 'promo_offer_discount_expires_at', None) if consume_promo else None
@@ -978,12 +954,25 @@ async def _auto_purchase_daily_tariff(
         )
         return False
 
-    if user.balance_kopeks < daily_price:
+    # Блокируем пользователя и применяем скидки (group + promo-offer)
+    from app.database.crud.user import lock_user_for_pricing
+    from app.utils.promo_offer import get_user_active_promo_discount_percent
+
+    user = await lock_user_for_pricing(db, user.id)
+
+    promo_group = user.get_primary_promo_group()
+    group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
+    offer_pct = get_user_active_promo_discount_percent(user)
+
+    final_price, _, _ = PricingEngine.apply_stacked_discounts(daily_price, group_pct, offer_pct)
+    consume_promo = offer_pct > 0
+
+    if user.balance_kopeks < final_price:
         logger.info(
             '🔁 Автопокупка суточного тарифа: у пользователя недостаточно средств (<)',
             format_user_id=_format_user_id(user),
             balance_kopeks=user.balance_kopeks,
-            daily_price=daily_price,
+            final_price=final_price,
         )
         return False
 
@@ -993,8 +982,9 @@ async def _auto_purchase_daily_tariff(
         success = await subtract_user_balance(
             db,
             user,
-            daily_price,
+            final_price,
             description,
+            consume_promo_offer=consume_promo,
             mark_as_paid_subscription=True,
         )
         if not success:
@@ -1081,7 +1071,7 @@ async def _auto_purchase_daily_tariff(
             await add_user_balance(
                 db,
                 user,
-                daily_price,
+                final_price,
                 'Возврат: ошибка автопокупки суточного тарифа',
                 create_transaction=True,
                 transaction_type=TransactionType.REFUND,
@@ -1089,13 +1079,13 @@ async def _auto_purchase_daily_tariff(
             logger.info(
                 '💰 Автопокупка суточного тарифа: возврат средств после ошибки создания подписки',
                 format_user_id=_format_user_id(user),
-                refund_kopeks=daily_price,
+                refund_kopeks=final_price,
             )
         except Exception as refund_error:
             logger.critical(
                 'CRITICAL: Автопокупка суточного тарифа: не удалось вернуть средства',
                 format_user_id=_format_user_id(user),
-                price_kopeks=daily_price,
+                price_kopeks=final_price,
                 refund_error=refund_error,
             )
         return False
@@ -1106,7 +1096,7 @@ async def _auto_purchase_daily_tariff(
             db=db,
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=daily_price,
+            amount_kopeks=final_price,
             description=description,
         )
     except Exception as error:
@@ -1167,7 +1157,7 @@ async def _auto_purchase_daily_tariff(
 
             message = (
                 f'✅ <b>Суточный тариф «{tariff.name}» активирован!</b>\n\n'
-                f'💰 Списано: {daily_price / 100:.0f} ₽ за первый день\n'
+                f'💰 Списано: {final_price / 100:.0f} ₽ за первый день\n'
                 f'🔄 Средства будут списываться автоматически раз в сутки.\n\n'
                 f'ℹ️ Вы можете приостановить подписку в любой момент.'
             )
@@ -1215,7 +1205,7 @@ async def _auto_purchase_daily_tariff(
             await notify_user_subscription_renewed(
                 user_id=user.id,
                 new_expires_at=subscription.end_date.isoformat() if subscription.end_date else '',
-                amount_kopeks=daily_price,
+                amount_kopeks=final_price,
             )
         else:
             # New subscription activation
@@ -1244,28 +1234,19 @@ async def _auto_add_devices(
     """Auto-purchase devices from saved cart after balance topup."""
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    from app.database.crud.user import subtract_user_balance
+    from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
     from app.database.models import PaymentMethod
+    from app.utils.pricing_utils import apply_percentage_discount
 
     devices_to_add = _safe_int(cart_data.get('devices_to_add'))
-    price_kopeks = _safe_int(cart_data.get('price_kopeks'))
+    cart_price_kopeks = _safe_int(cart_data.get('price_kopeks'))
 
-    if devices_to_add <= 0 or price_kopeks <= 0:
+    if devices_to_add <= 0 or cart_price_kopeks <= 0:
         logger.warning(
             '🔁 Автопокупка устройств: некорректные данные корзины для пользователя (devices price=)',
             format_user_id=_format_user_id(user),
             devices_to_add=devices_to_add,
-            price_kopeks=price_kopeks,
-        )
-        return False
-
-    # Проверяем баланс
-    if user.balance_kopeks < price_kopeks:
-        logger.info(
-            '🔁 Автопокупка устройств: у пользователя недостаточно средств (<)',
-            format_user_id=_format_user_id(user),
-            balance_kopeks=user.balance_kopeks,
-            price_kopeks=price_kopeks,
+            cart_price_kopeks=cart_price_kopeks,
         )
         return False
 
@@ -1328,6 +1309,44 @@ async def _auto_add_devices(
             tariff_max_device_limit=tariff_max_device_limit,
         )
         await user_cart_service.delete_user_cart(user.id)
+        return False
+
+    # Lock user BEFORE price computation to prevent TOCTOU on promo-offer/group discount
+    user = await lock_user_for_pricing(db, user.id)
+
+    # Recompute price fresh under lock (pricing config may have changed since cart was saved)
+    devices_price_per_month = devices_to_add * tariff_device_price
+    days_left = max(1, (subscription.end_date - datetime.now(UTC)).days)
+    devices_discount_percent = PricingEngine.get_addon_discount_percent(
+        user,
+        'devices',
+        days_left,
+    )
+    discounted_per_month, _ = apply_percentage_discount(
+        devices_price_per_month,
+        devices_discount_percent,
+    )
+    price_kopeks = int(discounted_per_month * days_left / 30)
+    price_kopeks = max(100, price_kopeks)
+
+    if price_kopeks != cart_price_kopeks:
+        logger.warning(
+            '🔁 Автопокупка устройств: пересчитанная цена отличается от корзины',
+            format_user_id=_format_user_id(user),
+            cart_price_kopeks=cart_price_kopeks,
+            recomputed_price_kopeks=price_kopeks,
+            devices_discount_percent=devices_discount_percent,
+            days_left=days_left,
+        )
+
+    # Проверяем баланс (с актуальной ценой)
+    if user.balance_kopeks < price_kopeks:
+        logger.info(
+            '🔁 Автопокупка устройств: у пользователя недостаточно средств (<)',
+            format_user_id=_format_user_id(user),
+            balance_kopeks=user.balance_kopeks,
+            price_kopeks=price_kopeks,
+        )
         return False
 
     # Списываем баланс
@@ -1519,28 +1538,19 @@ async def _auto_add_traffic(
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     from app.database.crud.subscription import add_subscription_traffic, get_subscription_by_user_id
-    from app.database.crud.user import subtract_user_balance
+    from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
     from app.database.models import PaymentMethod
+    from app.utils.pricing_utils import calculate_prorated_price
 
     traffic_gb = _safe_int(cart_data.get('traffic_gb'))
-    price_kopeks = _safe_int(cart_data.get('price_kopeks'))
+    cart_price_kopeks = _safe_int(cart_data.get('price_kopeks'))
 
-    if traffic_gb <= 0 or price_kopeks <= 0:
+    if traffic_gb <= 0 or cart_price_kopeks <= 0:
         logger.warning(
             '🔁 Автопокупка трафика: некорректные данные корзины для пользователя (traffic_gb price=)',
             format_user_id=_format_user_id(user),
             traffic_gb=traffic_gb,
-            price_kopeks=price_kopeks,
-        )
-        return False
-
-    # Verify balance
-    if user.balance_kopeks < price_kopeks:
-        logger.info(
-            '🔁 Автопокупка трафика: у пользователя недостаточно средств (<)',
-            format_user_id=_format_user_id(user),
-            balance_kopeks=user.balance_kopeks,
-            price_kopeks=price_kopeks,
+            cart_price_kopeks=cart_price_kopeks,
         )
         return False
 
@@ -1570,6 +1580,72 @@ async def _auto_add_traffic(
             '🔁 Автопокупка трафика: у пользователя уже безлимитный трафик', format_user_id=_format_user_id(user)
         )
         await user_cart_service.delete_user_cart(user.id)
+        return False
+
+    # Lock user BEFORE price computation to prevent TOCTOU on promo-offer/group discount
+    user = await lock_user_for_pricing(db, user.id)
+
+    # Recompute base price from tariff/settings (config may have changed since cart was saved)
+    tariff = None
+    if settings.is_tariffs_mode() and subscription.tariff_id:
+        from app.database.crud.tariff import get_tariff_by_id
+
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+
+    if tariff and tariff.can_topup_traffic():
+        base_price = tariff.get_traffic_topup_price(traffic_gb) or 0
+    else:
+        base_price = settings.get_traffic_topup_price(traffic_gb)
+
+    if base_price <= 0 and traffic_gb != 0:
+        logger.warning(
+            '🔁 Автопокупка трафика: цена пакета не настроена, корзина удалена',
+            format_user_id=_format_user_id(user),
+            traffic_gb=traffic_gb,
+        )
+        await user_cart_service.delete_user_cart(user.id)
+        return False
+
+    # Apply traffic discount from promo group
+    period_hint_days: int | None = None
+    if subscription.end_date:
+        days_remaining = (subscription.end_date - datetime.now(UTC)).days
+        period_hint_days = days_remaining if days_remaining > 0 else None
+
+    discounted_per_month, _, _ = PricingEngine.calculate_traffic_discount(
+        base_price,
+        user,
+        period_hint_days,
+    )
+
+    # Prorate for classic mode (tariff mode uses monthly price as-is)
+    is_tariff_mode = settings.is_tariffs_mode() and subscription.tariff_id
+    if is_tariff_mode:
+        price_kopeks = discounted_per_month
+    elif subscription and subscription.end_date:
+        price_kopeks, _ = calculate_prorated_price(discounted_per_month, subscription.end_date)
+    else:
+        price_kopeks = discounted_per_month
+
+    if cart_price_kopeks != price_kopeks:
+        logger.warning(
+            '🔁 Автопокупка трафика: пересчитанная цена отличается от корзины',
+            format_user_id=_format_user_id(user),
+            cart_price_kopeks=cart_price_kopeks,
+            recomputed_price_kopeks=price_kopeks,
+            base_price=base_price,
+            discounted_per_month=discounted_per_month,
+            period_hint_days=period_hint_days,
+        )
+
+    # Verify balance (with fresh price)
+    if user.balance_kopeks < price_kopeks:
+        logger.info(
+            '🔁 Автопокупка трафика: у пользователя недостаточно средств (<)',
+            format_user_id=_format_user_id(user),
+            balance_kopeks=user.balance_kopeks,
+            price_kopeks=price_kopeks,
+        )
         return False
 
     # Deduct balance
@@ -1801,6 +1877,11 @@ async def try_auto_extend_expired_after_topup(
     else:
         period_days = 30
 
+    # Lock user BEFORE price computation to prevent TOCTOU on promo offer
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
+
     # Calculate renewal price via PricingEngine
     subscription_service = SubscriptionService()
     try:
@@ -1870,10 +1951,8 @@ async def try_auto_extend_expired_after_topup(
             check_error=check_error,
         )
 
-    # Determine if promo offer discount was applied (for consume flag)
-    from app.utils.promo_offer import get_user_active_promo_discount_percent
-
-    consume_promo_offer = get_user_active_promo_discount_percent(user) > 0
+    # Derive consume_promo_offer from PricingEngine result (user already locked above)
+    consume_promo_offer = pricing.promo_offer_discount > 0
 
     # Save promo offer state before deduction (for restore on failure)
     saved_promo_percent = int(getattr(user, 'promo_offer_discount_percent', 0) or 0) if consume_promo_offer else 0
@@ -2142,11 +2221,25 @@ async def try_resume_disabled_daily_after_topup(
     if not tariff:
         return False
 
-    daily_price = getattr(tariff, 'daily_price_kopeks', 0)
-    if daily_price <= 0:
+    raw_daily_price = getattr(tariff, 'daily_price_kopeks', 0)
+    if raw_daily_price <= 0:
         return False
 
-    # Check balance
+    # Lock user row to prevent TOCTOU between discount read and balance charge
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
+
+    # Apply group discount to daily price (consistent with PricingEngine._calculate_switch_to_daily)
+    from app.services.pricing_engine import PricingEngine
+
+    promo_group = PricingEngine.resolve_promo_group(user)
+    daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
+    daily_price = (
+        PricingEngine.apply_discount(raw_daily_price, daily_group_pct) if daily_group_pct > 0 else raw_daily_price
+    )
+
+    # Check balance (uses locked user's balance_kopeks — safe from concurrent reads)
     if user.balance_kopeks < daily_price:
         logger.info(
             '🔄 Авто-возобновление daily: недостаточно средств',

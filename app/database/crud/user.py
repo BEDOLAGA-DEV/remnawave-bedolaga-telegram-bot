@@ -528,6 +528,26 @@ async def add_user_balance_by_id(
         return False
 
 
+async def lock_user_for_pricing(db: AsyncSession, user_id: int) -> User:
+    """Lock user row with FOR UPDATE and return refreshed instance.
+
+    Call BEFORE computing prices that depend on promo offer state
+    to prevent TOCTOU race conditions where two concurrent requests
+    both read the same promo offer discount and charge a discounted price.
+    """
+    result = await db.execute(
+        select(User)
+        .where(User.id == user_id)
+        .options(
+            selectinload(User.user_promo_groups).selectinload(UserPromoGroup.promo_group),
+            selectinload(User.promo_group),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one()
+
+
 async def subtract_user_balance(
     db: AsyncSession,
     user: User,

@@ -58,43 +58,6 @@ def _format_text_with_placeholders(template: str, values: dict[str, Any]) -> str
         return template
 
 
-def _get_addon_discount_percent_for_user(
-    user: User | None,
-    category: str,
-    period_days_hint: int | None = None,
-) -> int:
-    if user is None:
-        return 0
-
-    promo_group = user.get_primary_promo_group()
-    if promo_group is None:
-        return 0
-
-    if not getattr(promo_group, 'apply_discounts_to_addons', True):
-        return 0
-
-    try:
-        return user.get_promo_discount(category, period_days_hint)
-    except AttributeError:
-        return 0
-
-
-def _apply_addon_discount(
-    user: User | None,
-    category: str,
-    amount: int,
-    period_days_hint: int | None = None,
-) -> dict[str, int]:
-    percent = _get_addon_discount_percent_for_user(user, category, period_days_hint)
-    discounted_amount, discount_value = apply_percentage_discount(amount, percent)
-
-    return {
-        'discounted': discounted_amount,
-        'discount': discount_value,
-        'percent': percent,
-    }
-
-
 def _get_promo_offer_discount_percent(user: User | None) -> int:
     return get_user_active_promo_discount_percent(user)
 

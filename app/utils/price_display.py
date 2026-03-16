@@ -76,12 +76,10 @@ def calculate_user_price(user: User | None, base_price: int, period_days: int, c
 
         promo_offer_discount = get_user_active_promo_discount_percent(user)
 
-    # Apply both discounts sequentially (same as cabinet)
-    final_price = base_price
-    if group_discount > 0:
-        final_price = final_price - (final_price * group_discount) // 100
-    if promo_offer_discount > 0:
-        final_price = final_price - (final_price * promo_offer_discount) // 100
+    # Apply both discounts sequentially via PricingEngine
+    from app.services.pricing_engine import PricingEngine
+
+    final_price, _, _ = PricingEngine.apply_stacked_discounts(base_price, group_discount, promo_offer_discount)
 
     # Effective combined discount percent
     if final_price < base_price:

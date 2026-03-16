@@ -91,7 +91,7 @@ class SupportConfigResponse(BaseModel):
     """Support/tickets configuration for miniapp."""
 
     tickets_enabled: bool
-    support_type: str  # "tickets", "profile", "url"
+    support_type: str  # "tickets", "profile", "url", "both"
     support_url: str | None = None
     support_username: str | None = None
 
@@ -299,7 +299,7 @@ async def get_support_config():
         support_type = 'profile'
     else:  # both
         tickets_enabled = True
-        support_type = 'tickets'
+        support_type = 'both'
 
     return SupportConfigResponse(
         tickets_enabled=tickets_enabled,

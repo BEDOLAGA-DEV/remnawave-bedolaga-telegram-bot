@@ -35,6 +35,44 @@ def get_user_active_promo_discount_percent(user: User | None) -> int:
     return max(0, min(100, percent))
 
 
+async def consume_user_promo_offer(db: AsyncSession, user_id: int) -> bool:
+    """Consume the user's one-shot promo-offer discount (zeroes out the fields).
+
+    Used by external payment fulfillment handlers (Stars, YooKassa)
+    where subtract_user_balance (which normally consumes the offer) is not called.
+    Returns True if an offer was actually consumed.
+    """
+    from app.database.crud.promo_offer_log import log_promo_offer_action
+
+    result = await db.execute(select(User).where(User.id == user_id).with_for_update())
+    user = result.scalar_one_or_none()
+    if not user:
+        return False
+
+    current_percent = int(getattr(user, 'promo_offer_discount_percent', 0) or 0)
+    if current_percent <= 0:
+        return False
+
+    offer_id = getattr(user, 'promo_offer_discount_source', None)
+    user.promo_offer_discount_percent = 0
+    user.promo_offer_discount_source = None
+    user.promo_offer_discount_expires_at = None
+    await db.flush()
+
+    try:
+        await log_promo_offer_action(
+            db,
+            user_id=user_id,
+            offer_id=offer_id,
+            action='consumed_external_payment',
+            discount_percent=current_percent,
+        )
+    except Exception:
+        pass  # Non-critical logging
+
+    return True
+
+
 def _format_time_left(seconds_left: int, language: str) -> str:
     total_minutes = max(1, math.ceil(seconds_left / 60))
     days, remainder_minutes = divmod(total_minutes, 60 * 24)

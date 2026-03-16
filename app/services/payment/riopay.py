@@ -316,7 +316,7 @@ class RioPayPaymentMixin:
             UserModel.balance_kopeks: UserModel.balance_kopeks + payment.amount_kopeks,
             UserModel.updated_at: datetime.now(UTC),
         }
-        if was_first_topup:
+        if was_first_topup and not user.referred_by_id:
             update_values[UserModel.has_made_first_topup] = True
 
         await db.execute(update(UserModel).where(UserModel.id == user.id).values(update_values))

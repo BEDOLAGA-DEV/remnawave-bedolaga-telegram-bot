@@ -318,11 +318,10 @@ async def _sync_subscription_to_panel(
                 if hwid_limit is not None:
                     update_kwargs['hwid_device_limit'] = hwid_limit
 
-                # Внешний сквад: синхронизируем из тарифа или сбрасываем
+                # Внешний сквад: синхронизируем из тарифа (если задан)
+                # Не отправляем null — RemnaWave API не принимает null для externalSquadUuid (A039)
                 if ext_squad_uuid is not None:
                     update_kwargs['external_squad_uuid'] = ext_squad_uuid
-                else:
-                    update_kwargs['external_squad_uuid'] = None
 
                 try:
                     updated_panel_user = await api.update_user(**update_kwargs)
@@ -2777,11 +2776,10 @@ async def sync_user_to_panel(
                     update_kwargs['hwid_device_limit'] = hwid_limit
                     changes['device_limit'] = hwid_limit
 
-                # Внешний сквад: синхронизируем из тарифа или сбрасываем
+                # Внешний сквад: синхронизируем из тарифа (если задан)
+                # Не отправляем null — RemnaWave API не принимает null для externalSquadUuid (A039)
                 if ext_squad_uuid is not None:
                     update_kwargs['external_squad_uuid'] = ext_squad_uuid
-                else:
-                    update_kwargs['external_squad_uuid'] = None
 
                 try:
                     await api.update_user(**update_kwargs)

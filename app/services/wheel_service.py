@@ -324,10 +324,13 @@ class FortuneWheelService:
         # Синхронизируем с RemnaWave
         try:
             subscription_service = SubscriptionService()
-            await subscription_service.update_remnawave_user(db, subscription)
-            logger.info('✅ Списание дней синхронизировано с RemnaWave для user_id', user_id=user.id)
+            result = await subscription_service.update_remnawave_user(db, subscription)
+            if result is not None:
+                logger.info('✅ Списание дней синхронизировано с RemnaWave для user_id', user_id=user.id)
+            else:
+                logger.error('⚠️ Не удалось синхронизировать списание дней с RemnaWave', user_id=user.id)
         except Exception as e:
-            logger.error('⚠️ Ошибка синхронизации списания дней с RemnaWave', error=e)
+            logger.error('⚠️ Ошибка синхронизации списания дней с RemnaWave', error=e, user_id=user.id)
 
         return kopeks
 

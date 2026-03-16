@@ -342,7 +342,9 @@ async def _load_landing_tariffs(
                 effective_discount = tariff_override if tariff_override is not None else discount.percent
                 original_price_kopeks = price
                 original_price_label = settings.format_price(price)
-                price = max(1, price - (price * effective_discount // 100))
+                from app.services.pricing_engine import PricingEngine
+
+                price = max(1, PricingEngine.apply_discount(price, effective_discount))
 
             periods.append(
                 LandingTariffPeriod(

@@ -401,13 +401,25 @@ async def handle_simple_subscription_pay_with_balance(
         state_data=data,
     )
 
-    # Рассчитываем цену подписки
+    # Lock user BEFORE pricing to prevent TOCTOU
+    from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
+
+    db_user = await lock_user_for_pricing(db, db_user.id)
+
+    # Рассчитываем цену подписки (group discounts per-category)
     price_kopeks, price_breakdown = await _calculate_simple_subscription_price(
         db,
         subscription_params,
         user=db_user,
         resolved_squad_uuid=resolved_squad_uuid,
     )
+
+    # PricingEngine already applies promo-offer discount inside calculate_classic_new_subscription_price.
+    # Only determine whether to consume the offer (zero it out after use).
+    from app.utils.promo_offer import get_user_active_promo_discount_percent
+
+    consume_promo = get_user_active_promo_discount_percent(db_user) > 0
+
     total_required = price_kopeks
     logger.warning(
         'SIMPLE_SUBSCRIPTION_DEBUG_PAY_BALANCE | user= | period= | base= | traffic= | devices= | servers= | discount= | total_required= | balance',
@@ -431,15 +443,13 @@ async def handle_simple_subscription_pay_with_balance(
 
     try:
         # Списываем средства с баланса пользователя
-        from app.database.crud.user import subtract_user_balance
-
         purchase_description = f'Оплата подписки на {subscription_params["period_days"]} дней'
         success = await subtract_user_balance(
             db,
             db_user,
             price_kopeks,
             purchase_description,
-            consume_promo_offer=False,
+            consume_promo_offer=consume_promo,
             mark_as_paid_subscription=True,
         )
 
@@ -840,13 +850,21 @@ async def handle_simple_subscription_payment_method(
             state_data=data,
         )
 
-        # Рассчитываем цену подписки
+        # Рассчитываем цену подписки (group discounts per-category)
         price_kopeks, _ = await _calculate_simple_subscription_price(
             db,
             subscription_params,
             user=db_user,
             resolved_squad_uuid=resolved_squad_uuid,
         )
+
+        # Apply promo-offer discount on top of group discounts (consistent with balance-pay path)
+        from app.services.pricing_engine import PricingEngine
+        from app.utils.promo_offer import get_user_active_promo_discount_percent
+
+        offer_pct = get_user_active_promo_discount_percent(db_user)
+        if offer_pct > 0:
+            price_kopeks = PricingEngine.apply_discount(price_kopeks, offer_pct)
 
         if payment_method == 'stars':
             # Оплата через Telegram Stars
@@ -2121,13 +2139,25 @@ async def confirm_simple_subscription_purchase(
         state_data=data,
     )
 
-    # Рассчитываем цену подписки
+    # Lock user BEFORE pricing to prevent TOCTOU
+    from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
+
+    db_user = await lock_user_for_pricing(db, db_user.id)
+
+    # Рассчитываем цену подписки (group discounts per-category)
     price_kopeks, price_breakdown = await _calculate_simple_subscription_price(
         db,
         subscription_params,
         user=db_user,
         resolved_squad_uuid=resolved_squad_uuid,
     )
+
+    # PricingEngine already applies promo-offer discount inside calculate_classic_new_subscription_price.
+    # Only determine whether to consume the offer (zero it out after use).
+    from app.utils.promo_offer import get_user_active_promo_discount_percent
+
+    consume_promo = get_user_active_promo_discount_percent(db_user) > 0
+
     total_required = price_kopeks
     logger.warning(
         'SIMPLE_SUBSCRIPTION_DEBUG_CONFIRM | user= | period= | base= | traffic= | devices= | servers= | discount= | total_required= | balance',
@@ -2151,15 +2181,13 @@ async def confirm_simple_subscription_purchase(
 
     try:
         # Списываем средства с баланса пользователя
-        from app.database.crud.user import subtract_user_balance
-
         purchase_description = f'Оплата подписки на {subscription_params["period_days"]} дней'
         success = await subtract_user_balance(
             db,
             db_user,
             price_kopeks,
             purchase_description,
-            consume_promo_offer=False,
+            consume_promo_offer=consume_promo,
             mark_as_paid_subscription=True,
         )
 

@@ -10,12 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.server_squad import get_all_server_squads
 from app.database.crud.user import get_user_by_id
-from app.database.models import PromoGroup, Subscription, SubscriptionStatus, User
+from app.database.models import Subscription, SubscriptionStatus, User
 from app.external.remnawave_api import RemnaWaveAPI, RemnaWaveAPIError, RemnaWaveUser, TrafficLimitStrategy, UserStatus
-from app.utils.pricing_utils import (
-    calculate_months_from_days,
-    resolve_discount_percent,
-)
 from app.utils.subscription_utils import (
     resolve_hwid_device_limit_for_payload,
 )
@@ -242,11 +238,10 @@ class SubscriptionService:
                     if hwid_limit is not None:
                         update_kwargs['hwid_device_limit'] = hwid_limit
 
-                    # Внешний сквад: назначаем из тарифа или сбрасываем
+                    # Внешний сквад: назначаем из тарифа (если задан)
+                    # Не отправляем null — RemnaWave API не принимает null для externalSquadUuid (A039)
                     if ext_squad_uuid is not None:
                         update_kwargs['external_squad_uuid'] = ext_squad_uuid
-                    else:
-                        update_kwargs['external_squad_uuid'] = None
 
                     updated_user = await api.update_user(**update_kwargs)
 
@@ -335,6 +330,7 @@ class SubscriptionService:
         *,
         reset_traffic: bool = False,
         reset_reason: str | None = None,
+        sync_squads: bool = False,
     ) -> RemnaWaveUser | None:
         try:
             user = await get_user_by_id(db, subscription.user_id)
@@ -389,7 +385,10 @@ class SubscriptionService:
                     ),
                 )
 
-                if subscription.connected_squads:
+                # Сквады отправляем только при явном sync_squads=True (propagate_squads и пр.)
+                # В рутинных обновлениях пропускаем — сквады уже назначены при создании подписки,
+                # а пересылка стейловых UUID вызывает FK violation → A039 в RemnaWave
+                if sync_squads and subscription.connected_squads:
                     update_kwargs['active_internal_squads'] = subscription.connected_squads
 
                 if user_tag is not None:
@@ -398,12 +397,11 @@ class SubscriptionService:
                 if hwid_limit is not None:
                     update_kwargs['hwid_device_limit'] = hwid_limit
 
-                # Внешний сквад: синхронизируем из тарифа или сбрасываем
-                if ext_squad_uuid is not None:
+                # Внешний сквад НЕ пересылаем в рутинных обновлениях — он уже назначен
+                # при создании подписки. Стейловый UUID вызывает FK violation → A039.
+                # Синхронизация сквадов происходит только при sync_squads=True.
+                if sync_squads and ext_squad_uuid is not None:
                     update_kwargs['external_squad_uuid'] = ext_squad_uuid
-                else:
-                    # Тариф без внешнего сквада — сбрасываем у пользователя
-                    update_kwargs['external_squad_uuid'] = None
 
                 updated_user = await api.update_user(**update_kwargs)
 
@@ -775,120 +773,6 @@ class SubscriptionService:
             default_prices = [0] * len(country_uuids)
             return sum(default_prices), default_prices
 
-    async def calculate_subscription_price_with_months(
-        self,
-        period_days: int,
-        traffic_gb: int,
-        server_squad_ids: list[int],
-        devices: int,
-        db: AsyncSession,
-        *,
-        user: User | None = None,
-        promo_group: PromoGroup | None = None,
-    ) -> tuple[int, list[int]]:
-        from app.config import PERIOD_PRICES
-        from app.database.crud.server_squad import get_server_squad_by_id
-
-        if settings.MAX_DEVICES_LIMIT > 0 and devices > settings.MAX_DEVICES_LIMIT:
-            raise ValueError(f'Превышен максимальный лимит устройств: {settings.MAX_DEVICES_LIMIT}')
-
-        months_in_period = calculate_months_from_days(period_days)
-
-        base_price_original = PERIOD_PRICES.get(period_days, 0)
-        period_discount_percent = resolve_discount_percent(
-            user,
-            promo_group,
-            'period',
-            period_days=period_days,
-        )
-        base_discount_total = base_price_original * period_discount_percent // 100
-        base_price = base_price_original - base_discount_total
-
-        promo_group = promo_group or (user.get_primary_promo_group() if user else None)
-
-        traffic_price_per_month = settings.get_traffic_price(traffic_gb)
-        traffic_discount_percent = resolve_discount_percent(
-            user,
-            promo_group,
-            'traffic',
-            period_days=period_days,
-        )
-        traffic_discount_per_month = traffic_price_per_month * traffic_discount_percent // 100
-        discounted_traffic_per_month = traffic_price_per_month - traffic_discount_per_month
-        total_traffic_price = discounted_traffic_per_month * months_in_period
-
-        server_prices = []
-        total_servers_price = 0
-        servers_discount_percent = resolve_discount_percent(
-            user,
-            promo_group,
-            'servers',
-            period_days=period_days,
-        )
-
-        for server_id in server_squad_ids:
-            server = await get_server_squad_by_id(db, server_id)
-            if server and server.is_available and not server.is_full:
-                server_price_per_month = server.price_kopeks
-                server_discount_per_month = server_price_per_month * servers_discount_percent // 100
-                discounted_server_per_month = server_price_per_month - server_discount_per_month
-                server_price_total = discounted_server_per_month * months_in_period
-                server_prices.append(server_price_total)
-                total_servers_price += server_price_total
-                log_message = f'Сервер {server.display_name}: {server_price_per_month / 100}₽/мес x {months_in_period} мес = {server_price_total / 100}₽'
-                if server_discount_per_month > 0:
-                    log_message += (
-                        f' (скидка {servers_discount_percent}%: -{server_discount_per_month * months_in_period / 100}₽)'
-                    )
-                logger.debug(log_message)
-            else:
-                server_prices.append(0)
-                logger.warning('Сервер ID недоступен', server_id=server_id)
-
-        additional_devices = max(0, devices - settings.DEFAULT_DEVICE_LIMIT)
-        devices_price_per_month = additional_devices * settings.PRICE_PER_DEVICE
-        devices_discount_percent = resolve_discount_percent(
-            user,
-            promo_group,
-            'devices',
-            period_days=period_days,
-        )
-        devices_discount_per_month = devices_price_per_month * devices_discount_percent // 100
-        discounted_devices_per_month = devices_price_per_month - devices_discount_per_month
-        total_devices_price = discounted_devices_per_month * months_in_period
-
-        total_price = base_price + total_traffic_price + total_servers_price + total_devices_price
-
-        logger.debug(
-            'Расчет стоимости новой подписки на дней ( мес)', period_days=period_days, months_in_period=months_in_period
-        )
-        base_log = f'   Период {period_days} дней: {base_price_original / 100}₽'
-        if base_discount_total > 0:
-            base_log += f' → {base_price / 100}₽ (скидка {period_discount_percent}%: -{base_discount_total / 100}₽)'
-        logger.debug(base_log)
-        if total_traffic_price > 0:
-            message = f'   Трафик {traffic_gb} ГБ: {traffic_price_per_month / 100}₽/мес x {months_in_period} = {total_traffic_price / 100}₽'
-            if traffic_discount_per_month > 0:
-                message += (
-                    f' (скидка {traffic_discount_percent}%: -{traffic_discount_per_month * months_in_period / 100}₽)'
-                )
-            logger.debug(message)
-        if total_servers_price > 0:
-            message = f'   Серверы ({len(server_squad_ids)}): {total_servers_price / 100}₽'
-            if servers_discount_percent > 0:
-                message += f' (скидка {servers_discount_percent}% применяется ко всем серверам)'
-            logger.debug(message)
-        if total_devices_price > 0:
-            message = f'   Устройства ({additional_devices}): {devices_price_per_month / 100}₽/мес x {months_in_period} = {total_devices_price / 100}₽'
-            if devices_discount_per_month > 0:
-                message += (
-                    f' (скидка {devices_discount_percent}%: -{devices_discount_per_month * months_in_period / 100}₽)'
-                )
-            logger.debug(message)
-        logger.debug('ИТОГО: ₽', total_price=total_price / 100)
-
-        return total_price, server_prices
-
     def _gb_to_bytes(self, gb: int | None) -> int:
         if not gb:  # None or 0
             return 0
@@ -992,10 +876,9 @@ class SubscriptionService:
                         if hwid_limit is not None:
                             update_kwargs['hwid_device_limit'] = hwid_limit
 
+                        # Не отправляем null — RemnaWave API не принимает null для externalSquadUuid (A039)
                         if ext_squad_uuid is not None:
                             update_kwargs['external_squad_uuid'] = ext_squad_uuid
-                        else:
-                            update_kwargs['external_squad_uuid'] = None
 
                         updated_user = await api.update_user(**update_kwargs)
 

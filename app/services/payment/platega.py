@@ -442,7 +442,7 @@ class PlategaPaymentMixin:
         except Exception as error:
             logger.error('Ошибка обработки реферального пополнения Platega', error=error)
 
-        if was_first_topup and not user.has_made_first_topup:
+        if was_first_topup and not user.has_made_first_topup and not user.referred_by_id:
             user.has_made_first_topup = True
             await db.commit()
             await db.refresh(user)
