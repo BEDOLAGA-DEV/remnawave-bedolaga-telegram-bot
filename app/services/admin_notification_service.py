@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.crud.promo_group import get_promo_group_by_id
-from app.database.crud.campaign import get_campaign_registration_by_user
 from app.database.crud.subscription_event import create_subscription_event
 from app.database.crud.transaction import get_transaction_by_id
 from app.database.crud.user import get_user_by_id
