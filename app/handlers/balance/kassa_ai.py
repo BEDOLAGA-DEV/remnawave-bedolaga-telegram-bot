@@ -1,600 +1,521 @@
-"""Handler for KassaAI balance top-up."""
+"""Mixin для интеграции с KassaAI (api.fk.life)."""
 
-import structlog
-from aiogram import types
-from aiogram.fsm.context import FSMContext
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime, timedelta
+from importlib import import_module
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.models import User
-from app.keyboards.inline import get_back_keyboard
-from app.localization.texts import get_texts
-from app.services.payment_service import PaymentService
-from app.states import BalanceStates
-from app.utils.decorators import error_handler
+from app.database.models import PaymentMethod, TransactionType
+from app.services.kassa_ai_service import kassa_ai_service
+from app.utils.payment_logger import payment_logger as logger
+from app.utils.user_utils import format_referrer_info
 
 
-logger = structlog.get_logger(__name__)
+class KassaAiPaymentMixin:
+    """Mixin для работы с платежами KassaAI."""
 
+    async def create_kassa_ai_payment(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int | None,
+        amount_kopeks: int,
+        description: str = 'Пополнение баланса',
+        email: str | None = None,
+        language: str = 'ru',
+        payment_system_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Создает платеж KassaAI.
 
-from app.services.kassa_ai_service import KASSA_AI_SUB_METHODS
+        Args:
+            db: Сессия БД
+            user_id: ID пользователя
+            amount_kopeks: Сумма в копейках
+            description: Описание платежа
+            email: Email пользователя
+            language: Язык интерфейса
 
+        Returns:
+            Словарь с данными платежа или None при ошибке
+        """
+        if not settings.is_kassa_ai_enabled():
+            logger.error('KassaAI не настроен')
+            return None
 
-async def _create_kassa_ai_payment_and_respond(
-    message_or_callback,
-    db_user: User,
-    db: AsyncSession,
-    amount_kopeks: int,
-    edit_message: bool = False,
-    payment_method: str = 'kassa_ai',
-):
-    """
-    Common logic for creating KassaAI payment and sending response.
-
-    Args:
-        message_or_callback: Either a Message or CallbackQuery object
-        db_user: User object
-        db: Database session
-        amount_kopeks: Amount in kopeks
-        edit_message: Whether to edit existing message or send new one
-        payment_method: 'kassa_ai', 'kassa_ai_sbp', or 'kassa_ai_card'
-    """
-    texts = get_texts(db_user.language)
-    amount_rub = amount_kopeks / 100
-
-    # Create payment
-    payment_service = PaymentService()
-
-    description = settings.PAYMENT_BALANCE_TEMPLATE.format(
-        service_name=settings.PAYMENT_SERVICE_NAME,
-        description='Пополнение баланса',
-    )
-
-    sub = KASSA_AI_SUB_METHODS.get(payment_method)
-    payment_system_id = sub['payment_system_id'] if sub else settings.KASSA_AI_PAYMENT_SYSTEM_ID
-
-    result = await payment_service.create_kassa_ai_payment(
-        db=db,
-        user_id=db_user.id,
-        amount_kopeks=amount_kopeks,
-        description=description,
-        email=getattr(db_user, 'email', None),
-        language=db_user.language,
-        payment_system_id=payment_system_id,
-    )
-
-    if not result:
-        error_text = texts.t(
-            'PAYMENT_CREATE_ERROR',
-            'Не удалось создать платёж. Попробуйте позже.',
-        )
-        if edit_message:
-            await message_or_callback.edit_text(
-                error_text,
-                reply_markup=get_back_keyboard(db_user.language),
-                parse_mode='HTML',
+        # Валидация лимитов
+        if amount_kopeks < settings.KASSA_AI_MIN_AMOUNT_KOPEKS:
+            logger.warning(
+                'KassaAI: сумма меньше минимальной',
+                amount_kopeks=amount_kopeks,
+                KASSA_AI_MIN_AMOUNT_KOPEKS=settings.KASSA_AI_MIN_AMOUNT_KOPEKS,
             )
-        else:
-            await message_or_callback.answer(
-                error_text,
-                parse_mode='HTML',
+            return None
+
+        if amount_kopeks > settings.KASSA_AI_MAX_AMOUNT_KOPEKS:
+            logger.warning(
+                'KassaAI: сумма больше максимальной',
+                amount_kopeks=amount_kopeks,
+                KASSA_AI_MAX_AMOUNT_KOPEKS=settings.KASSA_AI_MAX_AMOUNT_KOPEKS,
             )
-        return
+            return None
 
-    payment_url = result.get('payment_url')
-    if payment_method == 'kassa_ai_sbp':
-        display_name = settings.get_kassa_ai_sbp_display_name()
-    elif payment_method == 'kassa_ai_card':
-        display_name = settings.get_kassa_ai_card_display_name()
-    else:
-        display_name = settings.get_kassa_ai_display_name()
-
-    # Create keyboard with payment button
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=texts.t(
-                        'PAY_BUTTON',
-                        '💳 Оплатить {amount}₽',
-                    ).format(amount=f'{amount_rub:.0f}'),
-                    url=payment_url,
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_BUTTON', '◀️ Назад'),
-                    callback_data='menu_balance',
-                )
-            ],
-        ]
-    )
-
-    response_text = texts.t(
-        'KASSA_AI_PAYMENT_CREATED',
-        '💳 <b>Оплата через {name}</b>\n\n'
-        'Сумма: <b>{amount}₽</b>\n\n'
-        'Нажмите кнопку ниже для оплаты.\n'
-        'После успешной оплаты баланс будет пополнен автоматически.',
-    ).format(name=display_name, amount=f'{amount_rub:.2f}')
-
-    if edit_message:
-        await message_or_callback.edit_text(
-            response_text,
-            reply_markup=keyboard,
-            parse_mode='HTML',
-        )
-    else:
-        await message_or_callback.answer(
-            response_text,
-            reply_markup=keyboard,
-            parse_mode='HTML',
-        )
-
-    logger.info('KassaAI payment created: user amount=₽', telegram_id=db_user.telegram_id, amount_rub=amount_rub)
-
-
-@error_handler
-async def process_kassa_ai_payment_amount(
-    message: types.Message,
-    db_user: User,
-    db: AsyncSession,
-    amount_kopeks: int,
-    state: FSMContext,
-    payment_method: str = 'kassa_ai',
-):
-    """
-    Process payment amount directly (called from quick_amount handlers).
-    """
-    texts = get_texts(db_user.language)
-
-    # Проверка ограничения на пополнение
-    if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
-        support_url = settings.get_support_contact_url()
-        keyboard = []
-        if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
-
-        await message.answer(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        )
-        await state.clear()
-        return
-
-    # Validate amount
-    min_amount = settings.KASSA_AI_MIN_AMOUNT_KOPEKS
-    max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS
-
-    if amount_kopeks < min_amount:
-        await message.answer(
-            texts.t(
-                'PAYMENT_AMOUNT_TOO_LOW',
-                'Минимальная сумма пополнения: {min_amount}₽',
-            ).format(min_amount=min_amount // 100),
-            parse_mode='HTML',
-        )
-        return
-
-    if amount_kopeks > max_amount:
-        await message.answer(
-            texts.t(
-                'PAYMENT_AMOUNT_TOO_HIGH',
-                'Максимальная сумма пополнения: {max_amount}₽',
-            ).format(max_amount=max_amount // 100),
-            parse_mode='HTML',
-        )
-        return
-
-    await state.clear()
-
-    await _create_kassa_ai_payment_and_respond(
-        message_or_callback=message,
-        db_user=db_user,
-        db=db,
-        amount_kopeks=amount_kopeks,
-        edit_message=False,
-        payment_method=payment_method,
-    )
-
-
-@error_handler
-async def start_kassa_ai_topup(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
-):
-    """
-    Start KassaAI top-up process - ask for amount.
-    """
-    texts = get_texts(db_user.language)
-
-    # Проверка ограничения на пополнение
-    if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
-        support_url = settings.get_support_contact_url()
-        keyboard = []
-        if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
-
-        await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        )
-        return
-
-    await state.set_state(BalanceStates.waiting_for_amount)
-    await state.update_data(payment_method='kassa_ai')
-
-    min_amount = settings.KASSA_AI_MIN_AMOUNT_KOPEKS // 100
-    max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS // 100
-    display_name = settings.get_kassa_ai_display_name()
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_BUTTON', '◀️ Назад'),
-                    callback_data='menu_balance',
-                )
-            ]
-        ]
-    )
-
-    await callback.message.edit_text(
-        texts.t(
-            'KASSA_AI_ENTER_AMOUNT',
-            '💳 <b>Пополнение через {name}</b>\n\n'
-            'Введите сумму пополнения в рублях.\n\n'
-            'Минимум: {min_amount}₽\n'
-            'Максимум: {max_amount}₽',
-        ).format(
-            name=display_name,
-            min_amount=min_amount,
-            max_amount=f'{max_amount:,}'.replace(',', ' '),
-        ),
-        parse_mode='HTML',
-        reply_markup=keyboard,
-    )
-
-
-@error_handler
-async def process_kassa_ai_custom_amount(
-    message: types.Message,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
-):
-    """
-    Process custom amount input for KassaAI payment.
-    """
-    data = await state.get_data()
-    pm = data.get('payment_method', 'kassa_ai')
-    if pm not in ('kassa_ai', 'kassa_ai_sbp', 'kassa_ai_card'):
-        return
-
-    texts = get_texts(db_user.language)
-
-    try:
-        amount_text = message.text.replace(',', '.').replace(' ', '').strip()
-        amount_rubles = float(amount_text)
-        amount_kopeks = int(amount_rubles * 100)
-    except (ValueError, TypeError):
-        await message.answer(
-            texts.t(
-                'PAYMENT_INVALID_AMOUNT',
-                'Введите корректную сумму числом.',
-            ),
-            parse_mode='HTML',
-        )
-        return
-
-    await process_kassa_ai_payment_amount(
-        message=message,
-        db_user=db_user,
-        db=db,
-        amount_kopeks=amount_kopeks,
-        state=state,
-        payment_method=pm,
-    )
-
-
-@error_handler
-async def process_kassa_ai_quick_amount(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
-):
-    """
-    Process quick amount selection for KassaAI payment.
-    Called when user clicks a predefined amount button.
-    """
-    texts = get_texts(db_user.language)
-
-    if not settings.is_kassa_ai_enabled():
-        await callback.answer(
-            texts.t('KASSA_AI_NOT_AVAILABLE', 'KassaAI временно недоступен'),
-            show_alert=True,
-        )
-        return
-
-    # Extract amount from callback data: topup_amount|kassa_ai|{amount_kopeks}
-    try:
-        parts = callback.data.split('|')
-        if len(parts) >= 3:
-            amount_kopeks = int(parts[2])
+        # Получаем telegram_id пользователя для order_id
+        payment_module = import_module('app.services.payment_service')
+        if user_id is not None:
+            user = await payment_module.get_user_by_id(db, user_id)
         else:
-            await callback.answer('Invalid callback data', show_alert=True)
-            return
-    except (ValueError, IndexError):
-        await callback.answer('Invalid amount', show_alert=True)
-        return
+            user = None
+        tg_id = user.telegram_id if user else (user_id or 'guest')
 
-    # Проверка ограничения на пополнение
-    if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
-        support_url = settings.get_support_contact_url()
-        keyboard = []
-        if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        # Генерируем уникальный order_id с telegram_id для удобного поиска
+        order_id = f'k{tg_id}_{uuid.uuid4().hex[:6]}'
+        amount_rubles = amount_kopeks / 100
+        currency = settings.KASSA_AI_CURRENCY
 
-        await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        # Срок действия платежа (1 час по умолчанию)
+        expires_at = datetime.now(UTC) + timedelta(hours=1)
+
+        # Метаданные
+        metadata = {
+            'user_id': user_id,
+            'amount_kopeks': amount_kopeks,
+            'description': description,
+            'language': language,
+            'type': 'balance_topup',
+        }
+
+        try:
+            # Используем API для создания заказа
+            result = await kassa_ai_service.create_order(
+                order_id=order_id,
+                amount=amount_rubles,
+                currency=currency,
+                email=email,
+                payment_system_id=payment_system_id
+                if payment_system_id is not None
+                else settings.KASSA_AI_PAYMENT_SYSTEM_ID,
+            )
+
+            payment_url = result.get('location')
+            if not payment_url:
+                logger.error('KassaAI API не вернул URL платежа')
+                return None
+
+            logger.info('KassaAI API: создан заказ order_id url', order_id=order_id, payment_url=payment_url)
+
+            # Импортируем CRUD модуль
+            kassa_ai_crud = import_module('app.database.crud.kassa_ai')
+
+            # Сохраняем в БД
+            local_payment = await kassa_ai_crud.create_kassa_ai_payment(
+                db=db,
+                user_id=user_id,
+                order_id=order_id,
+                amount_kopeks=amount_kopeks,
+                currency=currency,
+                description=description,
+                payment_url=payment_url,
+                payment_system_id=payment_system_id
+                if payment_system_id is not None
+                else settings.KASSA_AI_PAYMENT_SYSTEM_ID,
+                expires_at=expires_at,
+                metadata_json=metadata,
+            )
+
+            logger.info(
+                'KassaAI: создан платеж order_id user_id amount',
+                order_id=order_id,
+                user_id=user_id,
+                amount_rubles=amount_rubles,
+                currency=currency,
+            )
+
+            return {
+                'order_id': order_id,
+                'amount_kopeks': amount_kopeks,
+                'amount_rubles': amount_rubles,
+                'currency': currency,
+                'payment_url': payment_url,
+                'expires_at': expires_at.isoformat(),
+                'local_payment_id': local_payment.id,
+            }
+
+        except Exception as e:
+            logger.exception('KassaAI: ошибка создания платежа', e=e)
+            return None
+
+    async def process_kassa_ai_webhook(
+        self,
+        db: AsyncSession,
+        *,
+        merchant_id: int,
+        amount: float,
+        order_id: str,
+        sign: str,
+        intid: str,
+        cur_id: int | None = None,
+    ) -> bool:
+        """
+        Обрабатывает webhook от KassaAI.
+
+        Args:
+            db: Сессия БД
+            merchant_id: ID магазина (MERCHANT_ID)
+            amount: Сумма платежа (AMOUNT)
+            order_id: Номер заказа (MERCHANT_ORDER_ID)
+            sign: Подпись (SIGN)
+            intid: ID транзакции KassaAI
+            cur_id: ID валюты/платежной системы (CUR_ID)
+
+        Returns:
+            True если платеж успешно обработан
+        """
+        try:
+            # Проверка подписи
+            if not kassa_ai_service.verify_webhook_signature(merchant_id, amount, order_id, sign):
+                logger.warning('KassaAI webhook: неверная подпись для order_id', order_id=order_id)
+                return False
+
+            # Импортируем CRUD модуль
+            kassa_ai_crud = import_module('app.database.crud.kassa_ai')
+
+            # Получаем платеж из БД
+            payment = await kassa_ai_crud.get_kassa_ai_payment_by_order_id(db, order_id)
+            if not payment:
+                logger.warning('KassaAI webhook: платеж не найден order_id', order_id=order_id)
+                return False
+
+            # Проверка дублирования
+            if payment.is_paid:
+                logger.info('KassaAI webhook: платеж уже обработан order_id', order_id=order_id)
+                return True
+
+            # Проверка суммы
+            expected_amount = payment.amount_kopeks / 100
+            if abs(amount - expected_amount) > 0.01:
+                logger.warning(
+                    'KassaAI webhook: несоответствие суммы ожидалось получено',
+                    expected_amount=expected_amount,
+                    amount=amount,
+                )
+                return False
+
+            # Обновляем статус платежа
+            callback_payload = {
+                'merchant_id': merchant_id,
+                'amount': amount,
+                'order_id': order_id,
+                'intid': intid,
+                'cur_id': cur_id,
+            }
+
+            payment = await kassa_ai_crud.update_kassa_ai_payment_status(
+                db=db,
+                payment=payment,
+                status='success',
+                is_paid=True,
+                kassa_ai_order_id=intid,
+                payment_system_id=cur_id,
+                callback_payload=callback_payload,
+            )
+
+            # Финализируем платеж (начисляем баланс, создаем транзакцию)
+            return await self._finalize_kassa_ai_payment(db, payment, intid=intid, trigger='webhook')
+
+        except Exception as e:
+            logger.exception('KassaAI webhook: ошибка обработки', e=e)
+            return False
+
+    async def _finalize_kassa_ai_payment(
+        self,
+        db: AsyncSession,
+        payment: Any,
+        *,
+        intid: str | None,
+        trigger: str,
+    ) -> bool:
+        """Создаёт транзакцию, начисляет баланс и отправляет уведомления."""
+        payment_module = import_module('app.services.payment_service')
+
+        kassa_ai_lock_crud = import_module('app.database.crud.kassa_ai')
+        locked = await kassa_ai_lock_crud.get_kassa_ai_payment_by_id_for_update(db, payment.id)
+        if not locked:
+            logger.error('KassaAI: не удалось заблокировать платёж', payment_id=payment.id)
+            return False
+        payment = locked
+
+        if payment.transaction_id:
+            logger.info(
+                'KassaAI платеж уже привязан к транзакции (trigger=)', order_id=payment.order_id, trigger=trigger
+            )
+            return True
+
+        # --- Guest purchase flow (landing page) ---
+        kai_metadata = dict(getattr(payment, 'metadata_json', {}) or {})
+        from app.services.payment.common import try_fulfill_guest_purchase
+
+        guest_result = await try_fulfill_guest_purchase(
+            db,
+            metadata=kai_metadata,
+            payment_amount_kopeks=payment.amount_kopeks,
+            provider_payment_id=str(intid) if intid else payment.order_id,
+            provider_name='kassa_ai',
         )
-        return
+        if guest_result is not None:
+            return True
 
-    # Validate amount
-    min_amount = settings.KASSA_AI_MIN_AMOUNT_KOPEKS
-    max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS
+        # Получаем пользователя
+        user = await payment_module.get_user_by_id(db, payment.user_id)
+        if not user:
+            logger.error(
+                'Пользователь не найден для KassaAI платежа (trigger=)',
+                user_id=payment.user_id,
+                order_id=payment.order_id,
+                trigger=trigger,
+            )
+            return False
 
-    if amount_kopeks < min_amount:
-        await callback.answer(
-            texts.t('AMOUNT_TOO_LOW_SHORT', 'Сумма слишком мала'),
-            show_alert=True,
+        # Создаем транзакцию
+        transaction = await payment_module.create_transaction(
+            db,
+            user_id=payment.user_id,
+            type=TransactionType.DEPOSIT,
+            amount_kopeks=payment.amount_kopeks,
+            description=f'Пополнение через KassaAI (#{intid or payment.order_id})',
+            payment_method=PaymentMethod.KASSA_AI,
+            external_id=str(intid) if intid else payment.order_id,
+            is_completed=True,
+            created_at=getattr(payment, 'created_at', None),
+            commit=False,
         )
-        return
 
-    if amount_kopeks > max_amount:
-        await callback.answer(
-            texts.t('AMOUNT_TOO_HIGH_SHORT', 'Сумма слишком велика'),
-            show_alert=True,
+        # Связываем платеж с транзакцией (без commit, чтобы сохранить атомарность)
+        payment.transaction_id = transaction.id
+        payment.updated_at = datetime.now(UTC)
+        await db.flush()
+
+        # Lock user row to prevent concurrent balance race conditions
+        from app.database.crud.user import lock_user_for_update
+
+        user = await lock_user_for_update(db, user)
+
+        old_balance = user.balance_kopeks
+        was_first_topup = not user.has_made_first_topup
+
+        # Начисляем баланс
+        user.balance_kopeks += payment.amount_kopeks
+        user.updated_at = datetime.now(UTC)
+
+        promo_group = user.get_primary_promo_group()
+        subscription = getattr(user, 'subscription', None)
+        referrer_info = format_referrer_info(user)
+        topup_status = 'Первое пополнение' if was_first_topup else 'Пополнение'
+
+        await db.commit()
+
+        # Emit deferred side-effects after atomic commit
+        from app.database.crud.transaction import emit_transaction_side_effects
+
+        await emit_transaction_side_effects(
+            db,
+            transaction,
+            amount_kopeks=payment.amount_kopeks,
+            user_id=payment.user_id,
+            type=TransactionType.DEPOSIT,
+            payment_method=PaymentMethod.KASSA_AI,
+            external_id=str(intid) if intid else payment.order_id,
         )
-        return
 
-    await callback.answer()
-    await state.clear()
+        # Обработка реферального пополнения
+        try:
+            from app.services.referral_service import process_referral_topup
 
-    await _create_kassa_ai_payment_and_respond(
-        message_or_callback=callback.message,
-        db_user=db_user,
-        db=db,
-        amount_kopeks=amount_kopeks,
-        edit_message=True,
-    )
+            await process_referral_topup(db, user.id, payment.amount_kopeks, getattr(self, 'bot', None))
+        except Exception as error:
+            logger.error('Ошибка обработки реферального пополнения KassaAI', error=error)
 
+        if was_first_topup and not user.has_made_first_topup:
+            user.has_made_first_topup = True
+            await db.commit()
 
-@error_handler
-async def start_kassa_ai_sbp_topup(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
-):
-    """Start KassaAI SBP top-up process."""
-    texts = get_texts(db_user.language)
+        await db.refresh(user)
+        await db.refresh(payment)
 
-    if not settings.is_kassa_ai_sbp_enabled():
-        await callback.answer(texts.t('KASSA_AI_NOT_AVAILABLE', 'KassaAI СБП временно недоступен'), show_alert=True)
-        return
+        # Отправка уведомления админам
+        if getattr(self, 'bot', None):
+            try:
+                from app.services.admin_notification_service import (
+                    AdminNotificationService,
+                )
 
-    if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
-        support_url = settings.get_support_contact_url()
-        keyboard = []
-        if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
-        await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+                notification_service = AdminNotificationService(self.bot)
+                await notification_service.send_balance_topup_notification(
+                    user,
+                    transaction,
+                    old_balance,
+                    topup_status=topup_status,
+                    referrer_info=referrer_info,
+                    subscription=subscription,
+                    promo_group=promo_group,
+                    db=db,
+                )
+            except Exception as error:
+                logger.error('Ошибка отправки админ уведомления KassaAI', error=error)
+
+        # Отправка уведомления пользователю (только Telegram-пользователям)
+        if getattr(self, 'bot', None) and user.telegram_id:
+            try:
+                display_name = settings.get_kassa_ai_display_name()
+
+                keyboard = await self.build_topup_success_keyboard(user)
+                message = (
+                    '✅ <b>Пополнение успешно!</b>\n\n'
+                    f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}\n'
+                    f'💳 Способ: {display_name}\n'
+                    f'🆔 Транзакция: {transaction.id}\n\n'
+                    'Баланс пополнен автоматически!'
+                )
+
+                await self.bot.send_message(
+                    user.telegram_id,
+                    message,
+                    parse_mode='HTML',
+                    reply_markup=keyboard,
+                )
+            except Exception as error:
+                logger.error('Ошибка отправки уведомления пользователю KassaAI', error=error)
+
+        # Автопокупка подписки и уведомление о корзине
+        try:
+            from app.services.payment.common import send_cart_notification_after_topup
+
+            await send_cart_notification_after_topup(user, payment.amount_kopeks, db, getattr(self, 'bot', None))
+        except Exception as error:
+            logger.error(
+                'Ошибка при работе с сохраненной корзиной для пользователя', user_id=user.id, error=error, exc_info=True
+            )
+
+        logger.info(
+            '✅ Обработан KassaAI платеж для пользователя (trigger=)',
+            order_id=payment.order_id,
+            user_id=payment.user_id,
+            trigger=trigger,
         )
-        return
 
-    await state.set_state(BalanceStates.waiting_for_amount)
-    await state.update_data(payment_method='kassa_ai_sbp')
+        return True
 
-    min_amount = settings.KASSA_AI_MIN_AMOUNT_KOPEKS // 100
-    max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS // 100
-    display_name = settings.get_kassa_ai_sbp_display_name()
+    async def check_kassa_ai_payment_status(
+        self,
+        db: AsyncSession,
+        order_id: str,
+    ) -> dict[str, Any] | None:
+        """
+        Проверяет статус платежа через API.
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='menu_balance')]
-        ]
-    )
+        Args:
+            db: Сессия БД
+            order_id: Номер заказа
 
-    await callback.message.edit_text(
-        texts.t(
-            'KASSA_AI_ENTER_AMOUNT',
-            '💳 <b>Пополнение через {name}</b>\n\nВведите сумму пополнения в рублях.\n\nМинимум: {min_amount}₽\nМаксимум: {max_amount}₽',
-        ).format(name=display_name, min_amount=min_amount, max_amount=f'{max_amount:,}'.replace(',', ' ')),
-        parse_mode='HTML',
-        reply_markup=keyboard,
-    )
+        Returns:
+            Данные о статусе платежа
+        """
+        try:
+            status_data = await kassa_ai_service.get_order_status(order_id)
+            return status_data
+        except Exception as e:
+            logger.exception('KassaAI: ошибка проверки статуса', e=e)
+            return None
 
+    async def get_kassa_ai_payment_status(
+        self,
+        db: AsyncSession,
+        local_payment_id: int,
+    ) -> dict[str, Any] | None:
+        """
+        Проверяет статус платежа KassaAI по локальному ID через API.
+        Если платёж оплачен — автоматически начисляет баланс.
+        """
+        logger.info('KassaAI: checking payment status for id', local_payment_id=local_payment_id)
+        kassa_ai_crud = import_module('app.database.crud.kassa_ai')
 
-@error_handler
-async def process_kassa_ai_sbp_quick_amount(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
-):
-    """Process quick amount for KassaAI SBP."""
-    texts = get_texts(db_user.language)
-    if not settings.is_kassa_ai_sbp_enabled():
-        await callback.answer(texts.t('KASSA_AI_NOT_AVAILABLE', 'KassaAI СБП временно недоступен'), show_alert=True)
-        return
+        payment = await kassa_ai_crud.get_kassa_ai_payment_by_id(db, local_payment_id)
+        if not payment:
+            logger.warning('KassaAI payment not found: id', local_payment_id=local_payment_id)
+            return None
 
-    try:
-        parts = callback.data.split('|')
-        amount_kopeks = int(parts[2]) if len(parts) >= 3 else None
-        if amount_kopeks is None:
-            raise ValueError
-    except (ValueError, IndexError):
-        await callback.answer('Invalid amount', show_alert=True)
-        return
+        if payment.is_paid:
+            return {
+                'payment': payment,
+                'status': 'success',
+                'is_paid': True,
+            }
 
-    if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
-        support_url = settings.get_support_contact_url()
-        keyboard = []
-        if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
-        await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        )
-        return
+        if not settings.KASSA_AI_API_KEY:
+            return {
+                'payment': payment,
+                'status': payment.status or 'pending',
+                'is_paid': payment.is_paid,
+            }
 
-    min_amount = settings.KASSA_AI_MIN_AMOUNT_KOPEKS
-    max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS
-    if amount_kopeks < min_amount:
-        await callback.answer(texts.t('AMOUNT_TOO_LOW_SHORT', 'Сумма слишком мала'), show_alert=True)
-        return
-    if amount_kopeks > max_amount:
-        await callback.answer(texts.t('AMOUNT_TOO_HIGH_SHORT', 'Сумма слишком велика'), show_alert=True)
-        return
+        try:
+            # Запрашиваем статус заказа в KassaAI (api.fk.life)
+            response = await kassa_ai_service.get_order_status(payment.order_id)
 
-    await callback.answer()
-    await state.clear()
-    await _create_kassa_ai_payment_and_respond(
-        message_or_callback=callback.message,
-        db_user=db_user,
-        db=db,
-        amount_kopeks=amount_kopeks,
-        edit_message=True,
-        payment_method='kassa_ai_sbp',
-    )
+            # KassaAI возвращает список заказов (как Freekassa)
+            orders = response.get('orders', [])
+            target_order = None
 
+            # Ищем наш заказ в списке
+            for order in orders:
+                order_key = str(order.get('merchant_order_id') or order.get('paymentId'))
+                if order_key == str(payment.order_id):
+                    target_order = order
+                    break
 
-@error_handler
-async def start_kassa_ai_card_topup(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
-):
-    """Start KassaAI Card top-up process."""
-    texts = get_texts(db_user.language)
+            if target_order:
+                # Статус 1 = Оплачен (как в Freekassa)
+                kai_status = int(target_order.get('status', 0))
 
-    if not settings.is_kassa_ai_card_enabled():
-        await callback.answer(texts.t('KASSA_AI_NOT_AVAILABLE', 'KassaAI Карта временно недоступна'), show_alert=True)
-        return
+                if kai_status == 1:
+                    logger.info('KassaAI payment confirmed via API', order_id=payment.order_id)
 
-    if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
-        support_url = settings.get_support_contact_url()
-        keyboard = []
-        if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
-        await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        )
-        return
+                    callback_payload = {
+                        'check_source': 'api',
+                        'kai_order_data': target_order,
+                    }
 
-    await state.set_state(BalanceStates.waiting_for_amount)
-    await state.update_data(payment_method='kassa_ai_card')
+                    # ID заказа на стороне KassaAI
+                    kai_intid = str(target_order.get('fk_order_id') or target_order.get('id'))
 
-    min_amount = settings.KASSA_AI_MIN_AMOUNT_KOPEKS // 100
-    max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS // 100
-    display_name = settings.get_kassa_ai_card_display_name()
+                    # Обновляем статус
+                    payment = await kassa_ai_crud.update_kassa_ai_payment_status(
+                        db=db,
+                        payment=payment,
+                        status='success',
+                        is_paid=True,
+                        kassa_ai_order_id=kai_intid,
+                        payment_system_id=int(target_order.get('curID')) if target_order.get('curID') else None,
+                        callback_payload=callback_payload,
+                    )
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='menu_balance')]
-        ]
-    )
+                    # Финализируем (начисляем баланс)
+                    await self._finalize_kassa_ai_payment(
+                        db,
+                        payment,
+                        intid=kai_intid,
+                        trigger='api_check',
+                    )
+        except Exception as e:
+            logger.error('Error checking KassaAI payment status', e=e)
 
-    await callback.message.edit_text(
-        texts.t(
-            'KASSA_AI_ENTER_AMOUNT',
-            '💳 <b>Пополнение через {name}</b>\n\nВведите сумму пополнения в рублях.\n\nМинимум: {min_amount}₽\nМаксимум: {max_amount}₽',
-        ).format(name=display_name, min_amount=min_amount, max_amount=f'{max_amount:,}'.replace(',', ' ')),
-        parse_mode='HTML',
-        reply_markup=keyboard,
-    )
-
-
-@error_handler
-async def process_kassa_ai_card_quick_amount(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
-):
-    """Process quick amount for KassaAI Card."""
-    texts = get_texts(db_user.language)
-    if not settings.is_kassa_ai_card_enabled():
-        await callback.answer(texts.t('KASSA_AI_NOT_AVAILABLE', 'KassaAI Карта временно недоступна'), show_alert=True)
-        return
-
-    try:
-        parts = callback.data.split('|')
-        amount_kopeks = int(parts[2]) if len(parts) >= 3 else None
-        if amount_kopeks is None:
-            raise ValueError
-    except (ValueError, IndexError):
-        await callback.answer('Invalid amount', show_alert=True)
-        return
-
-    if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
-        support_url = settings.get_support_contact_url()
-        keyboard = []
-        if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
-        await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        )
-        return
-
-    min_amount = settings.KASSA_AI_MIN_AMOUNT_KOPEKS
-    max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS
-    if amount_kopeks < min_amount:
-        await callback.answer(texts.t('AMOUNT_TOO_LOW_SHORT', 'Сумма слишком мала'), show_alert=True)
-        return
-    if amount_kopeks > max_amount:
-        await callback.answer(texts.t('AMOUNT_TOO_HIGH_SHORT', 'Сумма слишком велика'), show_alert=True)
-        return
-
-    await callback.answer()
-    await state.clear()
-    await _create_kassa_ai_payment_and_respond(
-        message_or_callback=callback.message,
-        db_user=db_user,
-        db=db,
-        amount_kopeks=amount_kopeks,
-        edit_message=True,
-        payment_method='kassa_ai_card',
-    )
+        return {
+            'payment': payment,
+            'status': payment.status or 'pending',
+            'is_paid': payment.is_paid,
+        }

@@ -386,7 +386,10 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
 
 
 async def _process_yandex_cid(
-    db: AsyncSession, user: User, yandex_cid, source: str = 'web',
+    db: AsyncSession,
+    user: User,
+    yandex_cid,
+    source: str = 'web',
 ) -> None:
     await yandex_conv.store_cid_and_fire_registration(db, user.id, yandex_cid, source=source)
 

@@ -179,7 +179,6 @@ async def create_purchase(
     return purchase
 
 
-
 async def _fire_yandex_conversions(purchase: GuestPurchase, user_id: int, is_new_user: bool) -> None:
     """Store Yandex CID and fire offline conversions for guest purchases (best-effort)."""
     if not purchase.yandex_cid:
@@ -200,6 +199,7 @@ async def _fire_yandex_conversions(purchase: GuestPurchase, user_id: int, is_new
             yandex_conv.spawn_bg(yandex_conv.fire_registration_bg(user_id))
     except Exception:
         logger.warning('Failed to fire Yandex conversions for guest purchase', purchase_id=purchase.id, exc_info=True)
+
 
 async def fulfill_purchase(
     db: AsyncSession,

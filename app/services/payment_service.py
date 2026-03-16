@@ -672,6 +672,7 @@ class PaymentService(
                 return None
 
             from app.services.kassa_ai_service import KASSA_AI_SUB_METHODS
+
             sub = KASSA_AI_SUB_METHODS.get(payment_method)
             ps_id = sub['payment_system_id'] if sub else None
 

@@ -136,7 +136,9 @@ async def route_payment_by_method(
         from .kassa_ai import process_kassa_ai_payment_amount
 
         async with AsyncSessionLocal() as db:
-            await process_kassa_ai_payment_amount(message, db_user, db, amount_kopeks, state, payment_method=payment_method)
+            await process_kassa_ai_payment_amount(
+                message, db_user, db, amount_kopeks, state, payment_method=payment_method
+            )
         return True
 
     if payment_method == 'riopay':

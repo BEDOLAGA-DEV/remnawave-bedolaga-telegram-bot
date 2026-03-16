@@ -69,9 +69,6 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix='/subscription', tags=['Cabinet Subscription'])
 
 
-
-
-
 def _get_addon_discount_percent(
     user: User,
     category: str,

@@ -1861,6 +1861,7 @@ class Settings(BaseSettings):
 
     def get_riopay_display_name_html(self) -> str:
         return html.escape(self.get_riopay_display_name())
+
     def is_kassa_ai_sbp_enabled(self) -> bool:
         return self.KASSA_AI_SBP_ENABLED and self.is_kassa_ai_enabled()
 

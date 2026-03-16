@@ -64,8 +64,6 @@ ALLOWED_CONTENT_TYPES = {'image/png', 'image/jpeg', 'image/jpg', 'image/webp', '
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB for larger logos
 
 
-
-
 class BrandingResponse(BaseModel):
     """Current branding settings."""
 
@@ -287,6 +285,8 @@ class GiftEnabledUpdate(BaseModel):
     """Request to update gift feature setting."""
 
     enabled: bool
+
+
 class OfflineConvGoal(BaseModel):
     """Offline conversion goal info."""
 
@@ -332,8 +332,6 @@ DEFAULT_THEME_COLORS = {
 }
 
 
-
-
 def ensure_branding_dir():
     """Ensure branding directory exists."""
     BRANDING_DIR.mkdir(parents=True, exist_ok=True)
@@ -370,8 +368,6 @@ def get_logo_path() -> Path | None:
 def has_custom_logo() -> bool:
     """Check if a custom logo exists."""
     return get_logo_path() is not None
-
-
 
 
 @router.get('', response_model=BrandingResponse)
@@ -548,8 +544,6 @@ async def delete_logo(
     )
 
 
-
-
 def validate_hex_color(color: str) -> bool:
     """Validate hex color format."""
     if not color or not isinstance(color, str):
@@ -637,7 +631,6 @@ async def reset_theme_colors(
     return ThemeColorsResponse(**DEFAULT_THEME_COLORS)
 
 
-
 DEFAULT_ENABLED_THEMES = {'dark': True, 'light': True}
 
 
@@ -694,8 +687,6 @@ async def update_enabled_themes(
     return EnabledThemesResponse(**current_themes)
 
 
-
-
 @router.get('/animation', response_model=AnimationEnabledResponse)
 async def get_animation_enabled(
     db: AsyncSession = Depends(get_cabinet_db),
@@ -726,8 +717,6 @@ async def update_animation_enabled(
     logger.info('Admin set animation enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
 
     return AnimationEnabledResponse(enabled=payload.enabled)
-
-
 
 
 @router.get('/animation-config', response_model=AnimationConfigResponse)
@@ -790,8 +779,6 @@ async def update_animation_config(
     return AnimationConfigResponse(**current)
 
 
-
-
 @router.get('/fullscreen', response_model=FullscreenEnabledResponse)
 async def get_fullscreen_enabled(
     db: AsyncSession = Depends(get_cabinet_db),
@@ -822,8 +809,6 @@ async def update_fullscreen_enabled(
     logger.info('Admin set fullscreen enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
 
     return FullscreenEnabledResponse(enabled=payload.enabled)
-
-
 
 
 @router.get('/email-auth', response_model=EmailAuthEnabledResponse)
@@ -857,8 +842,6 @@ async def update_email_auth_enabled(
     logger.info('Admin set email auth enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
 
     return EmailAuthEnabledResponse(enabled=payload.enabled)
-
-
 
 
 @router.get('/telegram-widget', response_model=TelegramWidgetConfigResponse)
@@ -897,8 +880,6 @@ async def get_telegram_widget_config(
         oidc_enabled=oidc_enabled,
         oidc_client_id=oidc_client_id if oidc_enabled else '',
     )
-
-
 
 
 @router.get('/analytics', response_model=AnalyticsCountersResponse)
@@ -986,8 +967,6 @@ async def update_analytics_counters(
     )
 
 
-
-
 @router.get('/lite-mode', response_model=LiteModeEnabledResponse)
 async def get_lite_mode_enabled(
     db: AsyncSession = Depends(get_cabinet_db),
@@ -1019,8 +998,6 @@ async def update_lite_mode_enabled(
     logger.info('Admin set lite mode enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
 
     return LiteModeEnabledResponse(enabled=payload.enabled)
-
-
 
 
 @router.get('/gift-enabled', response_model=GiftEnabledResponse)

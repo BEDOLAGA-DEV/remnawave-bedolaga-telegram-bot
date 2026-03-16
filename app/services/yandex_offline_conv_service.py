@@ -152,7 +152,6 @@ async def _send_event(cid: str, event_action: str) -> bool:
     return await _post_collect(_event_payload(cid, event_action), event_action, cid)
 
 
-
 # --- Background task helpers ---
 
 _background_tasks: set[asyncio.Task] = set()
