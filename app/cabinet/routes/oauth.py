@@ -193,16 +193,24 @@ async def oauth_callback(
     # 5. Find user by provider ID
     user = await get_user_by_oauth_provider(db, provider, user_info.provider_id)
     if user:
+        if user.status != 'active':
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Account is not active')
         logger.info('OAuth login for existing user', provider=provider, user_id=user.id)
-        return await _finalize_oauth_login(db, user, provider, request.campaign_slug, request.referral_code, request.yandex_cid)
+        return await _finalize_oauth_login(
+            db, user, provider, request.campaign_slug, request.referral_code, request.yandex_cid
+        )
 
     # 6. Find user by email (if verified) and link provider
     if user_info.email and user_info.email_verified:
         user = await get_user_by_email(db, user_info.email)
         if user:
+            if user.status != 'active':
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Account is not active')
             await set_user_oauth_provider_id(db, user, provider, user_info.provider_id)
             logger.info('OAuth provider linked to existing email user', provider=provider, user_id=user.id)
-            return await _finalize_oauth_login(db, user, provider, request.campaign_slug, request.referral_code, request.yandex_cid)
+            return await _finalize_oauth_login(
+                db, user, provider, request.campaign_slug, request.referral_code, request.yandex_cid
+            )
 
     # 7. Resolve referral code for new user
     referrer_id = None
@@ -242,4 +250,6 @@ async def oauth_callback(
         referred_by_id=referrer_id,
     )
     logger.info('New OAuth user created', provider=provider, user_id=user.id)
-    return await _finalize_oauth_login(db, user, provider, request.campaign_slug, request.referral_code, request.yandex_cid)
+    return await _finalize_oauth_login(
+        db, user, provider, request.campaign_slug, request.referral_code, request.yandex_cid
+    )
