@@ -93,68 +93,68 @@ def _event_payload(cid: str, event_action: str, *, ev: str | None = None) -> dic
     return payload
 
 
-async def _post_collect(payload: dict[str, str], kind: str, cid: str) -> bool:
+async def _post_collect(client: httpx.AsyncClient, payload: dict[str, str], kind: str, cid: str) -> bool:
     """POST to mc.yandex.ru/collect with retries. Returns True on success."""
     masked = _mask_cid(cid)
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                resp = await client.post(COLLECT_URL, data=payload)
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = await client.post(COLLECT_URL, data=payload)
 
-                if 200 <= resp.status_code < 300:
-                    logger.info('%s %s sent (cid=%s, status=%s)', LOG_PREFIX, kind, masked, resp.status_code)
-                    return True
+            if 200 <= resp.status_code < 300:
+                logger.info('%s %s sent (cid=%s, status=%s)', LOG_PREFIX, kind, masked, resp.status_code)
+                return True
 
-                if 500 <= resp.status_code < 600 and attempt < MAX_RETRIES:
-                    logger.warning(
-                        '%s %s server error (attempt %s/%s, cid=%s, status=%s)',
-                        LOG_PREFIX,
-                        kind,
-                        attempt,
-                        MAX_RETRIES,
-                        masked,
-                        resp.status_code,
-                    )
-                    await asyncio.sleep(RETRY_DELAY)
-                    continue
-
-                logger.error(
-                    '%s %s rejected (cid=%s, status=%s, body=%s)',
-                    LOG_PREFIX,
-                    kind,
-                    masked,
-                    resp.status_code,
-                    resp.text[:200],
-                )
-                return False
-
-            except Exception as exc:
+            if 500 <= resp.status_code < 600 and attempt < MAX_RETRIES:
                 logger.warning(
-                    '%s %s request error (attempt %s/%s, cid=%s): %s',
+                    '%s %s server error (attempt %s/%s, cid=%s, status=%s)',
                     LOG_PREFIX,
                     kind,
                     attempt,
                     MAX_RETRIES,
                     masked,
-                    exc,
+                    resp.status_code,
                 )
-                if attempt < MAX_RETRIES:
-                    await asyncio.sleep(RETRY_DELAY)
-                    continue
-                return False
+                await asyncio.sleep(RETRY_DELAY)
+                continue
+
+            logger.error(
+                '%s %s rejected (cid=%s, status=%s, body=%s)',
+                LOG_PREFIX,
+                kind,
+                masked,
+                resp.status_code,
+                resp.text[:200],
+            )
+            return False
+
+        except Exception as exc:
+            logger.warning(
+                '%s %s request error (attempt %s/%s, cid=%s): %s',
+                LOG_PREFIX,
+                kind,
+                attempt,
+                MAX_RETRIES,
+                masked,
+                exc,
+            )
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY)
+                continue
+            return False
 
     return False
 
 
 async def _send_event(cid: str, event_action: str, *, ev: str | None = None) -> bool:
     """Send a warm-up pageview followed by the actual event."""
-    # Warm-up pageview (required by Metrika to associate the CID)
-    pv_ok = await _post_collect(_pageview_payload(cid), 'pageview', cid)
-    if not pv_ok:
-        logger.warning('%s Pageview failed for %s, skipping event %s', LOG_PREFIX, _mask_cid(cid), event_action)
-        return False
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        # Warm-up pageview (required by Metrika to associate the CID)
+        pv_ok = await _post_collect(client, _pageview_payload(cid), 'pageview', cid)
+        if not pv_ok:
+            logger.warning('%s Pageview failed for %s, skipping event %s', LOG_PREFIX, _mask_cid(cid), event_action)
+            return False
 
-    return await _post_collect(_event_payload(cid, event_action, ev=ev), event_action, cid)
+        return await _post_collect(client, _event_payload(cid, event_action, ev=ev), event_action, cid)
 
 
 # --- Background task helpers ---
