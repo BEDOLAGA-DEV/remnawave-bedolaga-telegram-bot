@@ -28,8 +28,8 @@ from app.database.models import (
     TransactionType,
     User,
 )
-from app.services.subscription_service import SubscriptionService
 from app.services import yandex_offline_conv_service as yandex_conv
+from app.services.subscription_service import SubscriptionService
 
 
 logger = structlog.get_logger(__name__)

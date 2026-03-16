@@ -1,6 +1,5 @@
 """Subscription management routes for cabinet."""
 
-import asyncio
 import base64
 import re
 from datetime import UTC, datetime, timedelta
@@ -11,8 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import PERIOD_PRICES, settings
-from app.services import yandex_offline_conv_service as yandex_conv
+from app.config import settings
 from app.database.crud.server_squad import get_server_squad_by_uuid
 from app.database.crud.subscription import (
     create_paid_subscription,
@@ -24,6 +22,7 @@ from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, ServerSquad, Subscription, Tariff, TransactionType, User
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
