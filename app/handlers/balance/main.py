@@ -145,6 +145,13 @@ async def route_payment_by_method(
             await process_riopay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method == 'external_gateway':
+        from .external_gateway import process_external_gateway_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_external_gateway_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
     return False
 
 
@@ -799,6 +806,16 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.callback_query.register(start_riopay_topup, F.data == 'topup_riopay')
     dp.callback_query.register(process_riopay_quick_amount, F.data.startswith('topup_amount|riopay|'))
+
+    from .external_gateway import (
+        check_external_gateway_status,
+        process_external_gateway_quick_amount,
+        start_external_gateway_topup,
+    )
+
+    dp.callback_query.register(start_external_gateway_topup, F.data == 'topup_external_gateway')
+    dp.callback_query.register(process_external_gateway_quick_amount, F.data.startswith('topup_amount|external_gateway|'))
+    dp.callback_query.register(check_external_gateway_status, F.data.startswith('ext_gw_check|'))
 
     from .mulenpay import check_mulenpay_payment_status
 

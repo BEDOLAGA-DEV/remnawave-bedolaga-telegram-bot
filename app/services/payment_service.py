@@ -34,6 +34,7 @@ from app.services.payment.cloudpayments import CloudPaymentsPaymentMixin
 from app.services.payment.freekassa import FreekassaPaymentMixin
 from app.services.payment.kassa_ai import KassaAiPaymentMixin
 from app.services.payment.riopay import RioPayPaymentMixin
+from app.services.payment.external_gateway import ExternalGatewayPaymentMixin
 from app.services.platega_service import PlategaService
 from app.services.wata_service import WataService
 from app.services.yookassa_service import YooKassaService
@@ -318,6 +319,7 @@ class PaymentService(
     FreekassaPaymentMixin,
     KassaAiPaymentMixin,
     RioPayPaymentMixin,
+    ExternalGatewayPaymentMixin,
 ):
     """Основной интерфейс платежей, делегирующий работу специализированным mixin-ам."""
 
@@ -335,6 +337,13 @@ class PaymentService(
         self.wata_service = WataService() if settings.is_wata_enabled() else None
         self.cloudpayments_service = CloudPaymentsService() if settings.is_cloudpayments_enabled() else None
         self.nalogo_service = NaloGoService() if settings.is_nalogo_enabled() else None
+
+        if settings.is_external_gateway_enabled():
+            from app.services.external_gateway_service import ExternalGatewayService
+
+            self.external_gateway_service = ExternalGatewayService()
+        else:
+            self.external_gateway_service = None
 
         mulenpay_name = settings.get_mulenpay_display_name()
         logger.debug(
