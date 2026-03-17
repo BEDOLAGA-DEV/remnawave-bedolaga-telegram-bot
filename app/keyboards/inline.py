@@ -1718,6 +1718,19 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
+    if settings.is_external_gateway_enabled():
+        ext_gw_name = settings.get_external_gateway_display_name()
+        ext_gw_emoji = settings.EXTERNAL_GATEWAY_DISPLAY_EMOJI
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_EXTERNAL_GATEWAY', f'{ext_gw_emoji} {ext_gw_name}'),
+                    callback_data=_build_callback('external_gateway'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
     if settings.is_support_topup_enabled():
         keyboard.append(
             [

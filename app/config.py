@@ -548,6 +548,25 @@ class Settings(BaseSettings):
     RIOPAY_SUCCESS_URL: str | None = None
     RIOPAY_FAIL_URL: str | None = None
 
+    # External Gateway -- универсальный внешний шлюз
+    EXTERNAL_GATEWAY_ENABLED: bool = False
+    EXTERNAL_GATEWAY_URL: str = ''  # Базовый URL шлюза (https://pay.example.com)
+    EXTERNAL_GATEWAY_API_KEY: str = ''
+    EXTERNAL_GATEWAY_WEBHOOK_SECRET: str = ''
+    EXTERNAL_GATEWAY_DISPLAY_NAME: str = 'Оплата картой'
+    EXTERNAL_GATEWAY_DISPLAY_EMOJI: str = '💳'
+    EXTERNAL_GATEWAY_CURRENCY: str = 'RUB'
+    EXTERNAL_GATEWAY_MIN_AMOUNT_KOPEKS: int = 10000
+    EXTERNAL_GATEWAY_MAX_AMOUNT_KOPEKS: int = 10000000
+    EXTERNAL_GATEWAY_WEBHOOK_PATH: str = '/ext-gateway-callback'
+    EXTERNAL_GATEWAY_WEBHOOK_HOST: str = '0.0.0.0'
+    EXTERNAL_GATEWAY_WEBHOOK_PORT: int = 8090
+    EXTERNAL_GATEWAY_CREATE_PATH: str = '/create.php'
+    EXTERNAL_GATEWAY_STATUS_PATH: str = '/status.php'
+    EXTERNAL_GATEWAY_RETURN_URL: str = ''
+    EXTERNAL_GATEWAY_PAYMENT_TIMEOUT_SECONDS: int = 3600
+    EXTERNAL_GATEWAY_PAYMENT_METHOD: str = ''
+
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
     CABINET_BUTTON_STYLE: str = ''
@@ -1849,6 +1868,19 @@ class Settings(BaseSettings):
 
     def get_riopay_display_name_html(self) -> str:
         return html.escape(self.get_riopay_display_name())
+
+    def is_external_gateway_enabled(self) -> bool:
+        return (
+            self.EXTERNAL_GATEWAY_ENABLED
+            and bool(self.EXTERNAL_GATEWAY_URL)
+            and bool(self.EXTERNAL_GATEWAY_API_KEY)
+        )
+
+    def get_external_gateway_display_name(self) -> str:
+        return self.EXTERNAL_GATEWAY_DISPLAY_NAME or 'Оплата картой'
+
+    def get_external_gateway_display_name_html(self) -> str:
+        return html.escape(self.get_external_gateway_display_name())
 
     def is_payment_verification_auto_check_enabled(self) -> bool:
         return self.PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED
