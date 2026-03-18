@@ -305,7 +305,7 @@ class ReferralContestService:
                 chat_id=chat_id,
                 text='\n'.join(lines),
                 disable_web_page_preview=True,
-                message_thread_id=settings.ADMIN_NOTIFICATIONS_TOPIC_ID,
+                message_thread_id=settings.ADMIN_NOTIFICATIONS_PROMO_TOPIC_ID or settings.ADMIN_NOTIFICATIONS_TOPIC_ID,
             )
         except Exception as exc:
             logger.error('Не удалось отправить админскую сводку конкурса', exc=exc)

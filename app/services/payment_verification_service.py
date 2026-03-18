@@ -27,6 +27,8 @@ from app.database.models import (
     Pal24Payment,
     PaymentMethod,
     PlategaPayment,
+    RioPayPayment,
+    SeverPayPayment,
     Transaction,
     TransactionType,
     User,
@@ -72,6 +74,8 @@ SUPPORTED_MANUAL_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.CLOUDPAYMENTS,
         PaymentMethod.FREEKASSA,
         PaymentMethod.KASSA_AI,
+        PaymentMethod.RIOPAY,
+        PaymentMethod.SEVERPAY,
     }
 )
 
@@ -90,6 +94,8 @@ SUPPORTED_AUTO_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         # Payments are processed via webhook (wata_webhook.py).
         PaymentMethod.FREEKASSA,
         PaymentMethod.KASSA_AI,
+        PaymentMethod.RIOPAY,
+        PaymentMethod.SEVERPAY,
     }
 )
 
@@ -115,6 +121,10 @@ def method_display_name(method: PaymentMethod) -> str:
         return 'Freekassa'
     if method == PaymentMethod.KASSA_AI:
         return settings.get_kassa_ai_display_name()
+    if method == PaymentMethod.RIOPAY:
+        return settings.get_riopay_display_name()
+    if method == PaymentMethod.SEVERPAY:
+        return settings.get_severpay_display_name()
     if method == PaymentMethod.TELEGRAM_STARS:
         return 'Telegram Stars'
     return method.value
@@ -141,6 +151,10 @@ def _method_is_enabled(method: PaymentMethod) -> bool:
         return settings.is_freekassa_enabled()
     if method == PaymentMethod.KASSA_AI:
         return settings.is_kassa_ai_enabled()
+    if method == PaymentMethod.RIOPAY:
+        return settings.is_riopay_enabled()
+    if method == PaymentMethod.SEVERPAY:
+        return settings.is_severpay_enabled()
     return False
 
 
@@ -374,6 +388,20 @@ def _is_kassa_ai_pending(payment: KassaAiPayment) -> bool:
         return False
     status = (payment.status or '').lower()
     return status in {'pending', 'created', 'processing'}
+
+
+def _is_severpay_pending(payment: SeverPayPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'pending', 'processing'}
+
+
+def _is_riopay_pending(payment: RioPayPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'pending'}
 
 
 def _parse_cryptobot_amount_kopeks(payment: CryptoBotPayment) -> int:
@@ -693,6 +721,58 @@ async def _fetch_kassa_ai_payments(db: AsyncSession, cutoff: datetime) -> list[P
     return records
 
 
+async def _fetch_riopay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(RioPayPayment)
+        .options(selectinload(RioPayPayment.user))
+        .where(RioPayPayment.created_at >= cutoff)
+        .order_by(desc(RioPayPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_riopay_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.RIOPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _fetch_severpay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(SeverPayPayment)
+        .options(selectinload(SeverPayPayment.user))
+        .where(SeverPayPayment.created_at >= cutoff)
+        .order_by(desc(SeverPayPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_severpay_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.SEVERPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 async def _fetch_stars_transactions(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
     stmt = (
         select(Transaction)
@@ -740,6 +820,8 @@ async def list_recent_pending_payments(
         await _fetch_cloudpayments_payments(db, cutoff),
         await _fetch_freekassa_payments(db, cutoff),
         await _fetch_kassa_ai_payments(db, cutoff),
+        await _fetch_riopay_payments(db, cutoff),
+        await _fetch_severpay_payments(db, cutoff),
         await _fetch_stars_transactions(db, cutoff),
     )
 
@@ -908,6 +990,36 @@ async def get_payment_record(
             is_paid=bool(payment.is_paid),
         )
 
+    if method == PaymentMethod.RIOPAY:
+        payment = await db.get(RioPayPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
+    if method == PaymentMethod.SEVERPAY:
+        payment = await db.get(SeverPayPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
     if method == PaymentMethod.TELEGRAM_STARS:
         transaction = await db.get(Transaction, local_payment_id)
         if not transaction:
@@ -966,6 +1078,20 @@ async def run_manual_check(
         elif method == PaymentMethod.KASSA_AI:
             result = await payment_service.get_kassa_ai_payment_status(db, local_payment_id)
             payment = result.get('payment') if result else None
+        elif method == PaymentMethod.SEVERPAY:
+            severpay_payment = await db.get(SeverPayPayment, local_payment_id)
+            if severpay_payment:
+                result = await payment_service.check_severpay_payment_status(db, severpay_payment.order_id)
+                payment = result.get('payment') if result else None
+            else:
+                payment = None
+        elif method == PaymentMethod.RIOPAY:
+            riopay_payment = await db.get(RioPayPayment, local_payment_id)
+            if riopay_payment:
+                result = await payment_service.check_riopay_payment_status(db, riopay_payment.order_id)
+                payment = result.get('payment') if result else None
+            else:
+                payment = None
         else:
             logger.warning('Manual check requested for unsupported method', method=method)
             return None

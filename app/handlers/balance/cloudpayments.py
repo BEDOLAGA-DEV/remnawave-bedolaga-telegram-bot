@@ -129,9 +129,9 @@ async def process_cloudpayments_payment_amount(
     state: FSMContext,
 ):
     """
-    Process payment amount directly (called from quick_amount handlers).
+    Process payment amount directly.
 
-    Similar to process_heleket_payment_amount and other payment handlers.
+    Similar to other payment amount handlers.
     """
     texts = get_texts(db_user.language)
 
@@ -167,6 +167,7 @@ async def process_cloudpayments_payment_amount(
                 'AMOUNT_TOO_LOW',
                 'Минимальная сумма пополнения: {min_amount:.0f}₽',
             ).format(min_amount=min_rub),
+            reply_markup=get_back_keyboard(db_user.language),
         )
         return
 
@@ -177,6 +178,7 @@ async def process_cloudpayments_payment_amount(
                 'AMOUNT_TOO_HIGH',
                 'Максимальная сумма пополнения: {max_amount:,.0f}₽',
             ).format(max_amount=max_rub),
+            reply_markup=get_back_keyboard(db_user.language),
         )
         return
 
@@ -195,7 +197,7 @@ async def start_cloudpayments_payment(
     """
     Start CloudPayments payment flow.
 
-    Shows amount input prompt or quick amount buttons.
+    Shows amount input prompt.
     """
     texts = get_texts(db_user.language)
 
@@ -290,6 +292,7 @@ async def process_cloudpayments_amount(
                 'AMOUNT_TOO_LOW',
                 'Минимальная сумма пополнения: {min_amount:.0f}₽',
             ).format(min_amount=min_rub),
+            reply_markup=get_back_keyboard(db_user.language),
             parse_mode='HTML',
         )
         return
@@ -301,6 +304,7 @@ async def process_cloudpayments_amount(
                 'AMOUNT_TOO_HIGH',
                 'Максимальная сумма пополнения: {max_amount:,.0f}₽',
             ).format(max_amount=max_rub),
+            reply_markup=get_back_keyboard(db_user.language),
             parse_mode='HTML',
         )
         return
@@ -371,123 +375,3 @@ async def process_cloudpayments_amount(
     )
 
     logger.info('CloudPayments payment created: user amount=₽', telegram_id=db_user.telegram_id, amount_rub=amount_rub)
-
-
-@error_handler
-async def handle_cloudpayments_quick_amount(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
-):
-    """
-    Handle quick amount selection for CloudPayments.
-
-    Called when user clicks a predefined amount button.
-    """
-    texts = get_texts(db_user.language)
-
-    if not settings.is_cloudpayments_enabled():
-        await callback.answer(
-            texts.t('CLOUDPAYMENTS_NOT_AVAILABLE', 'CloudPayments временно недоступен'),
-            show_alert=True,
-        )
-        return
-
-    # Extract amount from callback data: topup_amount|cloudpayments|{amount_kopeks}
-    try:
-        parts = callback.data.split('|')
-        if len(parts) >= 3:
-            amount_kopeks = int(parts[2])
-        else:
-            await callback.answer('Invalid callback data', show_alert=True)
-            return
-    except (ValueError, IndexError):
-        await callback.answer('Invalid amount', show_alert=True)
-        return
-
-    amount_rub = amount_kopeks / 100
-
-    # Validate amount
-    if amount_kopeks < settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS:
-        await callback.answer(
-            texts.t('AMOUNT_TOO_LOW_SHORT', 'Сумма слишком мала'),
-            show_alert=True,
-        )
-        return
-
-    if amount_kopeks > settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS:
-        await callback.answer(
-            texts.t('AMOUNT_TOO_HIGH_SHORT', 'Сумма слишком велика'),
-            show_alert=True,
-        )
-        return
-
-    await callback.answer()
-
-    # Create payment
-    payment_service = PaymentService()
-
-    description = settings.PAYMENT_BALANCE_TEMPLATE.format(
-        service_name=settings.PAYMENT_SERVICE_NAME,
-        description=settings.CLOUDPAYMENTS_DESCRIPTION,
-    )
-
-    result = await payment_service.create_cloudpayments_payment(
-        db=db,
-        user_id=db_user.id,
-        amount_kopeks=amount_kopeks,
-        description=description,
-        telegram_id=db_user.telegram_id,
-        language=db_user.language,
-    )
-
-    if not result:
-        await callback.message.edit_text(
-            texts.t(
-                'PAYMENT_CREATE_ERROR',
-                'Не удалось создать платёж. Попробуйте позже.',
-            ),
-            reply_markup=get_back_keyboard(db_user.language),
-            parse_mode='HTML',
-        )
-        return
-
-    payment_url = result.get('payment_url')
-
-    # Create keyboard with payment button
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=texts.t(
-                        'PAY_BUTTON',
-                        '💳 Оплатить {amount}₽',
-                    ).format(amount=f'{amount_rub:.0f}'),
-                    url=payment_url,
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_BUTTON', '◀️ Назад'),
-                    callback_data='menu_balance',
-                )
-            ],
-        ]
-    )
-
-    await callback.message.edit_text(
-        texts.t(
-            'CLOUDPAYMENTS_PAYMENT_CREATED',
-            '💳 <b>Оплата банковской картой</b>\n\n'
-            'Сумма: <b>{amount}₽</b>\n\n'
-            'Нажмите кнопку ниже для оплаты.\n'
-            'После успешной оплаты баланс будет пополнен автоматически.',
-        ).format(amount=f'{amount_rub:.2f}'),
-        reply_markup=keyboard,
-        parse_mode='HTML',
-    )
-
-    logger.info(
-        'CloudPayments payment created (quick): user amount=₽', telegram_id=db_user.telegram_id, amount_rub=amount_rub
-    )

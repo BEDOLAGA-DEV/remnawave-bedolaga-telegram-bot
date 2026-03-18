@@ -317,7 +317,17 @@ async def sync_with_remnawave(db: AsyncSession, remnawave_squads: list[dict]) ->
             )
             created += 1
 
-    removed_servers = [server for uuid, server in existing_servers.items() if uuid not in remnawave_uuids]
+    # Protect external squads referenced by tariffs from being removed during sync
+    tariff_ext_uuids_result = await db.execute(
+        select(Tariff.external_squad_uuid).where(Tariff.external_squad_uuid.isnot(None))
+    )
+    protected_uuids = {row[0] for row in tariff_ext_uuids_result.fetchall()}
+
+    removed_servers = [
+        server
+        for uuid, server in existing_servers.items()
+        if uuid not in remnawave_uuids and uuid not in protected_uuids
+    ]
 
     if removed_servers:
         removed_ids = [server.id for server in removed_servers]

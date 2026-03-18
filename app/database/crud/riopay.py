@@ -15,7 +15,7 @@ logger = structlog.get_logger(__name__)
 async def create_riopay_payment(
     db: AsyncSession,
     *,
-    user_id: int,
+    user_id: int | None,
     order_id: str,
     amount_kopeks: int,
     currency: str = 'RUB',

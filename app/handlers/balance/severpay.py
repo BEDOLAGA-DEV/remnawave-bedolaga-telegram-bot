@@ -1,4 +1,4 @@
-"""Handler for RioPay balance top-up."""
+"""Handler for SeverPay balance top-up."""
 
 import structlog
 from aiogram import types
@@ -31,7 +31,7 @@ def _check_topup_restriction(db_user: User, texts) -> InlineKeyboardMarkup | Non
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-async def _create_riopay_payment_and_respond(
+async def _create_severpay_payment_and_respond(
     message_or_callback,
     db_user: User,
     db: AsyncSession,
@@ -39,7 +39,7 @@ async def _create_riopay_payment_and_respond(
     edit_message: bool = False,
 ):
     """
-    Common logic for creating RioPay payment and sending response.
+    Common logic for creating SeverPay payment and sending response.
     """
     texts = get_texts(db_user.language)
     amount_rub = amount_kopeks / 100
@@ -52,7 +52,7 @@ async def _create_riopay_payment_and_respond(
         description='Пополнение баланса',
     )
 
-    result = await payment_service.create_riopay_payment(
+    result = await payment_service.create_severpay_payment(
         db=db,
         user_id=db_user.id,
         amount_kopeks=amount_kopeks,
@@ -80,7 +80,7 @@ async def _create_riopay_payment_and_respond(
         return
 
     payment_url = result.get('payment_url')
-    display_name = settings.get_riopay_display_name()
+    display_name = settings.get_severpay_display_name()
 
     # Create keyboard with payment button
     keyboard = InlineKeyboardMarkup(
@@ -104,7 +104,7 @@ async def _create_riopay_payment_and_respond(
     )
 
     response_text = texts.t(
-        'RIOPAY_PAYMENT_CREATED',
+        'SEVERPAY_PAYMENT_CREATED',
         '💳 <b>Оплата через {name}</b>\n\n'
         'Сумма: <b>{amount}₽</b>\n\n'
         'Нажмите кнопку ниже для оплаты.\n'
@@ -124,11 +124,11 @@ async def _create_riopay_payment_and_respond(
             parse_mode='HTML',
         )
 
-    logger.info('RioPay payment created', telegram_id=db_user.telegram_id, amount_rub=amount_rub)
+    logger.info('SeverPay payment created', telegram_id=db_user.telegram_id, amount_rub=amount_rub)
 
 
 @error_handler
-async def process_riopay_payment_amount(
+async def process_severpay_payment_amount(
     message: types.Message,
     db_user: User,
     db: AsyncSession,
@@ -152,8 +152,8 @@ async def process_riopay_payment_amount(
         return
 
     # Validate amount
-    min_amount = settings.RIOPAY_MIN_AMOUNT_KOPEKS
-    max_amount = settings.RIOPAY_MAX_AMOUNT_KOPEKS
+    min_amount = settings.SEVERPAY_MIN_AMOUNT_KOPEKS
+    max_amount = settings.SEVERPAY_MAX_AMOUNT_KOPEKS
 
     if amount_kopeks < min_amount:
         await message.answer(
@@ -179,7 +179,7 @@ async def process_riopay_payment_amount(
 
     await state.clear()
 
-    await _create_riopay_payment_and_respond(
+    await _create_severpay_payment_and_respond(
         message_or_callback=message,
         db_user=db_user,
         db=db,
@@ -189,14 +189,14 @@ async def process_riopay_payment_amount(
 
 
 @error_handler
-async def start_riopay_topup(
+async def start_severpay_topup(
     callback: types.CallbackQuery,
     db_user: User,
     db: AsyncSession,
     state: FSMContext,
 ):
     """
-    Start RioPay top-up process - ask for amount.
+    Start SeverPay top-up process - ask for amount.
     """
     texts = get_texts(db_user.language)
 
@@ -211,11 +211,11 @@ async def start_riopay_topup(
         return
 
     await state.set_state(BalanceStates.waiting_for_amount)
-    await state.update_data(payment_method='riopay')
+    await state.update_data(payment_method='severpay')
 
-    min_amount = settings.RIOPAY_MIN_AMOUNT_KOPEKS // 100
-    max_amount = settings.RIOPAY_MAX_AMOUNT_KOPEKS // 100
-    display_name = settings.get_riopay_display_name()
+    min_amount = settings.SEVERPAY_MIN_AMOUNT_KOPEKS // 100
+    max_amount = settings.SEVERPAY_MAX_AMOUNT_KOPEKS // 100
+    display_name = settings.get_severpay_display_name()
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -230,7 +230,7 @@ async def start_riopay_topup(
 
     await callback.message.edit_text(
         texts.t(
-            'RIOPAY_ENTER_AMOUNT',
+            'SEVERPAY_ENTER_AMOUNT',
             '💳 <b>Пополнение через {name}</b>\n\n'
             'Введите сумму пополнения в рублях.\n\n'
             'Минимум: {min_amount}₽\n'
@@ -242,43 +242,4 @@ async def start_riopay_topup(
         ),
         parse_mode='HTML',
         reply_markup=keyboard,
-    )
-
-
-@error_handler
-async def process_riopay_custom_amount(
-    message: types.Message,
-    db_user: User,
-    db: AsyncSession,
-    state: FSMContext,
-):
-    """
-    Process custom amount input for RioPay payment.
-    """
-    data = await state.get_data()
-    if data.get('payment_method') != 'riopay':
-        return
-
-    texts = get_texts(db_user.language)
-
-    try:
-        amount_text = message.text.replace(',', '.').replace(' ', '').strip()
-        amount_rubles = float(amount_text)
-        amount_kopeks = round(amount_rubles * 100)
-    except (ValueError, TypeError):
-        await message.answer(
-            texts.t(
-                'PAYMENT_INVALID_AMOUNT',
-                'Введите корректную сумму числом.',
-            ),
-            parse_mode='HTML',
-        )
-        return
-
-    await process_riopay_payment_amount(
-        message=message,
-        db_user=db_user,
-        db=db,
-        amount_kopeks=amount_kopeks,
-        state=state,
     )

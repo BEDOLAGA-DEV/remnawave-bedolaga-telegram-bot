@@ -61,13 +61,6 @@ async def start_wata_payment(
 
     keyboard = get_back_keyboard(db_user.language)
 
-    if settings.is_quick_amount_buttons_enabled():
-        from .main import get_quick_amount_buttons
-
-        quick_amount_buttons = await get_quick_amount_buttons(db_user.language, db_user)
-        if quick_amount_buttons:
-            keyboard.inline_keyboard = quick_amount_buttons + keyboard.inline_keyboard
-
     await callback.message.edit_text(
         message_text,
         reply_markup=keyboard,
@@ -120,7 +113,8 @@ async def process_wata_payment_amount(
             texts.t(
                 'WATA_AMOUNT_TOO_LOW',
                 'Минимальная сумма пополнения: {amount}',
-            ).format(amount=settings.format_price(settings.WATA_MIN_AMOUNT_KOPEKS))
+            ).format(amount=settings.format_price(settings.WATA_MIN_AMOUNT_KOPEKS)),
+            reply_markup=get_back_keyboard(db_user.language),
         )
         return
 
@@ -129,7 +123,8 @@ async def process_wata_payment_amount(
             texts.t(
                 'WATA_AMOUNT_TOO_HIGH',
                 'Максимальная сумма пополнения: {amount}',
-            ).format(amount=settings.format_price(settings.WATA_MAX_AMOUNT_KOPEKS))
+            ).format(amount=settings.format_price(settings.WATA_MAX_AMOUNT_KOPEKS)),
+            reply_markup=get_back_keyboard(db_user.language),
         )
         return
 

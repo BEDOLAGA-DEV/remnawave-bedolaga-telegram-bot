@@ -72,13 +72,6 @@ async def start_heleket_payment(
 
     keyboard = get_back_keyboard(db_user.language)
 
-    if settings.is_quick_amount_buttons_enabled():
-        from .main import get_quick_amount_buttons
-
-        quick_buttons = await get_quick_amount_buttons(db_user.language, db_user)
-        if quick_buttons:
-            keyboard.inline_keyboard = quick_buttons + keyboard.inline_keyboard
-
     await callback.message.edit_text(
         '\n'.join(filter(None, message_lines)),
         reply_markup=keyboard,
@@ -129,11 +122,13 @@ async def process_heleket_payment_amount(
     amount_rubles = amount_kopeks / 100
 
     if amount_rubles < 100:
-        await message.answer('Минимальная сумма пополнения: 100 ₽')
+        await message.answer('Минимальная сумма пополнения: 100 ₽', reply_markup=get_back_keyboard(db_user.language))
         return
 
     if amount_rubles > 100000:
-        await message.answer('Максимальная сумма пополнения: 100,000 ₽')
+        await message.answer(
+            'Максимальная сумма пополнения: 100,000 ₽', reply_markup=get_back_keyboard(db_user.language)
+        )
         return
 
     payment_service = PaymentService(message.bot)

@@ -5573,6 +5573,30 @@ async def update_subscription_servers_endpoint(
         servers_discount,
     )
 
+    # Enforce promo group authorization: drop any UUID not in the user's allowed set.
+    # Prevents users from retaining servers removed from their promo group.
+    authorized_servers = await get_available_server_squads(db, promo_group_id=getattr(user, 'promo_group_id', None))
+    authorized_uuids = {s.squad_uuid for s in authorized_servers}
+    selected_order = [uuid for uuid in selected_order if uuid in authorized_uuids]
+    if not selected_order:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'validation_error',
+                'message': 'At least one authorized server must be selected',
+            },
+        )
+    # Recompute added/removed after authorization filter
+    selected_set = set(selected_order)
+    added = [uuid for uuid in selected_order if uuid not in current_set]
+    removed = [uuid for uuid in current_squads if uuid not in selected_set]
+
+    if not added and not removed:
+        return MiniAppSubscriptionUpdateResponse(
+            success=True,
+            message='No changes',
+        )
+
     invalid_servers = [uuid for uuid in selected_order if uuid not in catalog]
     if invalid_servers:
         raise HTTPException(
@@ -5691,7 +5715,7 @@ async def update_subscription_servers_endpoint(
         pass
 
     service = SubscriptionService()
-    await service.update_remnawave_user(db, subscription)
+    await service.update_remnawave_user(db, subscription, sync_squads=True)
 
     await with_admin_notification_service(
         lambda service: service.send_subscription_update_notification(
@@ -6500,6 +6524,7 @@ async def purchase_tariff_endpoint(
         subscription,
         reset_traffic=True,
         reset_reason='покупка тарифа (miniapp)',
+        sync_squads=True,
     )
 
     # Сохраняем корзину для автопродления
@@ -6873,6 +6898,7 @@ async def switch_tariff_endpoint(
             subscription,
             reset_traffic=should_reset_traffic,
             reset_reason='смена тарифа',
+            sync_squads=True,
         )
     except Exception as e:
         logger.error('Ошибка синхронизации с RemnaWave при смене тарифа', error=e)

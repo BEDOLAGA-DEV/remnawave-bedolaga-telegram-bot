@@ -46,30 +46,12 @@ async def start_yookassa_payment(callback: types.CallbackQuery, db_user: User, s
     min_amount_rub = settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100
     max_amount_rub = settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100
 
-    # Формируем текст сообщения в зависимости от настройки
-    if settings.is_quick_amount_buttons_enabled():
-        message_text = (
-            f'💳 <b>Оплата банковской картой</b>\n\n'
-            f'Выберите сумму пополнения или введите вручную сумму '
-            f'от {min_amount_rub:.0f} до {max_amount_rub:,.0f} рублей:'
-        )
-    else:
-        message_text = (
-            f'💳 <b>Оплата банковской картой</b>\n\n'
-            f'Введите сумму для пополнения от {min_amount_rub:.0f} до {max_amount_rub:,.0f} рублей:'
-        )
+    message_text = (
+        f'💳 <b>Оплата банковской картой</b>\n\n'
+        f'Введите сумму для пополнения от {min_amount_rub:.0f} до {max_amount_rub:,.0f} рублей:'
+    )
 
-    # Создаем клавиатуру
     keyboard = get_back_keyboard(db_user.language)
-
-    # Если включен быстрый выбор суммы и не отключены кнопки, добавляем кнопки
-    if settings.is_quick_amount_buttons_enabled():
-        from .main import get_quick_amount_buttons
-
-        quick_amount_buttons = await get_quick_amount_buttons(db_user.language, db_user)
-        if quick_amount_buttons:
-            # Вставляем кнопки быстрого выбора перед кнопкой "Назад"
-            keyboard.inline_keyboard = quick_amount_buttons + keyboard.inline_keyboard
 
     await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
 
@@ -110,30 +92,12 @@ async def start_yookassa_sbp_payment(callback: types.CallbackQuery, db_user: Use
     min_amount_rub = settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100
     max_amount_rub = settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100
 
-    # Формируем текст сообщения в зависимости от настройки
-    if settings.is_quick_amount_buttons_enabled():
-        message_text = (
-            f'🏦 <b>Оплата через СБП</b>\n\n'
-            f'Выберите сумму пополнения или введите вручную сумму '
-            f'от {min_amount_rub:.0f} до {max_amount_rub:,.0f} рублей:'
-        )
-    else:
-        message_text = (
-            f'🏦 <b>Оплата через СБП</b>\n\n'
-            f'Введите сумму для пополнения от {min_amount_rub:.0f} до {max_amount_rub:,.0f} рублей:'
-        )
+    message_text = (
+        f'🏦 <b>Оплата через СБП</b>\n\n'
+        f'Введите сумму для пополнения от {min_amount_rub:.0f} до {max_amount_rub:,.0f} рублей:'
+    )
 
-    # Создаем клавиатуру
     keyboard = get_back_keyboard(db_user.language)
-
-    # Если включен быстрый выбор суммы и не отключены кнопки, добавляем кнопки
-    if settings.is_quick_amount_buttons_enabled():
-        from .main import get_quick_amount_buttons
-
-        quick_amount_buttons = await get_quick_amount_buttons(db_user.language, db_user)
-        if quick_amount_buttons:
-            # Вставляем кнопки быстрого выбора перед кнопкой "Назад"
-            keyboard.inline_keyboard = quick_amount_buttons + keyboard.inline_keyboard
 
     await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
 
@@ -178,12 +142,18 @@ async def process_yookassa_payment_amount(
 
     if amount_kopeks < settings.YOOKASSA_MIN_AMOUNT_KOPEKS:
         min_rubles = settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100
-        await message.answer(f'❌ Минимальная сумма для оплаты картой: {min_rubles:.0f} ₽')
+        await message.answer(
+            f'❌ Минимальная сумма для оплаты картой: {min_rubles:.0f} ₽',
+            reply_markup=get_back_keyboard(db_user.language),
+        )
         return
 
     if amount_kopeks > settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
         max_rubles = settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100
-        await message.answer(f'❌ Максимальная сумма для оплаты картой: {max_rubles:,.0f} ₽'.replace(',', ' '))
+        await message.answer(
+            f'❌ Максимальная сумма для оплаты картой: {max_rubles:,.0f} ₽'.replace(',', ' '),
+            reply_markup=get_back_keyboard(db_user.language),
+        )
         return
 
     try:
@@ -327,12 +297,18 @@ async def process_yookassa_sbp_payment_amount(
 
     if amount_kopeks < settings.YOOKASSA_MIN_AMOUNT_KOPEKS:
         min_rubles = settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100
-        await message.answer(f'❌ Минимальная сумма для оплаты через СБП: {min_rubles:.0f} ₽')
+        await message.answer(
+            f'❌ Минимальная сумма для оплаты через СБП: {min_rubles:.0f} ₽',
+            reply_markup=get_back_keyboard(db_user.language),
+        )
         return
 
     if amount_kopeks > settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
         max_rubles = settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100
-        await message.answer(f'❌ Максимальная сумма для оплаты через СБП: {max_rubles:,.0f} ₽'.replace(',', ' '))
+        await message.answer(
+            f'❌ Максимальная сумма для оплаты через СБП: {max_rubles:,.0f} ₽'.replace(',', ' '),
+            reply_markup=get_back_keyboard(db_user.language),
+        )
         return
 
     try:

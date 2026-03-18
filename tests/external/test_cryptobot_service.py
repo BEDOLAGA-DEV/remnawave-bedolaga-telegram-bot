@@ -27,7 +27,6 @@ def anyio_backend() -> str:
 def _enable_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'CRYPTOBOT_API_TOKEN', 'token', raising=False)
     monkeypatch.setattr(type(settings), 'get_cryptobot_base_url', lambda self: 'https://cryptobot.test', raising=False)
-    monkeypatch.setattr(settings, 'CRYPTOBOT_WEBHOOK_SECRET', 'secret', raising=False)
 
 
 @pytest.mark.anyio('asyncio')
@@ -69,7 +68,7 @@ async def test_make_request_returns_none_without_token(monkeypatch: pytest.Monke
 
 
 def test_verify_webhook_signature(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, 'CRYPTOBOT_WEBHOOK_SECRET', 'supersecret', raising=False)
+    monkeypatch.setattr(settings, 'CRYPTOBOT_API_TOKEN', 'supersecret', raising=False)
     service = CryptoBotService()
 
     body = '{"invoice_id":1}'
@@ -80,7 +79,7 @@ def test_verify_webhook_signature(monkeypatch: pytest.MonkeyPatch) -> None:
     assert service.verify_webhook_signature(body, 'invalid') is False
 
 
-def test_verify_webhook_signature_without_secret(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, 'CRYPTOBOT_WEBHOOK_SECRET', '', raising=False)
+def test_verify_webhook_signature_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, 'CRYPTOBOT_API_TOKEN', '', raising=False)
     service = CryptoBotService()
     assert service.verify_webhook_signature('{}', 'anything') is True

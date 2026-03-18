@@ -51,6 +51,7 @@ from app.services.privacy_policy_service import PrivacyPolicyService
 from app.services.referral_service import process_referral_registration
 from app.services.subscription_service import SubscriptionService
 from app.services.support_settings_service import SupportSettingsService
+from app.services.web_auth_service import WEB_AUTH_TOKEN_MIN_LENGTH, link_web_auth_token
 from app.states import RegistrationStates
 from app.utils.promo_offer import (
     build_promo_offer_hint,
@@ -195,6 +196,80 @@ async def _claim_phantom_user(
             )
 
     return True, phantom
+
+
+async def _merge_phantom_into_active_user(
+    db: AsyncSession,
+    phantom: 'User',
+    active_user: 'User',
+) -> None:
+    """Merge a phantom user (created by guest landing purchase) into an existing active user.
+
+    Transfers GuestPurchase records and handles subscription conflict.
+    The phantom is soft-deleted (status=DELETED, username cleared) to preserve
+    audit trail and avoid CASCADE deletion of payment/transaction records.
+    """
+    from sqlalchemy import update
+
+    logger.info(
+        'Merging phantom user into active user',
+        phantom_id=phantom.id,
+        active_user_id=active_user.id,
+        phantom_username=phantom.username,
+    )
+
+    # Transfer GuestPurchase.user_id references
+    await db.execute(update(GuestPurchase).where(GuestPurchase.user_id == phantom.id).values(user_id=active_user.id))
+
+    # Transfer GuestPurchase.buyer_user_id references
+    await db.execute(
+        update(GuestPurchase).where(GuestPurchase.buyer_user_id == phantom.id).values(buyer_user_id=active_user.id)
+    )
+
+    # Transfer balance
+    if phantom.balance_kopeks and phantom.balance_kopeks > 0:
+        active_user.balance_kopeks = (active_user.balance_kopeks or 0) + phantom.balance_kopeks
+        logger.info('Transferred balance from phantom', amount_kopeks=phantom.balance_kopeks)
+
+    # Handle subscription
+    await db.refresh(phantom, ['subscription'])
+    await db.refresh(active_user, ['subscription'])
+
+    if phantom.subscription and not active_user.subscription:
+        # Transfer subscription from phantom to active user
+        phantom.subscription.user_id = active_user.id
+        # Transfer remnawave_uuid
+        if phantom.remnawave_uuid and not active_user.remnawave_uuid:
+            active_user.remnawave_uuid = phantom.remnawave_uuid
+            phantom.remnawave_uuid = None
+        await db.flush()
+        logger.info(
+            'Transferred subscription from phantom to active user',
+            subscription_id=phantom.subscription.id,
+        )
+    elif phantom.subscription:
+        # Both have subscriptions — disable phantom's Remnawave user and free server slots
+        logger.warning(
+            'Both phantom and active user have subscriptions, disabling phantom',
+            phantom_subscription_id=phantom.subscription.id,
+            active_subscription_id=active_user.subscription.id,
+        )
+        if phantom.remnawave_uuid:
+            try:
+                subscription_service = SubscriptionService()
+                await subscription_service.disable_remnawave_user(phantom.remnawave_uuid)
+            except Exception as exc:
+                logger.warning('Failed to disable phantom Remnawave user', error=str(exc))
+        await decrement_subscription_server_counts(db, phantom.subscription)
+
+    # Soft-delete phantom: clear identifiers to prevent future matches,
+    # preserve record for audit trail and avoid CASCADE deletion of payments/transactions
+    phantom.status = UserStatus.DELETED.value
+    phantom.username = None
+    phantom.remnawave_uuid = None
+    await db.flush()
+
+    logger.info('Phantom user merged and soft-deleted', phantom_id=phantom.id, active_user_id=active_user.id)
 
 
 def _calculate_subscription_flags(subscription):
@@ -533,6 +608,40 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             await state.update_data(pending_gift_token=gift_token)
             start_parameter = None  # Don't treat as campaign or referral
 
+    # Handle web auth deep links: /start webauth_{token}
+    if start_parameter and start_parameter.startswith('webauth_'):
+        web_auth_token = start_parameter.removeprefix('webauth_')
+        if len(web_auth_token) >= WEB_AUTH_TOKEN_MIN_LENGTH:
+            user = db_user or await get_user_by_telegram_id(db, message.from_user.id)
+            if user and user.status != UserStatus.DELETED.value:
+                texts = get_texts(user.language)
+                keyboard = types.InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            types.InlineKeyboardButton(
+                                text=texts.t('WEB_AUTH_CONFIRM_YES', '✅ Да, войти'),
+                                callback_data=f'webauth_confirm:{web_auth_token}',
+                            ),
+                            types.InlineKeyboardButton(
+                                text=texts.t('WEB_AUTH_CONFIRM_NO', '❌ Нет'),
+                                callback_data='webauth_deny',
+                            ),
+                        ],
+                    ]
+                )
+                await message.answer(
+                    texts.t(
+                        'WEB_AUTH_CONFIRM_PROMPT',
+                        '🔐 Подтвердите вход в личный кабинет. Если вы не запрашивали вход — нажмите «Нет».',
+                    ),
+                    reply_markup=keyboard,
+                )
+            else:
+                logger.warning('Web auth attempt from unregistered user', telegram_id=message.from_user.id)
+                await message.answer('❌ Сначала зарегистрируйтесь в боте, затем попробуйте войти в кабинет.')
+            return
+        start_parameter = None  # Invalid token, ignore
+
     if start_parameter:
         campaign = await get_campaign_by_start_parameter(
             db,
@@ -588,6 +697,21 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
 
     if user and user.status != UserStatus.DELETED.value:
         logger.info('✅ Активный пользователь найден', telegram_id=user.telegram_id)
+
+        # Check for phantom user created by guest landing purchase and merge
+        if message.from_user.username:
+            phantom = await find_phantom_user_by_username(db, message.from_user.username)
+            if phantom and phantom.id != user.id:
+                try:
+                    await _merge_phantom_into_active_user(db, phantom, user)
+                    await db.refresh(user, ['subscription'])
+                except Exception:
+                    await db.rollback()
+                    logger.exception(
+                        'Failed to merge phantom user',
+                        phantom_id=phantom.id,
+                        active_user_id=user.id,
+                    )
 
         profile_updated = False
 
@@ -2473,6 +2597,43 @@ async def required_sub_channel_check(
             pass
 
 
+async def process_webauth_confirm(
+    callback: types.CallbackQuery,
+    db: AsyncSession,
+):
+    """Handle web auth confirmation or denial."""
+    await callback.answer()
+
+    if not isinstance(callback.message, types.Message):
+        return
+
+    if callback.data == 'webauth_deny':
+        await callback.message.edit_text('❌ Вход отменён.')
+        return
+
+    # Extract token from callback_data: "webauth_confirm:{token}"
+    token = callback.data.split(':', 1)[1] if ':' in callback.data else ''
+    if len(token) < WEB_AUTH_TOKEN_MIN_LENGTH:
+        await callback.message.edit_text('❌ Ошибка: неверный токен.')
+        return
+
+    user = await get_user_by_telegram_id(db, callback.from_user.id)
+    if not user or user.status != UserStatus.ACTIVE.value:
+        await callback.message.edit_text('❌ Учётная запись неактивна.')
+        return
+
+    linked = await link_web_auth_token(token, callback.from_user.id, user.id)
+    texts = get_texts(user.language)
+    if linked:
+        await callback.message.edit_text(
+            texts.t('WEB_AUTH_SUCCESS', '✅ Авторизация в кабинете подтверждена! Вернитесь в браузер.'),
+        )
+    else:
+        await callback.message.edit_text(
+            texts.t('WEB_AUTH_EXPIRED', '❌ Ссылка для входа истекла. Попробуйте снова.'),
+        )
+
+
 def register_handlers(dp: Dispatcher):
     logger.debug('=== НАЧАЛО регистрации обработчиков start.py ===')
 
@@ -2516,5 +2677,11 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(required_sub_channel_check, F.data.in_(['sub_channel_check']))
     logger.debug('Зарегистрирован required_sub_channel_check')
+
+    dp.callback_query.register(
+        process_webauth_confirm,
+        F.data.startswith('webauth_confirm:') | F.data.in_(['webauth_deny']),
+    )
+    logger.debug('Зарегистрирован process_webauth_confirm')
 
     logger.debug('=== КОНЕЦ регистрации обработчиков start.py ===')

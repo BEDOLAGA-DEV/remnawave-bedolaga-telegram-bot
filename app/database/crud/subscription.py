@@ -40,23 +40,18 @@ def calc_device_limit_on_tariff_switch(
     new_tariff_device_limit: int | None,
     max_device_limit: int | None = None,
 ) -> int:
-    """Calculate device_limit preserving extra purchased devices when switching tariffs.
+    """Calculate device_limit when switching tariffs.
 
-    Extra devices = current_device_limit - old_tariff_device_limit (clamped to 0).
-    Result = new_tariff_device_limit + extra_devices, capped at max_device_limit.
+    Resets to new tariff base device limit — previously purchased
+    extra devices are NOT carried over.  Capped at max_device_limit.
     """
-    old_base = old_tariff_device_limit if old_tariff_device_limit is not None else 0
-    current = current_device_limit if current_device_limit is not None else old_base
-    extra = max(0, current - old_base)
-
     new_base = new_tariff_device_limit if new_tariff_device_limit is not None else 1
-    total = new_base + extra
 
     effective_max = max_device_limit or (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None)
-    if effective_max and total > effective_max:
-        total = effective_max
+    if effective_max and new_base > effective_max:
+        new_base = effective_max
 
-    return total
+    return new_base
 
 
 def is_active_paid_subscription(subscription: Subscription | None) -> bool:

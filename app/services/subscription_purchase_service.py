@@ -1091,6 +1091,7 @@ class MiniAppSubscriptionPurchaseService:
                     subscription,
                     reset_traffic=True,
                     reset_reason='miniapp purchase',
+                    sync_squads=True,
                 )
             else:
                 await subscription_service.create_remnawave_user(

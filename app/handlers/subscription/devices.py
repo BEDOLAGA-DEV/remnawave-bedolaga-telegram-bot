@@ -508,6 +508,12 @@ async def execute_change_devices(callback: types.CallbackQuery, db_user: User, d
 
     texts = get_texts(db_user.language)
     subscription = db_user.subscription
+    if not subscription:
+        await callback.answer(
+            texts.t('NO_ACTIVE_SUBSCRIPTION', '⚠️ У вас нет активной подписки'),
+            show_alert=True,
+        )
+        return
     current_devices = subscription.device_limit
 
     # Проверяем тариф подписки

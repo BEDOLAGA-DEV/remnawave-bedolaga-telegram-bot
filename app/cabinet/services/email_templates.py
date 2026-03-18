@@ -74,6 +74,39 @@ class EmailNotificationTemplates:
 
         return template_func(language, context)
 
+    def _wrap_override_template(self, content: str, language: str = 'ru') -> str:
+        """Wrap override template content appropriately based on its structure.
+
+        Three-tier detection:
+        1. Full HTML document (<!DOCTYPE or <html>) — return as-is, no wrapping
+        2. Styled content (has <style> tag or background CSS) — minimal HTML wrapper
+           without forced colors, headers, or footers
+        3. Simple HTML fragment — wrap with base template (header, footer, white bg)
+           for backward compatibility
+        """
+        content_stripped = content.strip()
+        content_lower = content_stripped.lower()
+
+        # Tier 1: Full HTML document — return as-is
+        if content_lower.startswith('<!doctype') or content_lower.startswith('<html'):
+            return content_stripped
+
+        # Tier 2: Styled content — minimal wrapper without forced styling
+        if '<style' in content_lower or 'background' in content_lower:
+            return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0;">
+    {content}
+</body>
+</html>"""
+
+        # Tier 3: Simple HTML fragment — use base template for structure
+        return self._get_base_template(content, language)
+
     def _get_base_template(self, content: str, language: str = 'ru') -> str:
         """Wrap content in base HTML template."""
         footer_texts = {

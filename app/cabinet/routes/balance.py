@@ -701,6 +701,11 @@ async def create_topup(
                     detail='KassaAI payment method is unavailable',
                 )
 
+            # Use payment_option to select sbp or card
+            KASSA_AI_OPTION_MAP = {'sbp': 44, 'card': 36}
+            option = (request.payment_option or '').strip().lower()
+            ps_id = KASSA_AI_OPTION_MAP.get(option)  # None = use env default
+
             payment_service = PaymentService()
             result = await payment_service.create_kassa_ai_payment(
                 db=db,
@@ -709,6 +714,7 @@ async def create_topup(
                 description=settings.get_balance_payment_description(request.amount_kopeks),
                 email=getattr(user, 'email', None),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                payment_system_id=ps_id,
             )
 
             if result and result.get('payment_url'):
@@ -718,6 +724,33 @@ async def create_topup(
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail='Failed to create KassaAI payment',
+                )
+
+        elif request.payment_method == 'riopay':
+            if not settings.is_riopay_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='RioPay payment method is unavailable',
+                )
+
+            payment_service = PaymentService()
+            result = await payment_service.create_riopay_payment(
+                db=db,
+                user_id=user.id,
+                amount_kopeks=request.amount_kopeks,
+                description=settings.get_balance_payment_description(request.amount_kopeks),
+                language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                success_url=cabinet_success_url,
+                fail_url=cabinet_failed_url,
+            )
+
+            if result and result.get('payment_url'):
+                payment_url = result.get('payment_url')
+                payment_id = str(result.get('local_payment_id') or result.get('riopay_order_id') or 'pending')
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Failed to create RioPay payment',
                 )
 
         elif request.payment_method == 'tribute':
@@ -871,6 +904,17 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
         }
         return mapping.get(status, ('❓', 'Неизвестно'))
 
+    if record.method == PaymentMethod.RIOPAY:
+        mapping = {
+            'pending': ('⏳', 'Ожидает оплаты'),
+            'success': ('✅', 'Оплачено'),
+            'failed': ('❌', 'Ошибка'),
+            'canceled': ('❌', 'Отменено'),
+            'expired': ('⌛', 'Истёк'),
+            'amount_mismatch': ('⚠️', 'Несовпадение суммы'),
+        }
+        return mapping.get(status, ('❓', 'Неизвестно'))
+
     return '❓', 'Неизвестно'
 
 
@@ -901,6 +945,8 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status in {'pending', 'created', 'processing'}
     if record.method == PaymentMethod.KASSA_AI:
         return status in {'pending', 'created', 'processing'}
+    if record.method == PaymentMethod.RIOPAY:
+        return status in {'pending'}
     return False
 
 
@@ -924,7 +970,12 @@ def _get_payment_url(record: PendingPayment) -> str | None:
         )
     elif record.method == PaymentMethod.PLATEGA:
         payment_url = getattr(payment, 'redirect_url', None) or payment_url
-    elif record.method in (PaymentMethod.CLOUDPAYMENTS, PaymentMethod.FREEKASSA, PaymentMethod.KASSA_AI):
+    elif record.method in (
+        PaymentMethod.CLOUDPAYMENTS,
+        PaymentMethod.FREEKASSA,
+        PaymentMethod.KASSA_AI,
+        PaymentMethod.RIOPAY,
+    ):
         payment_url = getattr(payment, 'payment_url', None) or payment_url
 
     return payment_url
@@ -1013,6 +1064,7 @@ async def get_latest_payment_by_method(
         MulenPayPayment,
         Pal24Payment,
         PlategaPayment,
+        RioPayPayment,
         WataPayment,
         YooKassaPayment,
     )
@@ -1028,6 +1080,7 @@ async def get_latest_payment_by_method(
         PaymentMethod.CLOUDPAYMENTS: CloudPaymentsPayment,
         PaymentMethod.FREEKASSA: FreekassaPayment,
         PaymentMethod.KASSA_AI: KassaAiPayment,
+        PaymentMethod.RIOPAY: RioPayPayment,
     }
 
     model = model_map.get(payment_method)

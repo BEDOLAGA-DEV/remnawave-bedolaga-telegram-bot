@@ -670,8 +670,8 @@ async def preview_template(
     language = data.language if data.language in AVAILABLE_LANGUAGES else 'ru'
 
     if data.body_html:
-        # Preview custom content wrapped in base template
-        rendered_html = templates_instance._get_base_template(data.body_html, language)
+        # Preview custom content — auto-detects styled vs simple HTML
+        rendered_html = templates_instance._wrap_override_template(data.body_html, language)
         subject = data.subject or notification_type
     else:
         # Preview default template

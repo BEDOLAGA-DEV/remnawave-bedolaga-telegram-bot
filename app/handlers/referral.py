@@ -14,7 +14,7 @@ from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import get_referral_keyboard
 from app.localization.texts import get_texts
-from app.services.admin_notification_service import AdminNotificationService
+from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
 from app.services.referral_withdrawal_service import referral_withdrawal_service
 from app.states import ReferralWithdrawalStates
 from app.utils.photo_message import edit_or_answer_photo
@@ -825,7 +825,9 @@ async def confirm_withdrawal_request(callback: types.CallbackQuery, db_user: Use
 
     try:
         notification_service = AdminNotificationService(callback.bot)
-        await notification_service.send_admin_notification(admin_text, reply_markup=admin_keyboard)
+        await notification_service.send_admin_notification(
+            admin_text, reply_markup=admin_keyboard, category=NotificationCategory.PARTNERS
+        )
     except Exception as e:
         logger.error('Ошибка отправки уведомления админам о заявке на вывод', error=e)
 

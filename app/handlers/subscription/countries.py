@@ -172,7 +172,7 @@ async def handle_manage_country(callback: types.CallbackQuery, db_user: User, db
     countries = await _get_available_countries(db_user.promo_group_id)
     allowed_country_ids = {country['uuid'] for country in countries}
 
-    if country_uuid not in allowed_country_ids and country_uuid not in current_selected:
+    if country_uuid not in allowed_country_ids:
         texts = get_texts(db_user.language)
         await callback.answer(
             texts.t(
@@ -236,11 +236,7 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
     countries = await _get_available_countries(db_user.promo_group_id)
     allowed_country_ids = {country['uuid'] for country in countries}
 
-    selected_countries = [
-        country_uuid
-        for country_uuid in selected_countries
-        if country_uuid in allowed_country_ids or country_uuid in current_countries
-    ]
+    selected_countries = [country_uuid for country_uuid in selected_countries if country_uuid in allowed_country_ids]
 
     added = [c for c in selected_countries if c not in current_countries]
     removed = [c for c in current_countries if c not in selected_countries]
@@ -788,11 +784,7 @@ async def confirm_add_countries_to_subscription(
     countries = await _get_available_countries(db_user.promo_group_id)
     allowed_country_ids = {country['uuid'] for country in countries}
 
-    selected_countries = [
-        country_uuid
-        for country_uuid in selected_countries
-        if country_uuid in allowed_country_ids or country_uuid in current_countries
-    ]
+    selected_countries = [country_uuid for country_uuid in selected_countries if country_uuid in allowed_country_ids]
 
     new_countries = [c for c in selected_countries if c not in current_countries]
     removed_countries = [c for c in current_countries if c not in selected_countries]

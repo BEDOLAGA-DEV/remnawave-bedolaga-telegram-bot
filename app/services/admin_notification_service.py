@@ -1,5 +1,6 @@
 import html
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 import structlog
@@ -26,6 +27,21 @@ from app.utils.message_patch import caption_exceeds_telegram_limit
 from app.utils.timezone import format_local_datetime
 
 
+class NotificationCategory(StrEnum):
+    """Категории уведомлений для маршрутизации по топикам."""
+
+    PURCHASES = 'purchases'  # Покупки подписок, покупки с лендинга
+    RENEWALS = 'renewals'  # Продления
+    TRIALS = 'trials'  # Триалы
+    BALANCE = 'balance'  # Пополнение баланса
+    ADDONS = 'addons'  # Докупка трафика/устройств/серверов
+    INFRASTRUCTURE = 'infrastructure'  # Ноды, техработы, статус панели, вебхуки
+    ERRORS = 'errors'  # Ошибки бота, краши
+    PROMO = 'promo'  # Промокоды, кампании, промогруппы
+    PARTNERS = 'partners'  # Партнёрки, выводы, админ-действия
+    TICKETS = 'tickets'  # Тикеты (уже существует)
+
+
 logger = structlog.get_logger(__name__)
 
 
@@ -36,6 +52,20 @@ class AdminNotificationService:
         self.topic_id = getattr(settings, 'ADMIN_NOTIFICATIONS_TOPIC_ID', None)
         self.ticket_topic_id = getattr(settings, 'ADMIN_NOTIFICATIONS_TICKET_TOPIC_ID', None)
         self.enabled = getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False)
+
+        # Маппинг категорий на topic_id (None = fallback на self.topic_id)
+        self.category_topics: dict[NotificationCategory, int | None] = {
+            NotificationCategory.PURCHASES: getattr(settings, 'ADMIN_NOTIFICATIONS_PURCHASES_TOPIC_ID', None),
+            NotificationCategory.RENEWALS: getattr(settings, 'ADMIN_NOTIFICATIONS_RENEWALS_TOPIC_ID', None),
+            NotificationCategory.TRIALS: getattr(settings, 'ADMIN_NOTIFICATIONS_TRIALS_TOPIC_ID', None),
+            NotificationCategory.BALANCE: getattr(settings, 'ADMIN_NOTIFICATIONS_BALANCE_TOPIC_ID', None),
+            NotificationCategory.ADDONS: getattr(settings, 'ADMIN_NOTIFICATIONS_ADDONS_TOPIC_ID', None),
+            NotificationCategory.INFRASTRUCTURE: getattr(settings, 'ADMIN_NOTIFICATIONS_INFRASTRUCTURE_TOPIC_ID', None),
+            NotificationCategory.ERRORS: getattr(settings, 'ADMIN_NOTIFICATIONS_ERRORS_TOPIC_ID', None),
+            NotificationCategory.PROMO: getattr(settings, 'ADMIN_NOTIFICATIONS_PROMO_TOPIC_ID', None),
+            NotificationCategory.PARTNERS: getattr(settings, 'ADMIN_NOTIFICATIONS_PARTNERS_TOPIC_ID', None),
+            NotificationCategory.TICKETS: self.ticket_topic_id,
+        }
 
     async def _get_referrer_info(self, db: AsyncSession, referred_by_id: int | None) -> str:
         if not referred_by_id:
@@ -371,7 +401,7 @@ class AdminNotificationService:
             message_lines.append('')
             message_lines.append(f'⏰ <i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}</i>')
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.TRIALS)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о триале', error=e)
@@ -502,7 +532,15 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            # Маршрутизация по категориям (зеркалит логику заголовков выше)
+            if purchase_type == 'renewal' or (
+                not was_trial_conversion and purchase_type is None and user.has_had_paid_subscription
+            ):
+                cat = NotificationCategory.RENEWALS
+            else:
+                cat = NotificationCategory.PURCHASES
+
+            return await self._send_message('\n'.join(message_lines), category=cat)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о покупке', error=e)
@@ -565,7 +603,7 @@ class AdminNotificationService:
             else:
                 message = f'{message_prefix}{message_suffix}'
 
-            return await self._send_message(message)
+            return await self._send_message(message, category=NotificationCategory.INFRASTRUCTURE)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления об обновлении', error=e)
@@ -586,7 +624,7 @@ class AdminNotificationService:
 
     ⚙️ <i>Система автоматических обновлений • {format_local_datetime(datetime.now(UTC), '%d.%m.%Y %H:%M:%S')}</i>"""
 
-            return await self._send_message(message)
+            return await self._send_message(message, category=NotificationCategory.ERRORS)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления об ошибке проверки версий', error=e)
@@ -824,7 +862,7 @@ class AdminNotificationService:
                 return False
 
         try:
-            return await self._send_message(message)
+            return await self._send_message(message, category=NotificationCategory.BALANCE)
         except Exception as e:
             logger.error('Ошибка отправки уведомления о пополнении', error=e, exc_info=True)
             return False
@@ -901,7 +939,7 @@ class AdminNotificationService:
 
 ⏰ <i>{format_local_datetime(datetime.now(UTC), '%d.%m.%Y %H:%M:%S')}</i>"""
 
-            return await self._send_message(message)
+            return await self._send_message(message, category=NotificationCategory.RENEWALS)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о продлении', error=e)
@@ -1008,7 +1046,7 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.PROMO)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления об активации промокода', error=e)
@@ -1097,7 +1135,7 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.PROMO)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о переходе по кампании', error=e)
@@ -1187,14 +1225,30 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.PROMO)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о смене промогруппы', error=e)
             return False
 
+    def _resolve_topic_id(self, category: NotificationCategory | None = None) -> int | None:
+        """Определяет topic_id для сообщения.
+
+        Если указана category и для неё настроен топик — возвращает его.
+        Иначе — fallback на self.topic_id (общий топик).
+        """
+        if category:
+            topic = self.category_topics.get(category)
+            if topic is not None:
+                return topic
+        return self.topic_id
+
     async def _send_message(
-        self, text: str, reply_markup: types.InlineKeyboardMarkup | None = None, *, ticket_event: bool = False
+        self,
+        text: str,
+        reply_markup: types.InlineKeyboardMarkup | None = None,
+        *,
+        category: NotificationCategory | None = None,
     ) -> bool:
         if not self.chat_id:
             logger.warning('ADMIN_NOTIFICATIONS_CHAT_ID не настроен')
@@ -1208,19 +1262,14 @@ class AdminNotificationService:
                 'disable_web_page_preview': True,
             }
 
-            # route to ticket-specific topic if provided
-            thread_id = None
-            if ticket_event and self.ticket_topic_id:
-                thread_id = self.ticket_topic_id
-            elif self.topic_id:
-                thread_id = self.topic_id
+            thread_id = self._resolve_topic_id(category)
             if thread_id:
                 message_kwargs['message_thread_id'] = thread_id
             if reply_markup is not None:
                 message_kwargs['reply_markup'] = reply_markup
 
             await self.bot.send_message(**message_kwargs)
-            logger.info('Уведомление отправлено в чат', chat_id=self.chat_id)
+            logger.info('Уведомление отправлено в чат', chat_id=self.chat_id, category=category)
             return True
 
         except TelegramForbiddenError:
@@ -1241,11 +1290,17 @@ class AdminNotificationService:
         """Public check for whether admin notifications are configured and active."""
         return self._is_enabled()
 
-    async def send_admin_notification(self, text: str, reply_markup: types.InlineKeyboardMarkup | None = None) -> bool:
+    async def send_admin_notification(
+        self,
+        text: str,
+        reply_markup: types.InlineKeyboardMarkup | None = None,
+        *,
+        category: NotificationCategory | None = None,
+    ) -> bool:
         """Send a generic notification to admin chat with optional inline keyboard."""
         if not self._is_enabled():
             return False
-        return await self._send_message(text, reply_markup=reply_markup)
+        return await self._send_message(text, reply_markup=reply_markup, category=category)
 
     async def send_guest_purchase_notification(
         self,
@@ -1316,7 +1371,7 @@ class AdminNotificationService:
 
             message_lines.append(f'<i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M")}</i>')
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.PURCHASES)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о гостевой покупке', error=e)
@@ -1330,7 +1385,7 @@ class AdminNotificationService:
         """
         if not self._is_enabled():
             return False
-        return await self._send_message(text)
+        return await self._send_message(text, category=NotificationCategory.INFRASTRUCTURE)
 
     def _get_payment_method_display(self, payment_method: str | None) -> str:
         if not payment_method:
@@ -1516,7 +1571,7 @@ class AdminNotificationService:
 
             message = '\n'.join(message_parts)
 
-            return await self._send_message(message)
+            return await self._send_message(message, category=NotificationCategory.INFRASTRUCTURE)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о техработах', error=e)
@@ -1601,7 +1656,7 @@ class AdminNotificationService:
 
             message = '\n'.join(message_parts)
 
-            return await self._send_message(message)
+            return await self._send_message(message, category=NotificationCategory.INFRASTRUCTURE)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о статусе панели Remnawave', error=e)
@@ -1694,7 +1749,7 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.ADDONS)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления об изменении подписки', error=e)
@@ -1778,7 +1833,7 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.PARTNERS)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о заявке на партнёрку', error=e)
@@ -1829,7 +1884,7 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines))
+            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.PARTNERS)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о запросе на вывод', error=e)
@@ -1873,7 +1928,7 @@ class AdminNotificationService:
             )
 
             message = '\n'.join(message_lines)
-            return await self._send_message(message)
+            return await self._send_message(message, category=NotificationCategory.PARTNERS)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о массовой блокировке', error=e)
@@ -1910,7 +1965,7 @@ class AdminNotificationService:
         if media_file_id and media_type == 'photo':
             return await self._send_ticket_photo_notification(text, media_file_id, keyboard)
 
-        return await self._send_message(text, reply_markup=keyboard, ticket_event=True)
+        return await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
 
     async def _send_ticket_photo_notification(
         self,
@@ -1925,7 +1980,7 @@ class AdminNotificationService:
         if not self.chat_id:
             return False
 
-        thread_id = self.ticket_topic_id or self.topic_id
+        thread_id = self._resolve_topic_id(category=NotificationCategory.TICKETS)
 
         try:
             if not caption_exceeds_telegram_limit(text):
@@ -1943,7 +1998,7 @@ class AdminNotificationService:
                 await self.bot.send_photo(**photo_kwargs)
             else:
                 # Текст отдельно, фото следом в тот же топик
-                await self._send_message(text, reply_markup=keyboard, ticket_event=True)
+                await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
                 photo_kwargs = {
                     'chat_id': self.chat_id,
                     'photo': photo_file_id,
@@ -1956,7 +2011,7 @@ class AdminNotificationService:
         except Exception as e:
             logger.error('Ошибка отправки фото-уведомления тикета', error=e)
             # Fallback: отправляем хотя бы текст
-            return await self._send_message(text, reply_markup=keyboard, ticket_event=True)
+            return await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
 
     async def send_suspicious_traffic_notification(self, message: str, bot: Bot, topic_id: int | None = None) -> bool:
         """

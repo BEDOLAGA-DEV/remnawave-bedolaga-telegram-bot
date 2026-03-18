@@ -5417,6 +5417,7 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
             subscription,
             reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
             reset_reason='смена тарифа (админ)',
+            sync_squads=True,
         )
 
         logger.info(

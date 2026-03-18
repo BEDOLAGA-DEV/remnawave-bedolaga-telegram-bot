@@ -53,40 +53,17 @@ async def start_cryptobot_payment(callback: types.CallbackQuery, db_user: User, 
     available_assets = settings.get_cryptobot_assets()
     assets_text = ', '.join(available_assets)
 
-    # Формируем текст сообщения в зависимости от настройки
-    if settings.is_quick_amount_buttons_enabled():
-        message_text = (
-            f'🪙 <b>Пополнение криптовалютой</b>\n\n'
-            f'Выберите сумму пополнения или введите вручную сумму '
-            f'от 100 до 100,000 ₽:\n\n'
-            f'💰 Доступные активы: {assets_text}\n'
-            f'⚡ Мгновенное зачисление на баланс\n'
-            f'🔒 Безопасная оплата через CryptoBot\n\n'
-            f'{rate_text}\n'
-            f'Сумма будет автоматически конвертирована в USD для оплаты.'
-        )
-    else:
-        message_text = (
-            f'🪙 <b>Пополнение криптовалютой</b>\n\n'
-            f'Введите сумму для пополнения от 100 до 100,000 ₽:\n\n'
-            f'💰 Доступные активы: {assets_text}\n'
-            f'⚡ Мгновенное зачисление на баланс\n'
-            f'🔒 Безопасная оплата через CryptoBot\n\n'
-            f'{rate_text}\n'
-            f'Сумма будет автоматически конвертирована в USD для оплаты.'
-        )
+    message_text = (
+        f'🪙 <b>Пополнение криптовалютой</b>\n\n'
+        f'Введите сумму для пополнения от 100 до 100,000 ₽:\n\n'
+        f'💰 Доступные активы: {assets_text}\n'
+        f'⚡ Мгновенное зачисление на баланс\n'
+        f'🔒 Безопасная оплата через CryptoBot\n\n'
+        f'{rate_text}\n'
+        f'Сумма будет автоматически конвертирована в USD для оплаты.'
+    )
 
-    # Создаем клавиатуру
     keyboard = get_back_keyboard(db_user.language)
-
-    # Если включен быстрый выбор суммы и не отключены кнопки, добавляем кнопки
-    if settings.is_quick_amount_buttons_enabled():
-        from .main import get_quick_amount_buttons
-
-        quick_amount_buttons = await get_quick_amount_buttons(db_user.language, db_user)
-        if quick_amount_buttons:
-            # Вставляем кнопки быстрого выбора перед кнопкой "Назад"
-            keyboard.inline_keyboard = quick_amount_buttons + keyboard.inline_keyboard
 
     await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
 
@@ -133,11 +110,13 @@ async def process_cryptobot_payment_amount(
     amount_rubles = amount_kopeks / 100
 
     if amount_rubles < 100:
-        await message.answer('Минимальная сумма пополнения: 100 ₽')
+        await message.answer('Минимальная сумма пополнения: 100 ₽', reply_markup=get_back_keyboard(db_user.language))
         return
 
     if amount_rubles > 100000:
-        await message.answer('Максимальная сумма пополнения: 100,000 ₽')
+        await message.answer(
+            'Максимальная сумма пополнения: 100,000 ₽', reply_markup=get_back_keyboard(db_user.language)
+        )
         return
 
     try:
@@ -154,11 +133,15 @@ async def process_cryptobot_payment_amount(
         amount_usd = round(amount_usd, 2)
 
         if amount_usd < 1:
-            await message.answer('❌ Минимальная сумма для оплаты в USD: 1.00 USD')
+            await message.answer(
+                '❌ Минимальная сумма для оплаты в USD: 1.00 USD', reply_markup=get_back_keyboard(db_user.language)
+            )
             return
 
         if amount_usd > 1000:
-            await message.answer('❌ Максимальная сумма для оплаты в USD: 1,000 USD')
+            await message.answer(
+                '❌ Максимальная сумма для оплаты в USD: 1,000 USD', reply_markup=get_back_keyboard(db_user.language)
+            )
             return
 
         payment_service = PaymentService(message.bot)

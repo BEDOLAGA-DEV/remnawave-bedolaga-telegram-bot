@@ -654,13 +654,14 @@ class RemnaWaveWebhookService:
             changed = True
 
         # Sync subscription crypto link (for HAPP_CRYPT4_LINK)
-        subscription_crypto_link = data.get('subscriptionCryptoLink')
-        if (
-            subscription_crypto_link
-            and self._is_valid_link(subscription_crypto_link)
-            and subscription.subscription_crypto_link != subscription_crypto_link
-        ):
-            subscription.subscription_crypto_link = subscription_crypto_link
+        subscription_crypto_link = data.get('subscriptionCryptoLink') or (data.get('happ') or {}).get('cryptoLink', '')
+        if subscription_crypto_link and self._is_valid_link(subscription_crypto_link):
+            if subscription.subscription_crypto_link != subscription_crypto_link:
+                subscription.subscription_crypto_link = subscription_crypto_link
+                changed = True
+        elif subscription_url and subscription.subscription_crypto_link:
+            # URL обновился, а крипто-ссылка не пришла — сбрасываем старую
+            subscription.subscription_crypto_link = None
             changed = True
 
         # Always stamp to protect from sync overwrite, even if no fields changed
@@ -743,18 +744,18 @@ class RemnaWaveWebhookService:
     ) -> None:
         if subscription:
             new_url = data.get('subscriptionUrl')
-            new_crypto_link = data.get('subscriptionCryptoLink')
+            new_crypto_link = data.get('subscriptionCryptoLink') or (data.get('happ') or {}).get('cryptoLink', '')
             changed = False
 
             if new_url and self._is_valid_url(new_url) and subscription.subscription_url != new_url:
                 subscription.subscription_url = new_url
                 changed = True
-            if (
-                new_crypto_link
-                and self._is_valid_link(new_crypto_link)
-                and subscription.subscription_crypto_link != new_crypto_link
-            ):
-                subscription.subscription_crypto_link = new_crypto_link
+            if new_crypto_link and self._is_valid_link(new_crypto_link):
+                if subscription.subscription_crypto_link != new_crypto_link:
+                    subscription.subscription_crypto_link = new_crypto_link
+                    changed = True
+            elif new_url and subscription.subscription_crypto_link:
+                subscription.subscription_crypto_link = None
                 changed = True
 
             # Always stamp to protect from sync overwrite

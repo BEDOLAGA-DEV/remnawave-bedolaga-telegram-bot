@@ -2452,6 +2452,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 subscription,
                 reset_traffic=True,
                 reset_reason='покупка подписки',
+                sync_squads=True,
             )
         else:
             remnawave_user = await subscription_service.create_remnawave_user(

@@ -25,6 +25,8 @@ REAL_PAYMENT_METHODS = [
     PaymentMethod.CLOUDPAYMENTS.value,
     PaymentMethod.FREEKASSA.value,
     PaymentMethod.KASSA_AI.value,
+    PaymentMethod.RIOPAY.value,
+    PaymentMethod.SEVERPAY.value,
 ]
 
 
