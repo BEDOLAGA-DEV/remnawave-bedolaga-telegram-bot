@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.34.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.34.0...v3.34.1) (2026-03-18)
+
+
+### Documentation
+
+* add bot preview screenshot to README ([d7931a2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d7931a2afaf272aae74453f2bb6d493593895f67))
+* add cabinet preview screenshot to README ([b032c8f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b032c8f35435ddd592df04d6352097580f5e9837))
+* add icons and list all 14+1 payment providers ([1306c24](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1306c24fa36fd3e812c5bec551a0aca450ca7d2c))
+* add Redis to tech stack ([c14d7ab](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c14d7ab0af2e5dd4f35213b323a97eedcc99af0e))
+* add Redis to tech stack ([e12cc9f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e12cc9f248764104d538db1daaede9ddd8b77b2d))
+* add WATA partnership block to payments section ([31bdf8a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/31bdf8a0aeba53fcec40358d0a38b8480130a346))
+* increase logo size to 800px ([22e7f15](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/22e7f150b30c35b0419e7923e94c5ebc92c4b61a))
+* redesign README — concise feature showcase, link to docs ([38deb70](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/38deb70f8118d371e36ac92a4417bdb543635fc9))
+* replace header logo with new artwork ([6888822](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/688882237fe3019bb78d5e1d7ad54faf4cd69c09))
+* WATA partnership block with logo and table card ([8d5a002](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8d5a0029964ba52b40e03ebfe8ab6f4146d3aca9))
+
 ## [3.34.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.33.0...v3.34.0) (2026-03-18)
 
 
