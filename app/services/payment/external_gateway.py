@@ -67,9 +67,11 @@ class ExternalGatewayPaymentMixin:
 
         # Формируем callback URL
         webhook_path = settings.EXTERNAL_GATEWAY_WEBHOOK_PATH
-        webhook_host = settings.EXTERNAL_GATEWAY_WEBHOOK_HOST
+        webhook_host = settings.EXTERNAL_GATEWAY_WEBHOOK_HOST.replace('https://', '').replace('http://', '').rstrip('/')
         webhook_port = settings.EXTERNAL_GATEWAY_WEBHOOK_PORT
-        callback_url = f'http://{webhook_host}:{webhook_port}{webhook_path}'
+        scheme = 'https' if webhook_port == 443 else 'http'
+        port_suffix = '' if webhook_port in (80, 443) else f':{webhook_port}'
+        callback_url = f'{scheme}://{webhook_host}{port_suffix}{webhook_path}'
 
         # Return URL
         return_url = settings.EXTERNAL_GATEWAY_RETURN_URL or None
