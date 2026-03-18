@@ -94,6 +94,7 @@ async def upload_media(
             )
 
     target_chat_id = _resolve_target_chat_id()
+    thread_id = settings.ADMIN_NOTIFICATIONS_TOPIC_ID
     upload = BufferedInputFile(file_bytes, filename=file.filename or 'upload')
 
     bot = create_bot()
@@ -103,18 +104,21 @@ async def upload_media(
             message = await bot.send_photo(
                 chat_id=target_chat_id,
                 photo=upload,
+                message_thread_id=thread_id,
             )
             media = message.photo[-1]
         elif media_type_normalized == 'video':
             message = await bot.send_video(
                 chat_id=target_chat_id,
                 video=upload,
+                message_thread_id=thread_id,
             )
             media = message.video
         else:
             message = await bot.send_document(
                 chat_id=target_chat_id,
                 document=upload,
+                message_thread_id=thread_id,
             )
             media = message.document
 
