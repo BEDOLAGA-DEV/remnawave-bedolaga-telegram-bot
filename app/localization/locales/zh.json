@@ -1152,7 +1152,6 @@
 "PAYMENT_METHOD_RIOPAY_DESCRIPTION": "通过RioPay",
 "PAYMENT_METHOD_RIOPAY_NAME": "💳<b>银行卡(RioPay)</b>",
 "PAYMENT_RIOPAY": "💳 银行卡(RioPay)",
-"PAYMENT_EXTERNAL_GATEWAY": "{emoji} {name}",
 "EXTERNAL_GATEWAY_ENTER_AMOUNT": "💳 <b>通过 {name} 充值</b>\n\n请输入充值金额（卢布）。\n\n最低: {min_amount}₽\n最高: {max_amount}₽",
 "EXTERNAL_GATEWAY_PAYMENT_CREATED": "💳 <b>通过 {name} 支付</b>\n\n金额: <b>{amount}₽</b>\n\n点击下方按钮进行支付。\n支付成功后余额将自动充值。\n\n如未到账 — 请点击「检查支付」。",
 "EXTERNAL_GATEWAY_NOT_AVAILABLE": "支付方式暂时不可用",

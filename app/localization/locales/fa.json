@@ -1237,7 +1237,6 @@
     "PAYMENT_METHOD_RIOPAY_DESCRIPTION": "از طریق RioPay",
     "PAYMENT_METHOD_RIOPAY_NAME": "💳 <b>کارت بانکی (RioPay)</b>",
     "PAYMENT_RIOPAY": "💳 کارت بانکی (RioPay)",
-    "PAYMENT_EXTERNAL_GATEWAY": "{emoji} {name}",
     "EXTERNAL_GATEWAY_ENTER_AMOUNT": "💳 <b>شارژ از طریق {name}</b>\n\nمبلغ شارژ را به روبل وارد کنید.\n\nحداقل: {min_amount}₽\nحداکثر: {max_amount}₽",
     "EXTERNAL_GATEWAY_PAYMENT_CREATED": "💳 <b>پرداخت از طریق {name}</b>\n\nمبلغ: <b>{amount}₽</b>\n\nبرای پرداخت دکمه زیر را بزنید.\nپس از پرداخت موفق، موجودی به‌صورت خودکار شارژ می‌شود.\n\nاگر پرداخت ثبت نشد — دکمه «بررسی پرداخت» را بزنید.",
     "EXTERNAL_GATEWAY_NOT_AVAILABLE": "روش پرداخت موقتاً در دسترس نیست",

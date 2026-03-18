@@ -1237,7 +1237,6 @@
   "PAYMENT_METHOD_RIOPAY_DESCRIPTION": "через RioPay",
   "PAYMENT_METHOD_RIOPAY_NAME": "💳 <b>Банковская карта (RioPay)</b>",
   "PAYMENT_RIOPAY": "💳 Банковская карта (RioPay)",
-  "PAYMENT_EXTERNAL_GATEWAY": "{emoji} {name}",
   "EXTERNAL_GATEWAY_ENTER_AMOUNT": "💳 <b>Пополнение через {name}</b>\n\nВведите сумму пополнения в рублях.\n\nМинимум: {min_amount}₽\nМаксимум: {max_amount}₽",
   "EXTERNAL_GATEWAY_PAYMENT_CREATED": "💳 <b>Оплата через {name}</b>\n\nСумма: <b>{amount}₽</b>\n\nНажмите кнопку ниже для оплаты.\nПосле успешной оплаты баланс будет пополнен автоматически.\n\nЕсли оплата не зачислилась — нажмите «Проверить оплату».",
   "EXTERNAL_GATEWAY_NOT_AVAILABLE": "Способ оплаты временно недоступен",
