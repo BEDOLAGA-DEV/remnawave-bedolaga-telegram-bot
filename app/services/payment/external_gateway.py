@@ -396,8 +396,10 @@ class ExternalGatewayPaymentMixin:
             }
 
         # Пробуем проверить статус через шлюз
+        # gateway_order_id — внутренний ID paygate (числовой), order_id — наш bg_xxx
+        status_order_id = payment.gateway_order_id or payment.order_id
         try:
-            response = await self.external_gateway_service.check_status(payment.order_id)
+            response = await self.external_gateway_service.check_status(status_order_id)
             if response and response.get('success'):
                 gw_status = response.get('status', '')
 
