@@ -566,6 +566,7 @@ class Settings(BaseSettings):
     EXTERNAL_GATEWAY_RETURN_URL: str = ''
     EXTERNAL_GATEWAY_PAYMENT_TIMEOUT_SECONDS: int = 3600
     EXTERNAL_GATEWAY_PAYMENT_METHOD: str = ''
+    EXTERNAL_GATEWAY_METHODS: str = ''  # Мульти-метод: stripe:💳:Оплата картой,paypal:💰:PayPal
 
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
@@ -1881,6 +1882,29 @@ class Settings(BaseSettings):
 
     def get_external_gateway_display_name_html(self) -> str:
         return html.escape(self.get_external_gateway_display_name())
+
+    def get_external_gateway_methods(self) -> list[dict[str, str]]:
+        """Парсит EXTERNAL_GATEWAY_METHODS в список {'value': ..., 'emoji': ..., 'name': ...}."""
+        raw = (self.EXTERNAL_GATEWAY_METHODS or '').strip()
+        if not raw:
+            return []
+        methods: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for part in raw.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            pieces = part.split(':', 2)
+            if len(pieces) < 3:
+                continue
+            value, emoji, name = pieces[0].strip(), pieces[1].strip(), pieces[2].strip()
+            if value and value not in seen:
+                methods.append({'value': value, 'emoji': emoji or '💳', 'name': name or value})
+                seen.add(value)
+        return methods
+
+    def has_external_gateway_methods(self) -> bool:
+        return len(self.get_external_gateway_methods()) > 0
 
     def is_payment_verification_auto_check_enabled(self) -> bool:
         return self.PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED

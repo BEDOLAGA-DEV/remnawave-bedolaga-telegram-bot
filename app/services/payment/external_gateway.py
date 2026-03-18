@@ -26,6 +26,7 @@ class ExternalGatewayPaymentMixin:
         user_id: int | None,
         amount_kopeks: int,
         description: str = 'Пополнение баланса',
+        method: str | None = None,
     ) -> dict[str, Any] | None:
         """Создаёт платёж через внешний шлюз.
 
@@ -76,8 +77,8 @@ class ExternalGatewayPaymentMixin:
         # Return URL
         return_url = settings.EXTERNAL_GATEWAY_RETURN_URL or None
 
-        # Метод оплаты (stripe/paypal/пусто)
-        method = settings.EXTERNAL_GATEWAY_PAYMENT_METHOD or None
+        # Метод оплаты (stripe/paypal/пусто): приоритет — аргумент → env → None
+        method = method or settings.EXTERNAL_GATEWAY_PAYMENT_METHOD or None
 
         try:
             # Вызываем внешний шлюз

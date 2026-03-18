@@ -26,11 +26,19 @@ async def _create_external_gateway_payment_and_respond(
     db: AsyncSession,
     amount_kopeks: int,
     edit_message: bool = False,
+    method: str | None = None,
 ):
     """Создаёт платёж через внешний шлюз и отправляет ответ пользователю."""
     texts = get_texts(db_user.language)
     amount_rub = amount_kopeks / 100
+
+    # Определяем display_name: если мульти-метод, показываем имя конкретного метода
     display_name = settings.get_external_gateway_display_name()
+    if method:
+        for m in settings.get_external_gateway_methods():
+            if m['value'] == method:
+                display_name = m['name']
+                break
 
     payment_service = PaymentService()
 
@@ -44,6 +52,7 @@ async def _create_external_gateway_payment_and_respond(
         user_id=db_user.id,
         amount_kopeks=amount_kopeks,
         description=description,
+        method=method,
     )
 
     if not result:
@@ -130,6 +139,7 @@ async def process_external_gateway_payment_amount(
     db: AsyncSession,
     amount_kopeks: int,
     state: FSMContext,
+    method: str | None = None,
 ):
     """Обработка суммы платежа (вызывается из роутера или quick_amount)."""
     texts = get_texts(db_user.language)
@@ -175,6 +185,11 @@ async def process_external_gateway_payment_amount(
         )
         return
 
+    # Если метод не передан явно, берём из FSM state (до clear!)
+    if not method:
+        data = await state.get_data()
+        method = data.get('ext_gw_method')
+
     await state.clear()
 
     await _create_external_gateway_payment_and_respond(
@@ -183,6 +198,7 @@ async def process_external_gateway_payment_amount(
         db=db,
         amount_kopeks=amount_kopeks,
         edit_message=False,
+        method=method,
     )
 
 
@@ -324,6 +340,129 @@ async def process_external_gateway_quick_amount(
         db=db,
         amount_kopeks=amount_kopeks,
         edit_message=True,
+    )
+
+
+# ────────────────── Мульти-метод handler-ы ──────────────────
+
+
+@error_handler
+async def start_external_gateway_method_topup(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Начало оплаты для конкретного метода шлюза (мульти-метод).
+
+    callback_data: topup_ext_gw|{method_value}
+    """
+    texts = get_texts(db_user.language)
+
+    if not settings.is_external_gateway_enabled():
+        await callback.answer(
+            texts.t('EXTERNAL_GATEWAY_NOT_AVAILABLE', 'Способ оплаты временно недоступен'),
+            show_alert=True,
+        )
+        return
+
+    # Извлекаем метод из callback_data
+    method_value = callback.data.split('|', 1)[1]  # stripe / paypal
+
+    # Проверка ограничения
+    if getattr(db_user, 'restriction_topup', False):
+        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        support_url = settings.get_support_contact_url()
+        keyboard = []
+        if support_url:
+            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+        keyboard.append([InlineKeyboardButton(text=texts.t('BACK_BUTTON'), callback_data='menu_balance')])
+
+        await callback.message.edit_text(
+            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        )
+        return
+
+    await state.set_state(BalanceStates.waiting_for_amount)
+    await state.update_data(payment_method='external_gateway', ext_gw_method=method_value)
+
+    min_amount = settings.EXTERNAL_GATEWAY_MIN_AMOUNT_KOPEKS // 100
+    max_amount = settings.EXTERNAL_GATEWAY_MAX_AMOUNT_KOPEKS // 100
+
+    # Название конкретного метода
+    display_name = method_value
+    for m in settings.get_external_gateway_methods():
+        if m['value'] == method_value:
+            display_name = m['name']
+            break
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=texts.t('BACK_BUTTON'),
+                    callback_data='menu_balance',
+                )
+            ]
+        ]
+    )
+
+    await callback.message.edit_text(
+        texts.t(
+            'EXTERNAL_GATEWAY_ENTER_AMOUNT',
+            '💳 <b>Пополнение через {name}</b>\n\n'
+            'Введите сумму пополнения в рублях.\n\n'
+            'Минимум: {min_amount}₽\n'
+            'Максимум: {max_amount}₽',
+        ).format(
+            name=html.escape(display_name),
+            min_amount=min_amount,
+            max_amount=f'{max_amount:,}'.replace(',', ' '),
+        ),
+        parse_mode='HTML',
+        reply_markup=keyboard,
+    )
+
+
+@error_handler
+async def process_external_gateway_method_quick_amount(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Быстрая сумма для конкретного метода (мульти-метод).
+
+    callback_data: topup_amount|ext_gw|{method_value}|{amount_kopeks}
+    """
+    texts = get_texts(db_user.language)
+
+    if not settings.is_external_gateway_enabled():
+        await callback.answer(
+            texts.t('EXTERNAL_GATEWAY_NOT_AVAILABLE', 'Способ оплаты временно недоступен'),
+            show_alert=True,
+        )
+        return
+
+    try:
+        parts = callback.data.split('|')
+        method_value = parts[2]
+        amount_kopeks = int(parts[3])
+    except (IndexError, ValueError):
+        await callback.answer('Ошибка', show_alert=True)
+        return
+
+    await callback.answer()
+
+    await _create_external_gateway_payment_and_respond(
+        message_or_callback=callback.message,
+        db_user=db_user,
+        db=db,
+        amount_kopeks=amount_kopeks,
+        edit_message=True,
+        method=method_value,
     )
 
 
