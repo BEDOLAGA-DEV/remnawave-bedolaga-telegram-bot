@@ -20,6 +20,7 @@ from app.database.crud.yandex_client_id import (
     mark_trial_sent,
     upsert_cid,
 )
+from app.database.database import AsyncSessionLocal
 
 logger = structlog.get_logger(__name__)
 
@@ -133,6 +134,50 @@ async def _send_event(cid: str, event_action: str) -> bool:
     return await _post_collect(_event_payload(cid, event_action), event_action, cid)
 
 
+
+# --- Background task helpers ---
+
+_background_tasks: set[asyncio.Task] = set()
+
+
+def spawn_bg(coro) -> None:
+    """Spawn a background Yandex conversion task with proper reference tracking.
+
+    Checks _is_enabled() early so callers don't need to.
+    """
+    if not _is_enabled():
+        # Close the coroutine to avoid RuntimeWarning
+        coro.close()
+        return
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def _fire_bg(event_name: str, event_fn, user_id: int, **kwargs) -> None:
+    """Generic background wrapper: opens a session, calls event_fn, logs errors."""
+    try:
+        async with AsyncSessionLocal() as db:
+            await event_fn(db, user_id, **kwargs)
+    except Exception as exc:
+        logger.warning(f'{LOG_PREFIX} Background {event_name} event failed', user_id=user_id, error=str(exc))
+
+
+async def fire_registration_bg(user_id: int) -> None:
+    """Fire registration event in background with its own DB session."""
+    await _fire_bg('registration', on_registration, user_id)
+
+
+async def fire_trial_bg(user_id: int) -> None:
+    """Fire trial event in background with its own DB session."""
+    await _fire_bg('trial', on_trial, user_id)
+
+
+async def fire_purchase_bg(user_id: int, amount_kopeks: int) -> None:
+    """Fire purchase event in background with its own DB session."""
+    await _fire_bg('purchase', on_purchase, user_id, amount_kopeks=amount_kopeks)
+
+
 # --- Public API ---
 
 
@@ -155,6 +200,25 @@ async def store_cid(
     except Exception as exc:
         logger.error('%s Failed to store CID for user_id=%s: %s', LOG_PREFIX, user_id, exc)
         return False
+
+
+async def store_cid_and_fire_registration(
+    db: AsyncSession,
+    user_id: int,
+    cid: str | None,
+    *,
+    source: str = 'web',
+) -> None:
+    """Store Yandex CID and fire registration conversion in background (best-effort)."""
+    if not cid:
+        return
+    try:
+        stored = await store_cid(db, user_id, cid, source=source)
+        if stored:
+            await db.commit()
+            spawn_bg(fire_registration_bg(user_id))
+    except Exception as exc:
+        logger.warning(f'{LOG_PREFIX} Failed to store CID and fire registration', user_id=user_id, error=str(exc))
 
 
 async def on_registration(db: AsyncSession, user_id: int) -> None:
