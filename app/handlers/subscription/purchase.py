@@ -566,7 +566,11 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
     await callback.message.edit_text(
         message,
         reply_markup=get_subscription_keyboard(
-            db_user.language, has_subscription=True, is_trial=subscription.is_trial, subscription=subscription
+            db_user.language,
+            has_subscription=True,
+            is_trial=subscription.is_trial,
+            subscription=subscription,
+            balance_kopeks=db_user.balance_kopeks,
         ),
         parse_mode='HTML',
     )

@@ -1550,6 +1550,7 @@
   "TICKET_TITLE_TOO_SHORT": "Title must contain at least 5 characters. Try again:",
   "TICKET_UPDATE_ERROR": "❌ Error updating ticket.",
   "TOPUP_BALANCE_BUTTON": "💳 Top up balance",
+  "TOPUP_BALANCE_WITH_AMOUNT_BUTTON": "💳 Top up balance {balance}",
   "TOP_UP_AMOUNT": "💳 Enter top-up amount (in rubles):",
   "TOP_UP_METHODS": "\n💳 <b>Select a payment method</b>\n\nAmount: {amount}\n",
   "TOP_UP_STARS": "⭐ Telegram Stars",

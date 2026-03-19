@@ -1571,6 +1571,7 @@
   "TICKET_TITLE_TOO_SHORT": "Заголовок должен содержать минимум 5 символов. Попробуйте еще раз:",
   "TICKET_UPDATE_ERROR": "❌ Ошибка при обновлении тикета.",
   "TOPUP_BALANCE_BUTTON": "💳 Пополнить баланс",
+  "TOPUP_BALANCE_WITH_AMOUNT_BUTTON": "💳 Пополнить баланс {balance}",
   "TOP_UP_AMOUNT": "💳 Введите сумму для пополнения (в рублях):",
   "TOP_UP_METHODS": "\n💳 <b>Выберите способ оплаты</b>\n\nСумма: {amount}\n",
   "TOP_UP_STARS": "⭐ Telegram Stars",
