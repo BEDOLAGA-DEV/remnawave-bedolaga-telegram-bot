@@ -38,7 +38,7 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-@router.get('/', response_model=SubscriptionStatusResponse)
+@router.get('/info', response_model=SubscriptionStatusResponse)
 async def get_subscription(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),

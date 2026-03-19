@@ -62,7 +62,7 @@ from .withdrawal import router as withdrawal_router
 
 
 # Main cabinet router
-router = APIRouter(prefix='/cabinet', tags=['Cabinet'])
+router = APIRouter(prefix='/cabinet', tags=['Cabinet'], redirect_slashes=False)
 
 # Include all sub-routers
 router.include_router(auth_router)
