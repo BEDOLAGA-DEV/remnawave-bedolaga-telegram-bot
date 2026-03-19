@@ -431,21 +431,50 @@ def normalize_local_app_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(platforms, dict):
         return config
 
-    # Already in RemnaWave shape.
-    if any(isinstance(value, dict) and isinstance(value.get('apps'), list) for value in platforms.values()):
+    # Already fully in RemnaWave shape.
+    if platforms and all(isinstance(value, dict) and isinstance(value.get('apps'), list) for value in platforms.values()):
         return config
 
     normalized_platforms: dict[str, dict[str, Any]] = {}
-    for raw_platform, raw_apps in platforms.items():
-        if not isinstance(raw_apps, list):
-            continue
-
+    for raw_platform, raw_value in platforms.items():
         normalized_key = _LEGACY_TO_REMNAWAVE_PLATFORM.get(str(raw_platform).strip().lower(), str(raw_platform))
-        apps = [_normalize_legacy_app(app) for app in raw_apps if isinstance(app, dict)]
-        if not apps:
+
+        platform_payload: dict[str, Any] | None = None
+
+        if isinstance(raw_value, dict) and isinstance(raw_value.get('apps'), list):
+            apps = []
+            for app in raw_value.get('apps', []):
+                if not isinstance(app, dict):
+                    continue
+                # Preserve RemnaWave-ready apps, normalize legacy ones.
+                if isinstance(app.get('blocks'), list):
+                    apps.append(app)
+                else:
+                    apps.append(_normalize_legacy_app(app))
+
+            if not apps:
+                continue
+
+            platform_payload = {k: v for k, v in raw_value.items() if k != 'apps'}
+            platform_payload['apps'] = apps
+        elif isinstance(raw_value, list):
+            apps = [_normalize_legacy_app(app) for app in raw_value if isinstance(app, dict)]
+            if not apps:
+                continue
+            platform_payload = {'apps': apps}
+        else:
             continue
 
-        normalized_platforms[normalized_key] = {'apps': apps}
+        existing = normalized_platforms.get(normalized_key)
+        if existing and isinstance(existing.get('apps'), list):
+            existing['apps'].extend(platform_payload.get('apps', []))
+            for key, value in platform_payload.items():
+                if key == 'apps':
+                    continue
+                if key not in existing:
+                    existing[key] = value
+        else:
+            normalized_platforms[normalized_key] = platform_payload
 
     normalized: dict[str, Any] = {k: v for k, v in config.items() if k != 'platforms'}
     normalized['platforms'] = normalized_platforms
@@ -639,12 +668,25 @@ def get_platforms_list(config: dict[str, Any]) -> list[dict[str, Any]]:
 
         # Get displayName from Remnawave or fallback
         display_name_data = pd.get('displayName', display['name'])
+        icon_emoji = display['emoji']
+        if isinstance(pd.get('icon_emoji'), str) and pd.get('icon_emoji').strip():
+            icon_emoji = pd.get('icon_emoji').strip()
+        elif isinstance(pd.get('iconEmoji'), str) and pd.get('iconEmoji').strip():
+            icon_emoji = pd.get('iconEmoji').strip()
+
+        icon_custom_emoji_id = ''
+        for field_name in ('icon_custom_emoji_id', 'iconCustomEmojiId'):
+            value = pd.get(field_name)
+            if isinstance(value, str) and value.strip():
+                icon_custom_emoji_id = value.strip()
+                break
 
         result.append(
             {
                 'key': pk,
                 'displayName': display_name_data,
-                'icon_emoji': display['emoji'],
+                'icon_emoji': icon_emoji,
+                'icon_custom_emoji_id': icon_custom_emoji_id,
                 'device_type': _PLATFORM_TO_DEVICE.get(pk, pk),
             }
         )
@@ -657,11 +699,25 @@ def get_platforms_list(config: dict[str, Any]) -> list[dict[str, Any]]:
             continue
 
         display = _PLATFORM_DISPLAY.get(pk, {'name': pk, 'emoji': '📱'})
+        icon_emoji = display.get('emoji', '📱')
+        if isinstance(pd.get('icon_emoji'), str) and pd.get('icon_emoji').strip():
+            icon_emoji = pd.get('icon_emoji').strip()
+        elif isinstance(pd.get('iconEmoji'), str) and pd.get('iconEmoji').strip():
+            icon_emoji = pd.get('iconEmoji').strip()
+
+        icon_custom_emoji_id = ''
+        for field_name in ('icon_custom_emoji_id', 'iconCustomEmojiId'):
+            value = pd.get(field_name)
+            if isinstance(value, str) and value.strip():
+                icon_custom_emoji_id = value.strip()
+                break
+
         result.append(
             {
                 'key': pk,
                 'displayName': display.get('name', pk),
-                'icon_emoji': display.get('emoji', '📱'),
+                'icon_emoji': icon_emoji,
+                'icon_custom_emoji_id': icon_custom_emoji_id,
                 'device_type': _PLATFORM_TO_DEVICE.get(pk, pk),
             }
         )

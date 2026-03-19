@@ -2487,11 +2487,27 @@ def get_device_selection_keyboard(
             display_name = p.get('displayName', p['key'])
             if isinstance(display_name, dict):
                 display_name = get_localized_value(display_name, language)
+            icon_custom_emoji_id = p.get('icon_custom_emoji_id') or p.get('iconCustomEmojiId')
+            if isinstance(icon_custom_emoji_id, str):
+                icon_custom_emoji_id = icon_custom_emoji_id.strip()
+            else:
+                icon_custom_emoji_id = ''
+
             emoji = p.get('icon_emoji', '📱')
+            if isinstance(emoji, str):
+                emoji = emoji.strip()
+            else:
+                emoji = '📱'
+
+            button_text = str(display_name)
+            if not icon_custom_emoji_id:
+                button_text = f'{emoji or "📱"} {button_text}'
+
             device_type = p.get('device_type', p['key'])
             btn = InlineKeyboardButton(
-                text=f'{emoji} {display_name}',
+                text=button_text,
                 callback_data=f'device_guide_{device_type}',
+                icon_custom_emoji_id=icon_custom_emoji_id or None,
             )
             row.append(btn)
             if len(row) == 2:
