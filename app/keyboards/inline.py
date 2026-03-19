@@ -1063,7 +1063,7 @@ def get_subscription_keyboard(
     if has_subscription:
         balance_button_text = texts.t(
             'SUBSCRIPTION_BALANCE_BUTTON',
-            'Баланс: {balance}',
+            '💰 Баланс: {balance}',
         ).format(balance=texts.format_price(max(0, int(balance_kopeks or 0))))
         connect_button_text = texts.t('SUBSCRIPTION_CONNECT_BUTTON', '🚀 Подключиться')
 
