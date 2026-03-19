@@ -1061,11 +1061,11 @@ def get_subscription_keyboard(
     keyboard = []
 
     if has_subscription:
-        topup_text = texts.t(
-            'TOPUP_BALANCE_WITH_AMOUNT_BUTTON',
-            '💳 Пополнить баланс: (текущий: {balance})',
+        balance_button_text = texts.t(
+            'SUBSCRIPTION_BALANCE_BUTTON',
+            'Баланс: {balance}',
         ).format(balance=texts.format_price(max(0, int(balance_kopeks or 0))))
-        keyboard.append([build_miniapp_or_callback_button(text=topup_text, callback_data='balance_topup')])
+        connect_button_text = texts.t('SUBSCRIPTION_CONNECT_BUTTON', '🚀 Подключиться')
 
         subscription_link = get_display_subscription_link(subscription) if subscription else None
         if subscription_link:
@@ -1075,7 +1075,7 @@ def get_subscription_keyboard(
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                            text=connect_button_text,
                             web_app=types.WebAppInfo(url=subscription_link),
                         )
                     ]
@@ -1085,7 +1085,7 @@ def get_subscription_keyboard(
                     keyboard.append(
                         [
                             InlineKeyboardButton(
-                                text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                                text=connect_button_text,
                                 web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
                             )
                         ]
@@ -1093,20 +1093,16 @@ def get_subscription_keyboard(
                 else:
                     keyboard.append(
                         [
-                            InlineKeyboardButton(
-                                text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
-                            )
+                            InlineKeyboardButton(text=connect_button_text, callback_data='subscription_connect')
                         ]
                     )
             elif connect_mode == 'link':
-                keyboard.append(
-                    [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), url=subscription_link)]
-                )
+                keyboard.append([InlineKeyboardButton(text=connect_button_text, url=subscription_link)])
             elif connect_mode == 'happ_cryptolink':
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                            text=connect_button_text,
                             callback_data='open_subscription_link',
                         )
                     ]
@@ -1114,16 +1110,14 @@ def get_subscription_keyboard(
             else:
                 keyboard.append(
                     [
-                        InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
-                        )
+                        InlineKeyboardButton(text=connect_button_text, callback_data='subscription_connect')
                     ]
                 )
         elif settings.CONNECT_BUTTON_MODE == 'miniapp_custom':
             keyboard.append(
                 [
                     InlineKeyboardButton(
-                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                        text=connect_button_text,
                         web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
                     )
                 ]
@@ -1131,11 +1125,11 @@ def get_subscription_keyboard(
         else:
             keyboard.append(
                 [
-                    InlineKeyboardButton(
-                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
-                    )
+                    InlineKeyboardButton(text=connect_button_text, callback_data='subscription_connect')
                 ]
             )
+
+        keyboard.append([build_miniapp_or_callback_button(text=balance_button_text, callback_data='menu_balance')])
 
         happ_row = get_happ_download_button_row(texts)
         if happ_row:

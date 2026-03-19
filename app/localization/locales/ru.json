@@ -989,6 +989,8 @@
   "CONFIRM": "✅ Подтвердить",
   "CONFIRM_CHANGE_BUTTON": "✅ Подтвердить изменение",
   "CONNECT_BUTTON": "🔗 Подключиться",
+  "SUBSCRIPTION_CONNECT_BUTTON": "🚀 Подключиться",
+  "SUBSCRIPTION_BALANCE_BUTTON": "Баланс: {balance}",
   "CONTACT_SUPPORT": "💬 Написать в поддержку",
   "CONTACT_SUPPORT_BUTTON": "💬 Связаться с поддержкой",
   "CONTINUE": "➡️ Продолжить",
