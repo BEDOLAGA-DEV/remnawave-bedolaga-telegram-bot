@@ -69,7 +69,7 @@ def _subscription_to_list_item(sub) -> SubscriptionListItem:
     )
 
 
-@router.get('/', response_model=SubscriptionsListResponse)
+@router.get('', response_model=SubscriptionsListResponse)
 async def list_subscriptions(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
