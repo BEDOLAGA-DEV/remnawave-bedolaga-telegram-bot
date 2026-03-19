@@ -23,7 +23,7 @@ from ...dependencies import get_cabinet_db, get_current_cabinet_user
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix='/subscriptions', tags=['Cabinet Multi-Tariff'])
+router = APIRouter(prefix='/subscriptions', tags=['Cabinet Multi-Tariff'], redirect_slashes=False)
 
 
 class SubscriptionListItem(BaseModel):

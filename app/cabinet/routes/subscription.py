@@ -23,7 +23,7 @@ from .subscription_modules import (
 )
 
 
-router = APIRouter(prefix='/subscription', tags=['Cabinet Subscription'])
+router = APIRouter(prefix='/subscription', tags=['Cabinet Subscription'], redirect_slashes=False)
 
 # Include all sub-routers (no prefix — each module defines paths relative to /subscription)
 router.include_router(status_router)
