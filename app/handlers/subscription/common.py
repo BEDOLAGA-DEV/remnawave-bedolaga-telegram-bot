@@ -652,6 +652,52 @@ def get_platforms_list(config: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(platforms, dict):
         return []
 
+    custom_icon_map = config.get('platform_button_custom_emoji_ids', {})
+    if not isinstance(custom_icon_map, dict):
+        custom_icon_map = {}
+
+    def _resolve_platform_entry(pk: str, pd: Any) -> dict[str, Any] | None:
+        display = _PLATFORM_DISPLAY.get(pk, {'name': pk, 'emoji': '📱'})
+        display_name_data: Any = display.get('name', pk)
+        icon_emoji = display.get('emoji', '📱')
+        icon_custom_emoji_id = ''
+
+        if isinstance(pd, dict):
+            apps = pd.get('apps', [])
+            if not isinstance(apps, list) or not any(isinstance(app, dict) for app in apps):
+                return None
+
+            display_name_data = pd.get('displayName', display_name_data)
+
+            if isinstance(pd.get('icon_emoji'), str) and pd.get('icon_emoji').strip():
+                icon_emoji = pd.get('icon_emoji').strip()
+            elif isinstance(pd.get('iconEmoji'), str) and pd.get('iconEmoji').strip():
+                icon_emoji = pd.get('iconEmoji').strip()
+
+            for field_name in ('icon_custom_emoji_id', 'iconCustomEmojiId'):
+                value = pd.get(field_name)
+                if isinstance(value, str) and value.strip():
+                    icon_custom_emoji_id = value.strip()
+                    break
+        elif isinstance(pd, list):
+            if not any(isinstance(app, dict) for app in pd):
+                return None
+        else:
+            return None
+
+        if not icon_custom_emoji_id:
+            map_value = custom_icon_map.get(pk)
+            if isinstance(map_value, str) and map_value.strip():
+                icon_custom_emoji_id = map_value.strip()
+
+        return {
+            'key': pk,
+            'displayName': display_name_data,
+            'icon_emoji': icon_emoji,
+            'icon_custom_emoji_id': icon_custom_emoji_id,
+            'device_type': _PLATFORM_TO_DEVICE.get(pk, pk),
+        }
+
     # Desired order
     order = ['ios', 'android', 'windows', 'macos', 'linux', 'androidTV', 'appleTV']
 
@@ -659,68 +705,17 @@ def get_platforms_list(config: dict[str, Any]) -> list[dict[str, Any]]:
     for pk in order:
         if pk not in platforms:
             continue
-        pd = platforms[pk]
-
-        if not isinstance(pd, dict) or not pd.get('apps'):
-            continue
-
-        display = _PLATFORM_DISPLAY.get(pk, {'name': pk, 'emoji': '📱'})
-
-        # Get displayName from Remnawave or fallback
-        display_name_data = pd.get('displayName', display['name'])
-        icon_emoji = display['emoji']
-        if isinstance(pd.get('icon_emoji'), str) and pd.get('icon_emoji').strip():
-            icon_emoji = pd.get('icon_emoji').strip()
-        elif isinstance(pd.get('iconEmoji'), str) and pd.get('iconEmoji').strip():
-            icon_emoji = pd.get('iconEmoji').strip()
-
-        icon_custom_emoji_id = ''
-        for field_name in ('icon_custom_emoji_id', 'iconCustomEmojiId'):
-            value = pd.get(field_name)
-            if isinstance(value, str) and value.strip():
-                icon_custom_emoji_id = value.strip()
-                break
-
-        result.append(
-            {
-                'key': pk,
-                'displayName': display_name_data,
-                'icon_emoji': icon_emoji,
-                'icon_custom_emoji_id': icon_custom_emoji_id,
-                'device_type': _PLATFORM_TO_DEVICE.get(pk, pk),
-            }
-        )
+        resolved = _resolve_platform_entry(pk, platforms[pk])
+        if resolved:
+            result.append(resolved)
 
     # Also include any platforms in config not in our order list
     for pk, pd in platforms.items():
         if pk in order:
             continue
-        if not isinstance(pd, dict) or not pd.get('apps'):
-            continue
-
-        display = _PLATFORM_DISPLAY.get(pk, {'name': pk, 'emoji': '📱'})
-        icon_emoji = display.get('emoji', '📱')
-        if isinstance(pd.get('icon_emoji'), str) and pd.get('icon_emoji').strip():
-            icon_emoji = pd.get('icon_emoji').strip()
-        elif isinstance(pd.get('iconEmoji'), str) and pd.get('iconEmoji').strip():
-            icon_emoji = pd.get('iconEmoji').strip()
-
-        icon_custom_emoji_id = ''
-        for field_name in ('icon_custom_emoji_id', 'iconCustomEmojiId'):
-            value = pd.get(field_name)
-            if isinstance(value, str) and value.strip():
-                icon_custom_emoji_id = value.strip()
-                break
-
-        result.append(
-            {
-                'key': pk,
-                'displayName': display.get('name', pk),
-                'icon_emoji': icon_emoji,
-                'icon_custom_emoji_id': icon_custom_emoji_id,
-                'device_type': _PLATFORM_TO_DEVICE.get(pk, pk),
-            }
-        )
+        resolved = _resolve_platform_entry(pk, pd)
+        if resolved:
+            result.append(resolved)
 
     return result
 
