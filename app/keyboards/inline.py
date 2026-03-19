@@ -1063,7 +1063,7 @@ def get_subscription_keyboard(
     if has_subscription:
         topup_text = texts.t(
             'TOPUP_BALANCE_WITH_AMOUNT_BUTTON',
-            '💳 Пополнить баланс {balance}',
+            '💳 Пополнить баланс: (текущий: {balance})',
         ).format(balance=texts.format_price(max(0, int(balance_kopeks or 0))))
         keyboard.append([build_miniapp_or_callback_button(text=topup_text, callback_data='balance_topup')])
 
