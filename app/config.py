@@ -118,6 +118,7 @@ class Settings(BaseSettings):
     REMNAWAVE_WEBHOOK_ENABLED: bool = False
     REMNAWAVE_WEBHOOK_PATH: str = '/remnawave-webhook'
     REMNAWAVE_WEBHOOK_SECRET: str | None = None  # HMAC-SHA256 shared secret (min 32 chars)
+    REMNAWAVE_WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS: bool = True
 
     # Webhook user notification toggles (what Telegram messages users receive from webhook events)
     WEBHOOK_NOTIFY_USER_ENABLED: bool = True
