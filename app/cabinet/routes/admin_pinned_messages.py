@@ -4,7 +4,8 @@ import time
 from datetime import UTC, datetime
 
 import structlog
-from app.utils.telegram_bot_factory import Bot
+from aiogram import Bot as AiogramBot
+from app.utils.telegram_bot_factory import Bot as create_bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -71,13 +72,13 @@ def _serialize_pinned_message(msg: PinnedMessage) -> PinnedMessageResponse:
     )
 
 
-_cached_bot: Bot | None = None
+_cached_bot: AiogramBot | None = None
 
 
-def _get_bot() -> Bot:
+def _get_bot() -> AiogramBot:
     global _cached_bot
     if _cached_bot is None:
-        _cached_bot = Bot(
+        _cached_bot = create_bot(
             token=settings.BOT_TOKEN,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
