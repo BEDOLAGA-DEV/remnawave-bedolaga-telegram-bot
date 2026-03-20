@@ -99,7 +99,15 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     from aiogram.client.default import DefaultBotProperties
     from aiogram.enums import ParseMode
 
-    bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    proxy_url = settings.get_proxy_url()
+    session = None
+    if proxy_url:
+        from aiogram.client.session.aiohttp import AiohttpSession
+
+        session = AiohttpSession(proxy=proxy_url)
+        logger.info('Прокси настроен', proxy_url=proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url)
+
+    bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML), session=session)
 
     maintenance_service.set_bot(bot)
     logger.info('Бот установлен в maintenance_service')

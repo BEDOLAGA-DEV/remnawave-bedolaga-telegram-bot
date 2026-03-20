@@ -24,6 +24,7 @@ dependencies = [
     'pyzipper>=0.3.6',
     'structlog>=25.1.0,<26',
     'rich>=14.0',
+    'aiohttp-socks>=0.10.1',
 ]
 
 [dependency-groups]

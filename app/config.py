@@ -802,6 +802,10 @@ class Settings(BaseSettings):
     BAN_SYSTEM_API_TOKEN: str | None = None
     BAN_SYSTEM_REQUEST_TIMEOUT: int = 30
 
+    # SOCKS5 прокси для маршрутизации трафика бота к Telegram API
+    # Формат: socks5://user:password@host:port или socks5://host:port
+    PROXY_URL: str | None = None
+
     @field_validator('MAIN_MENU_MODE', mode='before')
     @classmethod
     def normalize_main_menu_mode(cls, value: str | None) -> str:
@@ -927,6 +931,10 @@ class Settings(BaseSettings):
     def is_sqlite(self) -> bool:
         """Проверяет, используется ли SQLite"""
         return 'sqlite' in self.get_database_url()
+
+    def get_proxy_url(self) -> str | None:
+        """Возвращает URL прокси-сервера (SOCKS5) или None."""
+        return self.PROXY_URL if self.PROXY_URL else None
 
     def is_admin(self, telegram_id: int | None = None, email: str | None = None) -> bool:
         """
