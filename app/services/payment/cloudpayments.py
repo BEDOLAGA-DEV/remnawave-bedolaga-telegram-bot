@@ -452,8 +452,8 @@ class CloudPaymentsPaymentMixin:
         transaction: Any,
     ) -> None:
         """Send success notification to user via Telegram."""
-        from app.utils.bot_utils import get_bot
         from app.localization.texts import get_texts
+        from app.utils.bot_utils import get_bot
 
         async with get_bot() as bot:
             # Skip email-only users (no telegram_id)

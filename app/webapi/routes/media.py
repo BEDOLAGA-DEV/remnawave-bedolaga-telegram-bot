@@ -4,9 +4,6 @@ import mimetypes
 from typing import Any
 
 import structlog
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from aiogram.types import BufferedInputFile
 from fastapi import (
     APIRouter,

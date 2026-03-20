@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from fastapi import (
     APIRouter,
     Depends,
@@ -328,7 +325,6 @@ async def send_poll(
             total=0,
         )
 
-    from app.config import settings
     from app.utils.bot_utils import get_bot
 
     async with get_bot() as bot:

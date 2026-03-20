@@ -4,13 +4,11 @@ import time
 from datetime import UTC, datetime
 
 import structlog
-from aiogram import Bot
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import PinnedMessage, User
-from app.utils.bot_utils import get_bot
 from app.services.pinned_message_service import (
     broadcast_pinned_message,
     deactivate_active_pinned_message,
@@ -18,6 +16,7 @@ from app.services.pinned_message_service import (
     set_active_pinned_message,
     unpin_active_pinned_message,
 )
+from app.utils.bot_utils import get_bot
 from app.utils.validators import sanitize_html, validate_html_tags
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -67,10 +66,6 @@ def _serialize_pinned_message(msg: PinnedMessage) -> PinnedMessageResponse:
         created_at=msg.created_at,
         updated_at=msg.updated_at,
     )
-
-
-
-
 
 
 # ============ List / Get Endpoints ============

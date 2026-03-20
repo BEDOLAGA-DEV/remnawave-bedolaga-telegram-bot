@@ -178,8 +178,6 @@ async def apply_for_partner(
 
     # Уведомляем админов о новой заявке
     try:
-        from aiogram import Bot
-
         from app.services.admin_notification_service import AdminNotificationService
 
         if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:

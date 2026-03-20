@@ -1,8 +1,6 @@
 from datetime import UTC, datetime
 
 import structlog
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

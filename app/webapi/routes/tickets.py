@@ -4,13 +4,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database.crud.ticket import TicketCRUD, TicketMessageCRUD
 from app.database.models import Ticket, TicketMessage, TicketStatus
 
@@ -294,7 +290,10 @@ async def get_ticket_message_media(
                 media_url = str(request.url_for('download_media', file_id=message.media_file_id))
         except Exception as error:
             logger.warning(
-                'Failed to resolve media URL for ticket message', ticket_id=ticket_id, message_id=message_id, error=error
+                'Failed to resolve media URL for ticket message',
+                ticket_id=ticket_id,
+                message_id=message_id,
+                error=error,
             )
 
     return TicketMediaResponse(

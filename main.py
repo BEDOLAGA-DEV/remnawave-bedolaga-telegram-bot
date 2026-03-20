@@ -154,6 +154,7 @@ async def main():
     proxy_info = 'Отключен'
     if proxy_url:
         from urllib.parse import urlparse
+
         try:
             parsed = urlparse(proxy_url)
             proxy_info = f'{parsed.hostname}:{parsed.port}' if parsed.port else str(parsed.hostname)
@@ -977,9 +978,8 @@ async def _send_crash_notification_on_error(error: Exception) -> None:
         return
 
     try:
-        from app.utils.bot_utils import get_bot
-
         from app.services.startup_notification_service import send_crash_notification
+        from app.utils.bot_utils import get_bot
 
         async with get_bot() as bot:
             traceback_str = traceback.format_exc()

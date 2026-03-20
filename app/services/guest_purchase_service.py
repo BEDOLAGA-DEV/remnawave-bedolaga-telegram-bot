@@ -46,10 +46,7 @@ async def _send_admin_notification(
     if not getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) or not settings.BOT_TOKEN:
         return
     try:
-        from aiogram import Bot
-
         from app.services.admin_notification_service import AdminNotificationService
-
         from app.utils.bot_utils import get_bot
 
         async with get_bot() as bot:
@@ -548,8 +545,6 @@ async def _find_or_create_user(
     resolved_telegram_id: int | None = pre_resolved_telegram_id
     if resolved_telegram_id is None:
         try:
-            from aiogram import Bot
-
             from app.utils.bot_utils import get_bot
 
             async with get_bot() as bot:
@@ -660,9 +655,6 @@ async def _send_telegram_gift_notification(
     try:
         import html as html_mod
 
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         gift_from = ''
@@ -696,6 +688,7 @@ async def _send_telegram_gift_notification(
             )
 
         from app.utils.bot_utils import get_bot
+
         async with get_bot() as bot:
             await bot.send_message(
                 chat_id=user.telegram_id,
@@ -1207,8 +1200,6 @@ async def _send_stuck_purchase_alert(data: dict, retry_count: int, phase: str) -
     try:
         import html as html_mod
 
-        from aiogram import Bot
-
         from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
 
         amount_rub = data['amount_kopeks'] / 100
@@ -1247,8 +1238,6 @@ async def _send_amount_mismatch_alert(
         return
     try:
         import html as html_mod
-
-        from aiogram import Bot
 
         from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
 

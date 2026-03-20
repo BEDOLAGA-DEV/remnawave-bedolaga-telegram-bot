@@ -227,8 +227,6 @@ async def approve_application(
 
     # Notify user about approval
     try:
-        from aiogram import Bot
-
         from app.config import settings
         from app.services.notification_delivery_service import notification_delivery_service
 
@@ -279,8 +277,6 @@ async def reject_application(
 
     # Notify user about rejection
     try:
-        from aiogram import Bot
-
         from app.config import settings
         from app.services.notification_delivery_service import notification_delivery_service
 

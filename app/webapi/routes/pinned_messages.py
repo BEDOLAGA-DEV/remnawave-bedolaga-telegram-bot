@@ -3,14 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Optional
 
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database.models import PinnedMessage
 from app.services.pinned_message_service import (
     broadcast_pinned_message,
@@ -48,8 +44,6 @@ def _serialize_pinned_message(msg: PinnedMessage) -> PinnedMessageResponse:
         created_at=msg.created_at,
         updated_at=msg.updated_at,
     )
-
-
 
 
 @router.get('', response_model=PinnedMessageListResponse)

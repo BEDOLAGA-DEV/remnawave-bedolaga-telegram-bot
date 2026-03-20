@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Any
 
 import structlog
-from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -363,8 +362,6 @@ async def list_offers(
         limit=limit,
         offset=offset,
     )
-
-
 
 
 def _build_default_promo_message(

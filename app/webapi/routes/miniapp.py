@@ -10,7 +10,6 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from aiogram import Bot
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
 from sqlalchemy import select

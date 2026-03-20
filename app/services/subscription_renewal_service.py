@@ -9,7 +9,6 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings

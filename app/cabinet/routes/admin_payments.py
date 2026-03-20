@@ -4,14 +4,10 @@ import math
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database.models import PaymentMethod, User
 from app.services.payment_search_service import (
     MAX_ALL_TIME_DAYS,
@@ -553,8 +549,8 @@ async def check_payment_status(
     from app.utils.bot_utils import get_bot
 
     async with get_bot() as bot:
-            payment_service = PaymentService(bot=bot)
-            updated = await run_manual_check(db, payment_method, payment_id, payment_service)
+        payment_service = PaymentService(bot=bot)
+        updated = await run_manual_check(db, payment_method, payment_id, payment_service)
     if not updated:
         return ManualCheckResponse(
             success=False,

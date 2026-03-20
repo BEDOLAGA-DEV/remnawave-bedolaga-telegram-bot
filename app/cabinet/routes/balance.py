@@ -6,9 +6,6 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import httpx
 import structlog
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession

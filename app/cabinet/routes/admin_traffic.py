@@ -7,16 +7,12 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from aiogram.types import BufferedInputFile
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
 from app.database.models import Subscription, Transaction, TransactionType, User
 from app.services.remnawave_service import RemnaWaveService
 
@@ -680,6 +676,7 @@ async def export_traffic_csv(
     filename = f'traffic_usage_{period_label}_{timestamp}.csv'
 
     from app.utils.bot_utils import get_bot
+
     try:
         async with get_bot() as bot:
             await bot.send_document(

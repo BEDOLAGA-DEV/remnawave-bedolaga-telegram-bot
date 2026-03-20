@@ -306,8 +306,6 @@ async def create_gift_purchase(
         else:
             # 2) Fall back to Bot API (works for public usernames the bot has seen)
             try:
-                from aiogram import Bot
-
                 from app.utils.bot_utils import get_bot
 
                 async with get_bot() as bot:
@@ -373,8 +371,6 @@ async def create_gift_purchase(
         # Stars payments need a Bot instance to create invoice links
         bot = None
         if body.payment_method == 'telegram_stars':
-            from aiogram import Bot
-
             from app.utils.bot_utils import get_bot
 
             async with get_bot() as bot:
