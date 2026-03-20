@@ -50,7 +50,9 @@ async def _send_admin_notification(
 
         from app.services.admin_notification_service import AdminNotificationService
 
-        async with Bot(token=settings.BOT_TOKEN) as bot:
+        from app.utils.bot_utils import get_bot
+
+        async with get_bot() as bot:
             service = AdminNotificationService(bot)
             await service.send_guest_purchase_notification(
                 purchase,
@@ -548,7 +550,9 @@ async def _find_or_create_user(
         try:
             from aiogram import Bot
 
-            async with Bot(token=settings.BOT_TOKEN) as bot:
+            from app.utils.bot_utils import get_bot
+
+            async with get_bot() as bot:
                 chat = await asyncio.wait_for(
                     bot.get_chat(chat_id=f'@{username}'),
                     timeout=5.0,
@@ -691,10 +695,8 @@ async def _send_telegram_gift_notification(
                 ]
             )
 
-        async with Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        ) as bot:
+        from app.utils.bot_utils import get_bot
+        async with get_bot() as bot:
             await bot.send_message(
                 chat_id=user.telegram_id,
                 text=text,
@@ -1225,7 +1227,9 @@ async def _send_stuck_purchase_alert(data: dict, retry_count: int, phase: str) -
             f'Requires manual investigation.'
         )
 
-        async with Bot(token=settings.BOT_TOKEN) as bot:
+        from app.utils.bot_utils import get_bot
+
+        async with get_bot() as bot:
             service = AdminNotificationService(bot)
             await service.send_admin_notification(text, category=NotificationCategory.ERRORS)
     except Exception:
@@ -1260,7 +1264,9 @@ async def _send_amount_mismatch_alert(
             f'Requires manual investigation.'
         )
 
-        async with Bot(token=settings.BOT_TOKEN) as bot:
+        from app.utils.bot_utils import get_bot
+
+        async with get_bot() as bot:
             service = AdminNotificationService(bot)
             await service.send_admin_notification(text, category=NotificationCategory.ERRORS)
     except Exception:

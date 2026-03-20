@@ -75,16 +75,15 @@ async def create_withdrawal(
         from app.services.admin_notification_service import AdminNotificationService
 
         if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
-            try:
+            from app.utils.bot_utils import get_bot
+
+            async with get_bot() as bot:
                 notification_service = AdminNotificationService(bot)
                 await notification_service.send_withdrawal_request_notification(
                     user=user,
                     amount_kopeks=request.amount_kopeks,
                     payment_details=request.payment_details,
                 )
-            finally:
-                await bot.session.close()
     except Exception as e:
         logger.error('Failed to send admin notification for withdrawal request', error=e)
 

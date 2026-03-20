@@ -679,12 +679,9 @@ async def export_traffic_csv(
     timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
     filename = f'traffic_usage_{period_label}_{timestamp}.csv'
 
+    from app.utils.bot_utils import get_bot
     try:
-        bot = Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
-        async with bot:
+        async with get_bot() as bot:
             await bot.send_document(
                 chat_id=admin.telegram_id,
                 document=BufferedInputFile(csv_bytes, filename=filename),

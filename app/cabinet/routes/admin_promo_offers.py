@@ -8,15 +8,12 @@ from typing import Any
 
 import structlog
 from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database.crud.discount_offer import (
     count_discount_offers,
     list_discount_offers,
@@ -32,6 +29,7 @@ from app.database.crud.promo_offer_template import (
 from app.database.crud.user import get_user_by_email, get_user_by_telegram_id
 from app.database.models import DiscountOffer, PromoOfferLog, PromoOfferTemplate, User
 from app.handlers.admin.messages import get_custom_users, get_target_users
+from app.utils.bot_utils import get_bot
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -367,12 +365,6 @@ async def list_offers(
     )
 
 
-def _get_bot() -> Bot:
-    """Create bot instance for sending notifications."""
-    return Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
 
 
 def _build_default_promo_message(
@@ -411,7 +403,7 @@ async def _send_promo_notifications(
     if not offers_to_notify:
         return 0, 0
 
-    bot = _get_bot()
+    bot = get_bot()
     sent = 0
     failed = 0
 
@@ -483,7 +475,6 @@ async def _send_promo_notifications(
             await asyncio.sleep(0.1)
 
     # Close bot session
-    await bot.session.close()
 
     return sent, failed
 

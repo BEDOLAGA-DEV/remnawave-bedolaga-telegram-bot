@@ -224,16 +224,15 @@ async def reply_to_ticket(
         media_caption=payload.media_caption,
     )
 
-    bot = Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
-    try:
-        from app.handlers.admin.tickets import notify_user_about_ticket_reply
+    from app.utils.bot_utils import get_bot
 
-        await notify_user_about_ticket_reply(bot, ticket, final_message_text, db)
-    finally:
-        await bot.session.close()
+    async with get_bot() as bot:
+        try:
+            from app.handlers.admin.tickets import notify_user_about_ticket_reply
+
+            await notify_user_about_ticket_reply(bot, ticket, final_message_text, db)
+        except Exception as error:
+            logger.warning('Failed to notify user about ticket reply', error=error)
 
     ticket_with_messages = await TicketCRUD.get_ticket_by_id(db, ticket_id, load_messages=True, load_user=False)
 
@@ -286,20 +285,17 @@ async def get_ticket_message_media(
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'Media not found for this message')
 
     media_url: str | None = None
-    bot = Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
-    try:
-        file = await bot.get_file(message.media_file_id)
-        if file.file_path:
-            media_url = str(request.url_for('download_media', file_id=message.media_file_id))
-    except Exception as error:
-        logger.warning(
-            'Failed to resolve media URL for ticket message', ticket_id=ticket_id, message_id=message_id, error=error
-        )
-    finally:
-        await bot.session.close()
+    from app.utils.bot_utils import get_bot
+
+    async with get_bot() as bot:
+        try:
+            file = await bot.get_file(message.media_file_id)
+            if file.file_path:
+                media_url = str(request.url_for('download_media', file_id=message.media_file_id))
+        except Exception as error:
+            logger.warning(
+                'Failed to resolve media URL for ticket message', ticket_id=ticket_id, message_id=message_id, error=error
+            )
 
     return TicketMediaResponse(
         id=message.id,

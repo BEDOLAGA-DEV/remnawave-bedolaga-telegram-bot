@@ -200,14 +200,16 @@ async def _process_campaign_bonus(
                 from aiogram.client.default import DefaultBotProperties
                 from aiogram.enums import ParseMode
 
-                bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-                await process_referral_registration(db, user.id, campaign.partner_user_id, bot=bot)
-                logger.info(
-                    'Referral set from campaign partner',
-                    user_id=user.id,
-                    partner_user_id=campaign.partner_user_id,
-                    campaign_id=campaign.id,
-                )
+                from app.utils.bot_utils import get_bot
+
+                async with get_bot() as bot:
+                    await process_referral_registration(db, user.id, campaign.partner_user_id, bot=bot)
+                    logger.info(
+                        'Referral set from campaign partner',
+                        user_id=user.id,
+                        partner_user_id=campaign.partner_user_id,
+                        campaign_id=campaign.id,
+                    )
             except Exception as e:
                 logger.error('Failed to process referral from campaign partner', error=e)
 
@@ -259,9 +261,11 @@ async def _process_referral_code(
         from aiogram.client.default import DefaultBotProperties
         from aiogram.enums import ParseMode
 
-        bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        await process_referral_registration(db, user.id, referrer.id, bot=bot)
-        logger.info('Referral applied from code', user_id=user.id, referrer_id=referrer.id, referral_code=referral_code)
+        from app.utils.bot_utils import get_bot
+
+        async with get_bot() as bot:
+            await process_referral_registration(db, user.id, referrer.id, bot=bot)
+            logger.info('Referral applied from code', user_id=user.id, referrer_id=referrer.id, referral_code=referral_code)
     except Exception as e:
         logger.error('Failed to process referral code', error=e, referral_code=referral_code)
 
@@ -941,11 +945,13 @@ async def register_email_standalone(
             from aiogram.client.default import DefaultBotProperties
             from aiogram.enums import ParseMode
 
-            bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-            await process_referral_registration(db, user.id, referrer.id, bot=bot)
-            logger.info(
-                'Processed referral registration: user_id=, referrer_id', user_id=user.id, referrer_id=referrer.id
-            )
+            from app.utils.bot_utils import get_bot
+
+            async with get_bot() as bot:
+                await process_referral_registration(db, user.id, referrer.id, bot=bot)
+                logger.info(
+                    'Processed referral registration: user_id=, referrer_id', user_id=user.id, referrer_id=referrer.id
+                )
         except Exception as e:
             logger.error('Failed to process referral registration', error=e)
             # Не прерываем регистрацию из-за ошибки реферальной системы

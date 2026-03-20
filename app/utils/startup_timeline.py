@@ -112,6 +112,7 @@ class StartupTimeline:
         self.logger = logger
         self.app_name = app_name
         self.steps: list[StepRecord] = []
+        self.metadata_records: list[tuple[str, Any]] = []
 
     def _record_step(self, title: str, icon: str, status_label: str, message: str, duration: float) -> None:
         self.steps.append(
@@ -125,6 +126,9 @@ class StartupTimeline:
         )
 
     def log_banner(self, metadata: Sequence[tuple[str, Any]] | None = None) -> None:
+        if metadata:
+            self.metadata_records.extend(metadata)
+
         title_text = f'🚀 {self.app_name}'
         subtitle_parts = [f'Python {platform.python_version()}']
         if metadata:
@@ -210,6 +214,11 @@ class StartupTimeline:
             return
 
         lines = []
+        if self.metadata_records:
+            for key, value in self.metadata_records:
+                lines.append(f'🔹 {key}: {value}')
+            lines.append('─' * 10)  # Разделитель
+
         for step in self.steps:
             base = f'{step.icon} {step.title} — {step.status_label} [{step.duration:.2f}s]'
             if step.message:

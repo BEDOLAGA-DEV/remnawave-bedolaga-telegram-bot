@@ -550,13 +550,11 @@ async def check_payment_status(
     old_is_paid = record.is_paid
 
     # Run manual check
-    bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    try:
-        payment_service = PaymentService(bot=bot)
-        updated = await run_manual_check(db, payment_method, payment_id, payment_service)
-    finally:
-        await bot.session.close()
+    from app.utils.bot_utils import get_bot
 
+    async with get_bot() as bot:
+            payment_service = PaymentService(bot=bot)
+            updated = await run_manual_check(db, payment_method, payment_id, payment_service)
     if not updated:
         return ManualCheckResponse(
             success=False,

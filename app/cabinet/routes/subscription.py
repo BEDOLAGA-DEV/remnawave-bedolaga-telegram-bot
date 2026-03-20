@@ -820,8 +820,9 @@ async def purchase_traffic(
         from app.services.admin_notification_service import AdminNotificationService
 
         if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
-            try:
+            from app.utils.bot_utils import get_bot
+
+            async with get_bot() as bot:
                 notification_service = AdminNotificationService(bot)
                 old_traffic = subscription.traffic_limit_gb - request.gb
                 await notification_service.send_subscription_update_notification(
@@ -833,8 +834,6 @@ async def purchase_traffic(
                     new_value=subscription.traffic_limit_gb,
                     price_paid=final_price,
                 )
-            finally:
-                await bot.session.close()
     except Exception as e:
         logger.error('Failed to send admin notification for traffic purchase', error=e)
 
@@ -1048,8 +1047,9 @@ async def purchase_devices_legacy(
         from app.services.admin_notification_service import AdminNotificationService
 
         if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
-            try:
+            from app.utils.bot_utils import get_bot
+
+            async with get_bot() as bot:
                 notification_service = AdminNotificationService(bot)
                 await notification_service.send_subscription_update_notification(
                     db=db,
@@ -1060,8 +1060,6 @@ async def purchase_devices_legacy(
                     new_value=actual_new,
                     price_paid=total_price,
                 )
-            finally:
-                await bot.session.close()
     except Exception as e:
         logger.error('Failed to send admin notification for device purchase', error=e)
 
@@ -1349,15 +1347,14 @@ async def activate_trial(
         from app.services.admin_notification_service import AdminNotificationService
 
         if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
-            try:
+            from app.utils.bot_utils import get_bot
+
+            async with get_bot() as bot:
                 notification_service = AdminNotificationService(bot)
                 charged_amount = settings.TRIAL_ACTIVATION_PRICE if requires_payment else None
                 await notification_service.send_trial_activation_notification(
                     db, user, subscription, charged_amount_kopeks=charged_amount
                 )
-            finally:
-                await bot.session.close()
     except Exception as e:
         logger.error('Failed to send trial activation notification', error=e)
 
@@ -1768,8 +1765,9 @@ async def submit_purchase(
             from app.services.admin_notification_service import AdminNotificationService
 
             if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-                bot = Bot(token=settings.BOT_TOKEN)
-                try:
+                from app.utils.bot_utils import get_bot
+
+                async with get_bot() as bot:
                     notification_service = AdminNotificationService(bot)
                     is_new_subscription = result.get('was_trial_conversion') or not context.subscription
                     await notification_service.send_subscription_purchase_notification(
@@ -1782,8 +1780,6 @@ async def submit_purchase(
                         amount_kopeks=pricing.final_total,
                         purchase_type='renewal' if not is_new_subscription else 'first_purchase',
                     )
-                finally:
-                    await bot.session.close()
         except Exception as e:
             logger.error('Failed to send admin notification for subscription purchase', error=e)
 
@@ -2166,8 +2162,9 @@ async def purchase_tariff(
             from app.services.admin_notification_service import AdminNotificationService
 
             if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-                bot = Bot(token=settings.BOT_TOKEN)
-                try:
+                from app.utils.bot_utils import get_bot
+
+                async with get_bot() as bot:
                     notification_service = AdminNotificationService(bot)
                     # Определяем тип покупки: новая подписка или продление
                     was_new_subscription = (
@@ -2183,8 +2180,6 @@ async def purchase_tariff(
                         amount_kopeks=price_kopeks,
                         purchase_type='renewal' if not was_new_subscription else 'first_purchase',
                     )
-                finally:
-                    await bot.session.close()
         except Exception as e:
             logger.error('Failed to send admin notification for tariff purchase', error=e)
 
@@ -2423,8 +2418,9 @@ async def purchase_devices(
             from app.services.admin_notification_service import AdminNotificationService
 
             if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-                bot = Bot(token=settings.BOT_TOKEN)
-                try:
+                from app.utils.bot_utils import get_bot
+
+                async with get_bot() as bot:
                     notification_service = AdminNotificationService(bot)
                     await notification_service.send_subscription_update_notification(
                         db=db,
@@ -2435,8 +2431,6 @@ async def purchase_devices(
                         new_value=subscription.device_limit,
                         price_paid=price_kopeks,
                     )
-                finally:
-                    await bot.session.close()
         except Exception as e:
             logger.error('Failed to send admin notification for device purchase', error=e)
 
@@ -4209,8 +4203,9 @@ async def switch_tariff(
         from app.services.admin_notification_service import AdminNotificationService
 
         if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
-            try:
+            from app.utils.bot_utils import get_bot
+
+            async with get_bot() as bot:
                 notification_service = AdminNotificationService(bot)
                 await notification_service.send_subscription_purchase_notification(
                     db=db,
@@ -4222,8 +4217,6 @@ async def switch_tariff(
                     amount_kopeks=upgrade_cost,
                     purchase_type='tariff_switch',
                 )
-            finally:
-                await bot.session.close()
     except Exception as e:
         logger.error('Failed to send admin notification for tariff switch', error=e)
 

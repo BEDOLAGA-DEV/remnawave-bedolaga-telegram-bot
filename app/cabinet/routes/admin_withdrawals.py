@@ -211,8 +211,9 @@ async def approve_withdrawal(
                 formatted_amount = settings.format_price(withdrawal.amount_kopeks)
                 comment_text = f'\n{request.comment}' if request.comment else ''
                 tg_message = f'✅ Ваш запрос на вывод {formatted_amount} одобрен.{comment_text}'
-                bot = Bot(token=settings.BOT_TOKEN)
-                try:
+                from app.utils.bot_utils import get_bot
+
+                async with get_bot() as bot:
                     await notification_delivery_service.notify_withdrawal_approved(
                         user=user,
                         amount_kopeks=withdrawal.amount_kopeks,
@@ -220,8 +221,6 @@ async def approve_withdrawal(
                         bot=bot,
                         telegram_message=tg_message,
                     )
-                finally:
-                    await bot.session.close()
     except Exception as e:
         logger.error('Failed to send withdrawal approval notification', error=e)
 
@@ -263,8 +262,9 @@ async def reject_withdrawal(
                 formatted_amount = settings.format_price(withdrawal.amount_kopeks)
                 comment_text = f'\nПричина: {request.comment}' if request.comment else ''
                 tg_message = f'❌ Ваш запрос на вывод {formatted_amount} отклонён.{comment_text}'
-                bot = Bot(token=settings.BOT_TOKEN)
-                try:
+                from app.utils.bot_utils import get_bot
+
+                async with get_bot() as bot:
                     await notification_delivery_service.notify_withdrawal_rejected(
                         user=user,
                         amount_kopeks=withdrawal.amount_kopeks,
@@ -272,8 +272,6 @@ async def reject_withdrawal(
                         bot=bot,
                         telegram_message=tg_message,
                     )
-                finally:
-                    await bot.session.close()
     except Exception as e:
         logger.error('Failed to send withdrawal rejection notification', error=e)
 

@@ -31,34 +31,31 @@ async def _notify_admins_about_auto_assignment(
         logger.debug('BOT_TOKEN не настроен — пропускаем уведомление о промогруппе')
         return
 
-    bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode='HTML'))
-    try:
-        notification_service = AdminNotificationService(bot)
-        reason = (
-            f'Автоназначение за траты {settings.format_price(total_spent_kopeks)}'
-            if hasattr(settings, 'format_price')
-            else f'Автоназначение за траты {total_spent_kopeks / 100:.2f}₽'
-        )
-        await notification_service.send_user_promo_group_change_notification(
-            db,
-            user,
-            old_group,
-            new_group,
-            reason=reason,
-            initiator=None,
-            automatic=True,
-        )
-    except Exception as exc:
-        logger.error(
-            'Ошибка отправки уведомления о автоназначении промогруппы пользователю',
-            telegram_id=user.telegram_id,
-            exc=exc,
-        )
-    finally:
+    from app.utils.bot_utils import get_bot
+
+    async with get_bot() as bot:
         try:
-            await bot.session.close()
-        except Exception:
-            pass
+            notification_service = AdminNotificationService(bot)
+            reason = (
+                f'Автоназначение за траты {settings.format_price(total_spent_kopeks)}'
+                if hasattr(settings, 'format_price')
+                else f'Автоназначение за траты {total_spent_kopeks / 100:.2f}₽'
+            )
+            await notification_service.send_user_promo_group_change_notification(
+                db,
+                user,
+                old_group,
+                new_group,
+                reason=reason,
+                initiator=None,
+                automatic=True,
+            )
+        except Exception as exc:
+            logger.error(
+                'Ошибка отправки уведомления о автоназначении промогруппы пользователю',
+                telegram_id=user.telegram_id,
+                exc=exc,
+            )
 
 
 async def _get_best_group_for_spending(

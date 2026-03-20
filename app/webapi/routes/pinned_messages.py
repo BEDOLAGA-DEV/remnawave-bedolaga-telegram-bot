@@ -50,12 +50,6 @@ def _serialize_pinned_message(msg: PinnedMessage) -> PinnedMessageResponse:
     )
 
 
-def _get_bot() -> Bot:
-    """Создать экземпляр бота для API операций."""
-    return Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
 
 
 @router.get('', response_model=PinnedMessageListResponse)
@@ -152,7 +146,10 @@ async def create_pinned_message(
     failed_count = 0
 
     if broadcast:
-        sent_count, failed_count = await broadcast_pinned_message(_get_bot(), db, msg)
+        from app.utils.bot_utils import get_bot
+
+        async with get_bot() as bot:
+            sent_count, failed_count = await broadcast_pinned_message(bot, db, msg)
 
     return PinnedMessageBroadcastResponse(
         message=_serialize_pinned_message(msg),
@@ -276,7 +273,10 @@ async def activate_pinned_message(
     failed_count = 0
 
     if broadcast:
-        sent_count, failed_count = await broadcast_pinned_message(_get_bot(), db, msg)
+        from app.utils.bot_utils import get_bot
+
+        async with get_bot() as bot:
+            sent_count, failed_count = await broadcast_pinned_message(bot, db, msg)
 
     return PinnedMessageBroadcastResponse(
         message=_serialize_pinned_message(msg),
@@ -301,7 +301,10 @@ async def broadcast_message(
     if not msg:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'Pinned message not found')
 
-    sent_count, failed_count = await broadcast_pinned_message(_get_bot(), db, msg)
+    from app.utils.bot_utils import get_bot
+
+    async with get_bot() as bot:
+        sent_count, failed_count = await broadcast_pinned_message(bot, db, msg)
 
     return PinnedMessageBroadcastResponse(
         message=_serialize_pinned_message(msg),
@@ -336,7 +339,10 @@ async def unpin_active_message(
 
     Удаляет закреплённое сообщение из чатов всех активных пользователей.
     """
-    unpinned_count, failed_count, was_active = await unpin_active_pinned_message(_get_bot(), db)
+    from app.utils.bot_utils import get_bot
+
+    async with get_bot() as bot:
+        unpinned_count, failed_count, was_active = await unpin_active_pinned_message(bot, db)
     return PinnedMessageUnpinResponse(
         unpinned_count=unpinned_count,
         failed_count=failed_count,

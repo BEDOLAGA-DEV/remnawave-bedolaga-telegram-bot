@@ -183,8 +183,9 @@ async def apply_for_partner(
         from app.services.admin_notification_service import AdminNotificationService
 
         if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
-            try:
+            from app.utils.bot_utils import get_bot
+
+            async with get_bot() as bot:
                 notification_service = AdminNotificationService(bot)
                 await notification_service.send_partner_application_notification(
                     user=user,
@@ -197,8 +198,6 @@ async def apply_for_partner(
                         'desired_commission_percent': request.desired_commission_percent,
                     },
                 )
-            finally:
-                await bot.session.close()
     except Exception as e:
         logger.error('Failed to send admin notification for partner application', error=e)
 

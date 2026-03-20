@@ -928,9 +928,10 @@ async def create_payment_link(
                 detail='Failed to prepare Stars payment',
             ) from exc
 
-        bot = Bot(token=settings.BOT_TOKEN)
+        from app.utils.bot_utils import get_bot
+
         invoice_payload = _build_balance_invoice_payload(user.id, amount_kopeks)
-        try:
+        async with get_bot() as bot:
             payment_service = PaymentService(bot)
             invoice_link = await payment_service.create_stars_invoice(
                 amount_kopeks=amount_kopeks,
@@ -938,8 +939,6 @@ async def create_payment_link(
                 payload=invoice_payload,
                 stars_amount=stars_amount,
             )
-        finally:
-            await bot.session.close()
 
         if not invoice_link:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail='Failed to create invoice')
@@ -1399,16 +1398,15 @@ async def create_payment_link(
         if not settings.BOT_TOKEN:
             raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail='Bot token is not configured')
 
-        bot = Bot(token=settings.BOT_TOKEN)
-        try:
+        from app.utils.bot_utils import get_bot
+
+        async with get_bot() as bot:
             tribute_service = TributeService(bot)
             payment_url = await tribute_service.create_payment_link(
                 user_id=user.telegram_id,
                 amount_kopeks=amount_kopeks or 0,
                 description=settings.get_balance_payment_description(amount_kopeks or 0),
             )
-        finally:
-            await bot.session.close()
 
         if not payment_url:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail='Failed to create payment')

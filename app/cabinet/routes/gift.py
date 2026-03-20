@@ -308,7 +308,9 @@ async def create_gift_purchase(
             try:
                 from aiogram import Bot
 
-                async with Bot(token=settings.BOT_TOKEN) as bot:
+                from app.utils.bot_utils import get_bot
+
+                async with get_bot() as bot:
                     chat = await asyncio.wait_for(bot.get_chat(chat_id=f'@{tg_username}'), timeout=5.0)
                     pre_resolved_telegram_id = chat.id
             except Exception:
@@ -373,17 +375,18 @@ async def create_gift_purchase(
         if body.payment_method == 'telegram_stars':
             from aiogram import Bot
 
-            bot = Bot(token=settings.BOT_TOKEN)
+            from app.utils.bot_utils import get_bot
 
-        payment_service = PaymentService(bot=bot)
-        payment_result = await payment_service.create_guest_payment(
-            db=db,
-            amount_kopeks=price_kopeks,
-            payment_method=body.payment_method,
-            description=f'Gift: {tariff.name} ({body.period_days}d)',
-            purchase_token=purchase.token,
-            return_url=return_url,
-        )
+            async with get_bot() as bot:
+                payment_service = PaymentService(bot=bot)
+                payment_result = await payment_service.create_guest_payment(
+                    db=db,
+                    amount_kopeks=price_kopeks,
+                    payment_method=body.payment_method,
+                    description=f'Gift: {tariff.name} ({body.period_days}d)',
+                    purchase_token=purchase.token,
+                    return_url=return_url,
+                )
 
         if payment_result is None:
             await db.rollback()

@@ -240,8 +240,9 @@ async def approve_application(
                 tg_message = (
                     f'✅ Ваша заявка на партнёрство одобрена!\nКомиссия: {request.commission_percent}%{comment_text}'
                 )
-                bot = Bot(token=settings.BOT_TOKEN)
-                try:
+                from app.utils.bot_utils import get_bot
+
+                async with get_bot() as bot:
                     await notification_delivery_service.notify_partner_approved(
                         user=user,
                         commission_percent=request.commission_percent,
@@ -249,8 +250,6 @@ async def approve_application(
                         bot=bot,
                         telegram_message=tg_message,
                     )
-                finally:
-                    await bot.session.close()
     except Exception as e:
         logger.error('Failed to send partner approval notification', error=e)
 
@@ -291,16 +290,15 @@ async def reject_application(
             if user:
                 comment_text = f'\nПричина: {request.comment}' if request.comment else ''
                 tg_message = f'❌ Ваша заявка на партнёрство отклонена.{comment_text}'
-                bot = Bot(token=settings.BOT_TOKEN)
-                try:
+                from app.utils.bot_utils import get_bot
+
+                async with get_bot() as bot:
                     await notification_delivery_service.notify_partner_rejected(
                         user=user,
                         comment=request.comment,
                         bot=bot,
                         telegram_message=tg_message,
                     )
-                finally:
-                    await bot.session.close()
     except Exception as e:
         logger.error('Failed to send partner rejection notification', error=e)
 

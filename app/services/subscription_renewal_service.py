@@ -335,16 +335,14 @@ async def with_admin_notification_service(
         logger.debug('Skipping admin notification: bot token is not configured')
         return
 
-    bot: Bot | None = None
     try:
-        bot = Bot(token=settings.BOT_TOKEN)
-        service = AdminNotificationService(bot)
-        await handler(service)
+        from app.utils.bot_utils import get_bot
+
+        async with get_bot() as bot:
+            service = AdminNotificationService(bot)
+            await handler(service)
     except Exception as error:  # pragma: no cover - defensive logging
         logger.error('Failed to send admin notification from renewal service', error=error)
-    finally:
-        if bot is not None:
-            await bot.session.close()
 
 
 class SubscriptionRenewalService:

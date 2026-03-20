@@ -329,16 +329,10 @@ async def send_poll(
         )
 
     from app.config import settings
+    from app.utils.bot_utils import get_bot
 
-    bot = Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
-
-    try:
+    async with get_bot() as bot:
         result = await send_poll_to_users(bot, db, poll, users)
-    finally:
-        await bot.session.close()
 
     return PollSendResponse(
         poll_id=poll_id,

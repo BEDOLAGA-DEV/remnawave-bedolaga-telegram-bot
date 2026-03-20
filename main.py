@@ -148,10 +148,23 @@ async def main():
 
     logger = structlog.get_logger(__name__)
     timeline = StartupTimeline(logger, 'Bedolaga Remnawave Bot')
+
+    # Проверка прокси для баннера
+    proxy_url = settings.get_proxy_url()
+    proxy_info = 'Отключен'
+    if proxy_url:
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(proxy_url)
+            proxy_info = f'{parsed.hostname}:{parsed.port}' if parsed.port else str(parsed.hostname)
+        except Exception:
+            proxy_info = 'Включен'
+
     timeline.log_banner(
         [
             ('Уровень логирования', settings.LOG_LEVEL),
             ('Режим БД', settings.DATABASE_MODE),
+            ('Прокси', proxy_info),
         ]
     )
 
@@ -964,16 +977,13 @@ async def _send_crash_notification_on_error(error: Exception) -> None:
         return
 
     try:
-        from aiogram import Bot
+        from app.utils.bot_utils import get_bot
 
         from app.services.startup_notification_service import send_crash_notification
 
-        bot = Bot(token=settings.BOT_TOKEN)
-        try:
+        async with get_bot() as bot:
             traceback_str = traceback.format_exc()
             await send_crash_notification(bot, error, traceback_str)
-        finally:
-            await bot.session.close()
     except Exception as notify_error:
         print(f'⚠️ Не удалось отправить уведомление о падении: {notify_error}')
 

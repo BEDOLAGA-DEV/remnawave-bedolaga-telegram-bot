@@ -452,22 +452,14 @@ class CloudPaymentsPaymentMixin:
         transaction: Any,
     ) -> None:
         """Send success notification to user via Telegram."""
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-
-        from app.config import settings
+        from app.utils.bot_utils import get_bot
         from app.localization.texts import get_texts
 
-        bot = Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
-
-        # Skip email-only users (no telegram_id)
-        if not user.telegram_id:
-            logger.debug('Skipping CloudPayments notification for email-only user', user_id=user.id)
-            return
+        async with get_bot() as bot:
+            # Skip email-only users (no telegram_id)
+            if not user.telegram_id:
+                logger.debug('Skipping CloudPayments notification for email-only user', user_id=user.id)
+                return
 
         texts = get_texts(user.language)
         keyboard = await self.build_topup_success_keyboard(user)
@@ -508,18 +500,10 @@ class CloudPaymentsPaymentMixin:
         message: str,
     ) -> None:
         """Send failure notification to user via Telegram."""
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
+        from app.utils.bot_utils import get_bot
 
-        from app.config import settings
-
-        bot = Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
-
-        text = f'❌ <b>Оплата не прошла</b>\n\n{message}'
+        async with get_bot() as bot:
+            text = f'❌ <b>Оплата не прошла</b>\n\n{message}'
 
         try:
             await bot.send_message(

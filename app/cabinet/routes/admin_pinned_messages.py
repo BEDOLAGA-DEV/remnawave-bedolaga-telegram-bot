@@ -5,14 +5,12 @@ from datetime import UTC, datetime
 
 import structlog
 from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database.models import PinnedMessage, User
+from app.utils.bot_utils import get_bot
 from app.services.pinned_message_service import (
     broadcast_pinned_message,
     deactivate_active_pinned_message,
@@ -71,17 +69,8 @@ def _serialize_pinned_message(msg: PinnedMessage) -> PinnedMessageResponse:
     )
 
 
-_cached_bot: Bot | None = None
 
 
-def _get_bot() -> Bot:
-    global _cached_bot
-    if _cached_bot is None:
-        _cached_bot = Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
-    return _cached_bot
 
 
 # ============ List / Get Endpoints ============
@@ -184,7 +173,7 @@ async def create_pinned_message(
     failed_count = 0
 
     if payload.broadcast:
-        sent_count, failed_count = await broadcast_pinned_message(_get_bot(), db, msg)
+        sent_count, failed_count = await broadcast_pinned_message(get_bot(), db, msg)
 
     logger.info(
         'Admin created pinned message # (broadcast=)', admin_id=admin.id, message_id=msg.id, broadcast=payload.broadcast
@@ -287,7 +276,7 @@ async def unpin_active_message(
 ) -> PinnedMessageUnpinResponse:
     """Unpin messages from all users and deactivate the active pinned message."""
     _check_broadcast_cooldown()
-    unpinned_count, failed_count, was_active = await unpin_active_pinned_message(_get_bot(), db)
+    unpinned_count, failed_count, was_active = await unpin_active_pinned_message(get_bot(), db)
 
     if was_active:
         logger.info(
@@ -344,7 +333,7 @@ async def activate_pinned_message(
     failed_count = 0
 
     if broadcast:
-        sent_count, failed_count = await broadcast_pinned_message(_get_bot(), db, msg)
+        sent_count, failed_count = await broadcast_pinned_message(get_bot(), db, msg)
 
     logger.info(
         'Admin activated pinned message # (broadcast=)', admin_id=admin.id, message_id=message_id, broadcast=broadcast
@@ -371,7 +360,7 @@ async def broadcast_message(
     if not msg:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'Pinned message not found')
 
-    sent_count, failed_count = await broadcast_pinned_message(_get_bot(), db, msg)
+    sent_count, failed_count = await broadcast_pinned_message(get_bot(), db, msg)
 
     logger.info(
         'Admin broadcast pinned message #: sent=, failed',
