@@ -1,5 +1,45 @@
 # Changelog
 
+## [3.36.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.36.0...v3.36.1) (2026-03-20)
+
+
+### Bug Fixes
+
+* handle duplicate admin roles in RBAC bootstrap ([877b1cd](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/877b1cde11c462c0cf5692119ca09944476a2fb6))
+* make migration 0042 idempotent for retry_count column ([5faf701](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5faf7015ac043f44366fd2a5e00be19eab76b945))
+
+## [3.36.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.35.0...v3.36.0) (2026-03-20)
+
+
+### New Features
+
+* add media attachment support for admin ticket replies ([69bb399](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/69bb399b63d6e1d761cc5518e6272917fc5a6ae7))
+* add multi-provider recovery, retry_count, amount verification, and indexes ([3d78974](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3d78974af70b360449d9cf634e09a79821cdc7c0))
+* add partner → campaign edges to referral network graph ([01132a7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/01132a7bc77b07eaaaf876c05d639bfed83e5324))
+* add referral network graph visualization admin API ([c08c903](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c08c903e8f94f3730872b19de904ce166ba35b98))
+* add scoped referral network graph with scope selector API ([df086b0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/df086b09c75a9157cdc558fb610b617a2d49deaf))
+* multi-select scope for referral network graph API ([6a4ce3d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6a4ce3dd38dc3cf2e9db08322093bfd0b84f1e1c))
+
+
+### Bug Fixes
+
+* address review findings for guest purchase recovery ([57c5c67](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/57c5c679eef987e9bacee1a9d420ac3c0ff69ff7))
+* address review findings for multi-provider recovery ([79c110f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/79c110ff41659ff225164c13690bafc859212d05))
+* allow repeated auto-assignment of promo groups on each purchase ([4a002b7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4a002b7db1bfa8fd1149b0e3dfa469e8912a0e3b))
+* correct revenue calculations in referral network ([c8f4cca](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c8f4cca34053713eb2793bbb82e74cbb9a6f893c))
+* improve referral network query correctness and cleanup ([ac9fcd8](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ac9fcd8d30dd64fdc7363e689e9ffaf03700976e))
+* prevent duplicate promo groups during auto-assignment after purchase ([da7a9cc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/da7a9cc3c5fd771b932a2bfd154400f6f923a4d1))
+* prevent guest purchases from getting stuck in PENDING/FAILED status ([2781236](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2781236011942e794949544b9c5422aa8679e5eb))
+* prevent premature commits in promocode promo group operations ([8b26680](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8b2668087b4831c08474846b20591b2158d607fc))
+* propagate exceptions from get_primary_user_promo_group ([3ec9e71](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3ec9e71de7d8d40e969f9ea738455445d04d983a))
+* use 'kassa_ai' base model name for guest metadata patch ([182667e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/182667ecb86f9bbbe87d640865dcbcaadf9e72f6))
+* use base model name for KassaAI guest metadata patch ([b6d4373](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b6d43739337cd2e2cfd61ac33398eb6def5b28b6))
+
+
+### Performance
+
+* add covering indexes for referral network queries ([b5471b7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b5471b7720213c217fc452dc1234a7d3c53447d5))
+
 ## [3.35.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.34.1...v3.35.0) (2026-03-18)
 
 

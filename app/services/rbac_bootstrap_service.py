@@ -129,12 +129,12 @@ async def _ensure_preset_roles(db: AsyncSession) -> AdminRole | None:
         result = await db.execute(
             select(AdminRole).where(AdminRole.is_system.is_(True), AdminRole.level == preset['level'])
         )
-        existing = result.scalar_one_or_none()
+        existing = result.scalars().first()
 
         # Fallback: поиск по имени (для ролей, созданных до этого фикса)
         if existing is None:
             result = await db.execute(select(AdminRole).where(AdminRole.name == preset['name']))
-            existing = result.scalar_one_or_none()
+            existing = result.scalars().first()
 
         if existing is not None:
             if existing.level == 999:  # Superadmin level

@@ -354,10 +354,6 @@ async def _handle_guest_purchase_payment(
                 stars_amount=stars_amount,
                 purchase_token_prefix=purchase_token[:5],
             )
-        elif result is False:
-            await message.answer(
-                '❌ Произошла ошибка при обработке подарочной подписки. Обратитесь в поддержку.',
-            )
         else:
             logger.error('try_fulfill_guest_purchase returned None for Stars gift', payload=payload)
             await message.answer('❌ Ошибка обработки платежа. Обратитесь в поддержку.')

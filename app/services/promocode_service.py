@@ -119,7 +119,7 @@ class PromoCodeService:
                         if promo_group:
                             # Add promo group to user
                             await add_user_to_promo_group(
-                                db, user_id, promocode.promo_group_id, assigned_by='promocode'
+                                db, user_id, promocode.promo_group_id, assigned_by='promocode', commit=False
                             )
 
                             logger.info(
@@ -393,7 +393,7 @@ class PromoCodeService:
 
                     has_group = await has_user_promo_group(db, user_id, promocode.promo_group_id)
                     if has_group:
-                        await remove_user_from_promo_group(db, user_id, promocode.promo_group_id)
+                        await remove_user_from_promo_group(db, user_id, promocode.promo_group_id, commit=False)
                         logger.info(
                             'Снята промогруппа ID у пользователя при деактивации промокода',
                             promo_group_id=promocode.promo_group_id,

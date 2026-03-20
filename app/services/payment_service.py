@@ -721,7 +721,7 @@ class PaymentService(
                 payment_system_id=ps_id,
             )
             if result:
-                await _patch_guest_metadata(result['local_payment_id'], payment_method)
+                await _patch_guest_metadata(result['local_payment_id'], 'kassa_ai')
                 return {
                     'payment_url': result.get('payment_url'),
                     'payment_id': result.get('order_id'),

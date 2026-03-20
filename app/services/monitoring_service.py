@@ -1742,18 +1742,35 @@ class MonitoringService:
             )
 
     async def _retry_stuck_guest_purchases(self, db: AsyncSession):
-        try:
-            from app.services.guest_purchase_service import retry_stuck_paid_purchases, retry_stuck_pending_activation
+        from app.services.guest_purchase_service import (
+            recover_stuck_pending_purchases,
+            retry_stuck_paid_purchases,
+            retry_stuck_pending_activation,
+        )
 
+        # Phase 1: Recover PENDING purchases where provider payment already succeeded
+        try:
+            recovered = await recover_stuck_pending_purchases(db, stale_minutes=10, limit=10)
+            if recovered:
+                logger.info('Recovered stuck PENDING purchases', recovered=recovered)
+        except Exception:
+            logger.error('Error recovering stuck PENDING guest purchases', exc_info=True)
+
+        # Phase 2: Retry fulfillment for purchases in PAID status
+        try:
             retried = await retry_stuck_paid_purchases(db, stale_minutes=5, limit=10)
             if retried:
                 logger.info('Retried stuck guest purchases', retried=retried)
+        except Exception:
+            logger.error('Error retrying stuck PAID guest purchases', exc_info=True)
 
+        # Phase 3: Retry activation for purchases in PENDING_ACTIVATION status
+        try:
             retried_pa = await retry_stuck_pending_activation(db, stale_minutes=10, limit=10)
             if retried_pa:
                 logger.info('Retried stuck pending_activation purchases', retried=retried_pa)
         except Exception:
-            logger.error('Error retrying stuck guest purchases', exc_info=True)
+            logger.error('Error retrying stuck PENDING_ACTIVATION guest purchases', exc_info=True)
 
     async def _cleanup_inactive_users(self, db: AsyncSession):
         try:
