@@ -1,10 +1,11 @@
 import redis.asyncio as redis
 import structlog
-from aiogram import Bot, Dispatcher, types
+from aiogram import Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
 
 from app.config import settings
+from app.utils.telegram_bot_factory import Bot
 from app.handlers import (
     balance,
     common,

@@ -252,7 +252,8 @@ async def create_stars_invoice(
     # Создаем invoice через Telegram Bot API
     try:
         bot_token = settings.BOT_TOKEN
-        api_url = f'https://api.telegram.org/bot{bot_token}/createInvoiceLink'
+        api_base = (settings.TELEGRAM_BOT_API_BASE_URL or 'https://api.telegram.org').rstrip('/')
+        api_url = f'{api_base}/bot{bot_token}/createInvoiceLink'
 
         async with httpx.AsyncClient() as client:
             response = await client.post(

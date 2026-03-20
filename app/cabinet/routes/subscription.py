@@ -815,7 +815,7 @@ async def purchase_traffic(
 
     # Отправляем уведомление админам
     try:
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
 
         from app.services.admin_notification_service import AdminNotificationService
 
@@ -1043,7 +1043,7 @@ async def purchase_devices_legacy(
 
     # Отправляем уведомление админам
     try:
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
 
         from app.services.admin_notification_service import AdminNotificationService
 
@@ -1344,7 +1344,7 @@ async def activate_trial(
 
     # Send admin notification about trial activation
     try:
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
 
         from app.services.admin_notification_service import AdminNotificationService
 
@@ -1763,7 +1763,7 @@ async def submit_purchase(
 
         # Отправляем уведомление админам о покупке подписки
         try:
-            from aiogram import Bot
+            from app.utils.telegram_bot_factory import Bot
 
             from app.services.admin_notification_service import AdminNotificationService
 
@@ -2161,7 +2161,7 @@ async def purchase_tariff(
 
         # Отправляем уведомление админам о покупке/продлении тарифа
         try:
-            from aiogram import Bot
+            from app.utils.telegram_bot_factory import Bot
 
             from app.services.admin_notification_service import AdminNotificationService
 
@@ -2418,7 +2418,7 @@ async def purchase_devices(
 
         # Отправляем уведомление админам
         try:
-            from aiogram import Bot
+            from app.utils.telegram_bot_factory import Bot
 
             from app.services.admin_notification_service import AdminNotificationService
 
@@ -4204,7 +4204,7 @@ async def switch_tariff(
 
     # Отправляем уведомление админам о смене тарифа
     try:
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
 
         from app.services.admin_notification_service import AdminNotificationService
 

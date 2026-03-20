@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from aiogram import Bot
+from app.utils.telegram_bot_factory import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BufferedInputFile

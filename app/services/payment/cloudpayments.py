@@ -452,7 +452,7 @@ class CloudPaymentsPaymentMixin:
         transaction: Any,
     ) -> None:
         """Send success notification to user via Telegram."""
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
         from aiogram.client.default import DefaultBotProperties
         from aiogram.enums import ParseMode
 
@@ -508,7 +508,7 @@ class CloudPaymentsPaymentMixin:
         message: str,
     ) -> None:
         """Send failure notification to user via Telegram."""
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
         from aiogram.client.default import DefaultBotProperties
         from aiogram.enums import ParseMode
 

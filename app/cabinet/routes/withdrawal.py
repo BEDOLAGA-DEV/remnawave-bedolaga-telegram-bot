@@ -70,7 +70,7 @@ async def create_withdrawal(
 
     # Уведомляем админов о запросе на вывод
     try:
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
 
         from app.services.admin_notification_service import AdminNotificationService
 

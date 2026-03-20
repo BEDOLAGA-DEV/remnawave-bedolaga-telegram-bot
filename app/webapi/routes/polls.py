@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiogram import Bot
+from app.utils.telegram_bot_factory import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from fastapi import (

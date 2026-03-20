@@ -199,7 +199,7 @@ async def approve_withdrawal(
 
     # Notify user about approval
     try:
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
 
         from app.config import settings
         from app.services.notification_delivery_service import notification_delivery_service
@@ -251,7 +251,7 @@ async def reject_withdrawal(
 
     # Notify user about rejection
     try:
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
 
         from app.config import settings
         from app.services.notification_delivery_service import notification_delivery_service

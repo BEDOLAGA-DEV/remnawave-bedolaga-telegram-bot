@@ -330,6 +330,15 @@ class Settings(BaseSettings):
     TELEGRAM_STARS_RATE_RUB: float = 1.3
     TELEGRAM_STARS_DISPLAY_NAME: str = 'Telegram Stars'
 
+    # Bot API base URL (для прокси, когда доступ к api.telegram.org ограничен)
+    # Должен указывать на корень прокси, который принимает запросы вида:
+    #   /bot{token}/{method}
+    TELEGRAM_BOT_API_BASE_URL: str = 'https://api.telegram.org'
+
+    # Отдельная настройка для эндпоинта скачивания файлов Bot API.
+    # По умолчанию используется тот же домен, что и для TELEGRAM_BOT_API_BASE_URL.
+    TELEGRAM_BOT_FILE_BASE_URL: str | None = None
+
     # Telegram Login Widget (cabinet auth page)
     TELEGRAM_WIDGET_SIZE: Literal['large', 'medium', 'small'] = 'large'
     TELEGRAM_WIDGET_RADIUS: int = Field(default=8, ge=0, le=20)

@@ -178,7 +178,7 @@ async def apply_for_partner(
 
     # Уведомляем админов о новой заявке
     try:
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
 
         from app.services.admin_notification_service import AdminNotificationService
 

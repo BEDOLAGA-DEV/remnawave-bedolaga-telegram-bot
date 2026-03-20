@@ -479,7 +479,7 @@ async def reply_to_ticket(
 
     # Try to notify user via Telegram
     try:
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
         from aiogram.client.default import DefaultBotProperties
         from aiogram.enums import ParseMode
 

@@ -196,7 +196,7 @@ async def _process_campaign_bonus(
             user.referred_by_id = campaign.partner_user_id
             await db.flush()
             try:
-                from aiogram import Bot
+                from app.utils.telegram_bot_factory import Bot
                 from aiogram.client.default import DefaultBotProperties
                 from aiogram.enums import ParseMode
 
@@ -255,7 +255,7 @@ async def _process_referral_code(
             return
         user.referred_by_id = referrer.id
         await db.flush()
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
         from aiogram.client.default import DefaultBotProperties
         from aiogram.enums import ParseMode
 
@@ -937,7 +937,7 @@ async def register_email_standalone(
     # Обработать реферальную регистрацию (если есть реферер)
     if referrer:
         try:
-            from aiogram import Bot
+            from app.utils.telegram_bot_factory import Bot
             from aiogram.client.default import DefaultBotProperties
             from aiogram.enums import ParseMode
 

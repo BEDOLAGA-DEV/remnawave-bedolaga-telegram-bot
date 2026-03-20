@@ -6,7 +6,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import httpx
 import structlog
-from aiogram import Bot
+from app.utils.telegram_bot_factory import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -273,7 +273,8 @@ async def create_stars_invoice(
     # Create invoice through Telegram Bot API
     try:
         bot_token = settings.BOT_TOKEN
-        api_url = f'https://api.telegram.org/bot{bot_token}/createInvoiceLink'
+        api_base = (settings.TELEGRAM_BOT_API_BASE_URL or 'https://api.telegram.org').rstrip('/')
+        api_url = f'{api_base}/bot{bot_token}/createInvoiceLink'
 
         async with httpx.AsyncClient() as client:
             response = await client.post(

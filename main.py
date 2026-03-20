@@ -964,7 +964,7 @@ async def _send_crash_notification_on_error(error: Exception) -> None:
         return
 
     try:
-        from aiogram import Bot
+        from app.utils.telegram_bot_factory import Bot
 
         from app.services.startup_notification_service import send_crash_notification
 
