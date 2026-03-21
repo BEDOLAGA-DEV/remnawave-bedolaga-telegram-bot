@@ -1,5 +1,25 @@
 # Changelog
 
+## [3.37.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.36.1...v3.37.0) (2026-03-21)
+
+
+### New Features
+
+* broadcast caption validation + landing daily created stats ([d400cd7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d400cd7b49cb18edf8545a5af54009561610218a))
+* expose cabinet_email/password vars in subscription delivered template admin UI ([f82a713](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f82a713110c90494e41f2de9910f5dc60a06962e))
+* include cabinet credentials in subscription delivered email ([fedcf25](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/fedcf2569a153ac40699dd5b402208ac86db0fc3))
+
+
+### Bug Fixes
+
+* default payment_method to BALANCE for bot subscription payments ([226d3f2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/226d3f2766bb0842e5a4aefb1458a9e40389108e))
+* derive income_today from revenue_chart to ensure consistency ([1882909](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1882909b3e60f4959921ae085e909bc91c0756b3))
+* include landing page revenue in dashboard statistics ([c6c1599](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c6c1599e14a8c7033dfa399ff3f2c3ee6d156598))
+* include SUBSCRIPTION_PAYMENT in dashboard revenue calculations ([13dba5a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/13dba5a303604f8d39e85d1382a4d36225f957ac))
+* include SUBSCRIPTION_PAYMENT in recent payments today/week totals ([6982d27](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6982d27378d0dbe5c7b37d1491e6c9d0461dffc8))
+* include SUBSCRIPTION_PAYMENT in sales summary and deposits stats ([27ef752](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/27ef75214e73211a68d541f5375ca14275ea86e9))
+* increase landing purchase rate limit from 5 to 30 req/min ([801921f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/801921ff74107daccc17e49a0335c7b133268280))
+
 ## [3.36.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.36.0...v3.36.1) (2026-03-20)
 
 
