@@ -222,18 +222,18 @@ async def store_cid_and_fire_registration(
 ) -> None:
     """Store Yandex CID and fire registration conversion in background (best-effort).
 
-    NOTE: does NOT commit — caller is responsible for committing the session.
-    Only flushes the CID row so it's visible within the transaction.
+    Caller must commit the session before this returns so that the background
+    task (which opens its own session) can read the committed CID row.
     """
     if not cid:
         return
     try:
         stored = await store_cid(db, user_id, cid, source=source)
         if stored:
-            # Don't commit here — caller owns the session.
-            # fire_registration_bg opens its own session.
+            await db.commit()
             spawn_bg(fire_registration_bg(user_id))
     except Exception as exc:
+        await db.rollback()
         logger.warning(f'{LOG_PREFIX} Failed to store CID and fire registration', user_id=user_id, error=str(exc))
 
 

@@ -354,10 +354,13 @@ async def _apply_campaign_bonus_if_needed(
     return None
 
 
-async def _process_bot_yandex_cid(db, user, data):
+async def _process_bot_yandex_cid(db: AsyncSession, user, data: dict) -> None:
     yandex_cid = data.get('yandex_cid')
     if yandex_cid:
-        await yandex_conv.store_cid_and_fire_registration(db, user.id, yandex_cid, source='bot')
+        try:
+            await yandex_conv.store_cid_and_fire_registration(db, user.id, yandex_cid, source='bot')
+        except Exception:
+            pass  # Best-effort, don't crash registration
 
 
 async def handle_potential_referral_code(message: types.Message, state: FSMContext, db: AsyncSession):
