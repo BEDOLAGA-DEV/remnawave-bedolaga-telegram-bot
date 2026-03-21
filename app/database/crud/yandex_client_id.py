@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import YandexClientIdMap
 
+
 logger = structlog.get_logger(__name__)
 
 
@@ -21,9 +22,7 @@ async def upsert_cid(
     counter_id: str | None = None,
 ) -> YandexClientIdMap:
     """Insert or update Yandex ClientID for a user."""
-    result = await db.execute(
-        select(YandexClientIdMap).where(YandexClientIdMap.user_id == user_id)
-    )
+    result = await db.execute(select(YandexClientIdMap).where(YandexClientIdMap.user_id == user_id))
     row = result.scalar_one_or_none()
 
     if row:
@@ -47,9 +46,7 @@ async def upsert_cid(
 
 async def get_cid(db: AsyncSession, user_id: int) -> YandexClientIdMap | None:
     """Get Yandex ClientID mapping for a user."""
-    result = await db.execute(
-        select(YandexClientIdMap).where(YandexClientIdMap.user_id == user_id)
-    )
+    result = await db.execute(select(YandexClientIdMap).where(YandexClientIdMap.user_id == user_id))
     return result.scalar_one_or_none()
 
 

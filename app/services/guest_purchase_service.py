@@ -29,8 +29,8 @@ from app.database.models import (
     TransactionType,
     User,
 )
-from app.services.subscription_service import SubscriptionService
 from app.services import yandex_offline_conv_service as yandex_conv
+from app.services.subscription_service import SubscriptionService
 
 
 logger = structlog.get_logger(__name__)
@@ -181,7 +181,6 @@ async def create_purchase(
     return purchase
 
 
-<<<<<<< HEAD
 async def _create_nalogo_receipt_for_purchase(
     db: AsyncSession,
     purchase: GuestPurchase,
@@ -273,7 +272,6 @@ async def _create_nalogo_receipt_for_purchase(
         )
 
 
-
 async def _fire_yandex_conversions(purchase: GuestPurchase, user_id: int, is_new_user: bool) -> None:
     """Store Yandex CID and fire offline conversions for guest purchases (best-effort)."""
     if not purchase.yandex_cid:
@@ -294,6 +292,7 @@ async def _fire_yandex_conversions(purchase: GuestPurchase, user_id: int, is_new
             yandex_conv.spawn_bg(yandex_conv.fire_registration_bg(user_id))
     except Exception:
         logger.warning('Failed to fire Yandex conversions for guest purchase', purchase_id=purchase.id, exc_info=True)
+
 
 async def fulfill_purchase(
     db: AsyncSession,
