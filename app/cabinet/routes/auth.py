@@ -421,11 +421,7 @@ async def _process_yandex_cid(
 ) -> None:
     if not yandex_cid:
         return
-    try:
-        await yandex_conv.store_cid_and_fire_registration(db, user.id, yandex_cid, source=source)
-        await db.commit()
-    except Exception:
-        await db.rollback()
+    await yandex_conv.store_cid_and_fire_registration(db, user.id, yandex_cid, source=source)
 
 
 @router.post('/telegram', response_model=AuthResponse)
