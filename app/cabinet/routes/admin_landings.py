@@ -483,6 +483,7 @@ class OrderRequest(BaseModel):
 
 class LandingDailyStat(BaseModel):
     date: str  # YYYY-MM-DD
+    created: int = 0
     purchases: int
     revenue_kopeks: int
     gifts: int
@@ -844,17 +845,35 @@ async def get_landing_stats(
     )
     daily_rows = {str(r.day): r for r in daily_result.all()}
 
+    # Created per day (all statuses, by created_at)
+    day_created_utc = func.date(func.timezone('UTC', GuestPurchase.created_at))
+    created_result = await db.execute(
+        select(
+            day_created_utc.label('day'),
+            func.count(GuestPurchase.id).label('created'),
+        )
+        .where(
+            GuestPurchase.landing_id == landing_id,
+            GuestPurchase.created_at >= cutoff,
+        )
+        .group_by(day_created_utc)
+        .order_by(day_created_utc)
+    )
+    created_rows = {str(r.day): r.created for r in created_result.all()}
+
     # Fill missing days with zeros
     today = now.date()
     daily_stats: list[LandingDailyStat] = []
     for i in range(_STATS_PERIOD_DAYS, -1, -1):
         day = today - timedelta(days=i)
         day_str = day.isoformat()
+        day_created = created_rows.get(day_str, 0)
         if day_str in daily_rows:
             r = daily_rows[day_str]
             daily_stats.append(
                 LandingDailyStat(
                     date=day_str,
+                    created=day_created,
                     purchases=r.purchases,
                     revenue_kopeks=r.revenue_kopeks,
                     gifts=r.gifts,
@@ -864,6 +883,7 @@ async def get_landing_stats(
             daily_stats.append(
                 LandingDailyStat(
                     date=day_str,
+                    created=day_created,
                     purchases=0,
                     revenue_kopeks=0,
                     gifts=0,
@@ -897,7 +917,7 @@ async def get_landing_stats(
     ]
 
     return LandingStatsResponse(
-        total_purchases=total_successful,
+        total_purchases=total_created,
         total_revenue_kopeks=total_revenue_kopeks,
         total_gifts=total_gifts,
         total_regular=total_regular,

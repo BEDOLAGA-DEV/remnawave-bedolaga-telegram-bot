@@ -218,6 +218,7 @@ class BotConfigurationService:
         'BOT_USERNAME': 'CORE',
         'DEFAULT_LANGUAGE': 'LOCALIZATION',
         'AVAILABLE_LANGUAGES': 'LOCALIZATION',
+        'REMNAWAVE_WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS': 'ADMIN_NOTIFICATIONS',
         'LANGUAGE_SELECTION_ENABLED': 'LOCALIZATION',
         'DEFAULT_DEVICE_LIMIT': 'SUBSCRIPTIONS_CORE',
         'DEFAULT_TRAFFIC_LIMIT_GB': 'SUBSCRIPTIONS_CORE',
@@ -842,6 +843,18 @@ class BotConfigurationService:
             'format': 'Целое число минут.',
             'example': '60',
             'warning': 'Защита от спама уведомлениями по одному и тому же пользователю.',
+        },
+        'REMNAWAVE_WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS': {
+            'description': (
+                'Уведомления администраторам о потере и восстановлении соединения с нодами из webhook-ов RemnaWave.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'false',
+            'warning': (
+                'Отключает только события node.connection_lost и node.connection_restored. '
+                'Остальные инфраструктурные уведомления продолжают отправляться.'
+            ),
+            'dependencies': 'REMNAWAVE_WEBHOOK_ENABLED, ADMIN_NOTIFICATIONS_ENABLED',
         },
         'WEBHOOK_NOTIFY_USER_ENABLED': {
             'description': (

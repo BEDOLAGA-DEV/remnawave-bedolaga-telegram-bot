@@ -153,35 +153,38 @@ class PlategaPaymentMixin:
             logger.warning('Platega webhook: платеж не найден (id=)', transaction_id=transaction_id)
             return False
 
+        # Lock payment row immediately to prevent concurrent webhook processing (TOCTOU race)
+        platega_crud = import_module('app.database.crud.platega')
+        locked = await platega_crud.get_platega_payment_by_id_for_update(db, payment.id)
+        if not locked:
+            logger.error('Platega: не удалось заблокировать платёж', payment_id=payment.id)
+            return False
+        payment = locked
+
         status_raw = str(payload.get('status') or '').upper()
         if not status_raw:
             logger.warning('Platega webhook без статуса для платежа', payment_id=payment.id)
             return False
 
-        update_kwargs = {
-            'status': status_raw,
-            'callback_payload': payload,
-        }
-
-        if transaction_id:
-            update_kwargs['platega_transaction_id'] = transaction_id
-
         if status_raw in self._SUCCESS_STATUSES:
             if payment.is_paid:
                 logger.info('Platega платеж уже помечен как оплачен', correlation_id=payment.correlation_id)
-                await payment_module.update_platega_payment(
-                    db,
-                    payment=payment,
-                    **update_kwargs,
-                    is_paid=True,
-                )
+                # Update callback payload without releasing the lock prematurely
+                payment.callback_payload = payload
+                if transaction_id and not payment.platega_transaction_id:
+                    payment.platega_transaction_id = transaction_id
+                payment.updated_at = datetime.now(UTC)
+                await db.commit()
                 return True
 
-            payment = await payment_module.update_platega_payment(
-                db,
-                payment=payment,
-                **update_kwargs,
-            )
+            # Inline field updates — NO intermediate commit that would release FOR UPDATE lock
+            payment.status = status_raw
+            payment.callback_payload = payload
+            if transaction_id and not payment.platega_transaction_id:
+                payment.platega_transaction_id = transaction_id
+            payment.updated_at = datetime.now(UTC)
+            await db.flush()
+
             result = await self._finalize_platega_payment(db, payment, payload)
             if result is None:
                 logger.error('Platega webhook: финализация не удалась', payment_id=payment.id)
@@ -192,7 +195,9 @@ class PlategaPaymentMixin:
             await payment_module.update_platega_payment(
                 db,
                 payment=payment,
-                **update_kwargs,
+                status=status_raw,
+                callback_payload=payload,
+                platega_transaction_id=transaction_id or None,
                 is_paid=False,
             )
             logger.info('Platega платеж перешёл в статус', correlation_id=payment.correlation_id, status_raw=status_raw)
@@ -201,7 +206,9 @@ class PlategaPaymentMixin:
         await payment_module.update_platega_payment(
             db,
             payment=payment,
-            **update_kwargs,
+            status=status_raw,
+            callback_payload=payload,
+            platega_transaction_id=transaction_id or None,
         )
         return True
 
@@ -231,28 +238,40 @@ class PlategaPaymentMixin:
 
         if remote_payload:
             remote_status = str(remote_payload.get('status') or '').upper()
-            if remote_status and remote_status != payment.status:
-                await payment_module.update_platega_payment(
-                    db,
-                    payment=payment,
-                    status=remote_status,
-                    metadata={
-                        **(getattr(payment, 'metadata_json', {}) or {}),
-                        'remote_status': remote_payload,
-                    },
-                )
-                payment = await payment_module.get_platega_payment_by_id(db, local_payment_id)
+            status_changed = remote_status and remote_status != payment.status
 
             if remote_status in self._SUCCESS_STATUSES and not payment.is_paid:
-                payment = await payment_module.update_platega_payment(
-                    db,
-                    payment=payment,
-                    status=remote_status,
-                    callback_payload=remote_payload,
-                )
-                result = await self._finalize_platega_payment(db, payment, remote_payload)
-                if result is not None:
-                    payment = result
+                # Lock payment row before finalization to prevent concurrent double-processing
+                platega_crud = import_module('app.database.crud.platega')
+                locked = await platega_crud.get_platega_payment_by_id_for_update(db, payment.id)
+                if not locked:
+                    logger.error('Platega status check: не удалось заблокировать платёж', payment_id=payment.id)
+                elif locked.is_paid:
+                    # Another concurrent handler already processed — skip
+                    logger.info('Platega платеж уже оплачен после блокировки', correlation_id=locked.correlation_id)
+                    payment = locked
+                else:
+                    payment = locked
+                    payment.status = remote_status
+                    payment.callback_payload = remote_payload
+                    payment.metadata_json = {
+                        **(getattr(payment, 'metadata_json', {}) or {}),
+                        'remote_status': remote_payload,
+                    }
+                    payment.updated_at = datetime.now(UTC)
+                    await db.flush()
+                    result = await self._finalize_platega_payment(db, payment, remote_payload)
+                    if result is not None:
+                        payment = result
+            elif status_changed:
+                # Non-success status change — safe to persist without lock
+                payment.status = remote_status
+                payment.metadata_json = {
+                    **(getattr(payment, 'metadata_json', {}) or {}),
+                    'remote_status': remote_payload,
+                }
+                payment.updated_at = datetime.now(UTC)
+                await db.commit()
 
         return {
             'payment': payment,
@@ -279,14 +298,7 @@ class PlategaPaymentMixin:
                 except ValueError:
                     paid_at = None
 
-        # Lock FIRST, then read fresh state
-        platega_lock_crud = import_module('app.database.crud.platega')
-        locked = await platega_lock_crud.get_platega_payment_by_id_for_update(db, payment.id)
-        if not locked:
-            logger.error('Platega: не удалось заблокировать платёж', payment_id=payment.id)
-            return None
-        payment = locked
-
+        # FOR UPDATE lock already acquired by caller — just check idempotency
         if payment.transaction_id:
             logger.info(
                 'Platega платеж уже связан с транзакцией',

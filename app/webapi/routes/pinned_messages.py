@@ -3,14 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Optional
 
-from app.utils.telegram_bot_factory import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram import Bot
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.bot_factory import create_bot
 from app.database.models import PinnedMessage
 from app.services.pinned_message_service import (
     broadcast_pinned_message,
@@ -52,10 +50,7 @@ def _serialize_pinned_message(msg: PinnedMessage) -> PinnedMessageResponse:
 
 def _get_bot() -> Bot:
     """Создать экземпляр бота для API операций."""
-    return Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    return create_bot()
 
 
 @router.get('', response_model=PinnedMessageListResponse)

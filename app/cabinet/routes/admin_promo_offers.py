@@ -7,16 +7,14 @@ from datetime import datetime
 from typing import Any
 
 import structlog
-from app.utils.telegram_bot_factory import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.bot_factory import create_bot
 from app.database.crud.discount_offer import (
     count_discount_offers,
     list_discount_offers,
@@ -369,10 +367,7 @@ async def list_offers(
 
 def _get_bot() -> Bot:
     """Create bot instance for sending notifications."""
-    return Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    return create_bot()
 
 
 def _build_default_promo_message(

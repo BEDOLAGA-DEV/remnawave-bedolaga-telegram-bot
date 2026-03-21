@@ -4,15 +4,12 @@ import math
 import time
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-import httpx
 import structlog
-from app.utils.telegram_bot_factory import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot_factory import create_bot
 from app.config import settings
 from app.database.crud.saved_payment_method import (
     deactivate_payment_method,
@@ -272,51 +269,37 @@ async def create_stars_invoice(
 
     # Create invoice through Telegram Bot API
     try:
-        bot_token = settings.BOT_TOKEN
-        api_base = (settings.TELEGRAM_BOT_API_BASE_URL or 'https://api.telegram.org').rstrip('/')
-        api_url = f'{api_base}/bot{bot_token}/createInvoiceLink'
+        from aiogram.exceptions import TelegramAPIError
+        from aiogram.types import LabeledPrice
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                api_url,
-                json={
-                    'title': 'Пополнение баланса VPN',
-                    'description': f'Пополнение баланса на {normalized_kopeks / 100:.2f} ₽ ({stars_amount} ⭐)',
-                    'payload': payload,
-                    'provider_token': '',  # Empty for Stars
-                    'currency': 'XTR',
-                    'prices': [{'label': 'Пополнение баланса', 'amount': stars_amount}],
-                },
+        async with create_bot() as bot:
+            invoice_url = await bot.create_invoice_link(
+                title='Пополнение баланса VPN',
+                description=f'Пополнение баланса на {normalized_kopeks / 100:.2f} ₽ ({stars_amount} ⭐)',
+                payload=payload,
+                provider_token='',
+                currency='XTR',
+                prices=[LabeledPrice(label='Пополнение баланса', amount=stars_amount)],
             )
 
-            result = response.json()
+        logger.info(
+            'Created Stars invoice for balance top-up: user=, amount= kopeks, stars',
+            user_id=user.id,
+            amount_kopeks=request.amount_kopeks,
+            stars_amount=stars_amount,
+        )
 
-            if not result.get('ok'):
-                logger.error('Telegram API error', result=result)
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail='Failed to create Stars invoice',
-                )
+        return StarsInvoiceResponse(
+            invoice_url=invoice_url,
+            stars_amount=stars_amount,
+            amount_kopeks=normalized_kopeks,
+        )
 
-            invoice_url = result['result']
-            logger.info(
-                'Created Stars invoice for balance top-up: user=, amount= kopeks, stars',
-                user_id=user.id,
-                amount_kopeks=request.amount_kopeks,
-                stars_amount=stars_amount,
-            )
-
-            return StarsInvoiceResponse(
-                invoice_url=invoice_url,
-                stars_amount=stars_amount,
-                amount_kopeks=normalized_kopeks,
-            )
-
-    except httpx.HTTPError as e:
-        logger.error('HTTP error creating Stars invoice', error=e)
+    except TelegramAPIError as e:
+        logger.error('Error creating Stars invoice', error=e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Failed to connect to Telegram API',
+            detail='Failed to create Stars invoice',
         )
 
 
@@ -1203,7 +1186,7 @@ async def check_payment_status(
     old_is_paid = record.is_paid
 
     # Run manual check
-    bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = create_bot()
     try:
         payment_service = PaymentService(bot=bot)
         updated = await run_manual_check(db, payment_method, payment_id, payment_service)

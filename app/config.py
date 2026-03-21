@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import time
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlparse
+from urllib.parse import quote as _url_quote, urlparse
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -118,6 +118,7 @@ class Settings(BaseSettings):
     REMNAWAVE_WEBHOOK_ENABLED: bool = False
     REMNAWAVE_WEBHOOK_PATH: str = '/remnawave-webhook'
     REMNAWAVE_WEBHOOK_SECRET: str | None = None  # HMAC-SHA256 shared secret (min 32 chars)
+    REMNAWAVE_WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS: bool = True
 
     # Webhook user notification toggles (what Telegram messages users receive from webhook events)
     WEBHOOK_NOTIFY_USER_ENABLED: bool = True
@@ -384,6 +385,7 @@ class Settings(BaseSettings):
     NALOGO_PASSWORD: str | None = None
     NALOGO_DEVICE_ID: str | None = None
     NALOGO_STORAGE_PATH: str = './nalogo_tokens.json'
+    NALOGO_PROXY_URL: str | None = None  # SOCKS proxy for nalog.ru; falls back to PROXY_URL if not set
 
     AUTO_PURCHASE_AFTER_TOPUP_ENABLED: bool = False
 
@@ -811,6 +813,27 @@ class Settings(BaseSettings):
     BAN_SYSTEM_API_TOKEN: str | None = None
     BAN_SYSTEM_REQUEST_TIMEOUT: int = 30
 
+    # SOCKS5 proxy for routing bot traffic to Telegram API
+    # Format: socks5://user:password@host:port or socks5://host:port
+    PROXY_URL: str | None = None
+
+    @field_validator('PROXY_URL', 'NALOGO_PROXY_URL', mode='before')
+    @classmethod
+    def validate_proxy_url(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        if parsed.scheme not in ('socks5', 'socks5h', 'socks4'):
+            raise ValueError(
+                f'Proxy URL must use socks5://, socks5h://, or socks4:// scheme, got: {parsed.scheme!r}. '
+                'HTTP proxies are not supported for security reasons.'
+            )
+        if not parsed.hostname:
+            raise ValueError('Proxy URL must contain a hostname')
+        return value
+
     @field_validator('MAIN_MENU_MODE', mode='before')
     @classmethod
     def normalize_main_menu_mode(cls, value: str | None) -> str:
@@ -936,6 +959,17 @@ class Settings(BaseSettings):
     def is_sqlite(self) -> bool:
         """Проверяет, используется ли SQLite"""
         return 'sqlite' in self.get_database_url()
+
+    def get_proxy_url(self) -> str | None:
+        """Return SOCKS5 proxy URL or None."""
+        return self.PROXY_URL if self.PROXY_URL else None
+
+    def get_nalogo_proxy_url(self) -> str | None:
+        """Return SOCKS proxy URL for nalogo or None.
+
+        Uses NALOGO_PROXY_URL if set, otherwise falls back to PROXY_URL.
+        """
+        return self.NALOGO_PROXY_URL or self.PROXY_URL
 
     def is_admin(self, telegram_id: int | None = None, email: str | None = None) -> bool:
         """
@@ -1448,23 +1482,43 @@ class Settings(BaseSettings):
 
     _CABINET_URL_DEFAULT = 'https://example.com/cabinet'
 
+    def _encode_referral_code(self, referral_code: str) -> str:
+        """Validate and URL-encode a referral code."""
+        if not referral_code:
+            raise ValueError('referral_code must not be empty or None')
+        return _url_quote(referral_code, safe='')
+
+    def _normalized_cabinet_url(self) -> str | None:
+        """Return normalized cabinet URL, or None if not configured."""
+        cabinet_url = (self.CABINET_URL or '').strip().rstrip('/')
+        if not cabinet_url or cabinet_url == self._CABINET_URL_DEFAULT:
+            return None
+        return cabinet_url
+
     def get_referral_link(self, referral_code: str, bot_username: str | None = None) -> str:
         """Build a referral link pointing to the web cabinet.
 
         Falls back to a Telegram bot deep link when CABINET_URL is not configured.
         """
-        from urllib.parse import quote
+        cabinet_link = self.get_cabinet_referral_link(referral_code)
+        if cabinet_link:
+            return cabinet_link
+        return self.get_bot_referral_link(referral_code, bot_username)
 
-        if not referral_code:
-            raise ValueError('referral_code must not be empty or None')
-
-        safe_code = quote(referral_code, safe='')
-        cabinet_url = (self.CABINET_URL or '').strip().rstrip('/')
-        if cabinet_url and cabinet_url != self._CABINET_URL_DEFAULT:
-            sep = '&' if '?' in cabinet_url else '?'
-            return f'{cabinet_url}{sep}ref={safe_code}'
+    def get_bot_referral_link(self, referral_code: str, bot_username: str | None = None) -> str:
+        """Always return the Telegram bot deep link for a referral code."""
+        safe_code = self._encode_referral_code(referral_code)
         username = bot_username or self.get_bot_username() or 'bot'
         return f'https://t.me/{username}?start={safe_code}'
+
+    def get_cabinet_referral_link(self, referral_code: str) -> str | None:
+        """Return the cabinet referral link, or None if cabinet is not configured."""
+        cabinet_url = self._normalized_cabinet_url()
+        if not cabinet_url:
+            return None
+        safe_code = self._encode_referral_code(referral_code)
+        sep = '&' if '?' in cabinet_url else '?'
+        return f'{cabinet_url}{sep}ref={safe_code}'
 
     def is_deep_links_enabled(self) -> bool:
         return self.ENABLE_DEEP_LINKS

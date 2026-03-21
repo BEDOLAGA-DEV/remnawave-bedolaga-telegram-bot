@@ -114,6 +114,8 @@ _ADMIN_ERROR_EVENTS: dict[str, str] = {
     'errors.bandwidth_usage_threshold_reached_max_notifications': '⚠️ Достигнут лимит уведомлений о трафике',
 }
 
+_ADMIN_NODE_CONNECTION_EVENTS = frozenset({'node.connection_lost', 'node.connection_restored'})
+
 
 class RemnaWaveWebhookService:
     """Processes incoming webhooks from RemnaWave backend."""
@@ -216,6 +218,10 @@ class RemnaWaveWebhookService:
 
     async def _process_admin_event(self, event_name: str, data: dict) -> bool:
         """Format and send admin notification for infrastructure events."""
+        if event_name in _ADMIN_NODE_CONNECTION_EVENTS and not settings.REMNAWAVE_WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS:
+            logger.debug('RemnaWave node connection notifications disabled, skipping event', event_name=event_name)
+            return True
+
         if not self._admin_service.is_enabled:
             logger.debug('Admin notifications disabled, skipping event', event_name=event_name)
             return True

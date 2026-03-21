@@ -63,7 +63,12 @@ async def get_freekassa_payment_by_id(db: AsyncSession, payment_id: int) -> Free
 
 
 async def get_freekassa_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> FreekassaPayment | None:
-    result = await db.execute(select(FreekassaPayment).where(FreekassaPayment.id == payment_id).with_for_update())
+    result = await db.execute(
+        select(FreekassaPayment)
+        .where(FreekassaPayment.id == payment_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     return result.scalar_one_or_none()
 
 

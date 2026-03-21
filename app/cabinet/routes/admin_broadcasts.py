@@ -411,6 +411,13 @@ async def create_broadcast(
 
     media_payload = request.media
 
+    # Validate caption length for media messages (Telegram limit: 1024 chars)
+    if media_payload and len(message_text) > 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Текст слишком длинный для сообщения с медиа. Максимум 1024 символов, сейчас {len(message_text)}. Сократите текст или уберите медиафайл.',
+        )
+
     # Create broadcast record
     broadcast = BroadcastHistory(
         target_type=request.target,

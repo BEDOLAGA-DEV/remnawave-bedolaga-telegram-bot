@@ -10,13 +10,13 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from app.utils.telegram_bot_factory import Bot
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.bot_factory import create_bot
 from app.config import settings
 from app.database.crud.discount_offer import (
     get_latest_claimed_offer_for_user,
@@ -928,7 +928,7 @@ async def create_payment_link(
                 detail='Failed to prepare Stars payment',
             ) from exc
 
-        bot = Bot(token=settings.BOT_TOKEN)
+        bot = create_bot()
         invoice_payload = _build_balance_invoice_payload(user.id, amount_kopeks)
         try:
             payment_service = PaymentService(bot)
@@ -1399,7 +1399,7 @@ async def create_payment_link(
         if not settings.BOT_TOKEN:
             raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail='Bot token is not configured')
 
-        bot = Bot(token=settings.BOT_TOKEN)
+        bot = create_bot()
         try:
             tribute_service = TributeService(bot)
             payment_url = await tribute_service.create_payment_link(
@@ -2869,8 +2869,10 @@ async def _build_referral_info(
     referral_settings = settings.get_referral_settings() or {}
 
     referral_link = None
+    bot_referral_link = None
     if referral_code:
-        referral_link = settings.get_referral_link(referral_code)
+        referral_link = settings.get_cabinet_referral_link(referral_code)
+        bot_referral_link = settings.get_bot_referral_link(referral_code)
 
     minimum_topup_kopeks = int(referral_settings.get('minimum_topup_kopeks') or 0)
     first_topup_bonus_kopeks = int(referral_settings.get('first_topup_bonus_kopeks') or 0)
@@ -2967,6 +2969,7 @@ async def _build_referral_info(
     return MiniAppReferralInfo(
         referral_code=referral_code,
         referral_link=referral_link,
+        bot_referral_link=bot_referral_link,
         terms=terms,
         stats=stats,
         recent_earnings=recent_earnings,

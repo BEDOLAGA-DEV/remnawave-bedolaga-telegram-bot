@@ -3,13 +3,11 @@
 import mimetypes
 
 import structlog
-from app.utils.telegram_bot_factory import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from aiogram.types import BufferedInputFile
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
 from pydantic import BaseModel
 
+from app.bot_factory import create_bot
 from app.config import settings
 from app.database.models import User
 
@@ -98,10 +96,7 @@ async def upload_media(
     target_chat_id = _resolve_target_chat_id()
     upload = BufferedInputFile(file_bytes, filename=file.filename or 'upload')
 
-    bot = Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = create_bot()
 
     try:
         if media_type_normalized == 'photo':
@@ -158,10 +153,7 @@ async def download_media(
     Download media file by file_id.
     Used to display images/documents in ticket messages.
     """
-    bot = Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = create_bot()
 
     try:
         file = await bot.get_file(file_id)

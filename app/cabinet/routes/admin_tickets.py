@@ -479,14 +479,9 @@ async def reply_to_ticket(
 
     # Try to notify user via Telegram
     try:
-        from app.utils.telegram_bot_factory import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
+        from app.bot_factory import create_bot
 
-        bot = Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
+        bot = create_bot()
         try:
             from app.handlers.admin.tickets import notify_user_about_ticket_reply
 

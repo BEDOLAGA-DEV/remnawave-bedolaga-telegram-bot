@@ -5,7 +5,6 @@ API роуты колеса удачи для пользователей.
 import math
 import time
 
-import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -21,7 +20,6 @@ from app.cabinet.schemas.wheel import (
     WheelConfigResponse,
     WheelPrizeDisplay,
 )
-from app.config import settings
 from app.database.crud.wheel import (
     get_or_create_wheel_config,
     get_user_spin_history,
@@ -251,45 +249,31 @@ async def create_stars_invoice(
 
     # Создаем invoice через Telegram Bot API
     try:
-        bot_token = settings.BOT_TOKEN
-        api_base = (settings.TELEGRAM_BOT_API_BASE_URL or 'https://api.telegram.org').rstrip('/')
-        api_url = f'{api_base}/bot{bot_token}/createInvoiceLink'
+        from aiogram.exceptions import TelegramAPIError
+        from aiogram.types import LabeledPrice
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                api_url,
-                json={
-                    'title': 'Колесо удачи',
-                    'description': f'Спин колеса удачи ({stars_amount} ⭐)',
-                    'payload': payload,
-                    'provider_token': '',  # Пустой для Stars
-                    'currency': 'XTR',
-                    'prices': [{'label': 'Спин колеса', 'amount': stars_amount}],
-                },
+        from app.bot_factory import create_bot
+
+        async with create_bot() as bot:
+            invoice_url = await bot.create_invoice_link(
+                title='Колесо удачи',
+                description=f'Спин колеса удачи ({stars_amount} ⭐)',
+                payload=payload,
+                provider_token='',
+                currency='XTR',
+                prices=[LabeledPrice(label='Спин колеса', amount=stars_amount)],
             )
 
-            result = response.json()
+        logger.info('Created Stars invoice for wheel spin: user=, stars', user_id=user.id, stars_amount=stars_amount)
 
-            if not result.get('ok'):
-                logger.error('Telegram API error', result=result)
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail='Ошибка создания инвойса',
-                )
+        return StarsInvoiceResponse(
+            invoice_url=invoice_url,
+            stars_amount=stars_amount,
+        )
 
-            invoice_url = result['result']
-            logger.info(
-                'Created Stars invoice for wheel spin: user=, stars', user_id=user.id, stars_amount=stars_amount
-            )
-
-            return StarsInvoiceResponse(
-                invoice_url=invoice_url,
-                stars_amount=stars_amount,
-            )
-
-    except httpx.HTTPError as e:
-        logger.error('HTTP error creating invoice', error=e)
+    except TelegramAPIError as e:
+        logger.error('Error creating invoice', error=e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Ошибка соединения с Telegram',
+            detail='Ошибка создания инвойса',
         )

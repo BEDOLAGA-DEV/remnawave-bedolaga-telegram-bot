@@ -1373,6 +1373,8 @@ class EmailNotificationTemplates:
         tariff_name = html.escape(context.get('tariff_name', ''))
         period_days = context.get('period_days', 0)
         cabinet_url = html.escape(context.get('cabinet_url', ''))
+        cabinet_email = html.escape(context.get('cabinet_email', ''))
+        cabinet_password = context.get('cabinet_password', '')
 
         subjects = {
             'ru': 'Ваша VPN подписка готова',
@@ -1382,6 +1384,66 @@ class EmailNotificationTemplates:
             'fa': 'اشتراک VPN شما آماده است',
         }
 
+        creds_block_ru = (
+            f"""
+                <div class="highlight">
+                    <p><strong>Данные для входа в личный кабинет:</strong></p>
+                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
+                    <p><strong>Пароль:</strong> <code>{cabinet_password}</code></p>
+                </div>
+        """
+            if cabinet_password
+            else ''
+        )
+
+        creds_block_en = (
+            f"""
+                <div class="highlight">
+                    <p><strong>Your cabinet login credentials:</strong></p>
+                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
+                    <p><strong>Password:</strong> <code>{cabinet_password}</code></p>
+                </div>
+        """
+            if cabinet_password
+            else ''
+        )
+
+        creds_block_zh = (
+            f"""
+                <div class="highlight">
+                    <p><strong>个人中心登录信息：</strong></p>
+                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
+                    <p><strong>密码:</strong> <code>{cabinet_password}</code></p>
+                </div>
+        """
+            if cabinet_password
+            else ''
+        )
+
+        creds_block_ua = (
+            f"""
+                <div class="highlight">
+                    <p><strong>Дані для входу в особистий кабінет:</strong></p>
+                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
+                    <p><strong>Пароль:</strong> <code>{cabinet_password}</code></p>
+                </div>
+        """
+            if cabinet_password
+            else ''
+        )
+
+        creds_block_fa = (
+            f"""
+                <div class="highlight">
+                    <p><strong>اطلاعات ورود به پنل کاربری:</strong></p>
+                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
+                    <p><strong>رمز عبور:</strong> <code>{cabinet_password}</code></p>
+                </div>
+        """
+            if cabinet_password
+            else ''
+        )
+
         bodies = {
             'ru': f"""
                 <h2>Ваша VPN подписка готова!</h2>
@@ -1389,6 +1451,7 @@ class EmailNotificationTemplates:
                     <p>Тариф: <strong>{tariff_name}</strong></p>
                     <p>Период: <strong>{period_days} дней</strong></p>
                 </div>
+                {creds_block_ru}
                 <p>Подписка активирована в вашем личном кабинете.</p>
                 <p style="text-align: center;"><a href="{cabinet_url}" class="button">Перейти в личный кабинет</a></p>
             """,
@@ -1398,6 +1461,7 @@ class EmailNotificationTemplates:
                     <p>Plan: <strong>{tariff_name}</strong></p>
                     <p>Period: <strong>{period_days} days</strong></p>
                 </div>
+                {creds_block_en}
                 <p>Your subscription has been activated in your cabinet.</p>
                 <p style="text-align: center;"><a href="{cabinet_url}" class="button">Go to Cabinet</a></p>
             """,
@@ -1407,6 +1471,7 @@ class EmailNotificationTemplates:
                     <p>套餐: <strong>{tariff_name}</strong></p>
                     <p>期限: <strong>{period_days} 天</strong></p>
                 </div>
+                {creds_block_zh}
                 <p>订阅已在您的个人中心激活。</p>
                 <p style="text-align: center;"><a href="{cabinet_url}" class="button">前往个人中心</a></p>
             """,
@@ -1416,6 +1481,7 @@ class EmailNotificationTemplates:
                     <p>Тариф: <strong>{tariff_name}</strong></p>
                     <p>Період: <strong>{period_days} днів</strong></p>
                 </div>
+                {creds_block_ua}
                 <p>Підписка активована у вашому особистому кабінеті.</p>
                 <p style="text-align: center;"><a href="{cabinet_url}" class="button">Перейти до кабінету</a></p>
             """,
@@ -1425,6 +1491,7 @@ class EmailNotificationTemplates:
                     <p>طرح: <strong>{tariff_name}</strong></p>
                     <p>مدت: <strong>{period_days} روز</strong></p>
                 </div>
+                {creds_block_fa}
                 <p>اشتراک شما در پنل کاربری فعال شده است.</p>
                 <p style="text-align: center;"><a href="{cabinet_url}" class="button">رفتن به پنل کاربری</a></p>
             """,

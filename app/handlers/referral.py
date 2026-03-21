@@ -1,5 +1,6 @@
 import hashlib
 import json
+from html import escape as html_escape
 from pathlib import Path
 
 import qrcode
@@ -45,7 +46,8 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
     summary = await get_user_referral_summary(db, db_user.id)
 
     bot_username = (await callback.bot.get_me()).username
-    referral_link = settings.get_referral_link(db_user.referral_code, bot_username)
+    bot_referral_link = settings.get_bot_referral_link(db_user.referral_code, bot_username)
+    cabinet_referral_link = settings.get_cabinet_referral_link(db_user.referral_code)
 
     referral_text = (
         texts.t('REFERRAL_PROGRAM_TITLE', '👥 <b>Реферальная программа</b>')
@@ -114,13 +116,27 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
             '• Комиссия с каждого пополнения реферала: <b>{percent}%</b>',
         ).format(percent=get_effective_referral_commission_percent(db_user))
 
+    referral_text += '\n' + commission_line + '\n\n'
+
+    # Show bot link
+    referral_text += (
+        texts.t('REFERRAL_BOT_LINK_TITLE', '🤖 <b>Ссылка на бота:</b>')
+        + f'\n<code>{html_escape(bot_referral_link)}</code>\n'
+    )
+
+    # Show cabinet link if configured
+    if cabinet_referral_link:
+        referral_text += (
+            '\n'
+            + texts.t('REFERRAL_CABINET_LINK_TITLE', '🌐 <b>Ссылка на кабинет:</b>')
+            + f'\n<code>{html_escape(cabinet_referral_link)}</code>\n'
+        )
+
     referral_text += (
         '\n'
-        + commission_line
-        + '\n\n'
-        + texts.t('REFERRAL_LINK_TITLE', '🔗 <b>Ваша реферальная ссылка:</b>')
-        + f'\n<code>{referral_link}</code>\n\n'
-        + texts.t('REFERRAL_CODE_TITLE', '🆔 <b>Ваш код:</b> <code>{code}</code>').format(code=db_user.referral_code)
+        + texts.t('REFERRAL_CODE_TITLE', '🆔 <b>Ваш код:</b> <code>{code}</code>').format(
+            code=html_escape(str(db_user.referral_code or ''))
+        )
         + '\n\n'
     )
 
@@ -158,7 +174,7 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
                     ).format(
                         reason=reason_text,
                         amount=texts.format_price(earning['amount_kopeks']),
-                        referral_name=earning['referral_name'],
+                        referral_name=html_escape(str(earning['referral_name'] or '')),
                     )
                     + '\n'
                 )
@@ -243,15 +259,15 @@ async def show_referral_qr(
     await callback.answer()
 
     bot_username = (await callback.bot.get_me()).username
-    referral_link = settings.get_referral_link(db_user.referral_code, bot_username)
+    bot_referral_link = settings.get_bot_referral_link(db_user.referral_code, bot_username)
 
     qr_dir = Path('data') / 'referral_qr'
     qr_dir.mkdir(parents=True, exist_ok=True)
 
-    link_hash = hashlib.md5(referral_link.encode()).hexdigest()[:8]
+    link_hash = hashlib.md5(bot_referral_link.encode()).hexdigest()[:8]
     file_path = qr_dir / f'{db_user.id}_{link_hash}.png'
     if not file_path.exists():
-        img = qrcode.make(referral_link)
+        img = qrcode.make(bot_referral_link)
         img.save(file_path)
 
     photo = FSInputFile(file_path)
@@ -259,25 +275,28 @@ async def show_referral_qr(
         inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')]]
     )
 
+    caption = texts.t(
+        'REFERRAL_QR_BOT_LINK',
+        '🤖 Ссылка на бота:\n{link}',
+    ).format(link=bot_referral_link)
+
+    cabinet_referral_link = settings.get_cabinet_referral_link(db_user.referral_code)
+    if cabinet_referral_link:
+        caption += '\n\n' + texts.t(
+            'REFERRAL_QR_CABINET_LINK',
+            '🌐 Ссылка на кабинет:\n{link}',
+        ).format(link=cabinet_referral_link)
+
     try:
         await callback.message.edit_media(
-            types.InputMediaPhoto(
-                media=photo,
-                caption=texts.t(
-                    'REFERRAL_LINK_CAPTION',
-                    '🔗 Ваша реферальная ссылка:\n{link}',
-                ).format(link=referral_link),
-            ),
+            types.InputMediaPhoto(media=photo, caption=caption),
             reply_markup=keyboard,
         )
     except TelegramBadRequest:
         await callback.message.delete()
         await callback.message.answer_photo(
             photo,
-            caption=texts.t(
-                'REFERRAL_LINK_CAPTION',
-                '🔗 Ваша реферальная ссылка:\n{link}',
-            ).format(link=referral_link),
+            caption=caption,
             reply_markup=keyboard,
         )
 
@@ -322,7 +341,7 @@ async def show_detailed_referral_list(callback: types.CallbackQuery, db_user: Us
             texts.t(
                 'REFERRAL_LIST_ITEM_HEADER',
                 '{index}. {status} <b>{name}</b>',
-            ).format(index=i, status=status_emoji, name=referral['full_name'])
+            ).format(index=i, status=status_emoji, name=html_escape(str(referral['full_name'] or '')))
             + '\n'
         )
         text += (
@@ -454,7 +473,7 @@ async def show_referral_analytics(callback: types.CallbackQuery, db_user: User, 
                     '{index}. {name}: {amount} ({count} начислений)',
                 ).format(
                     index=i,
-                    name=ref['referral_name'],
+                    name=html_escape(str(ref['referral_name'] or '')),
                     amount=texts.format_price(ref['total_earned_kopeks']),
                     count=ref['earnings_count'],
                 )
@@ -485,7 +504,8 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User):
         return
 
     bot_username = (await callback.bot.get_me()).username
-    referral_link = settings.get_referral_link(db_user.referral_code, bot_username)
+    bot_referral_link = settings.get_bot_referral_link(db_user.referral_code, bot_username)
+    cabinet_referral_link = settings.get_cabinet_referral_link(db_user.referral_code)
 
     invite_text = texts.t('REFERRAL_INVITE_TITLE', '🎉 Присоединяйся к VPN сервису!')
 
@@ -507,14 +527,29 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User):
         + texts.t('REFERRAL_INVITE_FEATURE_SECURE', '🔒 Надежная защита')
         + '\n\n'
         + texts.t('REFERRAL_INVITE_LINK_PROMPT', '👇 Переходи по ссылке:')
-        + f'\n{referral_link}'
+        + f'\n{bot_referral_link}'
     )
+
+    if cabinet_referral_link:
+        invite_text += (
+            '\n\n'
+            + texts.t('REFERRAL_INVITE_CABINET_LINK', '🌐 Или через личный кабинет:')
+            + f'\n{cabinet_referral_link}'
+        )
+
+    # Compact share text for switch_inline_query (256-char limit)
+    share_text = invite_text
+    if len(share_text) > 256:
+        share_text = texts.t('REFERRAL_INVITE_TITLE', '🎉 Присоединяйся к VPN сервису!') + f'\n\n👇 {bot_referral_link}'
+        if cabinet_referral_link and len(share_text) + len(cabinet_referral_link) + 5 <= 256:
+            share_text += f'\n🌐 {cabinet_referral_link}'
+        share_text = share_text[:256]
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 types.InlineKeyboardButton(
-                    text=texts.t('REFERRAL_SHARE_BUTTON', '📤 Поделиться'), switch_inline_query=invite_text
+                    text=texts.t('REFERRAL_SHARE_BUTTON', '📤 Поделиться'), switch_inline_query=share_text
                 )
             ],
             [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')],
@@ -531,7 +566,7 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User):
                 'Нажмите кнопку «📤 Поделиться» чтобы отправить приглашение в любой чат, или скопируйте текст ниже:',
             )
             + '\n\n'
-            f'<code>{invite_text}</code>'
+            f'<code>{html_escape(invite_text)}</code>'
         ),
         keyboard,
     )
@@ -584,7 +619,7 @@ async def show_withdrawal_info(callback: types.CallbackQuery, db_user: User, db:
             ]
         )
     else:
-        text += f'❌ {reason}\n'
+        text += f'❌ {html_escape(str(reason))}\n'
 
     keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')])
 
@@ -746,7 +781,7 @@ async def process_payment_details(message: types.Message, db_user: User, db: Asy
     )
     text += (
         texts.t('REFERRAL_WITHDRAWAL_CONFIRM_DETAILS', '💳 Реквизиты:\n<code>{details}</code>').format(
-            details=payment_details
+            details=html_escape(payment_details)
         )
         + '\n\n'
     )
@@ -792,16 +827,18 @@ async def confirm_withdrawal_request(callback: types.CallbackQuery, db_user: Use
     # Отправляем уведомление админам
     analysis = json.loads(request.risk_analysis) if request.risk_analysis else {}
 
-    user_id_display = db_user.telegram_id or db_user.email or f'#{db_user.id}'
+    user_id_display = html_escape(str(db_user.telegram_id or db_user.email or f'#{db_user.id}'))
+    safe_name = html_escape(db_user.full_name or 'Без имени')
+    safe_details = html_escape(payment_details)
     admin_text = f"""
 🔔 <b>Новая заявка на вывод #{request.id}</b>
 
-👤 Пользователь: {db_user.full_name or 'Без имени'}
+👤 Пользователь: {safe_name}
 🆔 ID: <code>{user_id_display}</code>
 💰 Сумма: <b>{amount_kopeks / 100:.0f}₽</b>
 
 💳 Реквизиты:
-<code>{payment_details}</code>
+<code>{safe_details}</code>
 
 {referral_withdrawal_service.format_analysis_for_admin(analysis)}
 """

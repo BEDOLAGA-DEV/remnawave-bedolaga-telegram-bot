@@ -70,12 +70,11 @@ async def create_withdrawal(
 
     # Уведомляем админов о запросе на вывод
     try:
-        from app.utils.telegram_bot_factory import Bot
-
+        from app.bot_factory import create_bot
         from app.services.admin_notification_service import AdminNotificationService
 
         if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
+            bot = create_bot()
             try:
                 notification_service = AdminNotificationService(bot)
                 await notification_service.send_withdrawal_request_notification(

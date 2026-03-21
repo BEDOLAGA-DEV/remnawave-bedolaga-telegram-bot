@@ -483,12 +483,14 @@ async def try_fulfill_guest_purchase(
     if purchase_token is None:
         return None
 
-    from app.database.crud.landing import get_purchase_by_token, update_purchase_status
+    from app.database.crud.landing import update_purchase_status
     from app.database.models import GuestPurchase, GuestPurchaseStatus
     from app.services.guest_purchase_service import fulfill_purchase
 
     try:
-        existing = await get_purchase_by_token(db, purchase_token)
+        # FOR UPDATE prevents concurrent webhooks from double-processing the same purchase
+        result = await db.execute(select(GuestPurchase).where(GuestPurchase.token == purchase_token).with_for_update())
+        existing = result.scalars().first()
 
         # Verify amount (skip for providers with currency conversion imprecision)
         if existing and not skip_amount_check and payment_amount_kopeks != existing.amount_kopeks:
@@ -502,11 +504,20 @@ async def try_fulfill_guest_purchase(
             await update_purchase_status(db, purchase_token, GuestPurchaseStatus.FAILED)
             return True  # consumed, even though failed
 
-        # Idempotency: skip terminal states
-        if existing and existing.status in (
-            GuestPurchaseStatus.DELIVERED.value,
-            GuestPurchaseStatus.PENDING_ACTIVATION.value,
-            GuestPurchaseStatus.FAILED.value,
+        # Idempotency: skip terminal states (and code-only gifts already in PAID)
+        if (
+            existing
+            and existing.status
+            in (
+                GuestPurchaseStatus.DELIVERED.value,
+                GuestPurchaseStatus.PENDING_ACTIVATION.value,
+                GuestPurchaseStatus.FAILED.value,
+            )
+        ) or (
+            existing
+            and existing.status == GuestPurchaseStatus.PAID.value
+            and existing.is_gift
+            and not existing.gift_recipient_type
         ):
             logger.info(
                 'Guest purchase already in terminal state, skipping',
@@ -536,6 +547,24 @@ async def try_fulfill_guest_purchase(
                 purchase_token_prefix=purchase_token[:5],
                 provider=provider_name,
             )
+            # NaloGO receipt: payment received, fulfillment deferred until code activation
+            try:
+                await db.refresh(existing)
+                if existing.buyer:
+                    from app.services.guest_purchase_service import _create_nalogo_receipt_for_purchase
+
+                    await _create_nalogo_receipt_for_purchase(db, existing, existing.buyer)
+                else:
+                    logger.warning(
+                        'Code-only gift has no buyer, skipping NaloGO receipt',
+                        purchase_token_prefix=purchase_token[:5],
+                        buyer_user_id=existing.buyer_user_id,
+                    )
+            except Exception:
+                logger.exception(
+                    'Failed to create NaloGO receipt for code-only gift',
+                    purchase_token_prefix=purchase_token[:5],
+                )
             return True
 
         # Fulfill: create user, subscription, deliver (commits on success)

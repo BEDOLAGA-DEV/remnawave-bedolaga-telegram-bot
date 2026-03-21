@@ -76,7 +76,7 @@ async def _get_overview(db: AsyncSession) -> dict[str, object]:
     today = datetime.now(UTC).date()
     today_transactions = (
         await db.scalar(
-            select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+            select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
                 func.date(Transaction.created_at) == today,
                 Transaction.type == TransactionType.DEPOSIT.value,
                 Transaction.payment_method.in_(REAL_PAYMENT_METHODS),

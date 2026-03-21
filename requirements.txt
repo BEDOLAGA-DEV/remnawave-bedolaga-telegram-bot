@@ -1,6 +1,7 @@
 # Основные зависимости
 aiogram==3.22.0
 aiohttp==3.12.15
+aiohttp-socks>=0.10.1
 asyncpg==0.31.0
 SQLAlchemy==2.0.46
 alembic==1.18.4

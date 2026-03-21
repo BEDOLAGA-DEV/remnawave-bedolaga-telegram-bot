@@ -70,7 +70,12 @@ async def get_severpay_payment_by_id(db: AsyncSession, payment_id: int) -> Sever
 
 async def get_severpay_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> SeverPayPayment | None:
     """Получает платеж по ID с блокировкой FOR UPDATE."""
-    result = await db.execute(select(SeverPayPayment).where(SeverPayPayment.id == payment_id).with_for_update())
+    result = await db.execute(
+        select(SeverPayPayment)
+        .where(SeverPayPayment.id == payment_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     return result.scalar_one_or_none()
 
 

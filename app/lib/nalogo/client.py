@@ -36,6 +36,7 @@ class Client:
         storage_path: str | None = None,
         device_id: str | None = None,
         timeout: float = 10.0,
+        proxy_url: str | None = None,
     ):
         """
         Initialize Moy Nalog API client.
@@ -45,6 +46,7 @@ class Client:
             storage_path: Optional file path for token storage
             device_id: Optional device ID (auto-generated if not provided)
             timeout: HTTP request timeout in seconds
+            proxy_url: Optional SOCKS proxy URL for routing traffic
         """
         self.base_url = base_url
         self.timeout = timeout
@@ -54,6 +56,7 @@ class Client:
             base_url=base_url,
             storage_path=storage_path,
             device_id=device_id,
+            proxy_url=proxy_url,
         )
 
         # Initialize HTTP client with auth middleware
@@ -67,6 +70,7 @@ class Client:
                 'Referrer': 'https://lknpd.nalog.ru/auth/login',
             },
             timeout=timeout,
+            proxy_url=proxy_url,
         )
 
         # User profile data (for receipt operations)

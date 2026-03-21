@@ -4,15 +4,12 @@ import time
 from datetime import UTC, datetime
 
 import structlog
-from aiogram import Bot as AiogramBot
-from app.utils.telegram_bot_factory import Bot as create_bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram import Bot
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.bot_factory import create_bot
 from app.database.models import PinnedMessage, User
 from app.services.pinned_message_service import (
     broadcast_pinned_message,
@@ -78,10 +75,7 @@ _cached_bot: AiogramBot | None = None
 def _get_bot() -> AiogramBot:
     global _cached_bot
     if _cached_bot is None:
-        _cached_bot = create_bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
+        _cached_bot = create_bot()
     return _cached_bot
 
 

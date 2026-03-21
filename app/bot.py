@@ -97,10 +97,21 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     except Exception as e:
         logger.warning('Кеш не инициализирован', error=e)
 
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.enums import ParseMode
+    from app.bot_factory import create_bot
 
-    bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = create_bot()
+
+    proxy_url = settings.get_proxy_url()
+    nalogo_proxy_url = settings.get_nalogo_proxy_url()
+
+    if proxy_url or nalogo_proxy_url:
+        from app.utils.proxy import mask_proxy_url
+
+        if proxy_url:
+            logger.info('Proxy configured', proxy_url=mask_proxy_url(proxy_url))
+        if nalogo_proxy_url:
+            source = 'NALOGO_PROXY_URL' if settings.NALOGO_PROXY_URL else 'PROXY_URL (fallback)'
+            logger.info('Nalogo proxy configured', proxy_url=mask_proxy_url(nalogo_proxy_url), source=source)
 
     maintenance_service.set_bot(bot)
     logger.info('Бот установлен в maintenance_service')

@@ -25,6 +25,7 @@ from app.database.models import (
     LandingPage,
     PaymentMethod,
     Tariff,
+    Transaction,
     TransactionType,
     User,
 )
@@ -46,11 +47,10 @@ async def _send_admin_notification(
     if not getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) or not settings.BOT_TOKEN:
         return
     try:
-        from app.utils.telegram_bot_factory import Bot
-
+        from app.bot_factory import create_bot
         from app.services.admin_notification_service import AdminNotificationService
 
-        async with Bot(token=settings.BOT_TOKEN) as bot:
+        async with create_bot() as bot:
             service = AdminNotificationService(bot)
             await service.send_guest_purchase_notification(
                 purchase,
@@ -177,6 +177,97 @@ async def create_purchase(
     return purchase
 
 
+async def _create_nalogo_receipt_for_purchase(
+    db: AsyncSession,
+    purchase: GuestPurchase,
+    user: User,
+    transaction: Transaction | None = None,
+) -> None:
+    """Create NaloGO fiscal receipt for a guest purchase (best-effort)."""
+    if not settings.is_nalogo_enabled():
+        return
+
+    # Без payment_id нет dedup-ключа в Redis — нельзя гарантировать идемпотентность
+    if not purchase.payment_id:
+        logger.warning(
+            'Cannot create NaloGO receipt: purchase has no payment_id',
+            purchase_id=purchase.id,
+        )
+        return
+
+    # Нулевые/отрицательные суммы не фискализируем
+    if purchase.amount_kopeks <= 0:
+        return
+
+    # Защита от дублей: если у транзакции или покупки уже есть чек — не создаём новый
+    if transaction and transaction.receipt_uuid:
+        logger.info(
+            'NaloGO receipt already exists for guest purchase (transaction)',
+            purchase_id=purchase.id,
+            receipt_uuid=transaction.receipt_uuid,
+        )
+        return
+
+    if purchase.receipt_uuid:
+        logger.info(
+            'NaloGO receipt already exists for guest purchase (purchase)',
+            purchase_id=purchase.id,
+            receipt_uuid=purchase.receipt_uuid,
+        )
+        return
+
+    try:
+        from app.services.nalogo_service import NaloGoService
+
+        nalogo_service = NaloGoService()
+        if not nalogo_service.configured:
+            return
+
+        amount_rubles = purchase.amount_kopeks / 100
+        # Не передаём telegram_user_id в описание чека — privacy (VPN-сервис)
+        receipt_name = settings.get_balance_payment_description(purchase.amount_kopeks)
+
+        receipt_uuid = await nalogo_service.create_receipt(
+            name=receipt_name,
+            amount=amount_rubles,
+            quantity=1,
+            payment_id=purchase.payment_id,
+            telegram_user_id=user.telegram_id,
+            amount_kopeks=purchase.amount_kopeks,
+        )
+
+        if receipt_uuid:
+            logger.info(
+                'NaloGO receipt created for guest purchase',
+                purchase_id=purchase.id,
+                receipt_uuid=receipt_uuid,
+                saved_to_transaction=transaction is not None,
+            )
+            # Всегда сохраняем receipt_uuid на purchase (persistent dedup)
+            try:
+                purchase.receipt_uuid = receipt_uuid
+                purchase.receipt_created_at = datetime.now(UTC)
+                if transaction:
+                    transaction.receipt_uuid = receipt_uuid
+                    transaction.receipt_created_at = datetime.now(UTC)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                logger.warning(
+                    'Failed to save receipt_uuid to purchase/transaction',
+                    purchase_id=purchase.id,
+                    receipt_uuid=receipt_uuid,
+                )
+    except Exception as exc:
+        from app.utils.proxy import sanitize_proxy_error
+
+        logger.error(
+            'Failed to create nalogo receipt for guest purchase',
+            purchase_id=purchase.id,
+            error=sanitize_proxy_error(exc),
+        )
+
+
 async def fulfill_purchase(
     db: AsyncSession,
     purchase_token: str,
@@ -272,6 +363,10 @@ async def fulfill_purchase(
 
             await _send_admin_notification(purchase, notification_tariff_name, is_pending_activation=True)
 
+            # Создаем чек через NaloGO (деньги получены, чек нужен)
+            await _create_nalogo_receipt_for_purchase(db, purchase, user)
+            await db.refresh(purchase)  # guard: inner rollback may expire the object
+
             # Clear plaintext password after email delivery
             if purchase.cabinet_password:
                 purchase.cabinet_password = None
@@ -336,9 +431,10 @@ async def fulfill_purchase(
         await db.refresh(purchase, attribute_names=['landing', 'user'])
 
         # Create transaction so promo group auto-assignment and contest tracking work
+        transaction = None
         try:
             payment_method_enum = _resolve_payment_method(purchase.payment_method)
-            await create_transaction(
+            transaction = await create_transaction(
                 db=db,
                 user_id=user.id,
                 type=TransactionType.SUBSCRIPTION_PAYMENT,
@@ -363,6 +459,12 @@ async def fulfill_purchase(
             logger.exception('Failed to send delivery notification', purchase_id=purchase.id)
 
         await _send_admin_notification(purchase, notification_tariff_name, is_pending_activation=False)
+
+        # Создаем чек через NaloGO
+        await _create_nalogo_receipt_for_purchase(db, purchase, user, transaction)
+
+        # Refresh purchase: если внутри nalogo helper был rollback, объект expired
+        await db.refresh(purchase)
 
         # Clear plaintext password after email delivery — no longer needed in DB
         if purchase.cabinet_password:
@@ -546,9 +648,9 @@ async def _find_or_create_user(
     resolved_telegram_id: int | None = pre_resolved_telegram_id
     if resolved_telegram_id is None:
         try:
-            from app.utils.telegram_bot_factory import Bot
+            from app.bot_factory import create_bot
 
-            async with Bot(token=settings.BOT_TOKEN) as bot:
+            async with create_bot() as bot:
                 chat = await asyncio.wait_for(
                     bot.get_chat(chat_id=f'@{username}'),
                     timeout=5.0,
@@ -656,10 +758,9 @@ async def _send_telegram_gift_notification(
     try:
         import html as html_mod
 
-        from app.utils.telegram_bot_factory import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        from app.bot_factory import create_bot
 
         gift_from = ''
         if purchase.contact_value:
@@ -691,10 +792,7 @@ async def _send_telegram_gift_notification(
                 ]
             )
 
-        async with Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        ) as bot:
+        async with create_bot() as bot:
             await bot.send_message(
                 chat_id=user.telegram_id,
                 text=text,
@@ -1205,8 +1303,7 @@ async def _send_stuck_purchase_alert(data: dict, retry_count: int, phase: str) -
     try:
         import html as html_mod
 
-        from app.utils.telegram_bot_factory import Bot
-
+        from app.bot_factory import create_bot
         from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
 
         amount_rub = data['amount_kopeks'] / 100
@@ -1225,7 +1322,7 @@ async def _send_stuck_purchase_alert(data: dict, retry_count: int, phase: str) -
             f'Requires manual investigation.'
         )
 
-        async with Bot(token=settings.BOT_TOKEN) as bot:
+        async with create_bot() as bot:
             service = AdminNotificationService(bot)
             await service.send_admin_notification(text, category=NotificationCategory.ERRORS)
     except Exception:
@@ -1244,8 +1341,7 @@ async def _send_amount_mismatch_alert(
     try:
         import html as html_mod
 
-        from app.utils.telegram_bot_factory import Bot
-
+        from app.bot_factory import create_bot
         from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
 
         text = (
@@ -1260,7 +1356,7 @@ async def _send_amount_mismatch_alert(
             f'Requires manual investigation.'
         )
 
-        async with Bot(token=settings.BOT_TOKEN) as bot:
+        async with create_bot() as bot:
             service = AdminNotificationService(bot)
             await service.send_admin_notification(text, category=NotificationCategory.ERRORS)
     except Exception:
@@ -1351,6 +1447,7 @@ async def _find_succeeded_provider_payment(
         result = await db.execute(
             select(CryptoBotPayment).where(
                 CryptoBotPayment.status == 'paid',
+                CryptoBotPayment.payload.like('{%'),
                 cast(CryptoBotPayment.payload, SA_JSON)['purchase_token'].as_string() == purchase_token,
             )
         )

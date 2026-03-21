@@ -73,12 +73,13 @@ def upgrade() -> None:
             )
         )
 
-        # CryptoBot: payload (text) column with JSON inside, no metadata_json
+        # CryptoBot: payload (text) column with JSON inside, no metadata_json.
+        # Filter payload LIKE '{%' to skip non-JSON values (e.g. "balance_2_10000").
         op.execute(
             sa.text(
                 'CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_cryptobot_payments_payload_purchase_token '
                 "ON cryptobot_payments ((CAST(payload AS json) ->> 'purchase_token')) "
-                "WHERE status = 'paid'"
+                "WHERE status = 'paid' AND payload LIKE '{%'"
             )
         )
 

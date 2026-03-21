@@ -1,5 +1,68 @@
 # Changelog
 
+## [3.39.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.38.0...v3.39.0) (2026-03-21)
+
+
+### New Features
+
+* add NaloGO fiscal receipts for code-only gift purchases ([90209eb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/90209ebef1a872665e622124a1898d52eff398e7))
+
+
+### Bug Fixes
+
+* add NaloGO fiscal receipt creation for landing page purchases ([4244962](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/424496233773b4cee4e389a1172e95208b3afeaf))
+* manual admin top-ups missing from sales statistics ([ab43e74](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ab43e74ab7484f8d3517f91e366ea395e1944b99))
+* skip non-JSON payload rows in cryptobot payment index and query ([ba79d03](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ba79d03e389afed972296fe2bc05104aa6b883f3))
+
+## [3.38.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.37.0...v3.38.0) (2026-03-21)
+
+
+### New Features
+
+* add SOCKS proxy support for nalogo (tax service) module ([3c5bf4f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3c5bf4fa22d1cdf144269f4e6ab32a4523c8f1f3))
+
+
+### Bug Fixes
+
+* add diagnostic payload logging in create_user error path ([4990ddf](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4990ddf9e46495b65fc3638ea8d6bed0cbe6b857))
+* retry Remnawave API calls without externalSquadUuid on A039 FK violation ([de00612](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/de006129657ce3dac2b1f2fc0ab1b91e23e44241))
+* sanitize proxy credentials in all nalogo error paths ([3bf3105](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3bf31055e71ff64e6a6d94486bb7f7775ac7dc91))
+
+## [3.37.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.36.1...v3.37.0) (2026-03-21)
+
+
+### New Features
+
+* add SOCKS5 proxy support for Telegram API traffic ([82b6a8b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/82b6a8bf707736541b58637b0fc9a84b0c403a6c))
+* broadcast caption validation + landing daily created stats ([d400cd7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d400cd7b49cb18edf8545a5af54009561610218a))
+* expose cabinet_email/password vars in subscription delivered template admin UI ([f82a713](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f82a713110c90494e41f2de9910f5dc60a06962e))
+* include cabinet credentials in subscription delivered email ([fedcf25](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/fedcf2569a153ac40699dd5b402208ac86db0fc3))
+* show both bot and cabinet referral links everywhere ([67da390](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/67da3903715e97c0d84d0018efdd74b085ee8720))
+
+
+### Bug Fixes
+
+* default payment_method to BALANCE for bot subscription payments ([226d3f2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/226d3f2766bb0842e5a4aefb1458a9e40389108e))
+* derive income_today from revenue_chart to ensure consistency ([1882909](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1882909b3e60f4959921ae085e909bc91c0756b3))
+* include landing page revenue in dashboard statistics ([c6c1599](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c6c1599e14a8c7033dfa399ff3f2c3ee6d156598))
+* include SUBSCRIPTION_PAYMENT in dashboard revenue ([5f71eaa](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5f71eaa92604faa2c6928994bd32a9c6c8ae7ae5))
+* include SUBSCRIPTION_PAYMENT in dashboard revenue calculations ([13dba5a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/13dba5a303604f8d39e85d1382a4d36225f957ac))
+* include SUBSCRIPTION_PAYMENT in dashboard revenue calculations ([d7f91c8](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d7f91c83584384ef5d0fc90a28debc722b2db79f))
+* include SUBSCRIPTION_PAYMENT in recent payments today/week totals ([6982d27](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6982d27378d0dbe5c7b37d1491e6c9d0461dffc8))
+* include SUBSCRIPTION_PAYMENT in sales summary and deposits stats ([27ef752](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/27ef75214e73211a68d541f5375ca14275ea86e9))
+* increase landing purchase rate limit from 5 to 30 req/min ([801921f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/801921ff74107daccc17e49a0335c7b133268280))
+* narrow exception handling and fix session leak in gift.py ([3875335](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3875335cd7083115043d22f8726f0d33a225cd10))
+* prevent bootstrap from reactivating revoked superadmin roles ([9dd6b54](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9dd6b54c6e963d2a842d4ac48c9a463014306ed7))
+* prevent double balance credit on concurrent Platega webhooks ([0e1296e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0e1296e0ea291ee661aa82508d5eb8049ce23cac))
+* prevent double-payment TOCTOU race in all payment providers ([82c79c1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/82c79c130601736cd149350f761dcceacfb7c2db))
+* resolve EmailService stale SMTP config causing NoneType crash on from_email ([2a72dea](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2a72deadd6ac3baea15a8d4ee414d763c16690b0))
+* resolve remaining TOCTOU issues in RioPay, SeverPay and restore paid_at ([afefcc9](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/afefcc9c07a80ecf65871bc2d0fbcfe13ffc24fd))
+
+
+### Refactoring
+
+* centralize Bot instantiation via create_bot() factory ([0a53b85](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0a53b85b8a3193f67e148c0f2bde246cc92f010c))
+
 ## [3.36.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.36.0...v3.36.1) (2026-03-20)
 
 

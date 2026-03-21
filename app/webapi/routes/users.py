@@ -24,7 +24,7 @@ from app.database.crud.user import (
     get_user_by_telegram_id,
     update_user,
 )
-from app.database.models import PromoGroup, Subscription, User, UserStatus
+from app.database.models import PaymentMethod, PromoGroup, Subscription, User, UserStatus
 from app.services.subscription_service import SubscriptionService
 
 from ..dependencies import get_db_session, require_api_token
@@ -317,6 +317,7 @@ async def update_balance(
         amount_kopeks=payload.amount_kopeks,
         description=payload.description or 'Корректировка через веб-API',
         create_transaction=payload.create_transaction,
+        payment_method=PaymentMethod.MANUAL,
     )
 
     if not success:

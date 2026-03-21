@@ -469,7 +469,22 @@ class RemnaWaveAPI:
             hwidDeviceLimit=data.get('hwidDeviceLimit'),
             status=data.get('status'),
         )
-        response = await self._make_request('POST', '/api/users', data)
+        try:
+            response = await self._make_request('POST', '/api/users', data)
+        except RemnaWaveAPIError as e:
+            # A039 = FK violation on externalSquadUuid — retry without it
+            error_code = (e.response_data or {}).get('errorCode', '')
+            if error_code == 'A039' and 'externalSquadUuid' in data:
+                stale_uuid = data.pop('externalSquadUuid')
+                logger.warning(
+                    'A039 FK violation on externalSquadUuid, retrying without it',
+                    stale_uuid=stale_uuid,
+                    username=data.get('username'),
+                )
+                response = await self._make_request('POST', '/api/users', data)
+            else:
+                logger.error('POST /api/users FAILED — full payload', payload=data)
+                raise
         user = self._parse_user(response['response'])
         logger.info(
             'POST /api/users response',
@@ -570,10 +585,20 @@ class RemnaWaveAPI:
 
         try:
             response = await self._make_request('PATCH', '/api/users', data)
-        except Exception:
-            # Логируем полный payload при ошибке для диагностики A039
-            logger.error('PATCH /api/users FAILED — full payload', payload=data)
-            raise
+        except RemnaWaveAPIError as e:
+            # A039 = FK violation on externalSquadUuid — retry without it
+            error_code = (e.response_data or {}).get('errorCode', '')
+            if error_code == 'A039' and 'externalSquadUuid' in data:
+                stale_uuid = data.pop('externalSquadUuid')
+                logger.warning(
+                    'A039 FK violation on externalSquadUuid, retrying without it',
+                    stale_uuid=stale_uuid,
+                    uuid=uuid,
+                )
+                response = await self._make_request('PATCH', '/api/users', data)
+            else:
+                logger.error('PATCH /api/users FAILED — full payload', payload=data)
+                raise
         user = self._parse_user(response['response'])
         logger.info(
             'PATCH /api/users response',

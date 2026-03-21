@@ -10,6 +10,7 @@ from app.config import settings
 from app.lib.nalogo import Client
 from app.lib.nalogo.dto.income import IncomeClient, IncomeType
 from app.utils.cache import cache
+from app.utils.proxy import mask_proxy_url, sanitize_proxy_error
 
 
 logger = structlog.get_logger(__name__)
@@ -41,18 +42,25 @@ class NaloGoService:
             try:
                 # Таймаут 30 секунд — nalog.ru иногда отвечает медленно
                 timeout = getattr(settings, 'NALOGO_TIMEOUT', 30.0)
+                proxy_url = settings.get_nalogo_proxy_url()
                 self.client = Client(
                     base_url='https://lknpd.nalog.ru/api',
                     storage_path=storage_path,
                     device_id=device_id or 'bot-device-123',
                     timeout=timeout,
+                    proxy_url=proxy_url,
                 )
                 self.inn = inn
                 self.password = password
                 self.configured = True
-                logger.info('NaloGO клиент инициализирован для ИНН: ...', inn=inn[:5])
+                if proxy_url:
+                    logger.info(
+                        'NaloGO клиент инициализирован с прокси', inn=inn[:5], proxy_url=mask_proxy_url(proxy_url)
+                    )
+                else:
+                    logger.info('NaloGO клиент инициализирован для ИНН: ...', inn=inn[:5])
             except Exception as error:
-                logger.error('Ошибка инициализации NaloGO клиента', error=error, exc_info=True)
+                logger.error('Ошибка инициализации NaloGO клиента', error=sanitize_proxy_error(error))
                 self.configured = False
 
     @staticmethod
@@ -281,9 +289,9 @@ class NaloGoService:
             return True
         except Exception as error:
             if self._is_service_unavailable(error):
-                logger.warning('NaloGO временно недоступен (техработы)', error=str(error)[:200])
+                logger.warning('NaloGO временно недоступен (техработы)', error=sanitize_proxy_error(error))
             else:
-                logger.error('Ошибка аутентификации в NaloGO', error=error, exc_info=True)
+                logger.error('Ошибка аутентификации в NaloGO', error=sanitize_proxy_error(error))
             return False
 
     async def create_receipt(
@@ -355,7 +363,7 @@ class NaloGoService:
                         name, amount, quantity, client_info, payment_id, telegram_user_id, amount_kopeks
                     )
             else:
-                logger.error('Ошибка аутентификации NaloGO', auth_error=auth_error, exc_info=True)
+                logger.error('Ошибка аутентификации NaloGO', auth_error=sanitize_proxy_error(auth_error))
             return None
 
         # ЭТАП 2: Создание чека
@@ -400,9 +408,9 @@ class NaloGoService:
             # ВАЖНО: Аутентификация была успешной, запрос на создание чека УШЁЛ
             # При таймауте чек МОГ быть создан на сервере — НЕ добавляем в очередь!
             if self._is_service_unavailable(error):
-                error_msg = str(error)[:200]
+                error_msg = sanitize_proxy_error(error)[:200]
                 logger.error(
-                    '⚠️ ТАЙМАУТ после успешной аутентификации! Чек МОГ быть создан! (payment_id=, сумма=₽). Сохраняем в очередь проверки. Проверьте lknpd.nalog.ru',
+                    'ТАЙМАУТ после успешной аутентификации! Чек МОГ быть создан!',
                     payment_id=payment_id,
                     amount=amount,
                 )
@@ -418,7 +426,7 @@ class NaloGoService:
                     error_message=error_msg,
                 )
             else:
-                logger.error('Ошибка создания чека в NaloGO', error=error, exc_info=True)
+                logger.error('Ошибка создания чека в NaloGO', error=sanitize_proxy_error(error))
             return None
 
     async def get_queue_length(self) -> int:
@@ -511,7 +519,7 @@ class NaloGoService:
             return None
 
         except Exception as error:
-            logger.warning('Ошибка проверки дубликата чека', error=error)
+            logger.warning('Ошибка проверки дубликата чека', error=sanitize_proxy_error(error))
             return None
 
     async def get_incomes(
@@ -555,7 +563,7 @@ class NaloGoService:
 
         except Exception as error:
             if self._is_service_unavailable(error):
-                logger.warning('NaloGO временно недоступен', error=error)
+                logger.warning('NaloGO временно недоступен', error=sanitize_proxy_error(error))
             else:
-                logger.error('Ошибка получения списка доходов', error=error, exc_info=True)
+                logger.error('Ошибка получения списка доходов', error=sanitize_proxy_error(error))
             return None  # None = ошибка, [] = нет чеков

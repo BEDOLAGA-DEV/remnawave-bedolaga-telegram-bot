@@ -293,6 +293,9 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
         if 'MESSAGE_ID_INVALID' in str(error) or 'message to edit not found' in str(error).lower():
             # Сообщение удалено или недоступно — просто игнорируем
             return None
+        if 'message is not modified' in str(error).lower():
+            # Контент не изменился — безопасно игнорируем
+            return None
         raise
 
 

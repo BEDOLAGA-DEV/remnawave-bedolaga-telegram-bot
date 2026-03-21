@@ -275,6 +275,14 @@ async def get_dashboard_stats(
         # Get tariff statistics
         tariff_stats = await _get_tariff_stats(db)
 
+        # Derive income_today from revenue_chart to ensure consistency with chart
+        today_str = now.date().isoformat()
+        income_today_from_chart = sum(
+            item.get('amount_kopeks', 0) for item in revenue_data if str(item.get('date', '')) == today_str
+        )
+        # Use chart-derived value if available, otherwise fall back to trans_stats
+        income_today_kopeks = income_today_from_chart or trans_stats.get('today', {}).get('income_kopeks', 0)
+
         # Build response
         return DashboardStats(
             nodes=nodes_data,
@@ -290,8 +298,8 @@ async def get_dashboard_stats(
                 trial_to_paid_conversion=sub_stats.get('trial_to_paid_conversion', 0.0),
             ),
             financial=FinancialStats(
-                income_today_kopeks=trans_stats.get('today', {}).get('income_kopeks', 0),
-                income_today_rubles=trans_stats.get('today', {}).get('income_kopeks', 0) / 100,
+                income_today_kopeks=income_today_kopeks,
+                income_today_rubles=income_today_kopeks / 100,
                 income_month_kopeks=trans_stats.get('totals', {}).get('income_kopeks', 0),
                 income_month_rubles=trans_stats.get('totals', {}).get('income_kopeks', 0) / 100,
                 income_total_kopeks=all_time_stats.get('totals', {}).get('income_kopeks', 0),
@@ -926,9 +934,9 @@ async def get_recent_payments(
         total_count = total_count_result.scalar() or 0
 
         today_total_result = await db.execute(
-            select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+            select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
                 and_(
-                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                     Transaction.is_completed == True,
                     Transaction.created_at >= today_start,
                     Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
@@ -938,9 +946,9 @@ async def get_recent_payments(
         total_today = today_total_result.scalar() or 0
 
         week_total_result = await db.execute(
-            select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+            select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
                 and_(
-                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                     Transaction.is_completed == True,
                     Transaction.created_at >= week_ago,
                     Transaction.payment_method.in_(REAL_PAYMENT_METHODS),

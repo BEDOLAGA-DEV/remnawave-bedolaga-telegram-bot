@@ -376,6 +376,7 @@ class MiniAppReferralList(BaseModel):
 class MiniAppReferralInfo(BaseModel):
     referral_code: str | None = None
     referral_link: str | None = None
+    bot_referral_link: str | None = None
     terms: MiniAppReferralTerms | None = None
     stats: MiniAppReferralStats | None = None
     recent_earnings: list[MiniAppReferralRecentEarning] = Field(default_factory=list)

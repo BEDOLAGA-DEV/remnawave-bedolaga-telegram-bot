@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.utils.telegram_bot_factory import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from fastapi import (
     APIRouter,
     Depends,
@@ -328,12 +325,9 @@ async def send_poll(
             total=0,
         )
 
-    from app.config import settings
+    from app.bot_factory import create_bot
 
-    bot = Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = create_bot()
 
     try:
         result = await send_poll_to_users(bot, db, poll, users)

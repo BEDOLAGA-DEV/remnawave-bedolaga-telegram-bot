@@ -223,6 +223,14 @@ class WataPaymentMixin:
             )
             return False
 
+        # Lock payment row immediately to prevent concurrent webhook processing (TOCTOU race)
+        wata_crud = import_module('app.database.crud.wata')
+        locked = await wata_crud.get_wata_payment_by_id_for_update(db, payment.id)
+        if not locked:
+            logger.error('WATA: не удалось заблокировать платёж', payment_id=payment.id)
+            return False
+        payment = locked
+
         status_lower = transaction_status.lower()
         metadata = dict(getattr(payment, 'metadata_json', {}) or {})
         metadata['last_webhook'] = payload
@@ -230,17 +238,38 @@ class WataPaymentMixin:
             payload.get('terminalPublicId') or payload.get('terminal_public_id') or payload.get('terminalPublicID')
         )
 
+        if status_lower == 'paid':
+            if payment.is_paid:
+                logger.info('WATA платеж уже помечен как оплачен', payment_link_id=payment.payment_link_id)
+                # Update callback payload without releasing the lock prematurely
+                payment.callback_payload = payload
+                payment.metadata_json = metadata
+                if terminal_public_id:
+                    payment.terminal_public_id = terminal_public_id
+                await db.commit()
+                return True
+
+            # Inline field updates — NO intermediate commit that would release FOR UPDATE lock
+            payment.status = transaction_status
+            payment.last_status = transaction_status
+            payment.callback_payload = payload
+            payment.metadata_json = metadata
+            if terminal_public_id:
+                payment.terminal_public_id = terminal_public_id
+            await db.flush()
+
+            await self._finalize_wata_payment(db, payment, payload)
+            return True
+
+        # Non-success statuses: safe to use update_wata_payment_status (commits)
         update_kwargs: dict[str, Any] = {
             'metadata': metadata,
             'callback_payload': payload,
             'terminal_public_id': terminal_public_id,
+            'status': transaction_status,
+            'last_status': transaction_status,
         }
-
-        if transaction_status:
-            update_kwargs['status'] = transaction_status
-            update_kwargs['last_status'] = transaction_status
-
-        if status_lower != 'paid' and not payment.is_paid:
+        if not payment.is_paid:
             update_kwargs['is_paid'] = False
 
         payment = await payment_module.update_wata_payment_status(
@@ -248,14 +277,6 @@ class WataPaymentMixin:
             payment=payment,
             **update_kwargs,
         )
-
-        if status_lower == 'paid':
-            if payment.is_paid:
-                logger.info('WATA платеж уже помечен как оплачен', payment_link_id=payment.payment_link_id)
-                return True
-
-            await self._finalize_wata_payment(db, payment, payload)
-            return True
 
         if status_lower == 'declined':
             logger.info('WATA платеж отклонён', payment_link_id=payment.payment_link_id)
@@ -364,7 +385,18 @@ class WataPaymentMixin:
                 if raw_status:
                     normalized_status = str(raw_status).lower()
             if normalized_status == 'paid':
-                payment = await self._finalize_wata_payment(db, payment, transaction_payload)
+                # Lock payment row before finalization to prevent concurrent double-processing
+                wata_crud = import_module('app.database.crud.wata')
+                locked = await wata_crud.get_wata_payment_by_id_for_update(db, payment.id)
+                if not locked:
+                    logger.error('WATA status check: не удалось заблокировать платёж', payment_id=payment.id)
+                elif locked.is_paid:
+                    # Another concurrent handler already processed — skip
+                    logger.info('WATA платеж уже оплачен после блокировки', payment_link_id=locked.payment_link_id)
+                    payment = locked
+                else:
+                    payment = locked
+                    payment = await self._finalize_wata_payment(db, payment, transaction_payload)
             else:
                 logger.debug(
                     'WATA транзакция в статусе , повторная обработка не требуется',
@@ -399,6 +431,15 @@ class WataPaymentMixin:
                 paid_status=paid_status,
             )
 
+        # FOR UPDATE lock already acquired by caller — just check idempotency
+        if payment.transaction_id:
+            logger.info(
+                'WATA платеж уже привязан к транзакции',
+                payment_link_id=payment.payment_link_id,
+                transaction_id=payment.transaction_id,
+            )
+            return payment
+
         paid_at = None
         if isinstance(transaction_payload, dict):
             paid_at = WataService._parse_datetime(transaction_payload.get('paymentTime'))
@@ -420,30 +461,13 @@ class WataPaymentMixin:
 
         existing_metadata['transaction'] = transaction_payload
 
-        await payment_module.update_wata_payment_status(
-            db,
-            payment=payment,
-            status='Paid',
-            is_paid=True,
-            paid_at=paid_at,
-            callback_payload=transaction_payload,
-            metadata=existing_metadata,
-        )
-
-        wata_lock_crud = import_module('app.database.crud.wata')
-        locked = await wata_lock_crud.get_wata_payment_by_id_for_update(db, payment.id)
-        if not locked:
-            logger.error('WATA: не удалось заблокировать платёж', payment_id=payment.id)
-            return None
-        payment = locked
-
-        if payment.transaction_id:
-            logger.info(
-                'WATA платеж уже привязан к транзакции',
-                payment_link_id=payment.payment_link_id,
-                transaction_id=payment.transaction_id,
-            )
-            return payment
+        # Inline field updates — NO intermediate commit that would release FOR UPDATE lock
+        payment.status = 'Paid'
+        payment.is_paid = True
+        payment.paid_at = paid_at
+        payment.callback_payload = transaction_payload
+        payment.metadata_json = existing_metadata
+        await db.flush()
 
         # --- Guest purchase flow (landing page) ---
         wata_metadata = dict(getattr(payment, 'metadata_json', {}) or {})

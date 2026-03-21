@@ -5,7 +5,6 @@ Auto-assigns the Superadmin role to users listed in ADMIN_IDS / ADMIN_EMAILS
 config on bot startup. Runs once during the startup sequence.
 """
 
-from datetime import UTC, datetime
 from typing import Final
 
 import structlog
@@ -13,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.crud.rbac import SUPERADMIN_LEVEL, UserRoleCRUD
 from app.database.models import AdminRole, User, UserRole
 
 
@@ -137,7 +137,7 @@ async def _ensure_preset_roles(db: AsyncSession) -> AdminRole | None:
             existing = result.scalars().first()
 
         if existing is not None:
-            if existing.level == 999:  # Superadmin level
+            if existing.level == SUPERADMIN_LEVEL:
                 superadmin_role = existing
             # Добавить НОВЫЕ permissions из кода, не трогая существующие (админ мог кастомизировать)
             if existing.is_system:
@@ -196,6 +196,8 @@ async def bootstrap_superadmins(db: AsyncSession) -> None:
         if not admin_ids and not admin_emails:
             logger.debug('No admin IDs or emails configured, skipping superadmin assignment')
             await db.commit()
+            # Safety check even when no IDs configured — someone may have cleared them
+            await _warn_if_no_superadmins(db, admin_ids, admin_emails)
             return
 
         role_id: int = superadmin_role.id
@@ -225,9 +227,32 @@ async def bootstrap_superadmins(db: AsyncSession) -> None:
         else:
             logger.debug('Superadmin bootstrap: no new assignments needed')
 
+        # ── 5. Safety: warn if no active superadmins exist ────────────
+        await _warn_if_no_superadmins(db, admin_ids, admin_emails)
+
     except Exception:
         await db.rollback()
         logger.exception('Failed to bootstrap superadmins, continuing startup')
+
+
+async def _warn_if_no_superadmins(
+    db: AsyncSession,
+    admin_ids: list[int],
+    admin_emails: list[str],
+) -> None:
+    """Log critical/warning if no active superadmin RBAC roles exist in DB."""
+    active = await UserRoleCRUD.get_superadmin_count(db)
+    if active > 0:
+        return
+    if not admin_ids and not admin_emails:
+        logger.critical(
+            'No active superadmins exist and no ADMIN_IDS/ADMIN_EMAILS configured. '
+            'Cabinet admin access is not possible until this is resolved.',
+        )
+    else:
+        logger.warning(
+            'No active superadmin RBAC roles in DB. Legacy config admins (ADMIN_IDS/ADMIN_EMAILS) still have access.',
+        )
 
 
 async def _ensure_role_by_telegram_id(
@@ -277,14 +302,14 @@ async def _assign_if_missing(
     role_id: int,
     identifier: str,
 ) -> bool:
-    """Create or reactivate a UserRole row for this user/role pair.
+    """Create a UserRole row if none exists for this user/role pair.
 
-    Handles the unique constraint on (user_id, role_id) by checking for
-    ANY existing assignment (active or inactive) and reactivating if needed.
+    If an assignment already exists (active or revoked), it is left as-is.
+    This ensures that an admin-revoked role is NOT silently reactivated
+    on every bot restart.
 
-    Returns True if a new assignment was created or an inactive one was reactivated.
+    Returns True only if a brand-new assignment was created.
     """
-    # Check for ANY existing assignment (active or not) to respect unique constraint
     result = await db.execute(
         select(UserRole).where(
             UserRole.user_id == user_id,
@@ -300,19 +325,16 @@ async def _assign_if_missing(
                 user_id=user_id,
                 identifier=identifier,
             )
-            return False
-        # Reactivate previously revoked assignment
-        existing.is_active = True
-        existing.assigned_at = datetime.now(UTC)
-        await db.flush()
-        logger.info(
-            'Reactivated Superadmin role for user',
-            user_id=user_id,
-            role_id=role_id,
-            identifier=identifier,
-            user_role_id=existing.id,
-        )
-        return True
+        else:
+            logger.info(
+                'Superadmin role was previously revoked, not reactivating '
+                '(remove user from ADMIN_IDS to stop this warning, '
+                'or re-assign via cabinet)',
+                user_id=user_id,
+                identifier=identifier,
+                user_role_id=existing.id,
+            )
+        return False
 
     user_role = UserRole(
         user_id=user_id,

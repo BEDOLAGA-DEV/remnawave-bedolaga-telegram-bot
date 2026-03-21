@@ -29,6 +29,7 @@ from app.database.crud.user import (
 from app.database.crud.user_promo_group import sync_user_primary_promo_group
 from app.database.models import (
     GuestPurchase,
+    PaymentMethod,
     PromoGroup,
     ReferralEarning,
     Subscription,
@@ -897,6 +898,7 @@ async def update_user_balance(
             description=request.description,
             create_transaction=request.create_transaction,
             transaction_type=TransactionType.DEPOSIT,
+            payment_method=PaymentMethod.MANUAL,
         )
     else:
         # Subtract balance
@@ -912,6 +914,7 @@ async def update_user_balance(
             amount_kopeks=amount_to_subtract,
             description=request.description,
             create_transaction=request.create_transaction,
+            payment_method=PaymentMethod.MANUAL,
         )
 
     if not success:

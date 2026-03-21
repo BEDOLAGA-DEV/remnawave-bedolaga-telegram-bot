@@ -1,11 +1,10 @@
 from datetime import UTC, datetime
 
 import structlog
-from app.utils.telegram_bot_factory import Bot
-from aiogram.client.default import DefaultBotProperties
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot_factory import create_bot
 from app.config import settings
 from app.database.crud.transaction import get_user_total_spent_kopeks
 from app.database.crud.user import lock_user_for_update
@@ -31,7 +30,7 @@ async def _notify_admins_about_auto_assignment(
         logger.debug('BOT_TOKEN не настроен — пропускаем уведомление о промогруппе')
         return
 
-    bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode='HTML'))
+    bot = create_bot(token=bot_token)
     try:
         notification_service = AdminNotificationService(bot)
         reason = (

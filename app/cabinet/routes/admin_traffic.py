@@ -7,16 +7,13 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from app.utils.telegram_bot_factory import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from aiogram.types import BufferedInputFile
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
+from app.bot_factory import create_bot
 from app.database.models import Subscription, Transaction, TransactionType, User
 from app.services.remnawave_service import RemnaWaveService
 
@@ -680,10 +677,7 @@ async def export_traffic_csv(
     filename = f'traffic_usage_{period_label}_{timestamp}.csv'
 
     try:
-        bot = Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
+        bot = create_bot()
         async with bot:
             await bot.send_document(
                 chat_id=admin.telegram_id,

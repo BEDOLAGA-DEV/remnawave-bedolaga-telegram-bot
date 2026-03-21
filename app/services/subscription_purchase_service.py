@@ -22,7 +22,7 @@ from app.database.crud.subscription_conversion import (
 )
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
-from app.database.models import ServerSquad, Subscription, SubscriptionStatus, TransactionType, User
+from app.database.models import PaymentMethod, ServerSquad, Subscription, SubscriptionStatus, TransactionType, User
 from app.localization.texts import get_texts
 from app.services.subscription_service import SubscriptionService
 from app.utils.pricing_utils import (
@@ -1109,6 +1109,7 @@ class MiniAppSubscriptionPurchaseService:
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=pricing.final_total,
             description=f'Подписка на {pricing.selection.period.days} дней ({pricing.months} мес)',
+            payment_method=PaymentMethod.BALANCE,
         )
 
         await db.refresh(user)

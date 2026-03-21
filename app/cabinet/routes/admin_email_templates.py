@@ -312,7 +312,7 @@ TEMPLATE_TYPES = [
             'zh': '通过落地页成功付款后发送给买家的邮件',
             'ua': 'Лист покупцю після успішної оплати через лендінг',
         },
-        'context_vars': ['tariff_name', 'period_days', 'cabinet_url'],
+        'context_vars': ['tariff_name', 'period_days', 'cabinet_url', 'cabinet_email', 'cabinet_password'],
     },
     {
         'type': 'guest_activation_required',
@@ -425,6 +425,8 @@ SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
         'tariff_name': 'Premium',
         'period_days': 30,
         'cabinet_url': 'https://example.com/cabinet',
+        'cabinet_email': 'user@example.com',
+        'cabinet_password': 'SecurePass123',
     },
     'guest_activation_required': {
         'tariff_name': 'Premium',
