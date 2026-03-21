@@ -1,7 +1,7 @@
-"""add yandex_client_id_map table for offline conversions
+"""add yandex_client_id_map table + guest_purchases.yandex_cid column
 
-Revision ID: 0032
-Revises: 0031
+Revision ID: 0046
+Revises: 0045
 Create Date: 2026-03-04
 """
 
@@ -22,16 +22,17 @@ def upgrade() -> None:
         sa.Column('id', sa.Integer, primary_key=True, autoincrement=True),
         sa.Column('user_id', sa.Integer, sa.ForeignKey('users.id', ondelete='CASCADE'), unique=True, nullable=False),
         sa.Column('yandex_cid', sa.String(128), nullable=False),
-        sa.Column('source', sa.String(10), nullable=False, server_default='web'),
+        sa.Column('source', sa.String(20), nullable=False, server_default='web'),
         sa.Column('counter_id', sa.String(32), nullable=True),
         sa.Column('registration_sent', sa.Boolean, server_default=sa.text('false'), nullable=False),
         sa.Column('trial_sent', sa.Boolean, server_default=sa.text('false'), nullable=False),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
-    op.create_index('ix_yandex_cid_user_id', 'yandex_client_id_map', ['user_id'])
+    # #1 CRITICAL: add yandex_cid column to guest_purchases
+    op.add_column('guest_purchases', sa.Column('yandex_cid', sa.String(128), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_index('ix_yandex_cid_user_id', table_name='yandex_client_id_map')
+    op.drop_column('guest_purchases', 'yandex_cid')
     op.drop_table('yandex_client_id_map')

@@ -273,7 +273,11 @@ async def _create_nalogo_receipt_for_purchase(
 
 
 async def _fire_yandex_conversions(purchase: GuestPurchase, user_id: int, is_new_user: bool) -> None:
-    """Store Yandex CID and fire offline conversions for guest purchases (best-effort)."""
+    """Store Yandex CID and fire offline conversions for guest purchases (best-effort).
+
+    Already runs inside a background task — calls event functions directly
+    instead of spawning nested tasks to avoid cascading sessions.
+    """
     if not purchase.yandex_cid:
         return
     try:
@@ -286,10 +290,11 @@ async def _fire_yandex_conversions(purchase: GuestPurchase, user_id: int, is_new
         if not stored:
             return
 
-        # Use centralized spawn_bg for proper task tracking
-        yandex_conv.spawn_bg(yandex_conv.fire_purchase_bg(user_id, purchase.amount_kopeks))
-        if is_new_user:
-            yandex_conv.spawn_bg(yandex_conv.fire_registration_bg(user_id))
+        # Call directly — we're already in a background task, no need to spawn more
+        async with AsyncSessionLocal() as db:
+            await yandex_conv.on_purchase(db, user_id, amount_kopeks=purchase.amount_kopeks)
+            if is_new_user:
+                await yandex_conv.on_registration(db, user_id)
     except Exception:
         logger.warning('Failed to fire Yandex conversions for guest purchase', purchase_id=purchase.id, exc_info=True)
 
