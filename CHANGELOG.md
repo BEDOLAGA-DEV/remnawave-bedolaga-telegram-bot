@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.39.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.38.0...v3.39.0) (2026-03-21)
+
+
+### New Features
+
+* add NaloGO fiscal receipts for code-only gift purchases ([90209eb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/90209ebef1a872665e622124a1898d52eff398e7))
+
+
+### Bug Fixes
+
+* add NaloGO fiscal receipt creation for landing page purchases ([4244962](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/424496233773b4cee4e389a1172e95208b3afeaf))
+* manual admin top-ups missing from sales statistics ([ab43e74](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ab43e74ab7484f8d3517f91e366ea395e1944b99))
+* skip non-JSON payload rows in cryptobot payment index and query ([ba79d03](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ba79d03e389afed972296fe2bc05104aa6b883f3))
+
 ## [3.38.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.37.0...v3.38.0) (2026-03-21)
 
 
