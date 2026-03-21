@@ -406,7 +406,7 @@ class AdminNotificationService:
                 if camp_reg and camp_reg.campaign:
                     message_lines.append(f'📢 <b>Кампания:</b> {camp_reg.campaign.name}')
             except Exception:
-                logger.warning('Ошибка получения кампании', user_id=user.id)
+                logger.warning('Ошибка получения кампании', user_id=user.id, exc_info=True)
 
             message_lines.append('')
             message_lines.append(f'⏰ <i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}</i>')
@@ -540,7 +540,7 @@ class AdminNotificationService:
                 if camp_reg and camp_reg.campaign:
                     message_lines.append(f'📢 {camp_reg.campaign.name}')
             except Exception:
-                logger.warning('Ошибка получения кампании', user_id=user.id)
+                logger.warning('Ошибка получения кампании', user_id=user.id, exc_info=True)
 
             # ID транзакции (только если есть)
             if transaction:
