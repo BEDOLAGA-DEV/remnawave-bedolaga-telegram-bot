@@ -29,6 +29,7 @@ from app.database.models import (
     TransactionType,
     User,
 )
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.services.subscription_service import SubscriptionService
 
 
@@ -139,6 +140,7 @@ async def create_purchase(
     gift_recipient_value: str | None = None,
     gift_message: str | None = None,
     source: str = 'landing',
+    yandex_cid: str | None = None,
     buyer_user_id: int | None = None,
     commit: bool = True,
 ) -> GuestPurchase:
@@ -158,6 +160,7 @@ async def create_purchase(
         gift_recipient_value=gift_recipient_value,
         gift_message=gift_message,
         source=source,
+        yandex_cid=yandex_cid,
         buyer_user_id=buyer_user_id,
         status=GuestPurchaseStatus.PENDING.value,
     )
@@ -172,6 +175,7 @@ async def create_purchase(
         amount_kopeks=amount_kopeks,
         is_gift=is_gift,
         source=source,
+        yandex_cid=yandex_cid,
     )
 
     return purchase
@@ -266,6 +270,34 @@ async def _create_nalogo_receipt_for_purchase(
             purchase_id=purchase.id,
             error=sanitize_proxy_error(exc),
         )
+
+
+async def _fire_yandex_conversions(purchase: GuestPurchase, user_id: int, is_new_user: bool) -> None:
+    """Store Yandex CID and fire offline conversions for guest purchases (best-effort).
+
+    Already runs inside a background task — calls event functions directly
+    instead of spawning nested tasks to avoid cascading sessions.
+    """
+    if not purchase.yandex_cid:
+        return
+    try:
+        from app.database.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            stored = await yandex_conv.store_cid(db, user_id, purchase.yandex_cid, source='landing')
+            await db.commit()
+
+        if not stored:
+            return
+
+        # Call directly — we're already in a background task, no need to spawn more
+        if is_new_user:
+            async with AsyncSessionLocal() as db:
+                await yandex_conv.on_registration(db, user_id)
+        async with AsyncSessionLocal() as db:
+            await yandex_conv.on_purchase(db, user_id, amount_kopeks=purchase.amount_kopeks)
+    except Exception:
+        logger.warning('Failed to fire Yandex conversions for guest purchase', purchase_id=purchase.id, exc_info=True)
 
 
 async def fulfill_purchase(
@@ -478,6 +510,9 @@ async def fulfill_purchase(
             user_id=user.id,
             recipient_type=recipient_type,
         )
+
+        # Fire Yandex offline conversions in background
+        yandex_conv.spawn_bg(_fire_yandex_conversions(purchase, user.id, is_new_account))
 
     except GuestPurchaseError:
         await db.rollback()

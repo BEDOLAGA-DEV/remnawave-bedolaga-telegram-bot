@@ -10,6 +10,7 @@ from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.crud.campaign import get_campaign_registration_by_user
 from app.database.crud.promo_group import get_promo_group_by_id
 from app.database.crud.subscription_event import create_subscription_event
 from app.database.crud.transaction import get_transaction_by_id
@@ -23,6 +24,7 @@ from app.database.models import (
     Transaction,
     User,
 )
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.utils.message_patch import caption_exceeds_telegram_limit
 from app.utils.timezone import format_local_datetime
 
@@ -398,6 +400,14 @@ class AdminNotificationService:
                 if referrer_info != 'Нет':
                     message_lines.append(f'🔗 <b>Реферер:</b> {referrer_info}')
 
+            # Рекламная кампания — только если есть
+            try:
+                camp_reg = await get_campaign_registration_by_user(db, user.id)
+                if camp_reg and camp_reg.campaign:
+                    message_lines.append(f'📢 <b>Кампания:</b> {camp_reg.campaign.name}')
+            except Exception:
+                logger.warning('Ошибка получения кампании', user_id=user.id, exc_info=True)
+
             message_lines.append('')
             message_lines.append(f'⏰ <i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}</i>')
 
@@ -437,6 +447,9 @@ class AdminNotificationService:
             total_amount = (
                 amount_kopeks if amount_kopeks is not None else (abs(transaction.amount_kopeks) if transaction else 0)
             )
+
+            # Yandex offline conversion: purchase event (fire-and-forget, uses own session)
+            yandex_conv.spawn_bg(yandex_conv.fire_purchase_bg(user.id, total_amount))
 
             await self._record_subscription_event(
                 db,
@@ -520,6 +533,14 @@ class AdminNotificationService:
                 referrer_info = await self._get_referrer_info(db, user.referred_by_id)
                 if referrer_info != 'Нет':
                     message_lines.append(f'🔗 Реф: {referrer_info}')
+
+            # Рекламная кампания — только если есть
+            try:
+                camp_reg = await get_campaign_registration_by_user(db, user.id)
+                if camp_reg and camp_reg.campaign:
+                    message_lines.append(f'📢 {camp_reg.campaign.name}')
+            except Exception:
+                logger.warning('Ошибка получения кампании', user_id=user.id, exc_info=True)
 
             # ID транзакции (только если есть)
             if transaction:

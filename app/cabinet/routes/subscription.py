@@ -22,6 +22,7 @@ from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, ServerSquad, Subscription, Tariff, TransactionType, User
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
@@ -1330,6 +1331,9 @@ async def activate_trial(
     )
 
     logger.info('Trial subscription activated for user', user_id=user.id)
+
+    # Yandex offline conversions: fire trial event (background, uses own session)
+    yandex_conv.spawn_bg(yandex_conv.fire_trial_bg(user.id))
 
     # Create RemnaWave user
     try:
