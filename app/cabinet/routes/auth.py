@@ -29,8 +29,8 @@ from app.database.crud.user import (
     verify_and_apply_email_change,
 )
 from app.database.models import CabinetRefreshToken, User, UserStatus
-from app.services.campaign_service import AdvertisingCampaignService
 from app.services import yandex_offline_conv_service as yandex_conv
+from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
 from app.services.referral_service import process_referral_registration
 from app.services.web_auth_service import (
@@ -388,7 +388,10 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
 
 
 async def _process_yandex_cid(
-    db: AsyncSession, user: User, yandex_cid, source: str = 'web',
+    db: AsyncSession,
+    user: User,
+    yandex_cid,
+    source: str = 'web',
 ) -> None:
     await yandex_conv.store_cid_and_fire_registration(db, user.id, yandex_cid, source=source)
 
