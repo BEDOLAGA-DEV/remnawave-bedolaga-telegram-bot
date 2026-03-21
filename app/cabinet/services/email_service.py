@@ -229,7 +229,7 @@ class EmailService:
         t = texts.get(language, texts['ru'])
 
         subject = t['subject']
-        body_html = f'''<!DOCTYPE html>
+        body_html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#222;background:#f5f5f5">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5"><tr><td align="center" style="padding:30px 10px">
@@ -250,7 +250,7 @@ class EmailService:
 </td></tr>
 </table>
 </td></tr></table>
-</body></html>'''
+</body></html>"""
 
         return self.send_email(to_email, subject, body_html)
 
