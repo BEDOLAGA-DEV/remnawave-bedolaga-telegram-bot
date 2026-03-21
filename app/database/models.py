@@ -3310,10 +3310,10 @@ class YandexClientIdMap(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), unique=True, nullable=False)
     yandex_cid = Column(String(128), nullable=False)
-    source = Column(String(10), nullable=False, default='web')
+    source = Column(String(20), nullable=False, server_default='web')
     counter_id = Column(String(32), nullable=True)
-    registration_sent = Column(Boolean, default=False, nullable=False)
-    trial_sent = Column(Boolean, default=False, nullable=False)
+    registration_sent = Column(Boolean, server_default='false', nullable=False)
+    trial_sent = Column(Boolean, server_default='false', nullable=False)
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
 
