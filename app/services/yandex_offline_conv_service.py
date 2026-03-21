@@ -31,7 +31,7 @@ TIMEOUT = 10.0
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 
-_CID_RE = re.compile(r'^[A-Za-z0-9._:-]{4,64}$')
+_CID_RE = re.compile(r'^[A-Za-z0-9._:-]{4,128}$')
 _http_client: httpx.AsyncClient | None = None
 
 
@@ -296,7 +296,8 @@ def parse_cid_from_start_param(param: str) -> tuple[str | None, str]:
     """Extract Yandex CID from bot start parameter.
 
     If param starts with the configured prefix (e.g. 'utm_ya_'),
-    returns (cid, remaining_param). Otherwise returns (None, original_param).
+    returns (cid, original_param). Otherwise returns (None, original_param).
+    Original param is always preserved for UTM tracking.
     """
     prefix = settings.YANDEX_OFFLINE_CONV_START_PREFIX
     if not prefix or not param.startswith(prefix):

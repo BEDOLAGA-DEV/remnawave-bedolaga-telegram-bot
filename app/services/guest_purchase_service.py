@@ -291,10 +291,11 @@ async def _fire_yandex_conversions(purchase: GuestPurchase, user_id: int, is_new
             return
 
         # Call directly — we're already in a background task, no need to spawn more
+        if is_new_user:
+            async with AsyncSessionLocal() as db:
+                await yandex_conv.on_registration(db, user_id)
         async with AsyncSessionLocal() as db:
             await yandex_conv.on_purchase(db, user_id, amount_kopeks=purchase.amount_kopeks)
-            if is_new_user:
-                await yandex_conv.on_registration(db, user_id)
     except Exception:
         logger.warning('Failed to fire Yandex conversions for guest purchase', purchase_id=purchase.id, exc_info=True)
 

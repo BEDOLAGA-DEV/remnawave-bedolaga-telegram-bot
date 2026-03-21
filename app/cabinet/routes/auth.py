@@ -416,10 +416,16 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
 async def _process_yandex_cid(
     db: AsyncSession,
     user: User,
-    yandex_cid,
+    yandex_cid: str | None,
     source: str = 'web',
 ) -> None:
-    await yandex_conv.store_cid_and_fire_registration(db, user.id, yandex_cid, source=source)
+    if not yandex_cid:
+        return
+    try:
+        await yandex_conv.store_cid_and_fire_registration(db, user.id, yandex_cid, source=source)
+        await db.commit()
+    except Exception:
+        await db.rollback()
 
 
 @router.post('/telegram', response_model=AuthResponse)
@@ -778,6 +784,9 @@ async def auth_telegram_oidc(
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
     if response.campaign_bonus:
         response.user = _user_to_response(user)
+
+    # Yandex offline conversions
+    await _process_yandex_cid(db, user, request.yandex_cid, source='web')
 
     return response
 
