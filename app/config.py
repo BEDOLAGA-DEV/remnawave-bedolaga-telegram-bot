@@ -808,6 +808,15 @@ class Settings(BaseSettings):
     # Format: socks5://user:password@host:port or socks5://host:port
     PROXY_URL: str | None = None
 
+    # Bot API base URL (for custom domain, when access to api.telegram.org is limited)
+    # Should point to the root proxy, which accepts requests of the form:
+    #   /bot{token}/{method}
+    TELEGRAM_BOT_API_BASE_URL: str = 'https://api.telegram.org'
+
+    # Separate setting for the file endpoint of the Bot API.
+    # By default, uses the same domain as TELEGRAM_BOT_API_BASE_URL.
+    TELEGRAM_BOT_FILE_BASE_URL: str | None = None
+
     @field_validator('PROXY_URL', 'NALOGO_PROXY_URL', mode='before')
     @classmethod
     def validate_proxy_url(cls, value: str | None) -> str | None:
@@ -910,6 +919,20 @@ class Settings(BaseSettings):
         log_path = Path(v)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         return str(log_path)
+
+    @field_validator('TELEGRAM_BOT_API_BASE_URL', mode='before')
+    @classmethod
+    def validate_telegram_bot_api_base_url(cls, value: str | None) -> str:
+        if not value:
+            return 'https://api.telegram.org'
+        return value.rstrip('/')
+
+    @field_validator('TELEGRAM_BOT_FILE_BASE_URL', mode='before')
+    @classmethod
+    def validate_telegram_bot_file_base_url(cls, value: str | None) -> str:
+        if not value:
+            return 'https://api.telegram.org'
+        return value.rstrip('/')
 
     def get_database_url(self) -> str:
         if self.DATABASE_URL and self.DATABASE_URL.strip():
