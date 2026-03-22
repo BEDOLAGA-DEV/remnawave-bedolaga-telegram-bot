@@ -414,14 +414,13 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
 
 
 async def _process_yandex_cid(
-    db: AsyncSession,
     user: User,
     yandex_cid: str | None,
     source: str = 'web',
 ) -> None:
     if not yandex_cid:
         return
-    await yandex_conv.store_cid_and_fire_registration(db, user.id, yandex_cid, source=source)
+    await yandex_conv.store_cid_and_fire_registration(user.id, yandex_cid, source=source)
 
 
 @router.post('/telegram', response_model=AuthResponse)
@@ -541,7 +540,7 @@ async def auth_telegram(
         response.user = _user_to_response(user)
 
     # Yandex offline conversions
-    await _process_yandex_cid(db, user, request.yandex_cid, source='web')
+    await _process_yandex_cid(user, request.yandex_cid, source='web')
 
     return response
 
@@ -642,7 +641,7 @@ async def auth_telegram_widget(
         response.user = _user_to_response(user)
 
     # Yandex offline conversions
-    await _process_yandex_cid(db, user, request.yandex_cid, source='web')
+    await _process_yandex_cid(user, request.yandex_cid, source='web')
 
     return response
 
@@ -782,7 +781,7 @@ async def auth_telegram_oidc(
         response.user = _user_to_response(user)
 
     # Yandex offline conversions
-    await _process_yandex_cid(db, user, request.yandex_cid, source='web')
+    await _process_yandex_cid(user, request.yandex_cid, source='web')
 
     return response
 
@@ -1026,7 +1025,7 @@ async def register_email_standalone(
             # Не прерываем регистрацию из-за ошибки реферальной системы
 
     # Yandex offline conversions (store CID for new user)
-    await _process_yandex_cid(db, user, request.yandex_cid, source='web')
+    await _process_yandex_cid(user, request.yandex_cid, source='web')
 
     # Для тестового email - сразу можно логиниться (уже verified)
     # Для обычного email - требуется верификация (если включена)
@@ -1247,7 +1246,7 @@ async def login_email(
         response.user = _user_to_response(user)
 
     # Yandex offline conversions
-    await _process_yandex_cid(db, user, request.yandex_cid, source='web')
+    await _process_yandex_cid(user, request.yandex_cid, source='web')
 
     return response
 

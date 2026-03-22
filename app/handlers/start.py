@@ -354,13 +354,13 @@ async def _apply_campaign_bonus_if_needed(
     return None
 
 
-async def _process_bot_yandex_cid(db: AsyncSession, user, data: dict) -> None:
+async def _process_bot_yandex_cid(user, data: dict) -> None:
     yandex_cid = data.get('yandex_cid')
     if yandex_cid:
         try:
-            await yandex_conv.store_cid_and_fire_registration(db, user.id, yandex_cid, source='bot')
+            await yandex_conv.store_cid_and_fire_registration(user.id, yandex_cid, source='bot')
         except Exception:
-            pass  # Best-effort, don't crash registration
+            logger.warning('Failed to process Yandex CID', user_id=user.id, exc_info=True)
 
 
 async def handle_potential_referral_code(message: types.Message, state: FSMContext, db: AsyncSession):
@@ -1592,7 +1592,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
             logger.error('Ошибка при обработке реферальной регистрации', error=e)
 
     # Yandex offline conversions: store CID and fire registration event
-    await _process_bot_yandex_cid(db, user, data)
+    await _process_bot_yandex_cid(user, data)
 
     campaign_message = await _apply_campaign_bonus_if_needed(db, user, data, texts)
 
@@ -1924,7 +1924,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
             logger.error('❌ Ошибка при активации промокода', promocode_to_activate=promocode_to_activate, error=e)
 
     # Yandex offline conversions: store CID and fire registration event
-    await _process_bot_yandex_cid(db, user, data)
+    await _process_bot_yandex_cid(user, data)
 
     campaign_message = await _apply_campaign_bonus_if_needed(db, user, data, texts)
 

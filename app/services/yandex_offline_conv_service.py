@@ -214,7 +214,6 @@ async def store_cid(
 
 
 async def store_cid_and_fire_registration(
-    db: AsyncSession,
     user_id: int,
     cid: str | None,
     *,
@@ -222,18 +221,17 @@ async def store_cid_and_fire_registration(
 ) -> None:
     """Store Yandex CID and fire registration conversion in background (best-effort).
 
-    Caller must commit the session before this returns so that the background
-    task (which opens its own session) can read the committed CID row.
+    Opens its own DB session so it never interferes with the caller's transaction.
     """
     if not cid:
         return
     try:
-        stored = await store_cid(db, user_id, cid, source=source)
-        if stored:
-            await db.commit()
-            spawn_bg(fire_registration_bg(user_id))
+        async with AsyncSessionLocal() as db:
+            stored = await store_cid(db, user_id, cid, source=source)
+            if stored:
+                await db.commit()
+                spawn_bg(fire_registration_bg(user_id))
     except Exception as exc:
-        await db.rollback()
         logger.warning(f'{LOG_PREFIX} Failed to store CID and fire registration', user_id=user_id, error=str(exc))
 
 
