@@ -11,7 +11,7 @@ from urllib.parse import quote as _url_quote, urlparse
 from zoneinfo import ZoneInfo
 
 import structlog
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -22,8 +22,36 @@ DEFAULT_DISPLAY_NAME_BANNED_KEYWORDS: list[str] = [
 
 USER_TAG_PATTERN = re.compile(r'^[A-Z0-9_]{1,16}$')
 
+# Разрешённые схемы для Telegram API URL - только HTTPS, для защиты от SSRF/Token leak
+_TELEGRAM_API_ALLOWED_SCHEMES = frozenset({'https'})
+_TELEGRAM_OFFICIAL_HOST = 'api.telegram.org'
+DEFAULT_TELEGRAM_BOT_API_BASE_URL = f'https://{_TELEGRAM_OFFICIAL_HOST}'
 
 logger = structlog.get_logger(__name__)
+
+
+def _validate_telegram_api_url(url: str, field_name: str) -> str:
+    """Проверяет URL: только https, логирует WARNING при кастомном домене."""
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or '').lower()
+    
+    if scheme not in _TELEGRAM_API_ALLOWED_SCHEMES:
+        raise ValueError(
+            f'{field_name}: разрешена только схема https://. '
+            f'Использование {scheme or "без схемы"!r} может привести к утечке токена.'
+        )
+    
+    if not parsed.hostname:
+        raise ValueError(f'{field_name}: URL должен содержать hostname')
+    
+    if parsed.hostname.lower() != _TELEGRAM_OFFICIAL_HOST:
+        logger.warning(
+            'Используется кастомный Telegram API URL — токен будет отправлен на этот хост',
+            field=field_name,
+            host=parsed.hostname,
+        )
+    
+    return url.rstrip('/')
 
 
 class Settings(BaseSettings):
@@ -808,6 +836,15 @@ class Settings(BaseSettings):
     # Format: socks5://user:password@host:port or socks5://host:port
     PROXY_URL: str | None = None
 
+    # Bot API base URL (for custom domain, when access to api.telegram.org is limited)
+    # Should point to the root proxy, which accepts requests of the form:
+    #   /bot{token}/{method}
+    TELEGRAM_BOT_API_BASE_URL: str = DEFAULT_TELEGRAM_BOT_API_BASE_URL
+
+    # Separate setting for the file endpoint of the Bot API.
+    # By default, uses the same domain as TELEGRAM_BOT_API_BASE_URL.
+    TELEGRAM_BOT_FILE_BASE_URL: str = ''
+
     @field_validator('PROXY_URL', 'NALOGO_PROXY_URL', mode='before')
     @classmethod
     def validate_proxy_url(cls, value: str | None) -> str | None:
@@ -910,6 +947,26 @@ class Settings(BaseSettings):
         log_path = Path(v)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         return str(log_path)
+
+    @field_validator('TELEGRAM_BOT_API_BASE_URL', mode='before')
+    @classmethod
+    def validate_telegram_bot_api_base_url(cls, value: str | None) -> str:
+        if not value:
+            return DEFAULT_TELEGRAM_BOT_API_BASE_URL
+        return _validate_telegram_api_url(value.strip(), 'TELEGRAM_BOT_API_BASE_URL')
+
+    @model_validator(mode='after')
+    def inherit_telegram_bot_file_base_url(self):
+        """Пустой TELEGRAM_BOT_FILE_BASE_URL наследует домен от TELEGRAM_BOT_API_BASE_URL."""
+        val = self.TELEGRAM_BOT_FILE_BASE_URL
+        if not val or not val.strip():
+            self.TELEGRAM_BOT_FILE_BASE_URL = self.TELEGRAM_BOT_API_BASE_URL
+        else:
+            self.TELEGRAM_BOT_FILE_BASE_URL = _validate_telegram_api_url(
+                val.strip(),
+                'TELEGRAM_BOT_FILE_BASE_URL',
+            )
+        return self
 
     def get_database_url(self) -> str:
         if self.DATABASE_URL and self.DATABASE_URL.strip():
