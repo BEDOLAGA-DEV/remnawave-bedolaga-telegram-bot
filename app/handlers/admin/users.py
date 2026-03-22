@@ -1019,7 +1019,7 @@ async def delete_user_account(callback: types.CallbackQuery, db_user: User, db: 
     user_id = int(callback.data.split('_')[-1])
 
     user_service = UserService()
-    delete_result = await user_service.delete_user_account(db, user_id, db_user.id)
+    delete_result = await user_service.delete_user_account(db, user_id, db_user.id, force_panel_delete=True)
 
     if delete_result.bot_deleted:
         await callback.message.edit_text(
@@ -4571,7 +4571,7 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                     async with remnawave_service.get_api_client() as api:
                         update_kwargs = dict(
                             uuid=target_user.remnawave_uuid,
-                            status=UserStatus.ACTIVE if subscription.is_active else UserStatus.EXPIRED,
+                            status=UserStatus.ACTIVE if subscription.is_active else UserStatus.DISABLED,
                             expire_at=subscription.end_date,
                             traffic_limit_bytes=subscription.traffic_limit_gb * (1024**3)
                             if subscription.traffic_limit_gb > 0
@@ -4608,7 +4608,7 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                         create_kwargs = dict(
                             username=username,
                             expire_at=subscription.end_date,
-                            status=UserStatus.ACTIVE if subscription.is_active else UserStatus.EXPIRED,
+                            status=UserStatus.ACTIVE if subscription.is_active else UserStatus.DISABLED,
                             traffic_limit_bytes=subscription.traffic_limit_gb * (1024**3)
                             if subscription.traffic_limit_gb > 0
                             else 0,

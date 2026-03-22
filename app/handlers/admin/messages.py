@@ -83,7 +83,6 @@ CABINET_MINIAPP_BUTTON_KEYS = {
     'connect',
     'subscription',
     'support',
-    'home',
 }
 
 
@@ -97,7 +96,11 @@ def get_updated_message_buttons_selector_keyboard(
     return get_updated_message_buttons_selector_keyboard_with_media(selected_buttons, False, language)
 
 
-def create_broadcast_keyboard(selected_buttons: list, language: str = 'ru') -> types.InlineKeyboardMarkup | None:
+def create_broadcast_keyboard(
+    selected_buttons: list,
+    language: str = 'ru',
+    custom_buttons: list[dict] | None = None,
+) -> types.InlineKeyboardMarkup | None:
     selected_buttons = selected_buttons or []
     keyboard: list[list[types.InlineKeyboardButton]] = []
     button_config_map = get_broadcast_button_config(language)
@@ -122,6 +125,20 @@ def create_broadcast_keyboard(selected_buttons: list, language: str = 'ru') -> t
                 )
         if row_buttons:
             keyboard.append(row_buttons)
+
+    # Append custom buttons (each on its own row)
+    if custom_buttons:
+        for btn in custom_buttons:
+            label = btn.get('label', '')
+            action_type = btn.get('action_type', 'callback')
+            action_value = btn.get('action_value', '')
+            if not label or not action_value:
+                continue
+            if action_type == 'url':
+                keyboard.append([types.InlineKeyboardButton(text=label, url=action_value)])
+            else:
+                # callback type
+                keyboard.append([types.InlineKeyboardButton(text=label, callback_data=action_value)])
 
     if not keyboard:
         return None

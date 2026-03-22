@@ -1190,12 +1190,17 @@ class Settings(BaseSettings):
         username_clean = (username or '').lstrip('@')
         full_name_value = full_name or ''
 
+        # Remnawave разрешает только буквы, цифры, подчёркивания и дефисы
+        def _sanitize(value: str) -> str:
+            result = re.sub(r'[^0-9A-Za-z_-]+', '_', value)
+            return re.sub(r'_+', '_', result).strip('_-')
+
         # Для email-пользователей формируем уникальный identifier
         if telegram_id:
             identifier = str(telegram_id)
         elif email:
-            email_prefix = email.split('@')[0][:10]
-            identifier = f'email_{email_prefix}_{user_id}' if user_id else f'email_{email_prefix}'
+            email_prefix = _sanitize(email.split('@')[0][:10])
+            identifier = _sanitize(f'email_{email_prefix}_{user_id}' if user_id else f'email_{email_prefix}')
         elif user_id:
             identifier = f'id_{user_id}'
         else:
@@ -1209,20 +1214,18 @@ class Settings(BaseSettings):
                 'username_clean': username_clean,
                 'telegram_id': str(telegram_id) if telegram_id else identifier,
                 'identifier': identifier,
-                'email': email.split('@')[0] if email else '',
+                'email': _sanitize(email.split('@')[0]) if email else '',
                 'user_id': str(user_id) if user_id else '',
             },
         )
 
         raw_username = template.format_map(values).strip()
-        # Remnawave разрешает только буквы, цифры, подчёркивания и дефисы
-        sanitized_username = re.sub(r'[^0-9A-Za-z_-]+', '_', raw_username)
-        sanitized_username = re.sub(r'_+', '_', sanitized_username).strip('_-')
+        sanitized_username = _sanitize(raw_username)
 
         if not sanitized_username:
-            sanitized_username = f'user_{identifier}'
+            sanitized_username = _sanitize(f'user_{identifier}')
 
-        return sanitized_username[:36]
+        return sanitized_username[:36].strip('_-') or 'user'
 
     @staticmethod
     def parse_daily_time_list(raw_value: str | None) -> list[time]:

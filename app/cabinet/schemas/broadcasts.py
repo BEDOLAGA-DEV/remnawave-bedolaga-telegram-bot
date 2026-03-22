@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ============ Channel Types ============
@@ -75,6 +75,27 @@ class BroadcastButtonsResponse(BaseModel):
     buttons: list[BroadcastButton]
 
 
+class CustomBroadcastButton(BaseModel):
+    """Custom button for broadcast message."""
+
+    label: str = Field(..., min_length=1, max_length=64)
+    action_type: Literal['callback', 'url'] = 'callback'
+    action_value: str = Field(..., min_length=1, max_length=256)
+
+    @field_validator('action_value')
+    @classmethod
+    def validate_action_value(cls, v: str, info) -> str:
+        action_type = info.data.get('action_type', 'callback')
+        if action_type == 'url':
+            if not v.startswith(('https://', 'tg://')):
+                raise ValueError('URL must start with https:// or tg://')
+        elif action_type == 'callback':
+            # Telegram API limits callback_data to 64 bytes
+            if len(v.encode('utf-8')) > 64:
+                raise ValueError('Callback data must be at most 64 bytes')
+        return v
+
+
 # ============ Media ============
 
 
@@ -95,6 +116,7 @@ class BroadcastCreateRequest(BaseModel):
     target: str
     message_text: str = Field(..., min_length=1, max_length=4000)
     selected_buttons: list[str] = Field(default_factory=lambda: ['home'])
+    custom_buttons: list[CustomBroadcastButton] = Field(default_factory=list, max_length=10)
     media: BroadcastMediaRequest | None = None
 
 
@@ -187,6 +209,7 @@ class CombinedBroadcastCreateRequest(BaseModel):
     # Telegram-specific fields
     message_text: str | None = Field(default=None, max_length=4000)
     selected_buttons: list[str] = Field(default_factory=lambda: ['home'])
+    custom_buttons: list[CustomBroadcastButton] = Field(default_factory=list, max_length=10)
     media: BroadcastMediaRequest | None = None
 
     # Email-specific fields

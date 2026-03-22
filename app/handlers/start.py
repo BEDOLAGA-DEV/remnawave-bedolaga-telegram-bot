@@ -888,7 +888,8 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                     balance_kopeks=user.balance_kopeks,
                 )
 
-            user.status = UserStatus.ACTIVE.value
+            # Keep status=DELETED so complete_registration properly handles
+            # referral assignment and status change (not the "already active" branch)
             user.balance_kopeks = 0
             user.remnawave_uuid = None
             user.has_had_paid_subscription = False
@@ -1191,7 +1192,7 @@ async def process_rules_accept(callback: types.CallbackQuery, state: FSMContext,
                 reply_markup=get_rules_keyboard(language),
             )
             await state.set_state(RegistrationStates.waiting_for_rules_accept)
-        except:
+        except Exception:
             pass
 
 
@@ -1302,7 +1303,7 @@ async def process_privacy_policy_accept(callback: types.CallbackQuery, state: FS
                 reply_markup=get_privacy_policy_keyboard(language),
             )
             await state.set_state(RegistrationStates.waiting_for_privacy_policy_accept)
-        except:
+        except Exception:
             pass
 
 
@@ -1392,7 +1393,7 @@ async def process_referral_code_skip(callback: types.CallbackQuery, state: FSMCo
             await callback.message.edit_text(
                 texts.t('REGISTRATION_COMPLETING', '✅ Завершаем регистрацию...'), reply_markup=None
             )
-        except:
+        except Exception:
             pass
 
     await complete_registration_from_callback(callback, state, db)

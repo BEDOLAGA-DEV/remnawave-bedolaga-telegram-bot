@@ -619,8 +619,6 @@ async def show_trial_offer(callback: types.CallbackQuery, db_user: User, db: Asy
                 trial_tariff_id = settings.get_trial_tariff_id()
                 if trial_tariff_id > 0:
                     trial_tariff = await get_tariff(db, trial_tariff_id)
-                    if trial_tariff and not trial_tariff.is_active:
-                        trial_tariff = None
 
             if trial_tariff:
                 trial_traffic = trial_tariff.traffic_limit_gb
@@ -811,14 +809,36 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
         user_balance_kopeks = getattr(db_user, 'balance_kopeks', 0) or 0
         can_pay_from_balance = user_balance_kopeks >= trial_price_kopeks
 
-        traffic_label = 'Безлимит' if settings.TRIAL_TRAFFIC_LIMIT_GB == 0 else f'{settings.TRIAL_TRAFFIC_LIMIT_GB} ГБ'
+        # Берём параметры из триального тарифа если доступен
+        paid_trial_days = settings.TRIAL_DURATION_DAYS
+        paid_trial_traffic = settings.TRIAL_TRAFFIC_LIMIT_GB
+        paid_trial_devices = settings.TRIAL_DEVICE_LIMIT
+        if settings.is_tariffs_mode():
+            try:
+                from app.database.crud.tariff import get_tariff_by_id as get_tariff, get_trial_tariff
+
+                paid_trial_tariff = await get_trial_tariff(db)
+                if not paid_trial_tariff:
+                    trial_tariff_id = settings.get_trial_tariff_id()
+                    if trial_tariff_id > 0:
+                        paid_trial_tariff = await get_tariff(db, trial_tariff_id)
+                if paid_trial_tariff:
+                    paid_trial_traffic = paid_trial_tariff.traffic_limit_gb
+                    paid_trial_devices = paid_trial_tariff.device_limit
+                    tariff_trial_days = getattr(paid_trial_tariff, 'trial_duration_days', None)
+                    if tariff_trial_days:
+                        paid_trial_days = tariff_trial_days
+            except Exception as e:
+                logger.error('Ошибка получения триального тарифа для платного триала', error=e)
+
+        traffic_label = 'Безлимит' if paid_trial_traffic == 0 else f'{paid_trial_traffic} ГБ'
 
         message_lines = [
             texts.t('PAID_TRIAL_HEADER', '⚡ <b>Пробная подписка</b>'),
             '',
-            f'📅 {texts.t("PERIOD", "Период")}: {settings.TRIAL_DURATION_DAYS} {texts.t("DAYS", "дней")}',
+            f'📅 {texts.t("PERIOD", "Период")}: {paid_trial_days} {texts.t("DAYS", "дней")}',
             f'📊 {texts.t("TRAFFIC", "Трафик")}: {traffic_label}',
-            f'📱 {texts.t("DEVICES", "Устройства")}: {settings.TRIAL_DEVICE_LIMIT}',
+            f'📱 {texts.t("DEVICES", "Устройства")}: {paid_trial_devices}',
             '',
             f'💰 {texts.t("PRICE", "Стоимость")}: {settings.format_price(trial_price_kopeks)}',
             f'💳 {texts.t("YOUR_BALANCE", "Ваш баланс")}: {settings.format_price(user_balance_kopeks)}',
@@ -865,6 +885,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                 from app.database.crud.tariff import get_tariff_by_id, get_trial_tariff
 
                 # Сначала проверяем тариф из БД с флагом is_trial_available
+                # Триальный тариф может быть неактивным — используется для отдельных лимитов
                 trial_tariff = await get_trial_tariff(db)
 
                 # Если не найден в БД, проверяем настройку TRIAL_TARIFF_ID
@@ -872,8 +893,6 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                     trial_tariff_id = settings.get_trial_tariff_id()
                     if trial_tariff_id > 0:
                         trial_tariff = await get_tariff_by_id(db, trial_tariff_id)
-                        if trial_tariff and not trial_tariff.is_active:
-                            trial_tariff = None
 
                 if trial_tariff:
                     trial_traffic_limit = trial_tariff.traffic_limit_gb
@@ -3044,10 +3063,47 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
         if not settings.is_devices_selection_enabled():
             forced_devices = settings.get_disabled_mode_device_limit()
 
+        # Получаем параметры из триального тарифа (аналогично бесплатному триалу)
+        trial_tariff = None
+        trial_traffic_limit = None
+        trial_device_limit = forced_devices
+        trial_squads = None
+        tariff_id_for_trial = None
+        trial_duration = None
+
+        if settings.is_tariffs_mode():
+            try:
+                from app.database.crud.tariff import get_tariff_by_id as _get_tariff, get_trial_tariff
+
+                trial_tariff = await get_trial_tariff(db)
+                if not trial_tariff:
+                    trial_tariff_id = settings.get_trial_tariff_id()
+                    if trial_tariff_id > 0:
+                        trial_tariff = await _get_tariff(db, trial_tariff_id)
+                if trial_tariff:
+                    trial_traffic_limit = trial_tariff.traffic_limit_gb
+                    trial_device_limit = trial_tariff.device_limit
+                    trial_squads = trial_tariff.allowed_squads or []
+                    tariff_id_for_trial = trial_tariff.id
+                    tariff_trial_days = getattr(trial_tariff, 'trial_duration_days', None)
+                    if tariff_trial_days:
+                        trial_duration = tariff_trial_days
+                    logger.info(
+                        'Платный триал с баланса: используем тариф',
+                        trial_tariff_name=trial_tariff.name,
+                        trial_tariff_id=trial_tariff.id,
+                    )
+            except Exception as e:
+                logger.error('Ошибка получения триального тарифа для платного триала', error=e)
+
         subscription = await create_trial_subscription(
             db,
             db_user.id,
-            device_limit=forced_devices,
+            duration_days=trial_duration,
+            device_limit=trial_device_limit,
+            traffic_limit_gb=trial_traffic_limit,
+            connected_squads=trial_squads,
+            tariff_id=tariff_id_for_trial,
         )
 
         await db.refresh(db_user)
@@ -3365,28 +3421,63 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
     try:
         payment_service = PaymentService(callback.bot)
 
-        # Получаем случайный сквад для триала
-        from app.database.crud.server_squad import get_random_trial_squad_uuid
+        # Получаем параметры из триального тарифа
+        trial_duration = settings.TRIAL_DURATION_DAYS
+        trial_traffic = settings.TRIAL_TRAFFIC_LIMIT_GB
+        trial_devices = settings.TRIAL_DEVICE_LIMIT
+        trial_squads_list = []
+        tariff_id_for_trial = None
 
-        trial_squad_uuid = await get_random_trial_squad_uuid(db)
+        if settings.is_tariffs_mode():
+            try:
+                from app.database.crud.tariff import get_tariff_by_id as _get_tariff, get_trial_tariff
+
+                trial_tariff = await get_trial_tariff(db)
+                if not trial_tariff:
+                    trial_tariff_id = settings.get_trial_tariff_id()
+                    if trial_tariff_id > 0:
+                        trial_tariff = await _get_tariff(db, trial_tariff_id)
+                if trial_tariff:
+                    trial_traffic = trial_tariff.traffic_limit_gb
+                    trial_devices = trial_tariff.device_limit
+                    trial_squads_list = trial_tariff.allowed_squads or []
+                    tariff_id_for_trial = trial_tariff.id
+                    tariff_trial_days = getattr(trial_tariff, 'trial_duration_days', None)
+                    if tariff_trial_days:
+                        trial_duration = tariff_trial_days
+                    logger.info(
+                        'Платный триал через платёжку: используем тариф',
+                        trial_tariff_name=trial_tariff.name,
+                        trial_tariff_id=trial_tariff.id,
+                    )
+            except Exception as e:
+                logger.error('Ошибка получения триального тарифа для платного триала', error=e)
+
+        # Если тариф не задал серверы, получаем случайный сквад
+        if not trial_squads_list:
+            from app.database.crud.server_squad import get_random_trial_squad_uuid
+
+            trial_squad_uuid = await get_random_trial_squad_uuid(db)
+            trial_squads_list = [trial_squad_uuid] if trial_squad_uuid else []
 
         # Создаем pending триальную подписку
         pending_subscription = await create_pending_trial_subscription(
             db=db,
             user_id=db_user.id,
-            duration_days=settings.TRIAL_DURATION_DAYS,
-            traffic_limit_gb=settings.TRIAL_TRAFFIC_LIMIT_GB,
-            device_limit=settings.TRIAL_DEVICE_LIMIT,
-            connected_squads=[trial_squad_uuid] if trial_squad_uuid else [],
+            duration_days=trial_duration,
+            traffic_limit_gb=trial_traffic,
+            device_limit=trial_devices,
+            connected_squads=trial_squads_list,
             payment_method=f'trial_{payment_method}',
             total_price_kopeks=trial_price_kopeks,
+            tariff_id=tariff_id_for_trial,
         )
 
         if not pending_subscription:
             await callback.answer('❌ Не удалось подготовить заказ. Попробуйте позже.', show_alert=True)
             return
 
-        traffic_label = 'Безлимит' if settings.TRIAL_TRAFFIC_LIMIT_GB == 0 else f'{settings.TRIAL_TRAFFIC_LIMIT_GB} ГБ'
+        traffic_label = 'Безлимит' if trial_traffic == 0 else f'{trial_traffic} ГБ'
 
         if payment_method == 'stars':
             # Оплата через Telegram Stars
@@ -3395,11 +3486,11 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             await callback.bot.send_invoice(
                 chat_id=callback.from_user.id,
                 title=texts.t('PAID_TRIAL_INVOICE_TITLE', 'Пробная подписка на {days} дней').format(
-                    days=settings.TRIAL_DURATION_DAYS
+                    days=trial_duration
                 ),
                 description=(
-                    f'{texts.t("PERIOD", "Период")}: {settings.TRIAL_DURATION_DAYS} {texts.t("DAYS", "дней")}\n'
-                    f'{texts.t("DEVICES", "Устройства")}: {settings.TRIAL_DEVICE_LIMIT}\n'
+                    f'{texts.t("PERIOD", "Период")}: {trial_duration} {texts.t("DAYS", "дней")}\n'
+                    f'{texts.t("DEVICES", "Устройства")}: {trial_devices}\n'
                     f'{texts.t("TRAFFIC", "Трафик")}: {traffic_label}'
                 ),
                 payload=f'trial_{pending_subscription.id}',
@@ -3426,7 +3517,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 db=db,
                 amount_kopeks=trial_price_kopeks,
                 description=texts.t('PAID_TRIAL_PAYMENT_DESC', 'Пробная подписка на {days} дней').format(
-                    days=settings.TRIAL_DURATION_DAYS
+                    days=trial_duration
                 ),
                 user_id=db_user.id,
                 metadata={
@@ -3465,7 +3556,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 user_id=db_user.id,
                 amount_kopeks=trial_price_kopeks,
                 description=texts.t('PAID_TRIAL_PAYMENT_DESC', 'Пробная подписка на {days} дней').format(
-                    days=settings.TRIAL_DURATION_DAYS
+                    days=trial_duration
                 ),
                 metadata={
                     'type': 'trial',
@@ -3514,7 +3605,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 amount_usd=amount_usd,
                 asset=settings.CRYPTOBOT_DEFAULT_ASSET,
                 description=texts.t('PAID_TRIAL_PAYMENT_DESC', 'Пробная подписка на {days} дней').format(
-                    days=settings.TRIAL_DURATION_DAYS
+                    days=trial_duration
                 ),
                 payload=f'trial_{pending_subscription.id}_{db_user.id}',
             )
@@ -3562,7 +3653,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 user_id=db_user.id,
                 amount_kopeks=trial_price_kopeks,
                 description=texts.t('PAID_TRIAL_PAYMENT_DESC', 'Пробная подписка на {days} дней').format(
-                    days=settings.TRIAL_DURATION_DAYS
+                    days=trial_duration
                 ),
                 language=db_user.language,
             )
@@ -3600,7 +3691,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 user_id=db_user.id,
                 amount_kopeks=trial_price_kopeks,
                 description=texts.t('PAID_TRIAL_PAYMENT_DESC', 'Пробная подписка на {days} дней').format(
-                    days=settings.TRIAL_DURATION_DAYS
+                    days=trial_duration
                 ),
                 language=db_user.language,
             )
@@ -3637,7 +3728,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 user_id=db_user.id,
                 amount_kopeks=trial_price_kopeks,
                 description=texts.t('PAID_TRIAL_PAYMENT_DESC', 'Пробная подписка на {days} дней').format(
-                    days=settings.TRIAL_DURATION_DAYS
+                    days=trial_duration
                 ),
                 language=db_user.language,
             )
@@ -3675,7 +3766,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 user_id=db_user.id,
                 amount_kopeks=trial_price_kopeks,
                 description=texts.t('PAID_TRIAL_PAYMENT_DESC', 'Пробная подписка на {days} дней').format(
-                    days=settings.TRIAL_DURATION_DAYS
+                    days=trial_duration
                 ),
                 language=db_user.language,
             )
@@ -3719,7 +3810,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 user_id=db_user.id,
                 amount_kopeks=trial_price_kopeks,
                 description=texts.t('PAID_TRIAL_PAYMENT_DESC', 'Пробная подписка на {days} дней').format(
-                    days=settings.TRIAL_DURATION_DAYS
+                    days=trial_duration
                 ),
                 language=db_user.language,
                 payment_method_code=method_code,

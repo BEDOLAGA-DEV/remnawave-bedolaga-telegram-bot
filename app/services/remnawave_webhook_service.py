@@ -120,6 +120,12 @@ _ADMIN_NODE_CONNECTION_EVENTS = frozenset({'node.connection_lost', 'node.connect
 class RemnaWaveWebhookService:
     """Processes incoming webhooks from RemnaWave backend."""
 
+    # In-memory guard: tracks recent panel recreations per subscription_id.
+    # Prevents unbounded user.deleted → recreate → user.deleted loops.
+    # Key: subscription_id, Value: datetime of last recreation attempt.
+    _recent_recreations: dict[int, datetime] = {}
+    _RECREATION_GUARD_SECONDS: int = 120  # 2-minute cooldown
+
     def __init__(self, bot: Bot) -> None:
         self.bot = bot
         self._admin_service = AdminNotificationService(bot)
@@ -687,6 +693,36 @@ class RemnaWaveWebhookService:
         user_id = user.id
         sub_id = subscription.id if subscription else None
 
+        # Evict stale entries from the recreation loop guard to prevent unbounded growth
+        if self._recent_recreations:
+            now = datetime.now(UTC)
+            expired_keys = [
+                k
+                for k, v in self._recent_recreations.items()
+                if (now - v).total_seconds() >= self._RECREATION_GUARD_SECONDS
+            ]
+            for k in expired_keys:
+                del self._recent_recreations[k]
+
+        # Guard against webhook loop: if we recently attempted panel recreation for this
+        # subscription (from a previous user.deleted), skip to prevent unbounded
+        # recreate→delete→recreate cycles. Uses an in-memory guard (not the generic
+        # last_webhook_update_at stamp which fires on ANY webhook event).
+        if sub_id and sub_id in self._recent_recreations:
+            elapsed = (datetime.now(UTC) - self._recent_recreations[sub_id]).total_seconds()
+            if elapsed < self._RECREATION_GUARD_SECONDS:
+                logger.warning(
+                    'Webhook user.deleted: skipping — panel recreation was attempted recently (recreation loop guard)',
+                    sub_id=sub_id,
+                    user_id=user_id,
+                    elapsed=round(elapsed, 1),
+                )
+                return
+
+        # Stamp immediately (before any await) so concurrent coroutines see the guard
+        if sub_id:
+            self._recent_recreations[sub_id] = datetime.now(UTC)
+
         if subscription:
             self._stamp_webhook_update(subscription)
 
@@ -718,23 +754,46 @@ class RemnaWaveWebhookService:
                     logger.error('Webhook: user not found after rollback', user_id=user_id)
                     return
 
+        # Check if subscription has a future end_date — likely a spurious user.deleted
+        # (e.g., RemnaWave sends user.deleted during panel resync when modifying another user)
+        subscription_still_valid = (
+            subscription is not None and subscription.end_date is not None and subscription.end_date > datetime.now(UTC)
+        )
+
         if subscription:
-            if subscription.status != SubscriptionStatus.EXPIRED.value:
-                subscription.status = SubscriptionStatus.EXPIRED.value
-                logger.info(
-                    'Webhook: subscription marked expired (user deleted in panel) for user',
+            if subscription_still_valid:
+                # Subscription is still valid — don't mark as expired.
+                # Clear only panel linkage fields (URLs, UUID) but keep status and squads
+                # so that re-creation can restore VPN access.
+                logger.warning(
+                    'Webhook user.deleted: subscription has future end_date, '
+                    'keeping active status and attempting panel re-creation',
                     sub_id=sub_id,
                     user_id=user_id,
+                    end_date=subscription.end_date,
+                    status=subscription.status,
                 )
+                subscription.subscription_url = None
+                subscription.subscription_crypto_link = None
+                subscription.remnawave_short_uuid = None
+                # Keep connected_squads — needed for panel re-creation
+                subscription.updated_at = datetime.now(UTC)
+            else:
+                # Subscription expired or has no end_date — safe to mark as expired
+                if subscription.status != SubscriptionStatus.EXPIRED.value:
+                    subscription.status = SubscriptionStatus.EXPIRED.value
+                    logger.info(
+                        'Webhook: subscription marked expired (user deleted in panel) for user',
+                        sub_id=sub_id,
+                        user_id=user_id,
+                    )
+                subscription.subscription_url = None
+                subscription.subscription_crypto_link = None
+                subscription.remnawave_short_uuid = None
+                subscription.connected_squads = []
+                subscription.updated_at = datetime.now(UTC)
 
-            # Clear subscription data — panel user no longer exists
-            subscription.subscription_url = None
-            subscription.subscription_crypto_link = None
-            subscription.remnawave_short_uuid = None
-            subscription.connected_squads = []
-            subscription.updated_at = datetime.now(UTC)
-
-            # Remove SubscriptionServer link rows
+            # Remove SubscriptionServer link rows (panel user no longer exists)
             await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id == sub_id))
 
         # Clear remnawave linkage
@@ -743,7 +802,69 @@ class RemnaWaveWebhookService:
 
         await db.commit()
 
-        await self._notify_user(user, 'WEBHOOK_SUB_DELETED', reply_markup=self._get_renew_keyboard(user))
+        if subscription_still_valid:
+            # Attempt to re-create user in panel to restore VPN access.
+            # If recreation fails, fall back to expiring the subscription
+            # so it doesn't stay in ACTIVE-but-no-panel limbo.
+            recreated = await self._attempt_panel_recreation(db, user, subscription)
+            if not recreated:
+                subscription.status = SubscriptionStatus.EXPIRED.value
+                subscription.connected_squads = []
+                subscription.updated_at = datetime.now(UTC)
+                await db.commit()
+                await self._notify_user(user, 'WEBHOOK_SUB_DELETED', reply_markup=self._get_renew_keyboard(user))
+        else:
+            await self._notify_user(user, 'WEBHOOK_SUB_DELETED', reply_markup=self._get_renew_keyboard(user))
+
+    async def _attempt_panel_recreation(self, db: AsyncSession, user: User, subscription: Subscription) -> bool:
+        """Re-create user in RemnaWave panel after spurious user.deleted webhook.
+
+        Called when a user.deleted webhook arrives but the subscription still has a
+        future end_date, indicating the deletion was likely spurious (e.g., RemnaWave
+        resync when modifying another user). Attempts to restore VPN access by
+        creating/updating the user in the panel.
+
+        Returns True if recreation succeeded, False otherwise.
+        """
+        # Update the recreation guard timestamp to the actual recreation start time
+        if subscription.id is not None:
+            self._recent_recreations[subscription.id] = datetime.now(UTC)
+
+        try:
+            from app.services.subscription_service import SubscriptionService
+
+            service = SubscriptionService()
+            if not service.is_configured:
+                logger.warning(
+                    'RemnaWave not configured, cannot re-create panel user after user.deleted',
+                    user_id=user.id,
+                )
+                return False
+
+            remnawave_user = await service.create_remnawave_user(db, subscription)
+            if remnawave_user:
+                logger.info(
+                    'Webhook user.deleted: successfully re-created user in panel',
+                    user_id=user.id,
+                    subscription_id=subscription.id,
+                    new_uuid=remnawave_user.uuid,
+                )
+                return True
+
+            logger.error(
+                'Webhook user.deleted: failed to re-create user in panel',
+                user_id=user.id,
+                subscription_id=subscription.id,
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                'Webhook user.deleted: error re-creating user in panel',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                error=e,
+            )
+            return False
 
     async def _handle_user_revoked(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict

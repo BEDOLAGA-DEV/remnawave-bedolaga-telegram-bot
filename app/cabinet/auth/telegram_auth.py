@@ -49,7 +49,17 @@ def validate_telegram_login_widget(data: dict[str, Any], max_age_seconds: int = 
         auth_time = datetime.fromtimestamp(int(auth_date), tz=UTC)
         age = (datetime.now(UTC) - auth_time).total_seconds()
         if age > max_age_seconds or age < -_MAX_CLOCK_SKEW_SECONDS:
+            logger.warning(
+                'Telegram widget auth rejected: too old',
+                age_hours=round(age / 3600, 1),
+                max_age_hours=round(max_age_seconds / 3600, 1),
+            )
             return False
+        if age > 86400:
+            logger.info(
+                'Telegram widget auth accepted with stale auth_date',
+                age_hours=round(age / 3600, 1),
+            )
     except (ValueError, TypeError, OSError):
         return False
 
@@ -96,7 +106,17 @@ def validate_telegram_init_data(init_data: str, max_age_seconds: int = 86400) ->
             auth_time = datetime.fromtimestamp(int(auth_date), tz=UTC)
             age = (datetime.now(UTC) - auth_time).total_seconds()
             if age > max_age_seconds or age < -_MAX_CLOCK_SKEW_SECONDS:
+                logger.warning(
+                    'Telegram initData rejected: too old',
+                    age_hours=round(age / 3600, 1),
+                    max_age_hours=round(max_age_seconds / 3600, 1),
+                )
                 return None
+            if age > 86400:
+                logger.info(
+                    'Telegram initData accepted with stale auth_date (Telegram caching bug)',
+                    age_hours=round(age / 3600, 1),
+                )
         except (ValueError, TypeError, OSError):
             return None
 

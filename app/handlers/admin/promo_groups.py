@@ -462,28 +462,17 @@ async def show_promo_groups_menu(
 
         keyboard_rows = []
         for group, member_count in groups:
+            icon = '⭐' if group.is_default else '🎯'
             default_suffix = texts.t('ADMIN_PROMO_GROUPS_DEFAULT_LABEL', ' (базовая)') if group.is_default else ''
-            group_lines = [
-                f'{"⭐" if group.is_default else "🎯"} <b>{group.name}</b>{default_suffix}',
-            ]
-            group_lines.extend(_format_discount_lines(texts, group))
-            group_lines.append(_format_auto_assign_line(texts, group))
-            group_lines.append(
-                texts.t(
-                    'ADMIN_PROMO_GROUPS_MEMBERS_COUNT',
-                    'Участников: {count}',
-                ).format(count=member_count)
-            )
-
-            period_lines = _format_period_discounts_lines(texts, group, db_user.language)
-            group_lines.extend(period_lines)
-            group_lines.append('')
-
-            lines.extend(group_lines)
+            members_label = texts.t(
+                'ADMIN_PROMO_GROUPS_MEMBERS_COUNT',
+                'Участников: {count}',
+            ).format(count=member_count)
+            lines.append(f'{icon} <b>{group.name}</b>{default_suffix} — {members_label}')
             keyboard_rows.append(
                 [
                     types.InlineKeyboardButton(
-                        text=f'{"⭐" if group.is_default else "🎯"} {group.name}',
+                        text=f'{icon} {group.name}',
                         callback_data=f'promo_group_manage_{group.id}',
                     )
                 ]

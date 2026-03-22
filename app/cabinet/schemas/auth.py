@@ -198,6 +198,17 @@ class DeepLinkTokenResponse(BaseModel):
 
 
 class DeepLinkPollRequest(BaseModel):
-    """Request to poll deep link auth status."""
+    """Request to poll deep link auth status.
+
+    Deep link auth is always for existing bot users — referral codes are not applicable here.
+    Only campaign_slug is supported (campaign bonus can apply to existing users).
+    """
 
     token: str = Field(..., min_length=16, max_length=128, description='Deep link auth token')
+    campaign_slug: str | None = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r'^[a-zA-Z0-9_-]+$',
+        description='Campaign slug captured from cabinet URL',
+    )

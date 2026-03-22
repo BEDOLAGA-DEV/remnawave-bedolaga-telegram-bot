@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import select
@@ -348,13 +348,17 @@ class SubscriptionService:
             # Определяем актуальный статус для отправки в RemnaWave
             # НЕ меняем статус подписки здесь - это задача scheduled job
             is_actually_active = (
-                subscription.status == SubscriptionStatus.ACTIVE.value and subscription.end_date > current_time
+                subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
+                and subscription.end_date > current_time
             )
 
             # Логируем если статус и end_date не согласованы (для отладки)
-            if subscription.status == SubscriptionStatus.ACTIVE.value and subscription.end_date <= current_time:
+            if (
+                subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
+                and subscription.end_date <= current_time
+            ):
                 logger.warning(
-                    '⚠️ update_remnawave_user: подписка имеет статус ACTIVE, но end_date <= now . Отправляем в RemnaWave как EXPIRED, но НЕ меняем статус в БД.',
+                    '⚠️ update_remnawave_user: подписка имеет статус ACTIVE, но end_date <= now. Отправляем в RemnaWave как DISABLED, но НЕ меняем статус в БД.',
                     subscription_id=subscription.id,
                     end_date=subscription.end_date,
                     current_time=current_time,
@@ -370,8 +374,10 @@ class SubscriptionService:
 
                 update_kwargs = dict(
                     uuid=user.remnawave_uuid,
-                    status=UserStatus.ACTIVE if is_actually_active else UserStatus.EXPIRED,
-                    expire_at=subscription.end_date,
+                    status=UserStatus.ACTIVE if is_actually_active else UserStatus.DISABLED,
+                    expire_at=subscription.end_date
+                    if is_actually_active
+                    else max(subscription.end_date, current_time + timedelta(minutes=1)),
                     traffic_limit_bytes=self._gb_to_bytes(subscription.traffic_limit_gb),
                     traffic_limit_strategy=get_traffic_reset_strategy(subscription.tariff),
                     telegram_id=user.telegram_id,
@@ -843,7 +849,8 @@ class SubscriptionService:
 
                         current_time = datetime.now(UTC)
                         is_actually_active = (
-                            sub.status == SubscriptionStatus.ACTIVE.value and sub.end_date > current_time
+                            sub.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
+                            and sub.end_date > current_time
                         )
 
                         user_tag = self._resolve_user_tag(sub)
@@ -852,8 +859,10 @@ class SubscriptionService:
 
                         update_kwargs = dict(
                             uuid=user.remnawave_uuid,
-                            status=UserStatus.ACTIVE if is_actually_active else UserStatus.EXPIRED,
-                            expire_at=sub.end_date,
+                            status=UserStatus.ACTIVE if is_actually_active else UserStatus.DISABLED,
+                            expire_at=sub.end_date
+                            if is_actually_active
+                            else max(sub.end_date, current_time + timedelta(minutes=1)),
                             traffic_limit_bytes=self._gb_to_bytes(sub.traffic_limit_gb),
                             traffic_limit_strategy=traffic_strategy,
                             telegram_id=user.telegram_id,

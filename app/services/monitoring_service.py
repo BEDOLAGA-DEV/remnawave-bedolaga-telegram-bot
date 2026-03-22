@@ -377,8 +377,10 @@ class MonitoringService:
 
                 update_kwargs = dict(
                     uuid=user.remnawave_uuid,
-                    status=RemnaWaveUserStatus.ACTIVE if is_active else RemnaWaveUserStatus.EXPIRED,
-                    expire_at=subscription.end_date,
+                    status=RemnaWaveUserStatus.ACTIVE if is_active else RemnaWaveUserStatus.DISABLED,
+                    expire_at=subscription.end_date
+                    if is_active
+                    else max(subscription.end_date, current_time + timedelta(minutes=1)),
                     traffic_limit_bytes=self._gb_to_bytes(subscription.traffic_limit_gb),
                     traffic_limit_strategy=TrafficLimitStrategy.MONTH,
                     description=settings.format_remnawave_user_description(

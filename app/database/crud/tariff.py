@@ -83,13 +83,16 @@ async def count_tariffs(db: AsyncSession, *, include_inactive: bool = False) -> 
 async def get_trial_tariff(db: AsyncSession) -> Tariff | None:
     """Получает тариф, доступный для триала (is_trial_available=True).
 
+    Триальный тариф может быть неактивным — это сделано специально,
+    чтобы он не отображался в списке покупки, но использовался для триала
+    со своими лимитами (трафик, устройства, серверы).
+
     Сортируется по updated_at DESC, чтобы вернуть последний установленный
     триальный тариф (на случай если их несколько).
     """
     query = (
         select(Tariff)
         .where(Tariff.is_trial_available.is_(True))
-        .where(Tariff.is_active.is_(True))
         .options(selectinload(Tariff.allowed_promo_groups))
         .order_by(Tariff.updated_at.desc().nullslast(), Tariff.id.desc())
         .limit(1)
