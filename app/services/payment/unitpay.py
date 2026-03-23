@@ -293,9 +293,7 @@ class UnitPayPaymentMixin:
 
         # Idempotency check
         if payment.transaction_id:
-            logger.info(
-                'UnitPay платеж уже привязан к транзакции', order_id=payment.order_id, trigger=trigger
-            )
+            logger.info('UnitPay платеж уже привязан к транзакции', order_id=payment.order_id, trigger=trigger)
             return True
 
         # --- Guest purchase flow ---
@@ -437,9 +435,7 @@ class UnitPayPaymentMixin:
 
             await send_cart_notification_after_topup(user, payment.amount_kopeks, db, getattr(self, 'bot', None))
         except Exception as error:
-            logger.error(
-                'Ошибка при работе с сохраненной корзиной', user_id=user.id, error=error, exc_info=True
-            )
+            logger.error('Ошибка при работе с сохраненной корзиной', user_id=user.id, error=error, exc_info=True)
 
         logger.info(
             '✅ Обработан UnitPay платеж',
