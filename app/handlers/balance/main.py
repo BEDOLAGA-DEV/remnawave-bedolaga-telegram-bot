@@ -142,6 +142,13 @@ async def route_payment_by_method(
             )
         return True
 
+    if payment_method == 'unitpay':
+        from .unitpay import process_unitpay_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_unitpay_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
     if payment_method == 'severpay':
         from .severpay import process_severpay_payment_amount
 
@@ -708,6 +715,10 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_kassa_ai_topup, F.data == 'topup_kassa_ai')
     dp.callback_query.register(start_kassa_ai_sbp_topup, F.data == 'topup_kassa_ai_sbp')
     dp.callback_query.register(start_kassa_ai_card_topup, F.data == 'topup_kassa_ai_card')
+
+    from .unitpay import start_unitpay_topup
+
+    dp.callback_query.register(start_unitpay_topup, F.data == 'topup_unitpay')
 
     from .riopay import start_riopay_topup
 

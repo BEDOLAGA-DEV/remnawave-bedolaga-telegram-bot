@@ -1122,6 +1122,65 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
+    # UnitPay webhook
+    if settings.is_unitpay_enabled():
+
+        @router.get(settings.UNITPAY_WEBHOOK_PATH)
+        async def unitpay_webhook(request: Request) -> JSONResponse:
+            """
+            UnitPay отправляет GET-запросы с параметрами method и params[...].
+            Ответ: JSON с result или error.
+            """
+            method = request.query_params.get('method', '')
+            if not method:
+                return JSONResponse(
+                    {'result': {'message': 'UnitPay webhook active'}},
+                    status_code=status.HTTP_200_OK,
+                )
+
+            # Собираем params из query string
+            params = {}
+            for key, value in request.query_params.items():
+                if key.startswith('params[') and key.endswith(']'):
+                    param_name = key[7:-1]  # Extract name from params[name]
+                    params[param_name] = value
+
+            if not params.get('account'):
+                return JSONResponse(
+                    {'error': {'message': 'Missing required parameter: account'}},
+                    status_code=status.HTTP_200_OK,
+                )
+
+            db_generator = get_db()
+            try:
+                db = await db_generator.__anext__()
+            except StopAsyncIteration:
+                return JSONResponse(
+                    {'error': {'message': 'DB Error'}},
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            try:
+                result = await payment_service.process_unitpay_webhook(
+                    db,
+                    method=method,
+                    params=params,
+                )
+                return JSONResponse(result, status_code=status.HTTP_200_OK)
+            except Exception as e:
+                logger.exception('UnitPay webhook processing error', e=e)
+                return JSONResponse(
+                    {'error': {'message': 'Internal error'}},
+                    status_code=status.HTTP_200_OK,
+                )
+            finally:
+                try:
+                    await db_generator.__anext__()
+                except StopAsyncIteration:
+                    pass
+
+        routes_registered = True
+
     # RioPay webhook
     if settings.is_riopay_enabled():
 
