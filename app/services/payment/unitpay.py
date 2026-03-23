@@ -175,17 +175,23 @@ class UnitPayPaymentMixin:
             Ответ для UnitPay (result или error)
         """
         try:
-            signature = params.get('signature', '')
-
-            # Проверка подписи
-            if not unitpay_service.verify_webhook_signature(method, params, signature):
-                logger.warning('UnitPay webhook: неверная подпись', method=method)
-                return {'error': {'message': 'Invalid signature'}}
-
             account = params.get('account', '')  # Наш order_id
+
+            # Тестовый запрос от UnitPay (проверка webhook URL) — до парсинга параметров
+            test_flag = params.get('test')
+            if test_flag == '1' or account == 'test':
+                logger.info('UnitPay webhook: тестовый запрос', method=method, account=account)
+                return {'result': {'message': 'Test OK'}}
+
             unitpay_id = params.get('unitpayId')
             order_sum = float(params.get('orderSum', 0))
             order_currency = params.get('orderCurrency', 'RUB')
+
+            # Проверка подписи
+            signature = params.get('signature', '')
+            if not unitpay_service.verify_webhook_signature(method, params, signature):
+                logger.warning('UnitPay webhook: неверная подпись', method=method)
+                return {'error': {'message': 'Invalid signature'}}
 
             # Импортируем CRUD модуль
             unitpay_crud = import_module('app.database.crud.unitpay')
