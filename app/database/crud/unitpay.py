@@ -81,7 +81,7 @@ async def get_pending_unitpay_payments(db: AsyncSession, user_id: int) -> list[U
         select(UnitPayPayment).where(
             UnitPayPayment.user_id == user_id,
             UnitPayPayment.status == 'pending',
-            UnitPayPayment.is_paid == False,  # noqa: E712
+            UnitPayPayment.is_paid == False,
         )
     )
     return list(result.scalars().all())
@@ -93,7 +93,7 @@ async def get_expired_pending_unitpay_payments(db: AsyncSession) -> list[UnitPay
     result = await db.execute(
         select(UnitPayPayment).where(
             UnitPayPayment.status == 'pending',
-            UnitPayPayment.is_paid == False,  # noqa: E712
+            UnitPayPayment.is_paid == False,
             UnitPayPayment.expires_at < now,
         )
     )
