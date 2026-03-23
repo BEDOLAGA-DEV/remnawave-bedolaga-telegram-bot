@@ -67,9 +67,9 @@ MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB for larger logos
 
 
 class LegalLink(BaseModel):
-    title: str
-    url: str
-    slug: str = ''  # Unique identifier for content storage (e.g. 'rules', 'privacy', 'offer')
+    title: str = Field(min_length=1, max_length=256)
+    url: str = Field(max_length=512, pattern=r'^(https?://|/)')  # Only http(s) or relative paths
+    slug: str = Field(default='', max_length=64, pattern=r'^[a-z0-9_-]*$')
 
 
 class LegalLinksConfig(BaseModel):
@@ -1113,10 +1113,10 @@ class LegalDocContent(BaseModel):
 
 
 class LegalDocUpdate(BaseModel):
-    content: str
+    content: str = Field(max_length=500_000)
 
 
-@router.get('/legal-doc/{slug}')
+@router.get('/legal-doc/{slug}', response_model=LegalDocContent)
 async def get_legal_doc(
     slug: str,
     db: AsyncSession = Depends(get_cabinet_db),
