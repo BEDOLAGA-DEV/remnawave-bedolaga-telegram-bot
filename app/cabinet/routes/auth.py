@@ -487,6 +487,32 @@ async def auth_telegram(
         except Exception as e:
             logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
 
+    # Check for phantom user created by guest purchase (same username, no telegram_id)
+    if not user and tg_username:
+        from sqlalchemy import func as sa_func
+
+        phantom_result = await db.execute(
+            select(User).where(
+                sa_func.lower(User.username) == tg_username.lower(),
+                User.telegram_id.is_(None),
+            ),
+        )
+        phantom = phantom_result.scalars().first()
+        if phantom:
+            logger.info(
+                'Found phantom user by username, linking telegram_id',
+                phantom_id=phantom.id,
+                telegram_id=telegram_id,
+                username=tg_username,
+            )
+            phantom.telegram_id = telegram_id
+            if tg_first_name:
+                phantom.first_name = tg_first_name
+            if tg_last_name:
+                phantom.last_name = tg_last_name
+            await db.flush()
+            user = phantom
+
     is_new_user = not user
     if not user:
         # Create new user from Telegram initData
@@ -594,6 +620,32 @@ async def auth_telegram_widget(
                     referrer_id = referrer.id
         except Exception as e:
             logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
+
+    # Check for phantom user created by guest purchase (same username, no telegram_id)
+    if not user and request.username:
+        from sqlalchemy import func as sa_func
+
+        phantom_result = await db.execute(
+            select(User).where(
+                sa_func.lower(User.username) == request.username.lower(),
+                User.telegram_id.is_(None),
+            ),
+        )
+        phantom = phantom_result.scalars().first()
+        if phantom:
+            logger.info(
+                'Found phantom user by username, linking telegram_id',
+                phantom_id=phantom.id,
+                telegram_id=request.id,
+                username=request.username,
+            )
+            phantom.telegram_id = request.id
+            if request.first_name:
+                phantom.first_name = request.first_name
+            if request.last_name:
+                phantom.last_name = request.last_name
+            await db.flush()
+            user = phantom
 
     is_new_user = not user
     if not user:
@@ -738,6 +790,32 @@ async def auth_telegram_oidc(
                     referrer_id = referrer.id
         except Exception as e:
             logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
+
+    # Check for phantom user created by guest purchase (same username, no telegram_id)
+    if not user and username:
+        from sqlalchemy import func as sa_func
+
+        phantom_result = await db.execute(
+            select(User).where(
+                sa_func.lower(User.username) == username.lower(),
+                User.telegram_id.is_(None),
+            ),
+        )
+        phantom = phantom_result.scalars().first()
+        if phantom:
+            logger.info(
+                'Found phantom user by username, linking telegram_id',
+                phantom_id=phantom.id,
+                telegram_id=telegram_id,
+                username=username,
+            )
+            phantom.telegram_id = telegram_id
+            if first_name:
+                phantom.first_name = first_name
+            if last_name:
+                phantom.last_name = last_name
+            await db.flush()
+            user = phantom
 
     is_new_user = not user
     if not user:
