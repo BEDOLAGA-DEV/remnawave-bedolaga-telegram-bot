@@ -1734,6 +1734,18 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
+    if settings.is_unitpay_enabled():
+        unitpay_name = settings.UNITPAY_DISPLAY_NAME
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_UNITPAY', f'💳 {unitpay_name}'),
+                    callback_data=_build_callback('unitpay'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
     if settings.is_riopay_enabled():
         riopay_name = settings.get_riopay_display_name()
         keyboard.append(

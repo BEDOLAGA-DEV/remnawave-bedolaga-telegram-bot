@@ -35,6 +35,7 @@ from app.services.payment.freekassa import FreekassaPaymentMixin
 from app.services.payment.kassa_ai import KassaAiPaymentMixin
 from app.services.payment.riopay import RioPayPaymentMixin
 from app.services.payment.severpay import SeverPayPaymentMixin
+from app.services.payment.unitpay import UnitPayPaymentMixin
 from app.services.platega_service import PlategaService
 from app.services.wata_service import WataService
 from app.services.yookassa_service import YooKassaService
@@ -355,6 +356,7 @@ class PaymentService(
     KassaAiPaymentMixin,
     RioPayPaymentMixin,
     SeverPayPaymentMixin,
+    UnitPayPaymentMixin,
 ):
     """Основной интерфейс платежей, делегирующий работу специализированным mixin-ам."""
 
@@ -771,6 +773,27 @@ class PaymentService(
                     'payment_url': result.get('payment_url'),
                     'payment_id': result.get('severpay_id') or result.get('order_id'),
                     'provider': 'severpay',
+                }
+            return None
+
+        # --- UnitPay ----------------------------------------------------------
+        if payment_method == 'unitpay':
+            if not settings.is_unitpay_enabled():
+                logger.warning('UnitPay is not enabled, cannot create guest payment')
+                return None
+
+            result = await self.create_unitpay_payment(
+                db=db,
+                user_id=None,
+                amount_kopeks=amount_kopeks,
+                description=description,
+            )
+            if result:
+                await _patch_guest_metadata(result['local_payment_id'], 'unitpay')
+                return {
+                    'payment_url': result.get('payment_url'),
+                    'payment_id': result.get('order_id'),
+                    'provider': 'unitpay',
                 }
             return None
 

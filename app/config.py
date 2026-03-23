@@ -552,6 +552,17 @@ class Settings(BaseSettings):
     KASSA_AI_CARD_ENABLED: bool = False  # Карты РФ — payment_system_id=36
     KASSA_AI_CARD_DISPLAY_NAME: str = 'Карта (KassaAI)'
 
+    # UnitPay (unitpay.ru)
+    UNITPAY_ENABLED: bool = False
+    UNITPAY_PROJECT_ID: int | None = None
+    UNITPAY_SECRET_KEY: str | None = None
+    UNITPAY_DISPLAY_NAME: str = 'UnitPay'
+    UNITPAY_CURRENCY: str = 'RUB'
+    UNITPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100 руб
+    UNITPAY_MAX_AMOUNT_KOPEKS: int = 100000000  # 1 000 000 руб
+    UNITPAY_WEBHOOK_PATH: str = '/unitpay-webhook'
+    UNITPAY_PAYMENT_TYPE: str = 'card'  # card, sbp
+
     # RioPay (api.riopay.online) v2.0.1
     RIOPAY_ENABLED: bool = False
     RIOPAY_API_TOKEN: str | None = None  # x-api-token header
@@ -1918,6 +1929,13 @@ class Settings(BaseSettings):
 
     def get_kassa_ai_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_display_name())
+
+    def is_unitpay_enabled(self) -> bool:
+        return (
+            self.UNITPAY_ENABLED
+            and self.UNITPAY_PROJECT_ID is not None
+            and self.UNITPAY_SECRET_KEY is not None
+        )
 
     def is_riopay_enabled(self) -> bool:
         return self.RIOPAY_ENABLED and self.RIOPAY_API_TOKEN is not None
