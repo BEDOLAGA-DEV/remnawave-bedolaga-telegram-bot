@@ -1953,11 +1953,7 @@ class Settings(BaseSettings):
         return html.escape(self.get_kassa_ai_display_name())
 
     def is_unitpay_enabled(self) -> bool:
-        return (
-            self.UNITPAY_ENABLED
-            and self.UNITPAY_PROJECT_ID is not None
-            and self.UNITPAY_SECRET_KEY is not None
-        )
+        return self.UNITPAY_ENABLED and self.UNITPAY_PROJECT_ID is not None and self.UNITPAY_SECRET_KEY is not None
 
     def is_riopay_enabled(self) -> bool:
         return self.RIOPAY_ENABLED and self.RIOPAY_API_TOKEN is not None
