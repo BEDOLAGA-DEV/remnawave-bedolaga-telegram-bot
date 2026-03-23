@@ -565,6 +565,13 @@ class Settings(BaseSettings):
     RIOPAY_WEBHOOK_PATH: str = '/riopay-webhook'
     RIOPAY_SUCCESS_URL: str | None = None
     RIOPAY_FAIL_URL: str | None = None
+    # === Yandex Offline Conversions ===
+    YANDEX_OFFLINE_CONV_ENABLED: bool = False
+    YANDEX_OFFLINE_CONV_COUNTER_ID: str = ''
+    YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET: str = ''
+    YANDEX_OFFLINE_CONV_START_PREFIX: str = 'utm_ya_'
+    YANDEX_OFFLINE_CONV_DL: str = ''
+    YANDEX_OFFLINE_CONV_DT: str = ''
 
     # SeverPay (severpay.io)
     SEVERPAY_ENABLED: bool = False

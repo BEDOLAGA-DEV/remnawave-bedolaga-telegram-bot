@@ -3372,3 +3372,23 @@ class NewsTag(Base):
 
     def __repr__(self) -> str:
         return f"<NewsTag id={self.id} name='{self.name}'>"
+
+class YandexClientIdMap(Base):
+    """Mapping between users and Yandex.Metrika ClientIDs for offline conversions."""
+
+    __tablename__ = 'yandex_client_id_map'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), unique=True, nullable=False)
+    yandex_cid = Column(String(128), nullable=False)
+    source = Column(String(10), nullable=False, default='web')
+    counter_id = Column(String(32), nullable=True)
+    registration_sent = Column(Boolean, default=False, nullable=False)
+    trial_sent = Column(Boolean, default=False, nullable=False)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+    user = relationship('User', foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return f'<YandexClientIdMap user_id={self.user_id} cid={self.yandex_cid[:8]}...>'
