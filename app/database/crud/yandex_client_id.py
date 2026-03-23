@@ -6,9 +6,11 @@ from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import YandexClientIdMap
+
 
 logger = structlog.get_logger(__name__)
 
@@ -20,36 +22,31 @@ async def upsert_cid(
     source: str = 'web',
     counter_id: str | None = None,
 ) -> YandexClientIdMap:
-    """Insert or update Yandex ClientID for a user."""
-    result = await db.execute(
-        select(YandexClientIdMap).where(YandexClientIdMap.user_id == user_id)
+    """Insert or update Yandex ClientID for a user (race-safe via ON CONFLICT)."""
+    now = datetime.now(UTC)
+    values = {
+        'yandex_cid': cid,
+        'source': source,
+        'updated_at': now,
+    }
+    if counter_id:
+        values['counter_id'] = counter_id
+
+    stmt = (
+        pg_insert(YandexClientIdMap)
+        .values(user_id=user_id, yandex_cid=cid, source=source, counter_id=counter_id)
+        .on_conflict_do_update(index_elements=['user_id'], set_=values)
+        .returning(YandexClientIdMap)
     )
-    row = result.scalar_one_or_none()
 
-    if row:
-        row.yandex_cid = cid
-        row.source = source
-        row.updated_at = datetime.now(UTC)
-        if counter_id:
-            row.counter_id = counter_id
-    else:
-        row = YandexClientIdMap(
-            user_id=user_id,
-            yandex_cid=cid,
-            source=source,
-            counter_id=counter_id,
-        )
-        db.add(row)
-
+    result = await db.execute(stmt)
     await db.flush()
-    return row
+    return result.scalar_one()
 
 
 async def get_cid(db: AsyncSession, user_id: int) -> YandexClientIdMap | None:
     """Get Yandex ClientID mapping for a user."""
-    result = await db.execute(
-        select(YandexClientIdMap).where(YandexClientIdMap.user_id == user_id)
-    )
+    result = await db.execute(select(YandexClientIdMap).where(YandexClientIdMap.user_id == user_id))
     return result.scalar_one_or_none()
 
 

@@ -20,6 +20,8 @@ from app.database.crud.yandex_client_id import (
     mark_trial_sent,
     upsert_cid,
 )
+from app.database.database import AsyncSessionLocal
+
 
 logger = structlog.get_logger(__name__)
 
@@ -29,7 +31,15 @@ TIMEOUT = 10.0
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 
-_CID_RE = re.compile(r'^[A-Za-z0-9._:-]{4,64}$')
+_CID_RE = re.compile(r'^[A-Za-z0-9._:-]{4,128}$')
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=TIMEOUT)
+    return _http_client
 
 
 def _is_enabled() -> bool:
@@ -44,7 +54,7 @@ def _normalize_cid(cid: str | None) -> str | None:
     if not isinstance(cid, str):
         return None
     cid = cid.strip()
-    if not cid:
+    if not cid or not _CID_RE.match(cid):
         return None
     return cid
 
@@ -88,31 +98,31 @@ async def _post_collect(payload: dict[str, str], kind: str, cid: str) -> bool:
     masked = _mask_cid(cid)
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-                resp = await client.post(COLLECT_URL, data=payload)
+            client = _get_client()
+            resp = await client.post(COLLECT_URL, data=payload)
 
             if 200 <= resp.status_code < 300:
-                logger.info('%s %s sent (cid=%s, status=%s)', LOG_PREFIX, kind, masked, resp.status_code)
+                logger.info('collect sent', kind=kind, cid=masked, status=resp.status_code)
                 return True
 
             if 500 <= resp.status_code < 600 and attempt < MAX_RETRIES:
                 logger.warning(
-                    '%s %s server error (attempt %s/%s, cid=%s, status=%s)',
-                    LOG_PREFIX, kind, attempt, MAX_RETRIES, masked, resp.status_code,
+                    'collect server error',
+                    kind=kind,
+                    attempt=attempt,
+                    max=MAX_RETRIES,
+                    cid=masked,
+                    status=resp.status_code,
                 )
                 await asyncio.sleep(RETRY_DELAY)
                 continue
 
-            logger.error(
-                '%s %s rejected (cid=%s, status=%s, body=%s)',
-                LOG_PREFIX, kind, masked, resp.status_code, resp.text[:200],
-            )
+            logger.error('collect rejected', kind=kind, cid=masked, status=resp.status_code, body=resp.text[:200])
             return False
 
         except Exception as exc:
             logger.warning(
-                '%s %s request error (attempt %s/%s, cid=%s): %s',
-                LOG_PREFIX, kind, attempt, MAX_RETRIES, masked, exc,
+                'collect request error', kind=kind, attempt=attempt, max=MAX_RETRIES, cid=masked, error=str(exc)
             )
             if attempt < MAX_RETRIES:
                 await asyncio.sleep(RETRY_DELAY)
@@ -127,10 +137,53 @@ async def _send_event(cid: str, event_action: str) -> bool:
     # Warm-up pageview (required by Metrika to associate the CID)
     pv_ok = await _post_collect(_pageview_payload(cid), 'pageview', cid)
     if not pv_ok:
-        logger.warning('%s Pageview failed for %s, skipping event %s', LOG_PREFIX, _mask_cid(cid), event_action)
+        logger.warning('pageview failed, skipping event', cid=_mask_cid(cid), event=event_action)
         return False
 
     return await _post_collect(_event_payload(cid, event_action), event_action, cid)
+
+
+# --- Background task helpers ---
+
+_background_tasks: set[asyncio.Task] = set()
+
+
+def spawn_bg(coro) -> None:
+    """Spawn a background Yandex conversion task with proper reference tracking.
+
+    Checks _is_enabled() early so callers don't need to.
+    """
+    if not _is_enabled():
+        # Close the coroutine to avoid RuntimeWarning
+        coro.close()
+        return
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def _fire_bg(event_name: str, event_fn, user_id: int, **kwargs) -> None:
+    """Generic background wrapper: opens a session, calls event_fn, logs errors."""
+    try:
+        async with AsyncSessionLocal() as db:
+            await event_fn(db, user_id, **kwargs)
+    except Exception as exc:
+        logger.warning(f'{LOG_PREFIX} Background {event_name} event failed', user_id=user_id, error=str(exc))
+
+
+async def fire_registration_bg(user_id: int) -> None:
+    """Fire registration event in background with its own DB session."""
+    await _fire_bg('registration', on_registration, user_id)
+
+
+async def fire_trial_bg(user_id: int) -> None:
+    """Fire trial event in background with its own DB session."""
+    await _fire_bg('trial', on_trial, user_id)
+
+
+async def fire_purchase_bg(user_id: int, amount_kopeks: int) -> None:
+    """Fire purchase event in background with its own DB session."""
+    await _fire_bg('purchase', on_purchase, user_id, amount_kopeks=amount_kopeks)
 
 
 # --- Public API ---
@@ -150,11 +203,33 @@ async def store_cid(
     try:
         await upsert_cid(db, user_id, normalized, source=source,
                          counter_id=settings.YANDEX_OFFLINE_CONV_COUNTER_ID)
-        logger.info('%s Stored CID for user_id=%s source=%s', LOG_PREFIX, user_id, source)
+        logger.info('stored CID', user_id=user_id, source=source)
         return True
     except Exception as exc:
-        logger.error('%s Failed to store CID for user_id=%s: %s', LOG_PREFIX, user_id, exc)
+        logger.error('failed to store CID', user_id=user_id, error=str(exc))
         return False
+
+
+async def store_cid_and_fire_registration(
+    user_id: int,
+    cid: str | None,
+    *,
+    source: str = 'web',
+) -> None:
+    """Store Yandex CID and fire registration conversion in background (best-effort).
+
+    Opens its own DB session so it never interferes with the caller's transaction.
+    """
+    if not cid:
+        return
+    try:
+        async with AsyncSessionLocal() as db:
+            stored = await store_cid(db, user_id, cid, source=source)
+            if stored:
+                await db.commit()
+                spawn_bg(fire_registration_bg(user_id))
+    except Exception as exc:
+        logger.warning(f'{LOG_PREFIX} Failed to store CID and fire registration', user_id=user_id, error=str(exc))
 
 
 async def on_registration(db: AsyncSession, user_id: int) -> None:
@@ -171,9 +246,9 @@ async def on_registration(db: AsyncSession, user_id: int) -> None:
         if success:
             await mark_registration_sent(db, user_id)
             await db.commit()
-            logger.info('%s registration event sent for user_id=%s', LOG_PREFIX, user_id)
+            logger.info('registration event sent', user_id=user_id)
     except Exception as exc:
-        logger.error('%s registration event failed for user_id=%s: %s', LOG_PREFIX, user_id, exc)
+        logger.error('registration event failed', user_id=user_id, error=str(exc))
 
 
 async def on_trial(db: AsyncSession, user_id: int) -> None:
@@ -190,9 +265,9 @@ async def on_trial(db: AsyncSession, user_id: int) -> None:
         if success:
             await mark_trial_sent(db, user_id)
             await db.commit()
-            logger.info('%s trial-add event sent for user_id=%s', LOG_PREFIX, user_id)
+            logger.info('trial-add event sent', user_id=user_id)
     except Exception as exc:
-        logger.error('%s trial-add event failed for user_id=%s: %s', LOG_PREFIX, user_id, exc)
+        logger.error('trial-add event failed', user_id=user_id, error=str(exc))
 
 
 async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> None:
@@ -207,19 +282,17 @@ async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> Non
 
         success = await _send_event(row.yandex_cid, 'purchase')
         if success:
-            logger.info(
-                '%s purchase event sent for user_id=%s amount=%s',
-                LOG_PREFIX, user_id, amount_kopeks / 100,
-            )
+            logger.info('purchase event sent', user_id=user_id, amount=amount_kopeks / 100)
     except Exception as exc:
-        logger.error('%s purchase event failed for user_id=%s: %s', LOG_PREFIX, user_id, exc)
+        logger.error('purchase event failed', user_id=user_id, error=str(exc))
 
 
 def parse_cid_from_start_param(param: str) -> tuple[str | None, str]:
     """Extract Yandex CID from bot start parameter.
 
     If param starts with the configured prefix (e.g. 'utm_ya_'),
-    returns (cid, remaining_param). Otherwise returns (None, original_param).
+    returns (cid, original_param). Otherwise returns (None, original_param).
+    Original param is always preserved for UTM tracking.
     """
     prefix = settings.YANDEX_OFFLINE_CONV_START_PREFIX
     if not prefix or not param.startswith(prefix):
