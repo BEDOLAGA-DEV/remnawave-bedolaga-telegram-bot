@@ -1,5 +1,49 @@
 # Changelog
 
+## [3.42.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.41.0...v3.42.0) (2026-03-23)
+
+
+### New Features
+
+* add managed news categories and tags with DB-backed CRUD ([51392d1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/51392d1918d8e2e94645acfb3a11b8e16776a5d5))
+* add media upload/delete API for news articles ([a0d40ad](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a0d40ad432d858ebfe75485a9597d32e847d5746))
+* add news articles module with admin CRUD and public API ([b932403](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b93240393f739f1243bbbfdd4298b90974b8fa87))
+* enforce single featured news article — unfeature others on toggle/create/update ([b5853ec](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b5853ec3b6769655f8d19914e51fd078ec9edccc))
+* show Platega payment methods inline on main screen ([#2720](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/2720)) ([334db53](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/334db53868ae2f9206fdde97fa575e953a83cbcf))
+
+
+### Bug Fixes
+
+* add explicit File(...) to UploadFile param to fix 422 on media upload ([89bfdc8](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/89bfdc8ed6bfba48cfcb61083240d5e6e870f49b))
+* add Literal type to SavedMedia and close orphaned PIL Image objects ([ce554cb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ce554cb2a8e606b6060dbf63463e64087a3a7539))
+* add user ID to payment descriptions for all providers and fix tuple bug ([2f19c76](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2f19c76357fe7de1636d65968cb13f784ee47c31))
+* catch DecompressionBombError, hoist MP4 brands to module level ([172924d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/172924df0e1248b27d3f18f6acf23cf115040941))
+* comprehensive html.escape() for all user/admin data in Telegram HTML messages ([9de3490](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9de34900a2a9047ab275c0bbf16fd314eb49a3ec))
+* comprehensive security hardening across payment and API layers ([8175bc8](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8175bc8bfe56dc564a0783c45226451b695bdbd6))
+* correctly price unlimited traffic (0 GB) in classic subscription mode ([aec04f0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/aec04f0085bd9c566bd033b8bb628389ff22bdf6))
+* create uploads subdirectories in Dockerfile for correct permissions ([5ed3780](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5ed3780f830023f7b1940dc96256fd38e3c86f4b))
+* media upload security hardening from 6-agent review ([165d25e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/165d25ef5fc02eecf7c6d703072b6adbe88bfd98))
+* news module security hardening, perf optimizations, bug fixes ([2b91808](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2b91808b0c72381cfb2f4e36eaff69e9102a32ee))
+* phantom user merge on claim failure, referral assignment, account merge hardening ([fad77f8](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/fad77f8c80a8fdecb0512f0ff91e5ae6d78ec8f3))
+* register categories/tags/media routers before news to avoid route conflict ([d9cda3a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d9cda3a6d67c6249397e3778c1aefc6bdb6d9e4f))
+* reject HEIC as MP4, close UploadFile, narrow exception handling ([7ff73e8](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/7ff73e8492343be5ed77fad5eea7e730621eac76))
+* remove future annotations breaking UploadFile, harden media URL generation ([0225fa1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0225fa155b7d4f3d1c6572a68651c206b1820db0))
+* replace asyncio.gather with sequential queries on shared session ([3e69efe](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3e69efe5891bbe8869a7feb2320185e14d83dd73))
+* respect per-channel disable_on_leave settings in monitoring service ([958ec48](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/958ec489a2a1d01d19cb6e60f52fb2be56295104))
+* respect X-Forwarded-Proto in media URL generation to prevent mixed content ([fd41009](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/fd410096ea7e541d8443ec4336bfd72de63d03d9))
+* restore connected_squads and admin notification on daily subscription resume ([89341ba](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/89341baa6243496d3b24c501e227ed156676c052))
+* simplify 0046 migration downgrade to just drop_table ([015c2da](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/015c2da297e4250ebfa50e32b3c1468c9a2143f3))
+* suppress harmless TelegramBadRequest errors and fix discount promo display ([0fe3c21](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0fe3c217f752ced2e3c3f56b4ab5b4c898ba2d8e))
+* use IF EXISTS in downgrade for FK indexes ([76b1f9b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/76b1f9b036e276646546aa4c89a3fe1d2ee58a40))
+* validate FK existence, add FK indexes, expand video brand whitelist ([f0cdd5d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f0cdd5dc904926b55be390798a71a5427a20949b))
+* validate period_days against tariff in purchase-tariff and auto-purchase ([4660ca5](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4660ca5756f5f1ef8033f9202d68612d570ddb1a))
+
+
+### Refactoring
+
+* extract phantom service, replace lightweight merge with execute_merge ([6658af6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6658af6268c10db170e3eaabc75f857e5c664c3c))
+* simplify referral invite text to single template ([cbe630c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/cbe630cab0973d7d71dd72603b114807b237ac84))
+
 ## [3.41.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.40.0...v3.41.0) (2026-03-22)
 
 
