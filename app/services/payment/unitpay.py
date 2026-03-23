@@ -224,7 +224,7 @@ class UnitPayPaymentMixin:
                 logger.info('UnitPay check OK', account=account)
                 return {'result': {'message': 'OK'}}
 
-            elif method == 'pay':
+            if method == 'pay':
                 # Lock payment row to prevent concurrent processing
                 locked = await unitpay_crud.get_unitpay_payment_by_id_for_update(db, payment.id)
                 if not locked:
@@ -275,14 +275,13 @@ class UnitPayPaymentMixin:
                     return {'result': {'message': 'OK'}}
                 return {'error': {'message': 'Finalization failed'}}
 
-            elif method == 'error':
+            if method == 'error':
                 error_msg = params.get('errorMessage', 'Unknown error')
                 logger.warning('UnitPay error webhook', account=account, error=error_msg)
                 # Не меняем статус — после error может прийти pay
                 return {'result': {'message': 'Error received'}}
 
-            else:
-                return {'error': {'message': f'Unknown method: {method}'}}
+            return {'error': {'message': f'Unknown method: {method}'}}
 
         except Exception as e:
             logger.exception('UnitPay webhook: ошибка обработки', e=e)
