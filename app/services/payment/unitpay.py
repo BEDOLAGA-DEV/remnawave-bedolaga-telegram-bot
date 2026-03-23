@@ -131,9 +131,15 @@ class UnitPayPaymentMixin:
 
             # Сохраняем unitpay_payment_id если получили
             if unitpay_payment_id:
-                local_payment.unitpay_payment_id = unitpay_payment_id
-                await db.commit()
-                await db.refresh(local_payment)
+                try:
+                    local_payment.unitpay_payment_id = unitpay_payment_id
+                    await db.commit()
+                    await db.refresh(local_payment)
+                except Exception:
+                    await db.rollback()
+                    logger.warning(
+                        'UnitPay: duplicate unitpay_payment_id, ignoring', unitpay_payment_id=unitpay_payment_id
+                    )
 
             logger.info(
                 'UnitPay: создан платеж',
@@ -177,21 +183,23 @@ class UnitPayPaymentMixin:
         try:
             account = params.get('account', '')  # Наш order_id
 
-            # Тестовый запрос от UnitPay (проверка webhook URL) — до парсинга параметров
-            test_flag = params.get('test')
-            if test_flag == '1' or account == 'test':
-                logger.info('UnitPay webhook: тестовый запрос', method=method, account=account)
-                return {'result': {'message': 'Test OK'}}
-
-            unitpay_id = params.get('unitpayId')
-            order_sum = float(params.get('orderSum', 0))
-            order_currency = params.get('orderCurrency', 'RUB')
-
-            # Проверка подписи
+            # Проверка подписи (до любой обработки)
             signature = params.get('signature', '')
             if not unitpay_service.verify_webhook_signature(method, params, signature):
+                # Тестовый запрос от UnitPay (проверка webhook URL) — только если подпись не прошла
+                test_flag = params.get('test')
+                if test_flag == '1' or account == 'test':
+                    logger.info('UnitPay webhook: тестовый запрос', method=method, account=account)
+                    return {'result': {'message': 'Test OK'}}
                 logger.warning('UnitPay webhook: неверная подпись', method=method)
                 return {'error': {'message': 'Invalid signature'}}
+
+            unitpay_id = params.get('unitpayId')
+            try:
+                order_sum = float(params.get('orderSum', 0))
+            except (ValueError, TypeError):
+                return {'error': {'message': 'Invalid orderSum'}}
+            order_currency = params.get('orderCurrency', 'RUB')
 
             # Импортируем CRUD модуль
             unitpay_crud = import_module('app.database.crud.unitpay')
@@ -348,9 +356,11 @@ class UnitPayPaymentMixin:
         old_balance = user.balance_kopeks
         was_first_topup = not user.has_made_first_topup
 
-        # Начисляем баланс
+        # Начисляем баланс (атомарно с has_made_first_topup)
         user.balance_kopeks += payment.amount_kopeks
         user.updated_at = datetime.now(UTC)
+        if was_first_topup and not user.referred_by_id:
+            user.has_made_first_topup = True
 
         promo_group = user.get_primary_promo_group()
         subscription = getattr(user, 'subscription', None)
@@ -379,10 +389,6 @@ class UnitPayPaymentMixin:
             await process_referral_topup(db, user.id, payment.amount_kopeks, getattr(self, 'bot', None))
         except Exception as error:
             logger.error('Ошибка обработки реферального пополнения UnitPay', error=error)
-
-        if was_first_topup and not user.has_made_first_topup and not user.referred_by_id:
-            user.has_made_first_topup = True
-            await db.commit()
 
         await db.refresh(user)
         await db.refresh(payment)
