@@ -13,6 +13,12 @@ logger = structlog.get_logger(__name__)
 
 API_BASE_URL = 'https://unitpay.ru/api'
 
+# Sub-method to paymentType mapping
+UNITPAY_SUB_METHODS = {
+    'unitpay_sbp': {'payment_type': 'sbp'},
+    'unitpay_card': {'payment_type': 'card'},
+}
+
 
 class UnitPayService:
     """Сервис для работы с API UnitPay."""
@@ -85,6 +91,9 @@ class UnitPayService:
 
         if result_url:
             params['params[resultUrl]'] = result_url
+
+        if settings.UNITPAY_HIDE_OTHER_METHODS:
+            params['params[hideOtherMethods]'] = 'true'
 
         logger.info(
             'UnitPay API initPayment',
