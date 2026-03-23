@@ -1122,6 +1122,54 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
+
+    # UnitPay webhook
+    if settings.is_unitpay_enabled():
+
+        @router.get(settings.UNITPAY_WEBHOOK_PATH)
+        async def unitpay_webhook(request: Request) -> JSONResponse:
+            """UnitPay webhook handler (GET with query params)."""
+            # UnitPay sends GET requests with params in query string
+            method = request.query_params.get('method', '')
+            params = {}
+            for key, value in request.query_params.items():
+                # Parse params[key] format
+                if key.startswith('params[') and key.endswith(']'):
+                    param_name = key[7:-1]
+                    params[param_name] = value
+                elif key != 'method':
+                    params[key] = value
+
+            if not method:
+                return JSONResponse({'error': {'message': 'Missing method'}})
+
+            logger.info('UnitPay webhook received', method=method, params_keys=list(params.keys()))
+
+            db_generator = get_db()
+            try:
+                db = await db_generator.__anext__()
+            except StopAsyncIteration:
+                return JSONResponse({'error': {'message': 'DB Error'}})
+
+            try:
+                payment_service = PaymentService()
+                result = await payment_service.process_unitpay_webhook(
+                    db,
+                    method=method,
+                    params=params,
+                )
+                return JSONResponse(result)
+            except Exception as e:
+                logger.exception('UnitPay webhook processing error', e=e)
+                return JSONResponse({'error': {'message': 'Internal error'}})
+            finally:
+                try:
+                    await db_generator.__anext__()
+                except StopAsyncIteration:
+                    pass
+
+        routes_registered = True
+
     # RioPay webhook
     if settings.is_riopay_enabled():
 

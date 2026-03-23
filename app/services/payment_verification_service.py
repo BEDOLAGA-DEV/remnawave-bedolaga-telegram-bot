@@ -29,6 +29,7 @@ from app.database.models import (
     PlategaPayment,
     RioPayPayment,
     SeverPayPayment,
+    UnitPayPayment,
     Transaction,
     TransactionType,
     User,
@@ -76,6 +77,7 @@ SUPPORTED_MANUAL_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.KASSA_AI,
         PaymentMethod.RIOPAY,
         PaymentMethod.SEVERPAY,
+        PaymentMethod.UNITPAY,
     }
 )
 
@@ -96,6 +98,7 @@ SUPPORTED_AUTO_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.KASSA_AI,
         PaymentMethod.RIOPAY,
         PaymentMethod.SEVERPAY,
+        PaymentMethod.UNITPAY,
     }
 )
 
@@ -125,6 +128,24 @@ def method_display_name(method: PaymentMethod) -> str:
         return settings.get_riopay_display_name()
     if method == PaymentMethod.SEVERPAY:
         return settings.get_severpay_display_name()
+    if method == PaymentMethod.UNITPAY:
+        return settings.get_unitpay_display_name()
+
+    if method == PaymentMethod.UNITPAY:
+        payment = await db.get(UnitPayPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
     if method == PaymentMethod.TELEGRAM_STARS:
         return 'Telegram Stars'
     return method.value
@@ -155,6 +176,8 @@ def _method_is_enabled(method: PaymentMethod) -> bool:
         return settings.is_riopay_enabled()
     if method == PaymentMethod.SEVERPAY:
         return settings.is_severpay_enabled()
+    if method == PaymentMethod.UNITPAY:
+        return settings.is_unitpay_enabled()
     return False
 
 
@@ -395,6 +418,14 @@ def _is_severpay_pending(payment: SeverPayPayment) -> bool:
         return False
     status = (payment.status or '').lower()
     return status in {'pending', 'processing'}
+
+
+def _is_unitpay_pending(payment: UnitPayPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'pending', 'processing'}
+
 
 
 def _is_riopay_pending(payment: RioPayPayment) -> bool:
@@ -773,6 +804,33 @@ async def _fetch_severpay_payments(db: AsyncSession, cutoff: datetime) -> list[P
     return records
 
 
+async def _fetch_unitpay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(UnitPayPayment)
+        .options(selectinload(UnitPayPayment.user))
+        .where(UnitPayPayment.created_at >= cutoff)
+        .order_by(desc(UnitPayPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_unitpay_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.UNITPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+
 async def _fetch_stars_transactions(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
     stmt = (
         select(Transaction)
@@ -822,6 +880,7 @@ async def list_recent_pending_payments(
         await _fetch_kassa_ai_payments(db, cutoff),
         await _fetch_riopay_payments(db, cutoff),
         await _fetch_severpay_payments(db, cutoff),
+        await _fetch_unitpay_payments(db, cutoff),
         await _fetch_stars_transactions(db, cutoff),
     )
 
@@ -1092,6 +1151,9 @@ async def run_manual_check(
                 payment = result.get('payment') if result else None
             else:
                 payment = None
+        elif method == PaymentMethod.UNITPAY:
+            result = await payment_service.get_unitpay_payment_status(db, local_payment_id)
+            payment = result.get('payment') if result else None
         else:
             logger.warning('Manual check requested for unsupported method', method=method)
             return None

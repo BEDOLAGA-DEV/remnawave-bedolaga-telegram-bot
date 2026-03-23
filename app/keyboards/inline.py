@@ -1770,6 +1770,46 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
+
+    if settings.is_unitpay_sbp_enabled():
+        sbp_name = settings.get_unitpay_sbp_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_UNITPAY_SBP', f'📱 {sbp_name}'),
+                    callback_data=_build_callback('unitpay_sbp'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_unitpay_card_enabled():
+        card_name = settings.get_unitpay_card_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_UNITPAY_CARD', f'💳 {card_name}'),
+                    callback_data=_build_callback('unitpay_card'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if (
+        settings.is_unitpay_enabled()
+        and not settings.is_unitpay_sbp_enabled()
+        and not settings.is_unitpay_card_enabled()
+    ):
+        unitpay_name = settings.get_unitpay_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_UNITPAY', f'💳 {unitpay_name}'), callback_data=_build_callback('unitpay')
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
     if settings.is_support_topup_enabled():
         keyboard.append(
             [

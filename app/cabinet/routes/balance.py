@@ -753,6 +753,42 @@ async def create_topup(
                     detail='Failed to create RioPay payment',
                 )
 
+
+        elif request.payment_method == 'unitpay':
+            if not settings.is_unitpay_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='UnitPay payment method is unavailable',
+                )
+
+            from app.services.unitpay_service import UNITPAY_SUB_METHODS
+
+            option = (request.payment_option or '').strip().lower()
+            UNITPAY_OPTION_MAP = {'sbp': 'sbp', 'card': 'card'}
+            pt = UNITPAY_OPTION_MAP.get(option)  # None = use env default
+
+            payment_service = PaymentService()
+            result = await payment_service.create_unitpay_payment(
+                db=db,
+                user_id=user.id,
+                amount_kopeks=request.amount_kopeks,
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
+                email=getattr(user, 'email', None),
+                language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                payment_type=pt,
+            )
+
+            if result and result.get('payment_url'):
+                payment_url = result.get('payment_url')
+                payment_id = str(result.get('local_payment_id') or result.get('order_id') or 'pending')
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Failed to create UnitPay payment',
+                )
+
         elif request.payment_method == 'tribute':
             if not settings.TRIBUTE_ENABLED or not settings.TRIBUTE_DONATE_LINK:
                 raise HTTPException(
@@ -947,6 +983,8 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status in {'pending', 'created', 'processing'}
     if record.method == PaymentMethod.RIOPAY:
         return status in {'pending'}
+    if record.method == PaymentMethod.UNITPAY:
+        return status in {'pending', 'processing'}
     return False
 
 
@@ -975,6 +1013,7 @@ def _get_payment_url(record: PendingPayment) -> str | None:
         PaymentMethod.FREEKASSA,
         PaymentMethod.KASSA_AI,
         PaymentMethod.RIOPAY,
+        PaymentMethod.UNITPAY,
     ):
         payment_url = getattr(payment, 'payment_url', None) or payment_url
 
@@ -1061,6 +1100,7 @@ async def get_latest_payment_by_method(
         FreekassaPayment,
         HeleketPayment,
         KassaAiPayment,
+        UnitPayPayment,
         MulenPayPayment,
         Pal24Payment,
         PlategaPayment,
@@ -1080,6 +1120,7 @@ async def get_latest_payment_by_method(
         PaymentMethod.CLOUDPAYMENTS: CloudPaymentsPayment,
         PaymentMethod.FREEKASSA: FreekassaPayment,
         PaymentMethod.KASSA_AI: KassaAiPayment,
+        PaymentMethod.UNITPAY: UnitPayPayment,
         PaymentMethod.RIOPAY: RioPayPayment,
     }
 

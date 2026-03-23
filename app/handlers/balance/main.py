@@ -156,6 +156,16 @@ async def route_payment_by_method(
             await process_riopay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+
+    if payment_method in ('unitpay', 'unitpay_sbp', 'unitpay_card'):
+        from .unitpay import process_unitpay_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_unitpay_payment_amount(
+                message, db_user, db, amount_kopeks, state, payment_method=payment_method
+            )
+        return True
+
     return False
 
 
@@ -663,6 +673,17 @@ def register_balance_handlers(dp: Dispatcher):
     from .tribute import start_tribute_payment
 
     dp.callback_query.register(start_tribute_payment, F.data == 'topup_tribute')
+
+
+    from .unitpay import (
+        start_unitpay_topup,
+        start_unitpay_sbp_topup,
+        start_unitpay_card_topup,
+    )
+
+    dp.callback_query.register(start_unitpay_topup, F.data == 'topup_unitpay')
+    dp.callback_query.register(start_unitpay_sbp_topup, F.data == 'topup_unitpay_sbp')
+    dp.callback_query.register(start_unitpay_card_topup, F.data == 'topup_unitpay_card')
 
     dp.callback_query.register(request_support_topup, F.data == 'topup_support')
 
