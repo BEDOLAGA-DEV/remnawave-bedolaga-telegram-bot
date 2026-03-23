@@ -150,7 +150,10 @@ def _get_method_defaults() -> dict:
             'is_configured': settings.is_unitpay_enabled(),
             'default_min': settings.UNITPAY_MIN_AMOUNT_KOPEKS,
             'default_max': settings.UNITPAY_MAX_AMOUNT_KOPEKS,
-            'available_sub_options': None,
+            'available_sub_options': [
+                {'id': 'sbp', 'name': 'СБП'},
+                {'id': 'card', 'name': 'Карта'},
+            ],
         },
     }
 

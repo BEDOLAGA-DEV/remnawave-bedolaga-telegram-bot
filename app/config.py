@@ -561,7 +561,13 @@ class Settings(BaseSettings):
     UNITPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100 руб
     UNITPAY_MAX_AMOUNT_KOPEKS: int = 100000000  # 1 000 000 руб
     UNITPAY_WEBHOOK_PATH: str = '/unitpay-webhook'
-    UNITPAY_PAYMENT_TYPE: str = 'card'  # card, sbp
+    UNITPAY_PAYMENT_TYPE: str = 'card'  # card, sbp, sberpay, tinkoffpay, usdt
+    UNITPAY_HIDE_OTHER_METHODS: bool = True  # Скрыть выбор других методов на форме
+    # Раздельные методы оплаты UnitPay (отображаются как отдельные кнопки)
+    UNITPAY_SBP_ENABLED: bool = False
+    UNITPAY_SBP_DISPLAY_NAME: str = 'СБП (UnitPay)'
+    UNITPAY_CARD_ENABLED: bool = False
+    UNITPAY_CARD_DISPLAY_NAME: str = 'Карта (UnitPay)'
 
     # RioPay (api.riopay.online) v2.0.1
     RIOPAY_ENABLED: bool = False
@@ -1932,6 +1938,18 @@ class Settings(BaseSettings):
 
     def is_unitpay_enabled(self) -> bool:
         return self.UNITPAY_ENABLED and self.UNITPAY_PROJECT_ID is not None and self.UNITPAY_SECRET_KEY is not None
+
+    def is_unitpay_sbp_enabled(self) -> bool:
+        return self.UNITPAY_SBP_ENABLED and self.is_unitpay_enabled()
+
+    def is_unitpay_card_enabled(self) -> bool:
+        return self.UNITPAY_CARD_ENABLED and self.is_unitpay_enabled()
+
+    def get_unitpay_sbp_display_name(self) -> str:
+        return (self.UNITPAY_SBP_DISPLAY_NAME or '').strip() or 'СБП (UnitPay)'
+
+    def get_unitpay_card_display_name(self) -> str:
+        return (self.UNITPAY_CARD_DISPLAY_NAME or '').strip() or 'Карта (UnitPay)'
 
     def is_riopay_enabled(self) -> bool:
         return self.RIOPAY_ENABLED and self.RIOPAY_API_TOKEN is not None
