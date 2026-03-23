@@ -1091,7 +1091,9 @@ async def update_legal_links(
     """Update legal links configuration. Admin only."""
     config = LegalLinksConfig(enabled=payload.enabled, links=payload.links)
     await set_setting_value(db, LEGAL_LINKS_KEY, json.dumps(config.model_dump(), ensure_ascii=False))
-    logger.info('Admin updated legal links', telegram_id=admin.telegram_id, enabled=payload.enabled, count=len(payload.links))
+    logger.info(
+        'Admin updated legal links', telegram_id=admin.telegram_id, enabled=payload.enabled, count=len(payload.links)
+    )
     return config
 
 
