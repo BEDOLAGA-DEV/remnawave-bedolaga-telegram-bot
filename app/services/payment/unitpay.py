@@ -129,6 +129,9 @@ class UnitPayPaymentMixin:
                 metadata_json=metadata,
             )
 
+            # Save id before potential rollback (avoids MissingGreenlet on detached object)
+            local_payment_id = local_payment.id
+
             # Сохраняем unitpay_payment_id если получили
             if unitpay_payment_id:
                 try:
@@ -155,7 +158,7 @@ class UnitPayPaymentMixin:
                 'currency': currency,
                 'payment_url': payment_url,
                 'expires_at': expires_at.isoformat(),
-                'local_payment_id': local_payment.id,
+                'local_payment_id': local_payment_id,
             }
 
         except Exception as e:
