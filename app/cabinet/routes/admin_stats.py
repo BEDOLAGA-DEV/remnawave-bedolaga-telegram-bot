@@ -149,7 +149,6 @@ class DashboardStats(BaseModel):
     subscription_chart: list | None = None  # paid sales (transactions)
 
 
-
 class SystemInfoResponse(BaseModel):
     """System information for admin dashboard."""
 
@@ -306,19 +305,23 @@ async def get_dashboard_stats(
         # Use chart-derived value if available, otherwise fall back to trans_stats
         income_today_kopeks = income_today_from_chart or trans_stats.get('today', {}).get('income_kopeks', 0)
 
-
         # Get paid subscription sales chart (last 30 days)
         # Counts new paid subscriptions (is_trial=False), NOT transactions
         try:
             from sqlalchemy import text as _text
-            _tz_safe = (tz or 'UTC').replace("'", "")
-            _chart_rows = (await db.execute(_text(
-                f"SELECT DATE(created_at AT TIME ZONE '{_tz_safe}') as d, COUNT(*) as c "
-                f"FROM subscriptions "
-                f"WHERE is_trial = false "
-                f"AND created_at >= NOW() - INTERVAL '30 days' "
-                f"GROUP BY DATE(created_at AT TIME ZONE '{_tz_safe}') ORDER BY d"
-            ))).all()
+
+            _tz_safe = (tz or 'UTC').replace("'", '')
+            _chart_rows = (
+                await db.execute(
+                    _text(
+                        f"SELECT DATE(created_at AT TIME ZONE '{_tz_safe}') as d, COUNT(*) as c "
+                        f'FROM subscriptions '
+                        f'WHERE is_trial = false '
+                        f"AND created_at >= NOW() - INTERVAL '30 days' "
+                        f"GROUP BY DATE(created_at AT TIME ZONE '{_tz_safe}') ORDER BY d"
+                    )
+                )
+            ).all()
             subscription_chart = [{'date': str(r[0]), 'count': r[1]} for r in _chart_rows]
         except Exception as _e:
             logger.error('subscription_chart query failed', error=str(_e), error_type=type(_e).__name__)
