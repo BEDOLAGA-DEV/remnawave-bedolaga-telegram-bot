@@ -1120,6 +1120,7 @@ class MiniAppSubscriptionPurchaseService:
                 device_limit=pricing.selection.devices,
                 connected_squads=pricing.selection.servers,
                 update_server_counters=False,
+                tariff_id=getattr(settings, 'SIMPLE_SUBSCRIPTION_TARIFF_ID', 1),
             )
 
         if pricing.server_ids:
