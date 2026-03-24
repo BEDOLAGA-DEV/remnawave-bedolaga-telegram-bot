@@ -43,6 +43,7 @@ def _resolve_tz(tz_str: str | None) -> ZoneInfo:
             pass
     return ZoneInfo('UTC')
 
+
 router = APIRouter(prefix='/admin/payments', tags=['Cabinet Admin Payments'])
 
 
