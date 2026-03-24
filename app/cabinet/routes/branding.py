@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -48,6 +49,7 @@ TELEGRAM_WIDGET_USERPIC_KEY = 'TELEGRAM_WIDGET_USERPIC'
 TELEGRAM_WIDGET_REQUEST_ACCESS_KEY = 'TELEGRAM_WIDGET_REQUEST_ACCESS'
 TELEGRAM_OIDC_ENABLED_KEY = 'TELEGRAM_OIDC_ENABLED'
 TELEGRAM_OIDC_CLIENT_ID_KEY = 'TELEGRAM_OIDC_CLIENT_ID'
+LEGAL_LINKS_KEY = 'CABINET_LEGAL_LINKS'  # JSON: {"enabled": true, "links": [{"title": "...", "url": "..."}]}
 
 # Default animation config
 DEFAULT_ANIMATION_CONFIG = {
@@ -64,7 +66,15 @@ ALLOWED_CONTENT_TYPES = {'image/png', 'image/jpeg', 'image/jpg', 'image/webp', '
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB for larger logos
 
 
-# ============ Schemas ============
+class LegalLink(BaseModel):
+    title: str
+    url: str
+    slug: str = ''  # Unique identifier for content storage (e.g. 'rules', 'privacy', 'offer')
+
+
+class LegalLinksConfig(BaseModel):
+    enabled: bool = False
+    links: list[LegalLink] = Field(default_factory=list)
 
 
 class BrandingResponse(BaseModel):
@@ -74,6 +84,7 @@ class BrandingResponse(BaseModel):
     logo_url: str | None = None
     logo_letter: str
     has_custom_logo: bool
+    legal_links: LegalLinksConfig | None = None
 
 
 class BrandingNameUpdate(BaseModel):
@@ -291,12 +302,23 @@ class GiftEnabledUpdate(BaseModel):
     enabled: bool
 
 
+class OfflineConvGoal(BaseModel):
+    """Offline conversion goal info."""
+
+    name: str
+    event_id: str
+    dedup: str
+
+
 class AnalyticsCountersResponse(BaseModel):
     """Analytics counter settings."""
 
     yandex_metrika_id: str = ''
     google_ads_id: str = ''
     google_ads_label: str = ''
+    offline_conv_enabled: bool = False
+    offline_conv_counter_id: str = ''
+    offline_conv_goals: list[OfflineConvGoal] = []
 
 
 class AnalyticsCountersUpdate(BaseModel):
@@ -322,9 +344,6 @@ DEFAULT_THEME_COLORS = {
     'warning': '#f59e0b',
     'error': '#ef4444',
 }
-
-
-# ============ Helper Functions ============
 
 
 def ensure_branding_dir():
@@ -365,9 +384,6 @@ def has_custom_logo() -> bool:
     return get_logo_path() is not None
 
 
-# ============ Routes ============
-
-
 @router.get('', response_model=BrandingResponse)
 async def get_branding(
     db: AsyncSession = Depends(get_cabinet_db),
@@ -387,11 +403,21 @@ async def get_branding(
     # Get first letter for logo fallback (use "V" if name is empty)
     logo_letter = name[0].upper() if name else 'V'
 
+    # Get legal links config
+    legal_links_raw = await get_setting_value(db, LEGAL_LINKS_KEY)
+    legal_links = None
+    if legal_links_raw:
+        try:
+            legal_links = LegalLinksConfig(**json.loads(legal_links_raw))
+        except Exception as e:
+            logger.warning('Failed to parse legal links config', error=str(e))
+
     return BrandingResponse(
         name=name,
         logo_url='/cabinet/branding/logo' if custom_logo else None,
         logo_letter=logo_letter,
         has_custom_logo=custom_logo,
+        legal_links=legal_links,
     )
 
 
@@ -542,9 +568,6 @@ async def delete_logo(
     )
 
 
-# ============ Theme Colors Routes ============
-
-
 def validate_hex_color(color: str) -> bool:
     """Validate hex color format."""
     if not color or not isinstance(color, str):
@@ -632,8 +655,6 @@ async def reset_theme_colors(
     return ThemeColorsResponse(**DEFAULT_THEME_COLORS)
 
 
-# ============ Enabled Themes Routes ============
-
 DEFAULT_ENABLED_THEMES = {'dark': True, 'light': True}
 
 
@@ -690,9 +711,6 @@ async def update_enabled_themes(
     return EnabledThemesResponse(**current_themes)
 
 
-# ============ Animation Routes ============
-
-
 @router.get('/animation', response_model=AnimationEnabledResponse)
 async def get_animation_enabled(
     db: AsyncSession = Depends(get_cabinet_db),
@@ -723,9 +741,6 @@ async def update_animation_enabled(
     logger.info('Admin set animation enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
 
     return AnimationEnabledResponse(enabled=payload.enabled)
-
-
-# ============ Animation Config Routes (new JSON-based) ============
 
 
 @router.get('/animation-config', response_model=AnimationConfigResponse)
@@ -788,9 +803,6 @@ async def update_animation_config(
     return AnimationConfigResponse(**current)
 
 
-# ============ Fullscreen Routes ============
-
-
 @router.get('/fullscreen', response_model=FullscreenEnabledResponse)
 async def get_fullscreen_enabled(
     db: AsyncSession = Depends(get_cabinet_db),
@@ -821,9 +833,6 @@ async def update_fullscreen_enabled(
     logger.info('Admin set fullscreen enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
 
     return FullscreenEnabledResponse(enabled=payload.enabled)
-
-
-# ============ Email Auth Routes ============
 
 
 @router.get('/email-auth', response_model=EmailAuthEnabledResponse)
@@ -868,9 +877,6 @@ async def update_email_auth_enabled(
     )
 
 
-# ============ Telegram Widget Config Routes ============
-
-
 @router.get('/telegram-widget', response_model=TelegramWidgetConfigResponse)
 async def get_telegram_widget_config(
     db: AsyncSession = Depends(get_cabinet_db),
@@ -909,9 +915,6 @@ async def get_telegram_widget_config(
     )
 
 
-# ============ Analytics Counters Routes ============
-
-
 @router.get('/analytics', response_model=AnalyticsCountersResponse)
 async def get_analytics_counters(
     db: AsyncSession = Depends(get_cabinet_db),
@@ -924,10 +927,26 @@ async def get_analytics_counters(
     google_id = await get_setting_value(db, GOOGLE_ADS_ID_KEY) or ''
     google_label = await get_setting_value(db, GOOGLE_ADS_LABEL_KEY) or ''
 
+    # Offline conversions status from env config
+    from app.config import settings as app_settings
+
+    oc_enabled = app_settings.YANDEX_OFFLINE_CONV_ENABLED and bool(app_settings.YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET)
+    oc_counter = app_settings.YANDEX_OFFLINE_CONV_COUNTER_ID if oc_enabled else ''
+    oc_goals = []
+    if oc_enabled:
+        oc_goals = [
+            OfflineConvGoal(name='Регистрация', event_id='registration', dedup='1 раз'),
+            OfflineConvGoal(name='Триал', event_id='trial-add', dedup='1 раз'),
+            OfflineConvGoal(name='Покупка', event_id='purchase', dedup='каждый'),
+        ]
+
     return AnalyticsCountersResponse(
         yandex_metrika_id=yandex_id,
         google_ads_id=google_id,
         google_ads_label=google_label,
+        offline_conv_enabled=oc_enabled,
+        offline_conv_counter_id=oc_counter,
+        offline_conv_goals=oc_goals,
     )
 
 
@@ -973,9 +992,6 @@ async def update_analytics_counters(
     )
 
 
-# ============ Lite Mode Routes ============
-
-
 @router.get('/lite-mode', response_model=LiteModeEnabledResponse)
 async def get_lite_mode_enabled(
     db: AsyncSession = Depends(get_cabinet_db),
@@ -1009,9 +1025,6 @@ async def update_lite_mode_enabled(
     return LiteModeEnabledResponse(enabled=payload.enabled)
 
 
-# ============ Gift Feature Routes ============
-
-
 @router.get('/gift-enabled', response_model=GiftEnabledResponse)
 async def get_gift_enabled(
     db: AsyncSession = Depends(get_cabinet_db),
@@ -1034,3 +1047,82 @@ async def update_gift_enabled(
     await set_setting_value(db, GIFT_ENABLED_KEY, str(payload.enabled).lower())
     logger.info('Admin set gift enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
     return GiftEnabledResponse(enabled=payload.enabled)
+
+
+# ============ Legal Links ============
+
+
+class LegalLinksUpdate(BaseModel):
+    enabled: bool
+    links: list[LegalLink] = Field(default_factory=list)
+
+
+@router.get('/legal-links', response_model=LegalLinksConfig)
+async def get_legal_links(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get legal links configuration. Public endpoint."""
+    raw = await get_setting_value(db, LEGAL_LINKS_KEY)
+    if raw:
+        try:
+            return LegalLinksConfig(**json.loads(raw))
+        except Exception as e:
+            logger.warning('Failed to parse legal links config', error=str(e))
+    return LegalLinksConfig(enabled=False, links=[])
+
+
+@router.put('/legal-links', response_model=LegalLinksConfig)
+async def update_legal_links(
+    payload: LegalLinksUpdate,
+    admin: User = Depends(require_permission('settings:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update legal links configuration. Admin only."""
+    config = LegalLinksConfig(enabled=payload.enabled, links=payload.links)
+    await set_setting_value(db, LEGAL_LINKS_KEY, json.dumps(config.model_dump(), ensure_ascii=False))
+    logger.info('Admin updated legal links', telegram_id=admin.telegram_id, enabled=payload.enabled, count=len(payload.links))
+    return config
+
+
+LEGAL_DOC_PREFIX = 'LEGAL_DOC_'
+_SLUG_PATTERN = re.compile(r'^[a-z0-9_-]{1,64}$')
+
+
+def _validate_slug(slug: str) -> str:
+    if not _SLUG_PATTERN.match(slug):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Invalid slug format')
+    return slug
+
+
+class LegalDocContent(BaseModel):
+    slug: str
+    content: str
+
+
+class LegalDocUpdate(BaseModel):
+    content: str
+
+
+@router.get('/legal-doc/{slug}')
+async def get_legal_doc(
+    slug: str,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get legal document content by slug. Public endpoint."""
+    _validate_slug(slug)
+    content = await get_setting_value(db, f'{LEGAL_DOC_PREFIX}{slug}')
+    return LegalDocContent(slug=slug, content=content or '')
+
+
+@router.put('/legal-doc/{slug}', response_model=LegalDocContent)
+async def update_legal_doc(
+    slug: str,
+    payload: LegalDocUpdate,
+    admin: User = Depends(require_permission('settings:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update legal document content. Admin only."""
+    _validate_slug(slug)
+    await set_setting_value(db, f'{LEGAL_DOC_PREFIX}{slug}', payload.content)
+    logger.info('Admin updated legal doc', telegram_id=admin.telegram_id, slug=slug, length=len(payload.content))
+    return LegalDocContent(slug=slug, content=payload.content)
