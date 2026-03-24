@@ -5,7 +5,8 @@ from __future__ import annotations
 import enum
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Any
 
 import structlog
@@ -74,6 +75,7 @@ class StatusFilter(str, enum.Enum):
 class PeriodPreset(str, enum.Enum):
     """Predefined period presets."""
 
+    TODAY = 'today'
     H24 = '24h'
     D7 = '7d'
     D30 = '30d'
@@ -81,6 +83,7 @@ class PeriodPreset(str, enum.Enum):
 
 
 _PERIOD_DELTAS: dict[PeriodPreset, timedelta] = {
+    PeriodPreset.TODAY: timedelta(hours=0),  # special: start of today
     PeriodPreset.H24: timedelta(hours=24),
     PeriodPreset.D7: timedelta(days=7),
     PeriodPreset.D30: timedelta(days=30),
@@ -119,6 +122,7 @@ class SearchParams:
     period: PeriodPreset = PeriodPreset.H24
     date_from: datetime | None = None
     date_to: datetime | None = None
+    tz: str | None = None
     page: int = 1
     per_page: int = DEFAULT_PER_PAGE
 
@@ -127,6 +131,14 @@ class SearchParams:
         """Calculate the earliest datetime to consider."""
         if self.date_from is not None:
             return self.date_from
+        if self.period == PeriodPreset.TODAY:
+            try:
+                user_tz = ZoneInfo(self.tz) if self.tz else UTC
+            except (KeyError, ValueError):
+                user_tz = UTC
+            now_local = datetime.now(user_tz)
+            midnight_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+            return midnight_local.astimezone(UTC)
         return datetime.now(UTC) - _PERIOD_DELTAS.get(self.period, _PERIOD_DELTAS[PeriodPreset.H24])
 
     @property
