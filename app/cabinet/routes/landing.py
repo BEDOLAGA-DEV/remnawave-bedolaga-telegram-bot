@@ -123,6 +123,8 @@ class PurchaseRequest(BaseModel):
     gift_recipient_type: str | None = Field(default=None, pattern=r'^(email|telegram)$')
     gift_recipient_value: str | None = Field(default=None, max_length=255)
     gift_message: str | None = Field(default=None, max_length=1000)
+    yandex_cid: str | None = Field(default=None, max_length=128)
+    language: str | None = Field(default=None, max_length=5)
 
     @model_validator(mode='after')
     def validate_contacts(self) -> 'PurchaseRequest':
@@ -252,36 +254,61 @@ def _build_purchase_status_response(purchase: GuestPurchase) -> PurchaseStatusRe
     )
 
 
-def _period_label(days: int) -> str:
-    """Human-readable label for a period in days."""
-    if days == 1:
-        return '1 day'
-    if days <= 6:
-        return f'{days} days'
-    if days == 7:
-        return '1 week'
-    if days == 14:
-        return '2 weeks'
-    if days == 30:
-        return '1 month'
-    if days == 60:
-        return '2 months'
-    if days == 90:
-        return '3 months'
-    if days == 180:
-        return '6 months'
-    if days == 365:
-        return '1 year'
-    if days == 456:
-        return '1 year + 3 mo.'
+def _detect_lang(request: Request) -> str:
+    """Detect language from Accept-Language header."""
+    accept = request.headers.get('accept-language', 'ru')
+    for lang in ('ru', 'en', 'zh', 'fa'):
+        if lang in accept:
+            return lang
+    return 'ru'
 
-    months = days // 30
-    remainder = days % 30
-    if months > 0 and remainder == 0:
-        return f'{months} mo.'
-    if months > 0:
-        return f'{months} mo. + {remainder} d.'
-    return f'{days} days'
+
+def _period_label(days: int, lang: str = 'ru') -> str:
+    """Convert days to human-readable period label, localized."""
+    labels = {
+        'ru': {
+            1: '1 день',
+            7: '1 неделя',
+            14: '2 недели',
+            30: '1 месяц',
+            60: '2 месяца',
+            90: '3 месяца',
+            180: '6 месяцев',
+            365: '1 год',
+        },
+        'en': {
+            1: '1 day',
+            7: '1 week',
+            14: '2 weeks',
+            30: '1 month',
+            60: '2 months',
+            90: '3 months',
+            180: '6 months',
+            365: '1 year',
+        },
+        'zh': {1: '1天', 7: '1周', 14: '2周', 30: '1个月', 60: '2个月', 90: '3个月', 180: '6个月', 365: '1年'},
+        'fa': {
+            1: '۱ روز',
+            7: '۱ هفته',
+            14: '۲ هفته',
+            30: '۱ ماه',
+            60: '۲ ماه',
+            90: '۳ ماه',
+            180: '۶ ماه',
+            365: '۱ سال',
+        },
+    }
+    lang_labels = labels.get(lang, labels['ru'])
+    if days in lang_labels:
+        return lang_labels[days]
+    if days % 30 == 0:
+        months = days // 30
+        suffixes = {'ru': 'мес.', 'en': 'mo.', 'zh': '个月', 'fa': 'ماه'}
+        suffix = suffixes.get(lang, 'мес.')
+        return f'{months} {suffix}'
+    suffixes_d = {'ru': 'дн.', 'en': 'd.', 'zh': '天', 'fa': 'روز'}
+    suffix_d = suffixes_d.get(lang, 'дн.')
+    return f'{days} {suffix_d}'
 
 
 def _get_active_discount(landing: LandingPage, lang: str) -> LandingDiscountInfo | None:
@@ -644,6 +671,7 @@ async def create_landing_purchase(
         gift_recipient_type=body.gift_recipient_type,
         gift_recipient_value=body.gift_recipient_value,
         gift_message=body.gift_message,
+        yandex_cid=body.yandex_cid,
         commit=False,
     )
 
@@ -662,7 +690,10 @@ async def create_landing_purchase(
         db=db,
         amount_kopeks=amount_kopeks,
         payment_method=body.payment_method,
-        description=f'{tariff.name} — {body.period_days}d',
+        description=settings.PAYMENT_BALANCE_TEMPLATE.format(
+            service_name=settings.PAYMENT_SERVICE_NAME,
+            description=f'{tariff.name} {_period_label(body.period_days, lang=(body.language or "ru"))}',
+        ),
         purchase_token=purchase.token,
         return_url=return_url,
     )

@@ -559,6 +559,23 @@ class Settings(BaseSettings):
     KASSA_AI_CARD_ENABLED: bool = False  # Карты РФ — payment_system_id=36
     KASSA_AI_CARD_DISPLAY_NAME: str = 'Карта (KassaAI)'
 
+    # UnitPay (unitpay.ru)
+    UNITPAY_ENABLED: bool = False
+    UNITPAY_PROJECT_ID: int | None = None
+    UNITPAY_SECRET_KEY: str | None = None
+    UNITPAY_DISPLAY_NAME: str = 'UnitPay'
+    UNITPAY_CURRENCY: str = 'RUB'
+    UNITPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
+    UNITPAY_MAX_AMOUNT_KOPEKS: int = 100000000  # 1 000 000₽
+    UNITPAY_WEBHOOK_PATH: str = '/unitpay-webhook'
+    UNITPAY_PAYMENT_TYPE: str = 'card'
+    UNITPAY_HIDE_OTHER_METHODS: bool = True
+    # Раздельные методы оплаты UnitPay
+    UNITPAY_SBP_ENABLED: bool = False
+    UNITPAY_SBP_DISPLAY_NAME: str = 'СБП (UnitPay)'
+    UNITPAY_CARD_ENABLED: bool = False
+    UNITPAY_CARD_DISPLAY_NAME: str = 'Карта (UnitPay)'
+
     # RioPay (api.riopay.online) v2.0.1
     RIOPAY_ENABLED: bool = False
     RIOPAY_API_TOKEN: str | None = None  # x-api-token header
@@ -570,6 +587,13 @@ class Settings(BaseSettings):
     RIOPAY_WEBHOOK_PATH: str = '/riopay-webhook'
     RIOPAY_SUCCESS_URL: str | None = None
     RIOPAY_FAIL_URL: str | None = None
+    # === Yandex Offline Conversions ===
+    YANDEX_OFFLINE_CONV_ENABLED: bool = False
+    YANDEX_OFFLINE_CONV_COUNTER_ID: str = ''
+    YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET: str = ''
+    YANDEX_OFFLINE_CONV_START_PREFIX: str = 'utm_ya_'
+    YANDEX_OFFLINE_CONV_DL: str = ''
+    YANDEX_OFFLINE_CONV_DT: str = ''
 
     # SeverPay (severpay.io)
     SEVERPAY_ENABLED: bool = False
@@ -967,7 +991,7 @@ class Settings(BaseSettings):
 
     def get_proxy_url(self) -> str | None:
         """Return SOCKS5 proxy URL or None."""
-        return self.PROXY_URL if self.PROXY_URL else None
+        return self.PROXY_URL or None
 
     def get_nalogo_proxy_url(self) -> str | None:
         """Return SOCKS proxy URL for nalogo or None.
@@ -1941,6 +1965,36 @@ class Settings(BaseSettings):
     def get_kassa_ai_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_display_name())
 
+    def is_unitpay_enabled(self) -> bool:
+        return self.UNITPAY_ENABLED and self.UNITPAY_PROJECT_ID is not None and self.UNITPAY_SECRET_KEY is not None
+
+    def get_unitpay_display_name(self) -> str:
+        name = (self.UNITPAY_DISPLAY_NAME or '').strip()
+        return name or 'UnitPay'
+
+    def get_unitpay_display_name_html(self) -> str:
+        return html.escape(self.get_unitpay_display_name())
+
+    def is_unitpay_sbp_enabled(self) -> bool:
+        return self.UNITPAY_SBP_ENABLED and self.is_unitpay_enabled()
+
+    def get_unitpay_sbp_display_name(self) -> str:
+        name = (self.UNITPAY_SBP_DISPLAY_NAME or '').strip()
+        return name or 'СБП (UnitPay)'
+
+    def get_unitpay_sbp_display_name_html(self) -> str:
+        return html.escape(self.get_unitpay_sbp_display_name())
+
+    def is_unitpay_card_enabled(self) -> bool:
+        return self.UNITPAY_CARD_ENABLED and self.is_unitpay_enabled()
+
+    def get_unitpay_card_display_name(self) -> str:
+        name = (self.UNITPAY_CARD_DISPLAY_NAME or '').strip()
+        return name or 'Карта (UnitPay)'
+
+    def get_unitpay_card_display_name_html(self) -> str:
+        return html.escape(self.get_unitpay_card_display_name())
+
     def is_riopay_enabled(self) -> bool:
         return self.RIOPAY_ENABLED and self.RIOPAY_API_TOKEN is not None
 
@@ -1956,7 +2010,7 @@ class Settings(BaseSettings):
 
     def get_severpay_display_name(self) -> str:
         name = (self.SEVERPAY_DISPLAY_NAME or '').strip()
-        return name if name else 'SeverPay'
+        return name or 'SeverPay'
 
     def get_severpay_display_name_html(self) -> str:
         return html.escape(self.get_severpay_display_name())
@@ -1966,7 +2020,7 @@ class Settings(BaseSettings):
 
     def get_kassa_ai_sbp_display_name(self) -> str:
         name = (self.KASSA_AI_SBP_DISPLAY_NAME or '').strip()
-        return name if name else 'СБП (KassaAI)'
+        return name or 'СБП (KassaAI)'
 
     def get_kassa_ai_sbp_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_sbp_display_name())
@@ -1976,7 +2030,7 @@ class Settings(BaseSettings):
 
     def get_kassa_ai_card_display_name(self) -> str:
         name = (self.KASSA_AI_CARD_DISPLAY_NAME or '').strip()
-        return name if name else 'Карта (KassaAI)'
+        return name or 'Карта (KassaAI)'
 
     def get_kassa_ai_card_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_card_display_name())
@@ -2230,10 +2284,21 @@ class Settings(BaseSettings):
             return [30, 60, 90, 180, 360]
 
     def get_balance_payment_description(
-        self, amount_kopeks: int, telegram_user_id: int | None = None, user_db_id: int | None = None
+        self,
+        amount_kopeks: int,
+        telegram_user_id: int | None = None,
+        user_db_id: int | None = None,
+        language: str | None = None,
     ) -> str:
-        # Базовое описание
-        description = f'{self.PAYMENT_BALANCE_DESCRIPTION} на {self.format_price(amount_kopeks)}'
+        # Localized base description
+        _topup_labels = {
+            'ru': 'Пополнение баланса',
+            'en': 'Balance top-up',
+            'zh': '余额充值',
+            'fa': 'شارژ موجودی',
+        }
+        base = _topup_labels.get(language or 'ru', self.PAYMENT_BALANCE_DESCRIPTION)
+        description = f'{base} {self.format_price(amount_kopeks)}'
 
         # Добавляем идентификатор пользователя (TG ID приоритет, fallback на DB ID)
         if telegram_user_id is not None:

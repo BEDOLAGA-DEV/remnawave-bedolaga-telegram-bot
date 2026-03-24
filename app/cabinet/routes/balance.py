@@ -360,7 +360,10 @@ async def create_topup(
             option = (request.payment_option or '').strip().lower()
             # Use description with telegram_id for tax receipts
             description = settings.get_balance_payment_description(
-                request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                request.amount_kopeks,
+                telegram_user_id=user.telegram_id,
+                user_db_id=user.id,
+                language=getattr(request, 'language', None),
             )
             if option == 'sbp':
                 result = await payment_service.create_yookassa_sbp_payment(
@@ -423,7 +426,10 @@ async def create_topup(
                 amount_usd=amount_usd,
                 asset=settings.CRYPTOBOT_DEFAULT_ASSET,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                    request.amount_kopeks,
+                    telegram_user_id=user.telegram_id,
+                    user_db_id=user.id,
+                    language=getattr(request, 'language', None),
                 ),
                 payload=f'cabinet_topup_{user.id}_{request.amount_kopeks}',
             )
@@ -484,7 +490,10 @@ async def create_topup(
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                    request.amount_kopeks,
+                    telegram_user_id=user.telegram_id,
+                    user_db_id=user.id,
+                    language=getattr(request, 'language', None),
                 ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_method_code=method_code,
@@ -514,7 +523,10 @@ async def create_topup(
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                    request.amount_kopeks,
+                    telegram_user_id=user.telegram_id,
+                    user_db_id=user.id,
+                    language=getattr(request, 'language', None),
                 ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 return_url=cabinet_return_url,
@@ -543,7 +555,10 @@ async def create_topup(
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                    request.amount_kopeks,
+                    telegram_user_id=user.telegram_id,
+                    user_db_id=user.id,
+                    language=getattr(request, 'language', None),
                 ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
@@ -575,7 +590,10 @@ async def create_topup(
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                    request.amount_kopeks,
+                    telegram_user_id=user.telegram_id,
+                    user_db_id=user.id,
+                    language=getattr(request, 'language', None),
                 ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
@@ -617,7 +635,10 @@ async def create_topup(
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                    request.amount_kopeks,
+                    telegram_user_id=user.telegram_id,
+                    user_db_id=user.id,
+                    language=getattr(request, 'language', None),
                 ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 return_url=cabinet_success_url,
@@ -646,7 +667,10 @@ async def create_topup(
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                    request.amount_kopeks,
+                    telegram_user_id=user.telegram_id,
+                    user_db_id=user.id,
+                    language=getattr(request, 'language', None),
                 ),
                 telegram_id=user.telegram_id,
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
@@ -676,7 +700,10 @@ async def create_topup(
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                    request.amount_kopeks,
+                    telegram_user_id=user.telegram_id,
+                    user_db_id=user.id,
+                    language=getattr(request, 'language', None),
                 ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
@@ -708,7 +735,10 @@ async def create_topup(
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                    request.amount_kopeks,
+                    telegram_user_id=user.telegram_id,
+                    user_db_id=user.id,
+                    language=getattr(request, 'language', None),
                 ),
                 email=getattr(user, 'email', None),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
@@ -737,7 +767,10 @@ async def create_topup(
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                    request.amount_kopeks,
+                    telegram_user_id=user.telegram_id,
+                    user_db_id=user.id,
+                    language=getattr(request, 'language', None),
                 ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 success_url=cabinet_success_url,
@@ -751,6 +784,43 @@ async def create_topup(
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail='Failed to create RioPay payment',
+                )
+
+        elif request.payment_method == 'unitpay':
+            if not settings.is_unitpay_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='UnitPay payment method is unavailable',
+                )
+
+
+            option = (request.payment_option or '').strip().lower()
+            UNITPAY_OPTION_MAP = {'sbp': 'sbp', 'card': 'card'}
+            pt = UNITPAY_OPTION_MAP.get(option)  # None = use env default
+
+            payment_service = PaymentService()
+            result = await payment_service.create_unitpay_payment(
+                db=db,
+                user_id=user.id,
+                amount_kopeks=request.amount_kopeks,
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks,
+                    telegram_user_id=user.telegram_id,
+                    user_db_id=user.id,
+                    language=getattr(request, 'language', None),
+                ),
+                email=getattr(user, 'email', None),
+                language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                payment_type=pt,
+            )
+
+            if result and result.get('payment_url'):
+                payment_url = result.get('payment_url')
+                payment_id = str(result.get('local_payment_id') or result.get('order_id') or 'pending')
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Failed to create UnitPay payment',
                 )
 
         elif request.payment_method == 'tribute':
@@ -947,6 +1017,8 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status in {'pending', 'created', 'processing'}
     if record.method == PaymentMethod.RIOPAY:
         return status in {'pending'}
+    if record.method == PaymentMethod.UNITPAY:
+        return status in {'pending', 'processing'}
     return False
 
 
@@ -975,6 +1047,7 @@ def _get_payment_url(record: PendingPayment) -> str | None:
         PaymentMethod.FREEKASSA,
         PaymentMethod.KASSA_AI,
         PaymentMethod.RIOPAY,
+        PaymentMethod.UNITPAY,
     ):
         payment_url = getattr(payment, 'payment_url', None) or payment_url
 
@@ -1065,6 +1138,7 @@ async def get_latest_payment_by_method(
         Pal24Payment,
         PlategaPayment,
         RioPayPayment,
+        UnitPayPayment,
         WataPayment,
         YooKassaPayment,
     )
@@ -1080,6 +1154,7 @@ async def get_latest_payment_by_method(
         PaymentMethod.CLOUDPAYMENTS: CloudPaymentsPayment,
         PaymentMethod.FREEKASSA: FreekassaPayment,
         PaymentMethod.KASSA_AI: KassaAiPayment,
+        PaymentMethod.UNITPAY: UnitPayPayment,
         PaymentMethod.RIOPAY: RioPayPayment,
     }
 
