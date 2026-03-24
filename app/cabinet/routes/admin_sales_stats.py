@@ -1,6 +1,7 @@
 """Admin routes for sales statistics in cabinet."""
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -34,10 +35,21 @@ router = APIRouter(prefix='/admin/stats/sales', tags=['Cabinet Admin Sales Stats
 MAX_PERIOD_DAYS = 730  # 2 years max
 
 
+def _resolve_tz(tz: str | None) -> ZoneInfo:
+    """Resolve timezone string to ZoneInfo, fallback to UTC."""
+    if tz:
+        try:
+            return ZoneInfo(tz)
+        except (KeyError, ValueError):
+            pass
+    return ZoneInfo('UTC')
+
+
 def _parse_period(
     days: int | None,
     start_date: str | None,
     end_date: str | None,
+    tz: str | None = None,
 ) -> tuple[datetime, datetime]:
     """Parse period from preset days or custom date range."""
     now = datetime.now(UTC)
@@ -56,11 +68,12 @@ def _parse_period(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Invalid end_date format',
             )
-        # Ensure timezone awareness
+        # Ensure timezone awareness — interpret naive dates in user's timezone
+        user_tz = _resolve_tz(tz)
         if start.tzinfo is None:
-            start = start.replace(tzinfo=UTC)
+            start = start.replace(hour=0, minute=0, second=0, tzinfo=user_tz).astimezone(UTC)
         if end.tzinfo is None:
-            end = end.replace(tzinfo=UTC)
+            end = end.replace(hour=23, minute=59, second=59, tzinfo=user_tz).astimezone(UTC)
         # Validate range
         if start > end:
             raise HTTPException(
@@ -72,10 +85,13 @@ def _parse_period(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f'Date range cannot exceed {MAX_PERIOD_DAYS} days',
             )
-        return start, end.replace(hour=23, minute=59, second=59)
+        return start, end
     if days is not None and days > 0:
         days = min(days, MAX_PERIOD_DAYS)
-        start = (now - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
+        user_tz = _resolve_tz(tz)
+        now_local = datetime.now(user_tz)
+        start_local = (now_local - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start = start_local.astimezone(UTC)
         return start, now
     # Default: all time (from epoch)
     return datetime(2020, 1, 1, tzinfo=UTC), now
@@ -105,12 +121,13 @@ async def get_sales_summary(
     days: int | None = Query(default=30, description='Preset period in days (7, 30, 90, 0=all)'),
     start_date: str | None = Query(default=None, description='Custom start date ISO format'),
     end_date: str | None = Query(default=None, description='Custom end date ISO format'),
+    tz: str | None = Query(None, description='Browser timezone (e.g. Europe/Moscow)'),
     admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SalesSummary:
     """Get summary statistics for sales dashboard cards."""
     try:
-        period_start, period_end = _parse_period(days, start_date, end_date)
+        period_start, period_end = _parse_period(days, start_date, end_date, tz=tz)
 
         # Total revenue (deposits + direct subscription payments with real payment methods)
         revenue_result = await db.execute(
@@ -310,12 +327,13 @@ async def get_trials_stats(
     days: int | None = Query(default=30),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
+    tz: str | None = Query(None, description='Browser timezone (e.g. Europe/Moscow)'),
     admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> TrialsStatsResponse:
     """Get trial registration statistics with provider breakdown."""
     try:
-        period_start, period_end = _parse_period(days, start_date, end_date)
+        period_start, period_end = _parse_period(days, start_date, end_date, tz=tz)
 
         total_result = await db.execute(
             select(func.count(Subscription.id)).where(
@@ -520,12 +538,13 @@ async def get_sales_stats(
     days: int | None = Query(default=30),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
+    tz: str | None = Query(None, description='Browser timezone (e.g. Europe/Moscow)'),
     admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SalesStatsResponse:
     """Get subscription sales statistics."""
     try:
-        period_start, period_end = _parse_period(days, start_date, end_date)
+        period_start, period_end = _parse_period(days, start_date, end_date, tz=tz)
 
         base_filter = and_(
             Subscription.is_trial == False,
@@ -699,12 +718,13 @@ async def get_renewals_stats(
     days: int | None = Query(default=30),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
+    tz: str | None = Query(None, description='Browser timezone (e.g. Europe/Moscow)'),
     admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> RenewalsStatsResponse:
     """Get renewal statistics with period comparison."""
     try:
-        period_start, period_end = _parse_period(days, start_date, end_date)
+        period_start, period_end = _parse_period(days, start_date, end_date, tz=tz)
         is_all_time = days is not None and days == 0
 
         if is_all_time:
@@ -914,12 +934,13 @@ async def get_addons_stats(
     days: int | None = Query(default=30),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
+    tz: str | None = Query(None, description='Browser timezone (e.g. Europe/Moscow)'),
     admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> AddonsStatsResponse:
     """Get add-on purchase statistics."""
     try:
-        period_start, period_end = _parse_period(days, start_date, end_date)
+        period_start, period_end = _parse_period(days, start_date, end_date, tz=tz)
 
         base_filter = and_(
             TrafficPurchase.created_at >= period_start,
@@ -1070,12 +1091,13 @@ async def get_deposits_stats(
     days: int | None = Query(default=30),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
+    tz: str | None = Query(None, description='Browser timezone (e.g. Europe/Moscow)'),
     admin: User = Depends(require_permission('sales_stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> DepositsStatsResponse:
     """Get deposit statistics with payment method breakdown."""
     try:
-        period_start, period_end = _parse_period(days, start_date, end_date)
+        period_start, period_end = _parse_period(days, start_date, end_date, tz=tz)
 
         methods_with_manual = [*REAL_PAYMENT_METHODS, PaymentMethod.MANUAL.value]
         base_filter = and_(

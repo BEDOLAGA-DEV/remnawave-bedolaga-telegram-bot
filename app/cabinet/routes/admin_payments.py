@@ -2,6 +2,7 @@
 
 import math
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -32,6 +33,15 @@ from ..dependencies import get_cabinet_db, require_permission
 
 
 logger = structlog.get_logger(__name__)
+
+
+def _resolve_tz(tz_str: str | None) -> ZoneInfo:
+    if tz_str:
+        try:
+            return ZoneInfo(tz_str)
+        except (KeyError, ValueError):
+            pass
+    return ZoneInfo('UTC')
 
 router = APIRouter(prefix='/admin/payments', tags=['Cabinet Admin Payments'])
 
@@ -382,11 +392,12 @@ async def search_payments_endpoint(
         except ValueError:
             pass
 
-    # Ensure custom dates are timezone-aware
+    # Ensure custom dates are timezone-aware — interpret in user's timezone
+    _user_tz = _resolve_tz(tz)
     if date_from is not None and date_from.tzinfo is None:
-        date_from = date_from.replace(tzinfo=UTC)
+        date_from = date_from.replace(hour=0, minute=0, second=0, tzinfo=_user_tz).astimezone(UTC)
     if date_to is not None and date_to.tzinfo is None:
-        date_to = date_to.replace(tzinfo=UTC)
+        date_to = date_to.replace(hour=23, minute=59, second=59, tzinfo=_user_tz).astimezone(UTC)
 
     # Clamp custom dates to safety limit
     min_allowed = datetime.now(UTC) - timedelta(days=MAX_ALL_TIME_DAYS)
@@ -452,11 +463,12 @@ async def search_payments_stats_endpoint(
         except ValueError:
             pass
 
-    # Ensure custom dates are timezone-aware
+    # Ensure custom dates are timezone-aware — interpret in user's timezone
+    _user_tz = _resolve_tz(tz)
     if date_from is not None and date_from.tzinfo is None:
-        date_from = date_from.replace(tzinfo=UTC)
+        date_from = date_from.replace(hour=0, minute=0, second=0, tzinfo=_user_tz).astimezone(UTC)
     if date_to is not None and date_to.tzinfo is None:
-        date_to = date_to.replace(tzinfo=UTC)
+        date_to = date_to.replace(hour=23, minute=59, second=59, tzinfo=_user_tz).astimezone(UTC)
 
     # Clamp custom dates to safety limit
     min_allowed = datetime.now(UTC) - timedelta(days=MAX_ALL_TIME_DAYS)
