@@ -72,7 +72,7 @@ class UnitPayPaymentMixin:
             user = await payment_module.get_user_by_id(db, user_id)
         else:
             user = None
-        tg_id = user.telegram_id if user else (user_id or 'guest')
+        tg_id = (user.telegram_id or user.id) if user else (user_id or 'guest')
 
         # Генерируем уникальный order_id (account для UnitPay)
         order_id = f'up{tg_id}_{uuid.uuid4().hex[:6]}'
