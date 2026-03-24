@@ -308,18 +308,24 @@ async def get_dashboard_stats(
         # Get paid subscription sales chart (last 30 days)
         # Counts new paid subscriptions (is_trial=False), NOT transactions
         try:
-            from sqlalchemy import text as _text
-
-            _tz_safe = (tz or 'UTC').replace("'", '')
+            _tz_name = (tz or 'UTC').replace("'", '')
+            try:
+                ZoneInfo(_tz_name)
+            except (KeyError, ValueError):
+                _tz_name = 'UTC'
+            day_col = func.date(func.timezone(_tz_name, Subscription.created_at))
             _chart_rows = (
                 await db.execute(
-                    _text(
-                        f"SELECT DATE(created_at AT TIME ZONE '{_tz_safe}') as d, COUNT(*) as c "
-                        f'FROM subscriptions '
-                        f'WHERE is_trial = false '
-                        f"AND created_at >= NOW() - INTERVAL '30 days' "
-                        f"GROUP BY DATE(created_at AT TIME ZONE '{_tz_safe}') ORDER BY d"
+                    select(
+                        day_col.label('d'),
+                        func.count(Subscription.id).label('c'),
                     )
+                    .where(
+                        Subscription.is_trial == False,
+                        Subscription.created_at >= datetime.now(UTC) - timedelta(days=30),
+                    )
+                    .group_by(day_col)
+                    .order_by(day_col)
                 )
             ).all()
             subscription_chart = [{'date': str(r[0]), 'count': r[1]} for r in _chart_rows]
