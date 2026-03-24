@@ -1059,7 +1059,6 @@ async def get_subscriptions_statistics(db: AsyncSession, tz: str | None = None) 
 
     paid_subscriptions = active_subscriptions - trial_subscriptions
 
-    now = datetime.now(UTC)
     try:
         user_tz = ZoneInfo(tz) if tz else ZoneInfo('UTC')
     except (KeyError, ValueError):
