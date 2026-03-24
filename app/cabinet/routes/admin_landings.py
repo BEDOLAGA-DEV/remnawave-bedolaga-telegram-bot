@@ -1,6 +1,7 @@
 """Admin routes for landing page management in cabinet."""
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
 import structlog
@@ -790,6 +791,7 @@ _STATS_PERIOD_DAYS = 30
 @router.get('/{landing_id}/stats', response_model=LandingStatsResponse)
 async def get_landing_stats(
     landing_id: int,
+    tz: str | None = Query(None, description='Browser timezone'),
     admin: User = Depends(require_permission('landings:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> LandingStatsResponse:
@@ -827,10 +829,15 @@ async def get_landing_stats(
     # -- Daily stats for last N days --
     now = datetime.now(UTC)
     cutoff = now - timedelta(days=_STATS_PERIOD_DAYS)
-    day_at_utc = func.date(func.timezone('UTC', GuestPurchase.paid_at))
+    _tz_name = tz or 'UTC'
+    try:
+        ZoneInfo(_tz_name)
+    except (KeyError, ValueError):
+        _tz_name = 'UTC'
+    day_at_tz = func.date(func.timezone(_tz_name, GuestPurchase.paid_at))
     daily_result = await db.execute(
         select(
-            day_at_utc.label('day'),
+            day_at_tz.label('day'),
             func.count(GuestPurchase.id).label('purchases'),
             func.coalesce(func.sum(GuestPurchase.amount_kopeks), 0).label('revenue_kopeks'),
             func.count(case((GuestPurchase.is_gift.is_(True), GuestPurchase.id))).label('gifts'),
@@ -840,24 +847,24 @@ async def get_landing_stats(
             is_successful,
             GuestPurchase.paid_at >= cutoff,
         )
-        .group_by(day_at_utc)
-        .order_by(day_at_utc)
+        .group_by(day_at_tz)
+        .order_by(day_at_tz)
     )
     daily_rows = {str(r.day): r for r in daily_result.all()}
 
     # Created per day (all statuses, by created_at)
-    day_created_utc = func.date(func.timezone('UTC', GuestPurchase.created_at))
+    day_created_tz = func.date(func.timezone(_tz_name, GuestPurchase.created_at))
     created_result = await db.execute(
         select(
-            day_created_utc.label('day'),
+            day_created_tz.label('day'),
             func.count(GuestPurchase.id).label('created'),
         )
         .where(
             GuestPurchase.landing_id == landing_id,
             GuestPurchase.created_at >= cutoff,
         )
-        .group_by(day_created_utc)
-        .order_by(day_created_utc)
+        .group_by(day_created_tz)
+        .order_by(day_created_tz)
     )
     created_rows = {str(r.day): r.created for r in created_result.all()}
 
