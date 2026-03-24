@@ -190,10 +190,6 @@ class UnitPayPaymentMixin:
             signature = params.get('signature', '')
             if not unitpay_service.verify_webhook_signature(method, params, signature):
                 # Тестовый запрос от UnitPay (проверка webhook URL) — только если подпись не прошла
-                test_flag = params.get('test')
-                if test_flag == '1' or account == 'test':
-                    logger.info('UnitPay webhook: тестовый запрос', method=method, account=account)
-                    return {'result': {'message': 'Test OK'}}
                 logger.warning('UnitPay webhook: неверная подпись', method=method)
                 return {'error': {'message': 'Invalid signature'}}
 
@@ -361,7 +357,7 @@ class UnitPayPaymentMixin:
         # Начисляем баланс (атомарно с has_made_first_topup)
         user.balance_kopeks += payment.amount_kopeks
         user.updated_at = datetime.now(UTC)
-        if was_first_topup and not user.referred_by_id:
+        if was_first_topup and not user.has_made_first_topup:
             user.has_made_first_topup = True
 
         promo_group = user.get_primary_promo_group()
