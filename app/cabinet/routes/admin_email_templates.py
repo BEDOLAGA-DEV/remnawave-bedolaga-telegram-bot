@@ -312,7 +312,14 @@ TEMPLATE_TYPES = [
             'zh': '通过落地页成功付款后发送给买家的邮件',
             'ua': 'Лист покупцю після успішної оплати через лендінг',
         },
-        'context_vars': ['tariff_name', 'period_days', 'cabinet_url', 'cabinet_email', 'cabinet_password', 'subscription_url'],
+        'context_vars': [
+            'tariff_name',
+            'period_days',
+            'cabinet_url',
+            'cabinet_email',
+            'cabinet_password',
+            'subscription_url',
+        ],
     },
     {
         'type': 'guest_activation_required',
