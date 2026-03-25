@@ -267,7 +267,7 @@ class UnitPayPaymentMixin:
 
                 # Финализируем платеж
                 success = await self._finalize_unitpay_payment(
-                    db, payment, unitpay_id=str(unitpay_id), trigger='webhook'
+                    db, payment, unitpay_id=str(unitpay_id) if unitpay_id else payment.order_id, trigger='webhook'
                 )
 
                 if success:
@@ -357,7 +357,7 @@ class UnitPayPaymentMixin:
         # Начисляем баланс (атомарно с has_made_first_topup)
         user.balance_kopeks += payment.amount_kopeks
         user.updated_at = datetime.now(UTC)
-        if was_first_topup and not user.has_made_first_topup:
+        if was_first_topup and not user.has_made_first_topup and not user.referred_by_id:
             user.has_made_first_topup = True
 
         promo_group = user.get_primary_promo_group()
