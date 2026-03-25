@@ -48,6 +48,7 @@ TELEGRAM_WIDGET_USERPIC_KEY = 'TELEGRAM_WIDGET_USERPIC'
 TELEGRAM_WIDGET_REQUEST_ACCESS_KEY = 'TELEGRAM_WIDGET_REQUEST_ACCESS'
 TELEGRAM_OIDC_ENABLED_KEY = 'TELEGRAM_OIDC_ENABLED'
 TELEGRAM_OIDC_CLIENT_ID_KEY = 'TELEGRAM_OIDC_CLIENT_ID'
+LOGIN_FORM_CONFIG_KEY = 'LOGIN_FORM_CONFIG'  # JSON: login form constructor config
 
 # Default animation config
 DEFAULT_ANIMATION_CONFIG = {
@@ -305,6 +306,64 @@ class AnalyticsCountersUpdate(BaseModel):
     yandex_metrika_id: str | None = None
     google_ads_id: str | None = None
     google_ads_label: str | None = None
+
+
+# ============ Login Form Constructor ============
+
+ALLOWED_SECTION_TYPES = {'telegram', 'oauth', 'email'}
+
+DEFAULT_LOGIN_FORM_CONFIG = {
+    'sections': [
+        {'type': 'telegram', 'enabled': True, 'order': 0, 'label': {}},
+        {'type': 'oauth', 'enabled': True, 'order': 1, 'label': {}},
+        {'type': 'email', 'enabled': True, 'order': 2, 'label': {}},
+    ],
+    'title': {},
+    'subtitle': {},
+    'show_bot_link': True,
+    'show_language_switcher': True,
+}
+
+
+class LoginFormSection(BaseModel):
+    """A single section of the login form."""
+
+    type: Literal['telegram', 'oauth', 'email']
+    enabled: bool
+    order: int = Field(ge=0)
+    label: dict = Field(default_factory=dict)
+
+
+class LoginFormConfigResponse(BaseModel):
+    """Login form configuration."""
+
+    sections: list[LoginFormSection] = Field(default_factory=list)
+    title: dict = Field(default_factory=dict)
+    subtitle: dict = Field(default_factory=dict)
+    show_bot_link: bool = True
+    show_language_switcher: bool = True
+
+
+class LoginFormConfigUpdate(BaseModel):
+    """Request to update login form configuration."""
+
+    sections: list[LoginFormSection]
+    title: dict = Field(default_factory=dict)
+    subtitle: dict = Field(default_factory=dict)
+    show_bot_link: bool = True
+    show_language_switcher: bool = True
+
+    @field_validator('sections')
+    @classmethod
+    def validate_sections(cls, v: list[LoginFormSection]) -> list[LoginFormSection]:
+        if not v:
+            raise ValueError('sections must not be empty')
+        seen_types = set()
+        for section in v:
+            if section.type in seen_types:
+                raise ValueError(f'Duplicate section type: {section.type}')
+            seen_types.add(section.type)
+        return v
 
 
 # Default theme colors
@@ -1034,3 +1093,47 @@ async def update_gift_enabled(
     await set_setting_value(db, GIFT_ENABLED_KEY, str(payload.enabled).lower())
     logger.info('Admin set gift enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
     return GiftEnabledResponse(enabled=payload.enabled)
+
+
+# ============ Login Form Constructor ============
+
+admin_branding_router = APIRouter(prefix='/admin/branding', tags=['Admin Branding'])
+
+
+@router.get('/login-form', response_model=LoginFormConfigResponse)
+async def get_login_form_config(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """
+    Get login form configuration.
+    This is a public endpoint - no authentication required.
+    """
+    config_json = await get_setting_value(db, LOGIN_FORM_CONFIG_KEY)
+
+    if config_json:
+        try:
+            config = json.loads(config_json)
+            return LoginFormConfigResponse(**config)
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            logger.warning('Failed to parse login form config', error=str(e))
+
+    return LoginFormConfigResponse(**DEFAULT_LOGIN_FORM_CONFIG)
+
+
+@admin_branding_router.put('/login-form', response_model=LoginFormConfigResponse)
+async def update_login_form_config(
+    payload: LoginFormConfigUpdate,
+    admin: User = Depends(require_permission('settings:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update login form configuration. Admin only."""
+    config = payload.model_dump()
+    await set_setting_value(db, LOGIN_FORM_CONFIG_KEY, json.dumps(config, ensure_ascii=False))
+
+    logger.info(
+        'Admin updated login form config',
+        telegram_id=admin.telegram_id,
+        sections=[s['type'] for s in config['sections']],
+    )
+
+    return LoginFormConfigResponse(**config)
