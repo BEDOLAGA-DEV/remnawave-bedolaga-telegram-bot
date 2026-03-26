@@ -2,6 +2,7 @@
 
 import math
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -32,6 +33,15 @@ from ..dependencies import get_cabinet_db, require_permission
 
 
 logger = structlog.get_logger(__name__)
+
+
+def _resolve_tz(tz_str: str | None) -> ZoneInfo:
+    if tz_str:
+        try:
+            return ZoneInfo(tz_str)
+        except (KeyError, ValueError):
+            pass
+    return ZoneInfo('UTC')
 
 router = APIRouter(prefix='/admin/payments', tags=['Cabinet Admin Payments'])
 
@@ -355,9 +365,10 @@ async def search_payments_endpoint(
     ),
     status_filter: str = Query('all', description='Status filter: all, pending, paid, cancelled'),
     method_filter: str | None = Query(None, description='Filter by payment method'),
-    period: str = Query('24h', description='Period preset: 24h, 7d, 30d, all'),
+    period: str = Query('today', description='Period preset: today, 24h, 7d, 30d, all'),
     date_from: datetime | None = Query(None, description='Custom range start (ISO 8601)'),
     date_to: datetime | None = Query(None, description='Custom range end (ISO 8601)'),
+    tz: str | None = Query(None, description='Browser timezone (e.g. Europe/Moscow)'),
     page: int = Query(1, ge=1, description='Page number'),
     per_page: int = Query(20, ge=1, le=100, description='Items per page'),
     admin: User = Depends(require_permission('payments:read')),
@@ -372,7 +383,7 @@ async def search_payments_endpoint(
     try:
         parsed_period = PeriodPreset(period)
     except ValueError:
-        parsed_period = PeriodPreset.H24
+        parsed_period = PeriodPreset.TODAY
 
     parsed_method: PaymentMethod | None = None
     if method_filter:
@@ -381,11 +392,12 @@ async def search_payments_endpoint(
         except ValueError:
             pass
 
-    # Ensure custom dates are timezone-aware
+    # Ensure custom dates are timezone-aware — interpret in user's timezone
+    _user_tz = _resolve_tz(tz)
     if date_from is not None and date_from.tzinfo is None:
-        date_from = date_from.replace(tzinfo=UTC)
+        date_from = date_from.replace(hour=0, minute=0, second=0, tzinfo=_user_tz).astimezone(UTC)
     if date_to is not None and date_to.tzinfo is None:
-        date_to = date_to.replace(tzinfo=UTC)
+        date_to = date_to.replace(hour=23, minute=59, second=59, tzinfo=_user_tz).astimezone(UTC)
 
     # Clamp custom dates to safety limit
     min_allowed = datetime.now(UTC) - timedelta(days=MAX_ALL_TIME_DAYS)
@@ -401,6 +413,7 @@ async def search_payments_endpoint(
         period=parsed_period,
         date_from=date_from,
         date_to=date_to,
+        tz=tz,
         page=page,
         per_page=per_page,
     )
@@ -425,9 +438,10 @@ async def search_payments_stats_endpoint(
     ),
     status_filter: str = Query('all', description='Status filter: all, pending, paid, cancelled'),
     method_filter: str | None = Query(None, description='Filter by payment method'),
-    period: str = Query('24h', description='Period preset: 24h, 7d, 30d, all'),
+    period: str = Query('today', description='Period preset: today, 24h, 7d, 30d, all'),
     date_from: datetime | None = Query(None, description='Custom range start (ISO 8601)'),
     date_to: datetime | None = Query(None, description='Custom range end (ISO 8601)'),
+    tz: str | None = Query(None, description='Browser timezone (e.g. Europe/Moscow)'),
     admin: User = Depends(require_permission('payments:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -440,7 +454,7 @@ async def search_payments_stats_endpoint(
     try:
         parsed_period = PeriodPreset(period)
     except ValueError:
-        parsed_period = PeriodPreset.H24
+        parsed_period = PeriodPreset.TODAY
 
     parsed_method: PaymentMethod | None = None
     if method_filter:
@@ -449,11 +463,12 @@ async def search_payments_stats_endpoint(
         except ValueError:
             pass
 
-    # Ensure custom dates are timezone-aware
+    # Ensure custom dates are timezone-aware — interpret in user's timezone
+    _user_tz = _resolve_tz(tz)
     if date_from is not None and date_from.tzinfo is None:
-        date_from = date_from.replace(tzinfo=UTC)
+        date_from = date_from.replace(hour=0, minute=0, second=0, tzinfo=_user_tz).astimezone(UTC)
     if date_to is not None and date_to.tzinfo is None:
-        date_to = date_to.replace(tzinfo=UTC)
+        date_to = date_to.replace(hour=23, minute=59, second=59, tzinfo=_user_tz).astimezone(UTC)
 
     # Clamp custom dates to safety limit
     min_allowed = datetime.now(UTC) - timedelta(days=MAX_ALL_TIME_DAYS)
@@ -469,6 +484,7 @@ async def search_payments_stats_endpoint(
         period=parsed_period,
         date_from=date_from,
         date_to=date_to,
+        tz=tz,
     )
 
     stats = await search_payments_stats(db, params)

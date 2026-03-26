@@ -2277,10 +2277,17 @@ class Settings(BaseSettings):
             return [30, 60, 90, 180, 360]
 
     def get_balance_payment_description(
-        self, amount_kopeks: int, telegram_user_id: int | None = None, user_db_id: int | None = None
+        self, amount_kopeks: int, telegram_user_id: int | None = None, user_db_id: int | None = None, language: str | None = None
     ) -> str:
-        # Базовое описание
-        description = f'{self.PAYMENT_BALANCE_DESCRIPTION} на {self.format_price(amount_kopeks)}'
+        # Localized base description
+        _topup_labels = {
+            'ru': 'Пополнение баланса',
+            'en': 'Balance top-up',
+            'zh': '余额充值',
+            'fa': 'شارژ موجودی',
+        }
+        base = _topup_labels.get(language or 'ru', self.PAYMENT_BALANCE_DESCRIPTION)
+        description = f'{base} {self.format_price(amount_kopeks)}'
 
         # Добавляем идентификатор пользователя (TG ID приоритет, fallback на DB ID)
         if telegram_user_id is not None:

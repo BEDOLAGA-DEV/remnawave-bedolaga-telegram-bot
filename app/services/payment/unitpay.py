@@ -72,7 +72,7 @@ class UnitPayPaymentMixin:
             user = await payment_module.get_user_by_id(db, user_id)
         else:
             user = None
-        tg_id = user.telegram_id if user else (user_id or 'guest')
+        tg_id = (user.telegram_id or user.id) if user else (user_id or 'guest')
 
         # Генерируем уникальный order_id (account для UnitPay)
         order_id = f'up{tg_id}_{uuid.uuid4().hex[:6]}'
@@ -129,6 +129,9 @@ class UnitPayPaymentMixin:
                 metadata_json=metadata,
             )
 
+            # Save id before potential rollback (avoids MissingGreenlet on detached object)
+            local_payment_id = local_payment.id
+
             # Сохраняем unitpay_payment_id если получили
             if unitpay_payment_id:
                 try:
@@ -155,7 +158,7 @@ class UnitPayPaymentMixin:
                 'currency': currency,
                 'payment_url': payment_url,
                 'expires_at': expires_at.isoformat(),
-                'local_payment_id': local_payment.id,
+                'local_payment_id': local_payment_id,
             }
 
         except Exception as e:
@@ -187,10 +190,6 @@ class UnitPayPaymentMixin:
             signature = params.get('signature', '')
             if not unitpay_service.verify_webhook_signature(method, params, signature):
                 # Тестовый запрос от UnitPay (проверка webhook URL) — только если подпись не прошла
-                test_flag = params.get('test')
-                if test_flag == '1' or account == 'test':
-                    logger.info('UnitPay webhook: тестовый запрос', method=method, account=account)
-                    return {'result': {'message': 'Test OK'}}
                 logger.warning('UnitPay webhook: неверная подпись', method=method)
                 return {'error': {'message': 'Invalid signature'}}
 
@@ -358,7 +357,7 @@ class UnitPayPaymentMixin:
         # Начисляем баланс (атомарно с has_made_first_topup)
         user.balance_kopeks += payment.amount_kopeks
         user.updated_at = datetime.now(UTC)
-        if was_first_topup and not user.referred_by_id:
+        if was_first_topup and not user.has_made_first_topup:
             user.has_made_first_topup = True
 
         promo_group = user.get_primary_promo_group()

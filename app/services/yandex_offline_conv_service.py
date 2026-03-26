@@ -148,6 +148,15 @@ async def _send_event(cid: str, event_action: str) -> bool:
 _background_tasks: set[asyncio.Task] = set()
 
 
+def _task_done(task):
+    """Log errors from background conversion tasks."""
+    _background_tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc:
+        logger.error(f"{LOG_PREFIX} Background task failed", error=str(exc))
+
 def spawn_bg(coro) -> None:
     """Spawn a background Yandex conversion task with proper reference tracking.
 
@@ -159,7 +168,7 @@ def spawn_bg(coro) -> None:
         return
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    task.add_done_callback(_task_done)
 
 
 async def _fire_bg(event_name: str, event_fn, user_id: int, **kwargs) -> None:

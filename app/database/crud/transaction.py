@@ -27,6 +27,7 @@ REAL_PAYMENT_METHODS = [
     PaymentMethod.KASSA_AI.value,
     PaymentMethod.RIOPAY.value,
     PaymentMethod.SEVERPAY.value,
+    PaymentMethod.UNITPAY.value,
 ]
 
 
@@ -395,13 +396,27 @@ async def get_transactions_statistics(
     }
 
 
-async def get_revenue_by_period(db: AsyncSession, days: int = 30) -> list[dict]:
+async def get_revenue_by_period(db: AsyncSession, days: int = 30, tz: str | None = None) -> list[dict]:
     """Доход по дням — реальные платежи + прямые покупки подписок (лендинги)."""
+    from zoneinfo import ZoneInfo
+
     start_date = datetime.now(UTC) - timedelta(days=days)
+
+    # Use timezone-aware date grouping if tz is provided
+    if tz:
+        try:
+            ZoneInfo(tz)  # validate
+            from sqlalchemy import text as _text
+
+            date_expr = func.date(func.timezone(tz, Transaction.created_at))
+        except (KeyError, ValueError):
+            date_expr = func.date(Transaction.created_at)
+    else:
+        date_expr = func.date(Transaction.created_at)
 
     result = await db.execute(
         select(
-            func.date(Transaction.created_at).label('date'),
+            date_expr.label('date'),
             func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('amount'),
         )
         .where(
@@ -412,8 +427,8 @@ async def get_revenue_by_period(db: AsyncSession, days: int = 30) -> list[dict]:
                 Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
             )
         )
-        .group_by(func.date(Transaction.created_at))
-        .order_by(func.date(Transaction.created_at))
+        .group_by(date_expr)
+        .order_by(date_expr)
     )
 
     return [{'date': row.date, 'amount_kopeks': row.amount} for row in result]

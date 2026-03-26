@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -73,6 +73,7 @@ class BrandingResponse(BaseModel):
     logo_url: str | None = None
     logo_letter: str
     has_custom_logo: bool
+    legal_links: Optional['LegalLinksResponse'] = None
 
 
 class BrandingNameUpdate(BaseModel):
@@ -393,11 +394,23 @@ async def get_branding(
     # Get first letter for logo fallback (use "V" if name is empty)
     logo_letter = name[0].upper() if name else 'V'
 
+    # Get legal links config
+    legal_raw = await get_setting_value(db, 'CABINET_LEGAL_LINKS')
+    legal_links = None
+    if legal_raw:
+        import json as _json
+        try:
+            legal_data = _json.loads(legal_raw)
+            legal_links = LegalLinksResponse(**legal_data)
+        except Exception:
+            pass
+
     return BrandingResponse(
         name=name,
         logo_url='/cabinet/branding/logo' if custom_logo else None,
         logo_letter=logo_letter,
         has_custom_logo=custom_logo,
+        legal_links=legal_links,
     )
 
 
@@ -446,11 +459,23 @@ async def update_branding_name(
     custom_logo = has_custom_logo()
     logo_letter = name[0].upper() if name else 'C'
 
+    # Get legal links config
+    legal_raw = await get_setting_value(db, 'CABINET_LEGAL_LINKS')
+    legal_links = None
+    if legal_raw:
+        import json as _json
+        try:
+            legal_data = _json.loads(legal_raw)
+            legal_links = LegalLinksResponse(**legal_data)
+        except Exception:
+            pass
+
     return BrandingResponse(
         name=name,
         logo_url='/cabinet/branding/logo' if custom_logo else None,
         logo_letter=logo_letter,
         has_custom_logo=custom_logo,
+        legal_links=legal_links,
     )
 
 
@@ -1045,3 +1070,97 @@ async def update_gift_enabled(
     await set_setting_value(db, GIFT_ENABLED_KEY, str(payload.enabled).lower())
     logger.info('Admin set gift enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
     return GiftEnabledResponse(enabled=payload.enabled)
+
+
+# --- Legal documents ---
+
+LEGAL_LINKS_KEY = 'CABINET_LEGAL_LINKS'  # Stores JSON with legal links config
+LEGAL_DOC_PREFIX = 'LEGAL_DOC_'  # Prefix for legal document content keys
+
+
+class LegalLink(BaseModel):
+    """Single legal link entry."""
+
+    title: str
+    url: str
+    slug: str
+
+
+class LegalLinksResponse(BaseModel):
+    """Legal links configuration."""
+
+    enabled: bool = False
+    links: list[LegalLink] = []
+
+
+class LegalLinksUpdate(BaseModel):
+    """Request to update legal links configuration."""
+
+    enabled: bool
+    links: list[LegalLink] = []
+
+
+class LegalDocResponse(BaseModel):
+    """Legal document content."""
+
+    slug: str
+    content: str = ''
+
+
+class LegalDocUpdate(BaseModel):
+    """Request to update legal document content."""
+
+    content: str
+
+
+@router.get('/legal-links', response_model=LegalLinksResponse)
+async def get_legal_links(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get legal links configuration. Public endpoint."""
+    value = await get_setting_value(db, LEGAL_LINKS_KEY)
+    if value is not None:
+        try:
+            data = json.loads(value)
+            return LegalLinksResponse(**data)
+        except (json.JSONDecodeError, Exception):
+            pass
+    return LegalLinksResponse(enabled=False, links=[])
+
+
+@router.put('/legal-links', response_model=LegalLinksResponse)
+async def update_legal_links(
+    payload: LegalLinksUpdate,
+    admin: User = Depends(require_permission('settings:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update legal links configuration. Admin only."""
+    data = payload.model_dump()
+    await set_setting_value(db, LEGAL_LINKS_KEY, json.dumps(data, ensure_ascii=False))
+    logger.info('Admin updated legal links', telegram_id=admin.telegram_id, enabled=payload.enabled)
+    return LegalLinksResponse(**data)
+
+
+@router.get('/legal-doc/{slug}', response_model=LegalDocResponse)
+async def get_legal_doc(
+    slug: str,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get legal document content by slug. Public endpoint."""
+    key = f'{LEGAL_DOC_PREFIX}{slug}'
+    value = await get_setting_value(db, key)
+    return LegalDocResponse(slug=slug, content=value or '')
+
+
+@router.put('/legal-doc/{slug}', response_model=LegalDocResponse)
+async def update_legal_doc(
+    slug: str,
+    payload: LegalDocUpdate,
+    admin: User = Depends(require_permission('settings:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update legal document content by slug. Admin only."""
+    key = f'{LEGAL_DOC_PREFIX}{slug}'
+    await set_setting_value(db, key, payload.content)
+    logger.info('Admin updated legal doc', telegram_id=admin.telegram_id, slug=slug)
+    return LegalDocResponse(slug=slug, content=payload.content)

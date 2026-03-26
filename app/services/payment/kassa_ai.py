@@ -71,7 +71,7 @@ class KassaAiPaymentMixin:
             user = await payment_module.get_user_by_id(db, user_id)
         else:
             user = None
-        tg_id = user.telegram_id if user else (user_id or 'guest')
+        tg_id = (user.telegram_id or user.id) if user else (user_id or 'guest')
 
         # Генерируем уникальный order_id с telegram_id для удобного поиска
         order_id = f'k{tg_id}_{uuid.uuid4().hex[:6]}'

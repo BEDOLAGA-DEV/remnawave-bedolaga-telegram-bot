@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import structlog
 from sqlalchemy import and_, delete, func, select
@@ -963,7 +964,7 @@ async def get_subscriptions_for_autopay(db: AsyncSession) -> list[Subscription]:
     return ready_for_autopay
 
 
-async def get_subscriptions_statistics(db: AsyncSession) -> dict:
+async def get_subscriptions_statistics(db: AsyncSession, tz: str | None = None) -> dict:
     total_result = await db.execute(select(func.count(Subscription.id)))
     total_subscriptions = total_result.scalar()
 
@@ -982,7 +983,12 @@ async def get_subscriptions_statistics(db: AsyncSession) -> dict:
     paid_subscriptions = active_subscriptions - trial_subscriptions
 
     now = datetime.now(UTC)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        user_tz = ZoneInfo(tz) if tz else ZoneInfo('UTC')
+    except (KeyError, ValueError):
+        user_tz = ZoneInfo('UTC')
+    now_local = datetime.now(user_tz)
+    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
     week_ago = today_start - timedelta(days=7)
     month_ago = today_start - timedelta(days=30)
 
@@ -1458,16 +1464,22 @@ async def create_pending_subscription(
     existing_subscription = await get_subscription_by_user_id(db, user_id)
 
     if existing_subscription:
-        if (
-            existing_subscription.status == SubscriptionStatus.ACTIVE.value
-            and existing_subscription.end_date > current_time
-        ):
-            logger.warning(
-                '⚠️ Попытка создать pending подписку для активного пользователя . Возвращаем существующую запись.',
-                trial_label=trial_label,
-                user_id=user_id,
-            )
-            return existing_subscription
+        # Don't overwrite a paid subscription with a trial
+        if existing_subscription.end_date and existing_subscription.end_date > current_time:
+            if is_trial and not existing_subscription.is_trial:
+                logger.warning(
+                    '⚠️ Отклонён триал: у пользователя есть оплаченная подписка до',
+                    user_id=user_id,
+                    end_date=existing_subscription.end_date,
+                )
+                return existing_subscription
+            if existing_subscription.status == SubscriptionStatus.ACTIVE.value:
+                logger.warning(
+                    '⚠️ Попытка создать pending подписку для активного пользователя . Возвращаем существующую запись.',
+                    trial_label=trial_label,
+                    user_id=user_id,
+                )
+                return existing_subscription
 
         existing_subscription.status = SubscriptionStatus.PENDING.value
         existing_subscription.is_trial = is_trial

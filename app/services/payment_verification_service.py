@@ -55,8 +55,8 @@ class PendingPayment:
     status: str
     is_paid: bool
     created_at: datetime
-    user: User
-    payment: Any
+    user: User | None = None
+    payment: Any = None
     expires_at: datetime | None = None
 
     def is_recent(self, max_age: timedelta = PENDING_MAX_AGE) -> bool:
@@ -129,22 +129,7 @@ def method_display_name(method: PaymentMethod) -> str:
     if method == PaymentMethod.SEVERPAY:
         return settings.get_severpay_display_name()
     if method == PaymentMethod.UNITPAY:
-        return settings.get_unitpay_display_name()
-
-    if method == PaymentMethod.UNITPAY:
-        payment = await db.get(UnitPayPayment, local_payment_id)
-        if not payment:
-            return None
-        await db.refresh(payment, attribute_names=['user'])
-        return _build_record(
-            method,
-            payment,
-            identifier=payment.order_id,
-            amount_kopeks=payment.amount_kopeks,
-            status=payment.status or '',
-            is_paid=bool(payment.is_paid),
-            expires_at=getattr(payment, 'expires_at', None),
-        )
+        return settings.UNITPAY_DISPLAY_NAME
 
     if method == PaymentMethod.TELEGRAM_STARS:
         return 'Telegram Stars'
@@ -463,9 +448,7 @@ def _build_record(
     expires_at: datetime | None = None,
 ) -> PendingPayment | None:
     user = getattr(payment, 'user', None)
-    if user is None:
-        logger.debug('Skipping payment without linked user', method_value=method.value, identifier=identifier)
-        return None
+
 
     created_at = getattr(payment, 'created_at', None)
     if not isinstance(created_at, datetime):
@@ -501,8 +484,6 @@ async def _fetch_pal24_payments(db: AsyncSession, cutoff: datetime) -> list[Pend
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if not _is_pal24_pending(payment):
-            continue
         record = _build_record(
             PaymentMethod.PAL24,
             payment,
@@ -527,8 +508,6 @@ async def _fetch_mulenpay_payments(db: AsyncSession, cutoff: datetime) -> list[P
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if not _is_mulenpay_pending(payment):
-            continue
         record = _build_record(
             PaymentMethod.MULENPAY,
             payment,
@@ -552,8 +531,6 @@ async def _fetch_wata_payments(db: AsyncSession, cutoff: datetime) -> list[Pendi
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if not _is_wata_pending(payment):
-            continue
         record = _build_record(
             PaymentMethod.WATA,
             payment,
@@ -578,8 +555,6 @@ async def _fetch_platega_payments(db: AsyncSession, cutoff: datetime) -> list[Pe
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if not _is_platega_pending(payment):
-            continue
         identifier = payment.platega_transaction_id or payment.correlation_id or str(payment.id)
         record = _build_record(
             PaymentMethod.PLATEGA,
@@ -605,8 +580,6 @@ async def _fetch_heleket_payments(db: AsyncSession, cutoff: datetime) -> list[Pe
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if not _is_heleket_pending(payment):
-            continue
         record = _build_record(
             PaymentMethod.HELEKET,
             payment,
@@ -634,8 +607,6 @@ async def _fetch_yookassa_payments(db: AsyncSession, cutoff: datetime) -> list[P
         if payment.transaction_id:
             continue
         if not _metadata_is_balance(payment):
-            continue
-        if not _is_yookassa_pending(payment):
             continue
         record = _build_record(
             PaymentMethod.YOOKASSA,
@@ -687,8 +658,6 @@ async def _fetch_cloudpayments_payments(db: AsyncSession, cutoff: datetime) -> l
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if not _is_cloudpayments_pending(payment):
-            continue
         record = _build_record(
             PaymentMethod.CLOUDPAYMENTS,
             payment,
@@ -712,8 +681,6 @@ async def _fetch_freekassa_payments(db: AsyncSession, cutoff: datetime) -> list[
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if not _is_freekassa_pending(payment):
-            continue
         record = _build_record(
             PaymentMethod.FREEKASSA,
             payment,
@@ -737,8 +704,6 @@ async def _fetch_kassa_ai_payments(db: AsyncSession, cutoff: datetime) -> list[P
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if not _is_kassa_ai_pending(payment):
-            continue
         record = _build_record(
             PaymentMethod.KASSA_AI,
             payment,
@@ -762,8 +727,6 @@ async def _fetch_riopay_payments(db: AsyncSession, cutoff: datetime) -> list[Pen
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if not _is_riopay_pending(payment):
-            continue
         record = _build_record(
             PaymentMethod.RIOPAY,
             payment,
@@ -788,8 +751,6 @@ async def _fetch_severpay_payments(db: AsyncSession, cutoff: datetime) -> list[P
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if not _is_severpay_pending(payment):
-            continue
         record = _build_record(
             PaymentMethod.SEVERPAY,
             payment,
@@ -814,8 +775,6 @@ async def _fetch_unitpay_payments(db: AsyncSession, cutoff: datetime) -> list[Pe
     result = await db.execute(stmt)
     records: list[PendingPayment] = []
     for payment in result.scalars().all():
-        if not _is_unitpay_pending(payment):
-            continue
         record = _build_record(
             PaymentMethod.UNITPAY,
             payment,
@@ -865,7 +824,8 @@ async def list_recent_pending_payments(
 ) -> list[PendingPayment]:
     """Return pending payments (top-ups) from supported providers within the age window."""
 
-    cutoff = datetime.now(UTC) - max_age
+    # Use start of today
+    cutoff = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
 
     tasks: Iterable[list[PendingPayment]] = (
         await _fetch_yookassa_payments(db, cutoff),
@@ -1047,6 +1007,22 @@ async def get_payment_record(
             amount_kopeks=payment.amount_kopeks,
             status=payment.status or '',
             is_paid=bool(payment.is_paid),
+        )
+
+    if method == PaymentMethod.UNITPAY:
+        from app.database.models import UnitPayPayment
+        payment = await db.get(UnitPayPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
         )
 
     if method == PaymentMethod.RIOPAY:

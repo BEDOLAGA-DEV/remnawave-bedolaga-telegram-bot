@@ -361,7 +361,7 @@ async def create_topup(
             # Use description with telegram_id for tax receipts
             description = settings.get_balance_payment_description(
                 request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-            )
+            , language=getattr(request, "language", None))
             if option == 'sbp':
                 result = await payment_service.create_yookassa_sbp_payment(
                     db=db,
@@ -424,7 +424,7 @@ async def create_topup(
                 asset=settings.CRYPTOBOT_DEFAULT_ASSET,
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
+                , language=getattr(request, "language", None)),
                 payload=f'cabinet_topup_{user.id}_{request.amount_kopeks}',
             )
             if result:
@@ -485,7 +485,7 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
+                , language=getattr(request, "language", None)),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_method_code=method_code,
                 return_url=cabinet_success_url,
@@ -515,7 +515,7 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
+                , language=getattr(request, "language", None)),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 return_url=cabinet_return_url,
                 success_url=cabinet_success_url,
@@ -544,7 +544,7 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
+                , language=getattr(request, "language", None)),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
 
@@ -576,7 +576,7 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
+                , language=getattr(request, "language", None)),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
 
@@ -618,7 +618,7 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
+                , language=getattr(request, "language", None)),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 return_url=cabinet_success_url,
                 failed_url=cabinet_failed_url,
@@ -647,7 +647,7 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
+                , language=getattr(request, "language", None)),
                 telegram_id=user.telegram_id,
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 return_url=cabinet_success_url,
@@ -677,7 +677,7 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
+                , language=getattr(request, "language", None)),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
 
@@ -709,7 +709,7 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
+                , language=getattr(request, "language", None)),
                 email=getattr(user, 'email', None),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_system_id=ps_id,
@@ -738,7 +738,7 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
+                , language=getattr(request, "language", None)),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 success_url=cabinet_success_url,
                 fail_url=cabinet_failed_url,
@@ -774,7 +774,7 @@ async def create_topup(
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
+                , language=getattr(request, "language", None)),
                 email=getattr(user, 'email', None),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_type=pt,

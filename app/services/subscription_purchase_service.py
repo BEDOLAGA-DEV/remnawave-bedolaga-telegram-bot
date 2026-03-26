@@ -1057,6 +1057,10 @@ class MiniAppSubscriptionPurchaseService:
             subscription.updated_at = now
             subscription.traffic_used_gb = 0.0
 
+            # Set default tariff_id if not set (classic mode)
+            if not subscription.tariff_id:
+                subscription.tariff_id = getattr(settings, 'SIMPLE_SUBSCRIPTION_TARIFF_ID', 1)
+
             await db.commit()
             await db.refresh(subscription)
         else:
@@ -1068,6 +1072,7 @@ class MiniAppSubscriptionPurchaseService:
                 device_limit=pricing.selection.devices,
                 connected_squads=pricing.selection.servers,
                 update_server_counters=False,
+                tariff_id=getattr(settings, "SIMPLE_SUBSCRIPTION_TARIFF_ID", 1),
             )
 
         if pricing.server_ids:
@@ -1151,9 +1156,15 @@ class SubscriptionPurchaseService:
         squad_uuid: str,
         payment_method: str,
         total_price_kopeks: int,
+        tariff_id: int | None = None,
     ):
         """Creates a subscription order with predefined parameters."""
         from app.database.crud.subscription import create_pending_subscription
+
+        # Resolve default tariff_id from settings if not provided
+        if tariff_id is None:
+            from app.config import settings
+            tariff_id = getattr(settings, 'SIMPLE_SUBSCRIPTION_TARIFF_ID', 1)
 
         # Create a pending subscription
         subscription = await create_pending_subscription(
@@ -1165,6 +1176,7 @@ class SubscriptionPurchaseService:
             connected_squads=[squad_uuid] if squad_uuid else [],
             payment_method=payment_method,
             total_price_kopeks=total_price_kopeks,
+            tariff_id=tariff_id,
         )
 
         return subscription

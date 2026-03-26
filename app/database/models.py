@@ -889,7 +889,7 @@ class UnitPayPayment(Base):
 
     # Идентификаторы
     order_id = Column(String(64), unique=True, nullable=False, index=True)  # Наш ID заказа (account)
-    unitpay_payment_id = Column(Integer, unique=True, nullable=True, index=True)  # ID от UnitPay
+    unitpay_payment_id = Column(BigInteger, unique=True, nullable=True, index=True)  # ID от UnitPay
 
     # Суммы
     amount_kopeks = Column(Integer, nullable=False)

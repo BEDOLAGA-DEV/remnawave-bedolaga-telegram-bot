@@ -3,9 +3,10 @@
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -145,6 +146,7 @@ class DashboardStats(BaseModel):
     servers: ServerStats
     revenue_chart: list[RevenueData]
     tariff_stats: TariffStats | None = None
+    subscription_chart: list | None = None  # paid sales (transactions)
 
 
 class SystemInfoResponse(BaseModel):
@@ -244,8 +246,27 @@ class RecentPaymentsResponse(BaseModel):
 # ============ Routes ============
 
 
+def _resolve_tz(tz: str | None) -> ZoneInfo:
+    """Resolve timezone string to ZoneInfo, fallback to UTC."""
+    if tz:
+        try:
+            return ZoneInfo(tz)
+        except (KeyError, ValueError):
+            pass
+    return ZoneInfo('UTC')
+
+
+def _today_start_utc(tz: str | None) -> datetime:
+    """Get start of today in user's timezone, converted to UTC."""
+    user_tz = _resolve_tz(tz)
+    now_local = datetime.now(user_tz)
+    midnight_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight_local.astimezone(UTC)
+
+
 @router.get('/dashboard', response_model=DashboardStats)
 async def get_dashboard_stats(
+    tz: str | None = Query(None, description='Browser timezone (e.g. Europe/Moscow)'),
     admin: User = Depends(require_permission('stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -255,7 +276,7 @@ async def get_dashboard_stats(
         nodes_data = await _get_nodes_overview()
 
         # Get subscription statistics
-        sub_stats = await get_subscriptions_statistics(db)
+        sub_stats = await get_subscriptions_statistics(db, tz=tz)
 
         # Get financial statistics
         now = datetime.now(UTC)
@@ -267,21 +288,50 @@ async def get_dashboard_stats(
         )
 
         # Get revenue chart data (last 30 days)
-        revenue_data = await get_revenue_by_period(db, days=30)
+        revenue_data = await get_revenue_by_period(db, days=30, tz=tz)
 
         # Get server statistics
         server_stats = await get_server_statistics(db)
 
         # Get tariff statistics
-        tariff_stats = await _get_tariff_stats(db)
+        tariff_stats = await _get_tariff_stats(db, tz=tz)
 
         # Derive income_today from revenue_chart to ensure consistency with chart
-        today_str = now.date().isoformat()
+        user_tz = _resolve_tz(tz)
+        today_str = datetime.now(user_tz).date().isoformat()
         income_today_from_chart = sum(
             item.get('amount_kopeks', 0) for item in revenue_data if str(item.get('date', '')) == today_str
         )
         # Use chart-derived value if available, otherwise fall back to trans_stats
         income_today_kopeks = income_today_from_chart or trans_stats.get('today', {}).get('income_kopeks', 0)
+
+        # Get paid subscription sales chart (last 30 days)
+        # Counts new paid subscriptions (is_trial=False), NOT transactions
+        try:
+            _tz_name = (tz or 'UTC').replace("'", '')
+            try:
+                ZoneInfo(_tz_name)
+            except (KeyError, ValueError):
+                _tz_name = 'UTC'
+            day_col = func.date(func.timezone(_tz_name, Subscription.created_at))
+            _chart_rows = (
+                await db.execute(
+                    select(
+                        day_col.label('d'),
+                        func.count(Subscription.id).label('c'),
+                    )
+                    .where(
+                        Subscription.is_trial == False,
+                        Subscription.created_at >= datetime.now(UTC) - timedelta(days=30),
+                    )
+                    .group_by(day_col)
+                    .order_by(day_col)
+                )
+            ).all()
+            subscription_chart = [{'date': str(r[0]), 'count': r[1]} for r in _chart_rows]
+        except Exception as _e:
+            logger.error('subscription_chart query failed', error=str(_e), error_type=type(_e).__name__)
+            subscription_chart = []
 
         # Build response
         return DashboardStats(
@@ -326,6 +376,7 @@ async def get_dashboard_stats(
                 for item in revenue_data
             ],
             tariff_stats=tariff_stats,
+            subscription_chart=subscription_chart,
         )
 
     except Exception as e:
@@ -504,7 +555,7 @@ async def _get_nodes_overview() -> NodesOverview:
         )
 
 
-async def _get_tariff_stats(db: AsyncSession) -> TariffStats | None:
+async def _get_tariff_stats(db: AsyncSession, tz: str | None = None) -> TariffStats | None:
     """Get statistics for all tariffs."""
     try:
         # Получаем ВСЕ тарифы (включая неактивные) для статистики
@@ -516,7 +567,7 @@ async def _get_tariff_stats(db: AsyncSession) -> TariffStats | None:
             return None
 
         now = datetime.now(UTC)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = _today_start_utc(tz)
         week_ago = now - timedelta(days=7)
         month_ago = now - timedelta(days=30)
 

@@ -1375,131 +1375,108 @@ class EmailNotificationTemplates:
         cabinet_url = html.escape(context.get('cabinet_url', ''))
         cabinet_email = html.escape(context.get('cabinet_email', ''))
         cabinet_password = context.get('cabinet_password', '')
+        subscription_url = html.escape(context.get('subscription_url', ''))
+
+        happ_deeplink = f'happ://add/{subscription_url}' if subscription_url else ''
 
         subjects = {
-            'ru': 'Ваша VPN подписка готова',
-            'en': 'Your VPN subscription is ready',
-            'zh': '您的VPN订阅已准备就绪',
-            'ua': 'Ваша VPN підписка готова',
-            'fa': 'اشتراک VPN شما آماده است',
+            'ru': 'Подписка оплачена — подключайтесь!',
+            'en': 'Subscription paid — connect now!',
+            'zh': '订阅已付款 - 立即连接！',
+            'ua': 'Підписка оплачена — підключайтесь!',
+            'fa': 'اشتراک پرداخت شد - اکنون متصل شوید!',
         }
 
-        creds_block_ru = (
-            f"""
-                <div class="highlight">
-                    <p><strong>Данные для входа в личный кабинет:</strong></p>
-                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
-                    <p><strong>Пароль:</strong> <code>{cabinet_password}</code></p>
-                </div>
-        """
-            if cabinet_password
-            else ''
-        )
+        def _connect_block(lang: str) -> str:
+            if not subscription_url:
+                return ''
+            texts = {
+                'ru': (
+                    'Подключиться в 1 клик',
+                    'Нажмите кнопку — Happ откроется и подключит автоматически',
+                    'Если Happ ещё не установлен:',
+                ),
+                'en': (
+                    'Connect in 1 click',
+                    'Click the button — Happ will open and connect automatically',
+                    'If Happ is not installed yet:',
+                ),
+                'zh': (
+                    '一键连接',
+                    '点击按钮 — Happ 将自动打开并连接',
+                    '如果 Happ 尚未安装：',
+                ),
+                'ua': (
+                    'Підключитися в 1 клік',
+                    'Натисніть кнопку — Happ відкриється і підключить автоматично',
+                    'Якщо Happ ще не встановлено:',
+                ),
+                'fa': (
+                    'اتصال با یک کلیک',
+                    'روی دکمه کلیک کنید — Happ به طور خودکار باز و متصل می‌شود',
+                    'اگر Happ هنوز نصب نشده:',
+                ),
+            }
+            btn_text, hint, install_text = texts.get(lang, texts['ru'])
+            return f"""
+                <p style="text-align: center; margin: 25px 0 5px;">
+                    <a href="{happ_deeplink}" style="display: inline-block; padding: 16px 40px;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white !important; text-decoration: none; border-radius: 12px;
+                        font-size: 18px; font-weight: bold; letter-spacing: 0.5px;">{btn_text}</a>
+                </p>
+                <p style="text-align: center; color: #888; font-size: 13px; margin: 0 0 20px;">{hint}</p>
+                <p style="color: #666; font-size: 13px;">{install_text}</p>
+                <table style="width: 100%; margin: 8px 0 20px;" cellspacing="0" cellpadding="0">
+                    <tr>
+                        <td style="padding: 4px 8px;"><a href="https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973" style="color: #007bff; text-decoration: none;">iPhone / iPad</a></td>
+                        <td style="padding: 4px 8px;"><a href="https://play.google.com/store/apps/details?id=com.happproxy" style="color: #007bff; text-decoration: none;">Android</a></td>
+                        <td style="padding: 4px 8px;"><a href="https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe" style="color: #007bff; text-decoration: none;">Windows</a></td>
+                        <td style="padding: 4px 8px;"><a href="https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.macOS.universal.dmg" style="color: #007bff; text-decoration: none;">macOS</a></td>
+                    </tr>
+                </table>
+            """
 
-        creds_block_en = (
-            f"""
-                <div class="highlight">
-                    <p><strong>Your cabinet login credentials:</strong></p>
-                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
-                    <p><strong>Password:</strong> <code>{cabinet_password}</code></p>
+        def _creds_block(lang: str) -> str:
+            if not cabinet_password:
+                return ''
+            labels = {
+                'ru': ('Личный кабинет', 'Email', 'Пароль'),
+                'en': ('Cabinet credentials', 'Email', 'Password'),
+                'zh': ('个人中心登录信息', 'Email', '密码'),
+                'ua': ('Дані для входу', 'Email', 'Пароль'),
+                'fa': ('اطلاعات ورود', 'Email', 'رمز عبور'),
+            }
+            title, email_label, pwd_label = labels.get(lang, labels['ru'])
+            return f"""
+                <div style="background: #f8f9fa; border-radius: 8px; padding: 16px; margin: 20px 0; border: 1px solid #e9ecef;">
+                    <p style="margin: 0 0 8px; font-weight: 600; color: #555;">{title}</p>
+                    <p style="margin: 4px 0;"><strong>{email_label}:</strong> <code style="background: #e9ecef; padding: 2px 6px; border-radius: 3px;">{cabinet_email}</code></p>
+                    <p style="margin: 4px 0;"><strong>{pwd_label}:</strong> <code style="background: #e9ecef; padding: 2px 6px; border-radius: 3px;">{cabinet_password}</code></p>
+                    <p style="text-align: center; margin: 12px 0 0;"><a href="{cabinet_url}" style="color: #007bff; text-decoration: none; font-size: 13px;">{cabinet_url}</a></p>
                 </div>
-        """
-            if cabinet_password
-            else ''
-        )
+            """
 
-        creds_block_zh = (
-            f"""
-                <div class="highlight">
-                    <p><strong>个人中心登录信息：</strong></p>
-                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
-                    <p><strong>密码:</strong> <code>{cabinet_password}</code></p>
+        def _body(lang: str) -> str:
+            headers = {
+                'ru': f'Подписка <strong>{tariff_name}</strong> ({period_days} дн.) активирована!',
+                'en': f'<strong>{tariff_name}</strong> ({period_days} days) is now active!',
+                'zh': f'<strong>{tariff_name}</strong>（{period_days} 天）已激活！',
+                'ua': f'Підписка <strong>{tariff_name}</strong> ({period_days} дн.) активована!',
+                'fa': f'<strong>{tariff_name}</strong> ({period_days} روز) فعال شد!',
+            }
+            return f"""
+                <div style="text-align: center; margin-bottom: 10px;">
+                    <span style="font-size: 48px;">&#9989;</span>
                 </div>
-        """
-            if cabinet_password
-            else ''
-        )
-
-        creds_block_ua = (
-            f"""
-                <div class="highlight">
-                    <p><strong>Дані для входу в особистий кабінет:</strong></p>
-                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
-                    <p><strong>Пароль:</strong> <code>{cabinet_password}</code></p>
-                </div>
-        """
-            if cabinet_password
-            else ''
-        )
-
-        creds_block_fa = (
-            f"""
-                <div class="highlight">
-                    <p><strong>اطلاعات ورود به پنل کاربری:</strong></p>
-                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
-                    <p><strong>رمز عبور:</strong> <code>{cabinet_password}</code></p>
-                </div>
-        """
-            if cabinet_password
-            else ''
-        )
-
-        bodies = {
-            'ru': f"""
-                <h2>Ваша VPN подписка готова!</h2>
-                <div class="highlight success">
-                    <p>Тариф: <strong>{tariff_name}</strong></p>
-                    <p>Период: <strong>{period_days} дней</strong></p>
-                </div>
-                {creds_block_ru}
-                <p>Подписка активирована в вашем личном кабинете.</p>
-                <p style="text-align: center;"><a href="{cabinet_url}" class="button">Перейти в личный кабинет</a></p>
-            """,
-            'en': f"""
-                <h2>Your VPN subscription is ready!</h2>
-                <div class="highlight success">
-                    <p>Plan: <strong>{tariff_name}</strong></p>
-                    <p>Period: <strong>{period_days} days</strong></p>
-                </div>
-                {creds_block_en}
-                <p>Your subscription has been activated in your cabinet.</p>
-                <p style="text-align: center;"><a href="{cabinet_url}" class="button">Go to Cabinet</a></p>
-            """,
-            'zh': f"""
-                <h2>您的VPN订阅已准备就绪！</h2>
-                <div class="highlight success">
-                    <p>套餐: <strong>{tariff_name}</strong></p>
-                    <p>期限: <strong>{period_days} 天</strong></p>
-                </div>
-                {creds_block_zh}
-                <p>订阅已在您的个人中心激活。</p>
-                <p style="text-align: center;"><a href="{cabinet_url}" class="button">前往个人中心</a></p>
-            """,
-            'ua': f"""
-                <h2>Ваша VPN підписка готова!</h2>
-                <div class="highlight success">
-                    <p>Тариф: <strong>{tariff_name}</strong></p>
-                    <p>Період: <strong>{period_days} днів</strong></p>
-                </div>
-                {creds_block_ua}
-                <p>Підписка активована у вашому особистому кабінеті.</p>
-                <p style="text-align: center;"><a href="{cabinet_url}" class="button">Перейти до кабінету</a></p>
-            """,
-            'fa': f"""
-                <h2>اشتراک VPN شما آماده است!</h2>
-                <div class="highlight success">
-                    <p>طرح: <strong>{tariff_name}</strong></p>
-                    <p>مدت: <strong>{period_days} روز</strong></p>
-                </div>
-                {creds_block_fa}
-                <p>اشتراک شما در پنل کاربری فعال شده است.</p>
-                <p style="text-align: center;"><a href="{cabinet_url}" class="button">رفتن به پنل کاربری</a></p>
-            """,
-        }
+                <h2 style="text-align: center; margin: 0 0 25px;">{headers.get(lang, headers['ru'])}</h2>
+                {_connect_block(lang)}
+                {_creds_block(lang)}
+            """
 
         return {
             'subject': subjects.get(language, subjects['ru']),
-            'body_html': self._get_base_template(bodies.get(language, bodies['ru']), language),
+            'body_html': self._get_base_template(_body(language), language),
         }
 
     def _guest_activation_required_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
