@@ -382,6 +382,8 @@ async def fulfill_purchase(
                 token_prefix=purchase_token[:5],
                 user_id=user.id,
             )
+            # Fire Yandex conversions before early return (otherwise lost for PENDING_ACTIVATION)
+            yandex_conv.spawn_bg(_fire_yandex_conversions(purchase, user.id, is_new_account))
             return purchase
 
         squads = list(tariff.allowed_squads or [])
