@@ -165,6 +165,6 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
 
 
 def register_handlers(dp: Dispatcher):
-    dp.callback_query.register(show_promocode_menu, F.data == 'menu_promocode')
+    dp.callback_query.register(show_promocode_menu, F.data == 'nz!_menu_promocode')
 
     dp.message.register(process_promocode, PromoCodeStates.waiting_for_code)

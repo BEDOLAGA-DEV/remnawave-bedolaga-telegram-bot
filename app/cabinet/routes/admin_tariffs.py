@@ -272,6 +272,9 @@ async def get_tariff(
         external_squad_uuid=tariff.external_squad_uuid,
         # Показывать в подарках
         show_in_gift=tariff.show_in_gift,
+        # WL (БС) трафик
+        wl_default_traffic_gb=tariff.wl_default_traffic_gb,
+        wl_traffic_topup_packages=tariff.wl_traffic_topup_packages or {},
         created_at=tariff.created_at,
         updated_at=tariff.updated_at,
     )
@@ -330,6 +333,9 @@ async def create_new_tariff(
         external_squad_uuid=request.external_squad_uuid,
         # Показывать в подарках
         show_in_gift=request.show_in_gift,
+        # WL (БС) трафик
+        wl_default_traffic_gb=request.wl_default_traffic_gb,
+        wl_traffic_topup_packages=request.wl_traffic_topup_packages,
     )
 
     logger.info('Admin created tariff', admin_id=admin.id, tariff_id=tariff.id, tariff_name=tariff.name)
@@ -429,6 +435,11 @@ async def update_existing_tariff(
     # Показывать в подарках
     if request.show_in_gift is not None:
         updates['show_in_gift'] = request.show_in_gift
+    # WL (БС) трафик
+    if 'wl_default_traffic_gb' in request.model_fields_set:
+        updates['wl_default_traffic_gb'] = request.wl_default_traffic_gb
+    if request.wl_traffic_topup_packages is not None:
+        updates['wl_traffic_topup_packages'] = request.wl_traffic_topup_packages
 
     if updates:
         await update_tariff(db, tariff, **updates)

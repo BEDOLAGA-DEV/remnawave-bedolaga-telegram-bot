@@ -37,9 +37,9 @@ def get_user_messages_keyboard(language: str = 'ru'):
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='📝 Добавить сообщение', callback_data='add_user_message')],
-            [InlineKeyboardButton(text='📋 Список сообщений', callback_data='list_user_messages:0')],
-            [InlineKeyboardButton(text='📊 Статистика', callback_data='user_messages_stats')],
+            [InlineKeyboardButton(text='📝 Добавить сообщение', callback_data='nz!_add_user_message')],
+            [InlineKeyboardButton(text='📋 Список сообщений', callback_data='nz!_list_user_messages:0')],
+            [InlineKeyboardButton(text='📊 Статистика', callback_data='nz!_user_messages_stats')],
             [InlineKeyboardButton(text='🔙 Назад в админку', callback_data='admin_panel')],
         ]
     )
@@ -52,10 +52,10 @@ def get_message_actions_keyboard(message_id: int, is_active: bool, language: str
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='✏️ Редактировать', callback_data=f'edit_user_message:{message_id}')],
-            [InlineKeyboardButton(text=status_text, callback_data=f'toggle_user_message:{message_id}')],
-            [InlineKeyboardButton(text='🗑️ Удалить', callback_data=f'delete_user_message:{message_id}')],
-            [InlineKeyboardButton(text='🔙 К списку', callback_data='list_user_messages:0')],
+            [InlineKeyboardButton(text='✏️ Редактировать', callback_data=f'nz!_edit_user_message:{message_id}')],
+            [InlineKeyboardButton(text=status_text, callback_data=f'nz!_toggle_user_message:{message_id}')],
+            [InlineKeyboardButton(text='🗑️ Удалить', callback_data=f'nz!_delete_user_message:{message_id}')],
+            [InlineKeyboardButton(text='🔙 К списку', callback_data='nz!_list_user_messages:0')],
         ]
     )
 
@@ -187,22 +187,22 @@ async def list_user_messages(callback: types.CallbackQuery, db_user: User, db: A
     for msg in messages:
         status_emoji = '🟢' if msg.is_active else '🔴'
         keyboard.append(
-            [InlineKeyboardButton(text=f'{status_emoji} ID {msg.id}', callback_data=f'view_user_message:{msg.id}')]
+            [InlineKeyboardButton(text=f'{status_emoji} ID {msg.id}', callback_data=f'nz!_view_user_message:{msg.id}')]
         )
 
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text='⬅️ Назад', callback_data=f'list_user_messages:{page - 1}'))
+        nav_buttons.append(InlineKeyboardButton(text='⬅️ Назад', callback_data=f'nz!_list_user_messages:{page - 1}'))
 
-    nav_buttons.append(InlineKeyboardButton(text='➕ Добавить', callback_data='add_user_message'))
+    nav_buttons.append(InlineKeyboardButton(text='➕ Добавить', callback_data='nz!_add_user_message'))
 
     if len(messages) == limit:
-        nav_buttons.append(InlineKeyboardButton(text='Вперед ➡️', callback_data=f'list_user_messages:{page + 1}'))
+        nav_buttons.append(InlineKeyboardButton(text='Вперед ➡️', callback_data=f'nz!_list_user_messages:{page + 1}'))
 
     if nav_buttons:
         keyboard.append(nav_buttons)
 
-    keyboard.append([InlineKeyboardButton(text='🔙 Назад', callback_data='user_messages_panel')])
+    keyboard.append([InlineKeyboardButton(text='🔙 Назад', callback_data='nz!_user_messages_panel')])
 
     await callback.message.edit_text(
         text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode='HTML'
@@ -313,7 +313,7 @@ async def show_messages_stats(callback: types.CallbackQuery, db_user: User, db: 
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text='🔙 Назад', callback_data='user_messages_panel')]]
+        inline_keyboard=[[InlineKeyboardButton(text='🔙 Назад', callback_data='nz!_user_messages_panel')]]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
@@ -412,22 +412,22 @@ async def process_edit_message_text(message: types.Message, state: FSMContext, d
 
 
 def register_handlers(dp: Dispatcher):
-    dp.callback_query.register(show_user_messages_panel, F.data == 'user_messages_panel')
+    dp.callback_query.register(show_user_messages_panel, F.data == 'nz!_user_messages_panel')
 
-    dp.callback_query.register(add_user_message_start, F.data == 'add_user_message')
+    dp.callback_query.register(add_user_message_start, F.data == 'nz!_add_user_message')
 
     dp.message.register(process_new_message_text, StateFilter(UserMessageStates.waiting_for_message_text))
 
-    dp.callback_query.register(edit_user_message_start, F.data.startswith('edit_user_message:'))
+    dp.callback_query.register(edit_user_message_start, F.data.startswith('nz!_edit_user_message:'))
 
     dp.message.register(process_edit_message_text, StateFilter(UserMessageStates.waiting_for_edit_text))
 
-    dp.callback_query.register(list_user_messages, F.data.startswith('list_user_messages'))
+    dp.callback_query.register(list_user_messages, F.data.startswith('nz!_list_user_messages'))
 
-    dp.callback_query.register(view_user_message, F.data.startswith('view_user_message:'))
+    dp.callback_query.register(view_user_message, F.data.startswith('nz!_view_user_message:'))
 
-    dp.callback_query.register(toggle_message_status, F.data.startswith('toggle_user_message:'))
+    dp.callback_query.register(toggle_message_status, F.data.startswith('nz!_toggle_user_message:'))
 
-    dp.callback_query.register(delete_message_confirm, F.data.startswith('delete_user_message:'))
+    dp.callback_query.register(delete_message_confirm, F.data.startswith('nz!_delete_user_message:'))
 
-    dp.callback_query.register(show_messages_stats, F.data == 'user_messages_stats')
+    dp.callback_query.register(show_messages_stats, F.data == 'nz!_user_messages_stats')

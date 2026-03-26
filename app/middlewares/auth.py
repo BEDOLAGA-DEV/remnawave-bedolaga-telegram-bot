@@ -69,7 +69,7 @@ class AuthMiddleware(BaseMiddleware):
 
                     is_reg_process = is_registration_process(event, current_state)
 
-                    is_channel_check = isinstance(event, CallbackQuery) and event.data == 'sub_channel_check'
+                    is_channel_check = isinstance(event, CallbackQuery) and event.data == 'nz!_sub_channel_check'
 
                     is_start_command = isinstance(event, Message) and event.text and event.text.startswith('/start')
 
@@ -127,13 +127,13 @@ class AuthMiddleware(BaseMiddleware):
                             and (
                                 event.data
                                 in [
-                                    'rules_accept',
-                                    'rules_decline',
-                                    'privacy_policy_accept',
-                                    'privacy_policy_decline',
-                                    'referral_skip',
+                                    'nz!_rules_accept',
+                                    'nz!_rules_decline',
+                                    'nz!_privacy_policy_accept',
+                                    'nz!_privacy_policy_decline',
+                                    'nz!_referral_skip',
                                 ]
-                                or event.data.startswith('language_select:')
+                                or event.data.startswith('nz!_language_select:')
                             )
                         )
                     )

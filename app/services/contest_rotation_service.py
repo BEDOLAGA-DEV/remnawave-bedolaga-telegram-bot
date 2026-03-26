@@ -302,7 +302,7 @@ class ContestRotationService:
             return
 
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text='🎲 Играть', callback_data='contests_menu')]]
+            inline_keyboard=[[InlineKeyboardButton(text='🎲 Играть', callback_data='nz!_contests_menu')]]
         )
 
         try:
@@ -326,7 +326,7 @@ class ContestRotationService:
             sent = failed = 0
 
             keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text='🎲 Играть', callback_data='contests_menu')]]
+                inline_keyboard=[[InlineKeyboardButton(text='🎲 Играть', callback_data='nz!_contests_menu')]]
             )
 
             while True:

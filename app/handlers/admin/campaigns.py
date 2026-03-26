@@ -99,7 +99,7 @@ def _build_campaign_servers_keyboard(
         is_selected = server.squad_uuid in selected_uuids
         emoji = '✅' if is_selected else ('⚪' if server.is_available else '🔒')
         text = f'{emoji} {server.display_name}'
-        keyboard.append([types.InlineKeyboardButton(text=text, callback_data=f'{toggle_prefix}{server.id}')])
+        keyboard.append([types.InlineKeyboardButton(text=text, callback_data=f'nz!_{toggle_prefix}{server.id}')])
 
     keyboard.append(
         [

@@ -48,6 +48,7 @@ TELEGRAM_WIDGET_USERPIC_KEY = 'TELEGRAM_WIDGET_USERPIC'
 TELEGRAM_WIDGET_REQUEST_ACCESS_KEY = 'TELEGRAM_WIDGET_REQUEST_ACCESS'
 TELEGRAM_OIDC_ENABLED_KEY = 'TELEGRAM_OIDC_ENABLED'
 TELEGRAM_OIDC_CLIENT_ID_KEY = 'TELEGRAM_OIDC_CLIENT_ID'
+EMAIL_REGISTRATION_ENABLED_KEY = 'CABINET_EMAIL_REGISTRATION_ENABLED'  # Stores "true" or "false"
 
 # Default animation config
 DEFAULT_ANIMATION_CONFIG = {
@@ -74,6 +75,8 @@ class BrandingResponse(BaseModel):
     logo_url: str | None = None
     logo_letter: str
     has_custom_logo: bool
+    email_registration_enabled: bool = True
+    telegram_proxy_url: str | None = None
 
 
 class BrandingNameUpdate(BaseModel):
@@ -287,6 +290,14 @@ class GiftEnabledResponse(BaseModel):
 
 class GiftEnabledUpdate(BaseModel):
     """Request to update gift feature setting."""
+class EmailRegistrationEnabledResponse(BaseModel):
+    """Email registration enabled setting."""
+
+    enabled: bool = True
+
+
+class EmailRegistrationEnabledUpdate(BaseModel):
+    """Request to update email registration setting."""
 
     enabled: bool
 
@@ -392,7 +403,17 @@ async def get_branding(
         logo_url='/cabinet/branding/logo' if custom_logo else None,
         logo_letter=logo_letter,
         has_custom_logo=custom_logo,
+        email_registration_enabled=await _is_email_registration_enabled(db),
+        telegram_proxy_url=settings.MTPROXY_URL or settings.TELEGRAM_PROXY_URL,
     )
+
+
+async def _is_email_registration_enabled(db: AsyncSession) -> bool:
+    """Check if email registration is enabled in database or config."""
+    value = await get_setting_value(db, EMAIL_REGISTRATION_ENABLED_KEY)
+    if value is not None:
+        return value.lower() == 'true'
+    return settings.CABINET_EMAIL_REGISTRATION_ENABLED
 
 
 @router.get('/logo')
@@ -445,6 +466,8 @@ async def update_branding_name(
         logo_url='/cabinet/branding/logo' if custom_logo else None,
         logo_letter=logo_letter,
         has_custom_logo=custom_logo,
+        email_registration_enabled=await _is_email_registration_enabled(db),
+        telegram_proxy_url=settings.MTPROXY_URL or settings.TELEGRAM_PROXY_URL,
     )
 
 
@@ -1009,8 +1032,7 @@ async def update_lite_mode_enabled(
     return LiteModeEnabledResponse(enabled=payload.enabled)
 
 
-# ============ Gift Feature Routes ============
-
+# ============ Gift Feature Routes =====
 
 @router.get('/gift-enabled', response_model=GiftEnabledResponse)
 async def get_gift_enabled(
@@ -1034,3 +1056,28 @@ async def update_gift_enabled(
     await set_setting_value(db, GIFT_ENABLED_KEY, str(payload.enabled).lower())
     logger.info('Admin set gift enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
     return GiftEnabledResponse(enabled=payload.enabled)
+=======
+@router.get('/email-registration', response_model=EmailRegistrationEnabledResponse)
+async def get_email_registration_enabled(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """
+    Get email registration enabled setting.
+    Public endpoint.
+    """
+    enabled = await _is_email_registration_enabled(db)
+    return EmailRegistrationEnabledResponse(enabled=enabled)
+
+
+@router.patch('/email-registration', response_model=EmailRegistrationEnabledResponse)
+async def update_email_registration_enabled(
+    payload: EmailRegistrationEnabledUpdate,
+    admin: User = Depends(require_permission('settings:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update email registration enabled setting. Admin only."""
+    await set_setting_value(db, EMAIL_REGISTRATION_ENABLED_KEY, str(payload.enabled).lower())
+
+    logger.info('Admin set email registration enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
+
+    return EmailRegistrationEnabledResponse(enabled=payload.enabled)

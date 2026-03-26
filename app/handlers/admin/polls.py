@@ -259,7 +259,7 @@ def _build_polls_keyboard(polls: list[Poll], language: str) -> types.InlineKeybo
             [
                 types.InlineKeyboardButton(
                     text=f'🗳️ {poll.title[:40]}',
-                    callback_data=f'poll_view:{poll.id}',
+                    callback_data=f'nz!_poll_view:{poll.id}',
                 )
             ]
         )
@@ -268,7 +268,7 @@ def _build_polls_keyboard(polls: list[Poll], language: str) -> types.InlineKeybo
         [
             types.InlineKeyboardButton(
                 text=texts.t('ADMIN_POLLS_CREATE', '➕ Создать опрос'),
-                callback_data='poll_create',
+                callback_data='nz!_poll_create',
             )
         ]
     )
@@ -301,19 +301,19 @@ def _build_poll_details_keyboard(poll_id: int, language: str) -> types.InlineKey
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_POLLS_SEND', '📤 Отправить'),
-                    callback_data=f'poll_send:{poll_id}',
+                    callback_data=f'nz!_poll_send:{poll_id}',
                 )
             ],
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_POLLS_STATS', '📊 Статистика'),
-                    callback_data=f'poll_stats:{poll_id}',
+                    callback_data=f'nz!_poll_stats:{poll_id}',
                 )
             ],
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_POLLS_DELETE', '🗑️ Удалить'),
-                    callback_data=f'poll_delete:{poll_id}',
+                    callback_data=f'nz!_poll_delete:{poll_id}',
                 )
             ],
             [types.InlineKeyboardButton(text=texts.t('ADMIN_POLLS_BACK', '⬅️ К списку'), callback_data='admin_polls')],
@@ -328,53 +328,53 @@ def _build_target_keyboard(poll_id: int, language: str) -> types.InlineKeyboardM
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_BROADCAST_TARGET_ALL', '👥 Всем'),
-                    callback_data=f'poll_target:{poll_id}:all',
+                    callback_data=f'nz!_poll_target:{poll_id}:all',
                 ),
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_BROADCAST_TARGET_ACTIVE', '📱 С подпиской'),
-                    callback_data=f'poll_target:{poll_id}:active',
+                    callback_data=f'nz!_poll_target:{poll_id}:active',
                 ),
             ],
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_BROADCAST_TARGET_TRIAL', '🎁 Триал'),
-                    callback_data=f'poll_target:{poll_id}:trial',
+                    callback_data=f'nz!_poll_target:{poll_id}:trial',
                 ),
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_BROADCAST_TARGET_NO_SUB', '❌ Без подписки'),
-                    callback_data=f'poll_target:{poll_id}:no',
+                    callback_data=f'nz!_poll_target:{poll_id}:no',
                 ),
             ],
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_BROADCAST_TARGET_EXPIRING', '⏰ Истекающие'),
-                    callback_data=f'poll_target:{poll_id}:expiring',
+                    callback_data=f'nz!_poll_target:{poll_id}:expiring',
                 ),
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_BROADCAST_TARGET_EXPIRED', '🔚 Истекшие'),
-                    callback_data=f'poll_target:{poll_id}:expired',
+                    callback_data=f'nz!_poll_target:{poll_id}:expired',
                 ),
             ],
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_BROADCAST_TARGET_ACTIVE_ZERO', '🧊 Активна 0 ГБ'),
-                    callback_data=f'poll_target:{poll_id}:active_zero',
+                    callback_data=f'nz!_poll_target:{poll_id}:active_zero',
                 ),
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_BROADCAST_TARGET_TRIAL_ZERO', '🥶 Триал 0 ГБ'),
-                    callback_data=f'poll_target:{poll_id}:trial_zero',
+                    callback_data=f'nz!_poll_target:{poll_id}:trial_zero',
                 ),
             ],
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_POLLS_CUSTOM_TARGET', '⚙️ По критериям'),
-                    callback_data=f'poll_custom_menu:{poll_id}',
+                    callback_data=f'nz!_poll_custom_menu:{poll_id}',
                 )
             ],
             [
                 types.InlineKeyboardButton(
                     text=texts.BACK,
-                    callback_data=f'poll_view:{poll_id}',
+                    callback_data=f'nz!_poll_view:{poll_id}',
                 )
             ],
         ]
@@ -388,44 +388,44 @@ def _build_custom_target_keyboard(poll_id: int, language: str) -> types.InlineKe
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_CRITERIA_TODAY', '📅 Сегодня'),
-                    callback_data=f'poll_custom_target:{poll_id}:today',
+                    callback_data=f'nz!_poll_custom_target:{poll_id}:today',
                 ),
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_CRITERIA_WEEK', '📅 За неделю'),
-                    callback_data=f'poll_custom_target:{poll_id}:week',
+                    callback_data=f'nz!_poll_custom_target:{poll_id}:week',
                 ),
             ],
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_CRITERIA_MONTH', '📅 За месяц'),
-                    callback_data=f'poll_custom_target:{poll_id}:month',
+                    callback_data=f'nz!_poll_custom_target:{poll_id}:month',
                 ),
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_CRITERIA_ACTIVE_TODAY', '⚡ Активные сегодня'),
-                    callback_data=f'poll_custom_target:{poll_id}:active_today',
+                    callback_data=f'nz!_poll_custom_target:{poll_id}:active_today',
                 ),
             ],
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_CRITERIA_INACTIVE_WEEK', '💤 Неактивные 7+ дней'),
-                    callback_data=f'poll_custom_target:{poll_id}:inactive_week',
+                    callback_data=f'nz!_poll_custom_target:{poll_id}:inactive_week',
                 ),
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_CRITERIA_INACTIVE_MONTH', '💤 Неактивные 30+ дней'),
-                    callback_data=f'poll_custom_target:{poll_id}:inactive_month',
+                    callback_data=f'nz!_poll_custom_target:{poll_id}:inactive_month',
                 ),
             ],
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_CRITERIA_REFERRALS', '🤝 Через рефералов'),
-                    callback_data=f'poll_custom_target:{poll_id}:referrals',
+                    callback_data=f'nz!_poll_custom_target:{poll_id}:referrals',
                 ),
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_CRITERIA_DIRECT', '🎯 Прямая регистрация'),
-                    callback_data=f'poll_custom_target:{poll_id}:direct',
+                    callback_data=f'nz!_poll_custom_target:{poll_id}:direct',
                 ),
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data=f'poll_send:{poll_id}')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_poll_send:{poll_id}')],
         ]
     )
 
@@ -443,7 +443,7 @@ def _build_send_confirmation_keyboard(poll_id: int, target: str, language: str) 
             [
                 types.InlineKeyboardButton(
                     text=texts.BACK,
-                    callback_data=f'poll_send:{poll_id}',
+                    callback_data=f'nz!_poll_send:{poll_id}',
                 )
             ],
         ]
@@ -1141,13 +1141,13 @@ async def confirm_poll_delete(
                 [
                     types.InlineKeyboardButton(
                         text=texts.t('ADMIN_POLLS_DELETE', '🗑️ Удалить'),
-                        callback_data=f'poll_delete_confirm:{poll_id}',
+                        callback_data=f'nz!_poll_delete_confirm:{poll_id}',
                     )
                 ],
                 [
                     types.InlineKeyboardButton(
                         text=texts.BACK,
-                        callback_data=f'poll_view:{poll_id}',
+                        callback_data=f'nz!_poll_view:{poll_id}',
                     )
                 ],
             ]
@@ -1182,16 +1182,16 @@ async def delete_poll_handler(
 
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_polls_panel, F.data == 'admin_polls')
-    dp.callback_query.register(start_poll_creation, F.data == 'poll_create')
-    dp.callback_query.register(show_poll_details, F.data.startswith('poll_view:'))
-    dp.callback_query.register(start_poll_send, F.data.startswith('poll_send:'))
-    dp.callback_query.register(show_custom_target_menu, F.data.startswith('poll_custom_menu:'))
-    dp.callback_query.register(select_poll_target, F.data.startswith('poll_target:'))
-    dp.callback_query.register(select_custom_poll_target, F.data.startswith('poll_custom_target:'))
+    dp.callback_query.register(start_poll_creation, F.data == 'nz!_poll_create')
+    dp.callback_query.register(show_poll_details, F.data.startswith('nz!_poll_view:'))
+    dp.callback_query.register(start_poll_send, F.data.startswith('nz!_poll_send:'))
+    dp.callback_query.register(show_custom_target_menu, F.data.startswith('nz!_poll_custom_menu:'))
+    dp.callback_query.register(select_poll_target, F.data.startswith('nz!_poll_target:'))
+    dp.callback_query.register(select_custom_poll_target, F.data.startswith('nz!_poll_custom_target:'))
     dp.callback_query.register(confirm_poll_send, F.data.startswith('poll_send_confirm:'))
-    dp.callback_query.register(show_poll_stats, F.data.startswith('poll_stats:'))
-    dp.callback_query.register(confirm_poll_delete, F.data.startswith('poll_delete:'))
-    dp.callback_query.register(delete_poll_handler, F.data.startswith('poll_delete_confirm:'))
+    dp.callback_query.register(show_poll_stats, F.data.startswith('nz!_poll_stats:'))
+    dp.callback_query.register(confirm_poll_delete, F.data.startswith('nz!_poll_delete:'))
+    dp.callback_query.register(delete_poll_handler, F.data.startswith('nz!_poll_delete_confirm:'))
 
     dp.message.register(process_poll_title, PollCreationStates.waiting_for_title)
     dp.message.register(process_poll_description, PollCreationStates.waiting_for_description)

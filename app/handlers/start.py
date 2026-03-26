@@ -10,6 +10,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 from app.config import settings
 from app.database.crud.campaign import (
@@ -20,9 +21,11 @@ from app.database.crud.subscription import decrement_subscription_server_counts
 from app.database.crud.user import (
     create_user,
     find_phantom_user_by_username,
+    get_user_by_id,
     get_user_by_referral_code,
     get_user_by_telegram_id,
 )
+from app.cabinet.auth import decode_link_token
 from app.database.crud.user_message import get_random_active_message
 from app.database.models import GuestPurchase, GuestPurchaseStatus, PinnedMessage, SubscriptionStatus, UserStatus
 from app.keyboards.inline import (
@@ -445,7 +448,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
     start_args = message.text.split()
     start_parameter = None
 
-    if len(start_args) > 1:
+    if len(start_args) > 1 and message.text != "🏠 Главное меню":
         start_parameter = start_args[1]
     elif pending_start_payload:
         start_parameter = pending_start_payload
@@ -530,6 +533,67 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                     campaign_id=campaign.id,
                     campaign_name=campaign.name,
                 )
+        elif start_parameter.startswith('link_'):
+            # Обработка токена привязки
+            link_token = start_parameter.replace('link_', '')
+            linked_user_id = decode_link_token(link_token)
+            
+            if linked_user_id:
+                target_user = await get_user_by_id(db, linked_user_id)
+                if target_user:
+                    # Проверяем, не занят ли этот telegram_id другим аккаунтом
+                    existing_tg_user = await get_user_by_telegram_id(db, message.from_user.id)
+                    
+                    if existing_tg_user and existing_tg_user.id != target_user.id:
+                        # Этот Telegram уже привязан к другому аккаунту
+                        language = getattr(target_user, 'language', DEFAULT_LANGUAGE)
+                        texts = get_texts(language)
+                        await message.answer(
+                            texts.t(
+                                'TELEGRAM_ALREADY_LINKED_OTHER',
+                                '❌ Этот Telegram аккаунт уже привязан к другому пользователю.',
+                            )
+                        )
+                        return
+                    
+                    if target_user.telegram_id and target_user.telegram_id != message.from_user.id:
+                        # Аккаунт уже привязан к другому Telegram
+                        language = getattr(target_user, 'language', DEFAULT_LANGUAGE)
+                        texts = get_texts(language)
+                        await message.answer(
+                            texts.t(
+                                'ACCOUNT_ALREADY_LINKED_OTHER_TG',
+                                '❌ Этот аккаунт уже привязан к другому Telegram.',
+                            )
+                        )
+                        return
+
+                    # Выполняем привязку
+                    target_user.telegram_id = message.from_user.id
+                    target_user.username = message.from_user.username
+                    target_user.first_name = message.from_user.first_name
+                    target_user.last_name = message.from_user.last_name
+                    
+                    if getattr(target_user, 'auth_type', 'email') == 'email':
+                        target_user.auth_type = 'telegram'
+                    
+                    await db.commit()
+                    logger.info('✅ Telegram привязан к аккаунту через бота', user_id=target_user.id, tg_id=message.from_user.id)
+                    
+                    language = getattr(target_user, 'language', DEFAULT_LANGUAGE)
+                    texts = get_texts(language)
+                    await message.answer(
+                        texts.t(
+                            'TELEGRAM_LINK_SUCCESS',
+                            '✅ Telegram успешно привязан к вашему аккаунту!',
+                        )
+                    )
+                    # Продолжаем как обычный старт для этого пользователя
+                    db_user = target_user
+                else:
+                    logger.warning('⚠️ Токен привязки ведет к несуществующему пользователю', user_id=linked_user_id)
+            else:
+                logger.warning('⚠️ Невалидный или просроченный токен привязки')
         else:
             referral_code = start_parameter
             logger.info('🔎 Найден реферальный код', referral_code=referral_code)
@@ -669,6 +733,18 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             is_moderator=is_moderator,
             custom_buttons=custom_buttons,
         )
+
+        kb_with_sticker = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="🏠 Главное меню")]],
+            resize_keyboard=True,
+        )
+
+        # send sticker with keyboard
+        await message.answer_sticker(
+            sticker='CAACAgIAAxkBAAEPBpZohflqYIlRfilN2bhHA-YY-IjdhAACVhAAAl6XSEvqr_65soQtIDYE',
+            reply_markup=kb_with_sticker,
+        )
+
         await message.answer(menu_text, reply_markup=keyboard, parse_mode='HTML')
 
         if pinned_message and not pinned_message.send_before_menu:
@@ -1009,7 +1085,7 @@ async def process_rules_accept(callback: types.CallbackQuery, state: FSMContext,
         language = data.get('language', language)
         texts = get_texts(language)
 
-        if callback.data == 'rules_accept':
+        if callback.data == 'nz!_rules_accept':
             logger.info('✅ Правила приняты пользователем', from_user_id=callback.from_user.id)
 
             # Пытаемся показать политику конфиденциальности
@@ -1078,7 +1154,7 @@ async def process_privacy_policy_accept(callback: types.CallbackQuery, state: FS
         language = data.get('language', language)
         texts = get_texts(language)
 
-        if callback.data == 'privacy_policy_accept':
+        if callback.data == 'nz!_privacy_policy_accept':
             logger.info('✅ Политика конфиденциальности принята пользователем', from_user_id=callback.from_user.id)
 
             try:
@@ -1845,7 +1921,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
             # Если у пользователя уже есть подписка (например, от промокода), не предлагаем триал
             user_has_subscription = user.subscription and getattr(user.subscription, 'is_active', False)
             if user_has_subscription:
-                keyboard = get_back_keyboard(user.language, callback_data='back_to_menu')
+                keyboard = get_back_keyboard(user.language, callback_data='nz!_back_to_menu')
             else:
                 keyboard = get_post_registration_keyboard(user.language)
 
@@ -2029,7 +2105,7 @@ def get_referral_code_keyboard(language: str):
     texts = get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=texts.t('REFERRAL_CODE_SKIP', '⭐️ Пропустить'), callback_data='referral_skip')]
+            [InlineKeyboardButton(text=texts.t('REFERRAL_CODE_SKIP', '⭐️ Пропустить'), callback_data='nz!_referral_skip')]
         ]
     )
 
@@ -2546,31 +2622,32 @@ def register_handlers(dp: Dispatcher):
     logger.debug('=== НАЧАЛО регистрации обработчиков start.py ===')
 
     dp.message.register(cmd_start, Command('start'))
+    dp.message.register(cmd_start, F.text == "🏠 Главное меню")
     logger.debug('Зарегистрирован cmd_start')
 
     dp.callback_query.register(
         process_rules_accept,
-        F.data.in_(['rules_accept', 'rules_decline']),
+        F.data.in_(['nz!_rules_accept', 'nz!_rules_decline']),
         StateFilter(RegistrationStates.waiting_for_rules_accept),
     )
     logger.debug('Зарегистрирован process_rules_accept')
 
     dp.callback_query.register(
         process_privacy_policy_accept,
-        F.data.in_(['privacy_policy_accept', 'privacy_policy_decline']),
+        F.data.in_(['nz!_privacy_policy_accept', 'nz!_privacy_policy_decline']),
         StateFilter(RegistrationStates.waiting_for_privacy_policy_accept),
     )
     logger.debug('Зарегистрирован process_privacy_policy_accept')
 
     dp.callback_query.register(
         process_language_selection,
-        F.data.startswith('language_select:'),
+        F.data.startswith('nz!_language_select:'),
         StateFilter(RegistrationStates.waiting_for_language),
     )
     logger.debug('Зарегистрирован process_language_selection')
 
     dp.callback_query.register(
-        process_referral_code_skip, F.data == 'referral_skip', StateFilter(RegistrationStates.waiting_for_referral_code)
+        process_referral_code_skip, F.data == 'nz!_referral_skip', StateFilter(RegistrationStates.waiting_for_referral_code)
     )
     logger.debug('Зарегистрирован process_referral_code_skip')
 
@@ -2583,7 +2660,7 @@ def register_handlers(dp: Dispatcher):
     )
     logger.debug('Зарегистрирован handle_potential_referral_code')
 
-    dp.callback_query.register(required_sub_channel_check, F.data.in_(['sub_channel_check']))
+    dp.callback_query.register(required_sub_channel_check, F.data.in_(['nz!_sub_channel_check']))
     logger.debug('Зарегистрирован required_sub_channel_check')
 
     dp.callback_query.register(

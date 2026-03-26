@@ -322,8 +322,8 @@ class DailySubscriptionService:
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='menu_balance')],
-                [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='nz!_menu_balance')],
+                [InlineKeyboardButton(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
             ]
         )
 

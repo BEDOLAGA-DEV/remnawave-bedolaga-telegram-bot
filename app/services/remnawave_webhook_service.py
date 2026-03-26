@@ -361,7 +361,7 @@ class RemnaWaveWebhookService:
         button_text = texts.get('WEBHOOK_RENEW_BUTTON', 'Renew subscription')
         return InlineKeyboardMarkup(
             inline_keyboard=[
-                [build_miniapp_or_callback_button(text=button_text, callback_data='subscription_extend')],
+                [build_miniapp_or_callback_button(text=button_text, callback_data='nz!_subscription_extend')],
             ]
         )
 
@@ -370,7 +370,7 @@ class RemnaWaveWebhookService:
         button_text = texts.get('MY_SUBSCRIPTION_BUTTON', 'My subscription')
         return InlineKeyboardMarkup(
             inline_keyboard=[
-                [build_miniapp_or_callback_button(text=button_text, callback_data='menu_subscription')],
+                [build_miniapp_or_callback_button(text=button_text, callback_data='nz!_menu_subscription')],
             ]
         )
 
@@ -379,7 +379,7 @@ class RemnaWaveWebhookService:
         button_text = texts.get('CONNECT_BUTTON', 'Connect')
         return InlineKeyboardMarkup(
             inline_keyboard=[
-                [build_miniapp_or_callback_button(text=button_text, callback_data='subscription_connect')],
+                [build_miniapp_or_callback_button(text=button_text, callback_data='nz!_subscription_connect')],
             ]
         )
 
@@ -389,8 +389,8 @@ class RemnaWaveWebhookService:
         sub_text = texts.get('MY_SUBSCRIPTION_BUTTON', 'My subscription')
         return InlineKeyboardMarkup(
             inline_keyboard=[
-                [build_miniapp_or_callback_button(text=buy_text, callback_data='buy_traffic')],
-                [build_miniapp_or_callback_button(text=sub_text, callback_data='menu_subscription')],
+                [build_miniapp_or_callback_button(text=buy_text, callback_data='nz!_buy_traffic')],
+                [build_miniapp_or_callback_button(text=sub_text, callback_data='nz!_menu_subscription')],
             ]
         )
 
@@ -435,7 +435,7 @@ class RemnaWaveWebhookService:
 
         # Append "Close" button to every webhook notification keyboard
         close_text = texts.get('WEBHOOK_CLOSE_BUTTON', '✖️ Закрыть')
-        close_row = [InlineKeyboardButton(text=close_text, callback_data='webhook:close')]
+        close_row = [InlineKeyboardButton(text=close_text, callback_data='nz!_webhook:close')]
         if reply_markup:
             reply_markup = InlineKeyboardMarkup(
                 inline_keyboard=[*reply_markup.inline_keyboard, close_row],
@@ -479,6 +479,19 @@ class RemnaWaveWebhookService:
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
     ) -> None:
         if subscription:
+            # Если в локальной базе подписка всё ещё активна и дата окончания в будущем,
+            # значит вебхук от Remnawave пришёл для старого состояния (например, после продления).
+            if subscription.end_date and subscription.end_date > datetime.now(UTC):
+                logger.info(
+                    'Webhook: пропуск expire для активной подписки (дата окончания в будущем)',
+                    subscription_id=subscription.id,
+                    user_id=user.id,
+                    end_date=subscription.end_date,
+                )
+                self._stamp_webhook_update(subscription)
+                await db.commit()
+                return
+
             # Суточные подписки управляются DailySubscriptionService.
             # Remnawave может прислать user.expired если sync не дошёл (старый end_date),
             # но локально подписка ещё жива — не экспайрим её.

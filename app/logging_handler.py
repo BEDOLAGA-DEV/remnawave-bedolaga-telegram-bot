@@ -249,6 +249,22 @@ class TelegramNotifierProcessor:
             exc_info = event_dict.get('exc_info')
             if exc_info and isinstance(exc_info, tuple) and exc_info[2] is not None:
                 tb_override = ''.join(traceback.format_exception(*exc_info))
+            else:
+                # exc_info не содержит traceback — пробуем извлечь из объекта
+                # исключения, переданного как kwarg (e=, error=, exception=)
+                real_exc: BaseException | None = None
+                if exc_info and isinstance(exc_info, tuple) and exc_info[1] is not None:
+                    real_exc = exc_info[1]
+                else:
+                    for key in ('error', 'e', 'exception', 'err'):
+                        val = event_dict.get(key)
+                        if isinstance(val, BaseException):
+                            real_exc = val
+                            break
+                if real_exc is not None and real_exc.__traceback__ is not None:
+                    tb_override = ''.join(
+                        traceback.format_exception(type(real_exc), real_exc, real_exc.__traceback__)
+                    )
 
             await send_error_to_admin_chat(bot, error, context, tb_override=tb_override)
 

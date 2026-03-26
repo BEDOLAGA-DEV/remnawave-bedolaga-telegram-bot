@@ -556,7 +556,7 @@ class AdminNotificationService:
         try:
             from app.utils.markdown_to_telegram import github_markdown_to_telegram_html, truncate_for_blockquote
 
-            repo = getattr(settings, 'VERSION_CHECK_REPO', 'fr1ngg/remnawave-bedolaga-telegram-bot')
+            repo = getattr(settings, 'VERSION_CHECK_REPO', 'fr1ngg/remnawave-nozapret-telegram-bot')
             release_url = f'https://github.com/{repo}/releases/tag/{latest_version.tag_name}'
             repo_url = f'https://github.com/{repo}'
             timestamp = format_local_datetime(datetime.now(UTC), '%d.%m.%Y %H:%M:%S')

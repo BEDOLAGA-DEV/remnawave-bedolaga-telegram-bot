@@ -196,20 +196,20 @@ def get_blocked_list_keyboard(
             nav_row.append(
                 InlineKeyboardButton(
                     text='⬅️',
-                    callback_data=f'{BlockedUsersCallback.VIEW_LIST_PAGE.value}{page - 1}',
+                    callback_data=f'nz!_{BlockedUsersCallback.VIEW_LIST_PAGE.value}{page - 1}',
                 )
             )
         nav_row.append(
             InlineKeyboardButton(
                 text=f'{page}/{total_pages}',
-                callback_data='noop',
+                callback_data='nz!_noop',
             )
         )
         if page < total_pages:
             nav_row.append(
                 InlineKeyboardButton(
                     text='➡️',
-                    callback_data=f'{BlockedUsersCallback.VIEW_LIST_PAGE.value}{page + 1}',
+                    callback_data=f'nz!_{BlockedUsersCallback.VIEW_LIST_PAGE.value}{page + 1}',
                 )
             )
         buttons.append(nav_row)
@@ -269,7 +269,7 @@ def get_confirm_keyboard(action: BlockedUserAction) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=BlockedUsersText.BUTTON_CONFIRM.value,
-                    callback_data=f'{BlockedUsersCallback.CONFIRM_PREFIX.value}{action_map[action]}',
+                    callback_data=f'nz!_{BlockedUsersCallback.CONFIRM_PREFIX.value}{action_map[action]}',
                 ),
                 InlineKeyboardButton(
                     text=BlockedUsersText.BUTTON_CANCEL.value,

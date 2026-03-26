@@ -24,7 +24,7 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 'name': 'Telegram Stars',
                 'icon': '⭐',
                 'description': 'быстро и удобно',
-                'callback': 'topup_stars',
+                'callback': 'nz!_topup_stars',
             }
         )
 
@@ -36,7 +36,7 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                     'name': 'СБП (YooKassa)',
                     'icon': '🏦',
                     'description': 'моментальная оплата по QR',
-                    'callback': 'topup_yookassa_sbp',
+                    'callback': 'nz!_topup_yookassa_sbp',
                 }
             )
 
@@ -46,7 +46,7 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 'name': 'Банковская карта',
                 'icon': '💳',
                 'description': 'через YooKassa',
-                'callback': 'topup_yookassa',
+                'callback': 'nz!_topup_yookassa',
             }
         )
 
@@ -57,7 +57,7 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 'name': 'Банковская карта',
                 'icon': '💳',
                 'description': 'через Tribute',
-                'callback': 'topup_tribute',
+                'callback': 'nz!_topup_tribute',
             }
         )
 
@@ -69,7 +69,7 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 'name': 'Банковская карта',
                 'icon': '💳',
                 'description': f'через {mulenpay_name}',
-                'callback': 'topup_mulenpay',
+                'callback': 'nz!_topup_mulenpay',
             }
         )
 
@@ -80,13 +80,13 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 'name': 'Банковская карта',
                 'icon': '💳',
                 'description': 'через WATA',
-                'callback': 'topup_wata',
+                'callback': 'nz!_topup_wata',
             }
         )
 
     if settings.is_pal24_enabled():
         methods.append(
-            {'id': 'pal24', 'name': 'СБП', 'icon': '🏦', 'description': 'через PayPalych', 'callback': 'topup_pal24'}
+            {'id': 'pal24', 'name': 'СБП', 'icon': '🏦', 'description': 'через PayPalych', 'callback': 'nz!_topup_pal24'}
         )
 
     if settings.is_cryptobot_enabled():
@@ -96,7 +96,7 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 'name': 'Криптовалюта',
                 'icon': '🪙',
                 'description': 'через CryptoBot',
-                'callback': 'topup_cryptobot',
+                'callback': 'nz!_topup_cryptobot',
             }
         )
 
@@ -107,34 +107,21 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 'name': 'Криптовалюта',
                 'icon': '🪙',
                 'description': 'через Heleket',
-                'callback': 'topup_heleket',
+                'callback': 'nz!_topup_heleket',
             }
         )
 
     if settings.is_platega_enabled() and settings.get_platega_active_methods():
         platega_name = settings.get_platega_display_name()
-        if settings.PLATEGA_INLINE_METHODS:
-            for method_code in settings.get_platega_active_methods():
-                info = settings.get_platega_method_definitions().get(method_code, {})
-                methods.append(
-                    {
-                        'id': f'platega_m{method_code}',
-                        'name': info.get('name', f'Метод {method_code}'),
-                        'icon': info.get('title', '💳').split(' ', 1)[0] if info.get('title') else '💳',
-                        'description': f'через {platega_name}',
-                        'callback': f'topup_platega_m{method_code}',
-                    }
-                )
-        else:
-            methods.append(
-                {
-                    'id': 'platega',
-                    'name': 'Банковская карта',
-                    'icon': '💳',
-                    'description': f'через {platega_name} (карты + СБП)',
-                    'callback': 'topup_platega',
-                }
-            )
+        methods.append(
+            {
+                'id': 'platega',
+                'name': 'Банковская карта',
+                'icon': '💳',
+                'description': f'через {platega_name} (карты + СБП)',
+                'callback': 'nz!_topup_platega',
+            }
+        )
 
     if settings.is_cloudpayments_enabled():
         cloudpayments_name = settings.get_cloudpayments_display_name()
@@ -144,7 +131,7 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 'name': 'Банковская карта',
                 'icon': '💳',
                 'description': f'через {cloudpayments_name}',
-                'callback': 'topup_cloudpayments',
+                'callback': 'nz!_topup_cloudpayments',
             }
         )
 
@@ -156,7 +143,7 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 'name': freekassa_name,
                 'icon': '💳',
                 'description': f'через {freekassa_name}',
-                'callback': 'topup_freekassa',
+                'callback': 'nz!_topup_freekassa',
             }
         )
 
@@ -168,7 +155,7 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 'name': kassa_ai_name,
                 'icon': '💳',
                 'description': f'через {kassa_ai_name}',
-                'callback': 'topup_kassa_ai',
+                'callback': 'nz!_topup_kassa_ai',
             }
         )
 
@@ -191,7 +178,7 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 'name': 'Через поддержку',
                 'icon': '🛠️',
                 'description': 'другие способы',
-                'callback': 'topup_support',
+                'callback': 'nz!_topup_support',
             }
         )
 

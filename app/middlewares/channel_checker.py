@@ -141,7 +141,7 @@ class ChannelCheckerMiddleware(BaseMiddleware):
 
         await self._capture_start_payload(state, event, bot)
 
-        if isinstance(event, CallbackQuery) and event.data == 'sub_channel_check':
+        if isinstance(event, CallbackQuery) and event.data == 'nz!_sub_channel_check':
             # Rate limit: max 1 check per 5 seconds per user
             rate_key = f'sub_check_rate:{telegram_id}'
             if await cache.exists(rate_key):

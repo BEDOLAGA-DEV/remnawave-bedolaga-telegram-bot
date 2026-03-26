@@ -1085,21 +1085,13 @@ class MiniAppSubscriptionPurchaseService:
         subscription_service = SubscriptionService()
         # При покупке подписки ВСЕГДА сбрасываем трафик в панели
         try:
-            if getattr(user, 'remnawave_uuid', None):
-                await subscription_service.update_remnawave_user(
-                    db,
-                    subscription,
-                    reset_traffic=True,
-                    reset_reason='miniapp purchase',
-                    sync_squads=True,
-                )
-            else:
-                await subscription_service.create_remnawave_user(
-                    db,
-                    subscription,
-                    reset_traffic=True,
-                    reset_reason='miniapp purchase',
-                )
+            # Всегда используем create_remnawave_user, так как он умнее (поиск -> создание/обновление)
+            await subscription_service.create_remnawave_user(
+                db,
+                subscription,
+                reset_traffic=True,
+                reset_reason='miniapp purchase',
+            )
         except Exception as remnawave_error:  # pragma: no cover - defensive logging
             logger.error('Failed to sync subscription with RemnaWave', remnawave_error=remnawave_error)
 

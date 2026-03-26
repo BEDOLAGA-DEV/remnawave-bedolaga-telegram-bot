@@ -32,6 +32,7 @@ from app.utils.pricing_utils import (
 from app.utils.subscription_utils import (
     get_display_subscription_link,
 )
+from app.utils.timezone import format_local_datetime
 
 from .common import (
     _get_period_hint_from_subscription,
@@ -236,7 +237,7 @@ async def handle_change_devices(callback: types.CallbackQuery, db_user: User, db
 
 
 async def confirm_change_devices(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    new_devices_count = int(callback.data.split('_')[2])
+    new_devices_count = int(callback.data.split('_')[3])
     texts = get_texts(db_user.language)
     subscription = db_user.subscription
 
@@ -491,9 +492,8 @@ async def confirm_change_devices(callback: types.CallbackQuery, db_user: User, d
 
 async def execute_change_devices(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     callback_parts = callback.data.split('_')
-    new_devices_count = int(callback_parts[3])
-
-    db_user = await lock_user_for_pricing(db, db_user.id)
+    new_devices_count = int(callback_parts[4])
+    price = int(callback_parts[5])
 
     texts = get_texts(db_user.language)
     subscription = db_user.subscription
@@ -848,8 +848,14 @@ async def show_devices_page(callback: types.CallbackQuery, db_user: User, device
             device_model = device.get('deviceModel', 'Unknown')
             device_info = f'{platform} - {device_model}'
 
-            if len(device_info) > 35:
-                device_info = device_info[:32] + '...'
+            updated_at_str = device.get('updatedAt')
+            if updated_at_str:
+                try:
+                    dt = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
+                    display_date = format_local_datetime(dt, '%d.%m %H:%M')
+                    device_info += f' (upd: {display_date})'
+                except Exception:
+                    pass
 
             devices_text += texts.t(
                 'DEVICE_MANAGEMENT_LIST_ITEM',
@@ -869,7 +875,7 @@ async def show_devices_page(callback: types.CallbackQuery, db_user: User, device
 
 
 async def handle_devices_page(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    page = int(callback.data.split('_')[2])
+    page = int(callback.data.split('_')[3])
     texts = get_texts(db_user.language)
 
     try:
@@ -901,7 +907,7 @@ async def handle_single_device_reset(callback: types.CallbackQuery, db_user: Use
     texts = get_texts(db_user.language)
     try:
         callback_parts = callback.data.split('_')
-        if len(callback_parts) < 4:
+        if len(callback_parts) < 5:
             logger.error('Некорректный формат callback_data', callback_data=callback.data)
             await callback.answer(
                 texts.t('DEVICE_RESET_INVALID_REQUEST', '❌ Ошибка: некорректный запрос'),
@@ -909,10 +915,11 @@ async def handle_single_device_reset(callback: types.CallbackQuery, db_user: Use
             )
             return
 
-        device_index = int(callback_parts[2])
-        page = int(callback_parts[3])
+        # Format: nz!_sub_resdev_{index}_{page}
+        device_index = int(callback_parts[3])
+        page = int(callback_parts[4])
 
-        logger.info('🔧 Сброс устройства: index=, page', device_index=device_index, page=page)
+        logger.info('🔧 Сброс устройства: index={device_index}, page={page}', device_index=device_index, page=page)
 
     except (ValueError, IndexError) as e:
         logger.error('❌ Ошибка парсинга callback_data', callback_data=callback.data, error=e)
@@ -1136,7 +1143,7 @@ async def handle_all_devices_reset_from_management(callback: types.CallbackQuery
 
 
 async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    devices_count = int(callback.data.split('_')[2])
+    devices_count = int(callback.data.split('_')[3])
     texts = get_texts(db_user.language)
     subscription = db_user.subscription
 
@@ -1398,7 +1405,7 @@ async def confirm_reset_devices(callback: types.CallbackQuery, db_user: User, db
 
 
 async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    device_type = callback.data.split('_')[2]
+    device_type = callback.data.split('_')[3]
     texts = get_texts(db_user.language)
     subscription = db_user.subscription
     subscription_link = get_display_subscription_link(subscription)
@@ -1511,7 +1518,7 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
 
 
 async def handle_app_selection(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    device_type = callback.data.split('_')[2]
+    device_type = callback.data.split('_')[3]
     texts = get_texts(db_user.language)
 
     apps = await get_apps_for_platform_async(device_type, db_user.language)

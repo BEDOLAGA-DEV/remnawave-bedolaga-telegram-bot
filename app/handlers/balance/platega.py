@@ -104,8 +104,8 @@ async def start_platega_payment(
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url, style='primary')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance', style='danger')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -152,12 +152,13 @@ async def start_platega_payment(
             [
                 types.InlineKeyboardButton(
                     text=label,
-                    callback_data=f'platega_method_{method_code}',
+                    callback_data=f'nz!_platega_method_{method_code}',
+                    style='primary',
                 )
             ]
         )
 
-    method_buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')])
+    method_buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_balance_topup', style='danger')])
 
     await callback.message.edit_text(
         texts.t(
@@ -256,8 +257,8 @@ async def process_platega_payment_amount(
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url, style='primary')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance', style='danger')])
 
         await message.answer(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -347,15 +348,17 @@ async def process_platega_payment_amount(
                         '💳 Оплатить через {method}',
                     ).format(method=method_title),
                     url=redirect_url,
+                    style='success',
                 )
             ],
             [
                 types.InlineKeyboardButton(
                     text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                    callback_data=f'check_platega_{local_payment_id}',
+                    callback_data=f'nz!_check_platega_{local_payment_id}',
+                    style='primary',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_balance_topup', style='danger')],
         ]
     )
 

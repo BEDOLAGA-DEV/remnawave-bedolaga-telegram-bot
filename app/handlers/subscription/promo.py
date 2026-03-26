@@ -206,7 +206,7 @@ async def claim_discount_offer(
                 [
                     InlineKeyboardButton(
                         text=texts.get('BACK_TO_MENU', '🏠 В главное меню'),
-                        callback_data='back_to_menu',
+                        callback_data='nz!_back_to_menu',
                     )
                 ]
             ]

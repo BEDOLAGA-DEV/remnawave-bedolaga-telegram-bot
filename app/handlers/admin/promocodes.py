@@ -106,7 +106,7 @@ async def show_promocodes_list(callback: types.CallbackQuery, db_user: User, db:
         if promo.valid_until:
             text += f'⏰ До: {format_datetime(promo.valid_until)}\n'
 
-        keyboard.append([types.InlineKeyboardButton(text=f'🎫 {promo.code}', callback_data=f'promo_manage_{promo.id}')])
+        keyboard.append([types.InlineKeyboardButton(text=f'🎫 {promo.code}', callback_data=f'nz!_promo_manage_{promo.id}')])
 
         text += '\n'
 
@@ -194,13 +194,13 @@ async def show_promocode_management(callback: types.CallbackQuery, db_user: User
 
     keyboard = [
         [
-            types.InlineKeyboardButton(text='✏️ Редактировать', callback_data=f'promo_edit_{promo.id}'),
-            types.InlineKeyboardButton(text='🔄 Переключить статус', callback_data=f'promo_toggle_{promo.id}'),
+            types.InlineKeyboardButton(text='✏️ Редактировать', callback_data=f'nz!_promo_edit_{promo.id}'),
+            types.InlineKeyboardButton(text='🔄 Переключить статус', callback_data=f'nz!_promo_toggle_{promo.id}'),
         ],
-        [types.InlineKeyboardButton(text=first_purchase_btn_text, callback_data=f'promo_toggle_first_{promo.id}')],
+        [types.InlineKeyboardButton(text=first_purchase_btn_text, callback_data=f'nz!_promo_toggle_first_{promo.id}')],
         [
-            types.InlineKeyboardButton(text='📊 Статистика', callback_data=f'promo_stats_{promo.id}'),
-            types.InlineKeyboardButton(text='🗑️ Удалить', callback_data=f'promo_delete_{promo.id}'),
+            types.InlineKeyboardButton(text='📊 Статистика', callback_data=f'nz!_promo_stats_{promo.id}'),
+            types.InlineKeyboardButton(text='🗑️ Удалить', callback_data=f'nz!_promo_delete_{promo.id}'),
         ],
         [types.InlineKeyboardButton(text='⬅️ К списку', callback_data='admin_promo_list')],
     ]
@@ -244,20 +244,20 @@ async def show_promocode_edit_menu(callback: types.CallbackQuery, db_user: User,
     text += '\nВыберите параметр для изменения:'
 
     keyboard = [
-        [types.InlineKeyboardButton(text='📅 Дата окончания', callback_data=f'promo_edit_date_{promo.id}')],
-        [types.InlineKeyboardButton(text='📊 Количество использований', callback_data=f'promo_edit_uses_{promo.id}')],
+        [types.InlineKeyboardButton(text='📅 Дата окончания', callback_data=f'nz!_promo_edit_date_{promo.id}')],
+        [types.InlineKeyboardButton(text='📊 Количество использований', callback_data=f'nz!_promo_edit_uses_{promo.id}')],
     ]
 
     if promo.type == PromoCodeType.BALANCE.value:
         keyboard.insert(
-            1, [types.InlineKeyboardButton(text='💰 Сумма бонуса', callback_data=f'promo_edit_amount_{promo.id}')]
+            1, [types.InlineKeyboardButton(text='💰 Сумма бонуса', callback_data=f'nz!_promo_edit_amount_{promo.id}')]
         )
     elif promo.type in [PromoCodeType.SUBSCRIPTION_DAYS.value, PromoCodeType.TRIAL_SUBSCRIPTION.value]:
         keyboard.insert(
-            1, [types.InlineKeyboardButton(text='📅 Количество дней', callback_data=f'promo_edit_days_{promo.id}')]
+            1, [types.InlineKeyboardButton(text='📅 Количество дней', callback_data=f'nz!_promo_edit_days_{promo.id}')]
         )
 
-    keyboard.extend([[types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'promo_manage_{promo.id}')]])
+    keyboard.extend([[types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'nz!_promo_manage_{promo.id}')]])
 
     await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
     await callback.answer()
@@ -287,7 +287,7 @@ ID промокода: {promo_id}
 """
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'promo_edit_{promo_id}')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'nz!_promo_edit_{promo_id}')]]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -316,7 +316,7 @@ ID промокода: {promo_id}
 """
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'promo_edit_{promo_id}')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'nz!_promo_edit_{promo_id}')]]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -346,7 +346,7 @@ ID промокода: {promo_id}
 """
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'promo_edit_{promo_id}')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'nz!_promo_edit_{promo_id}')]]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -378,7 +378,7 @@ ID промокода: {promo_id}
 """
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'promo_edit_{promo_id}')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'nz!_promo_edit_{promo_id}')]]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -480,7 +480,7 @@ async def process_promocode_code(message: types.Message, db_user: User, state: F
                 [
                     types.InlineKeyboardButton(
                         text=f'{promo_group.name} (↑{promo_group.priority})',
-                        callback_data=f'promo_select_group_{promo_group.id}',
+                        callback_data=f'nz!_promo_select_group_{promo_group.id}',
                     )
                 ]
             )
@@ -578,7 +578,7 @@ async def handle_edit_value(message: types.Message, db_user: User, state: FSMCon
                 f'✅ Сумма бонуса изменена на {value}₽',
                 reply_markup=types.InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'promo_manage_{promo_id}')]
+                        [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'nz!_promo_manage_{promo_id}')]
                     ]
                 ),
             )
@@ -593,7 +593,7 @@ async def handle_edit_value(message: types.Message, db_user: User, state: FSMCon
                 f'✅ Количество дней изменено на {value}',
                 reply_markup=types.InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'promo_manage_{promo_id}')]
+                        [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'nz!_promo_manage_{promo_id}')]
                     ]
                 ),
             )
@@ -672,7 +672,7 @@ async def handle_edit_uses(message: types.Message, db_user: User, state: FSMCont
             f'✅ Максимальное количество использований изменено на {uses_text}',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'promo_manage_{promo_id}')]
+                    [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'nz!_promo_manage_{promo_id}')]
                 ]
             ),
         )
@@ -893,7 +893,7 @@ async def handle_edit_expiry(message: types.Message, db_user: User, state: FSMCo
             f'✅ Срок действия промокода изменен: {expiry_text}',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'promo_manage_{promo_id}')]
+                    [types.InlineKeyboardButton(text='🎫 К промокоду', callback_data=f'nz!_promo_manage_{promo_id}')]
                 ]
             ),
         )
@@ -980,8 +980,8 @@ ID: {promo_id}
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                types.InlineKeyboardButton(text='✅ Да, удалить', callback_data=f'promo_delete_confirm_{promo.id}'),
-                types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'promo_manage_{promo.id}'),
+                types.InlineKeyboardButton(text='✅ Да, удалить', callback_data=f'nz!_promo_delete_confirm_{promo.id}'),
+                types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'nz!_promo_manage_{promo.id}'),
             ]
         ]
     )
@@ -1055,7 +1055,7 @@ async def show_promocode_stats(callback: types.CallbackQuery, db_user: User, db:
         text += '- Пока не было использований\n'
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'promo_manage_{promo.id}')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'nz!_promo_manage_{promo.id}')]]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -1095,24 +1095,24 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_promocodes_list, F.data == 'admin_promo_list')
     dp.callback_query.register(show_promocodes_list_page, F.data.startswith('admin_promo_list_page_'))
     dp.callback_query.register(start_promocode_creation, F.data == 'admin_promo_create')
-    dp.callback_query.register(select_promocode_type, F.data.startswith('promo_type_'))
-    dp.callback_query.register(process_promo_group_selection, F.data.startswith('promo_select_group_'))
+    dp.callback_query.register(select_promocode_type, F.data.startswith('nz!_promo_type_'))
+    dp.callback_query.register(process_promo_group_selection, F.data.startswith('nz!_promo_select_group_'))
 
-    dp.callback_query.register(show_promocode_management, F.data.startswith('promo_manage_'))
-    dp.callback_query.register(toggle_promocode_first_purchase, F.data.startswith('promo_toggle_first_'))
-    dp.callback_query.register(toggle_promocode_status, F.data.startswith('promo_toggle_'))
-    dp.callback_query.register(show_promocode_stats, F.data.startswith('promo_stats_'))
+    dp.callback_query.register(show_promocode_management, F.data.startswith('nz!_promo_manage_'))
+    dp.callback_query.register(toggle_promocode_first_purchase, F.data.startswith('nz!_promo_toggle_first_'))
+    dp.callback_query.register(toggle_promocode_status, F.data.startswith('nz!_promo_toggle_'))
+    dp.callback_query.register(show_promocode_stats, F.data.startswith('nz!_promo_stats_'))
 
-    dp.callback_query.register(start_edit_promocode_date, F.data.startswith('promo_edit_date_'))
-    dp.callback_query.register(start_edit_promocode_amount, F.data.startswith('promo_edit_amount_'))
-    dp.callback_query.register(start_edit_promocode_days, F.data.startswith('promo_edit_days_'))
-    dp.callback_query.register(start_edit_promocode_uses, F.data.startswith('promo_edit_uses_'))
+    dp.callback_query.register(start_edit_promocode_date, F.data.startswith('nz!_promo_edit_date_'))
+    dp.callback_query.register(start_edit_promocode_amount, F.data.startswith('nz!_promo_edit_amount_'))
+    dp.callback_query.register(start_edit_promocode_days, F.data.startswith('nz!_promo_edit_days_'))
+    dp.callback_query.register(start_edit_promocode_uses, F.data.startswith('nz!_promo_edit_uses_'))
     dp.callback_query.register(show_general_promocode_stats, F.data == 'admin_promo_general_stats')
 
-    dp.callback_query.register(show_promocode_edit_menu, F.data.regexp(r'^promo_edit_\d+$'))
+    dp.callback_query.register(show_promocode_edit_menu, F.data.regexp(r'^nz\!_promo_edit_\d+$'))
 
-    dp.callback_query.register(delete_promocode_confirmed, F.data.startswith('promo_delete_confirm_'))
-    dp.callback_query.register(confirm_delete_promocode, F.data.startswith('promo_delete_'))
+    dp.callback_query.register(delete_promocode_confirmed, F.data.startswith('nz!_promo_delete_confirm_'))
+    dp.callback_query.register(confirm_delete_promocode, F.data.startswith('nz!_promo_delete_'))
 
     dp.message.register(process_promocode_code, AdminStates.creating_promocode)
     dp.message.register(process_promocode_value, AdminStates.setting_promocode_value)

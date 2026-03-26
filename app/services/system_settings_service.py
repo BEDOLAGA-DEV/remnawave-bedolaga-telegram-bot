@@ -309,6 +309,8 @@ class BotConfigurationService:
         'TRAFFIC_CHECK_CONCURRENCY': 'MONITORING',
         'ENABLE_LOGO_MODE': 'INTERFACE_BRANDING',
         'LOGO_FILE': 'INTERFACE_BRANDING',
+        'TELEGRAM_PROXY_URL': 'INTERFACE_BRANDING',
+        'MTPROXY_URL': 'INTERFACE_BRANDING',
         'HIDE_SUBSCRIPTION_LINK': 'INTERFACE_SUBSCRIPTION',
         'MAIN_MENU_MODE': 'INTERFACE',
         'CABINET_BUTTON_STYLE': 'INTERFACE',
@@ -855,6 +857,23 @@ class BotConfigurationService:
                 'Остальные инфраструктурные уведомления продолжают отправляться.'
             ),
             'dependencies': 'REMNAWAVE_WEBHOOK_ENABLED, ADMIN_NOTIFICATIONS_ENABLED',
+        'TELEGRAM_PROXY_URL': {
+            'description': (
+                'Ссылка на публичный MTProto-прокси Telegram. '
+                'Если задана, в главном меню появится кнопка 🛡️ Прокси Telegram, '
+                'при нажатии на которую открывается эта ссылка.'
+            ),
+            'format': 'Полный URL вида https://t.me/proxy?server=...&port=...&secret=...',
+            'example': 'https://t.me/proxy?server=1.2.3.4&port=443&secret=abcdef',
+            'warning': 'Убедитесь, что ссылка рабочая — пользователи увидят её напрямую.',
+        },
+        'MTPROXY_URL': {
+            'description': (
+                'Псевдоним TELEGRAM_PROXY_URL (для обратной совместимости). '
+                'Рекомендуется использовать TELEGRAM_PROXY_URL.'
+            ),
+            'format': 'Полный URL вида https://t.me/proxy?server=...&port=...&secret=...',
+            'example': 'https://t.me/proxy?server=1.2.3.4&port=443&secret=abcdef',
         },
         'WEBHOOK_NOTIFY_USER_ENABLED': {
             'description': (

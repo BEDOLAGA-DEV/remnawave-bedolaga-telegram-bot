@@ -117,6 +117,11 @@ class TariffDetailResponse(BaseModel):
     external_squad_uuid: str | None = None
     # Показывать в подарках
     show_in_gift: bool = True
+    # WL (БС) трафик — индивидуальные настройки тарифа
+    # None = брать из WL_DEFAULT_TRAFFIC_LIMIT_GB; 0 = безлимит
+    wl_default_traffic_gb: int | None = None
+    # {"5": 1000, "10": 2000, ...} (ГБ: цена в копейках). Пустой словарь = глобальные цены
+    wl_traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime | None = None
 
@@ -175,6 +180,9 @@ class TariffCreateRequest(BaseModel):
     external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
     # Показывать в подарках
     show_in_gift: bool = True
+    # WL (БС) трафик
+    wl_default_traffic_gb: int | None = Field(None, ge=0, description='None = global default; 0 = unlimited')
+    wl_traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
 
 
 class TariffUpdateRequest(BaseModel):
@@ -216,6 +224,9 @@ class TariffUpdateRequest(BaseModel):
     external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
     # Показывать в подарках
     show_in_gift: bool | None = None
+    # WL (БС) трафик
+    wl_default_traffic_gb: int | None = Field(None, ge=0)
+    wl_traffic_topup_packages: dict[str, int] | None = None
 
 
 class TariffSortOrderRequest(BaseModel):

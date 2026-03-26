@@ -190,9 +190,8 @@ def _format_server_lines(
         else:
             latency_text = texts.t('SERVER_STATUS_OFFLINE', 'нет ответа')
 
-        name = html.escape(server.display_name or server.name)
-        flag_prefix = f'{server.flag} ' if server.flag else ''
-        server_line = f'{flag_prefix}{name} — {latency_text}'
+        name = server.display_name or server.name
+        server_line = f'{name} — {latency_text}'
         lines.append(f'<blockquote>{server_line}</blockquote>')
 
     return lines
@@ -201,10 +200,10 @@ def _format_server_lines(
 def register_handlers(dp: Dispatcher) -> None:
     dp.callback_query.register(
         show_server_status,
-        F.data == 'menu_server_status',
+        F.data == 'nz!_menu_server_status',
     )
 
     dp.callback_query.register(
         change_server_status_page,
-        F.data.startswith('server_status_page:'),
+        F.data.startswith('nz!_server_status_page:'),
     )

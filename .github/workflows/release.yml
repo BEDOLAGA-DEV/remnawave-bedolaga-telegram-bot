@@ -148,7 +148,7 @@ jobs:
 
             ```bash
             # Docker Hub
-            docker pull fr1ngg/remnawave-bedolaga-telegram-bot:${{ github.ref_name }}
+            docker pull fr1ngg/remnawave-nozapret-telegram-bot:${{ github.ref_name }}
 
             # GitHub Container Registry
             docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}

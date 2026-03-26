@@ -379,20 +379,20 @@ async def show_preview_welcome_text(callback: types.CallbackQuery, db_user: User
 
 
 def register_welcome_text_handlers(dp: Dispatcher):
-    dp.callback_query.register(show_welcome_text_panel, F.data == 'welcome_text_panel')
+    dp.callback_query.register(show_welcome_text_panel, F.data == 'nz!_welcome_text_panel')
 
-    dp.callback_query.register(toggle_welcome_text, F.data == 'toggle_welcome_text')
+    dp.callback_query.register(toggle_welcome_text, F.data == 'nz!_toggle_welcome_text')
 
-    dp.callback_query.register(show_current_welcome_text, F.data == 'show_welcome_text')
+    dp.callback_query.register(show_current_welcome_text, F.data == 'nz!_show_welcome_text')
 
-    dp.callback_query.register(show_placeholders_help, F.data == 'show_placeholders_help')
+    dp.callback_query.register(show_placeholders_help, F.data == 'nz!_show_placeholders_help')
 
-    dp.callback_query.register(show_formatting_help, F.data == 'show_formatting_help')
+    dp.callback_query.register(show_formatting_help, F.data == 'nz!_show_formatting_help')
 
-    dp.callback_query.register(show_preview_welcome_text, F.data == 'preview_welcome_text')
+    dp.callback_query.register(show_preview_welcome_text, F.data == 'nz!_preview_welcome_text')
 
-    dp.callback_query.register(start_edit_welcome_text, F.data == 'edit_welcome_text')
+    dp.callback_query.register(start_edit_welcome_text, F.data == 'nz!_edit_welcome_text')
 
-    dp.callback_query.register(reset_welcome_text, F.data == 'reset_welcome_text')
+    dp.callback_query.register(reset_welcome_text, F.data == 'nz!_reset_welcome_text')
 
     dp.message.register(process_welcome_text_edit, AdminStates.editing_welcome_text)

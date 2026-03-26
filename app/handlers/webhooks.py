@@ -95,6 +95,15 @@ async def handle_successful_payment(message: types.Message):
             user_id = int(payload_parts[1])
             amount_kopeks = int(payload_parts[2])
 
+            # Security: verify that payer matches the target user to prevent IDOR
+            if user_id != message.from_user.id:
+                logger.warning(
+                    'Payment ownership mismatch: payer does not match target user',
+                    from_user_id=message.from_user.id,
+                    target_user_id=user_id,
+                )
+                return
+
             async with AsyncSessionLocal() as db:
                 try:
                     existing_transaction = await get_transaction_by_external_id(

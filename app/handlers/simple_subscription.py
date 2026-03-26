@@ -49,7 +49,7 @@ async def start_simple_subscription_purchase(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription')])
 
         await callback.message.edit_text(
             f'🚫 <b>Покупка подписки ограничена</b>\n\n{reason}\n\n'
@@ -194,10 +194,10 @@ async def start_simple_subscription_purchase(
         keyboard_rows = [
             [
                 types.InlineKeyboardButton(
-                    text='✅ Подтвердить покупку', callback_data='simple_subscription_confirm_purchase'
+                    text='✅ Подтвердить покупку', callback_data='nz!_simple_subscription_confirm_purchase'
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
         ]
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
     else:
@@ -221,7 +221,7 @@ async def start_simple_subscription_purchase(
                 [
                     types.InlineKeyboardButton(
                         text='✅ Оплатить с баланса',
-                        callback_data='simple_subscription_pay_with_balance',
+                        callback_data='nz!_simple_subscription_pay_with_balance',
                     )
                 ]
             )
@@ -266,43 +266,43 @@ def _get_simple_subscription_payment_keyboard(language: str) -> types.InlineKeyb
     # Добавляем доступные методы оплаты
     if settings.TELEGRAM_STARS_ENABLED:
         keyboard.append(
-            [types.InlineKeyboardButton(text='⭐ Telegram Stars', callback_data='simple_subscription_stars')]
+            [types.InlineKeyboardButton(text='⭐ Telegram Stars', callback_data='nz!_simple_subscription_stars')]
         )
 
     if settings.is_yookassa_enabled():
         yookassa_methods = []
         if settings.YOOKASSA_SBP_ENABLED:
             yookassa_methods.append(
-                types.InlineKeyboardButton(text='🏦 YooKassa (СБП)', callback_data='simple_subscription_yookassa_sbp')
+                types.InlineKeyboardButton(text='🏦 YooKassa (СБП)', callback_data='nz!_simple_subscription_yookassa_sbp')
             )
         yookassa_methods.append(
-            types.InlineKeyboardButton(text='💳 YooKassa (Карта)', callback_data='simple_subscription_yookassa')
+            types.InlineKeyboardButton(text='💳 YooKassa (Карта)', callback_data='nz!_simple_subscription_yookassa')
         )
         if yookassa_methods:
             keyboard.append(yookassa_methods)
 
     if settings.is_cryptobot_enabled():
         keyboard.append(
-            [types.InlineKeyboardButton(text='🪙 CryptoBot', callback_data='simple_subscription_cryptobot')]
+            [types.InlineKeyboardButton(text='🪙 CryptoBot', callback_data='nz!_simple_subscription_cryptobot')]
         )
 
     if settings.is_heleket_enabled():
-        keyboard.append([types.InlineKeyboardButton(text='🪙 Heleket', callback_data='simple_subscription_heleket')])
+        keyboard.append([types.InlineKeyboardButton(text='🪙 Heleket', callback_data='nz!_simple_subscription_heleket')])
 
     if settings.is_mulenpay_enabled():
         mulenpay_name = settings.get_mulenpay_display_name()
         keyboard.append(
-            [types.InlineKeyboardButton(text=f'💳 {mulenpay_name}', callback_data='simple_subscription_mulenpay')]
+            [types.InlineKeyboardButton(text=f'💳 {mulenpay_name}', callback_data='nz!_simple_subscription_mulenpay')]
         )
 
     if settings.is_pal24_enabled():
-        keyboard.append([types.InlineKeyboardButton(text='💳 PayPalych', callback_data='simple_subscription_pal24')])
+        keyboard.append([types.InlineKeyboardButton(text='💳 PayPalych', callback_data='nz!_simple_subscription_pal24')])
 
     if settings.is_wata_enabled():
-        keyboard.append([types.InlineKeyboardButton(text='💳 WATA', callback_data='simple_subscription_wata')])
+        keyboard.append([types.InlineKeyboardButton(text='💳 WATA', callback_data='nz!_simple_subscription_wata')])
 
     # Кнопка назад
-    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')])
+    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')])
 
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -587,7 +587,7 @@ async def handle_simple_subscription_pay_with_balance(
         def _fallback_connect_button() -> types.InlineKeyboardButton:
             return types.InlineKeyboardButton(
                 text=connect_button_text,
-                callback_data='subscription_connect',
+                callback_data='nz!_subscription_connect',
             )
 
         if connect_mode == 'miniapp_subscription':
@@ -626,7 +626,7 @@ async def handle_simple_subscription_pay_with_balance(
                 connect_row = [
                     types.InlineKeyboardButton(
                         text=connect_button_text,
-                        callback_data='open_subscription_link',
+                        callback_data='nz!_open_subscription_link',
                     )
                 ]
             else:
@@ -640,7 +640,7 @@ async def handle_simple_subscription_pay_with_balance(
         if happ_row:
             keyboard_rows.append(happ_row)
 
-        keyboard_rows.append([types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')])
+        keyboard_rows.append([types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='nz!_back_to_menu')])
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
@@ -793,7 +793,7 @@ async def handle_simple_subscription_other_payment_methods(
         keyboard_rows.append(
             [
                 types.InlineKeyboardButton(
-                    text='✅ Оплатить с баланса', callback_data='simple_subscription_pay_with_balance'
+                    text='✅ Оплатить с баланса', callback_data='nz!_simple_subscription_pay_with_balance'
                 )
             ]
         )
@@ -836,7 +836,7 @@ async def handle_simple_subscription_payment_method(
         )
         return
 
-    payment_method = callback.data.replace('simple_subscription_', '')
+    payment_method = callback.data.replace('nz!_simple_subscription_', '')
 
     try:
         payment_service = PaymentService(callback.bot)
@@ -1018,19 +1018,19 @@ async def handle_simple_subscription_payment_method(
             else:
                 # Если ссылка недоступна, предлагаем оплатить через ID платежа в приложении банка
                 keyboard_buttons.append(
-                    [types.InlineKeyboardButton(text='📱 Оплатить в приложении банка', callback_data='temp_disabled')]
+                    [types.InlineKeyboardButton(text='📱 Оплатить в приложении банка', callback_data='nz!_temp_disabled')]
                 )
 
             # Добавляем общие кнопки
             keyboard_buttons.append(
                 [
                     types.InlineKeyboardButton(
-                        text='📊 Проверить статус', callback_data=f'check_yookassa_{payment_result["local_payment_id"]}'
+                        text='📊 Проверить статус', callback_data=f'nz!_check_yookassa_{payment_result["local_payment_id"]}'
                     )
                 ]
             )
             keyboard_buttons.append(
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')]
+                [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')]
             )
 
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
@@ -1173,10 +1173,10 @@ async def handle_simple_subscription_payment_method(
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                            callback_data=f'check_simple_cryptobot_{crypto_result["local_payment_id"]}',
+                            callback_data=f'nz!_check_simple_cryptobot_{crypto_result["local_payment_id"]}',
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
                 ]
             )
 
@@ -1267,10 +1267,10 @@ async def handle_simple_subscription_payment_method(
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                            callback_data=f'check_simple_heleket_{local_payment_id}',
+                            callback_data=f'nz!_check_simple_heleket_{local_payment_id}',
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
                 ]
             )
 
@@ -1371,10 +1371,10 @@ async def handle_simple_subscription_payment_method(
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                            callback_data=f'check_simple_mulenpay_{local_payment_id}',
+                            callback_data=f'nz!_check_simple_mulenpay_{local_payment_id}',
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
                 ]
             )
 
@@ -1559,10 +1559,10 @@ async def handle_simple_subscription_payment_method(
                 [
                     types.InlineKeyboardButton(
                         text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                        callback_data=f'check_simple_pal24_{local_payment_id}',
+                        callback_data=f'nz!_check_simple_pal24_{local_payment_id}',
                     )
                 ],
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
             ]
 
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
@@ -1637,10 +1637,10 @@ async def handle_simple_subscription_payment_method(
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                            callback_data=f'check_simple_wata_{local_payment_id}',
+                            callback_data=f'nz!_check_simple_wata_{local_payment_id}',
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
                 ]
             )
 
@@ -1793,10 +1793,10 @@ async def check_simple_pal24_payment_status(
                 [
                     types.InlineKeyboardButton(
                         text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                        callback_data=f'check_simple_pal24_{local_payment_id}',
+                        callback_data=f'nz!_check_simple_pal24_{local_payment_id}',
                     )
                 ],
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
             ]
         )
 
@@ -1880,10 +1880,10 @@ async def check_simple_mulenpay_payment_status(
             [
                 types.InlineKeyboardButton(
                     text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                    callback_data=f'check_simple_mulenpay_{local_payment_id}',
+                    callback_data=f'nz!_check_simple_mulenpay_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
         ]
     )
 
@@ -1950,10 +1950,10 @@ async def check_simple_cryptobot_payment_status(
             [
                 types.InlineKeyboardButton(
                     text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                    callback_data=f'check_simple_cryptobot_{local_payment_id}',
+                    callback_data=f'nz!_check_simple_cryptobot_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
         ]
     )
 
@@ -2036,10 +2036,10 @@ async def check_simple_heleket_payment_status(
             [
                 types.InlineKeyboardButton(
                     text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                    callback_data=f'check_simple_heleket_{local_payment_id}',
+                    callback_data=f'nz!_check_simple_heleket_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
         ]
     )
 
@@ -2099,10 +2099,10 @@ async def check_simple_wata_payment_status(
             [
                 types.InlineKeyboardButton(
                     text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                    callback_data=f'check_simple_wata_{local_payment_id}',
+                    callback_data=f'nz!_check_simple_wata_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
         ]
     )
 
@@ -2325,7 +2325,7 @@ async def confirm_simple_subscription_purchase(
         def _fallback_connect_button() -> types.InlineKeyboardButton:
             return types.InlineKeyboardButton(
                 text=connect_button_text,
-                callback_data='subscription_connect',
+                callback_data='nz!_subscription_connect',
             )
 
         if connect_mode == 'miniapp_subscription':
@@ -2364,7 +2364,7 @@ async def confirm_simple_subscription_purchase(
                 connect_row = [
                     types.InlineKeyboardButton(
                         text=connect_button_text,
-                        callback_data='open_subscription_link',
+                        callback_data='nz!_open_subscription_link',
                     )
                 ]
             else:
@@ -2378,7 +2378,7 @@ async def confirm_simple_subscription_purchase(
         if happ_row:
             keyboard_rows.append(happ_row)
 
-        keyboard_rows.append([types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')])
+        keyboard_rows.append([types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='nz!_back_to_menu')])
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
@@ -2428,32 +2428,32 @@ async def confirm_simple_subscription_purchase(
 def register_simple_subscription_handlers(dp):
     """Регистрирует обработчики простой покупки подписки."""
 
-    dp.callback_query.register(start_simple_subscription_purchase, F.data == 'simple_subscription_purchase')
+    dp.callback_query.register(start_simple_subscription_purchase, F.data == 'nz!_simple_subscription_purchase')
 
-    dp.callback_query.register(confirm_simple_subscription_purchase, F.data == 'simple_subscription_confirm_purchase')
+    dp.callback_query.register(confirm_simple_subscription_purchase, F.data == 'nz!_simple_subscription_confirm_purchase')
 
     dp.callback_query.register(
-        handle_simple_subscription_pay_with_balance, F.data == 'simple_subscription_pay_with_balance'
+        handle_simple_subscription_pay_with_balance, F.data == 'nz!_simple_subscription_pay_with_balance'
     )
 
     dp.callback_query.register(
-        handle_simple_subscription_pay_with_balance_disabled, F.data == 'simple_subscription_pay_with_balance_disabled'
+        handle_simple_subscription_pay_with_balance_disabled, F.data == 'nz!_simple_subscription_pay_with_balance_disabled'
     )
 
     dp.callback_query.register(
-        handle_simple_subscription_other_payment_methods, F.data == 'simple_subscription_other_payment_methods'
+        handle_simple_subscription_other_payment_methods, F.data == 'nz!_simple_subscription_other_payment_methods'
     )
 
-    dp.callback_query.register(handle_simple_subscription_payment_method, F.data.startswith('simple_subscription_'))
+    dp.callback_query.register(handle_simple_subscription_payment_method, F.data.startswith('nz!_simple_subscription_'))
 
-    dp.callback_query.register(check_simple_pal24_payment_status, F.data.startswith('check_simple_pal24_'))
+    dp.callback_query.register(check_simple_pal24_payment_status, F.data.startswith('nz!_check_simple_pal24_'))
 
-    dp.callback_query.register(check_simple_mulenpay_payment_status, F.data.startswith('check_simple_mulenpay_'))
+    dp.callback_query.register(check_simple_mulenpay_payment_status, F.data.startswith('nz!_check_simple_mulenpay_'))
 
-    dp.callback_query.register(check_simple_cryptobot_payment_status, F.data.startswith('check_simple_cryptobot_'))
+    dp.callback_query.register(check_simple_cryptobot_payment_status, F.data.startswith('nz!_check_simple_cryptobot_'))
 
-    dp.callback_query.register(check_simple_heleket_payment_status, F.data.startswith('check_simple_heleket_'))
+    dp.callback_query.register(check_simple_heleket_payment_status, F.data.startswith('nz!_check_simple_heleket_'))
 
-    dp.callback_query.register(check_simple_wata_payment_status, F.data.startswith('check_simple_wata_'))
+    dp.callback_query.register(check_simple_wata_payment_status, F.data.startswith('nz!_check_simple_wata_'))
 
-    dp.callback_query.register(check_simple_pal24_payment_status, F.data.startswith('check_simple_pal24_'))
+    dp.callback_query.register(check_simple_pal24_payment_status, F.data.startswith('nz!_check_simple_pal24_'))

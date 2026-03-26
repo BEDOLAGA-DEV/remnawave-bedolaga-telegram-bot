@@ -159,6 +159,7 @@ class AuthResponse(BaseModel):
     expires_in: int
     user: UserResponse
     campaign_bonus: CampaignBonusInfo | None = None
+    mtproxy_url: str | None = Field(None, description='URL for free MTProxy')
 
 
 class RegisterResponse(BaseModel):
@@ -212,3 +213,25 @@ class DeepLinkPollRequest(BaseModel):
         pattern=r'^[a-zA-Z0-9_-]+$',
         description='Campaign slug captured from cabinet URL',
     )
+class LinkedProvider(BaseModel):
+    """Schema for a linked authentication provider."""
+
+    provider: str
+    is_linked: bool
+    provider_id: str | None = None
+    display_name: str | None = None
+
+
+class LinkedProvidersResponse(BaseModel):
+    """Response containing list of linked providers."""
+
+    providers: list[LinkedProvider]
+
+
+class TelegramLinkTokenResponse(BaseModel):
+    """Response containing a temporary token for linking Telegram."""
+
+    link_token: str
+    bot_link: str
+    expires_in: int
+    mtproxy_url: str | None = Field(None, description='URL for free MTProxy')

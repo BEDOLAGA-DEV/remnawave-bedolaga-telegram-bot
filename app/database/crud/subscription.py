@@ -207,6 +207,7 @@ async def create_paid_subscription(
     is_trial: bool = False,
     tariff_id: int | None = None,
     commit: bool = True,
+    wl_traffic_limit_gb: int | None = None,
 ) -> Subscription:
     end_date = datetime.now(UTC) + timedelta(days=duration_days)
 
@@ -230,7 +231,7 @@ async def create_paid_subscription(
         except Exception as error:
             logger.error('❌ Не удалось получить fallback сквад', user_id=user_id, error=error)
 
-    subscription = Subscription(
+    sub_kwargs = dict(
         user_id=user_id,
         status=SubscriptionStatus.ACTIVE.value,
         is_trial=is_trial,
@@ -243,6 +244,10 @@ async def create_paid_subscription(
         autopay_days_before=settings.DEFAULT_AUTOPAY_DAYS_BEFORE,
         tariff_id=tariff_id,
     )
+    if wl_traffic_limit_gb is not None:
+        sub_kwargs['wl_traffic_limit_gb'] = wl_traffic_limit_gb
+
+    subscription = Subscription(**sub_kwargs)
 
     db.add(subscription)
     if commit:
@@ -682,6 +687,49 @@ async def add_subscription_traffic(db: AsyncSession, subscription: Subscription,
 
     logger.info(
         '📈 К подписке пользователя добавлено ГБ трафика (истекает )',
+        user_id=subscription.user_id,
+        gb=gb,
+        new_expires_at=new_expires_at.strftime('%d.%m.%Y'),
+    )
+    return subscription
+
+
+async def add_subscription_wl_traffic(db: AsyncSession, subscription: Subscription, gb: int) -> Subscription:
+    if subscription.wl_traffic_limit_gb == 0:
+        return subscription
+    subscription.wl_traffic_limit_gb += gb
+    subscription.updated_at = datetime.now(UTC)
+
+    from app.database.models import WlTrafficPurchase
+
+    new_expires_at = datetime.now(UTC) + timedelta(days=30)
+    new_purchase = WlTrafficPurchase(subscription_id=subscription.id, traffic_gb=gb, expires_at=new_expires_at)
+    db.add(new_purchase)
+
+    current_purchased = getattr(subscription, 'wl_purchased_traffic_gb', 0) or 0
+    subscription.wl_purchased_traffic_gb = current_purchased + gb
+
+    now = datetime.now(UTC)
+    active_purchases_query = (
+        select(WlTrafficPurchase)
+        .where(WlTrafficPurchase.subscription_id == subscription.id)
+        .where(WlTrafficPurchase.expires_at > now)
+    )
+    active_purchases_result = await db.execute(active_purchases_query)
+    active_purchases = active_purchases_result.scalars().all()
+
+    if active_purchases:
+        all_active = list(active_purchases) + [new_purchase]
+        earliest_expiry = min(p.expires_at for p in all_active)
+        subscription.wl_traffic_reset_at = earliest_expiry
+    else:
+        subscription.wl_traffic_reset_at = new_expires_at
+
+    await db.commit()
+    await db.refresh(subscription)
+
+    logger.info(
+        '📈 К подписке пользователя добавлено ГБ БС трафика (истекает )',
         user_id=subscription.user_id,
         gb=gb,
         new_expires_at=new_expires_at.strftime('%d.%m.%Y'),

@@ -106,7 +106,7 @@ class PaymentCommonMixin:
                     [
                         build_miniapp_or_callback_button(
                             text=texts.RETURN_TO_SUBSCRIPTION_CHECKOUT,
-                            callback_data='return_to_saved_cart',
+                            callback_data='nz!_return_to_saved_cart',
                         )
                     ]
                 )
@@ -117,7 +117,7 @@ class PaymentCommonMixin:
                         [
                             build_miniapp_or_callback_button(
                                 text=texts.RETURN_TO_SUBSCRIPTION_CHECKOUT,
-                                callback_data='subscription_resume_checkout',
+                                callback_data='nz!_subscription_resume_checkout',
                             )
                         ]
                     )
@@ -127,7 +127,7 @@ class PaymentCommonMixin:
             [
                 build_miniapp_or_callback_button(
                     text='💰 Мой баланс',
-                    callback_data='menu_balance',
+                    callback_data='nz!_menu_balance',
                 )
             ]
         )
@@ -135,7 +135,7 @@ class PaymentCommonMixin:
             [
                 InlineKeyboardButton(
                     text='🏠 Главное меню',
-                    callback_data='back_to_menu',
+                    callback_data='nz!_back_to_menu',
                 )
             ]
         )

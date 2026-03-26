@@ -24,4 +24,4 @@ async def show_support_info(callback: types.CallbackQuery, db_user: User):
 
 
 def register_handlers(dp: Dispatcher):
-    dp.callback_query.register(show_support_info, F.data == 'menu_support')
+    dp.callback_query.register(show_support_info, F.data == 'nz!_menu_support')

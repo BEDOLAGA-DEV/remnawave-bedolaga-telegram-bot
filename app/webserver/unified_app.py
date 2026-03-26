@@ -47,7 +47,7 @@ def _create_base_app() -> FastAPI:
         app = create_web_api_app()
     else:
         app = FastAPI(
-            title='Bedolaga Unified Server',
+            title='NoZapret Unified Server',
             version=settings.WEB_API_VERSION,
             docs_url=docs_config.get('docs_url'),
             redoc_url=None,
@@ -58,7 +58,7 @@ def _create_base_app() -> FastAPI:
             app,
             redoc_url=docs_config.get('redoc_url'),
             openapi_url=docs_config.get('openapi_url'),
-            title='Bedolaga Unified Server',
+            title='NoZapret Unified Server',
         )
 
         # Add cabinet routes even when web API is disabled
@@ -66,6 +66,7 @@ def _create_base_app() -> FastAPI:
             from fastapi.middleware.cors import CORSMiddleware
 
             cabinet_origins = settings.get_cabinet_allowed_origins()
+            # Security: wildcard origins are incompatible with allow_credentials=True
             if '*' in cabinet_origins:
                 logger.warning('CORS wildcard with credentials is insecure, disabling credentials for wildcard')
                 app.add_middleware(

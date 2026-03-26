@@ -1298,8 +1298,8 @@ class MonitoringService:
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [build_miniapp_or_callback_button(text='💎 Купить подписку', callback_data='menu_buy')],
-                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='balance_topup')],
+                    [build_miniapp_or_callback_button(text='💎 Купить подписку', callback_data='nz!_menu_buy')],
+                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='nz!_balance_topup')],
                 ]
             )
 
@@ -1389,11 +1389,11 @@ class MonitoringService:
                 inline_keyboard=[
                     [
                         build_miniapp_or_callback_button(
-                            text='⏰ Продлить подписку', callback_data='subscription_extend'
+                            text='⏰ Продлить подписку', callback_data='nz!_subscription_extend'
                         )
                     ],
-                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='balance_topup')],
-                    [build_miniapp_or_callback_button(text='📱 Моя подписка', callback_data='menu_subscription')],
+                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='nz!_balance_topup')],
+                    [build_miniapp_or_callback_button(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
                 ]
             )
 
@@ -1444,8 +1444,8 @@ class MonitoringService:
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [build_miniapp_or_callback_button(text='💎 Купить подписку', callback_data='menu_buy')],
-                    [build_miniapp_or_callback_button(text='💰 Пополнить баланс', callback_data='balance_topup')],
+                    [build_miniapp_or_callback_button(text='💎 Купить подписку', callback_data='nz!_menu_buy')],
+                    [build_miniapp_or_callback_button(text='💰 Пополнить баланс', callback_data='nz!_balance_topup')],
                 ]
             )
 
@@ -1513,7 +1513,7 @@ class MonitoringService:
                 [
                     InlineKeyboardButton(
                         text=check_button,
-                        callback_data='sub_channel_check',
+                        callback_data='nz!_sub_channel_check',
                     )
                 ]
             )
@@ -1575,18 +1575,18 @@ class MonitoringService:
                     [
                         build_miniapp_or_callback_button(
                             text=texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                            callback_data='subscription_extend',
+                            callback_data='nz!_subscription_extend',
                         )
                     ],
                     [
                         build_miniapp_or_callback_button(
                             text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'),
-                            callback_data='balance_topup',
+                            callback_data='nz!_balance_topup',
                         )
                     ],
                     [
                         InlineKeyboardButton(
-                            text=texts.t('SUPPORT_BUTTON', '🆘 Поддержка'), callback_data='menu_support'
+                            text=texts.t('SUPPORT_BUTTON', '🆘 Поддержка'), callback_data='nz!_menu_support'
                         )
                     ],
                 ]
@@ -1664,24 +1664,24 @@ class MonitoringService:
                 inline_keyboard=[
                     [
                         build_miniapp_or_callback_button(
-                            text='🎁 Получить скидку', callback_data=f'claim_discount_{offer_id}'
+                            text='🎁 Получить скидку', callback_data=f'nz!_claim_discount_{offer_id}'
                         )
                     ],
                     [
                         build_miniapp_or_callback_button(
                             text=texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                            callback_data='subscription_extend',
+                            callback_data='nz!_subscription_extend',
                         )
                     ],
                     [
                         build_miniapp_or_callback_button(
                             text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'),
-                            callback_data='balance_topup',
+                            callback_data='nz!_balance_topup',
                         )
                     ],
                     [
                         InlineKeyboardButton(
-                            text=texts.t('SUPPORT_BUTTON', '🆘 Поддержка'), callback_data='menu_support'
+                            text=texts.t('SUPPORT_BUTTON', '🆘 Поддержка'), callback_data='nz!_menu_support'
                         )
                     ],
                 ]
@@ -1745,8 +1745,8 @@ class MonitoringService:
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='balance_topup')],
-                    [build_miniapp_or_callback_button(text='📱 Моя подписка', callback_data='menu_subscription')],
+                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='nz!_balance_topup')],
+                    [build_miniapp_or_callback_button(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
                 ]
             )
 

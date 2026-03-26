@@ -303,6 +303,11 @@ async def update_tariff(
     traffic_reset_mode: str | None = ...,  # ... = не передан, None = сбросить к глобальной настройке
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = ...,  # ... = не передан, None = убрать внешний сквад
+    # Длительность триала
+    trial_duration_days: int | None = ...,  # ... = не передан, None = сбросить к глобальной настройке
+    # WL (_wl) трафик
+    wl_default_traffic_gb: int | None = ...,  # ... = не передан, None = сбросить к глобальной настройке
+    wl_traffic_topup_packages: dict[str, int] | None = None,
 ) -> Tariff:
     """Обновляет существующий тариф."""
     if name is not None:
@@ -372,6 +377,14 @@ async def update_tariff(
     # Внешний сквад
     if external_squad_uuid is not ...:
         tariff.external_squad_uuid = external_squad_uuid
+    # Длительность триала
+    if trial_duration_days is not ...:
+        tariff.trial_duration_days = trial_duration_days
+    # WL (_wl) трафик
+    if wl_default_traffic_gb is not ...:
+        tariff.wl_default_traffic_gb = wl_default_traffic_gb
+    if wl_traffic_topup_packages is not None:
+        tariff.wl_traffic_topup_packages = wl_traffic_topup_packages
 
     # Обновляем промогруппы если указаны
     if promo_group_ids is not None:

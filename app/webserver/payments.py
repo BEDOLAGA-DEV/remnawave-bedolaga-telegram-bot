@@ -30,7 +30,6 @@ def _create_cors_response() -> Response:
     return Response(
         status_code=status.HTTP_200_OK,
         headers={
-            'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type, trbt-signature, Crypto-Pay-API-Signature, X-MulenPay-Signature, Authorization',
         },
@@ -374,7 +373,6 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
             return Response(
                 status_code=status.HTTP_200_OK,
                 headers={
-                    'Access-Control-Allow-Origin': '*',
                     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
                     'Access-Control-Allow-Headers': 'Content-Type, X-YooKassa-Signature, Signature',
                 },
@@ -481,7 +479,6 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
             return Response(
                 status_code=status.HTTP_200_OK,
                 headers={
-                    'Access-Control-Allow-Origin': '*',
                     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
                     'Access-Control-Allow-Headers': 'Content-Type, X-Signature',
                 },
@@ -552,7 +549,6 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
             return Response(
                 status_code=status.HTTP_200_OK,
                 headers={
-                    'Access-Control-Allow-Origin': '*',
                     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
                     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
                 },
@@ -616,7 +612,6 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
             return Response(
                 status_code=status.HTTP_200_OK,
                 headers={
-                    'Access-Control-Allow-Origin': '*',
                     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
                     'Access-Control-Allow-Headers': 'Content-Type',
                 },
@@ -752,7 +747,6 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
             return Response(
                 status_code=status.HTTP_200_OK,
                 headers={
-                    'Access-Control-Allow-Origin': '*',
                     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
                     'Access-Control-Allow-Headers': 'Content-Type, X-Content-HMAC',
                 },
@@ -962,7 +956,6 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
             return Response(
                 status_code=status.HTTP_200_OK,
                 headers={
-                    'Access-Control-Allow-Origin': '*',
                     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
                     'Access-Control-Allow-Headers': 'Content-Type',
                 },

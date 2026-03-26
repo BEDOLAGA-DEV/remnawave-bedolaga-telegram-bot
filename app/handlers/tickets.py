@@ -274,12 +274,12 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('VIEW_TICKET', '👁️ Посмотреть тикет'), callback_data=f'view_ticket_{ticket.id}'
+                        text=texts.t('VIEW_TICKET', '👁️ Посмотреть тикет'), callback_data=f'nz!_view_ticket_{ticket.id}'
                     )
                 ],
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('BACK_TO_MENU', '🏠 В главное меню'), callback_data='back_to_menu'
+                        text=texts.t('BACK_TO_MENU', '🏠 В главное меню'), callback_data='nz!_back_to_menu'
                     )
                 ],
             ]
@@ -316,9 +316,9 @@ async def show_my_tickets(callback: types.CallbackQuery, db_user: User, db: Asyn
 
     # Определяем текущую страницу
     current_page = 1
-    if callback.data.startswith('my_tickets_page_'):
+    if callback.data.startswith('nz!_my_tickets_page_'):
         try:
-            current_page = int(callback.data.replace('my_tickets_page_', ''))
+            current_page = int(callback.data.replace('nz!_my_tickets_page_', ''))
         except ValueError:
             current_page = 1
 
@@ -347,15 +347,15 @@ async def show_my_tickets(callback: types.CallbackQuery, db_user: User, db: Asyn
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('CREATE_TICKET_BUTTON', '🎫 Создать тикет'), callback_data='create_ticket'
+                            text=texts.t('CREATE_TICKET_BUTTON', '🎫 Создать тикет'), callback_data='nz!_create_ticket'
                         )
                     ],
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('VIEW_CLOSED_TICKETS', '🟢 Закрытые тикеты'), callback_data='my_tickets_closed'
+                            text=texts.t('VIEW_CLOSED_TICKETS', '🟢 Закрытые тикеты'), callback_data='nz!_my_tickets_closed'
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_support')],
+                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_support')],
                 ]
             ),
         )
@@ -376,7 +376,7 @@ async def show_my_tickets(callback: types.CallbackQuery, db_user: User, db: Asyn
         0,
         [
             types.InlineKeyboardButton(
-                text=texts.t('VIEW_CLOSED_TICKETS', '🟢 Закрытые тикеты'), callback_data='my_tickets_closed'
+                text=texts.t('VIEW_CLOSED_TICKETS', '🟢 Закрытые тикеты'), callback_data='nz!_my_tickets_closed'
             )
         ],
     )
@@ -395,9 +395,9 @@ async def show_my_tickets_closed(callback: types.CallbackQuery, db_user: User, d
     # Пагинация закрытых
     current_page = 1
     data_str = callback.data
-    if data_str.startswith('my_tickets_closed_page_'):
+    if data_str.startswith('nz!_my_tickets_closed_page_'):
         try:
-            current_page = int(data_str.replace('my_tickets_closed_page_', ''))
+            current_page = int(data_str.replace('nz!_my_tickets_closed_page_', ''))
         except ValueError:
             current_page = 1
 
@@ -410,10 +410,10 @@ async def show_my_tickets_closed(callback: types.CallbackQuery, db_user: User, d
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('BACK_TO_OPEN_TICKETS', '🔴 Открытые тикеты'), callback_data='my_tickets'
+                            text=texts.t('BACK_TO_OPEN_TICKETS', '🔴 Открытые тикеты'), callback_data='nz!_my_tickets'
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_support')],
+                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_support')],
                 ]
             ),
         )
@@ -437,7 +437,7 @@ async def show_my_tickets_closed(callback: types.CallbackQuery, db_user: User, d
         0,
         [
             types.InlineKeyboardButton(
-                text=texts.t('BACK_TO_OPEN_TICKETS', '🔴 Открытые тикеты'), callback_data='my_tickets'
+                text=texts.t('BACK_TO_OPEN_TICKETS', '🔴 Открытые тикеты'), callback_data='nz!_my_tickets'
             )
         ],
     )
@@ -522,7 +522,7 @@ async def view_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         except Exception:
             pass
     if ticket_id is None:
-        ticket_id = int(data_str.replace('view_ticket_', ''))
+        ticket_id = int(data_str.replace('nz!_view_ticket_', ''))
 
     ticket = await TicketCRUD.get_ticket_by_id(db, ticket_id, load_messages=True)
 
@@ -576,7 +576,7 @@ async def view_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSes
                 [
                     types.InlineKeyboardButton(
                         text=texts.t('TICKET_ATTACHMENTS', '📎 Вложения'),
-                        callback_data=f'ticket_attachments_{ticket_id}',
+                        callback_data=f'nz!_ticket_attachments_{ticket_id}',
                     )
                 ],
             )
@@ -587,12 +587,12 @@ async def view_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         nav_row = []
         if page > 1:
             nav_row.append(
-                types.InlineKeyboardButton(text='⬅️', callback_data=f'ticket_view_page_{ticket_id}_{page - 1}')
+                types.InlineKeyboardButton(text='⬅️', callback_data=f'nz!_ticket_view_page_{ticket_id}_{page - 1}')
             )
-        nav_row.append(types.InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='noop'))
+        nav_row.append(types.InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='nz!_noop'))
         if page < total_pages:
             nav_row.append(
-                types.InlineKeyboardButton(text='➡️', callback_data=f'ticket_view_page_{ticket_id}_{page + 1}')
+                types.InlineKeyboardButton(text='➡️', callback_data=f'nz!_ticket_view_page_{ticket_id}_{page + 1}')
             )
         try:
             keyboard.inline_keyboard.insert(0, nav_row)
@@ -618,7 +618,7 @@ async def send_ticket_attachments(callback: types.CallbackQuery, db_user: User, 
     except Exception:
         pass
     try:
-        ticket_id = int(callback.data.replace('ticket_attachments_', ''))
+        ticket_id = int(callback.data.replace('nz!_ticket_attachments_', ''))
     except ValueError:
         await callback.answer(texts.t('TICKET_NOT_FOUND', 'Тикет не найден.'), show_alert=True)
         return
@@ -657,7 +657,7 @@ async def send_ticket_attachments(callback: types.CallbackQuery, db_user: User, 
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('DELETE_MESSAGE', '🗑 Удалить'),
-                            callback_data=f'user_delete_message_{last_group_message.message_id}',
+                            callback_data=f'nz!_user_delete_message_{last_group_message.message_id}',
                         )
                     ]
                 ]
@@ -676,7 +676,7 @@ async def send_ticket_attachments(callback: types.CallbackQuery, db_user: User, 
 
 async def user_delete_message(callback: types.CallbackQuery):
     try:
-        msg_id = int(callback.data.replace('user_delete_message_', ''))
+        msg_id = int(callback.data.replace('nz!_user_delete_message_', ''))
     except ValueError:
         await callback.answer('❌')
         return
@@ -721,7 +721,7 @@ async def _try_delete_message_later(bot: Bot, chat_id: int, message_id: int, del
 
 async def reply_to_ticket(callback: types.CallbackQuery, state: FSMContext, db_user: User):
     """Начать ответ на тикет"""
-    ticket_id = int(callback.data.replace('reply_ticket_', ''))
+    ticket_id = int(callback.data.replace('nz!_reply_ticket_', ''))
 
     await state.update_data(ticket_id=ticket_id)
 
@@ -827,7 +827,7 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
                         [
                             types.InlineKeyboardButton(
                                 text=texts.t('CLOSE_NOTIFICATION', '❌ Закрыть уведомление'),
-                                callback_data=f'close_ticket_notification_{ticket.id}',
+                                callback_data=f'nz!_close_ticket_notification_{ticket.id}',
                             )
                         ]
                     ]
@@ -846,7 +846,7 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
                         [
                             types.InlineKeyboardButton(
                                 text=texts.t('CLOSE_NOTIFICATION', '❌ Закрыть уведомление'),
-                                callback_data=f'close_ticket_notification_{ticket.id}',
+                                callback_data=f'nz!_close_ticket_notification_{ticket.id}',
                             )
                         ]
                     ]
@@ -875,12 +875,12 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('VIEW_TICKET', '👁️ Посмотреть тикет'), callback_data=f'view_ticket_{ticket_id}'
+                            text=texts.t('VIEW_TICKET', '👁️ Посмотреть тикет'), callback_data=f'nz!_view_ticket_{ticket_id}'
                         )
                     ],
                     [
                         types.InlineKeyboardButton(
-                            text=texts.t('BACK_TO_MENU', '🏠 В главное меню'), callback_data='back_to_menu'
+                            text=texts.t('BACK_TO_MENU', '🏠 В главное меню'), callback_data='nz!_back_to_menu'
                         )
                     ],
                 ]
@@ -905,7 +905,7 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
 
 async def close_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     """Закрыть тикет"""
-    ticket_id = int(callback.data.replace('close_ticket_', ''))
+    ticket_id = int(callback.data.replace('nz!_close_ticket_', ''))
 
     try:
         # Проверяем, что тикет принадлежит пользователю
@@ -948,7 +948,7 @@ async def cancel_ticket_creation(callback: types.CallbackQuery, state: FSMContex
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('BACK_TO_SUPPORT', '⬅️ К поддержке'), callback_data='menu_support'
+                        text=texts.t('BACK_TO_SUPPORT', '⬅️ К поддержке'), callback_data='nz!_menu_support'
                     )
                 ]
             ]
@@ -967,7 +967,7 @@ async def cancel_ticket_reply(callback: types.CallbackQuery, state: FSMContext, 
         texts.t('TICKET_REPLY_CANCELLED', 'Ответ отменен.'),
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text=texts.t('BACK_TO_TICKETS', '⬅️ К тикетам'), callback_data='my_tickets')]
+                [types.InlineKeyboardButton(text=texts.t('BACK_TO_TICKETS', '⬅️ К тикетам'), callback_data='nz!_my_tickets')]
             ]
         ),
     )
@@ -1116,39 +1116,39 @@ def register_handlers(dp: Dispatcher):
     """Регистрация обработчиков тикетов"""
 
     # Создание тикета (теперь без приоритета)
-    dp.callback_query.register(show_ticket_priority_selection, F.data == 'create_ticket')
+    dp.callback_query.register(show_ticket_priority_selection, F.data == 'nz!_create_ticket')
 
     dp.message.register(handle_ticket_title_input, TicketStates.waiting_for_title)
 
     dp.message.register(handle_ticket_message_input, TicketStates.waiting_for_message)
 
     # Просмотр тикетов
-    dp.callback_query.register(show_my_tickets, F.data == 'my_tickets')
-    dp.callback_query.register(show_my_tickets_closed, F.data == 'my_tickets_closed')
-    dp.callback_query.register(show_my_tickets_closed, F.data.startswith('my_tickets_closed_page_'))
+    dp.callback_query.register(show_my_tickets, F.data == 'nz!_my_tickets')
+    dp.callback_query.register(show_my_tickets_closed, F.data == 'nz!_my_tickets_closed')
+    dp.callback_query.register(show_my_tickets_closed, F.data.startswith('nz!_my_tickets_closed_page_'))
 
-    dp.callback_query.register(view_ticket, F.data.startswith('view_ticket_') | F.data.startswith('ticket_view_page_'))
+    dp.callback_query.register(view_ticket, F.data.startswith('nz!_view_ticket_') | F.data.startswith('nz!_ticket_view_page_'))
 
     # Вложения пользователя
-    dp.callback_query.register(send_ticket_attachments, F.data.startswith('ticket_attachments_'))
+    dp.callback_query.register(send_ticket_attachments, F.data.startswith('nz!_ticket_attachments_'))
 
-    dp.callback_query.register(user_delete_message, F.data.startswith('user_delete_message_'))
+    dp.callback_query.register(user_delete_message, F.data.startswith('nz!_user_delete_message_'))
 
     # Ответы на тикеты
-    dp.callback_query.register(reply_to_ticket, F.data.startswith('reply_ticket_'))
+    dp.callback_query.register(reply_to_ticket, F.data.startswith('nz!_reply_ticket_'))
 
     dp.message.register(handle_ticket_reply, TicketStates.waiting_for_reply)
 
     # Закрытие тикетов
-    dp.callback_query.register(close_ticket, F.data.regexp(r'^close_ticket_\d+$'))
+    dp.callback_query.register(close_ticket, F.data.regexp(r'^nz\!_close_ticket_\d+$'))
 
     # Отмена операций
-    dp.callback_query.register(cancel_ticket_creation, F.data == 'cancel_ticket_creation')
+    dp.callback_query.register(cancel_ticket_creation, F.data == 'nz!_cancel_ticket_creation')
 
-    dp.callback_query.register(cancel_ticket_reply, F.data == 'cancel_ticket_reply')
+    dp.callback_query.register(cancel_ticket_reply, F.data == 'nz!_cancel_ticket_reply')
 
     # Пагинация тикетов
-    dp.callback_query.register(show_my_tickets, F.data.startswith('my_tickets_page_'))
+    dp.callback_query.register(show_my_tickets, F.data.startswith('nz!_my_tickets_page_'))
 
     # Закрытие уведомлений
-    dp.callback_query.register(close_ticket_notification, F.data.startswith('close_ticket_notification_'))
+    dp.callback_query.register(close_ticket_notification, F.data.startswith('nz!_close_ticket_notification_'))

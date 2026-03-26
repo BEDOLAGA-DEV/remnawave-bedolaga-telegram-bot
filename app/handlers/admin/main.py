@@ -120,7 +120,7 @@ async def show_support_submenu(callback: types.CallbackQuery, db_user: User, db:
                         text=texts.t('ADMIN_SUPPORT_TICKETS', '🎫 Тикеты поддержки'), callback_data='admin_tickets'
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
             ]
         )
     await callback.message.edit_text(
@@ -150,7 +150,7 @@ async def show_moderator_panel(callback: types.CallbackQuery, db_user: User, db:
             ],
             [
                 InlineKeyboardButton(
-                    text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'), callback_data='back_to_menu'
+                    text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'), callback_data='nz!_back_to_menu'
                 )
             ],
         ]
@@ -220,7 +220,7 @@ async def show_support_audit(callback: types.CallbackQuery, db_user: User, db: A
     if total_pages > 1:
         if page > 1:
             nav_row.append(InlineKeyboardButton(text='⬅️', callback_data=f'admin_support_audit_page_{page - 1}'))
-        nav_row.append(InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='current_page'))
+        nav_row.append(InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='nz!_current_page'))
         if page < total_pages:
             nav_row.append(InlineKeyboardButton(text='➡️', callback_data=f'admin_support_audit_page_{page + 1}'))
 

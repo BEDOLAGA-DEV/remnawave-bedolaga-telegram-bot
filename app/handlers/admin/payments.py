@@ -842,7 +842,36 @@ async def export_payments(
     await callback.answer(texts.t('ADMIN_PAYMENTS_EXPORT_SUCCESS', '✅ Файл отправлен'))
 
 
+@admin_required
+@error_handler
+async def admin_refund_stars(message: types.Message, db_user: User, db: AsyncSession, **kwargs) -> None:
+    parts = message.text.split()
+    if len(parts) != 3:
+        await message.answer(
+            "<b>Usage:</b> <code>/refund_stars &lt;user_telegram_id&gt; &lt;telegram_payment_charge_id&gt;</code>",
+            parse_mode='HTML',
+        )
+        return
+        
+    try:
+        target_telegram_id = int(parts[1])
+        charge_id = parts[2]
+        
+        await message.bot.refund_star_payment(
+            user_id=target_telegram_id, 
+            telegram_payment_charge_id=charge_id
+        )
+        await message.answer(f"✅ Успешно отправлен запрос на возврат Stars: <code>{charge_id}</code>", parse_mode='HTML')
+        logger.info("Admin triggered Stars refund", admin_id=db_user.id, target=target_telegram_id, charge_id=charge_id)
+    except Exception as e:
+        logger.error("Failed to trigger Stars refund from admin", error=e)
+        await message.answer(f"❌ Ошибка при возврате: {str(e)}")
+
+
 def register_handlers(dp: Dispatcher) -> None:
+    from aiogram.filters import Command
+    dp.message.register(admin_refund_stars, Command('refund_stars'))
+    
     dp.callback_query.register(check_all_payments, F.data == 'admin_payments_check_all')
     dp.callback_query.register(export_payments, F.data == 'admin_payments_export')
     dp.callback_query.register(manual_check_payment, F.data.startswith('admin_payment_check_'))

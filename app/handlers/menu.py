@@ -40,7 +40,7 @@ from app.utils.promo_offer import (
     build_promo_offer_hint,
     build_test_access_hint,
 )
-from app.utils.timezone import format_local_datetime
+from app.utils.timezone import format_local_datetime, get_local_timezone
 
 
 logger = structlog.get_logger(__name__)
@@ -264,7 +264,7 @@ async def show_service_rules(callback: types.CallbackQuery, db_user: User, db: A
     await callback.message.edit_text(
         f'{texts.t("RULES_HEADER", "📋 <b>Правила сервиса</b>")}\n\n{rules_text}',
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')]]
+            inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')]]
         ),
     )
     await callback.answer()
@@ -313,6 +313,46 @@ async def show_info_menu(
     await callback.answer()
 
 
+async def show_info_menu_cmd(
+    message: types.Message,
+    db_user: User,
+    db: AsyncSession,
+):
+    if db_user is None:
+        # Пользователь не найден, используем язык по умолчанию
+        texts = get_texts(settings.DEFAULT_LANGUAGE)
+        await callback.answer(
+            texts.t(
+                'USER_NOT_FOUND_ERROR',
+                'Ошибка: пользователь не найден.',
+            ),
+            show_alert=True,
+        )
+        return
+
+    texts = get_texts(db_user.language)
+
+    header = texts.t('MENU_INFO_HEADER', 'ℹ️ <b>Инфо</b>')
+    prompt = texts.t('MENU_INFO_PROMPT', 'Выберите раздел:')
+    caption = f'{header}\n\n{prompt}' if prompt else header
+
+    privacy_enabled = await PrivacyPolicyService.is_policy_enabled(db, db_user.language)
+    public_offer_enabled = await PublicOfferService.is_offer_enabled(db, db_user.language)
+    faq_enabled = await FaqService.is_enabled(db, db_user.language)
+    promo_groups_available = await has_auto_assign_promo_groups(db)
+
+    await message.answer(
+        caption,
+        reply_markup=get_info_menu_keyboard(
+            language=db_user.language,
+            show_privacy_policy=privacy_enabled,
+            show_public_offer=public_offer_enabled,
+            show_faq=faq_enabled,
+            show_promo_groups=promo_groups_available,
+        ),
+        parse_mode='HTML',
+    )
+
 async def show_promo_groups_info(
     callback: types.CallbackQuery,
     db_user: User,
@@ -335,7 +375,7 @@ async def show_promo_groups_info(
     promo_groups = await get_auto_assign_promo_groups(db)
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_info')]]
     )
 
     if not promo_groups:
@@ -503,12 +543,12 @@ async def show_faq_pages(
             [
                 types.InlineKeyboardButton(
                     text=f'{index}. {raw_title}',
-                    callback_data=f'menu_faq_page:{page.id}:1',
+                    callback_data=f'nz!_menu_faq_page:{page.id}:1',
                 )
             ]
         )
 
-    buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')])
+    buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_info')])
 
     await callback.message.edit_text(
         caption,
@@ -616,14 +656,14 @@ async def show_faq_page(
             nav_row.append(
                 types.InlineKeyboardButton(
                     text=texts.t('PAGINATION_PREV', '⬅️'),
-                    callback_data=f'menu_faq_page:{page.id}:{current_page - 1}',
+                    callback_data=f'nz!_menu_faq_page:{page.id}:{current_page - 1}',
                 )
             )
 
         nav_row.append(
             types.InlineKeyboardButton(
                 text=f'{current_page}/{total_pages}',
-                callback_data='noop',
+                callback_data='nz!_noop',
             )
         )
 
@@ -631,7 +671,7 @@ async def show_faq_page(
             nav_row.append(
                 types.InlineKeyboardButton(
                     text=texts.t('PAGINATION_NEXT', '➡️'),
-                    callback_data=f'menu_faq_page:{page.id}:{current_page + 1}',
+                    callback_data=f'nz!_menu_faq_page:{page.id}:{current_page + 1}',
                 )
             )
 
@@ -641,11 +681,11 @@ async def show_faq_page(
         [
             types.InlineKeyboardButton(
                 text=texts.t('FAQ_BACK_TO_LIST', '⬅️ К списку FAQ'),
-                callback_data='menu_faq',
+                callback_data='nz!_menu_faq',
             )
         ]
     )
-    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')])
+    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_info')])
 
     await callback.message.edit_text(
         message_text,
@@ -741,14 +781,14 @@ async def show_privacy_policy(
             nav_row.append(
                 types.InlineKeyboardButton(
                     text=texts.t('PAGINATION_PREV', '⬅️'),
-                    callback_data=f'menu_privacy_policy:{current_page - 1}',
+                    callback_data=f'nz!_menu_privacy_policy:{current_page - 1}',
                 )
             )
 
         nav_row.append(
             types.InlineKeyboardButton(
                 text=f'{current_page}/{total_pages}',
-                callback_data='noop',
+                callback_data='nz!_noop',
             )
         )
 
@@ -756,13 +796,13 @@ async def show_privacy_policy(
             nav_row.append(
                 types.InlineKeyboardButton(
                     text=texts.t('PAGINATION_NEXT', '➡️'),
-                    callback_data=f'menu_privacy_policy:{current_page + 1}',
+                    callback_data=f'nz!_menu_privacy_policy:{current_page + 1}',
                 )
             )
 
         keyboard_rows.append(nav_row)
 
-    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')])
+    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_info')])
 
     await callback.message.edit_text(
         message_text,
@@ -858,14 +898,14 @@ async def show_public_offer(
             nav_row.append(
                 types.InlineKeyboardButton(
                     text=texts.t('PAGINATION_PREV', '⬅️'),
-                    callback_data=f'menu_public_offer:{current_page - 1}',
+                    callback_data=f'nz!_menu_public_offer:{current_page - 1}',
                 )
             )
 
         nav_row.append(
             types.InlineKeyboardButton(
                 text=f'{current_page}/{total_pages}',
-                callback_data='noop',
+                callback_data='nz!_noop',
             )
         )
 
@@ -873,13 +913,13 @@ async def show_public_offer(
             nav_row.append(
                 types.InlineKeyboardButton(
                     text=texts.t('PAGINATION_NEXT', '➡️'),
-                    callback_data=f'menu_public_offer:{current_page + 1}',
+                    callback_data=f'nz!_menu_public_offer:{current_page + 1}',
                 )
             )
 
         keyboard_rows.append(nav_row)
 
-    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')])
+    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_info')])
 
     await callback.message.edit_text(
         message_text,
@@ -1081,7 +1121,10 @@ def _get_subscription_status(user: User, texts, is_daily_tariff: bool = False) -
     days_left = 0
 
     if subscription.end_date > current_time:
-        days_left = (subscription.end_date - current_time).days
+        _tz = get_local_timezone()
+        _end_local = subscription.end_date.astimezone(_tz)
+        _now_local = current_time.astimezone(_tz)
+        days_left = max(0, (_end_local.date() - _now_local.date()).days)
 
     if actual_status == 'pending':
         return texts.t('SUBSCRIPTION_NONE', '❌ Нет активной подписки')
@@ -1435,61 +1478,63 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
 
 
 def register_handlers(dp: Dispatcher):
-    dp.callback_query.register(handle_back_to_menu, F.data == 'back_to_menu')
+    dp.callback_query.register(handle_back_to_menu, F.data == 'nz!_back_to_menu')
 
     dp.callback_query.register(
         handle_profile_unavailable,
-        F.data == 'menu_profile_unavailable',
+        F.data == 'nz!_menu_profile_unavailable',
     )
 
-    dp.callback_query.register(show_service_rules, F.data == 'menu_rules')
+    dp.callback_query.register(show_service_rules, F.data == 'nz!_menu_rules')
 
     dp.callback_query.register(
         show_info_menu,
-        F.data == 'menu_info',
+        F.data == 'nz!_menu_info',
     )
+
+    dp.message.register(show_info_menu_cmd, F.text == "/info")
 
     dp.callback_query.register(
         show_promo_groups_info,
-        F.data == 'menu_info_promo_groups',
+        F.data == 'nz!_menu_info_promo_groups',
     )
 
     dp.callback_query.register(
         show_faq_pages,
-        F.data == 'menu_faq',
+        F.data == 'nz!_menu_faq',
     )
 
     dp.callback_query.register(
         show_faq_page,
-        F.data.startswith('menu_faq_page:'),
+        F.data.startswith('nz!_menu_faq_page:'),
     )
 
     dp.callback_query.register(
         show_privacy_policy,
-        F.data == 'menu_privacy_policy',
+        F.data == 'nz!_menu_privacy_policy',
     )
 
     dp.callback_query.register(
         show_privacy_policy,
-        F.data.startswith('menu_privacy_policy:'),
+        F.data.startswith('nz!_menu_privacy_policy:'),
     )
 
     dp.callback_query.register(
         show_public_offer,
-        F.data == 'menu_public_offer',
+        F.data == 'nz!_menu_public_offer',
     )
 
     dp.callback_query.register(
         show_public_offer,
-        F.data.startswith('menu_public_offer:'),
+        F.data.startswith('nz!_menu_public_offer:'),
     )
 
-    dp.callback_query.register(show_language_menu, F.data == 'menu_language')
+    dp.callback_query.register(show_language_menu, F.data == 'nz!_menu_language')
 
-    dp.callback_query.register(process_language_change, F.data.startswith('language_select:'), StateFilter(None))
+    dp.callback_query.register(process_language_change, F.data.startswith('nz!_language_select:'), StateFilter(None))
 
-    dp.callback_query.register(handle_add_traffic, F.data == 'buy_traffic')
+    dp.callback_query.register(handle_add_traffic, F.data == 'nz!_buy_traffic')
 
-    dp.callback_query.register(add_traffic, F.data.startswith('add_traffic_'))
+    dp.callback_query.register(add_traffic, F.data.startswith('nz!_add_traffic_'))
 
-    dp.callback_query.register(handle_activate_button, F.data == 'activate_button')
+    dp.callback_query.register(handle_activate_button, F.data == 'nz!_activate_button')

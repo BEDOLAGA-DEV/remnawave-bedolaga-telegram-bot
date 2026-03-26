@@ -111,7 +111,7 @@ async def toggle_maintenance_mode(callback: types.CallbackQuery, db_user: User, 
         await callback.message.edit_text(
             '🔧 <b>Включение режима техработ</b>\n\nВведите причину включения техработ или отправьте /skip для пропуска:',
             reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='maintenance_panel')]]
+                inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='nz!_maintenance_panel')]]
             ),
         )
 
@@ -146,7 +146,7 @@ async def process_maintenance_reason(message: types.Message, db_user: User, db: 
     await message.answer(
         'Вернуться к панели управления техработами:',
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='🔧 Панель техработ', callback_data='maintenance_panel')]]
+            inline_keyboard=[[types.InlineKeyboardButton(text='🔧 Панель техработ', callback_data='nz!_maintenance_panel')]]
         ),
     )
 
@@ -235,14 +235,14 @@ async def send_manual_notification(callback: types.CallbackQuery, db_user: User,
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                types.InlineKeyboardButton(text='🟢 Онлайн', callback_data='manual_notify_online'),
-                types.InlineKeyboardButton(text='🔴 Офлайн', callback_data='manual_notify_offline'),
+                types.InlineKeyboardButton(text='🟢 Онлайн', callback_data='nz!_manual_notify_online'),
+                types.InlineKeyboardButton(text='🔴 Офлайн', callback_data='nz!_manual_notify_offline'),
             ],
             [
-                types.InlineKeyboardButton(text='🟡 Проблемы', callback_data='manual_notify_degraded'),
-                types.InlineKeyboardButton(text='🔧 Обслуживание', callback_data='manual_notify_maintenance'),
+                types.InlineKeyboardButton(text='🟡 Проблемы', callback_data='nz!_manual_notify_degraded'),
+                types.InlineKeyboardButton(text='🔧 Обслуживание', callback_data='nz!_manual_notify_maintenance'),
             ],
-            [types.InlineKeyboardButton(text='❌ Отмена', callback_data='maintenance_panel')],
+            [types.InlineKeyboardButton(text='❌ Отмена', callback_data='nz!_maintenance_panel')],
         ]
     )
 
@@ -279,7 +279,7 @@ async def handle_manual_notification(callback: types.CallbackQuery, db_user: Use
         f'📢 <b>Отправка уведомления: {status_names[status]}</b>\n\n'
         f'Введите сообщение для уведомления или отправьте /skip для отправки без дополнительного текста:',
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='maintenance_panel')]]
+            inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='nz!_maintenance_panel')]]
         ),
     )
 
@@ -325,7 +325,7 @@ async def process_notification_message(message: types.Message, db_user: User, db
     await message.answer(
         'Вернуться к панели техработ:',
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='🔧 Панель техработ', callback_data='maintenance_panel')]]
+            inline_keyboard=[[types.InlineKeyboardButton(text='🔧 Панель техработ', callback_data='nz!_maintenance_panel')]]
         ),
     )
 
@@ -340,19 +340,19 @@ async def back_to_admin_panel(callback: types.CallbackQuery, db_user: User, db: 
 
 
 def register_handlers(dp: Dispatcher):
-    dp.callback_query.register(show_maintenance_panel, F.data == 'maintenance_panel')
+    dp.callback_query.register(show_maintenance_panel, F.data == 'nz!_maintenance_panel')
 
-    dp.callback_query.register(toggle_maintenance_mode, F.data == 'maintenance_toggle')
+    dp.callback_query.register(toggle_maintenance_mode, F.data == 'nz!_maintenance_toggle')
 
-    dp.callback_query.register(toggle_monitoring, F.data == 'maintenance_monitoring')
+    dp.callback_query.register(toggle_monitoring, F.data == 'nz!_maintenance_monitoring')
 
-    dp.callback_query.register(force_api_check, F.data == 'maintenance_check_api')
+    dp.callback_query.register(force_api_check, F.data == 'nz!_maintenance_check_api')
 
-    dp.callback_query.register(check_panel_status, F.data == 'maintenance_check_panel')
+    dp.callback_query.register(check_panel_status, F.data == 'nz!_maintenance_check_panel')
 
-    dp.callback_query.register(send_manual_notification, F.data == 'maintenance_manual_notify')
+    dp.callback_query.register(send_manual_notification, F.data == 'nz!_maintenance_manual_notify')
 
-    dp.callback_query.register(handle_manual_notification, F.data.startswith('manual_notify_'))
+    dp.callback_query.register(handle_manual_notification, F.data.startswith('nz!_manual_notify_'))
 
     dp.callback_query.register(back_to_admin_panel, F.data == 'admin_panel')
 

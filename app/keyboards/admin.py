@@ -71,7 +71,7 @@ def get_admin_main_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
                     callback_data='admin_payments',
                 ),
             ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
         ]
     )
 
@@ -134,11 +134,11 @@ def get_admin_communications_submenu_keyboard(language: str = 'ru') -> InlineKey
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_COMMUNICATIONS_WELCOME_TEXT', '👋 Приветственный текст'),
-                    callback_data='welcome_text_panel',
+                    callback_data='nz!_welcome_text_panel',
                 ),
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_COMMUNICATIONS_MENU_MESSAGES', '📢 Сообщения в меню'),
-                    callback_data='user_messages_panel',
+                    callback_data='nz!_user_messages_panel',
                 ),
             ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_panel')],
@@ -196,7 +196,7 @@ def get_admin_settings_submenu_keyboard(language: str = 'ru') -> InlineKeyboardM
             [
                 InlineKeyboardButton(text=texts.ADMIN_RULES, callback_data='admin_rules'),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_SETTINGS_MAINTENANCE', '🔧 Техработы'), callback_data='maintenance_panel'
+                    text=_t(texts, 'ADMIN_SETTINGS_MAINTENANCE', '🔧 Техработы'), callback_data='nz!_maintenance_panel'
                 ),
             ],
             [
@@ -220,7 +220,7 @@ def get_admin_settings_submenu_keyboard(language: str = 'ru') -> InlineKeyboardM
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_SETTINGS_REQUIRED_CHANNELS', '📢 Обязательные каналы'),
-                    callback_data='reqch:list',
+                    callback_data='nz!_reqch:list',
                 )
             ],
             [
@@ -336,6 +336,9 @@ def get_admin_users_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_USERS_BULK_BAN', '🛑 Массовый бан'), callback_data='admin_bulk_ban_start'
+                ),
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_USERS_MASS_DELETE', '🗑️ Массовое удаление'), callback_data='admin_mass_delete_start'
                 )
             ],
             [
@@ -847,18 +850,18 @@ def get_promocode_management_keyboard(promo_id: int, language: str = 'ru') -> In
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_PROMOCODE_EDIT', '✏️ Редактировать'), callback_data=f'promo_edit_{promo_id}'
+                    text=_t(texts, 'ADMIN_PROMOCODE_EDIT', '✏️ Редактировать'), callback_data=f'nz!_promo_edit_{promo_id}'
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_PROMOCODE_TOGGLE', '🔄 Статус'), callback_data=f'promo_toggle_{promo_id}'
+                    text=_t(texts, 'ADMIN_PROMOCODE_TOGGLE', '🔄 Статус'), callback_data=f'nz!_promo_toggle_{promo_id}'
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_PROMOCODE_STATS', '📊 Статистика'), callback_data=f'promo_stats_{promo_id}'
+                    text=_t(texts, 'ADMIN_PROMOCODE_STATS', '📊 Статистика'), callback_data=f'nz!_promo_stats_{promo_id}'
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_PROMOCODE_DELETE', '🗑️ Удалить'), callback_data=f'promo_delete_{promo_id}'
+                    text=_t(texts, 'ADMIN_PROMOCODE_DELETE', '🗑️ Удалить'), callback_data=f'nz!_promo_delete_{promo_id}'
                 ),
             ],
             [
@@ -1083,7 +1086,7 @@ def get_admin_statistics_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
 
 
 def get_user_management_keyboard(
-    user_id: int, user_status: str, language: str = 'ru', back_callback: str = 'admin_users_list'
+    user_id: int, user_status: str, language: str = 'ru', back_callback: str = 'admin_users_list', has_subscription: bool = False
 ) -> InlineKeyboardMarkup:
     texts = get_texts(language)
 
@@ -1121,6 +1124,20 @@ def get_user_management_keyboard(
             )
         ],
     ]
+
+    if has_subscription:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_USER_DEVICES', '📱 Устройства'),
+                    callback_data=f'admin_user_devicelist_{user_id}',
+                ),
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_USER_SYNC_REMNAWAVE', '🔄 Синхр. RemnaWave'),
+                    callback_data=f'admin_user_sync_remnawave_{user_id}',
+                )
+            ]
+        )
 
     keyboard.append(
         [
@@ -1168,7 +1185,7 @@ def get_user_management_keyboard(
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_USER_ALREADY_DELETED', '❌ Пользователь удален'), callback_data='noop'
+                    text=_t(texts, 'ADMIN_USER_ALREADY_DELETED', '❌ Пользователь удален'), callback_data='nz!_noop'
                 )
             ]
         )
@@ -1278,25 +1295,25 @@ def get_promocode_type_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_PROMOCODE_TYPE_BALANCE', '💰 Баланс'), callback_data='promo_type_balance'
+                    text=_t(texts, 'ADMIN_PROMOCODE_TYPE_BALANCE', '💰 Баланс'), callback_data='nz!_promo_type_balance'
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_PROMOCODE_TYPE_DAYS', '📅 Дни подписки'), callback_data='promo_type_days'
+                    text=_t(texts, 'ADMIN_PROMOCODE_TYPE_DAYS', '📅 Дни подписки'), callback_data='nz!_promo_type_days'
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_PROMOCODE_TYPE_TRIAL', '🎁 Триал'), callback_data='promo_type_trial'
+                    text=_t(texts, 'ADMIN_PROMOCODE_TYPE_TRIAL', '🎁 Триал'), callback_data='nz!_promo_type_trial'
                 ),
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_PROMOCODE_TYPE_PROMO_GROUP', '🏷️ Промогруппа'),
-                    callback_data='promo_type_group',
+                    callback_data='nz!_promo_type_group',
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_PROMOCODE_TYPE_DISCOUNT', '💸 Одноразовая скидка'),
-                    callback_data='promo_type_discount',
+                    callback_data='nz!_promo_type_discount',
                 )
             ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_promocodes')],
@@ -1317,7 +1334,7 @@ def get_promocode_list_keyboard(
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=f'{status_emoji} {type_emoji} {promo.code}', callback_data=f'promo_manage_{promo.id}'
+                    text=f'{status_emoji} {type_emoji} {promo.code}', callback_data=f'nz!_promo_manage_{promo.id}'
                 )
             ]
         )
@@ -1328,7 +1345,7 @@ def get_promocode_list_keyboard(
         if page > 1:
             pagination_row.append(InlineKeyboardButton(text='⬅️', callback_data=f'admin_promo_list_page_{page - 1}'))
 
-        pagination_row.append(InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='current_page'))
+        pagination_row.append(InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='nz!_current_page'))
 
         if page < total_pages:
             pagination_row.append(InlineKeyboardButton(text='➡️', callback_data=f'admin_promo_list_page_{page + 1}'))
@@ -1356,43 +1373,43 @@ def get_broadcast_target_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BROADCAST_TARGET_ALL', '👥 Всем'), callback_data='broadcast_all'
+                    text=_t(texts, 'ADMIN_BROADCAST_TARGET_ALL', '👥 Всем'), callback_data='nz!_broadcast_all'
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BROADCAST_TARGET_ACTIVE', '📱 С подпиской'), callback_data='broadcast_active'
+                    text=_t(texts, 'ADMIN_BROADCAST_TARGET_ACTIVE', '📱 С подпиской'), callback_data='nz!_broadcast_active'
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BROADCAST_TARGET_TRIAL', '🎁 Триал'), callback_data='broadcast_trial'
+                    text=_t(texts, 'ADMIN_BROADCAST_TARGET_TRIAL', '🎁 Триал'), callback_data='nz!_broadcast_trial'
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BROADCAST_TARGET_NO_SUB', '❌ Без подписки'), callback_data='broadcast_no_sub'
+                    text=_t(texts, 'ADMIN_BROADCAST_TARGET_NO_SUB', '❌ Без подписки'), callback_data='nz!_broadcast_no_sub'
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_BROADCAST_TARGET_EXPIRING', '⏰ Истекающие'),
-                    callback_data='broadcast_expiring',
+                    callback_data='nz!_broadcast_expiring',
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BROADCAST_TARGET_EXPIRED', '🔚 Истекшие'), callback_data='broadcast_expired'
+                    text=_t(texts, 'ADMIN_BROADCAST_TARGET_EXPIRED', '🔚 Истекшие'), callback_data='nz!_broadcast_expired'
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_BROADCAST_TARGET_ACTIVE_ZERO', '🧊 Активна 0 ГБ'),
-                    callback_data='broadcast_active_zero',
+                    callback_data='nz!_broadcast_active_zero',
                 ),
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_BROADCAST_TARGET_TRIAL_ZERO', '🥶 Триал 0 ГБ'),
-                    callback_data='broadcast_trial_zero',
+                    callback_data='nz!_broadcast_trial_zero',
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_BROADCAST_TARGET_BY_TARIFF', '📦 По тарифу'),
-                    callback_data='broadcast_by_tariff',
+                    callback_data='nz!_broadcast_by_tariff',
                 )
             ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_messages')],
@@ -1407,43 +1424,43 @@ def get_custom_criteria_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_CRITERIA_TODAY', '📅 Сегодня'), callback_data='criteria_today'
+                    text=_t(texts, 'ADMIN_CRITERIA_TODAY', '📅 Сегодня'), callback_data='nz!_criteria_today'
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_CRITERIA_WEEK', '📅 За неделю'), callback_data='criteria_week'
+                    text=_t(texts, 'ADMIN_CRITERIA_WEEK', '📅 За неделю'), callback_data='nz!_criteria_week'
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_CRITERIA_MONTH', '📅 За месяц'), callback_data='criteria_month'
+                    text=_t(texts, 'ADMIN_CRITERIA_MONTH', '📅 За месяц'), callback_data='nz!_criteria_month'
                 ),
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_CRITERIA_ACTIVE_TODAY', '⚡ Активные сегодня'),
-                    callback_data='criteria_active_today',
+                    callback_data='nz!_criteria_active_today',
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_CRITERIA_INACTIVE_WEEK', '💤 Неактивные 7+ дней'),
-                    callback_data='criteria_inactive_week',
+                    callback_data='nz!_criteria_inactive_week',
                 ),
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_CRITERIA_INACTIVE_MONTH', '💤 Неактивные 30+ дней'),
-                    callback_data='criteria_inactive_month',
+                    callback_data='nz!_criteria_inactive_month',
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_CRITERIA_REFERRALS', '🤝 Через рефералов'), callback_data='criteria_referrals'
+                    text=_t(texts, 'ADMIN_CRITERIA_REFERRALS', '🤝 Через рефералов'), callback_data='nz!_criteria_referrals'
                 ),
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_CRITERIA_PROMOCODES', '🎫 Использовали промокоды'),
-                    callback_data='criteria_promocodes',
+                    callback_data='nz!_criteria_promocodes',
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_CRITERIA_DIRECT', '🎯 Прямая регистрация'), callback_data='criteria_direct'
+                    text=_t(texts, 'ADMIN_CRITERIA_DIRECT', '🎯 Прямая регистрация'), callback_data='nz!_criteria_direct'
                 )
             ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_messages')],
@@ -1461,7 +1478,7 @@ def get_broadcast_history_keyboard(page: int, total_pages: int, language: str = 
         if page > 1:
             pagination_row.append(InlineKeyboardButton(text='⬅️', callback_data=f'admin_msg_history_page_{page - 1}'))
 
-        pagination_row.append(InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='current_page'))
+        pagination_row.append(InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='nz!_current_page'))
 
         if page < total_pages:
             pagination_row.append(InlineKeyboardButton(text='➡️', callback_data=f'admin_msg_history_page_{page + 1}'))
@@ -1487,31 +1504,31 @@ def get_sync_options_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
     keyboard = [
         [
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_FULL', '🔄 Полная синхронизация'), callback_data='sync_all_users'
+                text=_t(texts, 'ADMIN_SYNC_FULL', '🔄 Полная синхронизация'), callback_data='nz!_sync_all_users'
             )
         ],
         [
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_TO_PANEL', '⬆️ Синхронизация в панель'), callback_data='sync_to_panel'
+                text=_t(texts, 'ADMIN_SYNC_TO_PANEL', '⬆️ Синхронизация в панель'), callback_data='nz!_sync_to_panel'
             )
         ],
         [
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_ONLY_NEW', '🆕 Только новые'), callback_data='sync_new_users'
+                text=_t(texts, 'ADMIN_SYNC_ONLY_NEW', '🆕 Только новые'), callback_data='nz!_sync_new_users'
             )
         ],
         [
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_UPDATE', '📈 Обновить данные'), callback_data='sync_update_data'
+                text=_t(texts, 'ADMIN_SYNC_UPDATE', '📈 Обновить данные'), callback_data='nz!_sync_update_data'
             )
         ],
         [
-            InlineKeyboardButton(text=_t(texts, 'ADMIN_SYNC_VALIDATE', '🔍 Валидация'), callback_data='sync_validate'),
-            InlineKeyboardButton(text=_t(texts, 'ADMIN_SYNC_CLEANUP', '🧹 Очистка'), callback_data='sync_cleanup'),
+            InlineKeyboardButton(text=_t(texts, 'ADMIN_SYNC_VALIDATE', '🔍 Валидация'), callback_data='nz!_sync_validate'),
+            InlineKeyboardButton(text=_t(texts, 'ADMIN_SYNC_CLEANUP', '🧹 Очистка'), callback_data='nz!_sync_cleanup'),
         ],
         [
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_RECOMMENDATIONS', '💡 Рекомендации'), callback_data='sync_recommendations'
+                text=_t(texts, 'ADMIN_SYNC_RECOMMENDATIONS', '💡 Рекомендации'), callback_data='nz!_sync_recommendations'
             )
         ],
         [InlineKeyboardButton(text=texts.BACK, callback_data='admin_remnawave')],
@@ -1525,7 +1542,7 @@ def get_sync_confirmation_keyboard(sync_type: str, language: str = 'ru') -> Inli
     keyboard = [
         [
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_CONFIRM', '✅ Подтвердить'), callback_data=f'confirm_{sync_type}'
+                text=_t(texts, 'ADMIN_SYNC_CONFIRM', '✅ Подтвердить'), callback_data=f'nz!_confirm_{sync_type}'
             )
         ],
         [InlineKeyboardButton(text=_t(texts, 'ADMIN_CANCEL', '❌ Отмена'), callback_data='admin_rw_sync')],
@@ -1542,7 +1559,7 @@ def get_sync_result_keyboard(sync_type: str, has_errors: bool = False, language:
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_SYNC_RETRY', '🔄 Повторить'), callback_data=f'sync_{sync_type}'
+                    text=_t(texts, 'ADMIN_SYNC_RETRY', '🔄 Повторить'), callback_data=f'nz!_sync_{sync_type}'
                 )
             ]
         )
@@ -1551,7 +1568,7 @@ def get_sync_result_keyboard(sync_type: str, has_errors: bool = False, language:
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_SYNC_FULL', '🔄 Полная синхронизация'), callback_data='sync_all_users'
+                    text=_t(texts, 'ADMIN_SYNC_FULL', '🔄 Полная синхронизация'), callback_data='nz!_sync_all_users'
                 )
             ]
         )
@@ -1563,7 +1580,7 @@ def get_sync_result_keyboard(sync_type: str, has_errors: bool = False, language:
                     text=_t(texts, 'ADMIN_STATS_BUTTON', '📊 Статистика'), callback_data='admin_rw_system'
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_SYNC_VALIDATE', '🔍 Валидация'), callback_data='sync_validate'
+                    text=_t(texts, 'ADMIN_SYNC_VALIDATE', '🔍 Валидация'), callback_data='nz!_sync_validate'
                 ),
             ],
             [
@@ -1588,16 +1605,16 @@ def get_period_selection_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text=_t(texts, 'ADMIN_PERIOD_TODAY', '📅 Сегодня'), callback_data='period_today'),
+                InlineKeyboardButton(text=_t(texts, 'ADMIN_PERIOD_TODAY', '📅 Сегодня'), callback_data='nz!_period_today'),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_PERIOD_YESTERDAY', '📅 Вчера'), callback_data='period_yesterday'
+                    text=_t(texts, 'ADMIN_PERIOD_YESTERDAY', '📅 Вчера'), callback_data='nz!_period_yesterday'
                 ),
             ],
             [
-                InlineKeyboardButton(text=_t(texts, 'ADMIN_PERIOD_WEEK', '📅 Неделя'), callback_data='period_week'),
-                InlineKeyboardButton(text=_t(texts, 'ADMIN_PERIOD_MONTH', '📅 Месяц'), callback_data='period_month'),
+                InlineKeyboardButton(text=_t(texts, 'ADMIN_PERIOD_WEEK', '📅 Неделя'), callback_data='nz!_period_week'),
+                InlineKeyboardButton(text=_t(texts, 'ADMIN_PERIOD_MONTH', '📅 Месяц'), callback_data='nz!_period_month'),
             ],
-            [InlineKeyboardButton(text=_t(texts, 'ADMIN_PERIOD_ALL', '📅 Все время'), callback_data='period_all')],
+            [InlineKeyboardButton(text=_t(texts, 'ADMIN_PERIOD_ALL', '📅 Все время'), callback_data='nz!_period_all')],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_statistics')],
         ]
     )
@@ -1610,18 +1627,18 @@ def get_node_management_keyboard(node_uuid: str, language: str = 'ru') -> Inline
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_NODE_ENABLE', '▶️ Включить'), callback_data=f'node_enable_{node_uuid}'
+                    text=_t(texts, 'ADMIN_NODE_ENABLE', '▶️ Включить'), callback_data=f'nz!_node_enable_{node_uuid}'
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_NODE_DISABLE', '⏸️ Отключить'), callback_data=f'node_disable_{node_uuid}'
+                    text=_t(texts, 'ADMIN_NODE_DISABLE', '⏸️ Отключить'), callback_data=f'nz!_node_disable_{node_uuid}'
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_NODE_RESTART', '🔄 Перезагрузить'), callback_data=f'node_restart_{node_uuid}'
+                    text=_t(texts, 'ADMIN_NODE_RESTART', '🔄 Перезагрузить'), callback_data=f'nz!_node_restart_{node_uuid}'
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_NODE_STATS', '📊 Статистика'), callback_data=f'node_stats_{node_uuid}'
+                    text=_t(texts, 'ADMIN_NODE_STATS', '📊 Статистика'), callback_data=f'nz!_node_stats_{node_uuid}'
                 ),
             ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_rw_nodes')],
@@ -1637,21 +1654,21 @@ def get_squad_management_keyboard(squad_uuid: str, language: str = 'ru') -> Inli
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_SQUAD_ADD_ALL', '👥 Добавить всех пользователей'),
-                    callback_data=f'squad_add_users_{squad_uuid}',
+                    callback_data=f'nz!_squad_add_users_{squad_uuid}',
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_SQUAD_REMOVE_ALL', '❌ Удалить всех пользователей'),
-                    callback_data=f'squad_remove_users_{squad_uuid}',
+                    callback_data=f'nz!_squad_remove_users_{squad_uuid}',
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_SQUAD_EDIT', '✏️ Редактировать'), callback_data=f'squad_edit_{squad_uuid}'
+                    text=_t(texts, 'ADMIN_SQUAD_EDIT', '✏️ Редактировать'), callback_data=f'nz!_squad_edit_{squad_uuid}'
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_SQUAD_DELETE', '🗑️ Удалить сквад'), callback_data=f'squad_delete_{squad_uuid}'
+                    text=_t(texts, 'ADMIN_SQUAD_DELETE', '🗑️ Удалить сквад'), callback_data=f'nz!_squad_delete_{squad_uuid}'
                 ),
             ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_rw_squads')],
@@ -1667,12 +1684,12 @@ def get_squad_edit_keyboard(squad_uuid: str, language: str = 'ru') -> InlineKeyb
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_SQUAD_EDIT_INBOUNDS', '🔧 Изменить инбаунды'),
-                    callback_data=f'squad_edit_inbounds_{squad_uuid}',
+                    callback_data=f'nz!_squad_edit_inbounds_{squad_uuid}',
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_SQUAD_RENAME', '✏️ Переименовать'), callback_data=f'squad_rename_{squad_uuid}'
+                    text=_t(texts, 'ADMIN_SQUAD_RENAME', '✏️ Переименовать'), callback_data=f'nz!_squad_rename_{squad_uuid}'
                 ),
             ],
             [
@@ -1763,7 +1780,7 @@ def get_monitoring_logs_navigation_keyboard(
         if current_page > 1:
             nav_row.append(InlineKeyboardButton(text='⬅️', callback_data=f'admin_mon_logs_page_{current_page - 1}'))
 
-        nav_row.append(InlineKeyboardButton(text=f'{current_page}/{total_pages}', callback_data='current_page_info'))
+        nav_row.append(InlineKeyboardButton(text=f'{current_page}/{total_pages}', callback_data='nz!_current_page_info'))
 
         if current_page < total_pages:
             nav_row.append(InlineKeyboardButton(text='➡️', callback_data=f'admin_mon_logs_page_{current_page + 1}'))
@@ -2064,12 +2081,12 @@ def get_admin_pagination_keyboard(
         row = []
 
         if current_page > 1:
-            row.append(InlineKeyboardButton(text='⬅️', callback_data=f'{callback_prefix}_page_{current_page - 1}'))
+            row.append(InlineKeyboardButton(text='⬅️', callback_data=f'nz!_{callback_prefix}_page_{current_page - 1}'))
 
-        row.append(InlineKeyboardButton(text=f'{current_page}/{total_pages}', callback_data='current_page'))
+        row.append(InlineKeyboardButton(text=f'{current_page}/{total_pages}', callback_data='nz!_current_page'))
 
         if current_page < total_pages:
-            row.append(InlineKeyboardButton(text='➡️', callback_data=f'{callback_prefix}_page_{current_page + 1}'))
+            row.append(InlineKeyboardButton(text='➡️', callback_data=f'nz!_{callback_prefix}_page_{current_page + 1}'))
 
         keyboard.append(row)
 
@@ -2089,7 +2106,7 @@ def get_maintenance_keyboard(
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_MAINTENANCE_DISABLE', '🟢 Выключить техработы'),
-                    callback_data='maintenance_toggle',
+                    callback_data='nz!_maintenance_toggle',
                 )
             ]
         )
@@ -2098,7 +2115,7 @@ def get_maintenance_keyboard(
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_MAINTENANCE_ENABLE', '🔧 Включить техработы'),
-                    callback_data='maintenance_toggle',
+                    callback_data='nz!_maintenance_toggle',
                 )
             ]
         )
@@ -2108,7 +2125,7 @@ def get_maintenance_keyboard(
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_MAINTENANCE_STOP_MONITORING', '⏹️ Остановить мониторинг'),
-                    callback_data='maintenance_monitoring',
+                    callback_data='nz!_maintenance_monitoring',
                 )
             ]
         )
@@ -2117,7 +2134,7 @@ def get_maintenance_keyboard(
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_MAINTENANCE_START_MONITORING', '▶️ Запустить мониторинг'),
-                    callback_data='maintenance_monitoring',
+                    callback_data='nz!_maintenance_monitoring',
                 )
             ]
         )
@@ -2125,12 +2142,12 @@ def get_maintenance_keyboard(
     keyboard.append(
         [
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_MAINTENANCE_CHECK_API', '🔍 Проверить API'), callback_data='maintenance_check_api'
+                text=_t(texts, 'ADMIN_MAINTENANCE_CHECK_API', '🔍 Проверить API'), callback_data='nz!_maintenance_check_api'
             ),
             InlineKeyboardButton(
                 text=_t(texts, 'ADMIN_MAINTENANCE_PANEL_STATUS', '🌐 Статус панели')
                 + ('⚠️' if panel_has_issues else ''),
-                callback_data='maintenance_check_panel',
+                callback_data='nz!_maintenance_check_panel',
             ),
         ]
     )
@@ -2139,14 +2156,14 @@ def get_maintenance_keyboard(
         [
             InlineKeyboardButton(
                 text=_t(texts, 'ADMIN_MAINTENANCE_SEND_NOTIFICATION', '📢 Отправить уведомление'),
-                callback_data='maintenance_manual_notify',
+                callback_data='nz!_maintenance_manual_notify',
             )
         ]
     )
 
     keyboard.append(
         [
-            InlineKeyboardButton(text=_t(texts, 'ADMIN_REFRESH', '🔄 Обновить'), callback_data='maintenance_panel'),
+            InlineKeyboardButton(text=_t(texts, 'ADMIN_REFRESH', '🔄 Обновить'), callback_data='nz!_maintenance_panel'),
             InlineKeyboardButton(text=texts.BACK, callback_data='admin_submenu_settings'),
         ]
     )
@@ -2159,7 +2176,7 @@ def get_sync_simplified_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
     keyboard = [
         [
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_SYNC_FULL', '🔄 Полная синхронизация'), callback_data='sync_all_users'
+                text=_t(texts, 'ADMIN_SYNC_FULL', '🔄 Полная синхронизация'), callback_data='nz!_sync_all_users'
             )
         ],
         [InlineKeyboardButton(text=texts.BACK, callback_data='admin_remnawave')],
@@ -2181,26 +2198,26 @@ def get_welcome_text_keyboard(language: str = 'ru', is_enabled: bool = True) -> 
         [InlineKeyboardButton(text=toggle_text, callback_data=toggle_callback)],
         [
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_WELCOME_EDIT', '📝 Изменить текст'), callback_data='edit_welcome_text'
+                text=_t(texts, 'ADMIN_WELCOME_EDIT', '📝 Изменить текст'), callback_data='nz!_edit_welcome_text'
             ),
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_WELCOME_SHOW', '👁️ Показать текущий'), callback_data='show_welcome_text'
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_WELCOME_PREVIEW', '👁️ Предпросмотр'), callback_data='preview_welcome_text'
-            ),
-            InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_WELCOME_RESET', '🔄 Сбросить'), callback_data='reset_welcome_text'
+                text=_t(texts, 'ADMIN_WELCOME_SHOW', '👁️ Показать текущий'), callback_data='nz!_show_welcome_text'
             ),
         ],
         [
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_WELCOME_HTML', '🏷️ HTML форматирование'), callback_data='show_formatting_help'
+                text=_t(texts, 'ADMIN_WELCOME_PREVIEW', '👁️ Предпросмотр'), callback_data='nz!_preview_welcome_text'
             ),
             InlineKeyboardButton(
-                text=_t(texts, 'ADMIN_WELCOME_PLACEHOLDERS', '💡 Плейсхолдеры'), callback_data='show_placeholders_help'
+                text=_t(texts, 'ADMIN_WELCOME_RESET', '🔄 Сбросить'), callback_data='nz!_reset_welcome_text'
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=_t(texts, 'ADMIN_WELCOME_HTML', '🏷️ HTML форматирование'), callback_data='nz!_show_formatting_help'
+            ),
+            InlineKeyboardButton(
+                text=_t(texts, 'ADMIN_WELCOME_PLACEHOLDERS', '💡 Плейсхолдеры'), callback_data='nz!_show_placeholders_help'
             ),
         ],
         [InlineKeyboardButton(text=texts.BACK, callback_data='admin_submenu_communications')],
@@ -2215,37 +2232,37 @@ BROADCAST_BUTTONS = {
     'balance': {
         'default_text': '💰 Пополнить баланс',
         'text_key': 'ADMIN_BROADCAST_BUTTON_BALANCE',
-        'callback': 'balance_topup',
+        'callback': 'nz!_balance_topup',
     },
     'referrals': {
         'default_text': '🤝 Партнерка',
         'text_key': 'ADMIN_BROADCAST_BUTTON_REFERRALS',
-        'callback': 'menu_referrals',
+        'callback': 'nz!_menu_referrals',
     },
     'promocode': {
         'default_text': '🎫 Промокод',
         'text_key': 'ADMIN_BROADCAST_BUTTON_PROMOCODE',
-        'callback': 'menu_promocode',
+        'callback': 'nz!_menu_promocode',
     },
     'connect': {
         'default_text': '🔗 Подключиться',
         'text_key': 'ADMIN_BROADCAST_BUTTON_CONNECT',
-        'callback': 'subscription_connect',
+        'callback': 'nz!_subscription_connect',
     },
     'subscription': {
         'default_text': '📱 Подписка',
         'text_key': 'ADMIN_BROADCAST_BUTTON_SUBSCRIPTION',
-        'callback': 'menu_subscription',
+        'callback': 'nz!_menu_subscription',
     },
     'support': {
         'default_text': '🛠️ Техподдержка',
         'text_key': 'ADMIN_BROADCAST_BUTTON_SUPPORT',
-        'callback': 'menu_support',
+        'callback': 'nz!_menu_support',
     },
     'home': {
         'default_text': '🏠 На главную',
         'text_key': 'ADMIN_BROADCAST_BUTTON_HOME',
-        'callback': 'back_to_menu',
+        'callback': 'nz!_back_to_menu',
     },
 }
 
@@ -2282,19 +2299,19 @@ def get_broadcast_media_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BROADCAST_ADD_PHOTO', '📷 Добавить фото'), callback_data='add_media_photo'
+                    text=_t(texts, 'ADMIN_BROADCAST_ADD_PHOTO', '📷 Добавить фото'), callback_data='nz!_add_media_photo'
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BROADCAST_ADD_VIDEO', '🎥 Добавить видео'), callback_data='add_media_video'
+                    text=_t(texts, 'ADMIN_BROADCAST_ADD_VIDEO', '🎥 Добавить видео'), callback_data='nz!_add_media_video'
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_BROADCAST_ADD_DOCUMENT', '📄 Добавить документ'),
-                    callback_data='add_media_document',
+                    callback_data='nz!_add_media_document',
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BROADCAST_SKIP_MEDIA', '⏭️ Пропустить медиа'), callback_data='skip_media'
+                    text=_t(texts, 'ADMIN_BROADCAST_SKIP_MEDIA', '⏭️ Пропустить медиа'), callback_data='nz!_skip_media'
                 ),
             ],
             [InlineKeyboardButton(text=_t(texts, 'ADMIN_CANCEL', '❌ Отмена'), callback_data='admin_messages')],
@@ -2309,15 +2326,15 @@ def get_media_confirm_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_BROADCAST_USE_MEDIA', '✅ Использовать это медиа'),
-                    callback_data='confirm_media',
+                    callback_data='nz!_confirm_media',
                 ),
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BROADCAST_REPLACE_MEDIA', '🔄 Заменить медиа'), callback_data='replace_media'
+                    text=_t(texts, 'ADMIN_BROADCAST_REPLACE_MEDIA', '🔄 Заменить медиа'), callback_data='nz!_replace_media'
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BROADCAST_NO_MEDIA', '⏭️ Без медиа'), callback_data='skip_media'
+                    text=_t(texts, 'ADMIN_BROADCAST_NO_MEDIA', '⏭️ Без медиа'), callback_data='nz!_skip_media'
                 ),
                 InlineKeyboardButton(text=_t(texts, 'ADMIN_CANCEL', '❌ Отмена'), callback_data='admin_messages'),
             ],
@@ -2346,7 +2363,7 @@ def get_updated_message_buttons_selector_keyboard_with_media(
                     toggle_text = f'✅ {base_text}'
             else:
                 toggle_text = base_text
-            row_buttons.append(InlineKeyboardButton(text=toggle_text, callback_data=f'btn_{button_key}'))
+            row_buttons.append(InlineKeyboardButton(text=toggle_text, callback_data=f'nz!_btn_{button_key}'))
         if row_buttons:
             keyboard.append(row_buttons)
 
@@ -2354,14 +2371,14 @@ def get_updated_message_buttons_selector_keyboard_with_media(
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_BROADCAST_CHANGE_MEDIA', '🖼️ Изменить медиа'), callback_data='change_media'
+                    text=_t(texts, 'ADMIN_BROADCAST_CHANGE_MEDIA', '🖼️ Изменить медиа'), callback_data='nz!_change_media'
                 )
             ]
         )
 
     keyboard.extend(
         [
-            [InlineKeyboardButton(text=_t(texts, 'ADMIN_CONTINUE', '✅ Продолжить'), callback_data='buttons_confirm')],
+            [InlineKeyboardButton(text=_t(texts, 'ADMIN_CONTINUE', '✅ Продолжить'), callback_data='nz!_buttons_confirm')],
             [InlineKeyboardButton(text=_t(texts, 'ADMIN_CANCEL', '❌ Отмена'), callback_data='admin_messages')],
         ]
     )

@@ -435,13 +435,13 @@ async def _send_promo_notifications(
                         [
                             build_miniapp_or_callback_button(
                                 text=btn_text,
-                                callback_data=f'claim_discount_{offer.id}',
+                                callback_data=f'nz!_claim_discount_{offer.id}',
                             )
                         ],
                         [
                             InlineKeyboardButton(
                                 text='❌ Закрыть',
-                                callback_data='promo_offer_close',
+                                callback_data='nz!_promo_offer_close',
                             )
                         ],
                     ]

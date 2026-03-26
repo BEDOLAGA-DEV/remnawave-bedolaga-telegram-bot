@@ -1141,8 +1141,13 @@ wheels = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "remnawave-bedolaga-telegram-bot"
 version = "3.38.0"
+=======
+name = "remnawave-nozapret-telegram-bot"
+version = "3.22.0"
+>>>>>>> 5088a33a (my: initial customizations)
 source = { virtual = "." }
 dependencies = [
     { name = "aiogram" },

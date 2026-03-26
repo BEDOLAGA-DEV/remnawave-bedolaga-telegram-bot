@@ -1941,7 +1941,7 @@ async def test_payment_provider(
                 [
                     types.InlineKeyboardButton(
                         text='📊 Проверить статус',
-                        callback_data=f'check_yookassa_{payment_result["local_payment_id"]}',
+                        callback_data=f'nz!_check_yookassa_{payment_result["local_payment_id"]}',
                     )
                 ],
             ]
@@ -2035,7 +2035,7 @@ async def test_payment_provider(
                 [
                     types.InlineKeyboardButton(
                         text='📊 Проверить статус',
-                        callback_data=f'check_mulenpay_{payment_result["local_payment_id"]}',
+                        callback_data=f'nz!_check_mulenpay_{payment_result["local_payment_id"]}',
                     )
                 ],
             ]
@@ -2131,7 +2131,7 @@ async def test_payment_provider(
             [
                 types.InlineKeyboardButton(
                     text='📊 Проверить статус',
-                    callback_data=f'check_pal24_{payment_result["local_payment_id"]}',
+                    callback_data=f'nz!_check_pal24_{payment_result["local_payment_id"]}',
                 )
             ],
         ]
@@ -2241,7 +2241,7 @@ async def test_payment_provider(
                 [
                     types.InlineKeyboardButton(
                         text='📊 Проверить статус',
-                        callback_data=f'check_cryptobot_{payment_result["local_payment_id"]}',
+                        callback_data=f'nz!_check_cryptobot_{payment_result["local_payment_id"]}',
                     )
                 ],
             ]

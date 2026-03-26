@@ -32,7 +32,7 @@ class ServerStatusService:
     _LATENCY_PATTERN = re.compile(r'xray_proxy_latency_ms\{(?P<labels>[^}]*)\}\s+(?P<value>[-+]?\d+(?:\.\d+)?)')
     _STATUS_PATTERN = re.compile(r'xray_proxy_status\{(?P<labels>[^}]*)\}\s+(?P<value>[-+]?\d+(?:\.\d+)?)')
     _LABEL_PATTERN = re.compile(r'(?P<key>[a-zA-Z_][a-zA-Z0-9_]*)=\"(?P<value>(?:\\.|[^\"])*)\"')
-    _FLAG_PATTERN = re.compile(r'^([\U0001F1E6-\U0001F1FF]{2})\s*(.*)$')
+    _FLAG_PATTERN = None  # Flag/country extraction disabled
 
     def __init__(self) -> None:
         pass
@@ -135,11 +135,8 @@ class ServerStatusService:
         )
 
     def _extract_flag(self, name: str) -> tuple[str, str]:
-        match = self._FLAG_PATTERN.match(name)
-        if not match:
-            return '', name
-        flag, remainder = match.groups()
-        return flag, remainder.strip()
+        # Country/flag display is disabled — return full name as-is
+        return '', name
 
     def _parse_labels(self, labels_str: str) -> dict[str, str]:
         labels: dict[str, str] = {}

@@ -255,7 +255,8 @@ async def _show_users_list_filtered(
 
 @admin_required
 @error_handler
-async def show_users_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def show_users_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    await state.clear()
     user_service = UserService()
     stats = await user_service.get_user_statistics(db)
 
@@ -1274,7 +1275,13 @@ async def show_user_management(callback: types.CallbackQuery, db_user: User, db:
         back_callback = 'admin_users_potential_customers_filter'
 
     # Базовая клавиатура профиля
-    kb = get_user_management_keyboard(user.id, user.status, db_user.language, back_callback)
+    kb = get_user_management_keyboard(
+        user.id,
+        user.status,
+        db_user.language,
+        back_callback,
+        has_subscription=subscription is not None,
+    )
     # Если пришли из тикета — добавим в начало кнопку возврата к тикету
     try:
         if origin_ticket_id:
@@ -5418,6 +5425,246 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
     await callback.answer()
 
 
+@admin_required
+@error_handler
+async def sync_remnawave_user(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    """Вручную синхронизирует пользователя в RemnaWave."""
+    user_id = int(callback.data.split('_')[-1])
+
+    subscription_service = SubscriptionService()
+    profile = await UserService().get_user_profile(db, user_id)
+
+    if not profile or not profile.get('subscription'):
+        await callback.answer('❌ У пользователя нет активной или триальной подписки', show_alert=True)
+        return
+
+    subscription = profile['subscription']
+    user = profile['user']
+
+    await callback.message.edit_text(
+        f"⏳ <b>Синхронизация пользователя {user.full_name}...</b>\n\n" f"Пожалуйста, подождите.",
+        reply_markup=None,
+    )
+
+    try:
+        # Принудительно вызываем полное создание/синхронизацию, которое также синхронизирует _wl
+        await subscription_service.create_remnawave_user(db, subscription)
+
+        await callback.message.edit_text(
+            f"✅ <b>Пользователь синхронизирован</b>\n\n" f"RemnaWave аккаунты (основной и _wl) успешно созданы или обновлены.",
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text='⬅️ Назад в профиль', callback_data=f'admin_user_manage_{user_id}'
+                        )
+                    ]
+                ]
+            ),
+        )
+    except Exception as e:
+        logger.error('Ошибка ручной синхронизации в RemnaWave', user_id=user_id, error=e)
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка синхронизации</b>\n\nДетали: {e!s}",
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text='⬅️ Назад в профиль', callback_data=f'admin_user_manage_{user_id}'
+                        )
+                    ]
+                ]
+            ),
+        )
+
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def admin_mass_delete_start(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    """Начинает процесс массового удаления пользователей."""
+    await state.set_state(AdminStates.waiting_for_mass_delete_ids)
+    await callback.message.edit_text(
+        "🗑️ <b>Массовое удаление пользователей</b>\n\n"
+        "Введите список ID пользователей (через пробел, запятую или с новой строки).\n\n"
+        "⚠️ <b>ВНИМАНИЕ:</b> Пользователи будут удалены из базы данных бота и из панели RemnaWave без возможности восстановления!",
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[[types.InlineKeyboardButton(text="❌ Отмена", callback_data="admin_users")]]
+        ),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def process_mass_delete_ids(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
+    """Обрабатывает список ID для массового удаления."""
+    text = message.text or ""
+
+    import re
+    ids_str = re.findall(r'\d+', text)
+    user_ids = [int(id_str) for id_str in ids_str]
+
+    if not user_ids:
+        await message.answer(
+            "❌ Не найдено корректных ID. Попробуйте еще раз или нажмите Отмена.",
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[[types.InlineKeyboardButton(text="❌ Отмена", callback_data="admin_users")]]
+            ),
+        )
+        return
+
+    await state.clear()
+    status_message = await message.answer(f"⏳ <b>Начинаю удаление {len(user_ids)} пользователей...</b>")
+
+    user_service = UserService()
+    success_count = 0
+    error_count = 0
+
+    for i, user_id in enumerate(user_ids):
+        if i % 5 == 0:  # Обновляем статус каждые 5 пользователей
+            await status_message.edit_text(
+                f"⏳ <b>Удаление пользователей: {i}/{len(user_ids)}</b>\n"
+                f"✅ Успешно: {success_count}\n"
+                f"❌ Ошибок: {error_count}"
+            )
+
+        try:
+            from app.database.crud.user import get_user_by_telegram_id, get_user_by_id
+            
+            # Сначала пробуем найти как telegram_id
+            user = await get_user_by_telegram_id(db, user_id)
+            if not user:
+                # Если не нашли, пробуем как внутренний ID
+                user = await get_user_by_id(db, user_id)
+                
+            if user:
+                # Вызываем полное удаление с внутренним ID
+                success = await user_service.delete_user_account(db, user.id, db_user.id)
+            else:
+                logger.warning(f"Массовое удаление: Пользователь не найден", target_id=user_id)
+                success = False
+
+            if success:
+                success_count += 1
+            else:
+                error_count += 1
+        except Exception as e:
+            logger.error(f"Ошибка при массовом удалении пользователя {user_id}", error=e)
+            error_count += 1
+
+    await status_message.edit_text(
+        f"🏁 <b>Массовое удаление завершено!</b>\n\n"
+        f"✅ Успешно удалено: {success_count}\n"
+        f"❌ Ошибок: {error_count}\n"
+        f"📊 Всего обработано: {len(user_ids)}",
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="admin_users")]]
+        ),
+    )
+
+
+@admin_required
+@error_handler
+async def show_user_devicelist(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    user_id = int(callback.data.split('_')[-1])
+    user_service = UserService()
+    user = await user_service.get_user(db, user_id)
+    if not user or not user.subscription or not user.subscription.remnawave_uuid:
+        await callback.answer('У пользователя нет подписки', show_alert=True)
+        return
+
+    remnawave = RemnaWaveService()
+    try:
+        devices_data = await remnawave.api.get_user_devices(user.subscription.remnawave_uuid)
+    except Exception as e:
+        logger.error('Ошибка получения устройств', error=e)
+        await callback.answer('Ошибка получения устройств из RemnaWave', show_alert=True)
+        return
+
+    devices = devices_data.get('devices', [])
+    keyboard_builder = []
+    
+    text = f'📱 <b>Устройства пользователя {user.full_name}</b>\n\n'
+    if not devices:
+        text += 'Устройств не найдено.'
+    else:
+        for idx, dev in enumerate(devices, 1):
+            text += f"{idx}. <b>{dev.get('platform', 'Неизвестно')}</b> - {dev.get('deviceModel', 'Неизвестно')}\n"
+            text += f"   └ HWID: <code>{dev.get('hwid')}</code>\n\n"
+            keyboard_builder.append([
+                types.InlineKeyboardButton(text=f"🗑 Удалить #{idx} ({dev.get('platform', 'Неизвестно')})", callback_data=f"admin_user_deldev_{user_id}_{dev.get('hwid')}")
+            ])
+            
+        if len(devices) > 1:
+            keyboard_builder.append([
+                types.InlineKeyboardButton(text="🗑 Удалить ВCЕ устройства", callback_data=f"admin_user_delalldev_{user_id}")
+            ])
+
+    keyboard_builder.append([
+        types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"admin_user_manage_{user_id}")
+    ])
+    
+    await callback.message.edit_text(text, parse_mode='HTML', reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard_builder))
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def delete_user_device_endpoint(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    parts = callback.data.split('_')
+    user_id = int(parts[3])
+    hwid = parts[4]
+    
+    user_service = UserService()
+    user = await user_service.get_user(db, user_id)
+    if not user or not user.subscription or not user.subscription.remnawave_uuid:
+        await callback.answer('У пользователя нет подписки', show_alert=True)
+        return
+        
+    remnawave = RemnaWaveService()
+    try:
+        success = await remnawave.api.remove_device(user.subscription.remnawave_uuid, hwid)
+        if success:
+            await callback.answer('Устройство удалено', show_alert=True)
+        else:
+            await callback.answer('Не удалось удалить устройство', show_alert=True)
+    except Exception as e:
+        logger.error('Ошибка удаления', error=e)
+        await callback.answer('Ошибка удаления устройства', show_alert=True)
+        
+    # go back to device list
+    callback.data = f"admin_user_devicelist_{user_id}"
+    await show_user_devicelist(callback, db_user, db)
+
+
+@admin_required
+@error_handler
+async def delete_all_user_devices_endpoint(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    user_id = int(callback.data.split('_')[-1])
+    
+    user_service = UserService()
+    user = await user_service.get_user(db, user_id)
+    if not user or not user.subscription or not user.subscription.remnawave_uuid:
+        await callback.answer('У пользователя нет подписки', show_alert=True)
+        return
+        
+    remnawave = RemnaWaveService()
+    try:
+        success = await remnawave.api.reset_user_devices(user.subscription.remnawave_uuid)
+        if success:
+            await callback.answer('Все устройства удалены', show_alert=True)
+        else:
+            await callback.answer('Не удалось удалить устройства', show_alert=True)
+    except Exception as e:
+        logger.error('Ошибка удаления', error=e)
+        await callback.answer('Ошибка удаления устройств', show_alert=True)
+
+    callback.data = f"admin_user_devicelist_{user_id}"
+    await show_user_devicelist(callback, db_user, db)
+
+
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_users_menu, F.data == 'admin_users')
 
@@ -5485,6 +5732,9 @@ def register_handlers(dp: Dispatcher):
     dp.message.register(process_user_search, AdminStates.waiting_for_user_search)
 
     dp.callback_query.register(show_user_management, F.data.startswith('admin_user_manage_'))
+    dp.callback_query.register(sync_remnawave_user, F.data.startswith('admin_user_sync_remnawave_'))
+    dp.callback_query.register(admin_mass_delete_start, F.data == 'admin_mass_delete_start')
+    dp.message.register(process_mass_delete_ids, AdminStates.waiting_for_mass_delete_ids)
 
     dp.callback_query.register(
         show_user_promo_group,
@@ -5635,3 +5885,12 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_potential_customers, F.data == 'admin_users_potential_customers_filter')
 
     dp.callback_query.register(show_users_list_by_campaign, F.data == 'admin_users_campaign_filter')
+
+    dp.callback_query.register(sync_remnawave_user, F.data.startswith('admin_user_sync_remnawave_'))
+    dp.callback_query.register(admin_mass_delete_start, F.data == 'admin_mass_delete_start')
+    dp.message.register(process_mass_delete_ids, AdminStates.waiting_for_mass_delete_ids)
+
+    # Устройства
+    dp.callback_query.register(show_user_devicelist, F.data.startswith('admin_user_devicelist_'))
+    dp.callback_query.register(delete_user_device_endpoint, F.data.startswith('admin_user_deldev_'))
+    dp.callback_query.register(delete_all_user_devices_endpoint, F.data.startswith('admin_user_delalldev_'))

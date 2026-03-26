@@ -181,19 +181,19 @@ async def _build_notification_preview_message(language: str, notification_type: 
                 [
                     InlineKeyboardButton(
                         text=texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                        callback_data='subscription_extend',
+                        callback_data='nz!_subscription_extend',
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'),
-                        callback_data='balance_topup',
+                        callback_data='nz!_balance_topup',
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=texts.t('SUPPORT_BUTTON', '🆘 Поддержка'),
-                        callback_data='menu_support',
+                        callback_data='nz!_menu_support',
                     )
                 ],
             ]
@@ -219,25 +219,25 @@ async def _build_notification_preview_message(language: str, notification_type: 
                 [
                     InlineKeyboardButton(
                         text='🎁 Получить скидку',
-                        callback_data='claim_discount_preview',
+                        callback_data='nz!_claim_discount_preview',
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                        callback_data='subscription_extend',
+                        callback_data='nz!_subscription_extend',
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'),
-                        callback_data='balance_topup',
+                        callback_data='nz!_balance_topup',
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=texts.t('SUPPORT_BUTTON', '🆘 Поддержка'),
-                        callback_data='menu_support',
+                        callback_data='nz!_menu_support',
                     )
                 ],
             ]
@@ -264,25 +264,25 @@ async def _build_notification_preview_message(language: str, notification_type: 
                 [
                     InlineKeyboardButton(
                         text='🎁 Получить скидку',
-                        callback_data='claim_discount_preview',
+                        callback_data='nz!_claim_discount_preview',
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                        callback_data='subscription_extend',
+                        callback_data='nz!_subscription_extend',
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'),
-                        callback_data='balance_topup',
+                        callback_data='nz!_balance_topup',
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         text=texts.t('SUPPORT_BUTTON', '🆘 Поддержка'),
-                        callback_data='menu_support',
+                        callback_data='nz!_menu_support',
                     )
                 ],
             ]
@@ -1579,7 +1579,7 @@ def get_monitoring_logs_keyboard(current_page: int, total_pages: int):
         if current_page > 1:
             nav_row.append(InlineKeyboardButton(text='⬅️', callback_data=f'admin_mon_logs_page_{current_page - 1}'))
 
-        nav_row.append(InlineKeyboardButton(text=f'{current_page}/{total_pages}', callback_data='current_page'))
+        nav_row.append(InlineKeyboardButton(text=f'{current_page}/{total_pages}', callback_data='nz!_current_page'))
 
         if current_page < total_pages:
             nav_row.append(InlineKeyboardButton(text='➡️', callback_data=f'admin_mon_logs_page_{current_page + 1}'))

@@ -344,8 +344,8 @@ class TributeService:
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='🔄 Попробовать снова', callback_data='menu_balance')],
-                    [InlineKeyboardButton(text='💬 Поддержка', callback_data='menu_support')],
+                    [InlineKeyboardButton(text='🔄 Попробовать снова', callback_data='nz!_menu_balance')],
+                    [InlineKeyboardButton(text='💬 Поддержка', callback_data='nz!_menu_support')],
                 ]
             )
 
@@ -373,8 +373,8 @@ class TributeService:
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='💬 Поддержка', callback_data='menu_support')],
-                    [InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')],
+                    [InlineKeyboardButton(text='💬 Поддержка', callback_data='nz!_menu_support')],
+                    [InlineKeyboardButton(text='🏠 Главное меню', callback_data='nz!_back_to_menu')],
                 ]
             )
 

@@ -140,19 +140,19 @@ def _build_auto_sync_view(status: RemnaWaveAutoSyncStatus) -> tuple[str, types.I
             [
                 types.InlineKeyboardButton(
                     text='🔁 Запустить сейчас',
-                    callback_data='remnawave_auto_sync_run',
+                    callback_data='nz!_remnawave_auto_sync_run',
                 )
             ],
             [
                 types.InlineKeyboardButton(
                     text=toggle_text,
-                    callback_data='remnawave_auto_sync_toggle',
+                    callback_data='nz!_remnawave_auto_sync_toggle',
                 )
             ],
             [
                 types.InlineKeyboardButton(
                     text='🕒 Изменить расписание',
-                    callback_data='remnawave_auto_sync_times',
+                    callback_data='nz!_remnawave_auto_sync_times',
                 )
             ],
             [
@@ -215,7 +215,7 @@ def _build_migration_keyboard(
                         users=squad.current_users,
                         status=status,
                     ),
-                    callback_data=f'{prefix}_{squad.squad_uuid}',
+                    callback_data=f'nz!_{prefix}_{squad.squad_uuid}',
                 )
             ]
         )
@@ -226,7 +226,7 @@ def _build_migration_keyboard(
             nav_buttons.append(
                 types.InlineKeyboardButton(
                     text='⬅️',
-                    callback_data=f'{prefix}_page_{page - 1}',
+                    callback_data=f'nz!_{prefix}_page_{page - 1}',
                 )
             )
         nav_buttons.append(
@@ -242,7 +242,7 @@ def _build_migration_keyboard(
             nav_buttons.append(
                 types.InlineKeyboardButton(
                     text='➡️',
-                    callback_data=f'{prefix}_page_{page + 1}',
+                    callback_data=f'nz!_{prefix}_page_{page + 1}',
                 )
             )
         rows.append(nav_buttons)
@@ -1288,7 +1288,7 @@ async def show_node_details(callback: types.CallbackQuery, db_user: User, db: As
 @admin_required
 @error_handler
 async def manage_node(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    action, node_uuid = callback.data.split('_')[1], callback.data.split('_')[-1]
+    action, node_uuid = callback.data.split('_')[2], callback.data.split('_')[-1]
 
     remnawave_service = RemnaWaveService()
     success = await remnawave_service.manage_node(node_uuid, action)
@@ -1393,7 +1393,7 @@ async def show_node_statistics(callback: types.CallbackQuery, db_user: User, db:
 
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text='🔄 Обновить', callback_data=f'node_stats_{node_uuid}')],
+                [types.InlineKeyboardButton(text='🔄 Обновить', callback_data=f'nz!_node_stats_{node_uuid}')],
                 [types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'admin_node_manage_{node_uuid}')],
             ]
         )
@@ -1434,7 +1434,7 @@ async def show_node_statistics(callback: types.CallbackQuery, db_user: User, db:
 
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text='🔄 Попробовать снова', callback_data=f'node_stats_{node_uuid}')],
+                [types.InlineKeyboardButton(text='🔄 Попробовать снова', callback_data=f'nz!_node_stats_{node_uuid}')],
                 [types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'admin_node_manage_{node_uuid}')],
             ]
         )
@@ -1480,7 +1480,7 @@ async def show_squad_details(callback: types.CallbackQuery, db_user: User, db: A
 @error_handler
 async def manage_squad_action(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     parts = callback.data.split('_')
-    action = parts[1]
+    action = parts[2]
     squad_uuid = parts[-1]
 
     remnawave_service = RemnaWaveService()
@@ -1586,7 +1586,7 @@ async def show_squad_inbounds_selection(callback: types.CallbackQuery, db_user: 
         keyboard.append(
             [
                 types.InlineKeyboardButton(
-                    text=f'{emoji} {inbound["tag"]} ({inbound["type"]})', callback_data=f'sqd_tgl_{i}_{squad_uuid[:8]}'
+                    text=f'{emoji} {inbound["tag"]} ({inbound["type"]})', callback_data=f'nz!_sqd_tgl_{i}_{squad_uuid[:8]}'
                 )
             ]
         )
@@ -1596,8 +1596,8 @@ async def show_squad_inbounds_selection(callback: types.CallbackQuery, db_user: 
 
     keyboard.extend(
         [
-            [types.InlineKeyboardButton(text='💾 Сохранить изменения', callback_data=f'sqd_save_{squad_uuid[:8]}')],
-            [types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'sqd_edit_{squad_uuid[:8]}')],
+            [types.InlineKeyboardButton(text='💾 Сохранить изменения', callback_data=f'nz!_sqd_save_{squad_uuid[:8]}')],
+            [types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'nz!_sqd_edit_{squad_uuid[:8]}')],
         ]
     )
 
@@ -1635,7 +1635,7 @@ async def show_squad_rename_form(callback: types.CallbackQuery, db_user: User, d
 Отправьте сообщение с новым названием или нажмите "Отмена" для выхода.
 """
 
-    keyboard = [[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'cancel_rename_{squad_uuid}')]]
+    keyboard = [[types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'nz!_cancel_rename_{squad_uuid}')]]
 
     await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
     await callback.answer()
@@ -1717,7 +1717,7 @@ async def process_squad_new_name(message: types.Message, db_user: User, db: Asyn
             'Попробуйте другое название:',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'cancel_rename_{squad_uuid}')]
+                    [types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'nz!_cancel_rename_{squad_uuid}')]
                 ]
             ),
         )
@@ -1727,8 +1727,8 @@ async def process_squad_new_name(message: types.Message, db_user: User, db: Asyn
 @error_handler
 async def toggle_squad_inbound(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     parts = callback.data.split('_')
-    inbound_index = int(parts[2])
-    short_squad_uuid = parts[3]
+    inbound_index = int(parts[3])
+    short_squad_uuid = parts[4]
 
     remnawave_service = RemnaWaveService()
     squads = await remnawave_service.get_all_squads()
@@ -1778,15 +1778,15 @@ async def toggle_squad_inbound(callback: types.CallbackQuery, db_user: User, db:
             [
                 types.InlineKeyboardButton(
                     text=f'{emoji} {inbound["tag"]} ({inbound["type"]})',
-                    callback_data=f'sqd_tgl_{i}_{short_squad_uuid}',
+                    callback_data=f'nz!_sqd_tgl_{i}_{short_squad_uuid}',
                 )
             ]
         )
 
     keyboard.extend(
         [
-            [types.InlineKeyboardButton(text='💾 Сохранить изменения', callback_data=f'sqd_save_{short_squad_uuid}')],
-            [types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'sqd_edit_{short_squad_uuid}')],
+            [types.InlineKeyboardButton(text='💾 Сохранить изменения', callback_data=f'nz!_sqd_save_{short_squad_uuid}')],
+            [types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'nz!_sqd_edit_{short_squad_uuid}')],
         ]
     )
 
@@ -1888,7 +1888,7 @@ async def start_squad_creation(callback: types.CallbackQuery, db_user: User, db:
 Отправьте сообщение с названием или нажмите "Отмена" для выхода.
 """
 
-    keyboard = [[types.InlineKeyboardButton(text='❌ Отмена', callback_data='cancel_squad_create')]]
+    keyboard = [[types.InlineKeyboardButton(text='❌ Отмена', callback_data='nz!_cancel_squad_create')]]
 
     await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
     await callback.answer()
@@ -1950,7 +1950,7 @@ async def process_squad_name(message: types.Message, db_user: User, db: AsyncSes
         keyboard.append(
             [
                 types.InlineKeyboardButton(
-                    text=f'☐ {inbound["tag"]} ({inbound["type"]})', callback_data=f'create_tgl_{i}'
+                    text=f'☐ {inbound["tag"]} ({inbound["type"]})', callback_data=f'nz!_create_tgl_{i}'
                 )
             ]
         )
@@ -1960,8 +1960,8 @@ async def process_squad_name(message: types.Message, db_user: User, db: AsyncSes
 
     keyboard.extend(
         [
-            [types.InlineKeyboardButton(text='✅ Создать сквад', callback_data='create_squad_finish')],
-            [types.InlineKeyboardButton(text='❌ Отмена', callback_data='cancel_squad_create')],
+            [types.InlineKeyboardButton(text='✅ Создать сквад', callback_data='nz!_create_squad_finish')],
+            [types.InlineKeyboardButton(text='❌ Отмена', callback_data='nz!_cancel_squad_create')],
         ]
     )
 
@@ -2017,15 +2017,15 @@ async def toggle_create_inbound(callback: types.CallbackQuery, db_user: User, db
         keyboard.append(
             [
                 types.InlineKeyboardButton(
-                    text=f'{emoji} {inbound["tag"]} ({inbound["type"]})', callback_data=f'create_tgl_{i}'
+                    text=f'{emoji} {inbound["tag"]} ({inbound["type"]})', callback_data=f'nz!_create_tgl_{i}'
                 )
             ]
         )
 
     keyboard.extend(
         [
-            [types.InlineKeyboardButton(text='✅ Создать сквад', callback_data='create_squad_finish')],
-            [types.InlineKeyboardButton(text='❌ Отмена', callback_data='cancel_squad_create')],
+            [types.InlineKeyboardButton(text='✅ Создать сквад', callback_data='nz!_create_squad_finish')],
+            [types.InlineKeyboardButton(text='❌ Отмена', callback_data='nz!_cancel_squad_create')],
         ]
     )
 
@@ -2168,13 +2168,13 @@ async def show_sync_options(callback: types.CallbackQuery, db_user: User, db: As
         [
             types.InlineKeyboardButton(
                 text='🔄 Запустить полную синхронизацию',
-                callback_data='sync_all_users',
+                callback_data='nz!_sync_all_users',
             )
         ],
         [
             types.InlineKeyboardButton(
                 text='⬆️ Синхронизация в панель',
-                callback_data='sync_to_panel',
+                callback_data='nz!_sync_to_panel',
             )
         ],
         [
@@ -2274,7 +2274,7 @@ async def prompt_auto_sync_schedule(
                 [
                     types.InlineKeyboardButton(
                         text='❌ Отмена',
-                        callback_data='remnawave_auto_sync_cancel',
+                        callback_data='nz!_remnawave_auto_sync_cancel',
                     )
                 ]
             ]
@@ -2506,7 +2506,7 @@ async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: Async
     keyboard = []
 
     if stats['errors'] > 0:
-        keyboard.append([types.InlineKeyboardButton(text='🔄 Повторить синхронизацию', callback_data='sync_all_users')])
+        keyboard.append([types.InlineKeyboardButton(text='🔄 Повторить синхронизацию', callback_data='nz!_sync_all_users')])
 
     keyboard.extend(
         [
@@ -2553,8 +2553,8 @@ async def sync_users_to_panel(
     )
 
     keyboard = [
-        [types.InlineKeyboardButton(text='🔄 Повторить', callback_data='sync_to_panel')],
-        [types.InlineKeyboardButton(text='🔄 Полная синхронизация', callback_data='sync_all_users')],
+        [types.InlineKeyboardButton(text='🔄 Повторить', callback_data='nz!_sync_to_panel')],
+        [types.InlineKeyboardButton(text='🔄 Полная синхронизация', callback_data='nz!_sync_all_users')],
         [types.InlineKeyboardButton(text='⬅️ К синхронизации', callback_data='admin_rw_sync')],
     ]
 
@@ -2604,9 +2604,9 @@ async def show_sync_recommendations(callback: types.CallbackQuery, db_user: User
             [
                 types.InlineKeyboardButton(
                     text='✅ Выполнить рекомендацию',
-                    callback_data=f'sync_{recommendations["sync_type"]}_users'
+                    callback_data=f'nz!_sync_{recommendations["sync_type"]}_users'
                     if recommendations['sync_type'] != 'update_only'
-                    else 'sync_update_data',
+                    else 'nz!_sync_update_data',
                 )
             ]
         )
@@ -2660,8 +2660,8 @@ async def validate_subscriptions(callback: types.CallbackQuery, db_user: User, d
         text += '\n⚠️ Обнаружены ошибки при обработке.\nПроверьте логи для подробной информации.'
 
     keyboard = [
-        [types.InlineKeyboardButton(text='🔄 Повторить валидацию', callback_data='sync_validate')],
-        [types.InlineKeyboardButton(text='🔄 Полная синхронизация', callback_data='sync_all_users')],
+        [types.InlineKeyboardButton(text='🔄 Повторить валидацию', callback_data='nz!_sync_validate')],
+        [types.InlineKeyboardButton(text='🔄 Полная синхронизация', callback_data='nz!_sync_all_users')],
         [types.InlineKeyboardButton(text='⬅️ К синхронизации', callback_data='admin_rw_sync')],
     ]
 
@@ -2707,8 +2707,8 @@ async def cleanup_subscriptions(callback: types.CallbackQuery, db_user: User, db
         text += '\n⚠️ Обнаружены ошибки при обработке.\nПроверьте логи для подробной информации.'
 
     keyboard = [
-        [types.InlineKeyboardButton(text='🔄 Повторить очистку', callback_data='sync_cleanup')],
-        [types.InlineKeyboardButton(text='🔍 Валидация', callback_data='sync_validate')],
+        [types.InlineKeyboardButton(text='🔄 Повторить очистку', callback_data='nz!_sync_cleanup')],
+        [types.InlineKeyboardButton(text='🔍 Валидация', callback_data='nz!_sync_validate')],
         [types.InlineKeyboardButton(text='⬅️ К синхронизации', callback_data='admin_rw_sync')],
     ]
 
@@ -2766,8 +2766,8 @@ async def force_cleanup_all_orphaned_users(callback: types.CallbackQuery, db_use
         text += '\n⚠️ Обнаружены ошибки при обработке.\nПроверьте логи для подробной информации.'
 
     keyboard = [
-        [types.InlineKeyboardButton(text='🔄 Повторить очистку', callback_data='force_cleanup_orphaned')],
-        [types.InlineKeyboardButton(text='🔄 Полная синхронизация', callback_data='sync_all_users')],
+        [types.InlineKeyboardButton(text='🔄 Повторить очистку', callback_data='nz!_force_cleanup_orphaned')],
+        [types.InlineKeyboardButton(text='🔄 Полная синхронизация', callback_data='nz!_sync_all_users')],
         [types.InlineKeyboardButton(text='⬅️ К синхронизации', callback_data='admin_rw_sync')],
     ]
 
@@ -2801,7 +2801,7 @@ async def confirm_force_cleanup(callback: types.CallbackQuery, db_user: User, db
 """
 
     keyboard = [
-        [types.InlineKeyboardButton(text='🗑️ ДА, ОЧИСТИТЬ ВСЕ', callback_data='force_cleanup_orphaned')],
+        [types.InlineKeyboardButton(text='🗑️ ДА, ОЧИСТИТЬ ВСЕ', callback_data='nz!_force_cleanup_orphaned')],
         [types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_rw_sync')],
     ]
 
@@ -2902,7 +2902,7 @@ async def sync_users(callback: types.CallbackQuery, db_user: User, db: AsyncSess
         keyboard.append([types.InlineKeyboardButton(text='🔄 Повторить синхронизацию', callback_data=callback.data)])
 
     if sync_type != 'all_users':
-        keyboard.append([types.InlineKeyboardButton(text='🔄 Полная синхронизация', callback_data='sync_all_users')])
+        keyboard.append([types.InlineKeyboardButton(text='🔄 Полная синхронизация', callback_data='nz!_sync_all_users')])
 
     keyboard.extend(
         [
@@ -2960,19 +2960,19 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_traffic_stats, F.data == 'admin_rw_traffic')
     dp.callback_query.register(show_nodes_management, F.data == 'admin_rw_nodes')
     dp.callback_query.register(show_node_details, F.data.startswith('admin_node_manage_'))
-    dp.callback_query.register(show_node_statistics, F.data.startswith('node_stats_'))
-    dp.callback_query.register(manage_node, F.data.startswith('node_enable_'))
-    dp.callback_query.register(manage_node, F.data.startswith('node_disable_'))
-    dp.callback_query.register(manage_node, F.data.startswith('node_restart_'))
+    dp.callback_query.register(show_node_statistics, F.data.startswith('nz!_node_stats_'))
+    dp.callback_query.register(manage_node, F.data.startswith('nz!_node_enable_'))
+    dp.callback_query.register(manage_node, F.data.startswith('nz!_node_disable_'))
+    dp.callback_query.register(manage_node, F.data.startswith('nz!_node_restart_'))
     dp.callback_query.register(restart_all_nodes, F.data == 'admin_restart_all_nodes')
     dp.callback_query.register(show_sync_options, F.data == 'admin_rw_sync')
     dp.callback_query.register(show_auto_sync_settings, F.data == 'admin_rw_auto_sync')
-    dp.callback_query.register(toggle_auto_sync_setting, F.data == 'remnawave_auto_sync_toggle')
-    dp.callback_query.register(prompt_auto_sync_schedule, F.data == 'remnawave_auto_sync_times')
-    dp.callback_query.register(cancel_auto_sync_schedule, F.data == 'remnawave_auto_sync_cancel')
-    dp.callback_query.register(run_auto_sync_now, F.data == 'remnawave_auto_sync_run')
-    dp.callback_query.register(sync_all_users, F.data == 'sync_all_users')
-    dp.callback_query.register(sync_users_to_panel, F.data == 'sync_to_panel')
+    dp.callback_query.register(toggle_auto_sync_setting, F.data == 'nz!_remnawave_auto_sync_toggle')
+    dp.callback_query.register(prompt_auto_sync_schedule, F.data == 'nz!_remnawave_auto_sync_times')
+    dp.callback_query.register(cancel_auto_sync_schedule, F.data == 'nz!_remnawave_auto_sync_cancel')
+    dp.callback_query.register(run_auto_sync_now, F.data == 'nz!_remnawave_auto_sync_run')
+    dp.callback_query.register(sync_all_users, F.data == 'nz!_sync_all_users')
+    dp.callback_query.register(sync_users_to_panel, F.data == 'nz!_sync_to_panel')
     dp.callback_query.register(show_squad_migration_menu, F.data == 'admin_rw_migration')
     dp.callback_query.register(paginate_migration_source, F.data.startswith('admin_migration_source_page_'))
     dp.callback_query.register(handle_migration_source_selection, F.data.startswith('admin_migration_source_'))
@@ -2984,22 +2984,22 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_migration_page_info, F.data == 'admin_migration_page_info')
     dp.callback_query.register(show_squads_management, F.data == 'admin_rw_squads')
     dp.callback_query.register(show_squad_details, F.data.startswith('admin_squad_manage_'))
-    dp.callback_query.register(manage_squad_action, F.data.startswith('squad_add_users_'))
-    dp.callback_query.register(manage_squad_action, F.data.startswith('squad_remove_users_'))
-    dp.callback_query.register(manage_squad_action, F.data.startswith('squad_delete_'))
+    dp.callback_query.register(manage_squad_action, F.data.startswith('nz!_squad_add_users_'))
+    dp.callback_query.register(manage_squad_action, F.data.startswith('nz!_squad_remove_users_'))
+    dp.callback_query.register(manage_squad_action, F.data.startswith('nz!_squad_delete_'))
     dp.callback_query.register(
-        show_squad_edit_menu, F.data.startswith('squad_edit_') & ~F.data.startswith('squad_edit_inbounds_')
+        show_squad_edit_menu, F.data.startswith('nz!_squad_edit_') & ~F.data.startswith('nz!_squad_edit_inbounds_')
     )
-    dp.callback_query.register(show_squad_inbounds_selection, F.data.startswith('squad_edit_inbounds_'))
-    dp.callback_query.register(show_squad_rename_form, F.data.startswith('squad_rename_'))
-    dp.callback_query.register(cancel_squad_rename, F.data.startswith('cancel_rename_'))
-    dp.callback_query.register(toggle_squad_inbound, F.data.startswith('sqd_tgl_'))
-    dp.callback_query.register(save_squad_inbounds, F.data.startswith('sqd_save_'))
-    dp.callback_query.register(show_squad_edit_menu_short, F.data.startswith('sqd_edit_'))
+    dp.callback_query.register(show_squad_inbounds_selection, F.data.startswith('nz!_squad_edit_inbounds_'))
+    dp.callback_query.register(show_squad_rename_form, F.data.startswith('nz!_squad_rename_'))
+    dp.callback_query.register(cancel_squad_rename, F.data.startswith('nz!_cancel_rename_'))
+    dp.callback_query.register(toggle_squad_inbound, F.data.startswith('nz!_sqd_tgl_'))
+    dp.callback_query.register(save_squad_inbounds, F.data.startswith('nz!_sqd_save_'))
+    dp.callback_query.register(show_squad_edit_menu_short, F.data.startswith('nz!_sqd_edit_'))
     dp.callback_query.register(start_squad_creation, F.data == 'admin_squad_create')
-    dp.callback_query.register(cancel_squad_creation, F.data == 'cancel_squad_create')
-    dp.callback_query.register(toggle_create_inbound, F.data.startswith('create_tgl_'))
-    dp.callback_query.register(finish_squad_creation, F.data == 'create_squad_finish')
+    dp.callback_query.register(cancel_squad_creation, F.data == 'nz!_cancel_squad_create')
+    dp.callback_query.register(toggle_create_inbound, F.data.startswith('nz!_create_tgl_'))
+    dp.callback_query.register(finish_squad_creation, F.data == 'nz!_create_squad_finish')
 
     dp.message.register(process_squad_new_name, SquadRenameStates.waiting_for_new_name, F.text)
 

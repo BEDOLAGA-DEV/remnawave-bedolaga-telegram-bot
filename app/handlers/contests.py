@@ -116,7 +116,7 @@ async def show_contests_menu(callback: types.CallbackQuery, db_user, db: AsyncSe
             [
                 types.InlineKeyboardButton(
                     text=f'▶️ {title}',
-                    callback_data=f'contest_play_{tpl_slug}_{rnd.id}',
+                    callback_data=f'nz!_contest_play_{tpl_slug}_{rnd.id}',
                 )
             ]
         )
@@ -126,12 +126,12 @@ async def show_contests_menu(callback: types.CallbackQuery, db_user, db: AsyncSe
             [
                 types.InlineKeyboardButton(
                     text=texts.t('CONTEST_EMPTY', 'Сейчас игр нет'),
-                    callback_data='noop',
+                    callback_data='nz!_noop',
                 )
             ]
         )
 
-    buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')])
 
     await callback.message.edit_text(
         texts.t('CONTEST_MENU_TITLE', '🎲 <b>Игры/Конкурсы</b>\nВыберите игру:'),
@@ -335,8 +335,8 @@ async def handle_text_answer(message: types.Message, state: FSMContext, db_user,
 
 def register_handlers(dp: Dispatcher):
     """Register contest handlers."""
-    dp.callback_query.register(show_contests_menu, F.data == 'contests_menu')
-    dp.callback_query.register(play_contest, F.data.startswith('contest_play_'))
-    dp.callback_query.register(handle_pick, F.data.startswith('contest_pick_'))
+    dp.callback_query.register(show_contests_menu, F.data == 'nz!_contests_menu')
+    dp.callback_query.register(play_contest, F.data.startswith('nz!_contest_play_'))
+    dp.callback_query.register(handle_pick, F.data.startswith('nz!_contest_pick_'))
     dp.message.register(handle_text_answer, ContestStates.waiting_for_answer)
     dp.message.register(lambda message: None, Command('contests'))  # placeholder

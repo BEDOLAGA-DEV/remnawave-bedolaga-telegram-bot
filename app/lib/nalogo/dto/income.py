@@ -5,7 +5,7 @@ Based on PHP library's DTO and Enum classes.
 MODIFIED: Исправлена работа с временем для nalog.ru
 """
 
-from datetime import UTC, datetime, timezone, timedelta
+from datetime import timezone, datetime, UTC, timedelta
 from decimal import Decimal
 from enum import Enum
 from typing import Any

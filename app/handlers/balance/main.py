@@ -159,6 +159,84 @@ async def route_payment_by_method(
     return False
 
 
+async def get_quick_amount_buttons(language: str, user: User) -> list:
+    """
+    Generate quick amount buttons with user-specific pricing and discounts.
+
+    Args:
+        language: User's language for formatting
+        user: User object to calculate personalized discounts
+
+    Returns:
+        List of button rows for inline keyboard
+    """
+    if not settings.is_quick_amount_buttons_enabled():
+        return []
+
+    from app.config import PERIOD_PRICES
+    from app.localization.texts import get_texts
+
+    texts = get_texts(language)
+
+    # В режиме тарифов получаем цены из тарифа пользователя
+    tariff_prices = None
+    tariff_periods = None
+    if settings.is_tariffs_mode():
+        from app.database.crud.subscription import get_subscription_by_user_id
+        from app.database.crud.tariff import get_tariff_by_id
+        from app.database.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            subscription = await get_subscription_by_user_id(db, user.id)
+            if subscription and subscription.tariff_id:
+                tariff = await get_tariff_by_id(db, subscription.tariff_id)
+                if tariff and tariff.period_prices:
+                    tariff_prices = {int(k): v for k, v in tariff.period_prices.items()}
+                    tariff_periods = sorted(tariff_prices.keys())
+
+    buttons = []
+
+    # Используем периоды тарифа в режиме тарифов, иначе стандартные
+    if tariff_periods:
+        periods = tariff_periods[:6]
+    else:
+        periods = settings.get_available_subscription_periods()[:6]
+
+    for period in periods:
+        # Получаем цену из тарифа или из PERIOD_PRICES
+        if tariff_prices and period in tariff_prices:
+            base_price_kopeks = tariff_prices[period]
+        else:
+            base_price_kopeks = PERIOD_PRICES.get(period, 0)
+
+        if base_price_kopeks > 0:
+            # Calculate price with user's promo group discount using unified system
+            price_info = calculate_user_price(user, base_price_kopeks, period, 'period')
+
+            callback_data = f'nz!_quick_amount_{price_info.final_price}'
+
+            # Format button text with discount display
+            period_label = f'{period} дней'
+
+            # For balance buttons, use simpler format without emoji and period label prefix
+            if price_info.has_discount:
+                button_text = (
+                    f'{texts.format_price(price_info.base_price)} ➜ '
+                    f'{texts.format_price(price_info.final_price)} '
+                    f'(-{price_info.discount_percent}%) • {period_label}'
+                )
+            else:
+                button_text = f'{texts.format_price(price_info.final_price)} • {period_label}'
+
+            buttons.append(types.InlineKeyboardButton(text=button_text, callback_data=callback_data))
+
+    keyboard_rows = []
+    for i in range(0, len(buttons), 2):
+        keyboard_rows.append(buttons[i : i + 2])
+
+    return keyboard_rows
+
+
 @error_handler
 async def show_balance_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     # Проверяем, доступно ли сообщение
@@ -245,7 +323,7 @@ async def show_balance_history(callback: types.CallbackQuery, db_user: User, db:
         pagination_row = get_pagination_keyboard(page, total_pages, 'balance_history', db_user.language)
         keyboard.extend(pagination_row)
 
-    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance')])
 
     await callback.message.edit_text(
         text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode='HTML'
@@ -273,7 +351,7 @@ async def show_payment_methods(callback: types.CallbackQuery, db_user: User, db:
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -367,11 +445,11 @@ async def handle_successful_topup_with_cart(user_id: int, amount_kopeks: int, bo
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
-                            text='🛒 Вернуться к оформлению подписки', callback_data='return_to_saved_cart'
+                            text='🛒 Вернуться к оформлению подписки', callback_data='nz!_return_to_saved_cart'
                         )
                     ],
-                    [types.InlineKeyboardButton(text='💰 Мой баланс', callback_data='menu_balance')],
-                    [types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')],
+                    [types.InlineKeyboardButton(text='💰 Мой баланс', callback_data='nz!_menu_balance')],
+                    [types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='nz!_back_to_menu')],
                 ]
             )
 
@@ -438,7 +516,7 @@ async def request_support_topup(callback: types.CallbackQuery, db_user: User):
                     text='💬 Написать в поддержку', url=settings.get_support_contact_url() or 'https://t.me/'
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_balance_topup')],
         ]
     )
 
@@ -606,50 +684,50 @@ async def handle_topup_amount_callback(
 
 
 def register_balance_handlers(dp: Dispatcher):
-    dp.callback_query.register(show_balance_menu, F.data == 'menu_balance')
+    dp.callback_query.register(show_balance_menu, F.data == 'nz!_menu_balance')
 
-    dp.callback_query.register(show_balance_history, F.data == 'balance_history')
+    dp.callback_query.register(show_balance_history, F.data == 'nz!_balance_history')
 
-    dp.callback_query.register(handle_balance_history_pagination, F.data.startswith('balance_history_page_'))
+    dp.callback_query.register(handle_balance_history_pagination, F.data.startswith('nz!_balance_history_page_'))
 
-    dp.callback_query.register(show_payment_methods, F.data == 'balance_topup')
+    dp.callback_query.register(show_payment_methods, F.data == 'nz!_balance_topup')
 
     from .stars import start_stars_payment
 
-    dp.callback_query.register(start_stars_payment, F.data == 'topup_stars')
+    dp.callback_query.register(start_stars_payment, F.data == 'nz!_topup_stars')
 
     from .yookassa import start_yookassa_payment
 
-    dp.callback_query.register(start_yookassa_payment, F.data == 'topup_yookassa')
+    dp.callback_query.register(start_yookassa_payment, F.data == 'nz!_topup_yookassa')
 
     from .yookassa import start_yookassa_sbp_payment
 
-    dp.callback_query.register(start_yookassa_sbp_payment, F.data == 'topup_yookassa_sbp')
+    dp.callback_query.register(start_yookassa_sbp_payment, F.data == 'nz!_topup_yookassa_sbp')
 
     from .mulenpay import start_mulenpay_payment
 
-    dp.callback_query.register(start_mulenpay_payment, F.data == 'topup_mulenpay')
+    dp.callback_query.register(start_mulenpay_payment, F.data == 'nz!_topup_mulenpay')
 
     from .wata import start_wata_payment
 
-    dp.callback_query.register(start_wata_payment, F.data == 'topup_wata')
+    dp.callback_query.register(start_wata_payment, F.data == 'nz!_topup_wata')
 
     from .pal24 import start_pal24_payment
 
-    dp.callback_query.register(start_pal24_payment, F.data == 'topup_pal24')
+    dp.callback_query.register(start_pal24_payment, F.data == 'nz!_topup_pal24')
     from .pal24 import handle_pal24_method_selection
 
     dp.callback_query.register(
         handle_pal24_method_selection,
-        F.data.startswith('pal24_method_'),
+        F.data.startswith('nz!_pal24_method_'),
     )
 
     from .platega import handle_platega_method_selection, start_platega_direct_method, start_platega_payment
 
-    dp.callback_query.register(start_platega_payment, F.data == 'topup_platega')
+    dp.callback_query.register(start_platega_payment, F.data == 'nz!_topup_platega')
     dp.callback_query.register(
         handle_platega_method_selection,
-        F.data.startswith('platega_method_'),
+        F.data.startswith('nz!_platega_method_'),
     )
     dp.callback_query.register(
         start_platega_direct_method,
@@ -658,36 +736,37 @@ def register_balance_handlers(dp: Dispatcher):
 
     from .yookassa import check_yookassa_payment_status
 
-    dp.callback_query.register(check_yookassa_payment_status, F.data.startswith('check_yookassa_'))
+    dp.callback_query.register(check_yookassa_payment_status, F.data.startswith('nz!_check_yookassa_'))
 
     from .tribute import start_tribute_payment
 
-    dp.callback_query.register(start_tribute_payment, F.data == 'topup_tribute')
+    dp.callback_query.register(start_tribute_payment, F.data == 'nz!_topup_tribute')
 
-    dp.callback_query.register(request_support_topup, F.data == 'topup_support')
+    dp.callback_query.register(request_support_topup, F.data == 'nz!_topup_support')
 
     from .yookassa import check_yookassa_payment_status
 
-    dp.callback_query.register(check_yookassa_payment_status, F.data.startswith('check_yookassa_'))
+    dp.callback_query.register(check_yookassa_payment_status, F.data.startswith('nz!_check_yookassa_'))
 
     dp.message.register(process_topup_amount, BalanceStates.waiting_for_amount)
 
     from .cryptobot import start_cryptobot_payment
 
-    dp.callback_query.register(start_cryptobot_payment, F.data == 'topup_cryptobot')
+    dp.callback_query.register(start_cryptobot_payment, F.data == 'nz!_topup_cryptobot')
 
     from .cryptobot import check_cryptobot_payment_status
 
-    dp.callback_query.register(check_cryptobot_payment_status, F.data.startswith('check_cryptobot_'))
+    dp.callback_query.register(check_cryptobot_payment_status, F.data.startswith('nz!_check_cryptobot_'))
 
     from .heleket import check_heleket_payment_status, start_heleket_payment
 
-    dp.callback_query.register(start_heleket_payment, F.data == 'topup_heleket')
-    dp.callback_query.register(check_heleket_payment_status, F.data.startswith('check_heleket_'))
+    dp.callback_query.register(start_heleket_payment, F.data == 'nz!_topup_heleket')
+    dp.callback_query.register(check_heleket_payment_status, F.data.startswith('nz!_check_heleket_'))
 
     from .cloudpayments import start_cloudpayments_payment
 
-    dp.callback_query.register(start_cloudpayments_payment, F.data == 'topup_cloudpayments')
+    dp.callback_query.register(start_cloudpayments_payment, F.data == 'nz!_topup_cloudpayments')
+    dp.callback_query.register(handle_cloudpayments_quick_amount, F.data.startswith('nz!_topup_amount|cloudpayments|'))
 
     from .freekassa import (
         start_freekassa_card_topup,
@@ -695,9 +774,12 @@ def register_balance_handlers(dp: Dispatcher):
         start_freekassa_topup,
     )
 
-    dp.callback_query.register(start_freekassa_topup, F.data == 'topup_freekassa')
-    dp.callback_query.register(start_freekassa_sbp_topup, F.data == 'topup_freekassa_sbp')
-    dp.callback_query.register(start_freekassa_card_topup, F.data == 'topup_freekassa_card')
+    dp.callback_query.register(start_freekassa_topup, F.data == 'nz!_topup_freekassa')
+    dp.callback_query.register(process_freekassa_quick_amount, F.data.startswith('nz!_topup_amount|freekassa|'))
+    dp.callback_query.register(start_freekassa_sbp_topup, F.data == 'nz!_topup_freekassa_sbp')
+    dp.callback_query.register(process_freekassa_sbp_quick_amount, F.data.startswith('nz!_topup_amount|freekassa_sbp|'))
+    dp.callback_query.register(start_freekassa_card_topup, F.data == 'nz!_topup_freekassa_card')
+    dp.callback_query.register(process_freekassa_card_quick_amount, F.data.startswith('nz!_topup_amount|freekassa_card|'))
 
     from .kassa_ai import (
         start_kassa_ai_card_topup,
@@ -705,38 +787,28 @@ def register_balance_handlers(dp: Dispatcher):
         start_kassa_ai_topup,
     )
 
-    dp.callback_query.register(start_kassa_ai_topup, F.data == 'topup_kassa_ai')
-    dp.callback_query.register(start_kassa_ai_sbp_topup, F.data == 'topup_kassa_ai_sbp')
-    dp.callback_query.register(start_kassa_ai_card_topup, F.data == 'topup_kassa_ai_card')
-
-    from .riopay import start_riopay_topup
-
-    dp.callback_query.register(start_riopay_topup, F.data == 'topup_riopay')
-
-    from .severpay import start_severpay_topup
-
-    dp.callback_query.register(start_severpay_topup, F.data == 'topup_severpay')
+    dp.callback_query.register(start_kassa_ai_topup, F.data == 'nz!_topup_kassa_ai')
+    dp.callback_query.register(process_kassa_ai_quick_amount, F.data.startswith('nz!_topup_amount|kassa_ai|'))
 
     from .mulenpay import check_mulenpay_payment_status
 
-    dp.callback_query.register(check_mulenpay_payment_status, F.data.startswith('check_mulenpay_'))
+    dp.callback_query.register(check_mulenpay_payment_status, F.data.startswith('nz!_check_mulenpay_'))
 
     from .wata import check_wata_payment_status
 
-    dp.callback_query.register(check_wata_payment_status, F.data.startswith('check_wata_'))
+    dp.callback_query.register(check_wata_payment_status, F.data.startswith('nz!_check_wata_'))
 
     from .pal24 import check_pal24_payment_status
 
-    dp.callback_query.register(check_pal24_payment_status, F.data.startswith('check_pal24_'))
+    dp.callback_query.register(check_pal24_payment_status, F.data.startswith('nz!_check_pal24_'))
 
     from .platega import check_platega_payment_status
 
-    dp.callback_query.register(check_platega_payment_status, F.data.startswith('check_platega_'))
+    dp.callback_query.register(check_platega_payment_status, F.data.startswith('nz!_check_platega_'))
 
-    dp.callback_query.register(handle_payment_methods_unavailable, F.data == 'payment_methods_unavailable')
+    dp.callback_query.register(handle_payment_methods_unavailable, F.data == 'nz!_payment_methods_unavailable')
 
-    dp.callback_query.register(handle_topup_amount_callback, F.data.startswith('topup_amount|'))
+    # Регистрируем обработчик для кнопок быстрого выбора суммы
+    dp.callback_query.register(handle_quick_amount_selection, F.data.startswith('nz!_quick_amount_'))
 
-    dp.callback_query.register(handle_saved_cards_list, F.data == 'saved_cards_list')
-    dp.callback_query.register(handle_unlink_card, F.data.startswith('unlink_card_'))
-    dp.callback_query.register(handle_confirm_unlink, F.data.startswith('confirm_unlink_'))
+    dp.callback_query.register(handle_topup_amount_callback, F.data.startswith('nz!_topup_amount|'))

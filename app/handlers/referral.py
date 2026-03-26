@@ -272,7 +272,7 @@ async def show_referral_qr(
 
     photo = FSInputFile(file_path)
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_referrals')]]
     )
 
     caption = texts.t(
@@ -314,7 +314,7 @@ async def show_detailed_referral_list(callback: types.CallbackQuery, db_user: Us
                 '📋 У вас пока нет рефералов.\n\nПоделитесь своей реферальной ссылкой, чтобы начать зарабатывать!',
             ),
             types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')]]
+                inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_referrals')]]
             ),
             parse_mode=None,
         )
@@ -391,21 +391,21 @@ async def show_detailed_referral_list(callback: types.CallbackQuery, db_user: Us
     if referrals_data['has_prev']:
         nav_buttons.append(
             types.InlineKeyboardButton(
-                text=texts.t('REFERRAL_LIST_PREV_PAGE', '⬅️ Назад'), callback_data=f'referral_list_page_{page - 1}'
+                text=texts.t('REFERRAL_LIST_PREV_PAGE', '⬅️ Назад'), callback_data=f'nz!_referral_list_page_{page - 1}'
             )
         )
 
     if referrals_data['has_next']:
         nav_buttons.append(
             types.InlineKeyboardButton(
-                text=texts.t('REFERRAL_LIST_NEXT_PAGE', 'Вперед ➡️'), callback_data=f'referral_list_page_{page + 1}'
+                text=texts.t('REFERRAL_LIST_NEXT_PAGE', 'Вперед ➡️'), callback_data=f'nz!_referral_list_page_{page + 1}'
             )
         )
 
     if nav_buttons:
         keyboard.append(nav_buttons)
 
-    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')])
+    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_referrals')])
 
     await edit_or_answer_photo(
         callback,
@@ -490,7 +490,7 @@ async def show_referral_analytics(callback: types.CallbackQuery, db_user: User, 
         callback,
         text,
         types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')]]
+            inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_referrals')]]
         ),
     )
     await callback.answer()
@@ -537,7 +537,12 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User):
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')],
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('REFERRAL_SHARE_BUTTON', '📤 Поделиться'), switch_inline_query=invite_text
+                )
+            ],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_referrals')],
         ]
     )
 
@@ -599,14 +604,14 @@ async def show_withdrawal_info(callback: types.CallbackQuery, db_user: User, db:
             [
                 types.InlineKeyboardButton(
                     text=texts.t('REFERRAL_WITHDRAWAL_REQUEST_BUTTON', '📝 Оформить заявку'),
-                    callback_data='referral_withdrawal_start',
+                    callback_data='nz!_referral_withdrawal_start',
                 )
             ]
         )
     else:
         text += f'❌ {html_escape(str(reason))}\n'
 
-    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')])
+    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_referrals')])
 
     await edit_or_answer_photo(callback, text, types.InlineKeyboardMarkup(inline_keyboard=keyboard))
     await callback.answer()
@@ -637,12 +642,12 @@ async def start_withdrawal_request(callback: types.CallbackQuery, db_user: User,
             [
                 types.InlineKeyboardButton(
                     text=texts.t('REFERRAL_WITHDRAWAL_ALL', f'Вывести всё ({available / 100:.0f}₽)'),
-                    callback_data=f'referral_withdrawal_amount_{available}',
+                    callback_data=f'nz!_referral_withdrawal_amount_{available}',
                 )
             ],
             [
                 types.InlineKeyboardButton(
-                    text=texts.t('CANCEL', '❌ Отмена'), callback_data='referral_withdrawal_cancel'
+                    text=texts.t('CANCEL', '❌ Отмена'), callback_data='nz!_referral_withdrawal_cancel'
                 )
             ],
         ]
@@ -698,7 +703,7 @@ async def process_withdrawal_amount(message: types.Message, db_user: User, db: A
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('CANCEL', '❌ Отмена'), callback_data='referral_withdrawal_cancel'
+                        text=texts.t('CANCEL', '❌ Отмена'), callback_data='nz!_referral_withdrawal_cancel'
                     )
                 ]
             ]
@@ -732,7 +737,7 @@ async def process_withdrawal_amount_callback(
         inline_keyboard=[
             [
                 types.InlineKeyboardButton(
-                    text=texts.t('CANCEL', '❌ Отмена'), callback_data='referral_withdrawal_cancel'
+                    text=texts.t('CANCEL', '❌ Отмена'), callback_data='nz!_referral_withdrawal_cancel'
                 )
             ]
         ]
@@ -777,12 +782,12 @@ async def process_payment_details(message: types.Message, db_user: User, db: Asy
             [
                 types.InlineKeyboardButton(
                     text=texts.t('REFERRAL_WITHDRAWAL_CONFIRM_BUTTON', '✅ Подтвердить'),
-                    callback_data='referral_withdrawal_confirm',
+                    callback_data='nz!_referral_withdrawal_confirm',
                 )
             ],
             [
                 types.InlineKeyboardButton(
-                    text=texts.t('CANCEL', '❌ Отмена'), callback_data='referral_withdrawal_cancel'
+                    text=texts.t('CANCEL', '❌ Отмена'), callback_data='nz!_referral_withdrawal_cancel'
                 )
             ],
         ]
@@ -877,7 +882,7 @@ async def confirm_withdrawal_request(callback: types.CallbackQuery, db_user: Use
     ).format(id=request.id, amount=texts.format_price(amount_kopeks))
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_referrals')]]
     )
 
     await edit_or_answer_photo(callback, text, keyboard)
@@ -892,38 +897,38 @@ async def cancel_withdrawal_request(callback: types.CallbackQuery, db_user: User
 
     # Возвращаем в меню партнёрки
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_referrals')]]
     )
     await edit_or_answer_photo(callback, texts.t('REFERRAL_WITHDRAWAL_CANCELLED', '❌ Заявка отменена'), keyboard)
 
 
 def register_handlers(dp: Dispatcher):
-    dp.callback_query.register(show_referral_info, F.data == 'menu_referrals')
+    dp.callback_query.register(show_referral_info, F.data == 'nz!_menu_referrals')
 
-    dp.callback_query.register(create_invite_message, F.data == 'referral_create_invite')
+    dp.callback_query.register(create_invite_message, F.data == 'nz!_referral_create_invite')
 
-    dp.callback_query.register(show_referral_qr, F.data == 'referral_show_qr')
+    dp.callback_query.register(show_referral_qr, F.data == 'nz!_referral_show_qr')
 
-    dp.callback_query.register(show_detailed_referral_list, F.data == 'referral_list')
+    dp.callback_query.register(show_detailed_referral_list, F.data == 'nz!_referral_list')
 
-    dp.callback_query.register(show_referral_analytics, F.data == 'referral_analytics')
+    dp.callback_query.register(show_referral_analytics, F.data == 'nz!_referral_analytics')
 
     async def handle_referral_list_page(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
         page = int(callback.data.split('_')[-1])
         await show_detailed_referral_list(callback, db_user, db, page)
 
-    dp.callback_query.register(handle_referral_list_page, F.data.startswith('referral_list_page_'))
+    dp.callback_query.register(handle_referral_list_page, F.data.startswith('nz!_referral_list_page_'))
 
     # Хендлеры вывода реферального баланса
-    dp.callback_query.register(show_withdrawal_info, F.data == 'referral_withdrawal')
+    dp.callback_query.register(show_withdrawal_info, F.data == 'nz!_referral_withdrawal')
 
-    dp.callback_query.register(start_withdrawal_request, F.data == 'referral_withdrawal_start')
+    dp.callback_query.register(start_withdrawal_request, F.data == 'nz!_referral_withdrawal_start')
 
-    dp.callback_query.register(process_withdrawal_amount_callback, F.data.startswith('referral_withdrawal_amount_'))
+    dp.callback_query.register(process_withdrawal_amount_callback, F.data.startswith('nz!_referral_withdrawal_amount_'))
 
-    dp.callback_query.register(confirm_withdrawal_request, F.data == 'referral_withdrawal_confirm')
+    dp.callback_query.register(confirm_withdrawal_request, F.data == 'nz!_referral_withdrawal_confirm')
 
-    dp.callback_query.register(cancel_withdrawal_request, F.data == 'referral_withdrawal_cancel')
+    dp.callback_query.register(cancel_withdrawal_request, F.data == 'nz!_referral_withdrawal_cancel')
 
     # Обработка текстового ввода суммы
     dp.message.register(process_withdrawal_amount, ReferralWithdrawalStates.waiting_for_amount)

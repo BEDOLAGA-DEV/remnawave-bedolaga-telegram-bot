@@ -40,10 +40,10 @@ CRASH_ERROR_MESSAGE_MAX_LENGTH: Final[int] = 1000
 CRASH_ERROR_PREVIEW_LENGTH: Final[int] = 200
 
 # URL-ы
-GITHUB_BOT_URL: Final[str] = 'https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot'
-GITHUB_CABINET_URL: Final[str] = 'https://github.com/BEDOLAGA-DEV/bedolaga-cabinet'
-COMMUNITY_URL: Final[str] = 'https://t.me/+wTdMtSWq8YdmZmVi'
-DEVELOPER_CONTACT_URL: Final[str] = 'https://t.me/fringg'
+GITHUB_BOT_URL: Final[str] = 'https://github.com/NOZAPRET-DEV/remnawave-nozapret-telegram-bot'
+GITHUB_CABINET_URL: Final[str] = 'https://github.com/NOZAPRET-DEV/nozapret-cabinet'
+COMMUNITY_URL: Final[str] = ''
+DEVELOPER_CONTACT_URL: Final[str] = 'https://t.me/devsql'
 
 # Ключевые слова для определения типа ошибки
 WEBHOOK_ERROR_KEYWORDS: Final[tuple[str, ...]] = ('webhook', 'failed to resolve host')
@@ -235,40 +235,16 @@ class StartupNotificationService:
             timestamp = format_local_datetime(datetime.now(UTC), DATETIME_FORMAT)
 
             message = (
-                f'<b>Remnawave Bedolaga Bot</b>\n\n'
+                f'<b>Remnawave NoZapret Bot</b>\n\n'
                 f'✅ Бот успешно запущен\n\n'
                 f'<blockquote expandable>{system_info}</blockquote>\n\n'
                 f'<i>{timestamp}</i>'
-            )
-
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text='Поставить звезду',
-                            url=GITHUB_BOT_URL,
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text='Вебкабинет',
-                            url=GITHUB_CABINET_URL,
-                        ),
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text='Сообщество',
-                            url=COMMUNITY_URL,
-                        ),
-                    ],
-                ]
             )
 
             message_kwargs: dict = {
                 'chat_id': self.chat_id,
                 'text': message,
                 'parse_mode': ParseMode.HTML,
-                'reply_markup': keyboard,
                 'disable_web_page_preview': True,
             }
 
@@ -422,7 +398,7 @@ async def send_crash_notification(bot: Bot, error: Exception, traceback_str: str
 
         # Текст сообщения (escape HTML в error_type/message — они могут содержать <class ...>)
         message_text = (
-            f'<b>Remnawave Bedolaga Bot</b>\n\n'
+            f'<b>Remnawave NoZapret Bot</b>\n\n'
             f'❌ Бот упал с ошибкой\n\n'
             f'<b>Тип:</b> <code>{html.escape(error_type)}</code>\n'
             f'<b>Сообщение:</b> <code>{html.escape(error_message[:CRASH_ERROR_PREVIEW_LENGTH])}</code>\n'

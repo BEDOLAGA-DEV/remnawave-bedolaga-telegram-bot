@@ -72,7 +72,7 @@ async def test_save_cart_and_redirect_to_topup(mock_callback_query, mock_state, 
         # Подготовим моки
         mock_cart_service.save_user_cart = AsyncMock(return_value=True)
         mock_keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text='✅', callback_data='confirm')]]
+            inline_keyboard=[[InlineKeyboardButton(text='✅', callback_data='nz!_confirm')]]
         )
         mock_keyboard_func.return_value = mock_keyboard
 
@@ -139,7 +139,7 @@ async def test_return_to_saved_cart_success(mock_callback_query, mock_state, moc
         mock_get_countries.return_value = [{'uuid': 'ru', 'name': 'Russia'}, {'uuid': 'us', 'name': 'USA'}]
         mock_format_period.return_value = '30 дней'
         mock_keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text='✅', callback_data='confirm')]]
+            inline_keyboard=[[InlineKeyboardButton(text='✅', callback_data='nz!_confirm')]]
         )
         mock_keyboard_func.return_value = mock_keyboard
 
@@ -181,10 +181,10 @@ async def test_return_to_saved_cart_skips_edit_when_message_matches(
     }
 
     confirm_keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text='Подтвердить', callback_data='confirm')]]
+        inline_keyboard=[[InlineKeyboardButton(text='Подтвердить', callback_data='nz!_confirm')]]
     )
     existing_keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text='Подтвердить', callback_data='confirm')]]
+        inline_keyboard=[[InlineKeyboardButton(text='Подтвердить', callback_data='nz!_confirm')]]
     )
 
     with (
@@ -278,7 +278,7 @@ async def test_return_to_saved_cart_normalizes_devices_when_disabled(
         mock_get_countries.return_value = [{'uuid': 'ru', 'name': 'Russia'}, {'uuid': 'us', 'name': 'USA'}]
         mock_format_period.return_value = '30 дней'
         mock_keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text='✅', callback_data='confirm')]]
+            inline_keyboard=[[InlineKeyboardButton(text='✅', callback_data='nz!_confirm')]]
         )
         mock_keyboard_func.return_value = mock_keyboard
 
@@ -337,7 +337,7 @@ async def test_return_to_saved_cart_insufficient_funds(mock_callback_query, mock
         mock_cart_service.get_user_cart = AsyncMock(return_value=cart_data)
         mock_cart_service.save_user_cart = AsyncMock(return_value=True)
         mock_keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text='Пополнить', callback_data='topup')]]
+            inline_keyboard=[[InlineKeyboardButton(text='Пополнить', callback_data='nz!_topup')]]
         )
         mock_keyboard_func.return_value = mock_keyboard
 

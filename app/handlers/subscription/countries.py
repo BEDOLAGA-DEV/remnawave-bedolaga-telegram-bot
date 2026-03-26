@@ -155,7 +155,7 @@ async def get_countries_price_by_uuids_fallback(
 async def handle_manage_country(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
     logger.info('🔍 Управление страной', callback_data=callback.data)
 
-    country_uuid = callback.data.split('_')[2]
+    country_uuid = callback.data.split('_')[3]
 
     subscription = db_user.subscription
     if not subscription or subscription.is_trial:
@@ -478,7 +478,7 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
 
 
 async def select_country(callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession):
-    country_uuid = callback.data.split('_')[1]
+    country_uuid = callback.data.split('_')[2]
     data = await state.get_data()
 
     if 'period_days' not in data:

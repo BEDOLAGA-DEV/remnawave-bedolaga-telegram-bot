@@ -20,7 +20,6 @@ from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, Subscription, SubscriptionStatus, TransactionType, User
 from app.keyboards.inline import (
     get_back_keyboard,
-    get_countries_keyboard,
     get_devices_keyboard,
     get_extend_subscription_keyboard_with_prices,
     get_happ_download_button_row,
@@ -119,15 +118,8 @@ from .autopay import (
 )
 from .common import _get_promo_offer_discount_percent, update_traffic_prices
 from .countries import (
-    _build_countries_selection_text,
     _get_available_countries,
     _get_preselected_free_countries,
-    _should_show_countries_management,
-    apply_countries_changes,
-    countries_continue,
-    handle_add_countries,
-    handle_manage_country,
-    select_country,
 )
 from .devices import (
     confirm_add_devices,
@@ -171,6 +163,17 @@ from .traffic import (
     handle_switch_traffic,
     select_traffic,
 )
+from .wl_traffic import (
+    add_traffic as add_wl_traffic,
+    confirm_reset_wl_traffic,
+    confirm_switch_wl_traffic,
+    execute_switch_wl_traffic,
+    handle_add_wl_traffic,
+    handle_no_wl_traffic_packages,
+    handle_reset_wl_traffic,
+    handle_switch_wl_traffic,
+    select_wl_traffic,
+)
 
 
 async def show_subscription_info(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
@@ -195,6 +198,7 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
     subscription_service = SubscriptionService()
     await subscription_service.sync_subscription_usage(db, subscription)
+    await subscription_service.sync_wl_subscription_usage(db, subscription)
 
     # Проверяем и синхронизируем подписку с RemnaWave если необходимо
     sync_success, sync_error = await subscription_service.ensure_subscription_synced(db, subscription)
@@ -278,6 +282,21 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             '{used} / {limit} ГБ',
         ).format(used=used_traffic, limit=subscription.traffic_limit_gb)
 
+    if settings.WL_TRAFFIC_TOPUP_ENABLED:
+        wl_used_traffic = f'{subscription.wl_traffic_used_gb:.1f}'
+        wl_limit = subscription.wl_traffic_limit_gb if subscription.wl_traffic_limit_gb is not None else settings.WL_DEFAULT_TRAFFIC_LIMIT_GB
+        if wl_limit == 0:
+            wl_traffic_str = texts.t(
+                'SUBSCRIPTION_WL_TRAFFIC_UNLIMITED',
+                '∞ (безлимит) | Использовано: {used} ГБ',
+            ).format(used=wl_used_traffic)
+        else:
+            wl_traffic_str = texts.t(
+                'SUBSCRIPTION_WL_TRAFFIC_LIMITED',
+                '{used} / {limit} ГБ',
+            ).format(used=wl_used_traffic, limit=wl_limit)
+        traffic_used_display += f"\n📈 Трафик БС: {wl_traffic_str}"
+
     devices_used_str = '—'
     devices_list = []
     devices_count = 0
@@ -315,9 +334,6 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             logger.error('Ошибка получения устройств для отображения', error=e)
             devices_used = await get_current_devices_count(db_user)
             devices_used_str = str(devices_used)
-
-    servers_names = await get_servers_display_names(subscription.connected_squads)
-    servers_display = servers_names or texts.t('SUBSCRIPTION_NO_SERVERS', 'Нет серверов')
 
     # Получаем информацию о тарифе для режима тарифов
     tariff_info_block = ''
@@ -425,7 +441,6 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 📱 Информация о подписке
 🎭 Тип: {subscription_type}
 📈 Трафик: {traffic}
-🌍 Серверы: {servers}
 📱 Устройства: {devices_used} / {device_limit}""",
         )
     else:
@@ -440,7 +455,6 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 📅 Действует до: {end_date}
 ⏰ Осталось: {time_left}
 📈 Трафик: {traffic}
-🌍 Серверы: {servers}
 📱 Устройства: {devices_used} / {device_limit}""",
         )
 
@@ -463,7 +477,6 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
         end_date=format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M'),
         time_left=time_left_text,
         traffic=traffic_used_display,
-        servers=servers_display,
         devices_used=devices_used_str,
         device_limit=device_limit_display,
     )
@@ -478,8 +491,15 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             device_model = device.get('deviceModel', 'Unknown')
             device_info = f'{platform} - {device_model}'
 
-            if len(device_info) > 35:
-                device_info = device_info[:32] + '...'
+            updated_at_str = device.get('updatedAt')
+            if updated_at_str:
+                try:
+                    dt = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
+                    display_date = format_local_datetime(dt, '%d.%m %H:%M')
+                    device_info += f' ({display_date})'
+                except Exception:
+                    pass
+
             message += f'• {device_info}\n'
         message += texts.t('SUBSCRIPTION_CONNECTED_DEVICES_FOOTER', '</blockquote>')
 
@@ -707,49 +727,49 @@ def _get_trial_payment_keyboard(language: str, can_pay_from_balance: bool = Fals
     # Кнопка оплаты с баланса (если хватает средств)
     if can_pay_from_balance:
         keyboard.append(
-            [types.InlineKeyboardButton(text='✅ Оплатить с баланса', callback_data='trial_pay_with_balance')]
+            [types.InlineKeyboardButton(text='✅ Оплатить с баланса', callback_data='nz!_trial_pay_with_balance')]
         )
 
     # Добавляем доступные методы оплаты
     if settings.TELEGRAM_STARS_ENABLED:
-        keyboard.append([types.InlineKeyboardButton(text='⭐ Telegram Stars', callback_data='trial_payment_stars')])
+        keyboard.append([types.InlineKeyboardButton(text='⭐ Telegram Stars', callback_data='nz!_trial_payment_stars')])
 
     if settings.is_yookassa_enabled():
         yookassa_methods = []
         if settings.YOOKASSA_SBP_ENABLED:
             yookassa_methods.append(
-                types.InlineKeyboardButton(text='🏦 YooKassa (СБП)', callback_data='trial_payment_yookassa_sbp')
+                types.InlineKeyboardButton(text='🏦 YooKassa (СБП)', callback_data='nz!_trial_payment_yookassa_sbp')
             )
         yookassa_methods.append(
-            types.InlineKeyboardButton(text='💳 YooKassa (Карта)', callback_data='trial_payment_yookassa')
+            types.InlineKeyboardButton(text='💳 YooKassa (Карта)', callback_data='nz!_trial_payment_yookassa')
         )
         if yookassa_methods:
             keyboard.append(yookassa_methods)
 
     if settings.is_cryptobot_enabled():
-        keyboard.append([types.InlineKeyboardButton(text='🪙 CryptoBot', callback_data='trial_payment_cryptobot')])
+        keyboard.append([types.InlineKeyboardButton(text='🪙 CryptoBot', callback_data='nz!_trial_payment_cryptobot')])
 
     if settings.is_heleket_enabled():
-        keyboard.append([types.InlineKeyboardButton(text='🪙 Heleket', callback_data='trial_payment_heleket')])
+        keyboard.append([types.InlineKeyboardButton(text='🪙 Heleket', callback_data='nz!_trial_payment_heleket')])
 
     if settings.is_mulenpay_enabled():
         mulenpay_name = settings.get_mulenpay_display_name()
         keyboard.append(
-            [types.InlineKeyboardButton(text=f'💳 {mulenpay_name}', callback_data='trial_payment_mulenpay')]
+            [types.InlineKeyboardButton(text=f'💳 {mulenpay_name}', callback_data='nz!_trial_payment_mulenpay')]
         )
 
     if settings.is_pal24_enabled():
-        keyboard.append([types.InlineKeyboardButton(text='💳 PayPalych', callback_data='trial_payment_pal24')])
+        keyboard.append([types.InlineKeyboardButton(text='💳 PayPalych', callback_data='nz!_trial_payment_pal24')])
 
     if settings.is_wata_enabled():
-        keyboard.append([types.InlineKeyboardButton(text='💳 WATA', callback_data='trial_payment_wata')])
+        keyboard.append([types.InlineKeyboardButton(text='💳 WATA', callback_data='nz!_trial_payment_wata')])
 
     if settings.is_platega_enabled():
         platega_name = settings.get_platega_display_name()
-        keyboard.append([types.InlineKeyboardButton(text=f'💳 {platega_name}', callback_data='trial_payment_platega')])
+        keyboard.append([types.InlineKeyboardButton(text=f'💳 {platega_name}', callback_data='nz!_trial_payment_platega')])
 
     # Кнопка назад
-    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_trial')])
+    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_trial')])
 
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -766,7 +786,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription')])
 
         await callback.message.edit_text(
             f'🚫 <b>Активация подписки ограничена</b>\n\n{reason}\n\n'
@@ -1140,7 +1160,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                         [
                             InlineKeyboardButton(
                                 text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                                callback_data='back_to_menu',
+                                callback_data='nz!_back_to_menu',
                             )
                         ],
                     ]
@@ -1167,7 +1187,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                         [
                             InlineKeyboardButton(
                                 text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                                callback_data='back_to_menu',
+                                callback_data='nz!_back_to_menu',
                             )
                         ],
                     ]
@@ -1188,7 +1208,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                     [
                         InlineKeyboardButton(
                             text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                            callback_data='back_to_menu',
+                            callback_data='nz!_back_to_menu',
                         )
                     ]
                 )
@@ -1198,7 +1218,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                     [
                         InlineKeyboardButton(
                             text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                            callback_data='open_subscription_link',
+                            callback_data='nz!_open_subscription_link',
                         )
                     ]
                 ]
@@ -1209,7 +1229,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                     [
                         InlineKeyboardButton(
                             text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                            callback_data='back_to_menu',
+                            callback_data='nz!_back_to_menu',
                         )
                     ]
                 )
@@ -1220,13 +1240,13 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                                callback_data='subscription_connect',
+                                callback_data='nz!_subscription_connect',
                             )
                         ],
                         [
                             InlineKeyboardButton(
                                 text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                                callback_data='back_to_menu',
+                                callback_data='nz!_back_to_menu',
                             )
                         ],
                     ]
@@ -1510,16 +1530,7 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
             await callback.answer('ℹ️ Пополните баланс, чтобы завершить оформление.')
         return
 
-    countries = await _get_available_countries(db_user.promo_group_id)
-    selected_countries_names = []
-
     period_display = format_period_description(prepared_cart_data['period_days'], db_user.language)
-
-    # Проверяем наличие ключа 'countries' в данных корзины
-    cart_countries = prepared_cart_data.get('countries', [])
-    for country in countries:
-        if country['uuid'] in cart_countries:
-            selected_countries_names.append(country['name'])
 
     if settings.is_traffic_fixed():
         traffic_value = prepared_cart_data.get('traffic_gb')
@@ -1535,7 +1546,6 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
         '',
         f'📅 Период: {period_display}',
         f'📊 Трафик: {traffic_display}',
-        f'🌍 Страны: {", ".join(selected_countries_names)}',
     ]
 
     if settings.is_devices_selection_enabled():
@@ -1619,8 +1629,8 @@ async def handle_extend_subscription(callback: types.CallbackQuery, db_user: Use
             '⚠️ Ваша текущая подписка продолжит действовать до окончания срока.',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='📦 Выбрать тариф', callback_data='tariff_switch')],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                    [types.InlineKeyboardButton(text='📦 Выбрать тариф', callback_data='nz!_tariff_switch')],
+                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')],
                 ]
             ),
             parse_mode='HTML',
@@ -1707,7 +1717,6 @@ async def handle_extend_subscription(callback: types.CallbackQuery, db_user: Use
         f'Осталось дней: {subscription.days_left}',
         '',
         '<b>Ваша текущая конфигурация:</b>',
-        f'🌍 Серверов: {len(subscription.connected_squads or [])}',
         f'📊 Трафик: {texts.format_traffic(subscription.traffic_limit_gb)}',
     ]
 
@@ -1749,10 +1758,7 @@ async def handle_extend_subscription(callback: types.CallbackQuery, db_user: Use
 
 
 async def confirm_extend_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    if not callback.data:
-        await callback.answer('⚠ Ошибка данных', show_alert=True)
-        return
-    days = int(callback.data.split('_')[2])
+    days = int(callback.data.split('_')[3])
     texts = get_texts(db_user.language)
 
     # Валидация что период доступен для продления
@@ -1920,8 +1926,8 @@ async def confirm_extend_subscription(callback: types.CallbackQuery, db_user: Us
     await callback.answer()
 
 
-async def select_period(callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession):
-    period_days = int(callback.data.split('_')[1])
+async def select_period(callback: types.CallbackQuery, state: FSMContext, db_user: User):
+    period_days = int(callback.data.split('_')[2])
     texts = get_texts(db_user.language)
 
     # Валидация что период доступен
@@ -1963,26 +1969,10 @@ async def select_period(callback: types.CallbackQuery, state: FSMContext, db_use
         await callback.answer()
         return
 
-    if await _should_show_countries_management(db_user):
-        countries = await _get_available_countries(db_user.promo_group_id)
-        # Автоматически предвыбираем бесплатные серверы
-        preselected = _get_preselected_free_countries(countries)
-        data['countries'] = preselected
-        await state.set_data(data)
-        # Формируем текст с описаниями сквадов
-        selection_text = _build_countries_selection_text(countries, texts.SELECT_COUNTRIES)
-        await callback.message.edit_text(
-            selection_text,
-            reply_markup=get_countries_keyboard(countries, preselected, db_user.language),
-            parse_mode='HTML',
-        )
-        await state.set_state(SubscriptionStates.selecting_countries)
-        await callback.answer()
-        return
-
     countries = await _get_available_countries(db_user.promo_group_id)
+    preselected = _get_preselected_free_countries(countries)
     available_countries = [c for c in countries if c.get('is_available', True)]
-    data['countries'] = [available_countries[0]['uuid']] if available_countries else []
+    data['countries'] = preselected if preselected else ([available_countries[0]['uuid']] if available_countries else [])
     await state.set_data(data)
 
     if settings.is_devices_selection_enabled():
@@ -2009,7 +1999,7 @@ async def select_devices(callback: types.CallbackQuery, state: FSMContext, db_us
         )
         return
 
-    if not callback.data.startswith('devices_') or callback.data == 'devices_continue':
+    if not callback.data.startswith('nz!_devices_') or callback.data == 'nz!_devices_continue':
         await callback.answer(texts.t('DEVICES_INVALID_REQUEST', '❌ Некорректный запрос'), show_alert=True)
         return
 
@@ -2074,7 +2064,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription')])
 
         await callback.message.edit_text(
             f'🚫 <b>Покупка/продление подписки ограничено</b>\n\n{reason}\n\n'
@@ -2580,7 +2570,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                         [
                             InlineKeyboardButton(
                                 text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                                callback_data='back_to_menu',
+                                callback_data='nz!_back_to_menu',
                             )
                         ],
                     ]
@@ -2607,7 +2597,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                         [
                             InlineKeyboardButton(
                                 text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                                callback_data='back_to_menu',
+                                callback_data='nz!_back_to_menu',
                             )
                         ],
                     ]
@@ -2622,7 +2612,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 rows.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'), callback_data='back_to_menu'
+                            text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'), callback_data='nz!_back_to_menu'
                         )
                     ]
                 )
@@ -2632,7 +2622,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                     [
                         InlineKeyboardButton(
                             text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                            callback_data='open_subscription_link',
+                            callback_data='nz!_open_subscription_link',
                         )
                     ]
                 ]
@@ -2642,7 +2632,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 rows.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'), callback_data='back_to_menu'
+                            text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'), callback_data='nz!_back_to_menu'
                         )
                     ]
                 )
@@ -2652,13 +2642,13 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                     inline_keyboard=[
                         [
                             InlineKeyboardButton(
-                                text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
+                                text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='nz!_subscription_connect'
                             )
                         ],
                         [
                             InlineKeyboardButton(
                                 text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                                callback_data='back_to_menu',
+                                callback_data='nz!_back_to_menu',
                             )
                         ],
                     ]
@@ -2811,7 +2801,6 @@ async def handle_subscription_settings(callback: types.CallbackQuery, db_user: U
         (
             '⚙️ <b>Настройки подписки</b>\n\n'
             '📊 <b>Текущие параметры:</b>\n'
-            '🌐 Стран: {countries_count}\n'
             '📈 Трафик: {traffic_used} / {traffic_limit}\n'
             '📱 Устройства: {devices_used} / {devices_limit}\n\n'
             'Выберите что хотите изменить:'
@@ -2827,19 +2816,16 @@ async def handle_subscription_settings(callback: types.CallbackQuery, db_user: U
     devices_limit_display = str(subscription.device_limit)
 
     settings_text = settings_template.format(
-        countries_count=len(subscription.connected_squads or []),
         traffic_used=texts.format_traffic(subscription.traffic_used_gb, is_limit=False),
         traffic_limit=texts.format_traffic(subscription.traffic_limit_gb, is_limit=True),
         devices_used=devices_used,
         devices_limit=devices_limit_display,
     )
 
-    show_countries = await _should_show_countries_management(db_user)
-
     await callback.message.edit_text(
         settings_text,
         reply_markup=get_updated_subscription_settings_keyboard(
-            db_user.language, show_countries, tariff=tariff, subscription=subscription
+            db_user.language, show_countries_management=False, tariff=tariff, subscription=subscription
         ),
         parse_mode='HTML',
     )
@@ -3359,7 +3345,7 @@ def _build_trial_success_keyboard(texts, subscription_link: str, connect_mode: s
                 [
                     InlineKeyboardButton(
                         text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                        callback_data='back_to_menu',
+                        callback_data='nz!_back_to_menu',
                     )
                 ],
             ]
@@ -3379,7 +3365,7 @@ def _build_trial_success_keyboard(texts, subscription_link: str, connect_mode: s
                 [
                     InlineKeyboardButton(
                         text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                        callback_data='back_to_menu',
+                        callback_data='nz!_back_to_menu',
                     )
                 ],
             ]
@@ -3400,7 +3386,7 @@ def _build_trial_success_keyboard(texts, subscription_link: str, connect_mode: s
             [
                 InlineKeyboardButton(
                     text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                    callback_data='back_to_menu',
+                    callback_data='nz!_back_to_menu',
                 )
             ]
         )
@@ -3410,7 +3396,7 @@ def _build_trial_success_keyboard(texts, subscription_link: str, connect_mode: s
             [
                 InlineKeyboardButton(
                     text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                    callback_data='open_subscription_link',
+                    callback_data='nz!_open_subscription_link',
                 )
             ]
         ]
@@ -3421,7 +3407,7 @@ def _build_trial_success_keyboard(texts, subscription_link: str, connect_mode: s
             [
                 InlineKeyboardButton(
                     text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                    callback_data='back_to_menu',
+                    callback_data='nz!_back_to_menu',
                 )
             ]
         )
@@ -3431,13 +3417,13 @@ def _build_trial_success_keyboard(texts, subscription_link: str, connect_mode: s
             [
                 InlineKeyboardButton(
                     text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                    callback_data='subscription_connect',
+                    callback_data='nz!_subscription_connect',
                 )
             ],
             [
                 InlineKeyboardButton(
                     text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                    callback_data='back_to_menu',
+                    callback_data='nz!_back_to_menu',
                 )
             ],
         ]
@@ -3474,7 +3460,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
         return
 
     # Определяем метод оплаты
-    payment_method = callback.data.replace('trial_payment_', '')
+    payment_method = callback.data.replace('nz!_trial_payment_', '')
 
     try:
         payment_service = PaymentService(callback.bot)
@@ -3601,7 +3587,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
                         [InlineKeyboardButton(text='💳 Оплатить', url=qr_url)],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -3635,7 +3621,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
                         [InlineKeyboardButton(text='💳 Оплатить', url=payment_result['confirmation_url'])],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -3695,10 +3681,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'check_trial_cryptobot_{pending_subscription.id}',
+                                callback_data=f'nz!_check_trial_cryptobot_{pending_subscription.id}',
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -3733,10 +3719,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'check_trial_heleket_{pending_subscription.id}',
+                                callback_data=f'nz!_check_trial_heleket_{pending_subscription.id}',
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -3770,10 +3756,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'check_trial_mulenpay_{pending_subscription.id}',
+                                callback_data=f'nz!_check_trial_mulenpay_{pending_subscription.id}',
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -3808,10 +3794,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'check_trial_pal24_{pending_subscription.id}',
+                                callback_data=f'nz!_check_trial_pal24_{pending_subscription.id}',
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -3844,10 +3830,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'check_trial_wata_{pending_subscription.id}',
+                                callback_data=f'nz!_check_trial_wata_{pending_subscription.id}',
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -3892,10 +3878,10 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'check_trial_platega_{pending_subscription.id}',
+                                callback_data=f'nz!_check_trial_platega_{pending_subscription.id}',
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -3915,161 +3901,158 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
 def register_handlers(dp: Dispatcher):
     update_traffic_prices()
 
-    dp.callback_query.register(show_subscription_info, F.data == 'menu_subscription')
+    dp.callback_query.register(show_subscription_info, F.data == 'nz!_menu_subscription')
 
-    dp.callback_query.register(show_trial_offer, F.data == 'menu_trial')
+    dp.callback_query.register(show_trial_offer, F.data == 'nz!_menu_trial')
 
-    dp.callback_query.register(activate_trial, F.data == 'trial_activate')
+    dp.callback_query.register(activate_trial, F.data == 'nz!_trial_activate')
 
     # Хендлеры платного триала
-    dp.callback_query.register(handle_trial_pay_with_balance, F.data == 'trial_pay_with_balance')
+    dp.callback_query.register(handle_trial_pay_with_balance, F.data == 'nz!_trial_pay_with_balance')
 
-    dp.callback_query.register(handle_trial_payment_method, F.data.startswith('trial_payment_'))
+    dp.callback_query.register(handle_trial_payment_method, F.data.startswith('nz!_trial_payment_'))
 
     dp.callback_query.register(
-        start_subscription_purchase, F.data.in_(['menu_buy', 'subscription_upgrade', 'subscription_purchase'])
+        start_subscription_purchase, F.data.in_(['nz!_menu_buy', 'nz!_subscription_upgrade', 'nz!_subscription_purchase'])
     )
 
-    dp.callback_query.register(handle_add_countries, F.data == 'subscription_add_countries')
+    dp.callback_query.register(handle_switch_traffic, F.data == 'nz!_subscription_switch_traffic')
 
-    dp.callback_query.register(handle_switch_traffic, F.data == 'subscription_switch_traffic')
+    dp.callback_query.register(confirm_switch_traffic, F.data.startswith('nz!_switch_traffic_'))
 
-    dp.callback_query.register(confirm_switch_traffic, F.data.startswith('switch_traffic_'))
+    dp.callback_query.register(execute_switch_traffic, F.data.startswith('nz!_confirm_switch_traffic_'))
 
-    dp.callback_query.register(execute_switch_traffic, F.data.startswith('confirm_switch_traffic_'))
+    dp.callback_query.register(handle_change_devices, F.data == 'nz!_subscription_change_devices')
 
-    dp.callback_query.register(handle_change_devices, F.data == 'subscription_change_devices')
+    dp.callback_query.register(confirm_change_devices, F.data.startswith('nz!_change_devices_'))
 
-    dp.callback_query.register(confirm_change_devices, F.data.startswith('change_devices_'))
+    dp.callback_query.register(execute_change_devices, F.data.startswith('nz!_confirm_change_devices_'))
 
-    dp.callback_query.register(execute_change_devices, F.data.startswith('confirm_change_devices_'))
+    dp.callback_query.register(handle_extend_subscription, F.data == 'nz!_subscription_extend')
 
-    dp.callback_query.register(handle_extend_subscription, F.data == 'subscription_extend')
+    dp.callback_query.register(handle_reset_traffic, F.data == 'nz!_subscription_reset_traffic')
 
-    dp.callback_query.register(handle_reset_traffic, F.data == 'subscription_reset_traffic')
+    dp.callback_query.register(confirm_add_devices, F.data.startswith('nz!_add_devices_'))
 
-    dp.callback_query.register(confirm_add_devices, F.data.startswith('add_devices_'))
+    dp.callback_query.register(confirm_extend_subscription, F.data.startswith('nz!_extend_period_'))
 
-    dp.callback_query.register(confirm_extend_subscription, F.data.startswith('extend_period_'))
+    dp.callback_query.register(confirm_reset_traffic, F.data == 'nz!_confirm_reset_traffic')
 
-    dp.callback_query.register(confirm_reset_traffic, F.data == 'confirm_reset_traffic')
+    dp.callback_query.register(handle_reset_devices, F.data == 'nz!_subscription_reset_devices')
 
-    dp.callback_query.register(handle_reset_devices, F.data == 'subscription_reset_devices')
+    dp.callback_query.register(confirm_reset_devices, F.data == 'nz!_confirm_reset_devices')
 
-    dp.callback_query.register(confirm_reset_devices, F.data == 'confirm_reset_devices')
+    dp.callback_query.register(select_period, F.data.startswith('nz!_period_'), SubscriptionStates.selecting_period)
 
-    dp.callback_query.register(select_period, F.data.startswith('period_'), SubscriptionStates.selecting_period)
-
-    dp.callback_query.register(select_traffic, F.data.startswith('traffic_'), SubscriptionStates.selecting_traffic)
+    dp.callback_query.register(select_traffic, F.data.startswith('nz!_traffic_'), SubscriptionStates.selecting_traffic)
 
     dp.callback_query.register(
         select_devices,
-        F.data.startswith('devices_') & ~F.data.in_(['devices_continue']),
+        F.data.startswith('nz!_devices_') & ~F.data.in_(['nz!_devices_continue']),
         SubscriptionStates.selecting_devices,
     )
 
-    dp.callback_query.register(devices_continue, F.data == 'devices_continue', SubscriptionStates.selecting_devices)
+    dp.callback_query.register(devices_continue, F.data == 'nz!_devices_continue', SubscriptionStates.selecting_devices)
 
     dp.callback_query.register(
-        confirm_purchase, F.data == 'subscription_confirm', SubscriptionStates.confirming_purchase
+        confirm_purchase, F.data == 'nz!_subscription_confirm', SubscriptionStates.confirming_purchase
     )
 
     dp.callback_query.register(
         resume_subscription_checkout,
-        F.data == 'subscription_resume_checkout',
+        F.data == 'nz!_subscription_resume_checkout',
     )
 
     dp.callback_query.register(
         return_to_saved_cart,
-        F.data == 'return_to_saved_cart',
+        F.data == 'nz!_return_to_saved_cart',
     )
 
     dp.callback_query.register(
         clear_saved_cart,
-        F.data == 'clear_saved_cart',
+        F.data == 'nz!_clear_saved_cart',
     )
 
-    dp.callback_query.register(handle_autopay_menu, F.data == 'subscription_autopay')
+    dp.callback_query.register(handle_autopay_menu, F.data == 'nz!_subscription_autopay')
 
-    dp.callback_query.register(toggle_autopay, F.data.in_(['autopay_enable', 'autopay_disable']))
+    dp.callback_query.register(toggle_autopay, F.data.in_(['nz!_autopay_enable', 'nz!_autopay_disable']))
 
-    dp.callback_query.register(show_autopay_days, F.data == 'autopay_set_days')
+    dp.callback_query.register(show_autopay_days, F.data == 'nz!_autopay_set_days')
 
-    dp.callback_query.register(handle_subscription_config_back, F.data == 'subscription_config_back')
+    dp.callback_query.register(handle_subscription_config_back, F.data == 'nz!_subscription_config_back')
 
-    dp.callback_query.register(handle_subscription_cancel, F.data == 'subscription_cancel')
+    dp.callback_query.register(handle_subscription_cancel, F.data == 'nz!_subscription_cancel')
 
-    dp.callback_query.register(set_autopay_days, F.data.startswith('autopay_days_'))
+    dp.callback_query.register(set_autopay_days, F.data.startswith('nz!_autopay_days_'))
 
-    dp.callback_query.register(select_country, F.data.startswith('country_'), SubscriptionStates.selecting_countries)
-
-    dp.callback_query.register(
-        countries_continue, F.data == 'countries_continue', SubscriptionStates.selecting_countries
-    )
-
-    dp.callback_query.register(handle_manage_country, F.data.startswith('country_manage_'))
-
-    dp.callback_query.register(apply_countries_changes, F.data == 'countries_apply')
-
-    dp.callback_query.register(claim_discount_offer, F.data.startswith('claim_discount_'))
+    dp.callback_query.register(claim_discount_offer, F.data.startswith('nz!_claim_discount_'))
 
     dp.callback_query.register(
         handle_promo_offer_close,
-        F.data == 'promo_offer_close',
+        F.data == 'nz!_promo_offer_close',
     )
 
-    dp.callback_query.register(handle_happ_download_request, F.data == 'subscription_happ_download')
+    dp.callback_query.register(handle_happ_download_request, F.data == 'nz!_subscription_happ_download')
 
     dp.callback_query.register(
         handle_happ_download_platform_choice,
         F.data.in_(
             [
-                'happ_download_ios',
-                'happ_download_android',
-                'happ_download_pc',
-                'happ_download_macos',
-                'happ_download_windows',
+                'nz!_happ_download_ios',
+                'nz!_happ_download_android',
+                'nz!_happ_download_pc',
+                'nz!_happ_download_macos',
+                'nz!_happ_download_windows',
             ]
         ),
     )
 
-    dp.callback_query.register(handle_happ_download_close, F.data == 'happ_download_close')
+    dp.callback_query.register(handle_happ_download_close, F.data == 'nz!_happ_download_close')
 
-    dp.callback_query.register(handle_happ_download_back, F.data == 'happ_download_back')
+    dp.callback_query.register(handle_happ_download_back, F.data == 'nz!_happ_download_back')
 
-    dp.callback_query.register(handle_connect_subscription, F.data == 'subscription_connect')
+    dp.callback_query.register(handle_connect_subscription, F.data == 'nz!_subscription_connect')
 
-    dp.callback_query.register(handle_device_guide, F.data.startswith('device_guide_'))
+    dp.callback_query.register(handle_device_guide, F.data.startswith('nz!_device_guide_'))
 
-    dp.callback_query.register(handle_app_selection, F.data.startswith('app_list_'))
+    dp.callback_query.register(handle_app_selection, F.data.startswith('nz!_app_list_'))
 
-    dp.callback_query.register(handle_specific_app_guide, F.data.startswith('app_') & ~F.data.startswith('app_list_'))
+    dp.callback_query.register(handle_specific_app_guide, F.data.startswith('nz!_app_') & ~F.data.startswith('nz!_app_list_'))
 
-    dp.callback_query.register(handle_open_subscription_link, F.data == 'open_subscription_link')
+    dp.callback_query.register(handle_open_subscription_link, F.data == 'nz!_open_subscription_link')
 
-    dp.callback_query.register(handle_subscription_settings, F.data == 'subscription_settings')
+    dp.callback_query.register(handle_subscription_settings, F.data == 'nz!_subscription_settings')
 
-    dp.callback_query.register(handle_toggle_daily_subscription_pause, F.data == 'toggle_daily_subscription_pause')
+    dp.callback_query.register(handle_toggle_daily_subscription_pause, F.data == 'nz!_toggle_daily_subscription_pause')
 
-    dp.callback_query.register(handle_no_traffic_packages, F.data == 'no_traffic_packages')
+    dp.callback_query.register(handle_no_traffic_packages, F.data == 'nz!_no_traffic_packages')
 
-    dp.callback_query.register(handle_device_management, F.data == 'subscription_manage_devices')
+    dp.callback_query.register(handle_device_management, F.data == 'nz!_subscription_manage_devices')
 
-    dp.callback_query.register(handle_devices_page, F.data.startswith('devices_page_'))
+    dp.callback_query.register(handle_devices_page, F.data.startswith('nz!_devices_page_'))
 
-    dp.callback_query.register(handle_single_device_reset, F.data.regexp(r'^reset_device_\d+_\d+$'))
+    dp.callback_query.register(handle_single_device_reset, F.data.regexp(r'^nz\!_sub_resdev_\d+_\d+$'))
 
-    dp.callback_query.register(handle_all_devices_reset_from_management, F.data == 'reset_all_devices')
+    dp.callback_query.register(handle_all_devices_reset_from_management, F.data == 'nz!_reset_all_devices')
 
-    dp.callback_query.register(show_device_connection_help, F.data == 'device_connection_help')
+    dp.callback_query.register(show_device_connection_help, F.data == 'nz!_device_connection_help')
 
     # Регистрируем обработчики покупки по тарифам
     from .tariff_purchase import register_tariff_purchase_handlers
 
     register_tariff_purchase_handlers(dp)
 
-    # Регистрируем обработчик для простой покупки
-    dp.callback_query.register(handle_simple_subscription_purchase, F.data == 'simple_subscription_purchase')
+    # Регистрируем обработчики БС-трафика (_wl)
+    dp.callback_query.register(handle_add_wl_traffic, F.data == 'nz!_subscription_add_wl_traffic')
+    dp.callback_query.register(handle_no_wl_traffic_packages, F.data == 'nz!_no_wl_traffic_packages')
+    dp.callback_query.register(handle_reset_wl_traffic, F.data == 'nz!_subscription_reset_wl_traffic')
+    dp.callback_query.register(confirm_reset_wl_traffic, F.data == 'nz!_confirm_reset_wl_traffic')
+    dp.callback_query.register(handle_switch_wl_traffic, F.data == 'nz!_subscription_switch_wl_traffic')
+    dp.callback_query.register(confirm_switch_wl_traffic, F.data.startswith('nz!_switch_wl_traffic_'))
+    dp.callback_query.register(execute_switch_wl_traffic, F.data.startswith('nz!_confirm_switch_wl_traffic_'))
+    dp.callback_query.register(select_wl_traffic, F.data.startswith('nz!_wl_traffic_'), SubscriptionStates.selecting_traffic)
+    dp.callback_query.register(add_wl_traffic, F.data.startswith('nz!_confirm_wl_traffic_'))
+    dp.callback_query.register(handle_simple_subscription_purchase, F.data == 'nz!_simple_subscription_purchase')
 
 
 async def handle_simple_subscription_purchase(
@@ -4176,15 +4159,15 @@ async def handle_simple_subscription_purchase(
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text='✅ Оплатить с баланса', callback_data='simple_subscription_pay_with_balance'
+                        text='✅ Оплатить с баланса', callback_data='nz!_simple_subscription_pay_with_balance'
                     )
                 ],
                 [
                     types.InlineKeyboardButton(
-                        text='💳 Другие способы оплаты', callback_data='simple_subscription_other_payment_methods'
+                        text='💳 Другие способы оплаты', callback_data='nz!_simple_subscription_other_payment_methods'
                     )
                 ],
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_purchase')],
             ]
         )
     else:

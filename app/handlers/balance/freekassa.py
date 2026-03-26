@@ -114,7 +114,7 @@ async def _create_freekassa_payment_and_respond(
             [
                 InlineKeyboardButton(
                     text=texts.t('BACK_BUTTON', '◀️ Назад'),
-                    callback_data='menu_balance',
+                    callback_data='nz!_menu_balance',
                 )
             ],
         ]
@@ -166,7 +166,7 @@ async def process_freekassa_payment_amount(
         keyboard = []
         if support_url:
             keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance')])
 
         await message.answer(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
@@ -255,7 +255,7 @@ async def _start_freekassa_topup_impl(
         keyboard = []
         if support_url:
             keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
@@ -276,7 +276,7 @@ async def _start_freekassa_topup_impl(
             [
                 InlineKeyboardButton(
                     text=texts.t('BACK_BUTTON', '◀️ Назад'),
-                    callback_data='menu_balance',
+                    callback_data='nz!_menu_balance',
                 )
             ]
         ]
@@ -370,3 +370,127 @@ async def process_freekassa_custom_amount(
         state=state,
         payment_method=data.get('payment_method'),
     )
+
+
+async def _process_freekassa_quick_amount_impl(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+    payment_method: str,
+):
+    """
+    Process quick amount selection for Freekassa payment.
+    Called when user clicks a predefined amount button.
+    payment_method: 'freekassa', 'freekassa_sbp', 'freekassa_card'
+    """
+    texts = get_texts(db_user.language)
+
+    if not settings.is_freekassa_enabled():
+        await callback.answer(
+            texts.t('FREEKASSA_NOT_AVAILABLE', 'Freekassa временно недоступен'),
+            show_alert=True,
+        )
+        return
+
+    if payment_method == 'freekassa_sbp' and not settings.is_freekassa_sbp_enabled():
+        await callback.answer(
+            texts.t('FREEKASSA_NOT_AVAILABLE', 'Freekassa временно недоступен'),
+            show_alert=True,
+        )
+        return
+
+    if payment_method == 'freekassa_card' and not settings.is_freekassa_card_enabled():
+        await callback.answer(
+            texts.t('FREEKASSA_NOT_AVAILABLE', 'Freekassa временно недоступен'),
+            show_alert=True,
+        )
+        return
+
+    # Extract amount from callback data: topup_amount|{method}|{amount_kopeks}
+    try:
+        parts = callback.data.split('|')
+        if len(parts) >= 3:
+            amount_kopeks = int(parts[2])
+        else:
+            await callback.answer('Invalid callback data', show_alert=True)
+            return
+    except (ValueError, IndexError):
+        await callback.answer('Invalid amount', show_alert=True)
+        return
+
+    # Проверка ограничения на пополнение
+    if getattr(db_user, 'restriction_topup', False):
+        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        support_url = settings.get_support_contact_url()
+        keyboard = []
+        if support_url:
+            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance')])
+
+        await callback.message.edit_text(
+            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        )
+        return
+
+    # Validate amount
+    min_amount = settings.FREEKASSA_MIN_AMOUNT_KOPEKS
+    max_amount = settings.FREEKASSA_MAX_AMOUNT_KOPEKS
+
+    if amount_kopeks < min_amount:
+        await callback.answer(
+            texts.t('AMOUNT_TOO_LOW_SHORT', 'Сумма слишком мала'),
+            show_alert=True,
+        )
+        return
+
+    if amount_kopeks > max_amount:
+        await callback.answer(
+            texts.t('AMOUNT_TOO_HIGH_SHORT', 'Сумма слишком велика'),
+            show_alert=True,
+        )
+        return
+
+    await callback.answer()
+    await state.clear()
+
+    await _create_freekassa_payment_and_respond(
+        message_or_callback=callback.message,
+        db_user=db_user,
+        db=db,
+        amount_kopeks=amount_kopeks,
+        edit_message=True,
+        payment_method=payment_method,
+    )
+
+
+@error_handler
+async def process_freekassa_quick_amount(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _process_freekassa_quick_amount_impl(callback, db_user, db, state, 'freekassa')
+
+
+@error_handler
+async def process_freekassa_sbp_quick_amount(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _process_freekassa_quick_amount_impl(callback, db_user, db, state, 'freekassa_sbp')
+
+
+@error_handler
+async def process_freekassa_card_quick_amount(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _process_freekassa_quick_amount_impl(callback, db_user, db, state, 'freekassa_card')

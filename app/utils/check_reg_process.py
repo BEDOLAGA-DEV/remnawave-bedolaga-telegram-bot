@@ -12,14 +12,14 @@ def is_registration_process(event: TelegramObject, current_state: str | None) ->
     ]
 
     registration_callbacks = [
-        'rules_accept',
-        'rules_decline',
-        'privacy_policy_accept',
-        'privacy_policy_decline',
-        'referral_skip',
+        'nz!_rules_accept',
+        'nz!_rules_decline',
+        'nz!_privacy_policy_accept',
+        'nz!_privacy_policy_decline',
+        'nz!_referral_skip',
     ]
 
-    language_select_prefix = 'language_select:'
+    language_select_prefix = 'nz!_language_select:'
 
     if current_state in registration_states:
         return True

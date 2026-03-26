@@ -461,8 +461,8 @@ def get_reset_devices_confirm_keyboard(language: str = 'ru') -> InlineKeyboardMa
     get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='✅ Да, сбросить все устройства', callback_data='confirm_reset_devices')],
-            [InlineKeyboardButton(text='❌ Отмена', callback_data='menu_subscription')],
+            [InlineKeyboardButton(text='✅ Да, сбросить все устройства', callback_data='nz!_confirm_reset_devices')],
+            [InlineKeyboardButton(text='❌ Отмена', callback_data='nz!_menu_subscription')],
         ]
     )
 
@@ -543,14 +543,14 @@ def get_traffic_switch_keyboard(
 
         button_text = f'{emoji} {traffic_text}{action_text}{price_text}'
 
-        buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'switch_traffic_{gb}')])
+        buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'nz!_switch_traffic_{gb}')])
 
     language_code = (language or 'ru').split('-')[0].lower()
     buttons.append(
         [
             InlineKeyboardButton(
                 text='⬅️ Назад' if language_code in {'ru', 'fa'} else '⬅️ Back',
-                callback_data='subscription_settings',
+                callback_data='nz!_subscription_settings',
             )
         ]
     )
@@ -566,9 +566,99 @@ def get_confirm_switch_traffic_keyboard(
             [
                 InlineKeyboardButton(
                     text='✅ Подтвердить переключение',
-                    callback_data=f'confirm_switch_traffic_{new_traffic_gb}_{price_difference}',
+                    callback_data=f'nz!_confirm_switch_traffic_{new_traffic_gb}_{price_difference}',
                 )
             ],
-            [InlineKeyboardButton(text='❌ Отмена', callback_data='subscription_settings')],
+            [InlineKeyboardButton(text='❌ Отмена', callback_data='nz!_subscription_settings')],
         ]
     )
+
+
+# ─── WL (белый ярлык) версии клавиатур переключения трафика ──────────────────
+
+def get_wl_traffic_switch_keyboard(
+    current_traffic_gb: int,
+    language: str = 'ru',
+    subscription_end_date: datetime = None,
+    discount_percent: int = 0,
+    base_traffic_gb: int = None,
+) -> InlineKeyboardMarkup:
+    from app.config import settings
+
+    if base_traffic_gb is None:
+        base_traffic_gb = current_traffic_gb
+
+    months_multiplier = 1
+    period_text = ''
+    if subscription_end_date:
+        months_multiplier = get_remaining_months(subscription_end_date)
+        if months_multiplier > 1:
+            period_text = f' (за {months_multiplier} мес)'
+
+    packages = settings.get_wl_traffic_packages()
+    enabled_packages = [pkg for pkg in packages if pkg.get('enabled')]
+
+    current_price_per_month = settings.get_wl_traffic_price(base_traffic_gb)
+    discounted_current_per_month, _ = apply_percentage_discount(current_price_per_month, discount_percent)
+
+    buttons = []
+
+    for package in enabled_packages:
+        gb = package['gb']
+        price_per_month = package.get('price', 0)
+        discounted_price_per_month, _ = apply_percentage_discount(price_per_month, discount_percent)
+
+        price_diff_per_month = discounted_price_per_month - discounted_current_per_month
+        total_price_diff = price_diff_per_month * months_multiplier
+
+        if gb == base_traffic_gb:
+            emoji = '✅'
+            action_text = ' (текущий)'
+            price_text = ''
+        elif total_price_diff > 0:
+            emoji = '⬆️'
+            action_text = ''
+            price_text = f' (+{total_price_diff // 100}₽{period_text})'
+            if discount_percent > 0:
+                discount_total = (price_per_month - current_price_per_month) * months_multiplier - total_price_diff
+                if discount_total > 0:
+                    price_text += f' (скидка {discount_percent}%: -{discount_total // 100}₽)'
+        elif total_price_diff < 0:
+            emoji = '⬇️'
+            action_text = ''
+            price_text = ' (без возврата)'
+        else:
+            emoji = '🔄'
+            action_text = ''
+            price_text = ' (бесплатно)'
+
+        traffic_text = 'Безлимит' if gb == 0 else f'{gb} ГБ БС'
+        button_text = f'{emoji} {traffic_text}{action_text}{price_text}'
+        buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'nz!_switch_wl_traffic_{gb}')])
+
+    language_code = (language or 'ru').split('-')[0].lower()
+    buttons.append(
+        [InlineKeyboardButton(
+            text='⬅️ Назад' if language_code in {'ru', 'fa'} else '⬅️ Back',
+            callback_data='nz!_subscription_settings',
+        )]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_confirm_switch_wl_traffic_keyboard(
+    new_traffic_gb: int, price_difference: int, language: str = 'ru'
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text='✅ Подтвердить смену БС-трафика',
+                    callback_data=f'nz!_confirm_switch_wl_traffic_{new_traffic_gb}_{price_difference}',
+                )
+            ],
+            [InlineKeyboardButton(text='❌ Отмена', callback_data='nz!_subscription_settings')],
+        ]
+    )
+

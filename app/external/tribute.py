@@ -35,8 +35,8 @@ class TributeService:
 
     def verify_webhook_signature(self, payload: str, signature: str) -> bool:
         if not self.api_key:
-            logger.warning('API key не настроен, пропускаем проверку')
-            return True
+            logger.error('API key не настроен, отклоняем webhook')
+            return False
 
         try:
             expected_signature = hmac.new(self.api_key.encode(), payload.encode(), hashlib.sha256).hexdigest()

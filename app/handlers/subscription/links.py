@@ -51,7 +51,7 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
                         web_app=types.WebAppInfo(url=subscription_link),
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')],
             ]
         )
 
@@ -85,7 +85,7 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
                         web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')],
             ]
         )
 
@@ -105,7 +105,7 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
             rows.append(happ_row)
-        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -124,14 +124,14 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
             [
                 InlineKeyboardButton(
                     text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                    callback_data='open_subscription_link',
+                    callback_data='nz!_open_subscription_link',
                 )
             ]
         ]
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
             rows.append(happ_row)
-        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -165,7 +165,7 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -203,8 +203,27 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
 
 
 async def handle_open_subscription_link(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    from app.services.remnawave_service import RemnaWaveService
+    
     texts = get_texts(db_user.language)
     subscription = db_user.subscription
+    
+    # Generate crypto link on the fly if subscription_url exists but crypto link is missing.
+    if subscription and subscription.subscription_url and not subscription.subscription_crypto_link:
+        try:
+            service = RemnaWaveService()
+            async with service.get_api_client() as api:
+                encrypted = await api.encrypt_happ_crypto_link(subscription.subscription_url)
+                if encrypted:
+                    subscription.subscription_crypto_link = encrypted
+                    await db.commit()
+                    logger.info(
+                        'Generated and saved crypto link for user via Bot',
+                        user_id=db_user.id,
+                    )
+        except Exception as e:
+            logger.warning('Could not generate crypto link in Bot handler', error=e)
+
     subscription_link = get_display_subscription_link(subscription)
 
     if not subscription_link:
@@ -299,10 +318,10 @@ async def handle_open_subscription_link(callback: types.CallbackQuery, db_user: 
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
+                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='nz!_subscription_connect'
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')],
             ]
         ),
         parse_mode='HTML',

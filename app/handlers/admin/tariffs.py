@@ -179,6 +179,13 @@ def get_tariff_view_keyboard(
     )
     buttons.append(
         [
+            InlineKeyboardButton(
+                text='🌍 БС-трафик (_wl)', callback_data=f'admin_tariff_edit_wl_traffic:{tariff.id}'
+            ),
+        ]
+    )
+    buttons.append(
+        [
             InlineKeyboardButton(text='🔄 Сброс трафика', callback_data=f'admin_tariff_edit_reset_mode:{tariff.id}'),
         ]
     )
@@ -258,6 +265,20 @@ def _format_traffic_topup_packages(tariff: Tariff) -> str:
     return '\n'.join(lines)
 
 
+def _format_wl_traffic_topup_packages(tariff: Tariff) -> str:
+    """Форматирует пакеты докупки WL-трафика для отображения."""
+    packages = tariff.get_wl_traffic_topup_packages() if hasattr(tariff, 'get_wl_traffic_topup_packages') else {}
+    if not packages:
+        return '❌ Не настроены (используются глобальные)'
+
+    lines = ['✅ Настроены']
+    for gb in sorted(packages.keys()):
+        price = packages[gb]
+        lines.append(f'  • {gb} ГБ: {_format_price_kopeks(price)}')
+
+    return '\n'.join(lines)
+
+
 def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> str:
     """Форматирует информацию о тарифе."""
     get_texts(language)
@@ -303,6 +324,16 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
     # Форматируем докупку трафика
     traffic_topup_display = _format_traffic_topup_packages(tariff)
 
+    # Форматируем WL-трафик (БС)
+    wl_default_gb = getattr(tariff, 'wl_default_traffic_gb', None)
+    if wl_default_gb is None:
+        wl_default_display = 'По умолчанию (глобальный)'
+    elif wl_default_gb == 0:
+        wl_default_display = 'Безлимит'
+    else:
+        wl_default_display = f'{wl_default_gb} ГБ'
+    wl_topup_display = _format_wl_traffic_topup_packages(tariff)
+
     # Форматируем режим сброса трафика
     traffic_reset_mode = getattr(tariff, 'traffic_reset_mode', None)
     traffic_reset_display = _format_traffic_reset_mode(traffic_reset_mode)
@@ -335,6 +366,10 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
 
 <b>Докупка трафика:</b>
 {traffic_topup_display}
+
+<b>БС-трафик (_wl):</b>
+• Стартовый лимит: {wl_default_display}
+• Докупка (пакеты): {wl_topup_display}
 
 <b>Сброс трафика:</b> {traffic_reset_display}
 
@@ -858,8 +893,8 @@ async def process_tariff_tier(
         'Шаг 5/6: Выберите тип тарифа',
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='📅 Периодный (месяцы)', callback_data='tariff_type_periodic')],
-                [InlineKeyboardButton(text='🔄 Суточный (оплата за день)', callback_data='tariff_type_daily')],
+                [InlineKeyboardButton(text='📅 Периодный (месяцы)', callback_data='nz!_tariff_type_periodic')],
+                [InlineKeyboardButton(text='🔄 Суточный (оплата за день)', callback_data='nz!_tariff_type_daily')],
                 [InlineKeyboardButton(text=texts.CANCEL, callback_data='admin_tariffs')],
             ]
         ),
@@ -2139,6 +2174,300 @@ async def process_edit_max_topup_traffic(
     )
 
 
+# ============ БС-ТРАФИК (_wl) ============
+
+
+@admin_required
+@error_handler
+async def start_edit_tariff_wl_traffic(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Показывает меню настройки БС-трафика (_wl) для тарифа."""
+    texts = get_texts(db_user.language)
+    tariff_id = int(callback.data.split(':')[1])
+    tariff = await get_tariff_by_id(db, tariff_id)
+
+    if not tariff:
+        await callback.answer('Тариф не найден', show_alert=True)
+        return
+
+    wl_default_gb = getattr(tariff, 'wl_default_traffic_gb', None)
+    if wl_default_gb is None:
+        wl_default_display = 'По умолчанию (глобальный)'
+    elif wl_default_gb == 0:
+        wl_default_display = 'Безлимит'
+    else:
+        wl_default_display = f'{wl_default_gb} ГБ'
+
+    packages = tariff.get_wl_traffic_topup_packages() if hasattr(tariff, 'get_wl_traffic_topup_packages') else {}
+    if packages:
+        packages_display = '\n'.join(
+            f'  • {gb} ГБ: {_format_price_kopeks(price)}' for gb, price in sorted(packages.items())
+        )
+    else:
+        packages_display = '  Не настроены (глобальные цены)'
+
+    buttons = [
+        [InlineKeyboardButton(text='📊 Стартовый лимит', callback_data=f'admin_tariff_edit_wl_default:{tariff_id}')],
+        [InlineKeyboardButton(text='📦 Пакеты докупки', callback_data=f'admin_tariff_edit_wl_packages:{tariff_id}')],
+        [InlineKeyboardButton(text=texts.BACK, callback_data=f'admin_tariff_view:{tariff_id}')],
+    ]
+
+    if packages:
+        buttons.insert(
+            2,
+            [InlineKeyboardButton(text='🗑️ Сбросить пакеты', callback_data=f'admin_tariff_clear_wl_packages:{tariff_id}')],
+        )
+
+    await callback.message.edit_text(
+        f'🌍 <b>БС-трафик (_wl) для «{tariff.name}»</b>\n\n'
+        f'<b>Стартовый лимит:</b> {wl_default_display}\n'
+        f'<b>Пакеты докупки:</b>\n{packages_display}\n\n'
+        '• <i>Стартовый лимит</i> — сколько ГБ выдаётся при покупке этого тарифа\n'
+        '• <i>Пакеты</i> — цены для докупки; если пусто, используются глобальные',
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def start_edit_tariff_wl_default(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Начинает редактирование стартового WL-лимита тарифа."""
+    texts = get_texts(db_user.language)
+    tariff_id = int(callback.data.split(':')[1])
+    tariff = await get_tariff_by_id(db, tariff_id)
+
+    if not tariff:
+        await callback.answer('Тариф не найден', show_alert=True)
+        return
+
+    current = getattr(tariff, 'wl_default_traffic_gb', None)
+    current_display = 'не задан (глобальный)' if current is None else ('∞ безлимит' if current == 0 else f'{current} ГБ')
+
+    await state.set_state(AdminStates.editing_tariff_wl_default_traffic)
+    await state.update_data(tariff_id=tariff_id, language=db_user.language)
+
+    await callback.message.edit_text(
+        f'📊 <b>Стартовый WL-лимит для «{tariff.name}»</b>\n\n'
+        f'Текущее значение: <b>{current_display}</b>\n\n'
+        'Отправьте число ГБ (например: <code>10</code>).\n'
+        '• <code>0</code> — безлимитный WL-трафик\n'
+        '• <code>-1</code> или <code>пусто</code> — сбросить (использовать глобальный)',
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.CANCEL, callback_data=f'admin_tariff_edit_wl_traffic:{tariff_id}')]
+            ]
+        ),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def process_edit_tariff_wl_default(
+    message: types.Message,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Обрабатывает ввод стартового WL-лимита."""
+    data = await state.get_data()
+    tariff_id = data.get('tariff_id')
+    tariff = await get_tariff_by_id(db, tariff_id)
+
+    if not tariff:
+        await message.answer('Тариф не найден')
+        await state.clear()
+        return
+
+    text = (message.text or '').strip()
+    new_value = None
+
+    if text in ('-1', ''):
+        new_value = None  # сбросить до глобального
+    else:
+        try:
+            val = int(text)
+            if val < 0:
+                await message.answer('Число должно быть ≥ 0. Введите снова:')
+                return
+            new_value = val
+        except ValueError:
+            await message.answer('Неверный формат. Введите число (например: <code>10</code>) или <code>-1</code> для сброса.', parse_mode='HTML')
+            return
+
+    tariff = await update_tariff(db, tariff, wl_default_traffic_gb=new_value)
+    await state.clear()
+
+    display = 'По умолчанию (глобальный)' if new_value is None else ('Безлимит' if new_value == 0 else f'{new_value} ГБ')
+
+    subs_count = await get_tariff_subscriptions_count(db, tariff_id)
+    await message.answer(
+        f'✅ Стартовый WL-лимит обновлён: <b>{display}</b>\n\n' + format_tariff_info(tariff, db_user.language, subs_count),
+        reply_markup=get_tariff_view_keyboard(tariff, db_user.language),
+        parse_mode='HTML',
+    )
+
+
+@admin_required
+@error_handler
+async def start_edit_wl_traffic_topup_packages(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Начинает редактирование пакетов докупки WL-трафика."""
+    texts = get_texts(db_user.language)
+    tariff_id = int(callback.data.split(':')[1])
+    tariff = await get_tariff_by_id(db, tariff_id)
+
+    if not tariff:
+        await callback.answer('Тариф не найден', show_alert=True)
+        return
+
+    packages = tariff.get_wl_traffic_topup_packages() if hasattr(tariff, 'get_wl_traffic_topup_packages') else {}
+    current_str = _format_traffic_topup_packages_for_edit(packages) if packages else '5:1000, 10:2000, 25:4000'
+
+    await state.set_state(AdminStates.editing_tariff_wl_traffic_topup_packages)
+    await state.update_data(tariff_id=tariff_id, language=db_user.language)
+
+    packages_display = '\n'.join(
+        f'  • {gb} ГБ: {_format_price_kopeks(price)}' for gb, price in sorted(packages.items())
+    ) if packages else '  Не настроены'
+
+    await callback.message.edit_text(
+        f'📦 <b>Пакеты докупки WL-трафика</b>\n\n'
+        f'Тариф: <b>{tariff.name}</b>\n\n'
+        f'<b>Текущие пакеты:</b>\n{packages_display}\n\n'
+        'Введите пакеты в формате:\n'
+        f'<code>{current_str}</code>\n\n'
+        '(ГБ:цена_в_копейках, через запятую)\n'
+        'Например: <code>5:1000, 10:2000</code> = 5ГБ за 10₽, 10ГБ за 20₽',
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.CANCEL, callback_data=f'admin_tariff_edit_wl_traffic:{tariff_id}')]
+            ]
+        ),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def process_edit_wl_traffic_topup_packages(
+    message: types.Message,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Обрабатывает новые пакеты докупки WL-трафика."""
+    data = await state.get_data()
+    tariff_id = data.get('tariff_id')
+    tariff = await get_tariff_by_id(db, tariff_id)
+
+    if not tariff:
+        await message.answer('Тариф не найден')
+        await state.clear()
+        return
+
+    if not message.text:
+        await message.answer(
+            'Пожалуйста, отправьте текстовое сообщение.\n\n'
+            'Формат: <code>ГБ:цена_в_копейках</code>\n'
+            'Пример: <code>5:1000, 10:2000, 25:4000</code>',
+            parse_mode='HTML',
+        )
+        return
+
+    packages = _parse_traffic_topup_packages(message.text.strip())
+
+    if not packages:
+        await message.answer(
+            'Не удалось распознать пакеты.\n\n'
+            'Формат: <code>ГБ:цена_в_копейках</code>\n'
+            'Пример: <code>5:1000, 10:2000, 25:4000</code>',
+            parse_mode='HTML',
+        )
+        return
+
+    packages_json = {str(gb): price for gb, price in packages.items()}
+    tariff = await update_tariff(db, tariff, wl_traffic_topup_packages=packages_json)
+    await state.clear()
+
+    texts = get_texts(db_user.language)
+    packages_display = '\n'.join(
+        f'  • {gb} ГБ: {_format_price_kopeks(price)}' for gb, price in sorted(packages.items())
+    )
+
+    buttons = [
+        [InlineKeyboardButton(text='📊 Стартовый лимит', callback_data=f'admin_tariff_edit_wl_default:{tariff_id}')],
+        [InlineKeyboardButton(text='📦 Пакеты докупки', callback_data=f'admin_tariff_edit_wl_packages:{tariff_id}')],
+        [InlineKeyboardButton(text='🗑️ Сбросить пакеты', callback_data=f'admin_tariff_clear_wl_packages:{tariff_id}')],
+        [InlineKeyboardButton(text=texts.BACK, callback_data=f'admin_tariff_view:{tariff_id}')],
+    ]
+
+    await message.answer(
+        f'✅ <b>WL-пакеты обновлены!</b>\n\n'
+        f'🌍 <b>БС-трафик (_wl) для «{tariff.name}»</b>\n\n'
+        f'<b>Пакеты:</b>\n{packages_display}',
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode='HTML',
+    )
+
+
+@admin_required
+@error_handler
+async def clear_tariff_wl_packages(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+):
+    """Сбрасывает пакеты докупки WL-трафика (используются глобальные)."""
+    tariff_id = int(callback.data.split(':')[1])
+    tariff = await get_tariff_by_id(db, tariff_id)
+
+    if not tariff:
+        await callback.answer('Тариф не найден', show_alert=True)
+        return
+
+    tariff = await update_tariff(db, tariff, wl_traffic_topup_packages={})
+    await callback.answer('WL-пакеты сброшены — будут использоваться глобальные цены')
+
+    texts = get_texts(db_user.language)
+    buttons = [
+        [InlineKeyboardButton(text='📊 Стартовый лимит', callback_data=f'admin_tariff_edit_wl_default:{tariff_id}')],
+        [InlineKeyboardButton(text='📦 Пакеты докупки', callback_data=f'admin_tariff_edit_wl_packages:{tariff_id}')],
+        [InlineKeyboardButton(text=texts.BACK, callback_data=f'admin_tariff_view:{tariff_id}')],
+    ]
+
+    wl_default_gb = getattr(tariff, 'wl_default_traffic_gb', None)
+    wl_default_display = 'По умолчанию (глобальный)' if wl_default_gb is None else ('Безлимит' if wl_default_gb == 0 else f'{wl_default_gb} ГБ')
+
+    try:
+        await callback.message.edit_text(
+            f'🌍 <b>БС-трафик (_wl) для «{tariff.name}»</b>\n\n'
+            f'<b>Стартовый лимит:</b> {wl_default_display}\n'
+            f'<b>Пакеты докупки:</b>\n  Не настроены (глобальные цены)',
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+            parse_mode='HTML',
+        )
+    except Exception:
+        pass
+
+
 # ============ УДАЛЕНИЕ ТАРИФА ============
 
 
@@ -2815,8 +3144,8 @@ def register_handlers(dp: Dispatcher):
     dp.message.register(process_tariff_traffic, AdminStates.creating_tariff_traffic)
     dp.message.register(process_tariff_devices, AdminStates.creating_tariff_devices)
     dp.message.register(process_tariff_tier, AdminStates.creating_tariff_tier)
-    dp.callback_query.register(select_tariff_type_periodic, F.data == 'tariff_type_periodic')
-    dp.callback_query.register(select_tariff_type_daily, F.data == 'tariff_type_daily')
+    dp.callback_query.register(select_tariff_type_periodic, F.data == 'nz!_tariff_type_periodic')
+    dp.callback_query.register(select_tariff_type_daily, F.data == 'nz!_tariff_type_daily')
     dp.message.register(process_tariff_prices, AdminStates.creating_tariff_prices)
 
     # Редактирование названия
@@ -2867,7 +3196,16 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(start_edit_max_topup_traffic, F.data.startswith('admin_tariff_edit_max_topup:'))
     dp.message.register(process_edit_max_topup_traffic, AdminStates.editing_tariff_max_topup_traffic)
 
-    # Удаление (delete_confirm BEFORE delete to avoid prefix conflict)
+    # Редактирование БС-трафика (_wl)
+    dp.callback_query.register(start_edit_tariff_wl_traffic, F.data.startswith('admin_tariff_edit_wl_traffic:'))
+    dp.callback_query.register(start_edit_tariff_wl_default, F.data.startswith('admin_tariff_edit_wl_default:'))
+    dp.message.register(process_edit_tariff_wl_default, AdminStates.editing_tariff_wl_default_traffic)
+    dp.callback_query.register(start_edit_wl_traffic_topup_packages, F.data.startswith('admin_tariff_edit_wl_packages:'))
+    dp.message.register(process_edit_wl_traffic_topup_packages, AdminStates.editing_tariff_wl_traffic_topup_packages)
+    dp.callback_query.register(clear_tariff_wl_packages, F.data.startswith('admin_tariff_clear_wl_packages:'))
+
+    # Удаление
+    dp.callback_query.register(confirm_delete_tariff, F.data.startswith('admin_tariff_delete:'))
     dp.callback_query.register(delete_tariff_confirmed, F.data.startswith('admin_tariff_delete_confirm:'))
     dp.callback_query.register(confirm_delete_tariff, F.data.startswith('admin_tariff_delete:'))
 

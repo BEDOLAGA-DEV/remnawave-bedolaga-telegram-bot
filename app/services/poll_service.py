@@ -57,7 +57,7 @@ def build_start_keyboard(response_id: int, language: str) -> InlineKeyboardMarku
             [
                 InlineKeyboardButton(
                     text=texts.t('POLL_START_BUTTON', '📝 Пройти опрос'),
-                    callback_data=f'poll_start:{response_id}',
+                    callback_data=f'nz!_poll_start:{response_id}',
                 )
             ]
         ]

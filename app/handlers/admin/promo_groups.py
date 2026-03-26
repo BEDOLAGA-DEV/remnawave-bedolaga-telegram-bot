@@ -321,7 +321,7 @@ def _build_edit_menu_content(
                     'ADMIN_PROMO_GROUP_EDIT_FIELD_NAME',
                     '✏️ Изменить название',
                 ),
-                callback_data=f'promo_group_edit_field_{group.id}_name',
+                callback_data=f'nz!_promo_group_edit_field_{group.id}_name',
             )
         ],
         [
@@ -330,7 +330,7 @@ def _build_edit_menu_content(
                     'ADMIN_PROMO_GROUP_EDIT_FIELD_PRIORITY',
                     '🎯 Приоритет',
                 ),
-                callback_data=f'promo_group_edit_field_{group.id}_priority',
+                callback_data=f'nz!_promo_group_edit_field_{group.id}_priority',
             )
         ],
         [
@@ -339,7 +339,7 @@ def _build_edit_menu_content(
                     'ADMIN_PROMO_GROUP_EDIT_FIELD_TRAFFIC',
                     '🌐 Скидка на трафик',
                 ),
-                callback_data=f'promo_group_edit_field_{group.id}_traffic',
+                callback_data=f'nz!_promo_group_edit_field_{group.id}_traffic',
             )
         ],
         [
@@ -348,7 +348,7 @@ def _build_edit_menu_content(
                     'ADMIN_PROMO_GROUP_EDIT_FIELD_SERVERS',
                     '🖥 Скидка на серверы',
                 ),
-                callback_data=f'promo_group_edit_field_{group.id}_servers',
+                callback_data=f'nz!_promo_group_edit_field_{group.id}_servers',
             )
         ],
         [
@@ -357,7 +357,7 @@ def _build_edit_menu_content(
                     'ADMIN_PROMO_GROUP_EDIT_FIELD_DEVICES',
                     '📱 Скидка на устройства',
                 ),
-                callback_data=f'promo_group_edit_field_{group.id}_devices',
+                callback_data=f'nz!_promo_group_edit_field_{group.id}_devices',
             )
         ],
         [
@@ -366,13 +366,13 @@ def _build_edit_menu_content(
                     'ADMIN_PROMO_GROUP_EDIT_FIELD_PERIODS',
                     '⏳ Скидки по периодам',
                 ),
-                callback_data=f'promo_group_edit_field_{group.id}_periods',
+                callback_data=f'nz!_promo_group_edit_field_{group.id}_periods',
             )
         ],
         [
             types.InlineKeyboardButton(
                 text=_get_addon_discounts_button_text(texts, group),
-                callback_data=f'promo_group_toggle_addons_{group.id}',
+                callback_data=f'nz!_promo_group_toggle_addons_{group.id}',
             )
         ],
         [
@@ -381,13 +381,13 @@ def _build_edit_menu_content(
                     'ADMIN_PROMO_GROUP_EDIT_FIELD_AUTO_ASSIGN',
                     '🤖 Автовыдача по тратам',
                 ),
-                callback_data=f'promo_group_edit_field_{group.id}_auto',
+                callback_data=f'nz!_promo_group_edit_field_{group.id}_auto',
             )
         ],
         [
             types.InlineKeyboardButton(
                 text=texts.BACK,
-                callback_data=f'promo_group_manage_{group.id}',
+                callback_data=f'nz!_promo_group_manage_{group.id}',
             )
         ],
     ]
@@ -402,7 +402,7 @@ def _get_edit_prompt_keyboard(group_id: int, texts) -> types.InlineKeyboardMarku
             [
                 types.InlineKeyboardButton(
                     text=texts.BACK,
-                    callback_data=f'promo_group_edit_{group_id}',
+                    callback_data=f'nz!_promo_group_edit_{group_id}',
                 )
             ]
         ]
@@ -473,8 +473,8 @@ async def show_promo_groups_menu(
             keyboard_rows.append(
                 [
                     types.InlineKeyboardButton(
-                        text=f'{icon} {group.name}',
-                        callback_data=f'promo_group_manage_{group.id}',
+                        text=f'{"⭐" if group.is_default else "🎯"} {group.name}',
+                        callback_data=f'nz!_promo_group_manage_{group.id}',
                     )
                 ]
             )
@@ -550,7 +550,7 @@ async def show_promo_group_details(
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_PROMO_GROUP_MEMBERS_BUTTON', '👥 Участники'),
-                    callback_data=f'promo_group_members_{group.id}_page_1',
+                    callback_data=f'nz!_promo_group_members_{group.id}_page_1',
                 )
             ]
         )
@@ -559,7 +559,7 @@ async def show_promo_group_details(
         [
             types.InlineKeyboardButton(
                 text=texts.t('ADMIN_PROMO_GROUP_EDIT_BUTTON', '✏️ Изменить'),
-                callback_data=f'promo_group_edit_{group.id}',
+                callback_data=f'nz!_promo_group_edit_{group.id}',
             )
         ]
     )
@@ -569,7 +569,7 @@ async def show_promo_group_details(
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_PROMO_GROUP_DELETE_BUTTON', '🗑️ Удалить'),
-                    callback_data=f'promo_group_delete_{group.id}',
+                    callback_data=f'nz!_promo_group_delete_{group.id}',
                 )
             ]
         )
@@ -1242,7 +1242,7 @@ async def show_promo_group_members(
         )
         keyboard.extend(pagination.inline_keyboard)
 
-    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data=f'promo_group_manage_{group_id}')])
+    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_promo_group_manage_{group_id}')])
 
     await callback.message.edit_text(
         f'{title}\n\n{body}',
@@ -1359,31 +1359,31 @@ async def toggle_promo_group_addon_discounts(
 
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_promo_groups_menu, F.data == 'admin_promo_groups')
-    dp.callback_query.register(show_promo_group_details, F.data.startswith('promo_group_manage_'))
+    dp.callback_query.register(show_promo_group_details, F.data.startswith('nz!_promo_group_manage_'))
     dp.callback_query.register(start_create_promo_group, F.data == 'admin_promo_group_create')
     dp.callback_query.register(
         prompt_edit_promo_group_field,
-        F.data.startswith('promo_group_edit_field_'),
+        F.data.startswith('nz!_promo_group_edit_field_'),
     )
     dp.callback_query.register(
         toggle_promo_group_addon_discounts,
-        F.data.startswith('promo_group_toggle_addons_'),
+        F.data.startswith('nz!_promo_group_toggle_addons_'),
     )
     dp.callback_query.register(
         start_edit_promo_group,
-        F.data.regexp(r'^promo_group_edit_\d+$'),
+        F.data.regexp(r'^nz\!_promo_group_edit_\d+$'),
     )
     dp.callback_query.register(
         request_delete_promo_group,
-        F.data.startswith('promo_group_delete_') & ~F.data.startswith('promo_group_delete_confirm_'),
+        F.data.startswith('nz!_promo_group_delete_') & ~F.data.startswith('nz!_promo_group_delete_confirm_'),
     )
     dp.callback_query.register(
         delete_promo_group_confirmed,
-        F.data.startswith('promo_group_delete_confirm_'),
+        F.data.startswith('nz!_promo_group_delete_confirm_'),
     )
     dp.callback_query.register(
         show_promo_group_members,
-        F.data.regexp(r'^promo_group_members_\d+_page_\d+$'),
+        F.data.regexp(r'^nz\!_promo_group_members_\d+_page_\d+$'),
     )
 
     dp.message.register(process_create_group_name, AdminStates.creating_promo_group_name)

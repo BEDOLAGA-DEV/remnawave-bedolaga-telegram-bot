@@ -101,7 +101,7 @@ class UserService:
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                            callback_data='subscription_extend',
+                            callback_data='nz!_subscription_extend',
                         )
                     ]
                 ]
@@ -119,11 +119,11 @@ class UserService:
             )
             keyboard = types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='🚀 АКТИВИРОВАТЬ ПОДПИСКУ', callback_data='subscription_buy')],
-                    [types.InlineKeyboardButton(text='💎 ПРОДЛИТЬ ПОДПИСКУ', callback_data='subscription_extend')],
+                    [types.InlineKeyboardButton(text='🚀 АКТИВИРОВАТЬ ПОДПИСКУ', callback_data='nz!_subscription_buy')],
+                    [types.InlineKeyboardButton(text='💎 ПРОДЛИТЬ ПОДПИСКУ', callback_data='nz!_subscription_extend')],
                     [
                         types.InlineKeyboardButton(
-                            text='📱 ДОБАВИТЬ УСТРОЙСТВА', callback_data='subscription_add_devices'
+                            text='📱 ДОБАВИТЬ УСТРОЙСТВА', callback_data='nz!_subscription_add_devices'
                         )
                     ],
                 ]
@@ -175,7 +175,7 @@ class UserService:
                 [
                     types.InlineKeyboardButton(
                         text=get_texts(user.language).t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                        callback_data='subscription_extend',
+                        callback_data='nz!_subscription_extend',
                     )
                 ]
             )
@@ -691,6 +691,27 @@ class UserService:
                             '✅ RemnaWave пользователь деактивирован при блокировке',
                             remnawave_uuid=user.remnawave_uuid,
                         )
+
+                        # Деактивируем _wl аккаунт при блокировке
+                        _wl_username = settings.format_remnawave_username(
+                            full_name=user.full_name,
+                            username=user.username,
+                            telegram_id=user.telegram_id,
+                            email=user.email,
+                            user_id=user.id,
+                        ) + '_wl'
+                        try:
+                            from app.services.remnawave_service import RemnaWaveService as _RemnaWaveService
+
+                            _rw_service = _RemnaWaveService()
+                            async with _rw_service.get_api_client() as _api:
+                                wl_user = await _api.get_user_by_username(_wl_username)
+                                if wl_user:
+                                    await subscription_service.disable_remnawave_user(wl_user.uuid)
+                                    logger.info('✅ _wl аккаунт деактивирован при блокировке', username=_wl_username)
+                        except Exception as _wl_e:
+                            logger.warning('⚠️ Не удалось деактивировать _wl аккаунт при блокировке', username=_wl_username, error=_wl_e)
+
                     except Exception as e:
                         logger.error('❌ Ошибка деактивации RemnaWave пользователя при блокировке', error=e)
 
@@ -787,19 +808,40 @@ class UserService:
                         if delete_mode == 'delete':
                             # Удаляем пользователя из панели Remnawave
                             async with remnawave_service.get_api_client() as api:
-                                delete_success = await api.delete_user(user.remnawave_uuid)
-                                if delete_success:
-                                    result.panel_deleted = True
+                                try:
+                                    await api.delete_user(user.remnawave_uuid)
                                     logger.info(
-                                        '✅ RemnaWave пользователь удален из панели',
-                                        remnawave_uuid=user.remnawave_uuid,
+                                    '✅ RemnaWave пользователь удален (или уже отсутствовал)',
+                                    remnawave_uuid=user.remnawave_uuid,
                                     )
-                                else:
-                                    result.panel_error = 'Remnawave API вернул ошибку удаления'
-                                    logger.warning(
-                                        '⚠️ Не удалось удалить пользователя из панели Remnawave',
-                                        remnawave_uuid=user.remnawave_uuid,
-                                    )
+                                except Exception as e:
+                                    error_msg = str(e).lower()
+                                    if 'not found' in error_msg or '404' in error_msg or 'a025' in error_msg:
+                                        logger.info('✅ RemnaWave пользователь уже отсутствует (404/Not Found)', remnawave_uuid=user.remnawave_uuid)
+                                    else:
+                                        logger.warning('⚠️ Не удалось удалить пользователя из RemnaWave', error=e)
+
+                                # Удаляем _wl аккаунт
+                                from app.config import settings as _settings
+                                _wl_username = settings.format_remnawave_username(
+                                    full_name=user.full_name,
+                                    username=user.username,
+                                    telegram_id=user.telegram_id,
+                                    email=user.email,
+                                    user_id=user.id,
+                                ) + '_wl'
+                                try:
+                                    wl_user = await api.get_user_by_username(_wl_username)
+                                    if wl_user:
+                                        await api.delete_user(wl_user.uuid)
+                                        logger.info('✅ _wl аккаунт удален из панели', username=_wl_username)
+                                except Exception as _wl_e:
+                                    _wl_error_msg = str(_wl_e).lower()
+                                    if 'not found' in _wl_error_msg or '404' in _wl_error_msg or 'a025' in _wl_error_msg:
+                                        logger.info('✅ _wl аккаунт уже отсутствует (404/Not Found)', username=_wl_username)
+                                    else:
+                                        logger.warning('⚠️ Не удалось удалить _wl аккаунт', username=_wl_username, error=_wl_e)
+
                         else:
                             # Деактивируем пользователя в панели Remnawave
                             from app.services.subscription_service import SubscriptionService
@@ -820,6 +862,23 @@ class UserService:
                                     remnawave_uuid=user.remnawave_uuid,
                                     delete_mode=delete_mode,
                                 )
+
+                            # Деактивируем _wl аккаунт
+                            _wl_username = settings.format_remnawave_username(
+                                full_name=user.full_name,
+                                username=user.username,
+                                telegram_id=user.telegram_id,
+                                email=user.email,
+                                user_id=user.id,
+                            ) + '_wl'
+                            try:
+                                async with remnawave_service.get_api_client() as _api:
+                                    wl_user = await _api.get_user_by_username(_wl_username)
+                                    if wl_user:
+                                        await subscription_service.disable_remnawave_user(wl_user.uuid)
+                                        logger.info('✅ _wl аккаунт деактивирован', username=_wl_username)
+                            except Exception as _wl_e:
+                                logger.warning('⚠️ Не удалось деактивировать _wl аккаунт', username=_wl_username, error=_wl_e)
 
                     except Exception as e:
                         result.panel_error = 'Ошибка обработки пользователя в Remnawave'

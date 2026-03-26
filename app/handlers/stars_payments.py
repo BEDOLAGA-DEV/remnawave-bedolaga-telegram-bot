@@ -13,6 +13,10 @@ from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 
+from app.database.crud.transaction import create_transaction
+from app.database.models import TransactionType, PaymentMethod
+from app.database.crud.subscription import get_subscription_by_user_id, deactivate_subscription
+from datetime import datetime, UTC
 
 logger = structlog.get_logger(__name__)
 
@@ -537,7 +541,7 @@ async def handle_successful_payment(message: types.Message, db: AsyncSession, st
 
             keyboard = await payment_service.build_topup_success_keyboard(user)
 
-            transaction_id_short = payment.telegram_payment_charge_id[:8]
+            transaction_id_short = payment.telegram_payment_charge_id
 
             await message.answer(
                 texts.t(
@@ -545,7 +549,7 @@ async def handle_successful_payment(message: types.Message, db: AsyncSession, st
                     '🎉 <b>Платеж успешно обработан!</b>\n\n'
                     '⭐ Потрачено звезд: {stars_spent}\n'
                     '💰 Зачислено на баланс: {amount} ₽\n'
-                    '🆔 ID транзакции: {transaction_id}...\n\n'
+                    '🆔 ID транзакции: <code>{transaction_id}</code>\n\n'
                     'Спасибо за пополнение! 🚀',
                 ).format(
                     stars_spent=payment.total_amount,
@@ -582,9 +586,126 @@ async def handle_successful_payment(message: types.Message, db: AsyncSession, st
         )
 
 
+async def handle_refunded_payment(message: types.Message, **kwargs):
+    texts = get_texts(DEFAULT_LANGUAGE)
+    from app.database.database import AsyncSessionLocal
+    
+    async with AsyncSessionLocal() as db:
+        try:
+            refund = message.refunded_payment
+            
+            from sqlalchemy import select
+            from app.database.crud.transaction import create_transaction
+            from app.database.models import TransactionType, PaymentMethod, Transaction
+            from app.database.crud.subscription import get_subscription_by_user_id, deactivate_subscription
+            from datetime import datetime, UTC
+            
+            # Пытаемся найти оригинальную транзакцию по telegram_payment_charge_id
+            result = await db.execute(
+                select(Transaction).where(Transaction.external_id == refund.telegram_payment_charge_id)
+            )
+            original_transaction = result.scalar_one_or_none()
+            
+            if original_transaction:
+                user_id = original_transaction.user_id
+            else:
+                user_id = message.from_user.id if message.from_user else None
+                
+            if not user_id:
+                logger.error('Не удалось определить user_id для возврата Stars', 
+                             telegram_payment_charge_id=refund.telegram_payment_charge_id)
+                return
+
+            logger.info(
+                '💸 Получен возврат Stars от XTR, payload: charge_id',
+                user_id=user_id,
+                total_amount=refund.total_amount,
+                invoice_payload=refund.invoice_payload,
+                telegram_payment_charge_id=refund.telegram_payment_charge_id,
+            )
+
+            from app.database.crud.user import get_user_by_id
+            user = await get_user_by_telegram_id(db, user_id)
+            if not user:
+                # Если искали по telegram ID (фоллбэк) и не нашли, возможно user_id это локальный ID из Transaction
+                user = await get_user_by_id(db, user_id)
+                
+            if user:
+                texts = get_texts(user.language if user.language else DEFAULT_LANGUAGE)
+            else:
+                logger.error('Пользователь не найден при обработке возврата Stars', user_id=user_id)
+                return
+            
+            # 1. Списываем полную сумму возврата с баланса
+            rubles_amount = TelegramStarsService.calculate_rubles_from_stars(refund.total_amount)
+            amount_kopeks = int((rubles_amount * Decimal(100)).to_integral_value(rounding=ROUND_HALF_UP))
+            
+            user.balance_kopeks -= amount_kopeks
+            
+            # 2. Ищем активную подписку
+            subscription = await get_subscription_by_user_id(db, user.id)
+            unused_kopeks = 0
+            
+            if subscription and subscription.is_active:
+                start = subscription.start_date or datetime.now(UTC)
+                end = subscription.end_date or start
+                
+                total_days = max(1, (end - start).days)
+                used_days = max(1, (datetime.now(UTC) - start).days)
+                
+                if used_days < total_days:
+                    # Сколько стоила подписка в день (в рамках этой транзакции)
+                    daily_cost = amount_kopeks / total_days
+                    unused_days = total_days - used_days
+                    unused_kopeks = int(unused_days * daily_cost)
+                    
+                    # Добавляем неизрасходованное обратно
+                    user.balance_kopeks += unused_kopeks
+                    
+                # Деактивируем подписку
+                await deactivate_subscription(db, subscription)
+            await db.commit()
+
+            # Создаем транзакцию возврата для истории
+            await create_transaction(
+                db=db,
+                user_id=user.id,
+                type=TransactionType.REFUND,
+                amount_kopeks=-(amount_kopeks - unused_kopeks),
+                description=f'Возврат Stars ({refund.total_amount} ⭐) с удержанием за использование',
+                payment_method=PaymentMethod.TELEGRAM_STARS,
+                external_id=f'refund_{refund.telegram_payment_charge_id}',
+                is_completed=True,
+            )
+
+            amount_text = settings.format_price(amount_kopeks - unused_kopeks).replace(' ₽', '')
+
+            # Уведомляем пользователя
+            try:
+                # Отправка по telegram_id, так как у нас system message может не иметь валидного chat для ответа
+                await message.bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=texts.t(
+                        'STARS_REFUND_PROCESSED',
+                        '⚠️ <b>Обработан возврат средств!</b>\n\n'
+                        f'⭐ Возвращено звезд: {refund.total_amount}\n'
+                        f'💰 Списано с баланса: {amount_text} ₽ (с учетом использованных дней)\n'
+                        '🛑 Подписка деактивирована.\n\n'
+                        'Если вы считаете, что произошла ошибка, обратитесь в поддержку.',
+                    ),
+                    parse_mode='HTML',
+                )
+            except Exception as e:
+                logger.error("Ошибка отправки уведомления пользователю", error=e)
+
+        except Exception as e:
+            logger.error('Ошибка в handle_refunded_payment', error=e, exc_info=True)
+
+
 def register_stars_handlers(dp: Dispatcher):
     dp.pre_checkout_query.register(handle_pre_checkout_query, F.currency == 'XTR')
 
     dp.message.register(handle_successful_payment, F.successful_payment)
+    dp.message.register(handle_refunded_payment, F.refunded_payment)
 
     logger.info('🌟 Зарегистрированы обработчики Telegram Stars платежей')

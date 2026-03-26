@@ -80,7 +80,7 @@ def _build_options_keyboard(response_id: int, question: PollQuestion) -> types.I
             [
                 types.InlineKeyboardButton(
                     text=option.text,
-                    callback_data=f'poll_answer:{response_id}:{question.id}:{option.id}',
+                    callback_data=f'nz!_poll_answer:{response_id}:{question.id}:{option.id}',
                 )
             ]
         )
@@ -239,5 +239,5 @@ async def handle_poll_answer(
 
 
 def register_handlers(dp: Dispatcher):
-    dp.callback_query.register(handle_poll_start, F.data.startswith('poll_start:'))
-    dp.callback_query.register(handle_poll_answer, F.data.startswith('poll_answer:'))
+    dp.callback_query.register(handle_poll_start, F.data.startswith('nz!_poll_start:'))
+    dp.callback_query.register(handle_poll_answer, F.data.startswith('nz!_poll_answer:'))

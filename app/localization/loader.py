@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 from functools import cache
@@ -21,12 +22,20 @@ _BASE_DIR = Path(__file__).resolve().parent
 _DEFAULT_LOCALES_DIR = _BASE_DIR / 'locales'
 
 
+_VALID_LANG_CODE = re.compile(r'^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$')
+
+
 def _normalize_language_code(value: Any) -> str:
     if isinstance(value, str):
-        return value.strip().lower()
-    if value is None:
+        code = value.strip().lower()
+    elif value is None:
         return ''
-    return str(value).strip().lower()
+    else:
+        code = str(value).strip().lower()
+    # Reject codes that could be used for path traversal
+    if code and not _VALID_LANG_CODE.match(code):
+        return ''
+    return code
 
 
 def _resolve_user_locales_dir() -> Path:

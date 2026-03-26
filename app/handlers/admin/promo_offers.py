@@ -195,7 +195,7 @@ def _build_templates_keyboard(templates: Sequence[PromoOfferTemplate], language:
             [
                 InlineKeyboardButton(
                     text=f'{icon} {label}',
-                    callback_data=f'promo_offer_{template.id}',
+                    callback_data=f'nz!_promo_offer_{template.id}',
                 )
             ]
         )
@@ -203,7 +203,7 @@ def _build_templates_keyboard(templates: Sequence[PromoOfferTemplate], language:
         [
             InlineKeyboardButton(
                 text=texts.t('ADMIN_PROMO_OFFER_LOGS', '📜 Лог операций'),
-                callback_data='promo_offer_logs_page_1',
+                callback_data='nz!_promo_offer_logs_page_1',
             )
         ]
     )
@@ -218,34 +218,34 @@ def _build_offer_detail_keyboard(template: PromoOfferTemplate, language: str) ->
 
     rows.append(
         [
-            InlineKeyboardButton(text='✏️ Текст', callback_data=f'promo_offer_edit_message_{template.id}'),
-            InlineKeyboardButton(text='🪄 Кнопка', callback_data=f'promo_offer_edit_button_{template.id}'),
+            InlineKeyboardButton(text='✏️ Текст', callback_data=f'nz!_promo_offer_edit_message_{template.id}'),
+            InlineKeyboardButton(text='🪄 Кнопка', callback_data=f'nz!_promo_offer_edit_button_{template.id}'),
         ]
     )
     rows.append(
         [
-            InlineKeyboardButton(text='⏱️ Срок', callback_data=f'promo_offer_edit_valid_{template.id}'),
+            InlineKeyboardButton(text='⏱️ Срок', callback_data=f'nz!_promo_offer_edit_valid_{template.id}'),
         ]
     )
 
     if template.offer_type != 'test_access':
-        rows[-1].append(InlineKeyboardButton(text='📉 %', callback_data=f'promo_offer_edit_discount_{template.id}'))
+        rows[-1].append(InlineKeyboardButton(text='📉 %', callback_data=f'nz!_promo_offer_edit_discount_{template.id}'))
         rows.append(
             [
-                InlineKeyboardButton(text='⌛ Активна', callback_data=f'promo_offer_edit_active_{template.id}'),
+                InlineKeyboardButton(text='⌛ Активна', callback_data=f'nz!_promo_offer_edit_active_{template.id}'),
             ]
         )
     else:
         rows.append(
             [
-                InlineKeyboardButton(text='⏳ Длительность', callback_data=f'promo_offer_edit_duration_{template.id}'),
-                InlineKeyboardButton(text='🌍 Сквады', callback_data=f'promo_offer_edit_squads_{template.id}'),
+                InlineKeyboardButton(text='⏳ Длительность', callback_data=f'nz!_promo_offer_edit_duration_{template.id}'),
+                InlineKeyboardButton(text='🌍 Сквады', callback_data=f'nz!_promo_offer_edit_squads_{template.id}'),
             ]
         )
 
     rows.append(
         [
-            InlineKeyboardButton(text='📬 Отправить', callback_data=f'promo_offer_send_menu_{template.id}'),
+            InlineKeyboardButton(text='📬 Отправить', callback_data=f'nz!_promo_offer_send_menu_{template.id}'),
         ]
     )
     rows.append(
@@ -399,20 +399,20 @@ def _build_logs_keyboard(page: int, total_pages: int, language: str) -> InlineKe
             nav_row.append(
                 InlineKeyboardButton(
                     text='⬅️',
-                    callback_data=f'promo_offer_logs_page_{page - 1}',
+                    callback_data=f'nz!_promo_offer_logs_page_{page - 1}',
                 )
             )
         nav_row.append(
             InlineKeyboardButton(
                 text=f'{page}/{total_pages}',
-                callback_data=f'promo_offer_logs_page_{page}',
+                callback_data=f'nz!_promo_offer_logs_page_{page}',
             )
         )
         if page < total_pages:
             nav_row.append(
                 InlineKeyboardButton(
                     text='➡️',
-                    callback_data=f'promo_offer_logs_page_{page + 1}',
+                    callback_data=f'nz!_promo_offer_logs_page_{page + 1}',
                 )
             )
         rows.append(nav_row)
@@ -432,7 +432,7 @@ def _build_send_keyboard(template: PromoOfferTemplate, language: str) -> InlineK
             [
                 InlineKeyboardButton(
                     text=label,
-                    callback_data=f'promo_offer_send_{template.id}_{segment}',
+                    callback_data=f'nz!_promo_offer_send_{template.id}_{segment}',
                 )
             ]
         )
@@ -444,12 +444,12 @@ def _build_send_keyboard(template: PromoOfferTemplate, language: str) -> InlineK
                     'ADMIN_PROMO_OFFER_SEND_USER',
                     '👤 Отправка пользователю',
                 ),
-                callback_data=f'promo_offer_send_user_{template.id}_page_1',
+                callback_data=f'nz!_promo_offer_send_user_{template.id}_page_1',
             )
         ]
     )
 
-    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=f'promo_offer_{template.id}')])
+    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_promo_offer_{template.id}')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -565,7 +565,7 @@ async def _render_send_user_list(
             [
                 InlineKeyboardButton(
                     text=_build_user_button_label(user),
-                    callback_data=f'promo_offer_send_user_select_{template_id}_{user.id}',
+                    callback_data=f'nz!_promo_offer_send_user_select_{template_id}_{user.id}',
                 )
             ]
         )
@@ -576,20 +576,20 @@ async def _render_send_user_list(
             nav_row.append(
                 InlineKeyboardButton(
                     text='⬅️',
-                    callback_data=f'promo_offer_send_user_{template_id}_page_{current_page - 1}',
+                    callback_data=f'nz!_promo_offer_send_user_{template_id}_page_{current_page - 1}',
                 )
             )
         nav_row.append(
             InlineKeyboardButton(
                 text=f'{current_page}/{total_pages}',
-                callback_data=f'promo_offer_send_user_{template_id}_page_{current_page}',
+                callback_data=f'nz!_promo_offer_send_user_{template_id}_page_{current_page}',
             )
         )
         if current_page < total_pages:
             nav_row.append(
                 InlineKeyboardButton(
                     text='➡️',
-                    callback_data=f'promo_offer_send_user_{template_id}_page_{current_page + 1}',
+                    callback_data=f'nz!_promo_offer_send_user_{template_id}_page_{current_page + 1}',
                 )
             )
         keyboard_rows.append(nav_row)
@@ -598,7 +598,7 @@ async def _render_send_user_list(
         [
             InlineKeyboardButton(
                 text=texts.t('ADMIN_PROMO_OFFER_SEND_USER_SEARCH', '🔍 Поиск'),
-                callback_data=f'promo_offer_send_user_search_{template_id}',
+                callback_data=f'nz!_promo_offer_send_user_search_{template_id}',
             )
         ]
     )
@@ -608,7 +608,7 @@ async def _render_send_user_list(
             [
                 InlineKeyboardButton(
                     text=texts.t('ADMIN_PROMO_OFFER_SEND_USER_RESET', '❌ Сбросить поиск'),
-                    callback_data=f'promo_offer_send_user_reset_{template_id}',
+                    callback_data=f'nz!_promo_offer_send_user_reset_{template_id}',
                 )
             ]
         )
@@ -620,11 +620,11 @@ async def _render_send_user_list(
                     'ADMIN_PROMO_OFFER_SEND_USER_BACK_TO_SEGMENTS',
                     '↩️ К выбору категории',
                 ),
-                callback_data=f'promo_offer_send_menu_{template_id}',
+                callback_data=f'nz!_promo_offer_send_menu_{template_id}',
             )
         ]
     )
-    keyboard_rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=f'promo_offer_{template_id}')])
+    keyboard_rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_promo_offer_{template_id}')])
 
     markup = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
     text = '\n'.join(lines)
@@ -961,7 +961,7 @@ async def _render_squad_selection(
             texts.t('ADMIN_PROMO_OFFER_NO_SQUADS_AVAILABLE', '❌ Доступные серверы не найдены.'),
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text=texts.BACK, callback_data=f'promo_offer_squad_back_{template.id}')]
+                    [InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_promo_offer_squad_back_{template.id}')]
                 ]
             ),
         )
@@ -1023,7 +1023,7 @@ async def _render_squad_selection(
             [
                 InlineKeyboardButton(
                     text=label,
-                    callback_data=f'promo_offer_select_squad_{template.id}_{server.id}_{page}',
+                    callback_data=f'nz!_promo_offer_select_squad_{template.id}_{server.id}_{page}',
                 )
             ]
         )
@@ -1034,14 +1034,14 @@ async def _render_squad_selection(
             nav_row.append(
                 InlineKeyboardButton(
                     text='⬅️',
-                    callback_data=f'promo_offer_squad_page_{template.id}_{page - 1}',
+                    callback_data=f'nz!_promo_offer_squad_page_{template.id}_{page - 1}',
                 )
             )
         if page < total_pages:
             nav_row.append(
                 InlineKeyboardButton(
                     text='➡️',
-                    callback_data=f'promo_offer_squad_page_{template.id}_{page + 1}',
+                    callback_data=f'nz!_promo_offer_squad_page_{template.id}_{page + 1}',
                 )
             )
         if nav_row:
@@ -1050,11 +1050,11 @@ async def _render_squad_selection(
     action_row = [
         InlineKeyboardButton(
             text=texts.t('ADMIN_PROMO_OFFER_SELECT_SQUAD_CLEAR', '🗑 Очистить'),
-            callback_data=f'promo_offer_clear_squad_{template.id}_{page}',
+            callback_data=f'nz!_promo_offer_clear_squad_{template.id}_{page}',
         ),
         InlineKeyboardButton(
             text=texts.t('ADMIN_PROMO_OFFER_SELECT_SQUAD_BACK', '↩️ Назад'),
-            callback_data=f'promo_offer_squad_back_{template.id}',
+            callback_data=f'nz!_promo_offer_squad_back_{template.id}',
         ),
     ]
     keyboard_rows.append(action_row)
@@ -1201,7 +1201,7 @@ async def show_send_segments(callback: CallbackQuery, db_user: User, db: AsyncSe
 @error_handler
 async def show_send_user_list(callback: CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
     try:
-        prefix = 'promo_offer_send_user_'
+        prefix = 'nz!_promo_offer_send_user_'
         if not callback.data.startswith(prefix):
             raise ValueError('invalid prefix')
         payload = callback.data[len(prefix) :]
@@ -1415,7 +1415,7 @@ async def show_selected_user_details(
     state: FSMContext,
 ):
     try:
-        prefix = 'promo_offer_send_user_select_'
+        prefix = 'nz!_promo_offer_send_user_select_'
         if not callback.data.startswith(prefix):
             raise ValueError('invalid prefix')
         payload = callback.data[len(prefix) :]
@@ -1811,7 +1811,7 @@ async def show_selected_user_details(
                     'ADMIN_PROMO_OFFER_SEND_USER_SEND_BUTTON',
                     '📬 Отправить предложение',
                 ),
-                callback_data=f'promo_offer_send_user_confirm_{template_id}_{user.id}',
+                callback_data=f'nz!_promo_offer_send_user_confirm_{template_id}_{user.id}',
             )
         ],
         [
@@ -1820,10 +1820,10 @@ async def show_selected_user_details(
                     'ADMIN_PROMO_OFFER_SEND_USER_BACK_TO_LIST',
                     '⬅️ К списку пользователей',
                 ),
-                callback_data=f'promo_offer_send_user_back_{template_id}',
+                callback_data=f'nz!_promo_offer_send_user_back_{template_id}',
             )
         ],
-        [InlineKeyboardButton(text=texts.BACK, callback_data=f'promo_offer_{template_id}')],
+        [InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_promo_offer_{template_id}')],
     ]
 
     await callback.message.edit_text(
@@ -1853,7 +1853,7 @@ def _build_connect_button_rows(user: User, texts) -> list[list[InlineKeyboardBut
     connect_mode = settings.CONNECT_BUTTON_MODE
 
     def _fallback_button() -> InlineKeyboardButton:
-        return InlineKeyboardButton(text=button_text, callback_data='subscription_connect')
+        return InlineKeyboardButton(text=button_text, callback_data='nz!_subscription_connect')
 
     rows: list[list[InlineKeyboardButton]] = []
 
@@ -1888,7 +1888,7 @@ def _build_connect_button_rows(user: User, texts) -> list[list[InlineKeyboardBut
             rows.append([_fallback_button()])
     elif connect_mode == 'happ_cryptolink':
         if subscription_link:
-            rows.append([InlineKeyboardButton(text=button_text, callback_data='open_subscription_link')])
+            rows.append([InlineKeyboardButton(text=button_text, callback_data='nz!_open_subscription_link')])
         else:
             rows.append([_fallback_button()])
     else:
@@ -1955,7 +1955,7 @@ async def _send_offer_to_users(
                         [
                             build_miniapp_or_callback_button(
                                 text=template.button_text,
-                                callback_data=f'claim_discount_{offer_record.id}',
+                                callback_data=f'nz!_claim_discount_{offer_record.id}',
                             )
                         ]
                     ]
@@ -1964,7 +1964,7 @@ async def _send_offer_to_users(
                         [
                             InlineKeyboardButton(
                                 text=user_texts.t('PROMO_OFFER_CLOSE', '❌ Закрыть'),
-                                callback_data='promo_offer_close',
+                                callback_data='nz!_promo_offer_close',
                             )
                         ]
                     )
@@ -2020,7 +2020,7 @@ async def _send_offer_to_users(
 @error_handler
 async def send_offer_to_segment(callback: CallbackQuery, db_user: User, db: AsyncSession):
     try:
-        prefix = 'promo_offer_send_'
+        prefix = 'nz!_promo_offer_send_'
         if not callback.data.startswith(prefix):
             raise ValueError('invalid prefix')
         data = callback.data[len(prefix) :]
@@ -2091,7 +2091,7 @@ async def send_offer_to_segment(callback: CallbackQuery, db_user: User, db: Asyn
             [
                 InlineKeyboardButton(
                     text=texts.t('ADMIN_PROMO_OFFER_BACK_TO_TEMPLATE', '↩️ К предложению'),
-                    callback_data=f'promo_offer_{refreshed.id}',
+                    callback_data=f'nz!_promo_offer_{refreshed.id}',
                 )
             ]
         )
@@ -2116,7 +2116,7 @@ async def send_offer_to_segment(callback: CallbackQuery, db_user: User, db: Asyn
 @error_handler
 async def send_offer_to_user(callback: CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
     try:
-        prefix = 'promo_offer_send_user_confirm_'
+        prefix = 'nz!_promo_offer_send_user_confirm_'
         if not callback.data.startswith(prefix):
             raise ValueError('invalid prefix')
         payload = callback.data[len(prefix) :]
@@ -2201,7 +2201,7 @@ async def send_offer_to_user(callback: CallbackQuery, db_user: User, db: AsyncSe
                     'ADMIN_PROMO_OFFER_SEND_USER_BACK_TO_PROFILE',
                     '👤 К профилю пользователя',
                 ),
-                callback_data=f'promo_offer_send_user_select_{template.id}_{user.id}',
+                callback_data=f'nz!_promo_offer_send_user_select_{template.id}_{user.id}',
             )
         ],
         [
@@ -2210,13 +2210,13 @@ async def send_offer_to_user(callback: CallbackQuery, db_user: User, db: AsyncSe
                     'ADMIN_PROMO_OFFER_SEND_USER_BACK_TO_LIST',
                     '⬅️ К списку пользователей',
                 ),
-                callback_data=f'promo_offer_send_user_back_{template.id}',
+                callback_data=f'nz!_promo_offer_send_user_back_{template.id}',
             )
         ],
         [
             InlineKeyboardButton(
                 text=texts.t('ADMIN_PROMO_OFFER_BACK_TO_TEMPLATE', '↩️ К предложению'),
-                callback_data=f'promo_offer_{template.id}',
+                callback_data=f'nz!_promo_offer_{template.id}',
             )
         ],
     ]
@@ -2265,7 +2265,7 @@ async def process_edit_test_duration(message: Message, state: FSMContext, db: As
 @error_handler
 async def paginate_squad_selection(callback: CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
     try:
-        prefix = 'promo_offer_squad_page_'
+        prefix = 'nz!_promo_offer_squad_page_'
         if not callback.data.startswith(prefix):
             raise ValueError('invalid prefix')
         payload = callback.data[len(prefix) :]
@@ -2290,7 +2290,7 @@ async def paginate_squad_selection(callback: CallbackQuery, db_user: User, db: A
 @error_handler
 async def select_squad_for_template(callback: CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
     try:
-        prefix = 'promo_offer_select_squad_'
+        prefix = 'nz!_promo_offer_select_squad_'
         if not callback.data.startswith(prefix):
             raise ValueError('invalid prefix')
         payload = callback.data[len(prefix) :]
@@ -2336,7 +2336,7 @@ async def select_squad_for_template(callback: CallbackQuery, db_user: User, db: 
 @error_handler
 async def clear_squad_for_template(callback: CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
     try:
-        prefix = 'promo_offer_clear_squad_'
+        prefix = 'nz!_promo_offer_clear_squad_'
         if not callback.data.startswith(prefix):
             raise ValueError('invalid prefix')
         payload = callback.data[len(prefix) :]
@@ -2387,27 +2387,27 @@ async def back_to_offer_from_squads(callback: CallbackQuery, db_user: User, db: 
 
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_promo_offers_menu, F.data == 'admin_promo_offers')
-    dp.callback_query.register(prompt_edit_message, F.data.startswith('promo_offer_edit_message_'))
-    dp.callback_query.register(prompt_edit_button, F.data.startswith('promo_offer_edit_button_'))
-    dp.callback_query.register(prompt_edit_valid, F.data.startswith('promo_offer_edit_valid_'))
-    dp.callback_query.register(prompt_edit_discount, F.data.startswith('promo_offer_edit_discount_'))
-    dp.callback_query.register(prompt_edit_active_duration, F.data.startswith('promo_offer_edit_active_'))
-    dp.callback_query.register(prompt_edit_duration, F.data.startswith('promo_offer_edit_duration_'))
-    dp.callback_query.register(prompt_edit_squads, F.data.startswith('promo_offer_edit_squads_'))
-    dp.callback_query.register(paginate_squad_selection, F.data.startswith('promo_offer_squad_page_'))
-    dp.callback_query.register(select_squad_for_template, F.data.startswith('promo_offer_select_squad_'))
-    dp.callback_query.register(clear_squad_for_template, F.data.startswith('promo_offer_clear_squad_'))
-    dp.callback_query.register(back_to_offer_from_squads, F.data.startswith('promo_offer_squad_back_'))
-    dp.callback_query.register(show_send_user_list, F.data.regexp(r'^promo_offer_send_user_\d+_page_\d+$'))
-    dp.callback_query.register(show_selected_user_details, F.data.startswith('promo_offer_send_user_select_'))
-    dp.callback_query.register(prompt_send_user_search, F.data.startswith('promo_offer_send_user_search_'))
-    dp.callback_query.register(reset_send_user_search, F.data.startswith('promo_offer_send_user_reset_'))
-    dp.callback_query.register(back_to_user_list, F.data.startswith('promo_offer_send_user_back_'))
-    dp.callback_query.register(show_send_segments, F.data.startswith('promo_offer_send_menu_'))
-    dp.callback_query.register(send_offer_to_user, F.data.startswith('promo_offer_send_user_confirm_'))
-    dp.callback_query.register(send_offer_to_segment, F.data.startswith('promo_offer_send_'))
-    dp.callback_query.register(show_promo_offer_logs, F.data.regexp(r'^promo_offer_logs_page_\d+$'))
-    dp.callback_query.register(show_promo_offer_details, F.data.startswith('promo_offer_'))
+    dp.callback_query.register(prompt_edit_message, F.data.startswith('nz!_promo_offer_edit_message_'))
+    dp.callback_query.register(prompt_edit_button, F.data.startswith('nz!_promo_offer_edit_button_'))
+    dp.callback_query.register(prompt_edit_valid, F.data.startswith('nz!_promo_offer_edit_valid_'))
+    dp.callback_query.register(prompt_edit_discount, F.data.startswith('nz!_promo_offer_edit_discount_'))
+    dp.callback_query.register(prompt_edit_active_duration, F.data.startswith('nz!_promo_offer_edit_active_'))
+    dp.callback_query.register(prompt_edit_duration, F.data.startswith('nz!_promo_offer_edit_duration_'))
+    dp.callback_query.register(prompt_edit_squads, F.data.startswith('nz!_promo_offer_edit_squads_'))
+    dp.callback_query.register(paginate_squad_selection, F.data.startswith('nz!_promo_offer_squad_page_'))
+    dp.callback_query.register(select_squad_for_template, F.data.startswith('nz!_promo_offer_select_squad_'))
+    dp.callback_query.register(clear_squad_for_template, F.data.startswith('nz!_promo_offer_clear_squad_'))
+    dp.callback_query.register(back_to_offer_from_squads, F.data.startswith('nz!_promo_offer_squad_back_'))
+    dp.callback_query.register(show_send_user_list, F.data.regexp(r'^nz\!_promo_offer_send_user_\d+_page_\d+$'))
+    dp.callback_query.register(show_selected_user_details, F.data.startswith('nz!_promo_offer_send_user_select_'))
+    dp.callback_query.register(prompt_send_user_search, F.data.startswith('nz!_promo_offer_send_user_search_'))
+    dp.callback_query.register(reset_send_user_search, F.data.startswith('nz!_promo_offer_send_user_reset_'))
+    dp.callback_query.register(back_to_user_list, F.data.startswith('nz!_promo_offer_send_user_back_'))
+    dp.callback_query.register(show_send_segments, F.data.startswith('nz!_promo_offer_send_menu_'))
+    dp.callback_query.register(send_offer_to_user, F.data.startswith('nz!_promo_offer_send_user_confirm_'))
+    dp.callback_query.register(send_offer_to_segment, F.data.startswith('nz!_promo_offer_send_'))
+    dp.callback_query.register(show_promo_offer_logs, F.data.regexp(r'^nz\!_promo_offer_logs_page_\d+$'))
+    dp.callback_query.register(show_promo_offer_details, F.data.startswith('nz!_promo_offer_'))
 
     dp.message.register(process_edit_message_text, AdminStates.editing_promo_offer_message)
     dp.message.register(process_edit_button_text, AdminStates.editing_promo_offer_button)

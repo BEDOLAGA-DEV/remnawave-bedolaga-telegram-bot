@@ -9,7 +9,6 @@ from aiogram import Bot
 from aiohttp import web
 
 from app.config import settings
-from app.database.database import get_db
 from app.services.payment_service import PaymentService
 from app.services.tribute_service import TributeService
 
@@ -141,7 +140,6 @@ class WebhookServer:
         return web.Response(
             status=200,
             headers={
-                'Access-Control-Allow-Origin': '*',
                 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
                 'Access-Control-Allow-Headers': 'Content-Type, trbt-signature, Crypto-Pay-API-Signature, X-MulenPay-Signature, Authorization',
             },
@@ -158,14 +156,12 @@ class WebhookServer:
                 logger.warning('Пустой webhook', mulenpay_name=mulenpay_name)
                 return web.json_response({'status': 'error', 'reason': 'empty_body'}, status=400)
 
-            # Временно отключаем проверку подписи для отладки
-            # TODO: Включить обратно после настройки MulenPay
             if not self._verify_mulenpay_signature(request, raw_body):
                 logger.warning(
-                    'webhook signature verification failed, but processing anyway for debugging',
+                    'webhook signature verification failed',
                     mulenpay_name=mulenpay_name,
                 )
-                # return web.json_response({"status": "error", "reason": "invalid_signature"}, status=401)
+                return web.json_response({'status': 'error', 'reason': 'invalid_signature'}, status=401)
 
             try:
                 payload = json.loads(raw_body.decode('utf-8'))
@@ -175,23 +171,19 @@ class WebhookServer:
 
             payment_service = PaymentService(self.bot)
 
-            # Получаем соединение с БД
-            db_generator = get_db()
-            db = await db_generator.__anext__()
+            from app.database.database import AsyncSessionLocal
 
-            try:
-                success = await payment_service.process_mulenpay_callback(db, payload)
-                if success:
-                    return web.json_response({'status': 'ok'}, status=200)
-                return web.json_response({'status': 'error', 'reason': 'processing_failed'}, status=400)
-            except Exception as error:
-                logger.error('Ошибка обработки webhook', mulenpay_name=mulenpay_name, error=error, exc_info=True)
-                return web.json_response({'status': 'error', 'reason': 'internal_error'}, status=500)
-            finally:
+            async with AsyncSessionLocal() as db:
                 try:
-                    await db_generator.__anext__()
-                except StopAsyncIteration:
-                    pass
+                    success = await payment_service.process_mulenpay_callback(db, payload)
+                    if success:
+                        await db.commit()
+                        return web.json_response({'status': 'ok'}, status=200)
+                    return web.json_response({'status': 'error', 'reason': 'processing_failed'}, status=400)
+                except Exception as error:
+                    await db.rollback()
+                    logger.error('Ошибка обработки webhook', mulenpay_name=mulenpay_name, error=error, exc_info=True)
+                    return web.json_response({'status': 'error', 'reason': 'internal_error'}, status=500)
 
         except Exception as error:
             mulenpay_name = settings.get_mulenpay_display_name()
@@ -340,6 +332,9 @@ class WebhookServer:
                 if not tribute_api.verify_webhook_signature(payload, signature):
                     logger.error('Неверная подпись Tribute webhook')
                     return web.json_response({'status': 'error', 'reason': 'invalid_signature'}, status=401)
+            else:
+                logger.error('Tribute API key не настроен, отклоняем webhook')
+                return web.json_response({'status': 'error', 'reason': 'missing_api_key'}, status=401)
 
             result = await self.tribute_service.process_webhook(payload)
 
@@ -383,10 +378,12 @@ class WebhookServer:
                     return web.json_response({'status': 'error', 'reason': 'missing_signature'}, status=401)
                 from app.external.cryptobot import CryptoBotService
 
-                cryptobot_service = CryptoBotService()
-                if not cryptobot_service.verify_webhook_signature(payload, signature):
-                    logger.error('Неверная подпись CryptoBot webhook')
-                    return web.json_response({'status': 'error', 'reason': 'invalid_signature'}, status=401)
+            from app.external.cryptobot import CryptoBotService
+
+            cryptobot_service = CryptoBotService()
+            if not cryptobot_service.verify_webhook_signature(payload, signature):
+                logger.error('Неверная подпись CryptoBot webhook')
+                return web.json_response({'status': 'error', 'reason': 'invalid_signature'}, status=401)
 
             from app.database.database import AsyncSessionLocal
             from app.services.payment_service import PaymentService

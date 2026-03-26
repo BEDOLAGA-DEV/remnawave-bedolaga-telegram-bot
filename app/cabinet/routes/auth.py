@@ -2,7 +2,9 @@
 
 import asyncio
 import hashlib
+import json
 from datetime import UTC, datetime
+from urllib.parse import parse_qs
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -43,7 +45,9 @@ from app.utils.timezone import panel_datetime_to_utc
 
 from ..auth import (
     create_access_token,
+    create_link_token,
     create_refresh_token,
+    decode_link_token,
     get_token_payload,
     hash_password,
     validate_telegram_init_data,
@@ -76,12 +80,15 @@ from ..schemas.auth import (
     EmailRegisterRequest,
     EmailRegisterStandaloneRequest,
     EmailVerifyRequest,
+    LinkedProvider,
+    LinkedProvidersResponse,
     PasswordForgotRequest,
     PasswordResetRequest,
     RefreshTokenRequest,
     RegisterResponse,
     TelegramAuthRequest,
     TelegramOIDCAuthRequest,
+    TelegramLinkTokenResponse,
     TelegramWidgetAuthRequest,
     TokenResponse,
     UserResponse,
@@ -134,6 +141,7 @@ async def _create_auth_response(user: User, db: AsyncSession) -> AuthResponse:
         token_type='bearer',
         expires_in=expires_in,
         user=_user_to_response(user),
+        mtproxy_url=settings.MTPROXY_URL,
     )
 
 
@@ -764,6 +772,86 @@ async def auth_telegram_oidc(
         response.user = _user_to_response(user)
 
     return response
+@router.get('/telegram/link-token', response_model=TelegramLinkTokenResponse)
+async def get_telegram_link_token(
+    user: User = Depends(get_current_cabinet_user),
+):
+    """
+    Generate a temporary token for linking Telegram via bot.
+
+    Requires valid JWT token from current session.
+    """
+    if user.telegram_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Telegram is already linked to this account',
+        )
+
+    token = create_link_token(user.id)
+    bot_username = settings.get_bot_username()
+    # LINK_TOKEN_EXPIRE_MINUTES is 10
+    expires_in = 10 * 60
+
+    bot_link = f'https://t.me/{bot_username}?start=link_{token}'
+
+    return TelegramLinkTokenResponse(
+        link_token=token,
+        bot_link=bot_link,
+        expires_in=expires_in,
+        mtproxy_url=settings.MTPROXY_URL,
+    )
+
+
+@router.post('/telegram/link-widget', response_model=UserResponse)
+async def link_telegram_widget(
+    request: TelegramWidgetAuthRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """
+    Link Telegram account using Telegram Login Widget data.
+
+    Requires valid JWT token from current session.
+    """
+    if user.telegram_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Telegram is already linked to this account',
+        )
+
+    widget_data = request.model_dump(exclude={'campaign_slug', 'referral_code'})
+
+    if not validate_telegram_login_widget(widget_data):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid or expired Telegram authentication data',
+        )
+
+    # Check if this telegram_id is already used by another user
+    existing_tg_user = await get_user_by_telegram_id(db, request.id)
+    if existing_tg_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='This Telegram account is already linked to another user',
+        )
+
+    # Link Telegram data
+    user.telegram_id = request.id
+    if request.username:
+        user.username = request.username
+    if request.first_name:
+        user.first_name = request.first_name
+    if request.last_name:
+        user.last_name = request.last_name
+
+    # If it was email-only account, it's now a 'telegram' account too
+    if getattr(user, 'auth_type', 'email') == 'email':
+        user.auth_type = 'telegram'
+
+    await db.commit()
+    await db.refresh(user)
+
+    return _user_to_response(user)
 
 
 @router.post('/email/register')
@@ -883,6 +971,15 @@ async def register_email_standalone(
             detail='Too many requests',
             headers={'Retry-After': '60'},
         )
+    # Check if email registration is enabled
+    from app.cabinet.routes.branding import _is_email_registration_enabled
+
+    if not await _is_email_registration_enabled(db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Email registration is disabled. Please use Telegram to create an account.',
+        )
+
     # Check if this is a test email registration
     is_test_email = settings.is_test_email(request.email)
 
@@ -1717,19 +1814,163 @@ async def cancel_email_change(
     return {'message': 'Email change cancelled'}
 
 
-@router.get('/email/change/status')
-async def get_email_change_status(
+@router.get('/account/linked-providers', response_model=LinkedProvidersResponse)
+async def get_linked_providers(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """
+    Get a list of all authentication providers and their link status for the current user.
+    """
+    providers = []
+
+    # Telegram
+    providers.append(
+        LinkedProvider(
+            provider='telegram',
+            is_linked=user.telegram_id is not None,
+            provider_id=str(user.telegram_id) if user.telegram_id else None,
+            display_name=user.username or user.first_name,
+        )
+    )
+
+    # Email
+    providers.append(
+        LinkedProvider(
+            provider='email',
+            is_linked=user.email is not None,
+            provider_id=user.email,
+            display_name=user.email,
+        )
+    )
+
+    # OAuth Providers
+    oauth_config = settings.get_oauth_providers_config()
+    for name, cfg in oauth_config.items():
+        if not cfg.get('enabled'):
+            continue
+
+        column_name = f'{name}_id'
+        provider_id = getattr(user, column_name, None)
+
+        providers.append(
+            LinkedProvider(
+                provider=name,
+                is_linked=provider_id is not None,
+                provider_id=str(provider_id) if provider_id else None,
+                display_name=cfg.get('display_name', name),
+            )
+        )
+
+    return LinkedProvidersResponse(providers=providers)
+
+
+@router.post('/account/unlink/{provider}')
+async def unlink_provider(
+    provider: str,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """
+    Unlink an authentication provider from the current account.
+    Prevents unlinking the last remaining authentication method.
+    """
+    # Count linked methods
+    methods = 0
+    if user.telegram_id:
+        methods += 1
+    if user.email and user.password_hash:
+        methods += 1
+
+    oauth_config = settings.get_oauth_providers_config()
+    linked_oauth = []
+    for name in oauth_config:
+        if getattr(user, f'{name}_id', None):
+            methods += 1
+            linked_oauth.append(name)
+
+    if methods <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Cannot unlink the last remaining authentication method',
+        )
+
+    if provider == 'telegram':
+        user.telegram_id = None
+        user.username = None
+    elif provider == 'email':
+        user.email = None
+        user.password_hash = None
+        user.email_verified = False
+    elif provider in oauth_config:
+        setattr(user, f'{provider}_id', None)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Unknown provider: {provider}',
+        )
+
+    await db.commit()
+    logger.info('User unlinked provider', user_id=user.id, provider=provider)
+
+    return {'message': f'Provider {provider} unlinked successfully'}
+
+
+@router.post('/account/link/telegram', response_model=UserResponse)
+async def link_telegram_standard(
+    request: TelegramAuthRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """
+    Standardize Telegram linking (similar to login but for already logged in user).
+    Used for Telegram WebApp initData linking.
+    """
+    if user.telegram_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Telegram is already linked to this account',
+        )
+
+    if not validate_telegram_init_data(request.init_data):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid Telegram authentication data',
+        )
+
+    # Simplified parsing for linking (just need the ID)
+    data = parse_qs(request.init_data)
+    user_data = json.loads(data['user'][0])
+    tg_id = user_data['id']
+
+    # Check if this telegram_id is already used
+    existing_tg_user = await get_user_by_telegram_id(db, tg_id)
+    if existing_tg_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='This Telegram account is already linked to another user',
+        )
+
+    user.telegram_id = tg_id
+    user.username = user_data.get('username')
+    user.first_name = user_data.get('first_name')
+    user.last_name = user_data.get('last_name')
+
+    await db.commit()
+    await db.refresh(user)
+
+    return _user_to_response(user)
+
+
+@router.get('/account/link/{provider}/init')
+async def link_provider_init(
+    provider: str,
     user: User = Depends(get_current_cabinet_user),
 ):
     """
-    Get pending email change status.
+    Initialize OAuth linking process.
     """
-    if not user.email_change_new:
-        return {
-            'pending': False,
-            'new_email': None,
-            'expires_at': None,
-        }
+    from .oauth import get_oauth_authorize_url
 
     return {
         'pending': True,
@@ -1863,3 +2104,128 @@ async def poll_deep_link_token(
     logger.info('Deep link auth successful', user_id=user.id, telegram_id=user.telegram_id)
 
     return response
+    # We reuse the same authorize logic but we might want to flag it as "linking" in state
+    # Actually, current oauth routes are prefix /cabinet/auth/oauth
+    # Frontend calls /cabinet/auth/account/link/{provider}/init
+    # I'll redirect to the oauth authorize url or mirror the logic
+
+    from ..auth.oauth_providers import generate_oauth_state, get_provider
+
+    oauth_provider = get_provider(provider)
+    if not oauth_provider:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Requested OAuth provider is not available',
+        )
+
+    # Check if already linked
+    if getattr(user, f'{provider}_id', None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'{provider} is already linked to this account',
+        )
+
+    auth_extra = oauth_provider.prepare_auth_state()
+    # Add 'link_user_id' to state to ensure we link to the CORRECT user on callback
+    state = await generate_oauth_state(provider, extra_data={'link_user_id': user.id, **(auth_extra or {})})
+    authorize_url = oauth_provider.get_authorization_url(state, **auth_extra)
+
+    return {'authorize_url': authorize_url, 'state': state}
+
+
+@router.post('/account/link/{provider}/callback')
+async def link_provider_callback(
+    provider: str,
+    request: dict,  # Use dict to be flexible with frontend data
+    db: AsyncSession = Depends(get_cabinet_db),
+    user: User = Depends(get_current_cabinet_user),
+):
+    """
+    Handle OAuth callback for account linking.
+    """
+    from ..auth.oauth_providers import (
+        OAuthUserInfo,
+        get_provider,
+        validate_oauth_state,
+    )
+
+    code = request.get('code')
+    state = request.get('state')
+    device_id = request.get('device_id')
+
+    if not code or not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Missing code or state',
+        )
+
+    # 1. Validate CSRF state
+    state_data = await validate_oauth_state(state, provider)
+    if not state_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Invalid or expired OAuth state',
+        )
+
+    # Verify this state was meant for linking and for THIS user
+    if state_data.get('link_user_id') != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='OAuth state mismatch for account linking',
+        )
+
+    # 2. Get provider instance
+    oauth_provider = get_provider(provider)
+    if not oauth_provider:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Requested OAuth provider is not available',
+        )
+
+    # 3. Exchange code for tokens
+    exchange_kwargs: dict[str, str] = {'state': state}
+    code_verifier = state_data.get('code_verifier')
+    if code_verifier:
+        exchange_kwargs['code_verifier'] = code_verifier
+    if device_id:
+        exchange_kwargs['device_id'] = device_id
+
+    try:
+        token_data = await oauth_provider.exchange_code(code, **exchange_kwargs)
+    except Exception as exc:
+        logger.error('OAuth code exchange failed for linking', provider=provider, exc_info=exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Failed to exchange authorization code',
+        ) from exc
+
+    # 4. Fetch user info from provider
+    try:
+        user_info: OAuthUserInfo = await oauth_provider.get_user_info(token_data)
+    except Exception as exc:
+        logger.error('OAuth user info fetch failed for linking', provider=provider, exc_info=exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Failed to fetch user information from provider',
+        ) from exc
+
+    # 5. Check if this provider ID is already used by another user
+    from app.database.crud.user import (
+        get_user_by_oauth_provider,
+        set_user_oauth_provider_id,
+    )
+
+    existing_user = await get_user_by_oauth_provider(db, provider, user_info.provider_id)
+    if existing_user and existing_user.id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'This {provider} account is already linked to another user',
+        )
+
+    # 6. Link provider
+    await set_user_oauth_provider_id(db, user, provider, user_info.provider_id)
+    await db.commit()
+
+    logger.info('OAuth provider linked via callback', provider=provider, user_id=user.id)
+
+    return _user_to_response(user)

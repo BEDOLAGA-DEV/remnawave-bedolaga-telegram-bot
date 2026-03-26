@@ -42,11 +42,11 @@ def _channels_keyboard(channels: list) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=f'{status} {title}',
-                    callback_data=f'reqch:view:{ch.id}',
+                    callback_data=f'nz!_reqch:view:{ch.id}',
                 )
             ]
         )
-    buttons.append([InlineKeyboardButton(text='➕ Добавить канал', callback_data='reqch:add')])
+    buttons.append([InlineKeyboardButton(text='➕ Добавить канал', callback_data='nz!_reqch:add')])
     buttons.append([InlineKeyboardButton(text='◀️ Назад', callback_data='admin_submenu_settings')])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -55,14 +55,14 @@ def _channel_detail_keyboard(channel_id: int, is_active: bool) -> InlineKeyboard
     toggle_text = '❌ Отключить' if is_active else '✅ Включить'
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=toggle_text, callback_data=f'reqch:toggle:{channel_id}')],
-            [InlineKeyboardButton(text='🗑 Удалить', callback_data=f'reqch:delete:{channel_id}')],
-            [InlineKeyboardButton(text='◀️ К списку', callback_data='reqch:list')],
+            [InlineKeyboardButton(text=toggle_text, callback_data=f'nz!_reqch:toggle:{channel_id}')],
+            [InlineKeyboardButton(text='🗑 Удалить', callback_data=f'nz!_reqch:delete:{channel_id}')],
+            [InlineKeyboardButton(text='◀️ К списку', callback_data='nz!_reqch:list')],
         ]
     )
 
 
-@router.callback_query(F.data == 'reqch:list')
+@router.callback_query(F.data == 'nz!_reqch:list')
 @admin_required
 async def show_channels_list(callback: CallbackQuery, **kwargs) -> None:
     async with AsyncSessionLocal() as db:
@@ -82,7 +82,7 @@ async def show_channels_list(callback: CallbackQuery, **kwargs) -> None:
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith('reqch:view:'))
+@router.callback_query(F.data.startswith('nz!_reqch:view:'))
 @admin_required
 async def view_channel(callback: CallbackQuery, **kwargs) -> None:
     try:
@@ -113,7 +113,7 @@ async def view_channel(callback: CallbackQuery, **kwargs) -> None:
 # -- Toggle / Delete ---------------------------------------------------------------
 
 
-@router.callback_query(F.data.startswith('reqch:toggle:'))
+@router.callback_query(F.data.startswith('nz!_reqch:toggle:'))
 @admin_required
 async def toggle_channel_handler(callback: CallbackQuery, **kwargs) -> None:
     try:
@@ -138,7 +138,7 @@ async def toggle_channel_handler(callback: CallbackQuery, **kwargs) -> None:
     )
 
 
-@router.callback_query(F.data.startswith('reqch:delete:'))
+@router.callback_query(F.data.startswith('nz!_reqch:delete:'))
 @admin_required
 async def delete_channel_handler(callback: CallbackQuery, **kwargs) -> None:
     try:
@@ -166,7 +166,7 @@ async def delete_channel_handler(callback: CallbackQuery, **kwargs) -> None:
 # -- Add channel flow --------------------------------------------------------------
 
 
-@router.callback_query(F.data == 'reqch:add')
+@router.callback_query(F.data == 'nz!_reqch:add')
 @admin_required
 async def start_add_channel(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
     await state.set_state(AddChannelStates.waiting_channel_id)

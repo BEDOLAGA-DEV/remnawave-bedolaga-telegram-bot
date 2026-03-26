@@ -1,7 +1,7 @@
 # Пример локализации на русском языке.
 # Ключи соответствуют именам констант из app/localization/texts.py.
 WELCOME: |
-  Добро пожаловать в Remnawave Bedolaga Bot!
+  Добро пожаловать в Remnawave NoZapret Bot!
   Эти строки заменят стандартное приветствие бота.
 
 MENU:

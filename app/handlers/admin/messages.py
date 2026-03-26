@@ -578,7 +578,7 @@ async def show_tariff_filter(callback: types.CallbackQuery, db_user: User, db: A
         buttons.append(
             [
                 types.InlineKeyboardButton(
-                    text=f'{tariff.name} ({count} чел.)', callback_data=f'broadcast_tariff_{tariff.id}'
+                    text=f'{tariff.name} ({count} чел.)', callback_data=f'nz!_broadcast_tariff_{tariff.id}'
                 )
             ]
         )
@@ -692,7 +692,7 @@ async def show_custom_broadcast(callback: types.CallbackQuery, db_user: User, st
 @admin_required
 @error_handler
 async def select_custom_criteria(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
-    criteria = callback.data.replace('criteria_', '')
+    criteria = callback.data.replace('nz!_criteria_', '')
 
     criteria_names = {
         'today': 'Зарегистрированные сегодня',
@@ -728,7 +728,7 @@ async def select_custom_criteria(callback: types.CallbackQuery, db_user: User, s
 @admin_required
 @error_handler
 async def select_broadcast_target(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
-    raw_target = callback.data[len('broadcast_') :]
+    raw_target = callback.data[len('nz!_broadcast_') :]
     target_aliases = {
         'no_sub': 'no',
     }
@@ -801,12 +801,12 @@ async def process_broadcast_message(message: types.Message, db_user: User, state
 @admin_required
 @error_handler
 async def handle_media_selection(callback: types.CallbackQuery, db_user: User, state: FSMContext):
-    if callback.data == 'skip_media':
+    if callback.data == 'nz!_skip_media':
         await state.update_data(has_media=False)
         await show_button_selector_callback(callback, db_user, state)
         return
 
-    media_type = callback.data.replace('add_media_', '')
+    media_type = callback.data.replace('nz!_add_media_', '')
 
     media_instructions = {
         'photo': '📷 Отправьте фотографию для рассылки:',
@@ -1030,7 +1030,7 @@ async def show_button_selector(message: types.Message, db_user: User, state: FSM
 @admin_required
 @error_handler
 async def toggle_button_selection(callback: types.CallbackQuery, db_user: User, state: FSMContext):
-    button_type = callback.data.replace('btn_', '')
+    button_type = callback.data.replace('nz!_btn_', '')
     data = await state.get_data()
     selected_buttons = data.get('selected_buttons')
     if selected_buttons is None:
@@ -1102,12 +1102,12 @@ async def confirm_button_selection(callback: types.CallbackQuery, db_user: User,
     keyboard = [
         [
             types.InlineKeyboardButton(text='✅ Отправить', callback_data='admin_confirm_broadcast'),
-            types.InlineKeyboardButton(text='📘 Изменить кнопки', callback_data='edit_buttons'),
+            types.InlineKeyboardButton(text='📘 Изменить кнопки', callback_data='nz!_edit_buttons'),
         ]
     ]
 
     if has_media:
-        keyboard.append([types.InlineKeyboardButton(text='🖼️ Изменить медиа', callback_data='change_media')])
+        keyboard.append([types.InlineKeyboardButton(text='🖼️ Изменить медиа', callback_data='nz!_change_media')])
 
     keyboard.append([types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')])
 
@@ -2051,21 +2051,21 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_pinned_broadcast_now, F.data.startswith('admin_pinned_broadcast_now:'))
     dp.callback_query.register(handle_pinned_broadcast_skip, F.data.startswith('admin_pinned_broadcast_skip:'))
     dp.callback_query.register(show_broadcast_targets, F.data.in_(['admin_msg_all', 'admin_msg_by_sub']))
-    dp.callback_query.register(show_tariff_filter, F.data == 'broadcast_by_tariff')
-    dp.callback_query.register(select_broadcast_target, F.data.startswith('broadcast_'))
+    dp.callback_query.register(show_tariff_filter, F.data == 'nz!_broadcast_by_tariff')
+    dp.callback_query.register(select_broadcast_target, F.data.startswith('nz!_broadcast_'))
     dp.callback_query.register(confirm_broadcast, F.data == 'admin_confirm_broadcast')
 
     dp.callback_query.register(show_messages_history, F.data.startswith('admin_msg_history'))
     dp.callback_query.register(show_custom_broadcast, F.data == 'admin_msg_custom')
-    dp.callback_query.register(select_custom_criteria, F.data.startswith('criteria_'))
+    dp.callback_query.register(select_custom_criteria, F.data.startswith('nz!_criteria_'))
 
-    dp.callback_query.register(toggle_button_selection, F.data.startswith('btn_'))
-    dp.callback_query.register(confirm_button_selection, F.data == 'buttons_confirm')
-    dp.callback_query.register(show_button_selector_callback, F.data == 'edit_buttons')
-    dp.callback_query.register(handle_media_selection, F.data.startswith('add_media_'))
-    dp.callback_query.register(handle_media_selection, F.data == 'skip_media')
-    dp.callback_query.register(handle_media_confirmation, F.data.in_(['confirm_media', 'replace_media']))
-    dp.callback_query.register(handle_change_media, F.data == 'change_media')
+    dp.callback_query.register(toggle_button_selection, F.data.startswith('nz!_btn_'))
+    dp.callback_query.register(confirm_button_selection, F.data == 'nz!_buttons_confirm')
+    dp.callback_query.register(show_button_selector_callback, F.data == 'nz!_edit_buttons')
+    dp.callback_query.register(handle_media_selection, F.data.startswith('nz!_add_media_'))
+    dp.callback_query.register(handle_media_selection, F.data == 'nz!_skip_media')
+    dp.callback_query.register(handle_media_confirmation, F.data.in_(['nz!_confirm_media', 'nz!_replace_media']))
+    dp.callback_query.register(handle_change_media, F.data == 'nz!_change_media')
     dp.message.register(process_broadcast_message, AdminStates.waiting_for_broadcast_message)
     dp.message.register(process_broadcast_media, AdminStates.waiting_for_broadcast_media)
     dp.message.register(process_pinned_message_update, AdminStates.editing_pinned_message)

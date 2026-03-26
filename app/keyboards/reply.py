@@ -7,18 +7,18 @@ from app.localization.texts import get_texts
 def get_main_reply_keyboard(language: str = 'ru') -> ReplyKeyboardMarkup:
     texts = get_texts(language)
 
-    keyboard = [[KeyboardButton(text=texts.MENU_BALANCE), KeyboardButton(text=texts.MENU_SUBSCRIPTION)]]
+    keyboard = [[KeyboardButton(text=texts.MENU_SUBSCRIPTION), KeyboardButton(text=texts.MENU_BALANCE)]]
 
-    # Добавляем кнопки промокода и рефералов, учитывая настройки
-    second_row = [KeyboardButton(text=texts.MENU_PROMOCODE)]
-
-    # Добавляем кнопку рефералов только если программа включена
-    if settings.is_referral_program_enabled():
-        second_row.append(KeyboardButton(text=texts.MENU_REFERRALS))
-
+    # Добавляем кнопки поддержки и промокода
+    second_row = [KeyboardButton(text=texts.MENU_SUPPORT), KeyboardButton(text=texts.MENU_PROMOCODE)]
     keyboard.append(second_row)
 
-    keyboard.append([KeyboardButton(text=texts.MENU_SUPPORT), KeyboardButton(text=texts.MENU_RULES)])
+    # Добавляем кнопки рефералов и правил
+    third_row = []
+    if settings.is_referral_program_enabled():
+        third_row.append(KeyboardButton(text=texts.MENU_REFERRALS))
+    third_row.append(KeyboardButton(text=texts.MENU_RULES))
+    keyboard.append(third_row)
 
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True, one_time_keyboard=False)
 

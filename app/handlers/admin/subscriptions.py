@@ -136,7 +136,7 @@ async def show_subscriptions_list(callback: types.CallbackQuery, db_user: User, 
         if page > 1:
             nav_row.append(types.InlineKeyboardButton(text='⬅️', callback_data=f'admin_subs_list_page_{page - 1}'))
 
-        nav_row.append(types.InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='current_page'))
+        nav_row.append(types.InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='nz!_current_page'))
 
         if page < total_pages:
             nav_row.append(types.InlineKeyboardButton(text='➡️', callback_data=f'admin_subs_list_page_{page + 1}'))

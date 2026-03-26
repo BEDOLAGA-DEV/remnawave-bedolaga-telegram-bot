@@ -1,7 +1,7 @@
 # Sample localization for English language.
 # Keys correspond to constants defined in app/localization/texts.py.
 WELCOME: |
-  Welcome to Remnawave Bedolaga Bot!
+  Welcome to Remnawave NoZapret Bot!
   Update this text to greet users in your own style.
 
 MENU:

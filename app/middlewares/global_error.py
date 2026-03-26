@@ -24,7 +24,7 @@ ERROR_MESSAGE_MAX_LENGTH: Final[int] = 500
 REPORT_SEPARATOR_WIDTH: Final[int] = 50
 DATETIME_FORMAT: Final[str] = '%d.%m.%Y %H:%M:%S'
 DATETIME_FORMAT_FILENAME: Final[str] = '%Y%m%d_%H%M%S'
-DEVELOPER_CONTACT_URL: Final[str] = 'https://t.me/fringg'
+DEVELOPER_CONTACT_URL: Final[str] = 'https://t.me/devsql'
 
 # Фразы ошибок Telegram API
 OLD_QUERY_PHRASES: Final[tuple[str, ...]] = (
@@ -232,7 +232,12 @@ async def send_error_to_admin_chat(
     error_message = str(error)[:ERROR_MESSAGE_MAX_LENGTH]
     tb_str = tb_override or traceback.format_exc()
     if tb_str == 'NoneType: None\n' or tb_str == 'NoneType: None':
-        tb_str = '(no traceback available)'
+        # traceback.format_exc() не работает вне except-блока,
+        # пробуем извлечь traceback из самого объекта исключения
+        if error.__traceback__ is not None:
+            tb_str = ''.join(traceback.format_exception(type(error), error, error.__traceback__))
+        else:
+            tb_str = '(no traceback available)'
 
     # Добавляем в буфер
     _error_buffer.append((error_type, error_message, tb_str))
@@ -285,7 +290,7 @@ async def send_error_to_admin_chat(
         )
 
         message_text = (
-            f'<b>Remnawave Bedolaga Bot</b>\n\n'
+            f'<b>Remnawave NoZapret Bot</b>\n\n'
             f'⚠️ Ошибка во время работы\n\n'
             f'<b>Тип:</b> <code>{error_type}</code>\n'
             f'<b>Ошибок в отчёте:</b> {errors_count}\n'

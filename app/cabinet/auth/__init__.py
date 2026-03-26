@@ -9,6 +9,8 @@ from .jwt_handler import (
 )
 from .password_utils import hash_password, verify_password
 from .telegram_auth import validate_telegram_init_data, validate_telegram_login_widget, validate_telegram_oidc_token
+from .telegram_auth import validate_telegram_init_data, validate_telegram_login_widget
+from .telegram_link import create_link_token, decode_link_token
 
 
 __all__ = [
@@ -21,5 +23,7 @@ __all__ = [
     'validate_telegram_init_data',
     'validate_telegram_login_widget',
     'validate_telegram_oidc_token',
+    'create_link_token',
+    'decode_link_token',
     'verify_password',
 ]

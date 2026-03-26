@@ -123,9 +123,9 @@ def get_tariffs_keyboard(
     buttons = []
 
     for tariff in tariffs:
-        buttons.append([InlineKeyboardButton(text=tariff.name, callback_data=f'tariff_select:{tariff.id}')])
+        buttons.append([InlineKeyboardButton(text=tariff.name, callback_data=f'nz!_tariff_select:{tariff.id}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -155,10 +155,10 @@ def get_tariff_periods_keyboard(
         else:
             price_text = format_price_kopeks(price)
 
-        button_text = f'{format_period(period)} — {price_text}'
-        buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'tariff_period:{tariff.id}:{period}')])
+        button_text = f'{_format_period(period)} — {price_text}'
+        buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'nz!_tariff_period:{tariff.id}:{period}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='tariff_list')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_tariff_list')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -191,10 +191,10 @@ def get_tariff_periods_keyboard_with_traffic(
         button_text = f'{format_period(period)} — {price_text}'
         # Используем другой callback для перехода к настройке трафика
         buttons.append(
-            [InlineKeyboardButton(text=button_text, callback_data=f'tariff_period_traffic:{tariff.id}:{period}')]
+            [InlineKeyboardButton(text=button_text, callback_data=f'nz!_tariff_period_traffic:{tariff.id}:{period}')]
         )
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='tariff_list')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_tariff_list')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -208,8 +208,8 @@ def get_tariff_confirm_keyboard(
     texts = get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='✅ Подтвердить покупку', callback_data=f'tariff_confirm:{tariff_id}:{period}')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')],
+            [InlineKeyboardButton(text='✅ Подтвердить покупку', callback_data=f'nz!_tariff_confirm:{tariff_id}:{period}')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_tariff_select:{tariff_id}')],
         ]
     )
 
@@ -223,8 +223,8 @@ def get_tariff_insufficient_balance_keyboard(
     texts = get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='balance_topup')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')],
+            [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='nz!_balance_topup')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_tariff_select:{tariff_id}')],
         ]
     )
 
@@ -268,8 +268,8 @@ def get_daily_tariff_confirm_keyboard(
     texts = get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='✅ Подтвердить покупку', callback_data=f'daily_tariff_confirm:{tariff_id}')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='tariff_list')],
+            [InlineKeyboardButton(text='✅ Подтвердить покупку', callback_data=f'nz!_daily_tariff_confirm:{tariff_id}')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_tariff_list')],
         ]
     )
 
@@ -282,8 +282,8 @@ def get_daily_tariff_insufficient_balance_keyboard(
     texts = get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='balance_topup')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='tariff_list')],
+            [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='nz!_balance_topup')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_tariff_list')],
         ]
     )
 
@@ -313,21 +313,21 @@ def get_custom_tariff_keyboard(
         # -30 / -7 / -1
         if days > min_days:
             if days - 30 >= min_days:
-                days_row.append(InlineKeyboardButton(text='-30', callback_data=f'custom_days:{tariff_id}:-30'))
+                days_row.append(InlineKeyboardButton(text='-30', callback_data=f'nz!_custom_days:{tariff_id}:-30'))
             if days - 7 >= min_days:
-                days_row.append(InlineKeyboardButton(text='-7', callback_data=f'custom_days:{tariff_id}:-7'))
-            days_row.append(InlineKeyboardButton(text='-1', callback_data=f'custom_days:{tariff_id}:-1'))
+                days_row.append(InlineKeyboardButton(text='-7', callback_data=f'nz!_custom_days:{tariff_id}:-7'))
+            days_row.append(InlineKeyboardButton(text='-1', callback_data=f'nz!_custom_days:{tariff_id}:-1'))
 
         # Текущее значение
-        days_row.append(InlineKeyboardButton(text=f'📅 {days} дн.', callback_data='noop'))
+        days_row.append(InlineKeyboardButton(text=f'📅 {days} дн.', callback_data='nz!_noop'))
 
         # +1 / +7 / +30
         if days < max_days:
-            days_row.append(InlineKeyboardButton(text='+1', callback_data=f'custom_days:{tariff_id}:1'))
+            days_row.append(InlineKeyboardButton(text='+1', callback_data=f'nz!_custom_days:{tariff_id}:1'))
             if days + 7 <= max_days:
-                days_row.append(InlineKeyboardButton(text='+7', callback_data=f'custom_days:{tariff_id}:7'))
+                days_row.append(InlineKeyboardButton(text='+7', callback_data=f'nz!_custom_days:{tariff_id}:7'))
             if days + 30 <= max_days:
-                days_row.append(InlineKeyboardButton(text='+30', callback_data=f'custom_days:{tariff_id}:30'))
+                days_row.append(InlineKeyboardButton(text='+30', callback_data=f'nz!_custom_days:{tariff_id}:30'))
 
         if days_row:
             buttons.append(days_row)
@@ -338,30 +338,30 @@ def get_custom_tariff_keyboard(
         # -100 / -10 / -1
         if traffic_gb > min_traffic:
             if traffic_gb - 100 >= min_traffic:
-                traffic_row.append(InlineKeyboardButton(text='-100', callback_data=f'custom_traffic:{tariff_id}:-100'))
+                traffic_row.append(InlineKeyboardButton(text='-100', callback_data=f'nz!_custom_traffic:{tariff_id}:-100'))
             if traffic_gb - 10 >= min_traffic:
-                traffic_row.append(InlineKeyboardButton(text='-10', callback_data=f'custom_traffic:{tariff_id}:-10'))
-            traffic_row.append(InlineKeyboardButton(text='-1', callback_data=f'custom_traffic:{tariff_id}:-1'))
+                traffic_row.append(InlineKeyboardButton(text='-10', callback_data=f'nz!_custom_traffic:{tariff_id}:-10'))
+            traffic_row.append(InlineKeyboardButton(text='-1', callback_data=f'nz!_custom_traffic:{tariff_id}:-1'))
 
         # Текущее значение
-        traffic_row.append(InlineKeyboardButton(text=f'📊 {traffic_gb} ГБ', callback_data='noop'))
+        traffic_row.append(InlineKeyboardButton(text=f'📊 {traffic_gb} ГБ', callback_data='nz!_noop'))
 
         # +1 / +10 / +100
         if traffic_gb < max_traffic:
-            traffic_row.append(InlineKeyboardButton(text='+1', callback_data=f'custom_traffic:{tariff_id}:1'))
+            traffic_row.append(InlineKeyboardButton(text='+1', callback_data=f'nz!_custom_traffic:{tariff_id}:1'))
             if traffic_gb + 10 <= max_traffic:
-                traffic_row.append(InlineKeyboardButton(text='+10', callback_data=f'custom_traffic:{tariff_id}:10'))
+                traffic_row.append(InlineKeyboardButton(text='+10', callback_data=f'nz!_custom_traffic:{tariff_id}:10'))
             if traffic_gb + 100 <= max_traffic:
-                traffic_row.append(InlineKeyboardButton(text='+100', callback_data=f'custom_traffic:{tariff_id}:100'))
+                traffic_row.append(InlineKeyboardButton(text='+100', callback_data=f'nz!_custom_traffic:{tariff_id}:100'))
 
         if traffic_row:
             buttons.append(traffic_row)
 
     # Кнопка подтверждения
-    buttons.append([InlineKeyboardButton(text='✅ Подтвердить покупку', callback_data=f'custom_confirm:{tariff_id}')])
+    buttons.append([InlineKeyboardButton(text='✅ Подтвердить покупку', callback_data=f'nz!_custom_confirm:{tariff_id}')])
 
     # Кнопка назад
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='tariff_list')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_tariff_list')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -496,7 +496,7 @@ async def show_tariffs_list(
         await callback.message.edit_text(
             '😔 <b>Нет доступных тарифов</b>\n\nК сожалению, сейчас нет тарифов для покупки.',
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')]]
+                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')]]
             ),
             parse_mode='HTML',
         )
@@ -909,6 +909,7 @@ async def handle_custom_confirm(
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
+                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
             )
     except Exception as e:
         logger.error('Ошибка создания/продления подписки при покупке кастомного тарифа', error=e, exc_info=True)
@@ -1000,8 +1001,8 @@ async def handle_custom_confirm(
             f'Перейдите в раздел «Подписка» для подключения.',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
+                    [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
                 ]
             ),
             parse_mode='HTML',
@@ -1279,6 +1280,7 @@ async def confirm_tariff_purchase(
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
+                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
             )
     except Exception as e:
         logger.error('Ошибка создания/продления подписки при покупке тарифа', error=e, exc_info=True)
@@ -1333,6 +1335,51 @@ async def confirm_tariff_purchase(
             amount_kopeks=final_price,
             description=f'Покупка тарифа {tariff.name} на {period} дней',
         )
+
+        # Отправляем уведомление админу
+        try:
+            admin_notification_service = AdminNotificationService(callback.bot)
+            await admin_notification_service.send_subscription_purchase_notification(
+                db,
+                db_user,
+                subscription,
+                None,  # Транзакция отсутствует, оплата с баланса
+                period,
+                was_trial_conversion=False,
+                amount_kopeks=final_price,
+            )
+        except Exception as e:
+            logger.error('Ошибка отправки уведомления админу', error=e)
+
+        # Очищаем корзину после успешной покупки
+        try:
+            await user_cart_service.delete_user_cart(db_user.id)
+            logger.info('Корзина очищена после покупки тарифа для пользователя', telegram_id=db_user.telegram_id)
+        except Exception as e:
+            logger.error('Ошибка очистки корзины', error=e)
+
+        await state.clear()
+
+        traffic = _format_traffic(tariff.traffic_limit_gb)
+
+        await callback.message.edit_text(
+            f'🎉 <b>Подписка успешно оформлена!</b>\n\n'
+            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📊 Трафик: {traffic}\n'
+            f'📱 Устройств: {tariff.device_limit}\n'
+            f'📅 Период: {_format_period(period)}\n'
+            f'💰 Списано: {_format_price_kopeks(final_price)}\n\n'
+            f'Перейдите в раздел «Подписка» для подключения.',
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
+                    [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
+                ]
+            ),
+            parse_mode='HTML',
+        )
+        await callback.answer('Подписка оформлена!', show_alert=True)
+
     except Exception as e:
         logger.error('Ошибка создания транзакции', error=e)
 
@@ -1516,6 +1563,7 @@ async def confirm_daily_tariff_purchase(
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
+                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
             )
             # Устанавливаем время последнего списания
             subscription.last_daily_charge_at = datetime.now(UTC)
@@ -1544,6 +1592,34 @@ async def confirm_daily_tariff_purchase(
                 price_kopeks=final_daily_price,
                 refund_error=refund_error,
             )
+        except Exception as e:
+            logger.error('Ошибка очистки корзины', error=e)
+
+        await state.clear()
+
+        traffic = _format_traffic(tariff.traffic_limit_gb)
+
+        await callback.message.edit_text(
+            f'🎉 <b>Суточная подписка оформлена!</b>\n\n'
+            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📊 Трафик: {traffic}\n'
+            f'📱 Устройств: {tariff.device_limit}\n'
+            f'🔄 Тип: Суточный\n'
+            f'💰 Списано: {_format_price_kopeks(daily_price)}\n\n'
+            f'ℹ️ Следующее списание через 24 часа.\n'
+            f'Перейдите в раздел «Подписка» для подключения.',
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
+                    [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
+                ]
+            ),
+            parse_mode='HTML',
+        )
+        await callback.answer('Подписка оформлена!', show_alert=True)
+
+    except Exception as e:
+        logger.error('Ошибка при покупке суточного тарифа', error=e, exc_info=True)
         await callback.answer('Произошла ошибка при оформлении подписки', show_alert=True)
         return
 
@@ -1674,10 +1750,10 @@ def get_tariff_extend_keyboard(
         else:
             price_text = format_price_kopeks(price)
 
-        button_text = f'{format_period(period)} — {price_text}'
-        buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'tariff_extend:{tariff.id}:{period}')])
+        button_text = f'{_format_period(period)} — {price_text}'
+        buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'nz!_tariff_extend:{tariff.id}:{period}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -1693,10 +1769,10 @@ def get_tariff_extend_confirm_keyboard(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text='✅ Подтвердить продление', callback_data=f'tariff_ext_confirm:{tariff_id}:{period}'
+                    text='✅ Подтвердить продление', callback_data=f'nz!_tariff_ext_confirm:{tariff_id}:{period}'
                 )
             ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='subscription_extend')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_extend')],
         ]
     )
 
@@ -1849,8 +1925,8 @@ async def select_tariff_extend_period(
             f'🛒 <i>Корзина сохранена! После пополнения баланса подписка будет продлена автоматически.</i>',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='balance_topup')],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='subscription_extend')],
+                    [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='nz!_balance_topup')],
+                    [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_extend')],
                 ]
             ),
             parse_mode='HTML',
@@ -1990,8 +2066,8 @@ async def confirm_tariff_extend(
             f'💰 Списано: {format_price_kopeks(final_price)}',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
+                    [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
                 ]
             ),
             parse_mode='HTML',
@@ -2083,9 +2159,9 @@ def get_tariff_switch_keyboard(
         if tariff.id == current_tariff_id:
             continue
 
-        buttons.append([InlineKeyboardButton(text=tariff.name, callback_data=f'tariff_sw_select:{tariff.id}')])
+        buttons.append([InlineKeyboardButton(text=tariff.name, callback_data=f'nz!_tariff_sw_select:{tariff.id}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2115,10 +2191,10 @@ def get_tariff_switch_periods_keyboard(
         else:
             price_text = format_price_kopeks(price)
 
-        button_text = f'{format_period(period)} — {price_text}'
-        buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'tariff_sw_period:{tariff.id}:{period}')])
+        button_text = f'{_format_period(period)} — {price_text}'
+        buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'nz!_tariff_sw_period:{tariff.id}:{period}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='tariff_switch')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_tariff_switch')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2134,10 +2210,10 @@ def get_tariff_switch_confirm_keyboard(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text='✅ Подтвердить переключение', callback_data=f'tariff_sw_confirm:{tariff_id}:{period}'
+                    text='✅ Подтвердить переключение', callback_data=f'nz!_tariff_sw_confirm:{tariff_id}:{period}'
                 )
             ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_sw_select:{tariff_id}')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_tariff_sw_select:{tariff_id}')],
         ]
     )
 
@@ -2151,8 +2227,8 @@ def get_tariff_switch_insufficient_balance_keyboard(
     texts = get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='balance_topup')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_sw_select:{tariff_id}')],
+            [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='nz!_balance_topup')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_tariff_sw_select:{tariff_id}')],
         ]
     )
 
@@ -2187,7 +2263,7 @@ async def show_tariff_switch_list(
         await callback.message.edit_text(
             '😔 <b>Нет доступных тарифов для переключения</b>\n\nВы уже используете единственный доступный тариф.',
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')]]
+                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')]]
             ),
             parse_mode='HTML',
         )
@@ -2284,10 +2360,10 @@ async def select_tariff_switch(
                     inline_keyboard=[
                         [
                             InlineKeyboardButton(
-                                text='✅ Подтвердить смену', callback_data=f'daily_tariff_switch_confirm:{tariff_id}'
+                                text='✅ Подтвердить смену', callback_data=f'nz!_daily_tariff_switch_confirm:{tariff_id}'
                             )
                         ],
-                        [InlineKeyboardButton(text=get_texts(db_user.language).BACK, callback_data='tariff_switch')],
+                        [InlineKeyboardButton(text=get_texts(db_user.language).BACK, callback_data='nz!_tariff_switch')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -2305,8 +2381,8 @@ async def select_tariff_switch(
                 f'{days_warning}',
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='balance_topup')],
-                        [InlineKeyboardButton(text=get_texts(db_user.language).BACK, callback_data='tariff_switch')],
+                        [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='nz!_balance_topup')],
+                        [InlineKeyboardButton(text=get_texts(db_user.language).BACK, callback_data='nz!_tariff_switch')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -2600,8 +2676,8 @@ async def confirm_tariff_switch(
             f'Перейдите в раздел «Подписка» для просмотра деталей.',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
+                    [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
                 ]
             ),
             parse_mode='HTML',
@@ -2797,8 +2873,8 @@ async def confirm_daily_tariff_switch(
             f'ℹ️ Следующее списание через 24 часа.',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
+                    [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
                 ]
             ),
             parse_mode='HTML',
@@ -2922,9 +2998,9 @@ def get_instant_switch_keyboard(
         else:
             btn_text = f'{tariff.name} (бесплатно)'
 
-        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f'instant_sw_preview:{tariff.id}')])
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f'nz!_instant_sw_preview:{tariff.id}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2937,8 +3013,8 @@ def get_instant_switch_confirm_keyboard(
     texts = get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='✅ Подтвердить переключение', callback_data=f'instant_sw_confirm:{tariff_id}')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='instant_switch')],
+            [InlineKeyboardButton(text='✅ Подтвердить переключение', callback_data=f'nz!_instant_sw_confirm:{tariff_id}')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_instant_switch')],
         ]
     )
 
@@ -2951,8 +3027,8 @@ def get_instant_switch_insufficient_balance_keyboard(
     texts = get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='balance_topup')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='instant_switch')],
+            [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='nz!_balance_topup')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_instant_switch')],
         ]
     )
 
@@ -2997,7 +3073,7 @@ async def show_instant_switch_list(
             'У вашей подписки не осталось активных дней.\n'
             'Используйте продление или покупку нового тарифа.',
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')]]
+                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')]]
             ),
             parse_mode='HTML',
         )
@@ -3015,7 +3091,7 @@ async def show_instant_switch_list(
         await callback.message.edit_text(
             '😔 <b>Нет доступных тарифов для переключения</b>\n\nВы уже используете единственный доступный тариф.',
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')]]
+                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')]]
             ),
             parse_mode='HTML',
         )
@@ -3442,8 +3518,8 @@ async def confirm_instant_switch(
                 f'ℹ️ Следующее списание через 24 часа.',
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                        [InlineKeyboardButton(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -3463,8 +3539,8 @@ async def confirm_instant_switch(
                 f'{cost_text}',
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                        [InlineKeyboardButton(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -3585,10 +3661,10 @@ async def return_to_saved_tariff_cart(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text='✅ Подтвердить продление', callback_data=f'tariff_ext_confirm:{tariff_id}:{period}'
+                            text='✅ Подтвердить продление', callback_data=f'nz!_tariff_ext_confirm:{tariff_id}:{period}'
                         )
                     ],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_extend:{tariff_id}')],
+                    [InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_tariff_extend:{tariff_id}')],
                 ]
             ),
             parse_mode='HTML',
@@ -3621,41 +3697,41 @@ async def return_to_saved_tariff_cart(
 def register_tariff_purchase_handlers(dp: Dispatcher):
     """Регистрирует обработчики покупки по тарифам."""
     # Список тарифов (для режима tariffs)
-    dp.callback_query.register(show_tariffs_list, F.data == 'tariff_list')
-    dp.callback_query.register(show_tariffs_list, F.data == 'buy_subscription_tariffs')
+    dp.callback_query.register(show_tariffs_list, F.data == 'nz!_tariff_list')
+    dp.callback_query.register(show_tariffs_list, F.data == 'nz!_buy_subscription_tariffs')
 
     # Выбор тарифа
-    dp.callback_query.register(select_tariff, F.data.startswith('tariff_select:'))
+    dp.callback_query.register(select_tariff, F.data.startswith('nz!_tariff_select:'))
 
     # Выбор периода
-    dp.callback_query.register(select_tariff_period, F.data.startswith('tariff_period:'))
+    dp.callback_query.register(select_tariff_period, F.data.startswith('nz!_tariff_period:'))
 
     # Подтверждение покупки
-    dp.callback_query.register(confirm_tariff_purchase, F.data.startswith('tariff_confirm:'))
+    dp.callback_query.register(confirm_tariff_purchase, F.data.startswith('nz!_tariff_confirm:'))
 
     # Подтверждение покупки суточного тарифа
-    dp.callback_query.register(confirm_daily_tariff_purchase, F.data.startswith('daily_tariff_confirm:'))
+    dp.callback_query.register(confirm_daily_tariff_purchase, F.data.startswith('nz!_daily_tariff_confirm:'))
 
     # Кастомные дни/трафик
-    dp.callback_query.register(handle_custom_days_change, F.data.startswith('custom_days:'))
-    dp.callback_query.register(handle_custom_traffic_change, F.data.startswith('custom_traffic:'))
-    dp.callback_query.register(handle_custom_confirm, F.data.startswith('custom_confirm:'))
-    dp.callback_query.register(select_tariff_period_with_traffic, F.data.startswith('tariff_period_traffic:'))
+    dp.callback_query.register(handle_custom_days_change, F.data.startswith('nz!_custom_days:'))
+    dp.callback_query.register(handle_custom_traffic_change, F.data.startswith('nz!_custom_traffic:'))
+    dp.callback_query.register(handle_custom_confirm, F.data.startswith('nz!_custom_confirm:'))
+    dp.callback_query.register(select_tariff_period_with_traffic, F.data.startswith('nz!_tariff_period_traffic:'))
 
     # Продление по тарифу
-    dp.callback_query.register(select_tariff_extend_period, F.data.startswith('tariff_extend:'))
-    dp.callback_query.register(confirm_tariff_extend, F.data.startswith('tariff_ext_confirm:'))
+    dp.callback_query.register(select_tariff_extend_period, F.data.startswith('nz!_tariff_extend:'))
+    dp.callback_query.register(confirm_tariff_extend, F.data.startswith('nz!_tariff_ext_confirm:'))
 
     # Переключение тарифов (с выбором периода)
-    dp.callback_query.register(show_tariff_switch_list, F.data == 'tariff_switch')
-    dp.callback_query.register(select_tariff_switch, F.data.startswith('tariff_sw_select:'))
-    dp.callback_query.register(select_tariff_switch_period, F.data.startswith('tariff_sw_period:'))
-    dp.callback_query.register(confirm_tariff_switch, F.data.startswith('tariff_sw_confirm:'))
+    dp.callback_query.register(show_tariff_switch_list, F.data == 'nz!_tariff_switch')
+    dp.callback_query.register(select_tariff_switch, F.data.startswith('nz!_tariff_sw_select:'))
+    dp.callback_query.register(select_tariff_switch_period, F.data.startswith('nz!_tariff_sw_period:'))
+    dp.callback_query.register(confirm_tariff_switch, F.data.startswith('nz!_tariff_sw_confirm:'))
 
     # Смена на суточный тариф
-    dp.callback_query.register(confirm_daily_tariff_switch, F.data.startswith('daily_tariff_switch_confirm:'))
+    dp.callback_query.register(confirm_daily_tariff_switch, F.data.startswith('nz!_daily_tariff_switch_confirm:'))
 
     # Мгновенное переключение тарифов (без выбора периода)
-    dp.callback_query.register(show_instant_switch_list, F.data == 'instant_switch')
-    dp.callback_query.register(preview_instant_switch, F.data.startswith('instant_sw_preview:'))
-    dp.callback_query.register(confirm_instant_switch, F.data.startswith('instant_sw_confirm:'))
+    dp.callback_query.register(show_instant_switch_list, F.data == 'nz!_instant_switch')
+    dp.callback_query.register(preview_instant_switch, F.data.startswith('nz!_instant_sw_preview:'))
+    dp.callback_query.register(confirm_instant_switch, F.data.startswith('nz!_instant_sw_confirm:'))

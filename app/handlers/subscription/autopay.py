@@ -28,12 +28,6 @@ from app.services.subscription_checkout_service import (
 from app.services.user_cart_service import user_cart_service
 from app.states import SubscriptionStates
 
-from .countries import (
-    _build_countries_selection_text,
-    _get_available_countries,
-    _get_preselected_free_countries,
-    _should_show_countries_management,
-)
 from .pricing import _build_subscription_period_prompt
 
 
@@ -89,7 +83,7 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
 
 async def toggle_autopay(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     subscription = db_user.subscription
-    enable = callback.data == 'autopay_enable'
+    enable = callback.data == 'nz!_autopay_enable'
 
     # Суточные подписки имеют свой механизм продления (DailySubscriptionService),
     # глобальный autopay для них запрещён
@@ -137,7 +131,7 @@ async def show_autopay_days(callback: types.CallbackQuery, db_user: User):
 
 
 async def set_autopay_days(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    days = int(callback.data.split('_')[2])
+    days = int(callback.data.split('_')[3])
     subscription = db_user.subscription
 
     await update_subscription_autopay(db, subscription, subscription.autopay_enabled, days)
@@ -245,20 +239,6 @@ async def handle_subscription_config_back(
         )
         await state.set_state(SubscriptionStates.selecting_period)
 
-    elif current_state == SubscriptionStates.selecting_countries.state:
-        if settings.is_traffic_selectable():
-            await callback.message.edit_text(
-                texts.SELECT_TRAFFIC, reply_markup=get_traffic_packages_keyboard(db_user.language)
-            )
-            await state.set_state(SubscriptionStates.selecting_traffic)
-        else:
-            await callback.message.edit_text(
-                await _build_subscription_period_prompt(db_user, texts, db),
-                reply_markup=get_subscription_period_keyboard(db_user.language, db_user),
-                parse_mode='HTML',
-            )
-            await state.set_state(SubscriptionStates.selecting_period)
-
     elif current_state == SubscriptionStates.selecting_devices.state:
         await _show_previous_configuration_step(callback, state, db_user, texts, db)
 
@@ -306,27 +286,6 @@ async def _show_previous_configuration_step(
     texts,
     db: AsyncSession,
 ):
-    if await _should_show_countries_management(db_user):
-        countries = await _get_available_countries(db_user.promo_group_id)
-        data = await state.get_data()
-        selected_countries = data.get('countries', [])
-
-        # Если страны не выбраны — автоматически предвыбираем бесплатные
-        if not selected_countries:
-            selected_countries = _get_preselected_free_countries(countries)
-            data['countries'] = selected_countries
-            await state.set_data(data)
-
-        # Формируем текст с описаниями сквадов
-        selection_text = _build_countries_selection_text(countries, texts.SELECT_COUNTRIES)
-        await callback.message.edit_text(
-            selection_text,
-            reply_markup=get_countries_keyboard(countries, selected_countries, db_user.language),
-            parse_mode='HTML',
-        )
-        await state.set_state(SubscriptionStates.selecting_countries)
-        return
-
     if settings.is_traffic_selectable():
         await callback.message.edit_text(
             texts.SELECT_TRAFFIC, reply_markup=get_traffic_packages_keyboard(db_user.language)

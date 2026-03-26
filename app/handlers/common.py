@@ -106,16 +106,16 @@ async def show_rules(callback: types.CallbackQuery, db_user: User, db: AsyncSess
 
 def register_handlers(dp: Dispatcher):
     # Удаление уведомлений
-    dp.callback_query.register(handle_delete_ban_notification, F.data == 'ban_notify:delete')
-    dp.callback_query.register(handle_webhook_notification_close, F.data == 'webhook:close')
+    dp.callback_query.register(handle_delete_ban_notification, F.data == 'nz!_ban_notify:delete')
+    dp.callback_query.register(handle_webhook_notification_close, F.data == 'nz!_webhook:close')
 
-    dp.callback_query.register(show_rules, F.data == 'menu_rules')
+    dp.callback_query.register(show_rules, F.data == 'nz!_menu_rules')
 
     # No-op utility handlers used in many keyboards
-    dp.callback_query.register(handle_noop, F.data == 'noop')
-    dp.callback_query.register(handle_current_page, F.data == 'current_page')
+    dp.callback_query.register(handle_noop, F.data == 'nz!_noop')
+    dp.callback_query.register(handle_current_page, F.data == 'nz!_current_page')
 
-    dp.callback_query.register(handle_cancel, F.data.in_(['cancel', 'subscription_cancel']))
+    dp.callback_query.register(handle_cancel, F.data.in_(['nz!_cancel', 'nz!_subscription_cancel']))
 
     # Самый последний: ловим любые неизвестные текстовые сообщения
     # Исключаем специальные сервисные события (например, успешные платежи),

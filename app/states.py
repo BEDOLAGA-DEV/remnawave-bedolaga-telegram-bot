@@ -54,6 +54,7 @@ class AdminStates(StatesGroup):
     granting_subscription = State()
     editing_user_subscription = State()
     editing_user_restriction_reason = State()
+    waiting_for_mass_delete_ids = State()
 
     creating_promocode = State()
     setting_promocode_type = State()
@@ -207,6 +208,8 @@ class AdminStates(StatesGroup):
     editing_tariff_traffic_topup_packages = State()
     editing_tariff_max_topup_traffic = State()
     editing_tariff_daily_price = State()
+    editing_tariff_wl_traffic_topup_packages = State()
+    editing_tariff_wl_default_traffic = State()
 
 
 class SupportStates(StatesGroup):

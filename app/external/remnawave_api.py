@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
+import re
 import structlog
 
 
@@ -329,7 +330,7 @@ class RemnaWaveAPI:
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
                 connector_kwargs['ssl'] = ssl_context
-                logger.debug('SSL проверка отключена для локального HTTPS')
+                logger.warning('SSL проверка отключена для локального HTTPS. Используйте CA-сертификат для production.')
 
         elif conn_type == 'external':
             logger.debug('Используют внешнее подключение с полной SSL проверкой')
@@ -1085,27 +1086,12 @@ class RemnaWaveAPI:
 
     async def reset_user_devices(self, user_uuid: str) -> bool:
         try:
-            devices_info = await self.get_user_devices(user_uuid)
-            devices = devices_info.get('devices', [])
-
-            if not devices:
-                return True
-
-            failed_count = 0
-            for device in devices:
-                device_hwid = device.get('hwid')
-                if device_hwid:
-                    try:
-                        delete_data = {'userUuid': user_uuid, 'hwid': device_hwid}
-                        await self._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
-                    except Exception as device_error:
-                        logger.error('Ошибка удаления устройства', device_hwid=device_hwid, device_error=device_error)
-                        failed_count += 1
-
-            return failed_count < len(devices) / 2
+            delete_data = {'userUuid': user_uuid}
+            await self._make_request('POST', '/api/hwid/devices/delete-all', data=delete_data)
+            return True
 
         except Exception as e:
-            logger.error('Ошибка при сбросе устройств', error=e)
+            logger.error('Ошибка при сбросе всех устройств пользователя', error=e)
             return False
 
     async def remove_device(self, user_uuid: str, device_hwid: str) -> bool:
@@ -1117,16 +1103,49 @@ class RemnaWaveAPI:
             logger.error('Ошибка удаления устройства', device_hwid=device_hwid, error=e)
             return False
 
+    async def enc_happ_crypto_link_v5(self, link_to_encrypt: str) -> str | None:
+        # send requests to another website https://crypto.happ.su/ and get link in html
+        try:
+            logger.info('Запрос на шифрование v5', url=link_to_encrypt)
+            # Explicitly set Content-Type to form-encoded to be sure
+            headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+            async with self.session.request('POST', 'https://crypto.happ.su/', data={'url': link_to_encrypt}, headers=headers) as response:
+                logger.info('Ответ от crypto.happ.su', status=response.status)
+                html = await response.text()
+                logger.debug('HTML от crypto.happ.su получен', length=len(html))
+                
+                # Check for all matches, not just the first one
+                matches = re.findall(r'href="(happ://crypt5[^"]+)"', html)
+                if matches:
+                    logger.info('Найдена crypto ссылка v5', link=matches[0])
+                    return matches[0]
+                
+                logger.warning('Crypto ссылка не найдена в HTML', html_preview=html[:200])
+                return None
+        except Exception as e:
+            logger.warning('Ошибка при шифровании happ ссылки v5', error=str(e))
+            return None
+
     async def encrypt_happ_crypto_link(self, link_to_encrypt: str) -> str | None:
         try:
+            logger.info('Начало шифрования ссылки', link=link_to_encrypt)
+            v5 = await self.enc_happ_crypto_link_v5(link_to_encrypt)
+            if v5:
+                return v5
+            
+            logger.info('v5 не сработал, пробуем через RemnaWave API')
             data = {'linkToEncrypt': link_to_encrypt}
             response = await self._make_request('POST', '/api/system/tools/happ/encrypt', data)
-            return response.get('response', {}).get('encryptedLink')
-        except RemnaWaveAPIError as e:
-            logger.warning('Не удалось зашифровать happ ссылку', message=e.message)
+            encrypted = response.get('response', {}).get('encryptedLink')
+            
+            if encrypted:
+                logger.info('Ссылка зашифрована через RemnaWave API', link=encrypted)
+                return encrypted
+            
+            logger.warning('Ни один метод шифрования не вернул результат')
             return None
         except Exception as e:
-            logger.warning('Ошибка при шифровании happ ссылки', error=e)
+            logger.warning('Не удалось зашифровать happ ссылку (общая ошибка)', error=str(e))
             return None
 
     async def enrich_user_with_happ_link(self, user: RemnaWaveUser) -> RemnaWaveUser:

@@ -112,8 +112,20 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
             source = 'NALOGO_PROXY_URL' if settings.NALOGO_PROXY_URL else 'PROXY_URL (fallback)'
             logger.info('Nalogo proxy configured', proxy_url=mask_proxy_url(nalogo_proxy_url), source=source)
 
-    maintenance_service.set_bot(bot)
-    logger.info('Бот установлен в maintenance_service')
+    # Автоматическая регистрация username бота в настройках
+    try:
+        bot_info = await bot.get_me()
+        if bot_info.username:
+            settings.BOT_USERNAME = bot_info.username
+            from app.database.database import AsyncSessionLocal
+            from app.services.system_settings_service import bot_configuration_service
+
+            async with AsyncSessionLocal() as db:
+                await bot_configuration_service.update_setting(db, 'BOT_USERNAME', bot_info.username)
+                await db.commit()
+            logger.info('Username бота автоматически зарегистрирован', username=bot_info.username)
+    except Exception as e:
+        logger.warning('Не удалось автоматически зарегистрировать username бота', error=e)
 
     try:
         redis_client = redis.from_url(settings.REDIS_URL)

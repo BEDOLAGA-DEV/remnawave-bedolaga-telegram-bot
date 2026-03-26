@@ -495,6 +495,21 @@ async def get_random_trial_squad_uuid(
     return None
 
 
+def _generate_display_name(original_name: str) -> str:
+    """Генерирует отображаемое название сервера на основе оригинального имени.
+    
+    ВЕРСИЯ С ОТКЛЮЧЕННЫМИ СТРАНАМИ: возвращает оригинальное имя с иконкой планеты.
+    """
+    return f'🌍 {original_name}'
+
+
+
+def _extract_country_code(original_name: str) -> str | None:
+    """Извлекает код страны из оригинального названия (ОТКЛЮЧЕНО)."""
+    return None
+
+
+
 async def get_server_statistics(db: AsyncSession) -> dict:
     total_result = await db.execute(select(func.count(ServerSquad.id)))
     total_servers = total_result.scalar()

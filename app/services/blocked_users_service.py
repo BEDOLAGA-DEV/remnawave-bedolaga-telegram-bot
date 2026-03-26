@@ -423,6 +423,18 @@ class BlockedUsersService:
                             result.deleted_from_remnawave += 1
                         else:
                             result.errors.append(f'Ошибка удаления {user_result.telegram_id} из Remnawave')
+
+                        # Удаляем _wl аккаунт
+                        try:
+                            if self.remnawave_service.is_configured:
+                                async with self.remnawave_service.get_api_client() as _api:
+                                    wl_user = await _api.get_user_by_username(f'{user_result.username}_wl')
+                                    if wl_user:
+                                        await _api.delete_user(wl_user.uuid)
+                                        logger.info('✅ _wl аккаунт удален при очистке', username=f'{user_result.username}_wl')
+                        except Exception as _wl_e:
+                            logger.warning('⚠️ Не удалось удалить _wl аккаунт при очистке', error=_wl_e)
+
                         # Задержка для избежания rate limit
                         await asyncio.sleep(self.API_DELAY_SECONDS)
 

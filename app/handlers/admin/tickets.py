@@ -327,7 +327,7 @@ async def view_admin_ticket(
             nav_row.append(
                 types.InlineKeyboardButton(text='⬅️', callback_data=f'admin_ticket_page_{ticket_id}_{page - 1}')
             )
-        nav_row.append(types.InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='noop'))
+        nav_row.append(types.InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='nz!_noop'))
         if page < total_pages:
             nav_row.append(
                 types.InlineKeyboardButton(text='➡️', callback_data=f'admin_ticket_page_{ticket_id}_{page + 1}')
@@ -1067,13 +1067,13 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('VIEW_TICKET', '👁️ Посмотреть тикет'), callback_data=f'view_ticket_{ticket.id}'
+                        text=texts.t('VIEW_TICKET', '👁️ Посмотреть тикет'), callback_data=f'nz!_view_ticket_{ticket.id}'
                     )
                 ],
                 [
                     types.InlineKeyboardButton(
                         text=texts.t('CLOSE_NOTIFICATION', '❌ Закрыть уведомление'),
-                        callback_data=f'close_ticket_notification_{ticket.id}',
+                        callback_data=f'nz!_close_ticket_notification_{ticket.id}',
                     )
                 ],
             ]

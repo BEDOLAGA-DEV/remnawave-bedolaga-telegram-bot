@@ -13,7 +13,6 @@ from app.keyboards.inline import (
     get_add_traffic_keyboard,
     get_add_traffic_keyboard_from_tariff,
     get_back_keyboard,
-    get_countries_keyboard,
     get_devices_keyboard,
     get_insufficient_balance_keyboard,
     get_reset_traffic_confirm_keyboard,
@@ -35,10 +34,7 @@ from .common import (
     logger,
 )
 from .countries import (
-    _build_countries_selection_text,
     _get_available_countries,
-    _get_preselected_free_countries,
-    _should_show_countries_management,
 )
 from .summary import present_subscription_summary
 
@@ -396,7 +392,7 @@ async def get_traffic_packages_info() -> str:
 
 
 async def select_traffic(callback: types.CallbackQuery, state: FSMContext, db_user: User):
-    traffic_gb = int(callback.data.split('_')[1])
+    traffic_gb = int(callback.data.split('_')[2])
     texts = get_texts(db_user.language)
 
     data = await state.get_data()
@@ -406,23 +402,6 @@ async def select_traffic(callback: types.CallbackQuery, state: FSMContext, db_us
     data['total_price'] += traffic_price
 
     await state.set_data(data)
-
-    if await _should_show_countries_management(db_user):
-        countries = await _get_available_countries(db_user.promo_group_id)
-        # Автоматически предвыбираем бесплатные серверы
-        preselected = _get_preselected_free_countries(countries)
-        data['countries'] = preselected
-        await state.set_data(data)
-        # Формируем текст с описаниями сквадов
-        selection_text = _build_countries_selection_text(countries, texts.SELECT_COUNTRIES)
-        await callback.message.edit_text(
-            selection_text,
-            reply_markup=get_countries_keyboard(countries, preselected, db_user.language),
-            parse_mode='HTML',
-        )
-        await state.set_state(SubscriptionStates.selecting_countries)
-        await callback.answer()
-        return
 
     countries = await _get_available_countries(db_user.promo_group_id)
     available_countries = [c for c in countries if c.get('is_available', True)]
@@ -446,7 +425,7 @@ async def select_traffic(callback: types.CallbackQuery, state: FSMContext, db_us
 async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     from app.database.crud.tariff import get_tariff_by_id
 
-    traffic_gb = int(callback.data.split('_')[2])
+    traffic_gb = int(callback.data.split('_')[3])
     texts = get_texts(db_user.language)
     subscription = db_user.subscription
 
@@ -705,7 +684,7 @@ async def handle_switch_traffic(callback: types.CallbackQuery, db_user: User, db
 
 
 async def confirm_switch_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    new_traffic_gb = int(callback.data.split('_')[2])
+    new_traffic_gb = int(callback.data.split('_')[3])
     texts = get_texts(db_user.language)
     subscription = db_user.subscription
 
@@ -803,11 +782,8 @@ async def confirm_switch_traffic(callback: types.CallbackQuery, db_user: User, d
 
 async def execute_switch_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     callback_parts = callback.data.split('_')
-    new_traffic_gb = int(callback_parts[3])
-
-    from app.database.crud.user import lock_user_for_pricing
-
-    db_user = await lock_user_for_pricing(db, db_user.id)
+    new_traffic_gb = int(callback_parts[4])
+    price_difference = int(callback_parts[5])
 
     texts = get_texts(db_user.language)
     subscription = db_user.subscription

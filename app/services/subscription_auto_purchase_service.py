@@ -570,18 +570,35 @@ async def _auto_extend_subscription(
                 ]
             )
 
-            await bot.send_message(
-                chat_id=user.telegram_id,
-                text=full_message,
-                reply_markup=keyboard,
-                parse_mode='HTML',
-            )
-        except Exception as error:  # pragma: no cover - defensive logging
-            logger.error(
-                '⚠️ Автопокупка: не удалось уведомить пользователя о продлении',
-                telegram_id=user.telegram_id or user.id,
-                error=error,
-            )
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 My subscription'),
+                                callback_data='nz!_menu_subscription',
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Main menu'),
+                                callback_data='nz!_back_to_menu',
+                            )
+                        ],
+                    ]
+                )
+
+                await bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=full_message,
+                    reply_markup=keyboard,
+                    parse_mode='HTML',
+                )
+            except Exception as error:  # pragma: no cover - defensive logging
+                logger.error(
+                    '⚠️ Автопокупка: не удалось уведомить пользователя о продлении',
+                    telegram_id=user.telegram_id or user.id,
+                    error=error,
+                )
 
     logger.info(
         '✅ Автопокупка: подписка продлена на дней для пользователя',
@@ -920,6 +937,49 @@ async def _auto_purchase_tariff(
                 error=error,
             )
 
+        # Send user notification only for Telegram users
+        if user.telegram_id:
+            try:
+                message = texts.t(
+                    'AUTO_PURCHASE_SUBSCRIPTION_SUCCESS',
+                    '✅ Подписка на {period} автоматически оформлена после пополнения баланса.',
+                ).format(period=period_label)
+
+                hint = texts.t(
+                    'AUTO_PURCHASE_SUBSCRIPTION_HINT',
+                    'Перейдите в раздел «Моя подписка», чтобы получить ссылку.',
+                )
+
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'),
+                                callback_data='nz!_menu_subscription',
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'),
+                                callback_data='nz!_back_to_menu',
+                            )
+                        ],
+                    ]
+                )
+
+                await bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=f'{message}\n\n{hint}',
+                    reply_markup=keyboard,
+                    parse_mode='HTML',
+                )
+            except Exception as error:
+                logger.warning(
+                    '⚠️ Автопокупка тарифа: не удалось уведомить пользователя',
+                    telegram_id=user.telegram_id or user.id,
+                    error=error,
+                )
+
     logger.info(
         '✅ Автопокупка тарифа: подписка на тариф (дней) оформлена для пользователя',
         tariff_name=tariff.name,
@@ -1246,6 +1306,46 @@ async def _auto_purchase_daily_tariff(
                 error=error,
             )
 
+        # Send user notification only for Telegram users
+        if user.telegram_id:
+            try:
+                message = (
+                    f'✅ <b>Суточный тариф «{tariff.name}» активирован!</b>\n\n'
+                    f'💰 Списано: {daily_price / 100:.0f} ₽ за первый день\n'
+                    f'🔄 Средства будут списываться автоматически раз в сутки.\n\n'
+                    f'ℹ️ Вы можете приостановить подписку в любой момент.'
+                )
+
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'),
+                                callback_data='nz!_menu_subscription',
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'),
+                                callback_data='nz!_back_to_menu',
+                            )
+                        ],
+                    ]
+                )
+
+                await bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=message,
+                    reply_markup=keyboard,
+                    parse_mode='HTML',
+                )
+            except Exception as error:
+                logger.warning(
+                    '⚠️ Автопокупка суточного тарифа: не удалось уведомить пользователя',
+                    telegram_id=user.telegram_id or user.id,
+                    error=error,
+                )
+
     logger.info(
         '✅ Автопокупка суточного тарифа: тариф активирован для пользователя',
         tariff_name=tariff.name,
@@ -1539,13 +1639,13 @@ async def _auto_add_devices(
                     [
                         InlineKeyboardButton(
                             text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'),
-                            callback_data='menu_subscription',
+                            callback_data='nz!_menu_subscription',
                         )
                     ],
                     [
                         InlineKeyboardButton(
                             text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'),
-                            callback_data='back_to_menu',
+                            callback_data='nz!_back_to_menu',
                         )
                     ],
                 ]
@@ -1835,13 +1935,13 @@ async def _auto_add_traffic(
                     [
                         InlineKeyboardButton(
                             text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'),
-                            callback_data='menu_subscription',
+                            callback_data='nz!_menu_subscription',
                         )
                     ],
                     [
                         InlineKeyboardButton(
                             text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'),
-                            callback_data='back_to_menu',
+                            callback_data='nz!_back_to_menu',
                         )
                     ],
                 ]
@@ -2799,13 +2899,13 @@ async def auto_purchase_saved_cart_after_topup(
                         [
                             InlineKeyboardButton(
                                 text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 My subscription'),
-                                callback_data='menu_subscription',
+                                callback_data='nz!_menu_subscription',
                             )
                         ],
                         [
                             InlineKeyboardButton(
                                 text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Main menu'),
-                                callback_data='back_to_menu',
+                                callback_data='nz!_back_to_menu',
                             )
                         ],
                     ]

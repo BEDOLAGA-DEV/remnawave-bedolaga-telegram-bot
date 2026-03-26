@@ -1124,9 +1124,22 @@ async def get_trial_info(
 ):
     """Get trial subscription info and availability."""
     await db.refresh(user, ['subscription'])
+    
+    auth_type = getattr(user, 'auth_type', 'telegram')
+    telegram_id = getattr(user, 'telegram_id', None)
+    
+    logger.debug(
+        "Checking trial info for user",
+        user_id=user.id,
+        auth_type=auth_type,
+        telegram_id=telegram_id,
+        has_subscription=bool(user.subscription),
+        has_had_paid=getattr(user, 'has_had_paid_subscription', False)
+    )
 
     # Проверяем, отключён ли триал для этого типа пользователя
-    if settings.is_trial_disabled_for_user(getattr(user, 'auth_type', 'telegram')):
+    if settings.is_trial_disabled_for_user(auth_type, telegram_id):
+        logger.info("Trial disabled for user type", user_id=user.id, auth_type=auth_type)
         return TrialInfoResponse(
             is_available=False,
             duration_days=settings.TRIAL_DURATION_DAYS,
@@ -1137,6 +1150,11 @@ async def get_trial_info(
             price_rubles=0,
             reason_unavailable='Trial is not available for your account type',
         )
+
+    # Проверяем, требуется ли привязка Telegram для триала
+    is_tg_required = settings.is_trial_telegram_link_required(telegram_id)
+    # Мы всё равно возвращаем is_available=True, но с пометкой requires_telegram=True,
+    # чтобы карточка триала отображалась в кабинете, но предлагала привязать аккаунт.
 
     duration_days = settings.TRIAL_DURATION_DAYS
     traffic_limit_gb = settings.TRIAL_TRAFFIC_LIMIT_GB
@@ -1172,6 +1190,7 @@ async def get_trial_info(
             user.subscription.status == 'active' and user.subscription.end_date and user.subscription.end_date > now
         )
         if is_active:
+            logger.info("Trial unavailable: active subscription exists", user_id=user.id)
             return TrialInfoResponse(
                 is_available=False,
                 duration_days=duration_days,
@@ -1185,6 +1204,7 @@ async def get_trial_info(
 
         # Check if user already used trial
         if user.subscription.is_trial or user.has_had_paid_subscription:
+            logger.info("Trial unavailable: already used", user_id=user.id)
             return TrialInfoResponse(
                 is_available=False,
                 duration_days=duration_days,
@@ -1204,6 +1224,7 @@ async def get_trial_info(
         requires_payment=requires_payment,
         price_kopeks=price_kopeks,
         price_rubles=price_kopeks / 100,
+        requires_telegram=is_tg_required,
     )
 
 
@@ -1216,10 +1237,17 @@ async def activate_trial(
     await db.refresh(user, ['subscription'])
 
     # Проверяем, отключён ли триал для этого типа пользователя
-    if settings.is_trial_disabled_for_user(getattr(user, 'auth_type', 'telegram')):
+    if settings.is_trial_disabled_for_user(getattr(user, 'auth_type', 'telegram'), getattr(user, 'telegram_id', None)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Trial is not available for your account type',
+        )
+
+    # Проверяем, требуется ли привязка Telegram для триала
+    if settings.is_trial_telegram_link_required(getattr(user, 'telegram_id', None)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Trial requires a linked Telegram account',
         )
 
     # Check if user already has an active subscription
@@ -3332,7 +3360,7 @@ async def get_app_config(
                             user_id=user.id,
                         )
         except Exception as e:
-            logger.debug('Could not generate crypto link', error=e)
+            logger.info('Could not generate crypto link in Cabinet API', error=e)
 
     config = await _load_app_config_async()
 

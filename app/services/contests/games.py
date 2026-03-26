@@ -98,7 +98,7 @@ class QuestButtonsStrategy(BaseGameStrategy):
                 row_buttons.append(
                     types.InlineKeyboardButton(
                         text='🎛',
-                        callback_data=f'contest_pick_{round_id}_quest_{idx}',
+                        callback_data=f'nz!_contest_pick_{round_id}_quest_{idx}',
                     )
                 )
             keyboard_rows.append(row_buttons)
@@ -158,7 +158,7 @@ class LockHackStrategy(BaseGameStrategy):
             row.append(
                 types.InlineKeyboardButton(
                     text='🔒',
-                    callback_data=f'contest_pick_{round_id}_locks_{i}',
+                    callback_data=f'nz!_contest_pick_{round_id}_locks_{i}',
                 )
             )
             if len(row) == 5:
@@ -226,7 +226,7 @@ class ServerLotteryStrategy(BaseGameStrategy):
             row.append(
                 types.InlineKeyboardButton(
                     text=flag,
-                    callback_data=f'contest_pick_{round_id}_{flag}',
+                    callback_data=f'nz!_contest_pick_{round_id}_{flag}',
                 )
             )
             if len(row) == 5:
@@ -281,7 +281,7 @@ class BlitzReactionStrategy(BaseGameStrategy):
                 [
                     types.InlineKeyboardButton(
                         text=texts.t('CONTEST_BLITZ_BUTTON', 'Я здесь!'),
-                        callback_data=f'contest_pick_{round_id}_blitz',
+                        callback_data=f'nz!_contest_pick_{round_id}_blitz',
                     )
                 ],
                 [self._get_back_button(language, back_callback)],

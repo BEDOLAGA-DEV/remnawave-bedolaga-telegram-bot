@@ -186,10 +186,10 @@ async def _send_pal24_payment_message(
             [
                 types.InlineKeyboardButton(
                     text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                    callback_data=f'check_pal24_{local_payment_id}',
+                    callback_data=f'nz!_check_pal24_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_balance_topup')],
         ]
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
@@ -267,7 +267,7 @@ async def start_pal24_payment(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -335,7 +335,7 @@ async def process_pal24_payment_amount(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance')])
 
         await message.answer(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -405,7 +405,7 @@ async def process_pal24_payment_amount(
                     text=settings.get_pal24_sbp_button_text(
                         texts.t('PAL24_SBP_PAY_BUTTON', '🏦 Оплатить через PayPalych (СБП)')
                     ),
-                    callback_data='pal24_method_sbp',
+                    callback_data='nz!_pal24_method_sbp',
                 )
             ]
         )
@@ -416,12 +416,12 @@ async def process_pal24_payment_amount(
                     text=settings.get_pal24_card_button_text(
                         texts.t('PAL24_CARD_PAY_BUTTON', '💳 Оплатить банковской картой (PayPalych)')
                     ),
-                    callback_data='pal24_method_card',
+                    callback_data='nz!_pal24_method_card',
                 )
             ]
         )
 
-    method_buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')])
+    method_buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_balance_topup')])
 
     await message.answer(
         texts.t(
@@ -632,10 +632,10 @@ async def check_pal24_payment_status(
             [
                 types.InlineKeyboardButton(
                     text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
-                    callback_data=f'check_pal24_{local_payment_id}',
+                    callback_data=f'nz!_check_pal24_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_balance_topup')],
         ]
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)

@@ -60,6 +60,7 @@ from .ticket_notifications import (
     router as ticket_notifications_router,
 )
 from .tickets import router as tickets_router
+from .utils import router as utils_router
 from .websocket import router as websocket_router
 from .wheel import router as wheel_router
 from .withdrawal import router as withdrawal_router
@@ -91,6 +92,7 @@ router.include_router(branding_router)
 router.include_router(landing_router)
 router.include_router(media_router)
 router.include_router(news_router)
+router.include_router(utils_router)
 
 # Wheel routes
 router.include_router(wheel_router)

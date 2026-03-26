@@ -168,9 +168,20 @@ class SubscriptionService:
 
             # Загружаем tariff заранее, чтобы избежать lazy loading в async контексте
             try:
-                await db.refresh(subscription, ['tariff'])
-            except Exception:
-                pass  # tariff может быть None или уже загружен
+                from sqlalchemy import select
+                from app.database.models import Tariff
+                tariff_needs_load = False
+                try:
+                    _ = subscription.tariff
+                except Exception:
+                    tariff_needs_load = True
+                    
+                if tariff_needs_load or subscription.tariff is None:
+                    if getattr(subscription, 'tariff_id', None):
+                        result = await db.execute(select(Tariff).where(Tariff.id == subscription.tariff_id))
+                        subscription.tariff = result.scalar_one_or_none()
+            except Exception as e:
+                logger.error('Failed to load tariff', error=e)
 
             user_tag = self._resolve_user_tag(subscription)
 
@@ -211,11 +222,11 @@ class SubscriptionService:
                         logger.info('🔧 Сброшены HWID устройства для', _format_user_log=self._format_user_log(user))
                     except Exception as hwid_error:
                         logger.warning('⚠️ Не удалось сбросить HWID', hwid_error=hwid_error)
-
+                        
                     update_kwargs = dict(
                         uuid=remnawave_user.uuid,
-                        status=UserStatus.ACTIVE,
                         expire_at=subscription.end_date,
+                        status=UserStatus.ACTIVE,
                         traffic_limit_bytes=self._gb_to_bytes(subscription.traffic_limit_gb),
                         traffic_limit_strategy=get_traffic_reset_strategy(subscription.tariff),
                         telegram_id=user.telegram_id,
@@ -226,7 +237,7 @@ class SubscriptionService:
                             telegram_id=user.telegram_id,
                             email=user.email,
                             user_id=user.id,
-                        ),
+                        )
                     )
 
                     if subscription.connected_squads:
@@ -303,6 +314,15 @@ class SubscriptionService:
                             reset_reason,
                         )
 
+                current_time = datetime.now(UTC)
+                is_actually_active = (
+                    subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value) 
+                    and subscription.end_date > current_time
+                )
+                await self._ensure_wl_user_synced(
+                    api, user, subscription, is_actually_active, reset_traffic, reset_reason
+                )
+
                 subscription.remnawave_short_uuid = updated_user.short_uuid
                 subscription.subscription_url = updated_user.subscription_url
                 subscription.subscription_crypto_link = updated_user.happ_crypto_link
@@ -340,9 +360,20 @@ class SubscriptionService:
 
             # Загружаем tariff заранее, чтобы избежать lazy loading в async контексте
             try:
-                await db.refresh(subscription, ['tariff'])
-            except Exception:
-                pass  # tariff может быть None или уже загружен
+                from sqlalchemy import select
+                from app.database.models import Tariff
+                tariff_needs_load = False
+                try:
+                    _ = subscription.tariff
+                except Exception:
+                    tariff_needs_load = True
+                    
+                if tariff_needs_load or subscription.tariff is None:
+                    if getattr(subscription, 'tariff_id', None):
+                        result = await db.execute(select(Tariff).where(Tariff.id == subscription.tariff_id))
+                        subscription.tariff = result.scalar_one_or_none()
+            except Exception as e:
+                logger.error('Failed to load tariff', error=e)
 
             current_time = datetime.now(UTC)
             # Определяем актуальный статус для отправки в RemnaWave
@@ -403,13 +434,19 @@ class SubscriptionService:
                 if hwid_limit is not None:
                     update_kwargs['hwid_device_limit'] = hwid_limit
 
-                # Внешний сквад НЕ пересылаем в рутинных обновлениях — он уже назначен
-                # при создании подписки. Стейловый UUID вызывает FK violation → A039.
-                # Синхронизация сквадов происходит только при sync_squads=True.
-                if sync_squads and ext_squad_uuid is not None:
-                    update_kwargs['external_squad_uuid'] = ext_squad_uuid
-
-                updated_user = await api.update_user(**update_kwargs)
+                try:
+                    updated_user = await api.update_user(**update_kwargs)
+                except RemnaWaveAPIError as api_error:
+                    if api_error.status_code == 404:
+                        logger.warning(
+                            '⚠️ Пользователь не найден в панели по UUID при обновлении. Пробуем полный поиск/создание.',
+                            remnawave_uuid=user.remnawave_uuid,
+                        )
+                        # Вызываем create_remnawave_user, который сделает поиск по telegram_id/email и создаст если надо
+                        return await self.create_remnawave_user(
+                            db, subscription, reset_traffic=reset_traffic, reset_reason=reset_reason
+                        )
+                    raise api_error
 
                 if reset_traffic:
                     await self._reset_user_traffic(
@@ -418,6 +455,10 @@ class SubscriptionService:
                         user,
                         reset_reason,
                     )
+
+                await self._ensure_wl_user_synced(
+                    api, user, subscription, is_actually_active, reset_traffic, reset_reason
+                )
 
                 subscription.subscription_url = updated_user.subscription_url
                 subscription.subscription_crypto_link = updated_user.happ_crypto_link
@@ -439,6 +480,99 @@ class SubscriptionService:
         except Exception as e:
             logger.error('Ошибка обновления RemnaWave пользователя', error=e)
             return None
+
+    async def _ensure_wl_user_synced(
+        self,
+        api: RemnaWaveAPI,
+        user: User,
+        subscription: Subscription,
+        is_actually_active: bool,
+        reset_traffic: bool = False,
+        reset_reason: str | None = None,
+    ) -> None:
+        try:
+            username = settings.format_remnawave_username(
+                full_name=user.full_name,
+                username=user.username,
+                telegram_id=user.telegram_id,
+                email=user.email,
+                user_id=user.id,
+            )
+            username_wl = f"{username[:33]}_wl"
+
+            description = settings.format_remnawave_user_description(
+                full_name=user.full_name,
+                username=user.username,
+                telegram_id=user.telegram_id,
+                email=user.email,
+                user_id=user.id,
+            )
+
+            base_wl_traffic = subscription.wl_traffic_limit_gb if subscription.wl_traffic_limit_gb is not None else settings.WL_DEFAULT_TRAFFIC_LIMIT_GB
+            total_wl_traffic_gb = base_wl_traffic  # wl_traffic_limit_gb уже включает докупленный трафик
+            traffic_limit_bytes = self._gb_to_bytes(total_wl_traffic_gb) if total_wl_traffic_gb > 0 else 0
+
+            wl_kwargs = dict(
+                status=UserStatus.ACTIVE if is_actually_active else UserStatus.EXPIRED,
+                expire_at=subscription.end_date,
+                traffic_limit_bytes=traffic_limit_bytes,
+                traffic_limit_strategy=get_traffic_reset_strategy(subscription.tariff),
+                email=f"{user.email.split('@')[0]}_wl@{user.email.split('@')[1]}" if user.email and '@' in user.email else (f"{user.email}_wl" if user.email else None),
+                description=f"{description} _wl",
+            )
+
+            wl_kwargs['active_internal_squads'] = ["07d12aeb-1945-48c2-b545-ca04038c9221"]
+
+            user_tag = self._resolve_user_tag(subscription)
+            if user_tag is not None:
+                wl_kwargs['tag'] = user_tag
+
+            hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
+            if hwid_limit is not None:
+                wl_kwargs['hwid_device_limit'] = hwid_limit
+
+            logger.info('🔍 Ищем _wl пользователя в панели', username_wl=username_wl)
+            try:
+                wl_user = await api.get_user_by_username(username_wl)
+            except Exception as lookup_error:
+                logger.error('❌ Ошибка поиска _wl пользователя', username_wl=username_wl, error=lookup_error, exc_info=True)
+                return
+
+            if wl_user:
+                logger.info('♻️ _wl пользователь найден, обновляем', username_wl=username_wl, wl_uuid=wl_user.uuid)
+                try:
+                    updated_wl = await api.update_user(uuid=wl_user.uuid, **wl_kwargs)
+                    if reset_traffic:
+                        await self._reset_user_traffic(
+                            api,
+                            updated_wl.uuid,
+                            user,
+                            reset_reason,
+                        )
+                    logger.info('✅ Обновлен _wl пользователь', username=username_wl)
+                except RemnaWaveAPIError as api_error:
+                    if api_error.status_code == 404:
+                        logger.warning('⚠️ _wl пользователь не найден при обновлении (404), пробуем создать', username_wl=username_wl)
+                        wl_kwargs['username'] = username_wl
+                        await api.create_user(**wl_kwargs)
+                        logger.info('✅ Пересоздан _wl пользователь после 404', username=username_wl)
+                    else:
+                        raise api_error
+            else:
+                logger.info('🆕 _wl пользователь не найден, создаём', username_wl=username_wl)
+                wl_kwargs['username'] = username_wl
+                created_wl = await api.create_user(**wl_kwargs)
+                if reset_traffic:
+                    await self._reset_user_traffic(
+                        api,
+                        created_wl.uuid,
+                        user,
+                        reset_reason,
+                    )
+                logger.info('✅ Создан _wl пользователь', username=username_wl)
+
+        except Exception as e:
+            logger.error('Ошибка создания/обновления _wl пользователя', error=e, exc_info=True)
 
     @staticmethod
     def _format_user_log(user) -> str:
@@ -483,6 +617,10 @@ class SubscriptionService:
             if 'already disabled' in error_msg:
                 logger.info('✅ RemnaWave пользователь уже отключен', user_uuid=user_uuid)
                 return True
+            # "User not found" (404 / A025) - также считаем успехом при попытке отключения
+            if 'not found' in error_msg or '404' in error_msg or 'a025' in error_msg:
+                logger.info('✅ RemnaWave пользователь не найден при попытке отключения (считаем за успех)', user_uuid=user_uuid)
+                return True
             logger.error('Ошибка отключения RemnaWave пользователя', error=e)
             return False
 
@@ -500,6 +638,10 @@ class SubscriptionService:
             if 'already enabled' in error_msg:
                 logger.info('✅ RemnaWave пользователь уже включен', user_uuid=user_uuid)
                 return True
+            # "User not found" (404 / A025) - считаем неуспехом для включения, но логируем мягче
+            if 'not found' in error_msg or '404' in error_msg or 'a025' in error_msg:
+                logger.warning('⚠️ Реактивация невозможна: пользователь RemnaWave не найден', user_uuid=user_uuid)
+                return False
             logger.error('Ошибка включения RemnaWave пользователя', error=e)
             return False
 
@@ -576,6 +718,38 @@ class SubscriptionService:
 
         except Exception as e:
             logger.error('Ошибка синхронизации трафика', error=e)
+            return False
+
+    async def sync_wl_subscription_usage(self, db: AsyncSession, subscription: Subscription) -> bool:
+        try:
+            user = await get_user_by_id(db, subscription.user_id)
+            if not user or not user.remnawave_uuid:
+                return False
+
+            username = settings.format_remnawave_username(
+                full_name=user.full_name,
+                username=user.username,
+                telegram_id=user.telegram_id,
+                email=user.email,
+                user_id=user.id,
+            )
+            username_wl = f"{username[:33]}_wl"
+
+            async with self.get_api_client() as api:
+                remnawave_user = await api.get_user_by_username(username_wl)
+                if not remnawave_user:
+                    return False
+
+                used_gb = self._bytes_to_gb(remnawave_user.used_traffic_bytes)
+                subscription.wl_traffic_used_gb = used_gb
+
+                await db.commit()
+
+                logger.debug('Синхронизирован WL трафик для подписки ГБ', subscription_id=subscription.id, used_gb=used_gb)
+                return True
+
+        except Exception as e:
+            logger.error('Ошибка синхронизации WL трафика', error=e)
             return False
 
     async def ensure_subscription_synced(

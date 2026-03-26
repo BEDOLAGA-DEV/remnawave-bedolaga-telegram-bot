@@ -327,16 +327,16 @@ API снова отвечает на запросы.""",
                 self._status.api_status = False
                 self._status.consecutive_failures += 1
 
-                if was_available:
+                if self._status.consecutive_failures >= 2:
                     detection_time = format_local_datetime(self._status.last_check, '%H:%M:%S %Z')
                     await self._notify_admins(
                         f"""API Remnawave недоступно!
 
 ❌ <b>Статус:</b> Недоступно
 🕐 <b>Время обнаружения:</b> {detection_time}
-🔄 <b>Попытка:</b> {self._status.consecutive_failures}
+🔄 <b>Неудачных проверок подряд:</b> {self._status.consecutive_failures}
 
-Началась серия неудачных проверок API.""",
+Серия неудачных проверок API.""",
                         'error',
                     )
 

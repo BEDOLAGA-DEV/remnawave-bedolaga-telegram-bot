@@ -62,7 +62,7 @@ class VersionInfo:
 class VersionService:
     def __init__(self, bot=None):
         self.bot = bot
-        self.repo = getattr(settings, 'VERSION_CHECK_REPO', 'fr1ngg/remnawave-bedolaga-telegram-bot')
+        self.repo = getattr(settings, 'VERSION_CHECK_REPO', 'fr1ngg/remnawave-nozapret-telegram-bot')
         self.enabled = getattr(settings, 'VERSION_CHECK_ENABLED', True)
         self.current_version = self._get_current_version()
         self.cache_ttl = 3600

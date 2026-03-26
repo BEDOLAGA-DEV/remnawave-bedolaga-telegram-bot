@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = 'remnawave_bot'
     POSTGRES_USER: str = 'remnawave_user'
-    POSTGRES_PASSWORD: str = 'secure_password_123'
+    POSTGRES_PASSWORD: str = ''
 
     SQLITE_PATH: str = './data/bot.db'
     LOCALES_PATH: str = './locales'
@@ -143,6 +143,7 @@ class Settings(BaseSettings):
     TRIAL_USER_TAG: str | None = None
     TRIAL_DISABLED_FOR: str = 'none'  # none, email, telegram, all
     DEFAULT_TRAFFIC_LIMIT_GB: int = 100
+    WL_DEFAULT_TRAFFIC_LIMIT_GB: int = 5
     DEFAULT_DEVICE_LIMIT: int = 1
     DEFAULT_TRAFFIC_RESET_STRATEGY: str = 'MONTH'
     RESET_TRAFFIC_ON_PAYMENT: bool = False
@@ -186,7 +187,18 @@ class Settings(BaseSettings):
     PRICE_TRAFFIC_1000GB: int = 19500
     PRICE_TRAFFIC_UNLIMITED: int = 20000
 
+    WL_PRICE_TRAFFIC_5GB: int = 1000
+    WL_PRICE_TRAFFIC_10GB: int = 2000
+    WL_PRICE_TRAFFIC_25GB: int = 4000
+    WL_PRICE_TRAFFIC_50GB: int = 7000
+    WL_PRICE_TRAFFIC_100GB: int = 12000
+    WL_PRICE_TRAFFIC_250GB: int = 25000
+    WL_PRICE_TRAFFIC_500GB: int = 45000
+    WL_PRICE_TRAFFIC_1000GB: int = 80000
+    WL_PRICE_TRAFFIC_UNLIMITED: int = 150000
+
     TRAFFIC_PACKAGES_CONFIG: str = ''
+    WL_TRAFFIC_PACKAGES_CONFIG: str = ''
 
     PRICE_PER_DEVICE: int = 5000
     DEVICES_SELECTION_ENABLED: bool = True
@@ -224,8 +236,12 @@ class Settings(BaseSettings):
     # "traffic" - цена зависит от текущего лимита трафика (цена пакета трафика)
     # "traffic_with_purchased" - цена = базовый трафик + докупленный трафик (рекомендуется)
     TRAFFIC_RESET_PRICE_MODE: str = 'traffic_with_purchased'
-    # Базовая цена сброса в копейках (используется если режим "period" или как минимальная цена)
+    # 바зовая цена сброса в копейках (используется если режим "period" или как минимальная цена)
     TRAFFIC_RESET_BASE_PRICE: int = 0  # 0 = использовать PERIOD_PRICES[30]
+
+    WL_TRAFFIC_TOPUP_ENABLED: bool = True
+    WL_TRAFFIC_RESET_PRICE_MODE: str = 'traffic_with_purchased'
+    WL_TRAFFIC_RESET_BASE_PRICE: int = 0
 
     REFERRAL_MINIMUM_TOPUP_KOPEKS: int = 10000
     REFERRAL_FIRST_TOPUP_BONUS_KOPEKS: int = 10000
@@ -592,8 +608,8 @@ class Settings(BaseSettings):
     MEDIA_IMAGE_MAX_DIMENSION: int = 2048
     MEDIA_JPEG_QUALITY: int = 85
     MINIAPP_PURCHASE_URL: str = ''
-    MINIAPP_SERVICE_NAME_EN: str = 'Bedolaga VPN'
-    MINIAPP_SERVICE_NAME_RU: str = 'Bedolaga VPN'
+    MINIAPP_SERVICE_NAME_EN: str = 'NoZapret VPN'
+    MINIAPP_SERVICE_NAME_RU: str = 'NoZapret VPN'
     MINIAPP_SERVICE_DESCRIPTION_EN: str = 'Secure & Fast Connection'
     MINIAPP_SERVICE_DESCRIPTION_RU: str = 'Безопасное и быстрое подключение'
     CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED: bool = False
@@ -747,7 +763,7 @@ class Settings(BaseSettings):
     APP_CONFIG_CACHE_TTL: int = 3600
 
     VERSION_CHECK_ENABLED: bool = True
-    VERSION_CHECK_REPO: str = 'fr1ngg/remnawave-bedolaga-telegram-bot'
+    VERSION_CHECK_REPO: str = 'fr1ngg/remnawave-nozapret-telegram-bot'
     VERSION_CHECK_INTERVAL_HOURS: int = 1
 
     BACKUP_AUTO_ENABLED: bool = True
@@ -807,11 +823,14 @@ class Settings(BaseSettings):
     SMTP_FROM_NAME: str = 'VPN Service'
     SMTP_USE_TLS: bool = True
 
-    # Ban System Integration (BedolagaBan monitoring)
+    # Ban System Integration (NoZapretBan monitoring)
     BAN_SYSTEM_ENABLED: bool = False
     BAN_SYSTEM_API_URL: str | None = None  # e.g., http://ban-server:8000
     BAN_SYSTEM_API_TOKEN: str | None = None
     BAN_SYSTEM_REQUEST_TIMEOUT: int = 30
+
+    TELEGRAM_PROXY_URL: str | None = None
+    MTPROXY_URL: str | None = None
 
     # SOCKS5 proxy for routing bot traffic to Telegram API
     # Format: socks5://user:password@host:port or socks5://host:port
@@ -1028,7 +1047,9 @@ class Settings(BaseSettings):
         return password or None
 
     def is_test_email(self, email: str) -> bool:
-        """Check if email is the configured test email."""
+        """Check if email is the configured test email. Only works in DEBUG mode."""
+        if not self.DEBUG:
+            return False
         test_email = self.get_test_email()
         if not test_email:
             return False
@@ -2231,6 +2252,54 @@ class Settings(BaseSettings):
         # Формируем финальную строку по шаблону
         return self.PAYMENT_BALANCE_TEMPLATE.format(service_name=self.PAYMENT_SERVICE_NAME, description=description)
 
+    def get_traffic_topup_price(self, gb: int) -> int:
+        for pkg in self.get_traffic_packages():
+            if pkg['gb'] == gb and pkg['enabled']:
+                return pkg['price']
+        return 0
+
+    def get_wl_traffic_packages(self) -> list[dict]:
+        packages = []
+        if self.WL_TRAFFIC_PACKAGES_CONFIG:
+            for part in self.WL_TRAFFIC_PACKAGES_CONFIG.split(','):
+                if not part.strip():
+                    continue
+                try:
+                    gb_str, price_str, enabled_str = part.split(':')
+                    packages.append({
+                        'gb': int(gb_str),
+                        'price': int(price_str),
+                        'enabled': enabled_str.lower() == 'true',
+                    })
+                except Exception:
+                    pass
+        
+        if not packages:
+            packages = [
+                {'gb': 5, 'price': self.WL_PRICE_TRAFFIC_5GB, 'enabled': True},
+                {'gb': 10, 'price': self.WL_PRICE_TRAFFIC_10GB, 'enabled': True},
+                {'gb': 25, 'price': self.WL_PRICE_TRAFFIC_25GB, 'enabled': True},
+                {'gb': 50, 'price': self.WL_PRICE_TRAFFIC_50GB, 'enabled': True},
+                {'gb': 100, 'price': self.WL_PRICE_TRAFFIC_100GB, 'enabled': True},
+                {'gb': 250, 'price': self.WL_PRICE_TRAFFIC_250GB, 'enabled': True},
+                {'gb': 500, 'price': self.WL_PRICE_TRAFFIC_500GB, 'enabled': True},
+                {'gb': 1000, 'price': self.WL_PRICE_TRAFFIC_1000GB, 'enabled': True},
+                {'gb': 0, 'price': self.WL_PRICE_TRAFFIC_UNLIMITED, 'enabled': True},
+            ]
+        return packages
+
+    def get_wl_traffic_price(self, gb: int) -> int:
+        for pkg in self.get_wl_traffic_packages():
+            if pkg['gb'] == gb:
+                return pkg['price']
+        return 0
+
+    def get_wl_traffic_topup_price(self, gb: int) -> int:
+        for pkg in self.get_wl_traffic_packages():
+            if pkg['gb'] == gb and pkg['enabled']:
+                return pkg['price']
+        return 0
+
     def get_subscription_payment_description(self, period_days: int, amount_kopeks: int) -> str:
         return self.PAYMENT_SUBSCRIPTION_TEMPLATE.format(
             service_name=self.PAYMENT_SERVICE_NAME,
@@ -2658,6 +2727,7 @@ class Settings(BaseSettings):
             UserWarning,
             stacklevel=2,
         )
+        logger.warning('CABINET_JWT_SECRET not set, falling back to BOT_TOKEN. Set a dedicated secret for production.')
         return self.BOT_TOKEN
 
     def get_cabinet_access_token_expire_minutes(self) -> int:

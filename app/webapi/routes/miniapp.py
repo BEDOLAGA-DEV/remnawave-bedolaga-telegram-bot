@@ -3019,7 +3019,7 @@ def _is_trial_available_for_user(user: User) -> bool:
     if settings.TRIAL_DURATION_DAYS <= 0:
         return False
 
-    if settings.is_trial_disabled_for_user(getattr(user, 'auth_type', 'telegram')):
+    if settings.is_trial_disabled_for_user(getattr(user, 'auth_type', 'telegram'), getattr(user, 'telegram_id', None)):
         return False
 
     if getattr(user, 'has_had_paid_subscription', False):

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, time, timedelta
+from app.utils.timezone import get_local_timezone
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -1024,6 +1025,12 @@ class Tariff(Base):
     # Максимальный лимит трафика после докупки (0 = без ограничений)
     max_topup_traffic_gb = Column(Integer, default=0, nullable=False)
 
+    # БС-трафик (_wl) per-tariff настройки
+    # None = использовать глобальный WL_DEFAULT_TRAFFIC_LIMIT_GB; 0 = безлимит
+    wl_default_traffic_gb = Column(Integer, nullable=True, default=None)
+    # {"5": 1000, "10": 2000, ...} (GB: price_kopeks). Пустой = использовать глобальные цены
+    wl_traffic_topup_packages = Column(JSON, default=dict)
+
     # Суточный тариф - ежедневное списание
     is_daily = Column(Boolean, default=False, nullable=False)  # Является ли тариф суточным
     daily_price_kopeks = Column(Integer, default=0, nullable=False)  # Цена за день в копейках
@@ -1045,9 +1052,6 @@ class Tariff(Base):
 
     # Режим сброса трафика: DAY, WEEK, MONTH, NO_RESET (по умолчанию берётся из конфига)
     traffic_reset_mode = Column(String(20), nullable=True, default=None)  # None = использовать глобальную настройку
-
-    # Внешний сквад RemnaWave (UUID) — назначается пользователю при создании подписки
-    external_squad_uuid = Column(String(255), nullable=True, default=None)
 
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
@@ -1158,6 +1162,23 @@ class Tariff(Base):
     def can_purchase_custom_traffic(self) -> bool:
         """Проверяет, можно ли купить произвольный трафик."""
         return self.custom_traffic_enabled and self.traffic_price_per_gb_kopeks > 0
+
+    def get_wl_traffic_topup_packages(self) -> dict[int, int]:
+        """Возвращает пакеты WL-трафика для докупки: {ГБ: цена в копейках}."""
+        packages = self.wl_traffic_topup_packages or {}
+        return {int(gb): int(price) for gb, price in packages.items()}
+
+    def get_wl_traffic_topup_price(self, gb: int) -> int | None:
+        """Возвращает цену в копейках для указанного пакета WL-трафика."""
+        packages = self.get_wl_traffic_topup_packages()
+        return packages.get(gb)
+
+    def can_topup_wl_traffic(self) -> bool:
+        """Проверяет, можно ли докупить WL-трафик на этом тарифе."""
+        # wl_default_traffic_gb=0 означает безлимитный WL-трафик — докупка не нужна
+        if self.wl_default_traffic_gb == 0:
+            return False
+        return bool(self.wl_traffic_topup_packages)
 
     def __repr__(self):
         return f"<Tariff(id={self.id}, name='{self.name}', tier={self.tier_level}, active={self.is_active})>"
@@ -1350,6 +1371,11 @@ class Subscription(Base):
         AwareDateTime(), nullable=True
     )  # Дата сброса докупленного трафика (30 дней после первой докупки)
 
+    wl_traffic_limit_gb = Column(Integer, default=5)
+    wl_traffic_used_gb = Column(Float, default=0.0)
+    wl_purchased_traffic_gb = Column(Integer, default=0)
+    wl_traffic_reset_at = Column(AwareDateTime(), nullable=True)
+
     subscription_url = Column(String, nullable=True)
     subscription_crypto_link = Column(String, nullable=True)
 
@@ -1385,6 +1411,9 @@ class Subscription(Base):
     )
     traffic_purchases = relationship(
         'TrafficPurchase', back_populates='subscription', passive_deletes=True, cascade='all, delete-orphan'
+    )
+    wl_traffic_purchases = relationship(
+        'WlTrafficPurchase', back_populates='subscription', passive_deletes=True, cascade='all, delete-orphan'
     )
 
     @property
@@ -1477,8 +1506,11 @@ class Subscription(Base):
         current_time = datetime.now(UTC)
         if end <= current_time:
             return 0
-        delta = end - current_time
-        return max(0, delta.days)
+        # from zoneinfo import ZoneInfo  # noqa: PLC0415
+        _tz = get_local_timezone()
+        end_local = end.astimezone(_tz)
+        now_local = current_time.astimezone(_tz)
+        return max(0, (end_local.date() - now_local.date()).days)
 
     @property
     def time_left_display(self) -> str:
@@ -1565,6 +1597,27 @@ class TrafficPurchase(Base):
     @property
     def is_expired(self) -> bool:
         """Проверяет, истекла ли докупка."""
+        return datetime.now(UTC) >= _aware(self.expires_at)
+
+
+class WlTrafficPurchase(Base):
+    """Докупка трафика (WL) с индивидуальной датой истечения."""
+
+    __tablename__ = 'wl_traffic_purchases'
+    __table_args__ = (Index('ix_wl_traffic_purchases_created_at', 'created_at'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False, index=True)
+
+    traffic_gb = Column(Integer, nullable=False)
+    expires_at = Column(AwareDateTime(), nullable=False, index=True)
+
+    created_at = Column(AwareDateTime(), default=func.now())
+
+    subscription = relationship('Subscription', back_populates='wl_traffic_purchases')
+
+    @property
+    def is_expired(self) -> bool:
         return datetime.now(UTC) >= _aware(self.expires_at)
 
 

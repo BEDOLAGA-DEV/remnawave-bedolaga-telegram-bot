@@ -362,7 +362,7 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_revenue_statistics, F.data == 'admin_stats_revenue')
     dp.callback_query.register(show_referral_statistics, F.data == 'admin_stats_referrals')
     dp.callback_query.register(show_summary_statistics, F.data == 'admin_stats_summary')
-    dp.callback_query.register(show_revenue_by_period, F.data.startswith('period_'))
+    dp.callback_query.register(show_revenue_by_period, F.data.startswith('nz!_period_'))
 
     periods = ['today', 'yesterday', 'week', 'month', 'all']
     for period in periods:

@@ -13,6 +13,18 @@ from structlog.contextvars import bound_contextvars
 logger = structlog.get_logger('web_api')
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        response = await call_next(request)
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        response.headers['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
+        return response
+
+
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Логирование входящих запросов в административный API."""
 

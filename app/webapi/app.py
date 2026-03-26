@@ -8,7 +8,7 @@ from app.cabinet.routes import router as cabinet_router
 from app.config import settings
 from app.webapi.docs import add_redoc_endpoint
 
-from .middleware import RequestLoggingMiddleware
+from .middleware import RequestLoggingMiddleware, SecurityHeadersMiddleware
 from .routes import (
     backups,
     ban_notifications,
@@ -195,6 +195,7 @@ def create_web_api_app() -> FastAPI:
     cabinet_origins = settings.get_cabinet_allowed_origins()
     all_origins = list(set(allowed_origins + cabinet_origins))
 
+    # Security: wildcard origins are incompatible with allow_credentials=True
     if '*' in all_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -214,6 +215,8 @@ def create_web_api_app() -> FastAPI:
 
     if settings.WEB_API_REQUEST_LOGGING:
         app.add_middleware(RequestLoggingMiddleware)
+
+    app.add_middleware(SecurityHeadersMiddleware)
 
     app.include_router(health.router)
     app.include_router(stats.router, prefix='/stats', tags=['stats'])

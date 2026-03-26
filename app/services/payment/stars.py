@@ -317,13 +317,13 @@ class TelegramStarsMixin:
                         [
                             types.InlineKeyboardButton(
                                 text='📱 Моя подписка',
-                                callback_data='menu_subscription',
+                                callback_data='nz!_menu_subscription',
                             )
                         ],
                         [
                             types.InlineKeyboardButton(
                                 text='🏠 Главное меню',
-                                callback_data='back_to_menu',
+                                callback_data='nz!_back_to_menu',
                             )
                         ],
                     ]

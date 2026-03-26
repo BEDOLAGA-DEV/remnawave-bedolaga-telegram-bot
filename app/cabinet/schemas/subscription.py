@@ -129,6 +129,7 @@ class TrialInfoResponse(BaseModel):
     price_kopeks: int = 0
     price_rubles: float = 0.0
     reason_unavailable: str | None = None
+    requires_telegram: bool = False
 
 
 # ============ Purchase Options Schemas ============
