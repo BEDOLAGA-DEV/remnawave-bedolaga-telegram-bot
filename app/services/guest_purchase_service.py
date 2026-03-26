@@ -310,6 +310,7 @@ async def fulfill_purchase(
             recipient_value,
             purchase=purchase,
             pre_resolved_telegram_id=pre_resolved_telegram_id,
+            tariff_id=purchase.tariff_id,
         )
 
         # Load tariff early — needed for both PENDING_ACTIVATION and DELIVERED paths
@@ -560,6 +561,7 @@ async def _find_or_create_user(
     contact_value: str,
     purchase: GuestPurchase | None = None,
     pre_resolved_telegram_id: int | None = None,
+    tariff_id: int | None = None,
 ) -> tuple[User, bool]:
     """Find user by email/telegram username or create a new one.
 
@@ -599,14 +601,21 @@ async def _find_or_create_user(
 
         # Create new email user with verified cabinet account
         plain_password = secrets.token_urlsafe(12)
-        default_group = await _get_or_create_default_promo_group(db)
+        # Resolve promo group: prefer tariff's allowed group, fallback to default
+        resolved_group = None
+        if tariff_id:
+            tariff_obj = await get_tariff_by_id(db, tariff_id)
+            if tariff_obj and hasattr(tariff_obj, 'allowed_promo_groups') and tariff_obj.allowed_promo_groups:
+                resolved_group = tariff_obj.allowed_promo_groups[0]
+        if not resolved_group:
+            resolved_group = await _get_or_create_default_promo_group(db)
         user = User(
             auth_type='email',
             email=contact_value,
             email_verified=True,
             email_verified_at=datetime.now(UTC),
             password_hash=hash_password(plain_password),
-            promo_group_id=default_group.id,
+            promo_group_id=resolved_group.id,
         )
         if purchase:
             purchase.cabinet_password = plain_password
