@@ -305,6 +305,12 @@ def _get_simple_subscription_payment_keyboard(language: str) -> types.InlineKeyb
     if settings.is_wata_enabled():
         keyboard.append([types.InlineKeyboardButton(text='💳 WATA', callback_data='simple_subscription_wata')])
 
+    if settings.is_unitpay_enabled():
+        unitpay_name = settings.get_unitpay_display_name()
+        keyboard.append(
+            [types.InlineKeyboardButton(text=f'💳 {unitpay_name}', callback_data='simple_subscription_unitpay')]
+        )
+
     # Кнопка назад
     keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')])
 
@@ -1679,6 +1685,96 @@ async def handle_simple_subscription_payment_method(
             await callback.answer()
             return
 
+        elif payment_method == 'unitpay':
+            # Оплата через UnitPay
+            if not settings.is_unitpay_enabled():
+                await callback.answer('❌ Оплата через UnitPay временно недоступна', show_alert=True)
+                return
+            if price_kopeks < settings.UNITPAY_MIN_AMOUNT_KOPEKS or price_kopeks > settings.UNITPAY_MAX_AMOUNT_KOPEKS:
+                await callback.answer(
+                    f'❌ Сумма для UnitPay должна быть между {settings.format_price(settings.UNITPAY_MIN_AMOUNT_KOPEKS)} и {settings.format_price(settings.UNITPAY_MAX_AMOUNT_KOPEKS)}.',
+                    show_alert=True,
+                )
+                return
+
+            payment_service = PaymentService(callback.bot)
+            try:
+                unitpay_result = await payment_service.create_unitpay_payment(
+                    db=db,
+                    user_id=db_user.id,
+                    amount_kopeks=price_kopeks,
+                    description=settings.get_subscription_payment_description(
+                        subscription_params['period_days'],
+                        price_kopeks,
+                    ),
+                    language=db_user.language,
+                )
+            except Exception as error:
+                logger.error('Ошибка создания UnitPay платежа', error=error)
+                unitpay_result = None
+
+            if not unitpay_result or not unitpay_result.get('payment_url'):
+                await callback.answer(
+                    texts.t(
+                        'UNITPAY_PAYMENT_ERROR',
+                        '❌ Ошибка создания платежа UnitPay. Попробуйте позже или обратитесь в поддержку.',
+                    ),
+                    show_alert=True,
+                )
+                return
+
+            payment_url = unitpay_result['payment_url']
+            order_id = unitpay_result.get('order_id')
+            local_payment_id = unitpay_result.get('local_payment_id')
+
+            keyboard = types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('UNITPAY_PAY_BUTTON', '💳 Оплатить через UnitPay'),
+                            url=payment_url,
+                        )
+                    ],
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                            callback_data=f'check_simple_unitpay_{local_payment_id}',
+                        )
+                    ],
+                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                ]
+            )
+
+            unitpay_display = settings.get_unitpay_display_name()
+            message_template = texts.t(
+                'UNITPAY_PAYMENT_INSTRUCTIONS',
+                (
+                    f'💳 <b>Оплата через {unitpay_display}</b>\n\n'
+                    '💰 Сумма: {amount}\n'
+                    '🆔 ID платежа: {payment_id}\n\n'
+                    '📱 <b>Инструкция:</b>\n'
+                    f"1. Нажмите кнопку 'Оплатить через {unitpay_display}'\n"
+                    '2. Следуйте подсказкам платежной системы\n'
+                    '3. Подтвердите перевод\n'
+                    '4. Средства зачислятся автоматически\n\n'
+                    '❓ Если возникнут проблемы, обратитесь в {support}'
+                ),
+            )
+
+            await callback.message.edit_text(
+                message_template.format(
+                    amount=settings.format_price(price_kopeks),
+                    payment_id=order_id,
+                    support=settings.get_support_contact_display_html(),
+                ),
+                reply_markup=keyboard,
+                parse_mode='HTML',
+            )
+
+            await state.clear()
+            await callback.answer()
+            return
+
         else:
             await callback.answer('❌ Неизвестный способ оплаты', show_alert=True)
 
@@ -2121,6 +2217,70 @@ async def check_simple_wata_payment_status(
 
 
 @error_handler
+async def check_simple_unitpay_payment_status(
+    callback: types.CallbackQuery,
+    db: AsyncSession,
+):
+    try:
+        local_payment_id = int(callback.data.rsplit('_', 1)[-1])
+    except (ValueError, IndexError):
+        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        return
+
+    payment_service = PaymentService(callback.bot)
+    status_info = await payment_service.get_unitpay_payment_status(db, local_payment_id)
+
+    if not status_info:
+        await callback.answer('❌ Платеж не найден', show_alert=True)
+        return
+
+    payment = status_info['payment']
+    texts = get_texts(settings.DEFAULT_LANGUAGE)
+
+    status_labels = {
+        'pending': ('⏳', texts.t('UNITPAY_STATUS_PENDING', 'Ожидает оплаты')),
+        'success': ('✅', texts.t('UNITPAY_STATUS_SUCCESS', 'Оплачен')),
+        'error': ('❌', texts.t('UNITPAY_STATUS_ERROR', 'Ошибка')),
+        'refund': ('↩️', texts.t('UNITPAY_STATUS_REFUND', 'Возврат')),
+    }
+    emoji, status_text = status_labels.get(payment.status, ('❓', texts.t('UNITPAY_STATUS_UNKNOWN', 'Неизвестно')))
+
+    unitpay_display = settings.get_unitpay_display_name()
+    message_lines = [
+        texts.t('UNITPAY_STATUS_TITLE', f'💳 <b>Статус платежа {unitpay_display}</b>'),
+        '',
+        f'🆔 ID: {payment.order_id}',
+        f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}',
+        f'📊 Статус: {emoji} {status_text}',
+        f'📅 Создан: {payment.created_at.strftime("%d.%m.%Y %H:%M") if payment.created_at else "—"}',
+    ]
+
+    if payment.is_paid:
+        message_lines.append('\n✅ Платеж успешно завершен! Средства уже зачислены.')
+    elif payment.status == 'pending':
+        message_lines.append('\n⏳ Платеж еще не завершен. Завершите оплату и проверьте статус позже.')
+
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('CHECK_STATUS_BUTTON', '📊 Проверить статус'),
+                    callback_data=f'check_simple_unitpay_{local_payment_id}',
+                )
+            ],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+        ]
+    )
+
+    await callback.answer()
+    await callback.message.edit_text(
+        '\n'.join(message_lines),
+        reply_markup=keyboard,
+        parse_mode='HTML',
+    )
+
+
+@error_handler
 async def confirm_simple_subscription_purchase(
     callback: types.CallbackQuery,
     db_user: User,
@@ -2461,5 +2621,7 @@ def register_simple_subscription_handlers(dp):
     dp.callback_query.register(check_simple_heleket_payment_status, F.data.startswith('check_simple_heleket_'))
 
     dp.callback_query.register(check_simple_wata_payment_status, F.data.startswith('check_simple_wata_'))
+
+    dp.callback_query.register(check_simple_unitpay_payment_status, F.data.startswith('check_simple_unitpay_'))
 
     dp.callback_query.register(check_simple_pal24_payment_status, F.data.startswith('check_simple_pal24_'))
