@@ -291,12 +291,23 @@ class GiftEnabledUpdate(BaseModel):
     enabled: bool
 
 
+class OfflineConvGoal(BaseModel):
+    """Single offline conversion goal descriptor."""
+
+    name: str
+    event_id: str
+    dedup: str
+
+
 class AnalyticsCountersResponse(BaseModel):
     """Analytics counter settings."""
 
     yandex_metrika_id: str = ''
     google_ads_id: str = ''
     google_ads_label: str = ''
+    offline_conv_enabled: bool = False
+    offline_conv_counter_id: str = ''
+    offline_conv_goals: list[OfflineConvGoal] = []
 
 
 class AnalyticsCountersUpdate(BaseModel):
@@ -924,10 +935,30 @@ async def get_analytics_counters(
     google_id = await get_setting_value(db, GOOGLE_ADS_ID_KEY) or ''
     google_label = await get_setting_value(db, GOOGLE_ADS_LABEL_KEY) or ''
 
+    # Offline conversions info (read-only, from env)
+    from app.config import settings
+
+    oc_enabled = bool(
+        settings.YANDEX_OFFLINE_CONV_ENABLED
+        and settings.YANDEX_OFFLINE_CONV_COUNTER_ID
+        and settings.YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET
+    )
+    oc_counter = settings.YANDEX_OFFLINE_CONV_COUNTER_ID if oc_enabled else ''
+    oc_goals: list[OfflineConvGoal] = []
+    if oc_enabled:
+        oc_goals = [
+            OfflineConvGoal(name='Регистрация', event_id='registration', dedup='1 раз'),
+            OfflineConvGoal(name='Триал', event_id='trial-add', dedup='1 раз'),
+            OfflineConvGoal(name='Покупка', event_id='purchase', dedup='каждый'),
+        ]
+
     return AnalyticsCountersResponse(
         yandex_metrika_id=yandex_id,
         google_ads_id=google_id,
         google_ads_label=google_label,
+        offline_conv_enabled=oc_enabled,
+        offline_conv_counter_id=oc_counter,
+        offline_conv_goals=oc_goals,
     )
 
 

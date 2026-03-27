@@ -23,6 +23,7 @@ from app.database.models import (
     Transaction,
     User,
 )
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.utils.message_patch import caption_exceeds_telegram_limit
 from app.utils.timezone import format_local_datetime
 
@@ -439,6 +440,9 @@ class AdminNotificationService:
             total_amount = (
                 amount_kopeks if amount_kopeks is not None else (abs(transaction.amount_kopeks) if transaction else 0)
             )
+
+            # Yandex offline conversion: purchase event (fire-and-forget, uses own session)
+            yandex_conv.spawn_bg(yandex_conv.fire_purchase_bg(user.id, total_amount))
 
             await self._record_subscription_event(
                 db,

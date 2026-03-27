@@ -12,6 +12,7 @@ class TelegramAuthRequest(BaseModel):
     campaign_slug: str | None = Field(
         None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description='Campaign slug from web link'
     )
+    yandex_cid: str | None = Field(None, max_length=128, description='Yandex.Metrika ClientID')
     referral_code: str | None = Field(
         None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
     )
@@ -30,6 +31,7 @@ class TelegramWidgetAuthRequest(BaseModel):
     campaign_slug: str | None = Field(
         None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description='Campaign slug from web link'
     )
+    yandex_cid: str | None = Field(None, max_length=128, description='Yandex.Metrika ClientID')
     referral_code: str | None = Field(
         None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
     )
@@ -42,6 +44,7 @@ class TelegramOIDCAuthRequest(BaseModel):
     campaign_slug: str | None = Field(
         None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description='Campaign slug from web link'
     )
+    yandex_cid: str | None = Field(None, max_length=128, description='Yandex.Metrika ClientID')
     referral_code: str | None = Field(
         None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
     )
@@ -71,6 +74,7 @@ class EmailLoginRequest(BaseModel):
     campaign_slug: str | None = Field(
         None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description='Campaign slug from web link'
     )
+    yandex_cid: str | None = Field(None, max_length=128, description='Yandex.Metrika ClientID')
 
 
 class RefreshTokenRequest(BaseModel):
@@ -138,6 +142,7 @@ class EmailRegisterStandaloneRequest(BaseModel):
     referral_code: str | None = Field(
         None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
     )
+    yandex_cid: str | None = Field(None, max_length=128, description='Yandex.Metrika ClientID')
 
 
 class CampaignBonusInfo(BaseModel):

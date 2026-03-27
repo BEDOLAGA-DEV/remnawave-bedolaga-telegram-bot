@@ -29,6 +29,7 @@ from app.database.models import (
     TransactionType,
     User,
 )
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.services.subscription_service import SubscriptionService
 
 
@@ -140,6 +141,7 @@ async def create_purchase(
     gift_message: str | None = None,
     source: str = 'landing',
     buyer_user_id: int | None = None,
+    yandex_cid: str | None = None,
     commit: bool = True,
 ) -> GuestPurchase:
     """Create a guest purchase record."""
@@ -159,6 +161,7 @@ async def create_purchase(
         gift_message=gift_message,
         source=source,
         buyer_user_id=buyer_user_id,
+        yandex_cid=yandex_cid,
         status=GuestPurchaseStatus.PENDING.value,
     )
 
@@ -385,6 +388,8 @@ async def fulfill_purchase(
                 token_prefix=purchase_token[:5],
                 user_id=user.id,
             )
+            # Fire Yandex conversions before early return (otherwise lost for PENDING_ACTIVATION)
+            yandex_conv.spawn_bg(_fire_yandex_conversions(purchase, user.id, is_new_account))
             return purchase
 
         squads = list(tariff.allowed_squads or [])
@@ -486,6 +491,9 @@ async def fulfill_purchase(
             recipient_type=recipient_type,
         )
 
+        # Fire Yandex offline conversions in background
+        yandex_conv.spawn_bg(_fire_yandex_conversions(purchase, user.id, is_new_account))
+
     except GuestPurchaseError:
         await db.rollback()
         raise
@@ -552,6 +560,34 @@ def _mask_email(email: str) -> str:
     domain = domain_parts[0][0] + '***'
     tld = domain_parts[-1] if len(domain_parts) > 1 else ''
     return f'{local}@{domain}.{tld}'
+
+
+async def _fire_yandex_conversions(purchase: GuestPurchase, user_id: int, is_new_user: bool) -> None:
+    """Store Yandex CID and fire offline conversions for guest purchases (best-effort).
+
+    Already runs inside a background task -- calls event functions directly
+    instead of spawning nested tasks to avoid cascading sessions.
+    """
+    if not purchase.yandex_cid:
+        return
+    try:
+        from app.database.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            stored = await yandex_conv.store_cid(db, user_id, purchase.yandex_cid, source='landing')
+            await db.commit()
+
+        if not stored:
+            return
+
+        # Call directly -- we are already in a background task, no need to spawn more
+        if is_new_user:
+            async with AsyncSessionLocal() as db:
+                await yandex_conv.on_registration(db, user_id)
+        async with AsyncSessionLocal() as db:
+            await yandex_conv.on_purchase(db, user_id, amount_kopeks=purchase.amount_kopeks)
+    except Exception:
+        logger.warning('Failed to fire Yandex conversions for guest purchase', purchase_id=purchase.id, exc_info=True)
 
 
 async def _find_or_create_user(
