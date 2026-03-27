@@ -308,11 +308,7 @@ async def get_dashboard_stats(
         # Get paid subscription sales chart (last 30 days)
         # Counts new paid subscriptions (is_trial=False), NOT transactions
         try:
-            _tz_name = (tz or 'UTC').replace("'", '')
-            try:
-                ZoneInfo(_tz_name)
-            except (KeyError, ValueError):
-                _tz_name = 'UTC'
+            _tz_name = str(_resolve_tz(tz))
             day_col = func.date(func.timezone(_tz_name, Subscription.created_at))
             _chart_rows = (
                 await db.execute(
