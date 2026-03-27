@@ -609,13 +609,14 @@ async def _find_or_create_user(
                 resolved_group = tariff_obj.allowed_promo_groups[0]
         if not resolved_group:
             resolved_group = await _get_or_create_default_promo_group(db)
+        promo_group_id = resolved_group.id if hasattr(resolved_group, 'id') else resolved_group
         user = User(
             auth_type='email',
             email=contact_value,
             email_verified=True,
             email_verified_at=datetime.now(UTC),
             password_hash=hash_password(plain_password),
-            promo_group_id=resolved_group.id,
+            promo_group_id=promo_group_id,
         )
         if purchase:
             purchase.cabinet_password = plain_password
