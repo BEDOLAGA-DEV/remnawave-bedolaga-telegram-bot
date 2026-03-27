@@ -1097,8 +1097,6 @@ async def update_gift_enabled(
 
 # ============ Login Form Constructor ============
 
-admin_branding_router = APIRouter(prefix='/admin/branding', tags=['Admin Branding'])
-
 
 @router.get('/login-form', response_model=LoginFormConfigResponse)
 async def get_login_form_config(
@@ -1120,7 +1118,7 @@ async def get_login_form_config(
     return LoginFormConfigResponse(**DEFAULT_LOGIN_FORM_CONFIG)
 
 
-@admin_branding_router.put('/login-form', response_model=LoginFormConfigResponse)
+@router.put('/login-form', response_model=LoginFormConfigResponse)
 async def update_login_form_config(
     payload: LoginFormConfigUpdate,
     admin: User = Depends(require_permission('settings:edit')),

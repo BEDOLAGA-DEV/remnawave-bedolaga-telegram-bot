@@ -40,7 +40,7 @@ from .admin_wheel import router as admin_wheel_router
 from .admin_withdrawals import router as admin_withdrawals_router
 from .auth import router as auth_router
 from .balance import router as balance_router
-from .branding import admin_branding_router, router as branding_router
+from .branding import router as branding_router
 from .contests import router as contests_router
 from .gift import router as gift_router
 from .info import router as info_router
@@ -140,7 +140,6 @@ router.include_router(admin_news_categories_router)
 router.include_router(admin_news_tags_router)
 router.include_router(admin_news_media_router)
 router.include_router(admin_news_router)
-router.include_router(admin_branding_router)
 
 # WebSocket route
 router.include_router(websocket_router)
