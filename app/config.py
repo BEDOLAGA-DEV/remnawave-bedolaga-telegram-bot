@@ -554,7 +554,6 @@ class Settings(BaseSettings):
     KASSA_AI_CARD_ENABLED: bool = False  # Карты РФ — payment_system_id=36
     KASSA_AI_CARD_DISPLAY_NAME: str = 'Карта (KassaAI)'
 
-
     # UnitPay (unitpay.ru)
     UNITPAY_ENABLED: bool = False
     UNITPAY_PROJECT_ID: int | None = None
@@ -987,7 +986,7 @@ class Settings(BaseSettings):
 
     def get_proxy_url(self) -> str | None:
         """Return SOCKS5 proxy URL or None."""
-        return self.PROXY_URL if self.PROXY_URL else None
+        return self.PROXY_URL or None
 
     def get_nalogo_proxy_url(self) -> str | None:
         """Return SOCKS proxy URL for nalogo or None.
@@ -1953,13 +1952,8 @@ class Settings(BaseSettings):
     def get_kassa_ai_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_display_name())
 
-
     def is_unitpay_enabled(self) -> bool:
-        return (
-            self.UNITPAY_ENABLED
-            and self.UNITPAY_PROJECT_ID is not None
-            and self.UNITPAY_SECRET_KEY is not None
-        )
+        return self.UNITPAY_ENABLED and self.UNITPAY_PROJECT_ID is not None and self.UNITPAY_SECRET_KEY is not None
 
     def get_unitpay_display_name(self) -> str:
         name = (self.UNITPAY_DISPLAY_NAME or '').strip()
@@ -1973,7 +1967,7 @@ class Settings(BaseSettings):
 
     def get_unitpay_sbp_display_name(self) -> str:
         name = (self.UNITPAY_SBP_DISPLAY_NAME or '').strip()
-        return name if name else 'СБП (UnitPay)'
+        return name or 'СБП (UnitPay)'
 
     def get_unitpay_sbp_display_name_html(self) -> str:
         return html.escape(self.get_unitpay_sbp_display_name())
@@ -1983,7 +1977,7 @@ class Settings(BaseSettings):
 
     def get_unitpay_card_display_name(self) -> str:
         name = (self.UNITPAY_CARD_DISPLAY_NAME or '').strip()
-        return name if name else 'Карта (UnitPay)'
+        return name or 'Карта (UnitPay)'
 
     def get_unitpay_card_display_name_html(self) -> str:
         return html.escape(self.get_unitpay_card_display_name())
@@ -2003,7 +1997,7 @@ class Settings(BaseSettings):
 
     def get_severpay_display_name(self) -> str:
         name = (self.SEVERPAY_DISPLAY_NAME or '').strip()
-        return name if name else 'SeverPay'
+        return name or 'SeverPay'
 
     def get_severpay_display_name_html(self) -> str:
         return html.escape(self.get_severpay_display_name())
@@ -2013,7 +2007,7 @@ class Settings(BaseSettings):
 
     def get_kassa_ai_sbp_display_name(self) -> str:
         name = (self.KASSA_AI_SBP_DISPLAY_NAME or '').strip()
-        return name if name else 'СБП (KassaAI)'
+        return name or 'СБП (KassaAI)'
 
     def get_kassa_ai_sbp_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_sbp_display_name())
@@ -2023,7 +2017,7 @@ class Settings(BaseSettings):
 
     def get_kassa_ai_card_display_name(self) -> str:
         name = (self.KASSA_AI_CARD_DISPLAY_NAME or '').strip()
-        return name if name else 'Карта (KassaAI)'
+        return name or 'Карта (KassaAI)'
 
     def get_kassa_ai_card_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_card_display_name())
@@ -2277,7 +2271,11 @@ class Settings(BaseSettings):
             return [30, 60, 90, 180, 360]
 
     def get_balance_payment_description(
-        self, amount_kopeks: int, telegram_user_id: int | None = None, user_db_id: int | None = None, language: str | None = None
+        self,
+        amount_kopeks: int,
+        telegram_user_id: int | None = None,
+        user_db_id: int | None = None,
+        language: str | None = None,
     ) -> str:
         # Localized base description
         _topup_labels = {

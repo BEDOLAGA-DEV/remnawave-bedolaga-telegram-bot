@@ -451,9 +451,10 @@ class AdminNotificationService:
             # Yandex offline conversion: purchase event
             try:
                 from app.services import yandex_offline_conv_service as yandex_conv
+
                 await yandex_conv.on_purchase(db, user.id, total_amount)
             except Exception as yandex_err:
-                logger.debug("Yandex offline conv purchase hook error", error=yandex_err)
+                logger.debug('Yandex offline conv purchase hook error', error=yandex_err)
 
             await self._record_subscription_event(
                 db,

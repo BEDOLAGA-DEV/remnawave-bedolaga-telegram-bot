@@ -254,7 +254,6 @@ def _build_purchase_status_response(purchase: GuestPurchase) -> PurchaseStatusRe
     )
 
 
-
 def _detect_lang(request: Request) -> str:
     """Detect language from Accept-Language header."""
     accept = request.headers.get('accept-language', 'ru')
@@ -263,13 +262,41 @@ def _detect_lang(request: Request) -> str:
             return lang
     return 'ru'
 
+
 def _period_label(days: int, lang: str = 'ru') -> str:
     """Convert days to human-readable period label, localized."""
     labels = {
-        'ru': {1: '1 день', 7: '1 неделя', 14: '2 недели', 30: '1 месяц', 60: '2 месяца', 90: '3 месяца', 180: '6 месяцев', 365: '1 год'},
-        'en': {1: '1 day', 7: '1 week', 14: '2 weeks', 30: '1 month', 60: '2 months', 90: '3 months', 180: '6 months', 365: '1 year'},
+        'ru': {
+            1: '1 день',
+            7: '1 неделя',
+            14: '2 недели',
+            30: '1 месяц',
+            60: '2 месяца',
+            90: '3 месяца',
+            180: '6 месяцев',
+            365: '1 год',
+        },
+        'en': {
+            1: '1 day',
+            7: '1 week',
+            14: '2 weeks',
+            30: '1 month',
+            60: '2 months',
+            90: '3 months',
+            180: '6 months',
+            365: '1 year',
+        },
         'zh': {1: '1天', 7: '1周', 14: '2周', 30: '1个月', 60: '2个月', 90: '3个月', 180: '6个月', 365: '1年'},
-        'fa': {1: '۱ روز', 7: '۱ هفته', 14: '۲ هفته', 30: '۱ ماه', 60: '۲ ماه', 90: '۳ ماه', 180: '۶ ماه', 365: '۱ سال'},
+        'fa': {
+            1: '۱ روز',
+            7: '۱ هفته',
+            14: '۲ هفته',
+            30: '۱ ماه',
+            60: '۲ ماه',
+            90: '۳ ماه',
+            180: '۶ ماه',
+            365: '۱ سال',
+        },
     }
     lang_labels = labels.get(lang, labels['ru'])
     if days in lang_labels:
@@ -664,9 +691,9 @@ async def create_landing_purchase(
         amount_kopeks=amount_kopeks,
         payment_method=body.payment_method,
         description=settings.PAYMENT_BALANCE_TEMPLATE.format(
-                service_name=settings.PAYMENT_SERVICE_NAME,
-                description=f'{tariff.name} {_period_label(body.period_days, lang=(body.language or 'ru'))}',
-            ),
+            service_name=settings.PAYMENT_SERVICE_NAME,
+            description=f'{tariff.name} {_period_label(body.period_days, lang=(body.language or "ru"))}',
+        ),
         purchase_token=purchase.token,
         return_url=return_url,
     )

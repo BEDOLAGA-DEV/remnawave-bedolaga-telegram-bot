@@ -406,7 +406,6 @@ async def get_revenue_by_period(db: AsyncSession, days: int = 30, tz: str | None
     if tz:
         try:
             ZoneInfo(tz)  # validate
-            from sqlalchemy import text as _text
 
             date_expr = func.date(func.timezone(tz, Transaction.created_at))
         except (KeyError, ValueError):

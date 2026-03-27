@@ -5,9 +5,9 @@ from __future__ import annotations
 import enum
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import structlog
 from sqlalchemy import cast, desc, or_, select
@@ -63,7 +63,7 @@ def _escape_like(value: str) -> str:
     return value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
 
 
-class StatusFilter(str, enum.Enum):
+class StatusFilter(enum.StrEnum):
     """Supported status filter values."""
 
     ALL = 'all'
@@ -72,7 +72,7 @@ class StatusFilter(str, enum.Enum):
     CANCELLED = 'cancelled'
 
 
-class PeriodPreset(str, enum.Enum):
+class PeriodPreset(enum.StrEnum):
     """Predefined period presets."""
 
     TODAY = 'today'

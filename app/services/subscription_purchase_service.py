@@ -1072,7 +1072,7 @@ class MiniAppSubscriptionPurchaseService:
                 device_limit=pricing.selection.devices,
                 connected_squads=pricing.selection.servers,
                 update_server_counters=False,
-                tariff_id=getattr(settings, "SIMPLE_SUBSCRIPTION_TARIFF_ID", 1),
+                tariff_id=getattr(settings, 'SIMPLE_SUBSCRIPTION_TARIFF_ID', 1),
             )
 
         if pricing.server_ids:
@@ -1164,6 +1164,7 @@ class SubscriptionPurchaseService:
         # Resolve default tariff_id from settings if not provided
         if tariff_id is None:
             from app.config import settings
+
             tariff_id = getattr(settings, 'SIMPLE_SUBSCRIPTION_TARIFF_ID', 1)
 
         # Create a pending subscription

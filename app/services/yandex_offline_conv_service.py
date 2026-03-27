@@ -75,21 +75,25 @@ def _base_payload(cid: str) -> dict[str, str]:
 
 def _pageview_payload(cid: str) -> dict[str, str]:
     payload = _base_payload(cid)
-    payload.update({
-        't': 'pageview',
-        'dl': settings.YANDEX_OFFLINE_CONV_DL or 'https://web.mtrxvps.ru',
-        'dt': settings.YANDEX_OFFLINE_CONV_DT or 'Matrixxx VPN',
-    })
+    payload.update(
+        {
+            't': 'pageview',
+            'dl': settings.YANDEX_OFFLINE_CONV_DL or 'https://web.mtrxvps.ru',
+            'dt': settings.YANDEX_OFFLINE_CONV_DT or 'Matrixxx VPN',
+        }
+    )
     return payload
 
 
 def _event_payload(cid: str, event_action: str) -> dict[str, str]:
     payload = _base_payload(cid)
-    payload.update({
-        't': 'event',
-        'ea': event_action,
-        'dl': settings.YANDEX_OFFLINE_CONV_DL or 'https://web.mtrxvps.ru',
-    })
+    payload.update(
+        {
+            't': 'event',
+            'ea': event_action,
+            'dl': settings.YANDEX_OFFLINE_CONV_DL or 'https://web.mtrxvps.ru',
+        }
+    )
     return payload
 
 
@@ -155,7 +159,8 @@ def _task_done(task):
         return
     exc = task.exception()
     if exc:
-        logger.error(f"{LOG_PREFIX} Background task failed", error=str(exc))
+        logger.error(f'{LOG_PREFIX} Background task failed', error=str(exc))
+
 
 def spawn_bg(coro) -> None:
     """Spawn a background Yandex conversion task with proper reference tracking.
@@ -210,8 +215,7 @@ async def store_cid(
         return False
 
     try:
-        await upsert_cid(db, user_id, normalized, source=source,
-                         counter_id=settings.YANDEX_OFFLINE_CONV_COUNTER_ID)
+        await upsert_cid(db, user_id, normalized, source=source, counter_id=settings.YANDEX_OFFLINE_CONV_COUNTER_ID)
         logger.info('stored CID', user_id=user_id, source=source)
         return True
     except Exception as exc:
@@ -307,6 +311,6 @@ def parse_cid_from_start_param(param: str) -> tuple[str | None, str]:
     if not prefix or not param.startswith(prefix):
         return None, param
 
-    cid = param[len(prefix):]
+    cid = param[len(prefix) :]
     normalized = _normalize_cid(cid)
     return normalized, param  # Keep original param for UTM tracking

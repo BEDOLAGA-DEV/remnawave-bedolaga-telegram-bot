@@ -878,7 +878,6 @@ class SeverPayPayment(Base):
         return f'<SeverPayPayment(id={self.id}, order_id={self.order_id}, amount={self.amount_rubles}₽, status={self.status})>'
 
 
-
 class UnitPayPayment(Base):
     """Платежи через UnitPay (unitpay.ru)."""
 
@@ -3437,6 +3436,7 @@ class NewsTag(Base):
 
     def __repr__(self) -> str:
         return f"<NewsTag id={self.id} name='{self.name}'>"
+
 
 class YandexClientIdMap(Base):
     """Mapping between users and Yandex.Metrika ClientIDs for offline conversions."""

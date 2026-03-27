@@ -29,9 +29,9 @@ from app.database.models import (
     PlategaPayment,
     RioPayPayment,
     SeverPayPayment,
-    UnitPayPayment,
     Transaction,
     TransactionType,
+    UnitPayPayment,
     User,
     WataPayment,
     YooKassaPayment,
@@ -412,12 +412,11 @@ def _is_unitpay_pending(payment: UnitPayPayment) -> bool:
     return status in {'pending', 'processing'}
 
 
-
 def _is_riopay_pending(payment: RioPayPayment) -> bool:
     if payment.is_paid:
         return False
     status = (payment.status or '').lower()
-    return status in {'pending'}
+    return status == 'pending'
 
 
 def _parse_cryptobot_amount_kopeks(payment: CryptoBotPayment) -> int:
@@ -448,7 +447,6 @@ def _build_record(
     expires_at: datetime | None = None,
 ) -> PendingPayment | None:
     user = getattr(payment, 'user', None)
-
 
     created_at = getattr(payment, 'created_at', None)
     if not isinstance(created_at, datetime):
@@ -789,7 +787,6 @@ async def _fetch_unitpay_payments(db: AsyncSession, cutoff: datetime) -> list[Pe
     return records
 
 
-
 async def _fetch_stars_transactions(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
     stmt = (
         select(Transaction)
@@ -1011,6 +1008,7 @@ async def get_payment_record(
 
     if method == PaymentMethod.UNITPAY:
         from app.database.models import UnitPayPayment
+
         payment = await db.get(UnitPayPayment, local_payment_id)
         if not payment:
             return None

@@ -660,7 +660,7 @@ async def add_subscription_traffic(db: AsyncSession, subscription: Subscription,
     subscription.purchased_traffic_gb = current_purchased + gb
 
     # Устанавливаем traffic_reset_at на ближайшую дату истечения из всех активных докупок
-    now = datetime.now(UTC)
+
     active_purchases_query = (
         select(TrafficPurchase)
         .where(TrafficPurchase.subscription_id == subscription.id)
@@ -845,7 +845,6 @@ async def reactivate_subscription(db: AsyncSession, subscription: Subscription, 
     Активирует если подписка была DISABLED или EXPIRED и ещё не истекла по времени.
     Не логирует если реактивация не требуется.
     """
-    now = datetime.now(UTC)
 
     # Тихо выходим если реактивация не нужна (уже активна или другой статус)
     reactivatable_statuses = {
@@ -982,7 +981,6 @@ async def get_subscriptions_statistics(db: AsyncSession, tz: str | None = None) 
 
     paid_subscriptions = active_subscriptions - trial_subscriptions
 
-    now = datetime.now(UTC)
     try:
         user_tz = ZoneInfo(tz) if tz else ZoneInfo('UTC')
     except (KeyError, ValueError):
@@ -1070,7 +1068,6 @@ async def get_subscriptions_statistics(db: AsyncSession, tz: str | None = None) 
 
 
 async def get_trial_statistics(db: AsyncSession) -> dict:
-    now = datetime.now(UTC)
 
     total_trials_result = await db.execute(select(func.count(Subscription.id)).where(Subscription.is_trial.is_(True)))
     total_trials = total_trials_result.scalar() or 0
@@ -1103,7 +1100,6 @@ async def get_trial_statistics(db: AsyncSession) -> dict:
 
 
 async def reset_trials_for_users_without_paid_subscription(db: AsyncSession) -> int:
-    now = datetime.now(UTC)
 
     result = await db.execute(
         select(Subscription)
@@ -1690,7 +1686,6 @@ async def get_daily_subscriptions_for_charge(db: AsyncSession) -> list[Subscript
     """
     from app.database.models import Tariff
 
-    now = datetime.now(UTC)
     one_day_ago = now - timedelta(hours=24)
 
     query = (

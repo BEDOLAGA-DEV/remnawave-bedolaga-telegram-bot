@@ -1122,7 +1122,6 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
-
     # UnitPay webhook
     if settings.is_unitpay_enabled():
 

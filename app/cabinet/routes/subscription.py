@@ -1332,6 +1332,7 @@ async def activate_trial(
     # Yandex offline conversions: fire trial event
     try:
         from app.services import yandex_offline_conv_service as yandex_conv
+
         await yandex_conv.on_trial(db, user.id)
     except Exception as e:
         logger.debug('Yandex offline conv trial hook error', error=e)

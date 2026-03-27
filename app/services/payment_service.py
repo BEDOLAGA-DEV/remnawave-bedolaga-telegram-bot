@@ -776,7 +776,6 @@ class PaymentService(
                 }
             return None
 
-
         # --- UnitPay -----------------------------------------------------------
         if payment_method in ('unitpay', 'unitpay_sbp', 'unitpay_card'):
             if not settings.is_unitpay_enabled():
