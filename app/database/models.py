@@ -3254,6 +3254,8 @@ class LandingPage(Base):
     custom_css = Column(Text, nullable=True)
     meta_title = Column(JSON, nullable=True)
     meta_description = Column(JSON, nullable=True)
+    meta_keywords = Column(JSON, nullable=True)
+    meta_og_image = Column(Text, nullable=True)
     display_order = Column(Integer, nullable=False, default=0)
     discount_percent = Column(Integer, nullable=True)  # 1-99, global discount for all tariffs
     discount_overrides = Column(JSON, nullable=True)  # {"tariff_id": percent} per-tariff override

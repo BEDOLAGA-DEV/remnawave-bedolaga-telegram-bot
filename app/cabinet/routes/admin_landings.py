@@ -199,6 +199,8 @@ class LandingCreateRequest(BaseModel):
     custom_css: str | None = Field(default=None, max_length=10000)
     meta_title: dict[str, str] | None = None
     meta_description: dict[str, str] | None = None
+    meta_keywords: dict[str, str] | None = None
+    meta_og_image: str | None = Field(default=None, max_length=500)
     discount_percent: int | None = Field(default=None, ge=1, le=99)
     discount_overrides: dict[str, int] | None = None  # {"tariff_id": percent}
     discount_starts_at: datetime | None = None
@@ -212,7 +214,14 @@ class LandingCreateRequest(BaseModel):
         return _validate_background_config(v)
 
     @field_validator(
-        'title', 'subtitle', 'footer_text', 'meta_title', 'meta_description', 'discount_badge_text', mode='before'
+        'title',
+        'subtitle',
+        'footer_text',
+        'meta_title',
+        'meta_description',
+        'meta_keywords',
+        'discount_badge_text',
+        mode='before',
     )
     @classmethod
     def coerce_text_to_dict(cls, v: dict[str, str] | str | None) -> dict[str, str] | None:
@@ -252,6 +261,13 @@ class LandingCreateRequest(BaseModel):
         if v is None:
             return None
         return validate_locale_dict(v, max_length=500, field_name='meta_description')
+
+    @field_validator('meta_keywords')
+    @classmethod
+    def validate_meta_keywords(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if v is None:
+            return None
+        return validate_locale_dict(v, max_length=300, field_name='meta_keywords')
 
     @field_validator('discount_badge_text')
     @classmethod
@@ -308,6 +324,8 @@ class LandingUpdateRequest(BaseModel):
     custom_css: str | None = Field(default=None, max_length=10000)
     meta_title: dict[str, str] | None = None
     meta_description: dict[str, str] | None = None
+    meta_keywords: dict[str, str] | None = None
+    meta_og_image: str | None = Field(default=None, max_length=500)
     discount_percent: int | None = Field(default=None, ge=1, le=99)
     discount_overrides: dict[str, int] | None = None
     discount_starts_at: datetime | None = None
@@ -333,7 +351,14 @@ class LandingUpdateRequest(BaseModel):
         return v
 
     @field_validator(
-        'title', 'subtitle', 'footer_text', 'meta_title', 'meta_description', 'discount_badge_text', mode='before'
+        'title',
+        'subtitle',
+        'footer_text',
+        'meta_title',
+        'meta_description',
+        'meta_keywords',
+        'discount_badge_text',
+        mode='before',
     )
     @classmethod
     def coerce_text_to_dict(cls, v: dict[str, str] | str | None) -> dict[str, str] | None:
@@ -375,6 +400,13 @@ class LandingUpdateRequest(BaseModel):
         if v is None:
             return None
         return validate_locale_dict(v, max_length=500, field_name='meta_description')
+
+    @field_validator('meta_keywords')
+    @classmethod
+    def validate_meta_keywords(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if v is None:
+            return None
+        return validate_locale_dict(v, max_length=300, field_name='meta_keywords')
 
     @field_validator('discount_badge_text')
     @classmethod
@@ -455,6 +487,8 @@ class LandingDetailResponse(BaseModel):
     custom_css: str | None = None
     meta_title: dict[str, str] | None = None
     meta_description: dict[str, str] | None = None
+    meta_keywords: dict[str, str] | None = None
+    meta_og_image: str | None = Field(default=None, max_length=500)
     discount_percent: int | None = None
     discount_overrides: dict[str, int] | None = None
     discount_starts_at: datetime | None = None
@@ -465,7 +499,14 @@ class LandingDetailResponse(BaseModel):
     updated_at: datetime | None = None
 
     @field_validator(
-        'title', 'subtitle', 'footer_text', 'meta_title', 'meta_description', 'discount_badge_text', mode='before'
+        'title',
+        'subtitle',
+        'footer_text',
+        'meta_title',
+        'meta_description',
+        'meta_keywords',
+        'discount_badge_text',
+        mode='before',
     )
     @classmethod
     def coerce_to_dict(cls, v: dict[str, str] | str | None) -> dict[str, str] | None:

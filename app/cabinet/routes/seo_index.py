@@ -1,26 +1,27 @@
 """Serves index.html with injected SEO meta tags for search engines and social previews.
 
-Reads the cabinet's built index.html from disk (data/cabinet_index.html),
-replaces <title>Loading...</title> with configured SEO meta tags,
-and returns the modified HTML. This ensures search engines and social media
-crawlers see proper title, description, and Open Graph tags instead of
-the SPA's default "Loading..." placeholder.
+Supports per-landing SEO: /buy/{slug} pages use meta_title/meta_description
+from the landing_pages table. All other pages use global SEO settings.
 
 Setup:
   1. Copy cabinet's index.html: docker cp cabinet:/usr/share/nginx/html/index.html data/cabinet_index.html
   2. Point nginx location / to this endpoint for non-asset requests
   3. Configure SEO settings via /cabinet/branding/seo API
+  4. Pass X-Original-URI header from nginx for per-page SEO
 """
 
 import html as html_module
+import re
 from pathlib import Path
 
 import structlog
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.crud.system_setting import get_setting_value
+from app.database.models import LandingPage
 
 from ..dependencies import get_cabinet_db
 from .branding import SEO_DESCRIPTION_KEY, SEO_KEYWORDS_KEY, SEO_OG_IMAGE_KEY, SEO_TITLE_KEY
@@ -33,6 +34,7 @@ router = APIRouter(tags=['SEO'])
 INDEX_PATH = Path('data/cabinet_index.html')
 
 _cached_html: str | None = None
+_BUY_SLUG_RE = re.compile(r'^/buy/([a-zA-Z0-9_-]+)')
 
 
 def _read_index() -> str:
@@ -68,6 +70,36 @@ def _build_meta_block(title: str, description: str, og_image: str, keywords: str
     return '\n    '.join(lines)
 
 
+def _get_localized(json_field, lang: str = 'ru') -> str:
+    if not json_field:
+        return ''
+    if isinstance(json_field, str):
+        return json_field
+    if isinstance(json_field, dict):
+        return json_field.get(lang) or json_field.get('ru') or next(iter(json_field.values()), '')
+    return ''
+
+
+async def _get_landing_seo(db: AsyncSession, slug: str) -> dict | None:
+    result = await db.execute(
+        select(
+            LandingPage.meta_title,
+            LandingPage.meta_description,
+            LandingPage.meta_keywords,
+            LandingPage.meta_og_image,
+        ).where(LandingPage.slug == slug, LandingPage.is_active.is_(True))
+    )
+    row = result.first()
+    if not row:
+        return None
+    return {
+        'title': _get_localized(row[0]),
+        'description': _get_localized(row[1]),
+        'keywords': _get_localized(row[2]),
+        'og_image': row[3] or '',
+    }
+
+
 @router.get('/seo-index')
 async def seo_index(request: Request, db: AsyncSession = Depends(get_cabinet_db)):
     """Serve index.html with SEO meta tags injected."""
@@ -77,20 +109,40 @@ async def seo_index(request: Request, db: AsyncSession = Depends(get_cabinet_db)
         logger.exception('Failed to read cabinet index.html')
         return HTMLResponse('<html><body>Service unavailable</body></html>', status_code=502)
 
+    base_url = (
+        str(request.headers.get('x-forwarded-proto', 'https'))
+        + '://'
+        + str(request.headers.get('host', 'matrixvpn.top'))
+    )
+    request_path = request.headers.get('x-original-uri') or ''
+
+    # Per-landing SEO for /buy/{slug}
+    landing_match = _BUY_SLUG_RE.match(request_path)
+    if landing_match:
+        slug = landing_match.group(1)
+        landing_seo = await _get_landing_seo(db, slug)
+        if landing_seo:
+            title = landing_seo['title'] or 'Cabinet'
+            description = landing_seo['description']
+            keywords = landing_seo['keywords']
+            og_image = landing_seo['og_image'] or await get_setting_value(db, SEO_OG_IMAGE_KEY) or ''
+            url = f'{base_url}/buy/{slug}'
+            meta_block = _build_meta_block(title, description, og_image, keywords, url)
+            injected = original.replace('<title>Loading...</title>', meta_block)
+            return HTMLResponse(injected, headers={'Cache-Control': 'no-cache, must-revalidate'})
+
+    # Global SEO settings
     title = await get_setting_value(db, SEO_TITLE_KEY) or 'Cabinet'
     description = await get_setting_value(db, SEO_DESCRIPTION_KEY) or ''
     og_image = await get_setting_value(db, SEO_OG_IMAGE_KEY) or ''
     keywords = await get_setting_value(db, SEO_KEYWORDS_KEY) or ''
 
-    url = str(request.headers.get('x-forwarded-proto', 'https')) + '://' + str(request.headers.get('host', 'localhost'))
-
-    meta_block = _build_meta_block(title, description, og_image, keywords, url)
+    meta_block = _build_meta_block(title, description, og_image, keywords, base_url)
     injected = original.replace('<title>Loading...</title>', meta_block)
 
     return HTMLResponse(injected, headers={'Cache-Control': 'no-cache, must-revalidate'})
 
 
 def invalidate_cache():
-    """Call after cabinet redeploy to refresh cached HTML."""
     global _cached_html
     _cached_html = None
