@@ -1615,7 +1615,7 @@ class EmailNotificationTemplates:
         # Credentials block for gift recipients who got a new cabinet account
         cred_block = {'ru': '', 'en': '', 'zh': '', 'ua': '', 'fa': ''}
         if cabinet_password and cabinet_email:
-            escaped_pw = html.escape(cabinet_password)
+            escaped_pw = cabinet_password  # already escaped above
             cred_block = {
                 'ru': f"""
                     <div class="highlight">
