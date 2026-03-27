@@ -1411,7 +1411,7 @@ class EmailNotificationTemplates:
         period_days = context.get('period_days', 0)
         cabinet_url = html.escape(context.get('cabinet_url', ''))
         cabinet_email = html.escape(context.get('cabinet_email', ''))
-        cabinet_password = context.get('cabinet_password', '')
+        cabinet_password = html.escape(context.get('cabinet_password', ''))
         subscription_url = html.escape(context.get('subscription_url', ''))
 
         happ_deeplink = f'happ://add/{subscription_url}' if subscription_url else ''
@@ -1608,7 +1608,7 @@ class EmailNotificationTemplates:
         tariff_name = html.escape(context.get('tariff_name', ''))
         period_days = context.get('period_days', 0)
         gift_message = context.get('gift_message')
-        cabinet_password = context.get('cabinet_password')
+        cabinet_password = html.escape(context.get('cabinet_password') or '')
         cabinet_email = html.escape(context.get('cabinet_email', ''))
         cabinet_url = html.escape(context.get('cabinet_url', ''))
 
