@@ -34,6 +34,7 @@ router = APIRouter(tags=['SEO'])
 INDEX_PATH = Path('data/cabinet_index.html')
 
 _cached_html: str | None = None
+_TITLE_PLACEHOLDER = '<title>Loading...</title>'
 _BUY_SLUG_RE = re.compile(r'^/buy/([a-zA-Z0-9_-]+)')
 
 
@@ -128,7 +129,7 @@ async def seo_index(request: Request, db: AsyncSession = Depends(get_cabinet_db)
             og_image = landing_seo['og_image'] or await get_setting_value(db, SEO_OG_IMAGE_KEY) or ''
             url = f'{base_url}/buy/{slug}'
             meta_block = _build_meta_block(title, description, og_image, keywords, url)
-            injected = original.replace('<title>Loading...</title>', meta_block)
+            injected = original.replace(_TITLE_PLACEHOLDER, meta_block)
             return HTMLResponse(injected, headers={'Cache-Control': 'no-cache, must-revalidate'})
 
     # Global SEO settings
@@ -138,7 +139,7 @@ async def seo_index(request: Request, db: AsyncSession = Depends(get_cabinet_db)
     keywords = await get_setting_value(db, SEO_KEYWORDS_KEY) or ''
 
     meta_block = _build_meta_block(title, description, og_image, keywords, base_url)
-    injected = original.replace('<title>Loading...</title>', meta_block)
+    injected = original.replace(_TITLE_PLACEHOLDER, meta_block)
 
     return HTMLResponse(injected, headers={'Cache-Control': 'no-cache, must-revalidate'})
 
