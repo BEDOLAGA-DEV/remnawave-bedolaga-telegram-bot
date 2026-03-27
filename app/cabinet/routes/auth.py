@@ -595,7 +595,10 @@ async def auth_telegram(
         response.user = _user_to_response(user)
 
     # Yandex offline conversions
-    await _process_yandex_cid(user, request.yandex_cid, source='web')
+    try:
+        asyncio.create_task(_process_yandex_cid(user, request.yandex_cid, source='web'))
+    except Exception:
+        pass
 
     return response
 
@@ -705,7 +708,10 @@ async def auth_telegram_widget(
         response.user = _user_to_response(user)
 
     # Yandex offline conversions
-    await _process_yandex_cid(user, request.yandex_cid, source='web')
+    try:
+        asyncio.create_task(_process_yandex_cid(user, request.yandex_cid, source='web'))
+    except Exception:
+        pass
 
     return response
 
@@ -854,7 +860,10 @@ async def auth_telegram_oidc(
         response.user = _user_to_response(user)
 
     # Yandex offline conversions
-    await _process_yandex_cid(user, request.yandex_cid, source='web')
+    try:
+        asyncio.create_task(_process_yandex_cid(user, request.yandex_cid, source='web'))
+    except Exception:
+        pass
 
     return response
 
@@ -1098,7 +1107,10 @@ async def register_email_standalone(
             # Не прерываем регистрацию из-за ошибки реферальной системы
 
     # Yandex offline conversions (store CID for new user)
-    await _process_yandex_cid(user, request.yandex_cid, source='web')
+    try:
+        asyncio.create_task(_process_yandex_cid(user, request.yandex_cid, source='web'))
+    except Exception:
+        pass
 
     # Для тестового email - сразу можно логиниться (уже verified)
     # Для обычного email - требуется верификация (если включена)
@@ -1319,7 +1331,10 @@ async def login_email(
         response.user = _user_to_response(user)
 
     # Yandex offline conversions
-    await _process_yandex_cid(user, request.yandex_cid, source='web')
+    try:
+        asyncio.create_task(_process_yandex_cid(user, request.yandex_cid, source='web'))
+    except Exception:
+        pass
 
     return response
 
