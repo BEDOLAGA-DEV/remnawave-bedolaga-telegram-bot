@@ -82,6 +82,7 @@ class UnitPayService:
             'method': 'initPayment',
             'params[paymentType]': payment_type,
             'params[projectId]': self.project_id,
+            # NOTE: UnitPay requires secretKey as query param -- ensure access logs are secured
             'params[secretKey]': self.secret_key,
             'params[sum]': amount,
             'params[account]': account,
@@ -141,6 +142,7 @@ class UnitPayService:
         params = {
             'method': 'getPayment',
             'params[paymentId]': payment_id,
+            # NOTE: UnitPay requires secretKey as query param -- ensure access logs are secured
             'params[secretKey]': self.secret_key,
         }
 
