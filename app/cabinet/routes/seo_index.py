@@ -77,7 +77,6 @@ async def seo_index(request: Request, db: AsyncSession = Depends(get_cabinet_db)
         logger.exception('Failed to read cabinet index.html')
         return HTMLResponse('<html><body>Service unavailable</body></html>', status_code=502)
 
-
     title = await get_setting_value(db, SEO_TITLE_KEY) or 'Cabinet'
     description = await get_setting_value(db, SEO_DESCRIPTION_KEY) or ''
     og_image = await get_setting_value(db, SEO_OG_IMAGE_KEY) or ''
