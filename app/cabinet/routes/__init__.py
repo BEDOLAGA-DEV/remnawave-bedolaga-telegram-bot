@@ -41,7 +41,6 @@ from .admin_withdrawals import router as admin_withdrawals_router
 from .auth import router as auth_router
 from .balance import router as balance_router
 from .branding import router as branding_router
-from .seo_index import router as seo_index_router
 from .contests import router as contests_router
 from .gift import router as gift_router
 from .info import router as info_router
@@ -55,6 +54,7 @@ from .polls import router as polls_router
 from .promo import router as promo_router
 from .promocode import router as promocode_router
 from .referral import router as referral_router
+from .seo_index import router as seo_index_router
 from .subscription import router as subscription_router
 from .subscription_modules.multi_tariff import router as multi_tariff_subscription_router
 from .ticket_notifications import (

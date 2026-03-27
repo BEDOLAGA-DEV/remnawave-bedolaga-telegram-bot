@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.crud.system_setting import get_setting_value
 
 from ..dependencies import get_cabinet_db
+nfrom .branding import SEO_DESCRIPTION_KEY, SEO_KEYWORDS_KEY, SEO_OG_IMAGE_KEY, SEO_TITLE_KEY
 
 
 logger = structlog.get_logger(__name__)
@@ -76,7 +77,6 @@ async def seo_index(request: Request, db: AsyncSession = Depends(get_cabinet_db)
         logger.exception('Failed to read cabinet index.html')
         return HTMLResponse('<html><body>Service unavailable</body></html>', status_code=502)
 
-    from .branding import SEO_TITLE_KEY, SEO_DESCRIPTION_KEY, SEO_OG_IMAGE_KEY, SEO_KEYWORDS_KEY
 
     title = await get_setting_value(db, SEO_TITLE_KEY) or 'Cabinet'
     description = await get_setting_value(db, SEO_DESCRIPTION_KEY) or ''
