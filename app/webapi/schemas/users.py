@@ -34,6 +34,7 @@ class SubscriptionSummary(BaseModel):
 class UserResponse(BaseModel):
     id: int
     telegram_id: int | None = None
+    email: str | None = None
     username: str | None = None
     first_name: str | None = None
     last_name: str | None = None
