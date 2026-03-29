@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import Integer as SAInteger, and_, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database.crud.transaction import REAL_PAYMENT_METHODS
 from app.database.models import (
     PaymentMethod,
@@ -27,6 +28,11 @@ from ..dependencies import get_cabinet_db, require_permission
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/admin/stats/sales', tags=['Cabinet Admin Sales Stats'])
+
+
+def _local_date(column):
+    """Group by date in the configured timezone (e.g. Europe/Moscow) instead of UTC."""
+    return func.date(func.timezone(settings.TIMEZONE, column))
 
 
 # ============ Helpers ============
@@ -407,7 +413,7 @@ async def get_trials_stats(
         # Daily registrations (user signups per day)
         daily_reg_query = await db.execute(
             select(
-                func.date(User.created_at).label('date'),
+                _local_date(User.created_at).label('date'),
                 func.count(User.id).label('count'),
             )
             .where(
@@ -416,8 +422,8 @@ async def get_trials_stats(
                     User.created_at <= period_end,
                 )
             )
-            .group_by(func.date(User.created_at))
-            .order_by(func.date(User.created_at))
+            .group_by(_local_date(User.created_at))
+            .order_by(_local_date(User.created_at))
         )
         reg_by_date: dict[str, int] = {}
         for row in daily_reg_query:
@@ -427,7 +433,7 @@ async def get_trials_stats(
         # Daily trials (trial subscriptions per day)
         daily_trial_query = await db.execute(
             select(
-                func.date(Subscription.created_at).label('date'),
+                _local_date(Subscription.created_at).label('date'),
                 func.count(Subscription.id).label('count'),
             )
             .where(
@@ -437,8 +443,8 @@ async def get_trials_stats(
                     Subscription.created_at <= period_end,
                 )
             )
-            .group_by(func.date(Subscription.created_at))
-            .order_by(func.date(Subscription.created_at))
+            .group_by(_local_date(Subscription.created_at))
+            .order_by(_local_date(Subscription.created_at))
         )
         trial_by_date: dict[str, int] = {}
         for row in daily_trial_query:
@@ -595,7 +601,7 @@ async def get_sales_stats(
 
         daily_query = await db.execute(
             select(
-                func.date(Transaction.created_at).label('date'),
+                _local_date(Transaction.created_at).label('date'),
                 func.count(Transaction.id).label('count'),
                 func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('revenue'),
             )
@@ -607,8 +613,8 @@ async def get_sales_stats(
                     Transaction.created_at <= period_end,
                 )
             )
-            .group_by(func.date(Transaction.created_at))
-            .order_by(func.date(Transaction.created_at))
+            .group_by(_local_date(Transaction.created_at))
+            .order_by(_local_date(Transaction.created_at))
         )
         daily = [
             DailySalesItem(
@@ -623,14 +629,14 @@ async def get_sales_stats(
         tariff_name_col = func.coalesce(Tariff.name, 'Unknown')
         daily_by_tariff_query = await db.execute(
             select(
-                func.date(Subscription.created_at).label('date'),
+                _local_date(Subscription.created_at).label('date'),
                 tariff_name_col.label('tariff_name'),
                 func.count(Subscription.id).label('count'),
             )
             .join(Tariff, Subscription.tariff_id == Tariff.id, isouter=True)
             .where(base_filter)
-            .group_by(func.date(Subscription.created_at), tariff_name_col)
-            .order_by(func.date(Subscription.created_at), tariff_name_col)
+            .group_by(_local_date(Subscription.created_at), tariff_name_col)
+            .order_by(_local_date(Subscription.created_at), tariff_name_col)
         )
         daily_by_tariff = [
             DailyTariffSalesItem(
@@ -829,7 +835,7 @@ async def get_renewals_stats(
 
         daily_query = await db.execute(
             select(
-                func.date(Transaction.created_at).label('date'),
+                _local_date(Transaction.created_at).label('date'),
                 func.count(Transaction.id).label('count'),
             )
             .where(
@@ -841,8 +847,8 @@ async def get_renewals_stats(
                     Transaction.user_id.in_(existing_users_subquery),
                 )
             )
-            .group_by(func.date(Transaction.created_at))
-            .order_by(func.date(Transaction.created_at))
+            .group_by(_local_date(Transaction.created_at))
+            .order_by(_local_date(Transaction.created_at))
         )
         daily = [
             DailyRenewalItem(
@@ -960,13 +966,13 @@ async def get_addons_stats(
 
         daily_query = await db.execute(
             select(
-                func.date(TrafficPurchase.created_at).label('date'),
+                _local_date(TrafficPurchase.created_at).label('date'),
                 func.count(TrafficPurchase.id).label('count'),
                 func.coalesce(func.sum(TrafficPurchase.traffic_gb), 0).label('total_gb'),
             )
             .where(base_filter)
-            .group_by(func.date(TrafficPurchase.created_at))
-            .order_by(func.date(TrafficPurchase.created_at))
+            .group_by(_local_date(TrafficPurchase.created_at))
+            .order_by(_local_date(TrafficPurchase.created_at))
         )
         daily = [
             DailyAddonItem(
@@ -996,12 +1002,12 @@ async def get_addons_stats(
         # Daily device purchases
         daily_device_query = await db.execute(
             select(
-                func.date(Transaction.created_at).label('date'),
+                _local_date(Transaction.created_at).label('date'),
                 func.count(Transaction.id).label('count'),
             )
             .where(device_filter)
-            .group_by(func.date(Transaction.created_at))
-            .order_by(func.date(Transaction.created_at))
+            .group_by(_local_date(Transaction.created_at))
+            .order_by(_local_date(Transaction.created_at))
         )
         daily_devices = [
             DailyDeviceItem(
@@ -1114,13 +1120,13 @@ async def get_deposits_stats(
 
         daily_query = await db.execute(
             select(
-                func.date(Transaction.created_at).label('date'),
+                _local_date(Transaction.created_at).label('date'),
                 func.count(Transaction.id).label('count'),
                 func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('amount'),
             )
             .where(base_filter)
-            .group_by(func.date(Transaction.created_at))
-            .order_by(func.date(Transaction.created_at))
+            .group_by(_local_date(Transaction.created_at))
+            .order_by(_local_date(Transaction.created_at))
         )
         daily = [
             DailyDepositItem(
@@ -1135,13 +1141,13 @@ async def get_deposits_stats(
         # base_filter already excludes NULLs via .in_(methods_with_manual), no coalesce needed
         daily_by_method_query = await db.execute(
             select(
-                func.date(Transaction.created_at).label('date'),
+                _local_date(Transaction.created_at).label('date'),
                 Transaction.payment_method.label('method'),
                 func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('amount'),
             )
             .where(base_filter)
-            .group_by(func.date(Transaction.created_at), Transaction.payment_method)
-            .order_by(func.date(Transaction.created_at), Transaction.payment_method)
+            .group_by(_local_date(Transaction.created_at), Transaction.payment_method)
+            .order_by(_local_date(Transaction.created_at), Transaction.payment_method)
         )
         daily_by_method = [
             DailyDepositByMethodItem(
