@@ -1,7 +1,9 @@
 """Yandex.Metrika offline conversions service.
 
 Sends events (registration, trial-add, purchase) to mc.yandex.ru/collect
-using the Measurement Protocol. Each event is preceded by a warm-up pageview.
+using the Measurement Protocol. No pageview needed — user has active
+Metrika session from the site. yclid is passed via landing page URL,
+Metrika matches it automatically.
 """
 
 from __future__ import annotations
@@ -91,7 +93,42 @@ def _event_payload(cid: str, event_action: str) -> dict[str, str]:
         {
             't': 'event',
             'ea': event_action,
-            'dl': settings.YANDEX_OFFLINE_CONV_DL or 'https://web.mtrxvps.ru',
+        }
+    )
+    return payload
+
+
+def _ecommerce_purchase_payload(
+    cid: str,
+    amount_rubles: float,
+    order_id: str = '',
+    product_name: str = '',
+    product_category: str = '',
+) -> dict[str, str]:
+    """Build ecommerce:purchase payload for Metrika Measurement Protocol."""
+    import time as _time
+
+    service_name = (
+        getattr(settings, 'YANDEX_OFFLINE_CONV_DT', '')
+        or getattr(settings, 'PAYMENT_SERVICE_NAME', '')
+        or 'Subscription'
+    )
+    currency = getattr(settings, 'YANDEX_OFFLINE_CONV_CURRENCY', '') or 'RUB'
+    payload = _base_payload(cid)
+    payload.update(
+        {
+            't': 'event',
+            'ea': 'purchase',
+            'pa': 'purchase',
+            'ti': order_id or str(int(_time.time())),
+            'tr': str(amount_rubles),
+            'cu': currency,
+            'ev': str(amount_rubles),
+            'pr1id': 'subscription',
+            'pr1nm': product_name or service_name,
+            'pr1ca': product_category or 'subscription',
+            'pr1pr': str(amount_rubles),
+            'pr1qt': '1',
         }
     )
     return payload
@@ -137,13 +174,7 @@ async def _post_collect(payload: dict[str, str], kind: str, cid: str) -> bool:
 
 
 async def _send_event(cid: str, event_action: str) -> bool:
-    """Send a warm-up pageview followed by the actual event."""
-    # Warm-up pageview (required by Metrika to associate the CID)
-    pv_ok = await _post_collect(_pageview_payload(cid), 'pageview', cid)
-    if not pv_ok:
-        logger.warning('pageview failed, skipping event', cid=_mask_cid(cid), event=event_action)
-        return False
-
+    """Send event directly — no pageview needed, user has active Metrika session."""
     return await _post_collect(_event_payload(cid, event_action), event_action, cid)
 
 
@@ -152,14 +183,14 @@ async def _send_event(cid: str, event_action: str) -> bool:
 _background_tasks: set[asyncio.Task] = set()
 
 
-def _on_task_done(task: asyncio.Task) -> None:
-    """Clean up finished task and log unhandled exceptions."""
+def _task_done(task):
+    """Log errors from background conversion tasks."""
     _background_tasks.discard(task)
     if task.cancelled():
         return
     exc = task.exception()
     if exc:
-        logger.error(f'{LOG_PREFIX} Background task failed', error=str(exc), exc_type=type(exc).__name__)
+        logger.error(f'{LOG_PREFIX} Background task failed', error=str(exc))
 
 
 def spawn_bg(coro) -> None:
@@ -173,7 +204,7 @@ def spawn_bg(coro) -> None:
         return
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
-    task.add_done_callback(_on_task_done)
+    task.add_done_callback(_task_done)
 
 
 async def _fire_bg(event_name: str, event_fn, user_id: int, **kwargs) -> None:
@@ -284,7 +315,7 @@ async def on_trial(db: AsyncSession, user_id: int) -> None:
 
 
 async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> None:
-    """Fire purchase event (every payment)."""
+    """Fire ecommerce purchase event (every payment)."""
     if not _is_enabled():
         return
 
@@ -293,9 +324,11 @@ async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> Non
         if not row:
             return
 
-        success = await _send_event(row.yandex_cid, 'purchase')
+        amount_rubles = amount_kopeks / 100
+        payload = _ecommerce_purchase_payload(row.yandex_cid, amount_rubles)
+        success = await _post_collect(payload, 'purchase', row.yandex_cid)
         if success:
-            logger.info('purchase event sent', user_id=user_id, amount=amount_kopeks / 100)
+            logger.info('purchase event sent', user_id=user_id, amount=amount_rubles)
     except Exception as exc:
         logger.error('purchase event failed', user_id=user_id, error=str(exc))
 

@@ -577,6 +577,7 @@ class Settings(BaseSettings):
     YANDEX_OFFLINE_CONV_START_PREFIX: str = 'utm_ya_'
     YANDEX_OFFLINE_CONV_DL: str = ''
     YANDEX_OFFLINE_CONV_DT: str = ''
+    YANDEX_OFFLINE_CONV_CURRENCY: str = 'RUB'
 
     # SeverPay (severpay.io)
     SEVERPAY_ENABLED: bool = False
