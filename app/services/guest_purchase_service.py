@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import structlog
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, text as sa_text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,7 @@ from app.database.models import (
     TransactionType,
     User,
 )
+from app.services import yandex_offline_conv_service as yandex_conv
 from app.services.subscription_service import SubscriptionService
 
 
@@ -140,6 +141,8 @@ async def create_purchase(
     gift_message: str | None = None,
     source: str = 'landing',
     buyer_user_id: int | None = None,
+    yandex_cid: str | None = None,
+    referrer: str | None = None,
     commit: bool = True,
 ) -> GuestPurchase:
     """Create a guest purchase record."""
@@ -159,6 +162,8 @@ async def create_purchase(
         gift_message=gift_message,
         source=source,
         buyer_user_id=buyer_user_id,
+        yandex_cid=yandex_cid,
+        referrer=referrer,
         status=GuestPurchaseStatus.PENDING.value,
     )
 
@@ -353,6 +358,7 @@ async def fulfill_purchase(
             # Active subscription or gift with any existing subscription — hold for manual activation
             purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
             purchase.user_id = user.id
+            await _backfill_payment_user_id(db, purchase, user.id)
             if recipient_type == 'email' and not purchase.is_gift and is_new_account:
                 purchase.auto_login_token = create_auto_login_token(user.id)
             await db.commit()
@@ -386,6 +392,8 @@ async def fulfill_purchase(
                 token_prefix=purchase_token[:5],
                 user_id=user.id,
             )
+            # Fire Yandex conversions before early return (otherwise lost for PENDING_ACTIVATION)
+            yandex_conv.spawn_bg(_fire_yandex_conversions(purchase, user.id, is_new_account))
             return purchase
 
         squads = list(tariff.allowed_squads or [])
@@ -432,6 +440,7 @@ async def fulfill_purchase(
         purchase.status = GuestPurchaseStatus.DELIVERED.value
         purchase.user_id = user.id
         purchase.delivered_at = datetime.now(UTC)
+        await _backfill_payment_user_id(db, purchase, user.id)
         if recipient_type == 'email' and not purchase.is_gift and is_new_account:
             purchase.auto_login_token = create_auto_login_token(user.id)
 
@@ -487,6 +496,9 @@ async def fulfill_purchase(
             recipient_type=recipient_type,
         )
 
+        # Fire Yandex offline conversions in background
+        yandex_conv.spawn_bg(_fire_yandex_conversions(purchase, user.id, is_new_account))
+
     except GuestPurchaseError:
         await db.rollback()
         raise
@@ -500,6 +512,59 @@ async def fulfill_purchase(
         raise GuestPurchaseError('Purchase fulfillment failed', status_code=500)
 
     return purchase
+
+
+async def _backfill_payment_user_id(db: AsyncSession, purchase: 'GuestPurchase', user_id: int) -> None:
+    """Backfill user_id into the provider payment record after guest user creation.
+
+    Guest purchases create the payment record before the user exists,
+    so user_id is NULL. This links the payment to the user for admin UI.
+    """
+    if not purchase.payment_id or not user_id:
+        return
+    base_method = _resolve_base_payment_method(purchase.payment_method)
+    logger.info('backfill_payment_user_id called', user_id=user_id, payment_id=purchase.payment_id, method=base_method)
+    table_map = {
+        'kassa_ai': 'kassa_ai_payments',
+        'freekassa': 'freekassa_payments',
+        'wata': 'wata_payments',
+        'unitpay': 'unitpay_payments',
+        'yookassa': 'yookassa_payments',
+        'cloudpayments': 'cloudpayments_payments',
+        'cryptobot': 'cryptobot_payments',
+        'platega': 'platega_payments',
+        'heleket': 'heleket_payments',
+        'mulenpay': 'mulenpay_payments',
+        'riopay': 'riopay_payments',
+        'severpay': 'severpay_payments',
+        'pal24': 'pal24_payments',
+    }
+    table = table_map.get(base_method)
+    if not table:
+        return
+    try:
+        pid = str(purchase.payment_id)
+        # Each provider stores the payment ID in a different column
+        id_column_map = {
+            'kassa_ai': 'kassa_ai_order_id',
+            'wata': 'payment_link_id',
+            'unitpay': 'unitpay_payment_id',
+            'freekassa': 'freekassa_order_id',
+            'yookassa': 'yookassa_payment_id',
+            'cloudpayments': 'invoice_id',
+            'cryptobot': 'invoice_id',
+            'mulenpay': 'mulen_payment_id',
+            'riopay': 'riopay_order_id',
+        }
+        id_column = id_column_map.get(base_method, 'order_id')
+        result = await db.execute(
+            sa_text(f'UPDATE {table} SET user_id = :uid WHERE {id_column} = :pid AND user_id IS NULL'),
+            {'uid': user_id, 'pid': pid},
+        )
+        if result.rowcount:
+            logger.info('backfill payment user_id OK', method=base_method, user_id=user_id)
+    except Exception as e:
+        logger.warning('Could not backfill payment user_id', error=e, method=base_method)
 
 
 def _resolve_base_payment_method(method_str: str | None) -> str:
@@ -553,6 +618,34 @@ def _mask_email(email: str) -> str:
     domain = domain_parts[0][0] + '***'
     tld = domain_parts[-1] if len(domain_parts) > 1 else ''
     return f'{local}@{domain}.{tld}'
+
+
+async def _fire_yandex_conversions(purchase: GuestPurchase, user_id: int, is_new_user: bool) -> None:
+    """Store Yandex CID and fire offline conversions for guest purchases (best-effort).
+
+    Already runs inside a background task -- calls event functions directly
+    instead of spawning nested tasks to avoid cascading sessions.
+    """
+    if not purchase.yandex_cid:
+        return
+    try:
+        from app.database.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            stored = await yandex_conv.store_cid(db, user_id, purchase.yandex_cid, source='landing')
+            await db.commit()
+
+        if not stored:
+            return
+
+        # Call directly -- we are already in a background task, no need to spawn more
+        if is_new_user:
+            async with AsyncSessionLocal() as db:
+                await yandex_conv.on_registration(db, user_id)
+        async with AsyncSessionLocal() as db:
+            await yandex_conv.on_purchase(db, user_id, amount_kopeks=purchase.amount_kopeks)
+    except Exception:
+        logger.warning('Failed to fire Yandex conversions for guest purchase', purchase_id=purchase.id, exc_info=True)
 
 
 async def _find_or_create_user(
@@ -1099,6 +1192,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
         purchase.subscription_crypto_link = subscription.subscription_crypto_link
         purchase.status = GuestPurchaseStatus.DELIVERED.value
         purchase.delivered_at = datetime.now(UTC)
+        await _backfill_payment_user_id(db, purchase, user.id)
         if user.auth_type == 'email' and not purchase.is_gift and is_new_account:
             purchase.auto_login_token = create_auto_login_token(user.id)
 
@@ -1591,6 +1685,7 @@ async def _check_and_recover_pending_purchase(
 
     # Resolve base method: 'yookassa_sbp' → 'yookassa', 'kassa_ai' stays 'kassa_ai'
     base_method = _resolve_base_payment_method(payment_method)
+    logger.info('backfill_payment_user_id called', user_id=user_id, payment_id=purchase.payment_id, method=base_method)
 
     match = await _find_succeeded_provider_payment(db, base_method, purchase_token)
     if match is None:
