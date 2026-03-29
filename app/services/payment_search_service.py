@@ -7,6 +7,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import structlog
 from sqlalchemy import cast, desc, or_, select
@@ -28,6 +29,7 @@ from app.database.models import (
     SeverPayPayment,
     Transaction,
     TransactionType,
+    UnitPayPayment,
     User,
     WataPayment,
     YooKassaPayment,
@@ -62,7 +64,7 @@ def _escape_like(value: str) -> str:
     return value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
 
 
-class StatusFilter(str, enum.Enum):
+class StatusFilter(enum.StrEnum):
     """Supported status filter values."""
 
     ALL = 'all'
@@ -71,9 +73,10 @@ class StatusFilter(str, enum.Enum):
     CANCELLED = 'cancelled'
 
 
-class PeriodPreset(str, enum.Enum):
+class PeriodPreset(enum.StrEnum):
     """Predefined period presets."""
 
+    TODAY = 'today'
     H24 = '24h'
     D7 = '7d'
     D30 = '30d'
@@ -81,6 +84,7 @@ class PeriodPreset(str, enum.Enum):
 
 
 _PERIOD_DELTAS: dict[PeriodPreset, timedelta] = {
+    PeriodPreset.TODAY: timedelta(hours=0),  # special: start of today
     PeriodPreset.H24: timedelta(hours=24),
     PeriodPreset.D7: timedelta(days=7),
     PeriodPreset.D30: timedelta(days=30),
@@ -119,6 +123,7 @@ class SearchParams:
     period: PeriodPreset = PeriodPreset.H24
     date_from: datetime | None = None
     date_to: datetime | None = None
+    tz: str | None = None
     page: int = 1
     per_page: int = DEFAULT_PER_PAGE
 
@@ -127,6 +132,14 @@ class SearchParams:
         """Calculate the earliest datetime to consider."""
         if self.date_from is not None:
             return self.date_from
+        if self.period == PeriodPreset.TODAY:
+            try:
+                user_tz = ZoneInfo(self.tz) if self.tz else UTC
+            except (KeyError, ValueError):
+                user_tz = UTC
+            now_local = datetime.now(user_tz)
+            midnight_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+            return midnight_local.astimezone(UTC)
         return datetime.now(UTC) - _PERIOD_DELTAS.get(self.period, _PERIOD_DELTAS[PeriodPreset.H24])
 
     @property
@@ -293,7 +306,7 @@ async def _search_cryptobot(db: AsyncSession, params: SearchParams) -> list[Pend
             identifier=payment.invoice_id,
             amount_kopeks=amount_kopeks,
             status=payment.status or '',
-            is_paid=bool(payment.is_paid),
+            is_paid=(payment.status == 'paid'),
         )
         if record:
             records.append(record)
@@ -326,7 +339,7 @@ async def _search_heleket(db: AsyncSession, params: SearchParams) -> list[Pendin
             identifier=payment.uuid,
             amount_kopeks=payment.amount_kopeks,
             status=payment.status or '',
-            is_paid=bool(payment.is_paid),
+            is_paid=(payment.status == 'paid'),
             expires_at=getattr(payment, 'expires_at', None),
         )
         if record:
@@ -432,6 +445,39 @@ async def _search_wata(db: AsyncSession, params: SearchParams) -> list[PendingPa
             status=payment.status or '',
             is_paid=bool(payment.is_paid),
             expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _search_unitpay(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = select(UnitPayPayment).options(selectinload(UnitPayPayment.user)).order_by(desc(UnitPayPayment.created_at))
+    stmt = _apply_date_filter(stmt, UnitPayPayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            escaped = _escape_like(params.search)
+            conditions = [
+                UnitPayPayment.order_id.ilike(f'%{escaped}%'),
+                UnitPayPayment.unitpay_payment_id.ilike(f'%{escaped}%'),
+            ]
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, UnitPayPayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.UNITPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
         )
         if record:
             records.append(record)
@@ -696,6 +742,7 @@ _PROVIDER_SEARCH_MAP: dict[PaymentMethod, Any] = {
     PaymentMethod.MULENPAY: _search_mulenpay,
     PaymentMethod.PAL24: _search_pal24,
     PaymentMethod.WATA: _search_wata,
+    PaymentMethod.UNITPAY: _search_unitpay,
     PaymentMethod.PLATEGA: _search_platega,
     PaymentMethod.CLOUDPAYMENTS: _search_cloudpayments,
     PaymentMethod.FREEKASSA: _search_freekassa,
