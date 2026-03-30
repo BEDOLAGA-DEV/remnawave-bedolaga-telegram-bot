@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import Integer as SAInteger, and_, case, cast, func, select
+from sqlalchemy import Integer as SAInteger, and_, case, cast, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -422,8 +422,8 @@ async def get_trials_stats(
                     User.created_at <= period_end,
                 )
             )
-            .group_by(_local_date(User.created_at))
-            .order_by(_local_date(User.created_at))
+            .group_by(text('date'))
+            .order_by(text('date'))
         )
         reg_by_date: dict[str, int] = {}
         for row in daily_reg_query:
@@ -443,8 +443,8 @@ async def get_trials_stats(
                     Subscription.created_at <= period_end,
                 )
             )
-            .group_by(_local_date(Subscription.created_at))
-            .order_by(_local_date(Subscription.created_at))
+            .group_by(text('date'))
+            .order_by(text('date'))
         )
         trial_by_date: dict[str, int] = {}
         for row in daily_trial_query:
@@ -613,8 +613,8 @@ async def get_sales_stats(
                     Transaction.created_at <= period_end,
                 )
             )
-            .group_by(_local_date(Transaction.created_at))
-            .order_by(_local_date(Transaction.created_at))
+            .group_by(text('date'))
+            .order_by(text('date'))
         )
         daily = [
             DailySalesItem(
@@ -635,8 +635,8 @@ async def get_sales_stats(
             )
             .join(Tariff, Subscription.tariff_id == Tariff.id, isouter=True)
             .where(base_filter)
-            .group_by(_local_date(Subscription.created_at), tariff_name_col)
-            .order_by(_local_date(Subscription.created_at), tariff_name_col)
+            .group_by(text('date'), tariff_name_col)
+            .order_by(text('date'), tariff_name_col)
         )
         daily_by_tariff = [
             DailyTariffSalesItem(
@@ -847,8 +847,8 @@ async def get_renewals_stats(
                     Transaction.user_id.in_(existing_users_subquery),
                 )
             )
-            .group_by(_local_date(Transaction.created_at))
-            .order_by(_local_date(Transaction.created_at))
+            .group_by(text('date'))
+            .order_by(text('date'))
         )
         daily = [
             DailyRenewalItem(
@@ -971,8 +971,8 @@ async def get_addons_stats(
                 func.coalesce(func.sum(TrafficPurchase.traffic_gb), 0).label('total_gb'),
             )
             .where(base_filter)
-            .group_by(_local_date(TrafficPurchase.created_at))
-            .order_by(_local_date(TrafficPurchase.created_at))
+            .group_by(text('date'))
+            .order_by(text('date'))
         )
         daily = [
             DailyAddonItem(
@@ -1006,8 +1006,8 @@ async def get_addons_stats(
                 func.count(Transaction.id).label('count'),
             )
             .where(device_filter)
-            .group_by(_local_date(Transaction.created_at))
-            .order_by(_local_date(Transaction.created_at))
+            .group_by(text('date'))
+            .order_by(text('date'))
         )
         daily_devices = [
             DailyDeviceItem(
@@ -1125,8 +1125,8 @@ async def get_deposits_stats(
                 func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('amount'),
             )
             .where(base_filter)
-            .group_by(_local_date(Transaction.created_at))
-            .order_by(_local_date(Transaction.created_at))
+            .group_by(text('date'))
+            .order_by(text('date'))
         )
         daily = [
             DailyDepositItem(
@@ -1146,8 +1146,8 @@ async def get_deposits_stats(
                 func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('amount'),
             )
             .where(base_filter)
-            .group_by(_local_date(Transaction.created_at), Transaction.payment_method)
-            .order_by(_local_date(Transaction.created_at), Transaction.payment_method)
+            .group_by(text('date'), Transaction.payment_method)
+            .order_by(text('date'), Transaction.payment_method)
         )
         daily_by_method = [
             DailyDepositByMethodItem(
