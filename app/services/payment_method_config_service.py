@@ -129,6 +129,7 @@ def _get_method_defaults() -> dict:
             'available_sub_options': [
                 {'id': 'sbp', 'name': 'СБП'},
                 {'id': 'card', 'name': 'Карта'},
+                {'id': 'sberpay', 'name': 'SberPay'},
             ],
         },
         'riopay': {

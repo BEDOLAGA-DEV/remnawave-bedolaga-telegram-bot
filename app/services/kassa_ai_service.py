@@ -18,6 +18,7 @@ logger = structlog.get_logger(__name__)
 KASSA_AI_SUB_METHODS = {
     'kassa_ai_sbp': {'payment_system_id': 44},
     'kassa_ai_card': {'payment_system_id': 36},
+    'kassa_ai_sberpay': {'payment_system_id': 43},
 }
 
 # Кэш для публичного IP

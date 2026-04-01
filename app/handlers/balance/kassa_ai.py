@@ -37,7 +37,11 @@ _KASSA_AI_METHOD_CONFIG = {
     'kassa_ai_card': {
         'is_enabled': settings.is_kassa_ai_card_enabled,
         'display_name': settings.get_kassa_ai_card_display_name,
-        'unavailable_text': 'KassaAI Карта временно недоступна',
+    },
+    'kassa_ai_sberpay': {
+        'is_enabled': settings.is_kassa_ai_sberpay_enabled,
+        'display_name': settings.get_kassa_ai_sberpay_display_name,
+        'unavailable_text': 'KassaAI SberPay временно недоступен',
     },
 }
 
@@ -350,3 +354,13 @@ async def start_kassa_ai_card_topup(
 ):
     """Start KassaAI Card top-up process."""
     await _start_kassa_ai_sub_topup(callback, db_user, db, state, 'kassa_ai_card')
+
+@error_handler
+async def start_kassa_ai_sberpay_topup(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Start KassaAI SberPay top-up process."""
+    await _start_kassa_ai_sub_topup(callback, db_user, db, state, 'kassa_ai_sberpay')

@@ -571,6 +571,16 @@ class Settings(BaseSettings):
     RIOPAY_SUCCESS_URL: str | None = None
     RIOPAY_FAIL_URL: str | None = None
 
+
+    # Yandex Offline Conversions
+    YANDEX_OFFLINE_CONV_ENABLED: bool = False
+    YANDEX_OFFLINE_CONV_COUNTER_ID: str = ''
+    YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET: str = ''
+    YANDEX_OFFLINE_CONV_START_PREFIX: str = 'utm_ya_'
+    YANDEX_OFFLINE_CONV_DL: str = ''
+    YANDEX_OFFLINE_CONV_DT: str = ''
+    YANDEX_OFFLINE_CONV_CURRENCY: str = 'RUB'
+
     # SeverPay (severpay.io)
     SEVERPAY_ENABLED: bool = False
     SEVERPAY_MID: int | None = None  # Merchant ID
@@ -1980,6 +1990,16 @@ class Settings(BaseSettings):
 
     def get_kassa_ai_card_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_card_display_name())
+
+    def is_kassa_ai_sberpay_enabled(self) -> bool:
+        return self.KASSA_AI_SBERPAY_ENABLED and self.is_kassa_ai_enabled()
+
+    def get_kassa_ai_sberpay_display_name(self) -> str:
+        name = (self.KASSA_AI_SBERPAY_DISPLAY_NAME or '').strip()
+        return name or 'SberPay'
+
+    def get_kassa_ai_sberpay_display_name_html(self) -> str:
+        return html.escape(self.get_kassa_ai_sberpay_display_name())
 
     def is_payment_verification_auto_check_enabled(self) -> bool:
         return self.PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED
