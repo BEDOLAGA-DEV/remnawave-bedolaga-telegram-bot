@@ -708,7 +708,7 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.callback_query.register(start_kassa_ai_topup, F.data == 'topup_kassa_ai')
     dp.callback_query.register(start_kassa_ai_sbp_topup, F.data == 'topup_kassa_ai_sbp')
-    dp.callback_query.register(start_kassa_ai_card_topup, F.data == "topup_kassa_ai_card")
+    dp.callback_query.register(start_kassa_ai_card_topup, F.data == 'topup_kassa_ai_card')
     dp.callback_query.register(start_kassa_ai_sberpay_topup, F.data == 'topup_kassa_ai_sberpay')
 
     from .riopay import start_riopay_topup
