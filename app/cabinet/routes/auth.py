@@ -568,6 +568,14 @@ async def auth_telegram(
 
     # Process referral code (only for new users — existing users cannot be assigned a referrer)
     await _process_referral_code(db, user, request.referral_code, is_new_user=is_new_user)
+    # Yandex offline conversions: fire registration event
+    if is_new_user:
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+            await yandex_conv.on_registration(db, user.id)
+        except Exception:
+            logger.debug("Yandex offline conv registration hook error")
+
 
     # Clear Redis pending referral after successful user creation with referral
     if referrer_id:

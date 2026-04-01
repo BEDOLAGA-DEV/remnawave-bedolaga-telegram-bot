@@ -291,12 +291,22 @@ class GiftEnabledUpdate(BaseModel):
     enabled: bool
 
 
+class OfflineConvGoal(BaseModel):
+    name: str
+    event_id: str
+    dedup: str
+
+
 class AnalyticsCountersResponse(BaseModel):
     """Analytics counter settings."""
 
     yandex_metrika_id: str = ''
     google_ads_id: str = ''
     google_ads_label: str = ''
+    offline_conv_enabled: bool = False
+    offline_conv_counter_id: str = ''
+    offline_conv_measurement_secret_masked: str = ''
+    offline_conv_goals: list[OfflineConvGoal] = []
 
 
 class AnalyticsCountersUpdate(BaseModel):
@@ -924,10 +934,28 @@ async def get_analytics_counters(
     google_id = await get_setting_value(db, GOOGLE_ADS_ID_KEY) or ''
     google_label = await get_setting_value(db, GOOGLE_ADS_LABEL_KEY) or ''
 
+
+    # Offline conversions from settings
+    oc_enabled = getattr(settings, 'YANDEX_OFFLINE_CONV_ENABLED', False)
+    oc_counter = getattr(settings, 'YANDEX_OFFLINE_CONV_COUNTER_ID', '')
+    oc_secret = getattr(settings, 'YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET', '')
+    oc_secret_masked = (oc_secret[:8] + '...' + oc_secret[-4:]) if len(oc_secret) > 12 else '***'
+    oc_goals = []
+    if oc_enabled:
+        oc_goals = [
+            OfflineConvGoal(name='Registration', event_id='registration', dedup='user_id'),
+            OfflineConvGoal(name='Trial', event_id='trial-add', dedup='user_id'),
+            OfflineConvGoal(name='Purchase', event_id='purchase', dedup='order_id'),
+        ]
+
     return AnalyticsCountersResponse(
         yandex_metrika_id=yandex_id,
         google_ads_id=google_id,
         google_ads_label=google_label,
+        offline_conv_enabled=oc_enabled,
+        offline_conv_counter_id=oc_counter,
+        offline_conv_measurement_secret_masked=oc_secret_masked if oc_enabled else '',
+        offline_conv_goals=oc_goals,
     )
 
 
@@ -944,7 +972,7 @@ async def update_analytics_counters(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Yandex Metrika counter ID must be numeric',
-            )
+    )
         await set_setting_value(db, YANDEX_METRIKA_ID_KEY, value)
 
     if payload.google_ads_id is not None:
@@ -953,7 +981,7 @@ async def update_analytics_counters(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Google Ads conversion ID must start with AW-',
-            )
+    )
         await set_setting_value(db, GOOGLE_ADS_ID_KEY, value)
 
     if payload.google_ads_label is not None:
@@ -966,10 +994,26 @@ async def update_analytics_counters(
     google_id = await get_setting_value(db, GOOGLE_ADS_ID_KEY) or ''
     google_label = await get_setting_value(db, GOOGLE_ADS_LABEL_KEY) or ''
 
+    
+    # Offline conversions (shared with GET handler)
+    oc_enabled = getattr(settings, 'YANDEX_OFFLINE_CONV_ENABLED', False)
+    oc_counter = getattr(settings, 'YANDEX_OFFLINE_CONV_COUNTER_ID', '')
+    oc_secret = getattr(settings, 'YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET', '')
+    oc_secret_masked = (oc_secret[:8] + '...' + oc_secret[-4:]) if len(oc_secret) > 12 else '***'
+    oc_goals = [
+        OfflineConvGoal(name='Registration', event_id='registration', dedup='user_id'),
+        OfflineConvGoal(name='Trial', event_id='trial-add', dedup='user_id'),
+        OfflineConvGoal(name='Purchase', event_id='purchase', dedup='order_id'),
+    ] if oc_enabled else []
+
     return AnalyticsCountersResponse(
         yandex_metrika_id=yandex_id,
         google_ads_id=google_id,
         google_ads_label=google_label,
+        offline_conv_enabled=oc_enabled,
+        offline_conv_counter_id=oc_counter,
+        offline_conv_measurement_secret_masked=oc_secret_masked if oc_enabled else '',
+        offline_conv_goals=oc_goals,
     )
 
 
