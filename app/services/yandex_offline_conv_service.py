@@ -25,6 +25,7 @@ from app.database.crud.yandex_client_id import (
 )
 from app.database.database import AsyncSessionLocal
 
+
 logger = structlog.get_logger(__name__)
 
 LOG_PREFIX = '[YandexOfflineConv]'
