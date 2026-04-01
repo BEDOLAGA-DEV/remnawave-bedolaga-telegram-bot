@@ -558,6 +558,8 @@ class Settings(BaseSettings):
     KASSA_AI_SBP_DISPLAY_NAME: str = 'СБП (KassaAI)'
     KASSA_AI_CARD_ENABLED: bool = False  # Карты РФ — payment_system_id=36
     KASSA_AI_CARD_DISPLAY_NAME: str = 'Карта (KassaAI)'
+    KASSA_AI_SBERPAY_ENABLED: bool = False  # SberPay — payment_system_id=43
+    KASSA_AI_SBERPAY_DISPLAY_NAME: str = 'SberPay'
 
     # RioPay (api.riopay.online) v2.0.1
     RIOPAY_ENABLED: bool = False
