@@ -572,10 +572,10 @@ async def auth_telegram(
     if is_new_user:
         try:
             from app.services import yandex_offline_conv_service as yandex_conv
+
             await yandex_conv.on_registration(db, user.id)
         except Exception:
-            logger.debug("Yandex offline conv registration hook error")
-
+            logger.debug('Yandex offline conv registration hook error')
 
     # Clear Redis pending referral after successful user creation with referral
     if referrer_id:

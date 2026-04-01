@@ -455,22 +455,22 @@ async def fulfill_purchase(
         except Exception:
             logger.exception('Failed to create transaction for guest purchase', purchase_id=purchase.id)
 
-
         # Yandex offline conversions: fire registration event for new accounts
         if is_new_account:
             try:
                 from app.services import yandex_offline_conv_service as yandex_conv
+
                 await yandex_conv.on_registration(db, user.id)
             except Exception:
-                logger.debug("Yandex offline conv registration hook error")
-
+                logger.debug('Yandex offline conv registration hook error')
 
         # Yandex offline conversions: fire ecommerce purchase event
         try:
             from app.services import yandex_offline_conv_service as yandex_conv
+
             await yandex_conv.on_purchase(db, user.id, purchase.amount_kopeks)
         except Exception:
-            logger.debug("Yandex offline conv purchase hook error")
+            logger.debug('Yandex offline conv purchase hook error')
 
         try:
             await send_guest_notification(

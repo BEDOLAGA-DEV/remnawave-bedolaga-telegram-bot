@@ -571,7 +571,6 @@ class Settings(BaseSettings):
     RIOPAY_SUCCESS_URL: str | None = None
     RIOPAY_FAIL_URL: str | None = None
 
-
     # Yandex Offline Conversions
     YANDEX_OFFLINE_CONV_ENABLED: bool = False
     YANDEX_OFFLINE_CONV_COUNTER_ID: str = ''

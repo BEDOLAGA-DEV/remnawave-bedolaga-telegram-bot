@@ -3407,6 +3407,7 @@ class NewsTag(Base):
     def __repr__(self) -> str:
         return f"<NewsTag id={self.id} name='{self.name}'>"
 
+
 class YandexClientIdMap(Base):
     __tablename__ = 'yandex_client_id_map'
     id = Column(Integer, primary_key=True, autoincrement=True)
