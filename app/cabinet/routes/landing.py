@@ -23,7 +23,7 @@ from app.services.guest_purchase_service import (
 )
 from app.services.payment_method_config_service import _get_method_defaults
 from app.services.payment_service import PaymentService
-from app.utils.cache import RateLimitCache
+from app.utils.cache import RateLimitCache, cache
 
 
 logger = structlog.get_logger(__name__)
@@ -123,6 +123,7 @@ class PurchaseRequest(BaseModel):
     gift_recipient_type: str | None = Field(default=None, pattern=r'^(email|telegram)$')
     gift_recipient_value: str | None = Field(default=None, max_length=255)
     gift_message: str | None = Field(default=None, max_length=1000)
+    yandex_cid: str | None = Field(default=None, max_length=64, pattern=r'^[A-Za-z0-9._:-]{4,64}$')
 
     @model_validator(mode='after')
     def validate_contacts(self) -> 'PurchaseRequest':
@@ -689,6 +690,13 @@ async def create_landing_purchase(
 
     await db.commit()
     await db.refresh(purchase)
+
+    # Persist Yandex CID in cache so fulfill_purchase can link it to the user later
+    if body.yandex_cid and settings.YANDEX_OFFLINE_CONV_ENABLED:
+        try:
+            await cache.set(f'yacid:purchase:{purchase.token}', body.yandex_cid, expire=86400)
+        except Exception:
+            pass
 
     return PurchaseResponse(
         purchase_token=purchase.token,

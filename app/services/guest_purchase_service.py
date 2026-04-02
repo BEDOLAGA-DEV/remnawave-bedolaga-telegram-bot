@@ -355,6 +355,22 @@ async def fulfill_purchase(
             purchase.user_id = user.id
             if recipient_type == 'email' and not purchase.is_gift and is_new_account:
                 purchase.auto_login_token = create_auto_login_token(user.id)
+            # Link Yandex CID before commit so it's available for later activation
+            try:
+                from app.utils.cache import cache
+
+                cached_cid = await cache.get(f'yacid:purchase:{purchase.token}')
+                if cached_cid and settings.YANDEX_OFFLINE_CONV_ENABLED:
+                    from app.database.crud.yandex_client_id import upsert_cid
+
+                    counter_id = (
+                        str(settings.YANDEX_OFFLINE_CONV_COUNTER_ID) if settings.YANDEX_OFFLINE_CONV_COUNTER_ID else ''
+                    )
+                    await upsert_cid(db, user_id=user.id, cid=cached_cid, source='landing', counter_id=counter_id)
+                    await cache.delete(f'yacid:purchase:{purchase.token}')
+            except Exception:
+                logger.debug('Failed to link landing yandex_cid to user (pending)', purchase_id=purchase.id)
+
             await db.commit()
             await db.refresh(purchase, attribute_names=['landing', 'user', 'buyer'])
 
@@ -454,6 +470,22 @@ async def fulfill_purchase(
             )
         except Exception:
             logger.exception('Failed to create transaction for guest purchase', purchase_id=purchase.id)
+
+        # Link Yandex CID from landing purchase cache to the resolved user
+        try:
+            from app.utils.cache import cache
+
+            cached_cid = await cache.get(f'yacid:purchase:{purchase.token}')
+            if cached_cid and settings.YANDEX_OFFLINE_CONV_ENABLED:
+                from app.database.crud.yandex_client_id import upsert_cid
+
+                counter_id = (
+                    str(settings.YANDEX_OFFLINE_CONV_COUNTER_ID) if settings.YANDEX_OFFLINE_CONV_COUNTER_ID else ''
+                )
+                await upsert_cid(db, user_id=user.id, cid=cached_cid, source='landing', counter_id=counter_id)
+                await cache.delete(f'yacid:purchase:{purchase.token}')
+        except Exception:
+            logger.debug('Failed to link landing yandex_cid to user', purchase_id=purchase.id)
 
         # Yandex offline conversions: fire registration event for new accounts
         if is_new_account:
