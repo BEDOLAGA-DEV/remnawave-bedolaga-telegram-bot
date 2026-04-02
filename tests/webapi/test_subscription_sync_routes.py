@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -13,7 +13,7 @@ from app.webapi.schemas.users import UserSubscriptionCreateRequest
 
 
 def _build_subscription() -> SimpleNamespace:
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     return SimpleNamespace(
         id=10,
         user_id=1,
@@ -117,4 +117,3 @@ async def test_subscriptions_extend_rolls_back_when_sync_fails(monkeypatch: pyte
 
     assert error.value.status_code == 500
     restore_mock.assert_awaited_once()
-
