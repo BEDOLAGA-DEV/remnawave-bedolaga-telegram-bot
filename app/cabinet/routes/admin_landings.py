@@ -797,7 +797,8 @@ async def get_landing_stats(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> LandingStatsResponse:
     """Get daily statistics and tariff breakdown for a landing page."""
-    user_tz = tz if tz and len(tz) < 50 else 'UTC'
+    _valid_timezones = zoneinfo.available_timezones()
+    user_tz = tz if tz and tz in _valid_timezones else 'UTC'
 
     landing = await get_landing_by_id(db, landing_id)
     if landing is None:
