@@ -3263,6 +3263,12 @@ class LandingPage(Base):
     background_config = Column(
         JSON, nullable=True
     )  # AnimationConfig: {enabled, type, settings, opacity, blur, reducedOnMobile}
+    # Per-landing analytics goals (JS Yandex.Metrika reachGoal)
+    analytics_view_enabled = Column(Boolean, default=False, server_default='false')
+    analytics_view_goal = Column(String(100), default='landing_view', server_default='landing_view')
+    analytics_click_enabled = Column(Boolean, default=False, server_default='false')
+    analytics_click_goal = Column(String(100), default='landing_pay', server_default='landing_pay')
+
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
 
