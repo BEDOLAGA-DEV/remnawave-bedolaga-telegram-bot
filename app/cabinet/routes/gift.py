@@ -506,6 +506,14 @@ async def create_gift_purchase(
 
     await db.commit()
 
+    # Yandex offline conversions: fire purchase event
+    try:
+        from app.services.yandex_offline_conv_service import fire_purchase_bg, spawn_bg
+
+        spawn_bg(fire_purchase_bg(user.id, price_kopeks))
+    except Exception:
+        pass
+
     # Emit deferred side-effects after atomic commit
     await emit_transaction_side_effects(
         db,

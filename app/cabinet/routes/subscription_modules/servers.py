@@ -233,6 +233,15 @@ async def update_countries(
     subscription.updated_at = datetime.now(UTC)
     await db.commit()
 
+    # Yandex offline conversions: fire purchase event for server add
+    if total_cost > 0:
+        try:
+            from app.services.yandex_offline_conv_service import fire_purchase_bg, spawn_bg
+
+            spawn_bg(fire_purchase_bg(user.id, total_cost))
+        except Exception:
+            pass
+
     # Sync with RemnaWave
     try:
         from app.config import settings
