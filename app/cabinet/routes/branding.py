@@ -1099,3 +1099,4 @@ async def store_yandex_cid(
     from app.services import yandex_offline_conv_service as yandex_conv
 
     await yandex_conv.store_cid(db, user_id=user.id, cid=payload.cid, source='cabinet')
+    await db.commit()
