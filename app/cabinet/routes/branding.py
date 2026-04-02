@@ -17,7 +17,7 @@ from app.config import settings
 from app.database.crud.system_setting import get_setting_value
 from app.database.models import SystemSetting, User
 
-from ..dependencies import get_cabinet_db, require_permission
+from ..dependencies import get_cabinet_db, get_current_cabinet_user, require_permission
 
 
 logger = structlog.get_logger(__name__)
@@ -1080,3 +1080,22 @@ async def update_gift_enabled(
     await set_setting_value(db, GIFT_ENABLED_KEY, str(payload.enabled).lower())
     logger.info('Admin set gift enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
     return GiftEnabledResponse(enabled=payload.enabled)
+
+
+# ============ Yandex CID ============
+
+
+class YandexCidRequest(BaseModel):
+    cid: str = Field(min_length=4, max_length=64)
+
+
+@router.post('/analytics/yandex-cid', status_code=status.HTTP_204_NO_CONTENT)
+async def store_yandex_cid(
+    payload: YandexCidRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Store Yandex ClientID for the current user (first CID wins)."""
+    from app.services import yandex_offline_conv_service as yandex_conv
+
+    await yandex_conv.store_cid(db, user_id=user.id, cid=payload.cid, source='cabinet')

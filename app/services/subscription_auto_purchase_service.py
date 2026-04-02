@@ -691,6 +691,14 @@ async def _auto_extend_subscription(
             ws_error=ws_error,
         )
 
+    # Yandex offline conversions: fire ecommerce purchase event
+    try:
+        from app.services.yandex_offline_conv_service import fire_purchase_bg
+
+        await fire_purchase_bg(user.id, prepared.price_kopeks)
+    except Exception:
+        logger.debug('Yandex offline conv purchase hook error', user_id=user.id)
+
     return True
 
 
@@ -1060,6 +1068,14 @@ async def _auto_purchase_tariff(
             ws_error=ws_error,
         )
 
+    # Yandex offline conversions: fire ecommerce purchase event
+    try:
+        from app.services.yandex_offline_conv_service import fire_purchase_bg
+
+        await fire_purchase_bg(user.id, final_price)
+    except Exception:
+        logger.debug('Yandex offline conv purchase hook error', user_id=user.id)
+
     return True
 
 
@@ -1402,6 +1418,14 @@ async def _auto_purchase_daily_tariff(
             format_user_id=_format_user_id(user),
             ws_error=ws_error,
         )
+
+    # Yandex offline conversions: fire ecommerce purchase event
+    try:
+        from app.services.yandex_offline_conv_service import fire_purchase_bg
+
+        await fire_purchase_bg(user.id, final_price)
+    except Exception:
+        logger.debug('Yandex offline conv purchase hook error', user_id=user.id)
 
     return True
 
@@ -2436,6 +2460,14 @@ async def try_auto_extend_expired_after_topup(
             ws_error=ws_error,
         )
 
+    # Yandex offline conversions: fire ecommerce purchase event
+    try:
+        from app.services.yandex_offline_conv_service import fire_purchase_bg
+
+        await fire_purchase_bg(user.id, renewal_cost)
+    except Exception:
+        logger.debug('Yandex offline conv purchase hook error', user_id=user.id)
+
     return True
 
 
@@ -2805,6 +2837,14 @@ async def try_resume_disabled_daily_after_topup(
             format_user_id=_format_user_id(user),
             ws_error=ws_error,
         )
+
+    # Yandex offline conversions: fire ecommerce purchase event
+    try:
+        from app.services.yandex_offline_conv_service import fire_purchase_bg
+
+        await fire_purchase_bg(user.id, daily_price)
+    except Exception:
+        logger.debug('Yandex offline conv purchase hook error', user_id=user.id)
 
     return True
 

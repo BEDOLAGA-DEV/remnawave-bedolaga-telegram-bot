@@ -1214,6 +1214,14 @@ class MiniAppSubscriptionPurchaseService:
             )
             message = f'{message}\n\n{note}'
 
+        # Yandex offline conversions: fire ecommerce purchase event
+        try:
+            from app.services.yandex_offline_conv_service import fire_purchase_bg
+
+            await fire_purchase_bg(user.id, pricing.final_total)
+        except Exception:
+            logger.debug('Yandex offline conv purchase hook error', user_id=user.id)
+
         return {
             'subscription': subscription,
             'transaction': transaction,

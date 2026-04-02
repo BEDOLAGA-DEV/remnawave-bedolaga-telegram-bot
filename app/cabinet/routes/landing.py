@@ -123,7 +123,7 @@ class PurchaseRequest(BaseModel):
     gift_recipient_type: str | None = Field(default=None, pattern=r'^(email|telegram)$')
     gift_recipient_value: str | None = Field(default=None, max_length=255)
     gift_message: str | None = Field(default=None, max_length=1000)
-    yandex_cid: str | None = Field(default=None, max_length=64, pattern=r'^[A-Za-z0-9._:-]{4,64}$')
+    yandex_cid: str | None = Field(default=None, max_length=128, pattern=r'^[A-Za-z0-9._:-]{4,128}$')
 
     @model_validator(mode='after')
     def validate_contacts(self) -> 'PurchaseRequest':
