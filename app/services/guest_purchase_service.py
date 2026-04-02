@@ -438,6 +438,22 @@ async def fulfill_purchase(
         await db.commit()
         await db.refresh(purchase, attribute_names=['landing', 'user', 'buyer'])
 
+        # Retrieve Yandex CID from Redis and store for user
+        try:
+            import redis as redis_lib
+
+            from app.services.yandex_offline_conv_service import store_cid
+
+            r = redis_lib.from_url(settings.REDIS_URL)
+            cached_cid = r.get(f'yacid:purchase:{purchase_token}')
+            if cached_cid:
+                cid_str = cached_cid if isinstance(cached_cid, str) else cached_cid.decode()
+                await store_cid(db, user.id, cid_str, source='landing')
+                await db.commit()
+                r.delete(f'yacid:purchase:{purchase_token}')
+        except Exception:
+            pass
+
         # Create transaction so promo group auto-assignment and contest tracking work
         transaction = None
         try:

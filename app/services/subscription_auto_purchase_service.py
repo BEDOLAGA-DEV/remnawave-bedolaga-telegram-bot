@@ -1035,6 +1035,14 @@ async def _auto_purchase_tariff(
         format_user_id=_format_user_id(user),
     )
 
+    # Yandex offline conversions: fire purchase event
+    try:
+        from app.services.yandex_offline_conv_service import fire_purchase_bg, spawn_bg
+
+        spawn_bg(fire_purchase_bg(user.id, final_price))
+    except Exception:
+        pass
+
     # Send WebSocket notification to cabinet frontend
     try:
         if existing_subscription:

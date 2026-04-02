@@ -123,6 +123,7 @@ class PurchaseRequest(BaseModel):
     gift_recipient_type: str | None = Field(default=None, pattern=r'^(email|telegram)$')
     gift_recipient_value: str | None = Field(default=None, max_length=255)
     gift_message: str | None = Field(default=None, max_length=1000)
+    yandex_cid: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode='after')
     def validate_contacts(self) -> 'PurchaseRequest':
@@ -646,6 +647,16 @@ async def create_landing_purchase(
         gift_message=body.gift_message,
         commit=False,
     )
+
+    # Store Yandex CID in Redis for offline conversions (user_id not known yet for guest)
+    if body.yandex_cid:
+        try:
+            import redis as redis_lib
+
+            r = redis_lib.from_url(settings.REDIS_URL)
+            r.set(f'yacid:purchase:{purchase.token}', body.yandex_cid, ex=86400)
+        except Exception:
+            pass
 
     # Determine return URL: per-method override → default cabinet URL
     cabinet_base = (settings.CABINET_URL or '').rstrip('/')

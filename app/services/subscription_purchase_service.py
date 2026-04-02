@@ -1214,6 +1214,14 @@ class MiniAppSubscriptionPurchaseService:
             )
             message = f'{message}\n\n{note}'
 
+        # Yandex offline conversions: fire purchase event
+        try:
+            from app.services.yandex_offline_conv_service import fire_purchase_bg, spawn_bg
+
+            spawn_bg(fire_purchase_bg(user.id, pricing.final_total))
+        except Exception:
+            pass
+
         return {
             'subscription': subscription,
             'transaction': transaction,
