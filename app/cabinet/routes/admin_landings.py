@@ -1,5 +1,6 @@
 """Admin routes for landing page management in cabinet."""
 
+import zoneinfo
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -527,6 +528,7 @@ class LandingPurchaseItem(BaseModel):
     currency: str
     payment_method: str | None = None
     status: str
+    referrer: str | None = None
     created_at: datetime | None = None
     paid_at: datetime | None = None
 
@@ -790,10 +792,13 @@ _STATS_PERIOD_DAYS = 30
 @router.get('/{landing_id}/stats', response_model=LandingStatsResponse)
 async def get_landing_stats(
     landing_id: int,
+    tz: str = Query(default='UTC'),
     admin: User = Depends(require_permission('landings:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> LandingStatsResponse:
     """Get daily statistics and tariff breakdown for a landing page."""
+    user_tz = tz if tz and len(tz) < 50 else 'UTC'
+
     landing = await get_landing_by_id(db, landing_id)
     if landing is None:
         raise HTTPException(
@@ -827,7 +832,7 @@ async def get_landing_stats(
     # -- Daily stats for last N days --
     now = datetime.now(UTC)
     cutoff = now - timedelta(days=_STATS_PERIOD_DAYS)
-    day_at_utc = func.date(func.timezone('UTC', GuestPurchase.paid_at))
+    day_at_utc = func.date(func.timezone(user_tz, GuestPurchase.paid_at))
     daily_result = await db.execute(
         select(
             day_at_utc.label('day'),
@@ -846,7 +851,7 @@ async def get_landing_stats(
     daily_rows = {str(r.day): r for r in daily_result.all()}
 
     # Created per day (all statuses, by created_at)
-    day_created_utc = func.date(func.timezone('UTC', GuestPurchase.created_at))
+    day_created_utc = func.date(func.timezone(user_tz, GuestPurchase.created_at))
     created_result = await db.execute(
         select(
             day_created_utc.label('day'),
@@ -862,7 +867,10 @@ async def get_landing_stats(
     created_rows = {str(r.day): r.created for r in created_result.all()}
 
     # Fill missing days with zeros
-    today = now.date()
+    try:
+        today = datetime.now(zoneinfo.ZoneInfo(user_tz)).date()
+    except Exception:
+        today = now.date()
     daily_stats: list[LandingDailyStat] = []
     for i in range(_STATS_PERIOD_DAYS, -1, -1):
         day = today - timedelta(days=i)
@@ -979,6 +987,7 @@ async def get_landing_purchases(
             GuestPurchase.currency,
             GuestPurchase.payment_method,
             GuestPurchase.status,
+            GuestPurchase.referrer,
             GuestPurchase.created_at,
             GuestPurchase.paid_at,
         )
@@ -1004,6 +1013,7 @@ async def get_landing_purchases(
             currency=row.currency,
             payment_method=row.payment_method,
             status=row.status,
+            referrer=row.referrer,
             created_at=row.created_at,
             paid_at=row.paid_at,
         )

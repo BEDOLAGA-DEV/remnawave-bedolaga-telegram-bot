@@ -647,6 +647,11 @@ async def create_landing_purchase(
         commit=False,
     )
 
+    # Capture HTTP Referer header
+    http_referrer = raw_request.headers.get('referer') or raw_request.headers.get('referrer')
+    if http_referrer and len(http_referrer) <= 500:
+        purchase.referrer = http_referrer
+
     # Determine return URL: per-method override → default cabinet URL
     cabinet_base = (settings.CABINET_URL or '').rstrip('/')
     default_return_url = f'{cabinet_base}/buy/success/{purchase.token}'

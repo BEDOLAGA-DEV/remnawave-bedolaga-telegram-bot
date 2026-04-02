@@ -3325,6 +3325,7 @@ class GuestPurchase(Base):
     retry_count = Column(Integer, nullable=False, default=0, server_default='0')
     receipt_uuid = Column(String(255), nullable=True, index=True)
     receipt_created_at = Column(AwareDateTime(), nullable=True)
+    referrer = Column(String(500), nullable=True)
 
     landing = relationship('LandingPage', back_populates='guest_purchases', lazy='selectin')
     tariff = relationship('Tariff', lazy='selectin')
