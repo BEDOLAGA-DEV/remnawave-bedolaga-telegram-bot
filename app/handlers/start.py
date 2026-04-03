@@ -1,4 +1,5 @@
 import html
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -701,6 +702,14 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             return
         start_parameter = None  # Invalid token, ignore
 
+    # Handle Yandex Metrika CID: /start ym_{cid}
+    if start_parameter and start_parameter.startswith('ym_'):
+        ym_cid = start_parameter[3:]
+        if re.match(r'^[A-Za-z0-9._:-]{4,128}$', ym_cid):
+            await state.update_data(yandex_cid=ym_cid)
+            logger.info('📊 Yandex CID from start parameter', cid_prefix=ym_cid[:8])
+        start_parameter = None  # Not a campaign or referral
+
     if start_parameter:
         campaign = await get_campaign_by_start_parameter(
             db,
@@ -765,6 +774,18 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
 
     if user and user.status != UserStatus.DELETED.value:
         logger.info('✅ Активный пользователь найден', telegram_id=user.telegram_id)
+
+        # Store Yandex CID from start parameter if present
+        _ym_cid = (await state.get_data()).get('yandex_cid')
+        if _ym_cid:
+            try:
+                from app.services import yandex_offline_conv_service as yandex_conv
+
+                await yandex_conv.store_cid(db, user.id, _ym_cid, source='bot')
+                await db.commit()
+                logger.info('📊 Yandex CID stored for existing user', user_id=user.id)
+            except Exception:
+                pass
 
         # Check for phantom user created by guest landing purchase and merge
         if message.from_user.username:
@@ -1696,6 +1717,18 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
     # Auto-activate pending gift for newly registered user (before state.clear() wipes the token)
     await _activate_pending_gift_after_registration(db, state, user, callback.message.answer)
 
+    # Store Yandex CID from start parameter (before state.clear)
+    _ym_cid = data.get('yandex_cid')
+    if _ym_cid:
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            await yandex_conv.store_cid(db, user.id, _ym_cid, source='bot')
+            await db.commit()
+            logger.info('📊 Yandex CID stored for new user (callback)', user_id=user.id)
+        except Exception:
+            pass
+
     await state.clear()
 
     if campaign_message:
@@ -2041,6 +2074,18 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
     # Auto-activate pending gift for newly registered user (before state.clear() wipes the token)
     await _activate_pending_gift_after_registration(db, state, user, message.answer)
+
+    # Store Yandex CID from start parameter (before state.clear)
+    _ym_cid = data.get('yandex_cid')
+    if _ym_cid:
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            await yandex_conv.store_cid(db, user.id, _ym_cid, source='bot')
+            await db.commit()
+            logger.info('📊 Yandex CID stored for new user', user_id=user.id)
+        except Exception:
+            pass
 
     await state.clear()
 
