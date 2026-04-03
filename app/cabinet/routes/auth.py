@@ -851,6 +851,9 @@ async def auth_telegram_oidc(
         except Exception:
             pass
 
+    # Store Yandex CID if provided
+    await _try_store_yandex_cid(db, user.id, getattr(request, 'yandex_cid', None))
+
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
     if response.campaign_bonus:
         response.user = _user_to_response(user)
