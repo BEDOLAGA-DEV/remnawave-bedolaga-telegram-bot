@@ -115,6 +115,19 @@ def _user_to_response(user: User) -> UserResponse:
     )
 
 
+async def _try_store_yandex_cid(db: AsyncSession, user_id: int, yandex_cid: str | None) -> None:
+    """Store Yandex ClientID if provided. Best-effort, never fails."""
+    if not yandex_cid:
+        return
+    try:
+        from app.services import yandex_offline_conv_service as yandex_conv
+
+        await yandex_conv.store_cid(db, user_id, yandex_cid, source='cabinet')
+        await db.commit()
+    except Exception:
+        pass
+
+
 async def _create_auth_response(user: User, db: AsyncSession) -> AuthResponse:
     """Create full auth response with tokens and RBAC permissions."""
     user_permissions, user_role_names, user_role_level = await UserRoleCRUD.get_user_permissions(db, user.id)
@@ -578,6 +591,9 @@ async def auth_telegram(
         except Exception:
             pass
 
+    # Store Yandex CID if provided
+    await _try_store_yandex_cid(db, user.id, getattr(request, 'yandex_cid', None))
+
     # Process campaign bonus
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
     if response.campaign_bonus:
@@ -684,6 +700,9 @@ async def auth_telegram_widget(
             await clear_pending_referral(request.id)
         except Exception:
             pass
+
+    # Store Yandex CID if provided
+    await _try_store_yandex_cid(db, user.id, getattr(request, 'yandex_cid', None))
 
     # Process campaign bonus
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
@@ -1173,6 +1192,9 @@ async def verify_email(
     response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, response.refresh_token)
 
+    # Store Yandex CID if provided
+    await _try_store_yandex_cid(db, user.id, getattr(request, 'yandex_cid', None))
+
     # Process campaign bonus
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
     if response.campaign_bonus:
@@ -1329,6 +1351,9 @@ async def login_email(
 
     response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, response.refresh_token)
+
+    # Store Yandex CID if provided
+    await _try_store_yandex_cid(db, user.id, getattr(request, 'yandex_cid', None))
 
     # Process campaign bonus
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)

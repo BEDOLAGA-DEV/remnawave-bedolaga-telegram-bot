@@ -15,6 +15,9 @@ class TelegramAuthRequest(BaseModel):
     referral_code: str | None = Field(
         None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
     )
+    yandex_cid: str | None = Field(
+        None, max_length=128, pattern=r'^[A-Za-z0-9._:-]{4,128}$', description='Yandex Metrika ClientID'
+    )
 
 
 class TelegramWidgetAuthRequest(BaseModel):
@@ -33,6 +36,9 @@ class TelegramWidgetAuthRequest(BaseModel):
     referral_code: str | None = Field(
         None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
     )
+    yandex_cid: str | None = Field(
+        None, max_length=128, pattern=r'^[A-Za-z0-9._:-]{4,128}$', description='Yandex Metrika ClientID'
+    )
 
 
 class TelegramOIDCAuthRequest(BaseModel):
@@ -45,6 +51,9 @@ class TelegramOIDCAuthRequest(BaseModel):
     referral_code: str | None = Field(
         None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
     )
+    yandex_cid: str | None = Field(
+        None, max_length=128, pattern=r'^[A-Za-z0-9._:-]{4,128}$', description='Yandex Metrika ClientID'
+    )
 
 
 class EmailRegisterRequest(BaseModel):
@@ -52,6 +61,9 @@ class EmailRegisterRequest(BaseModel):
 
     email: EmailStr = Field(..., description='Email address')
     password: str = Field(..., min_length=8, max_length=128, description='Password (min 8 chars)')
+    yandex_cid: str | None = Field(
+        None, max_length=128, pattern=r'^[A-Za-z0-9._:-]{4,128}$', description='Yandex Metrika ClientID'
+    )
 
 
 class EmailVerifyRequest(BaseModel):
@@ -70,6 +82,9 @@ class EmailLoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=128, description='Password')
     campaign_slug: str | None = Field(
         None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description='Campaign slug from web link'
+    )
+    yandex_cid: str | None = Field(
+        None, max_length=128, pattern=r'^[A-Za-z0-9._:-]{4,128}$', description='Yandex Metrika ClientID'
     )
 
 
@@ -137,6 +152,9 @@ class EmailRegisterStandaloneRequest(BaseModel):
     language: str = Field('ru', max_length=5, pattern=r'^[a-z]{2}$', description='Preferred language (ISO 639-1)')
     referral_code: str | None = Field(
         None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
+    )
+    yandex_cid: str | None = Field(
+        None, max_length=128, pattern=r'^[A-Za-z0-9._:-]{4,128}$', description='Yandex Metrika ClientID'
     )
 
 
