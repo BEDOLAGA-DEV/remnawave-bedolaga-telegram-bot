@@ -60,6 +60,7 @@ _TEXT_KEY_TO_NOTIFICATION_TYPE: dict[str, NotificationType] = {
     'WEBHOOK_USER_NOT_CONNECTED': NotificationType.WEBHOOK_USER_NOT_CONNECTED,
     'WEBHOOK_DEVICE_ADDED': NotificationType.WEBHOOK_DEVICE_ADDED,
     'WEBHOOK_DEVICE_DELETED': NotificationType.WEBHOOK_DEVICE_DELETED,
+    'WEBHOOK_TORRENT_DETECTED': NotificationType.WEBHOOK_TORRENT_DETECTED,
 }
 
 # Mapping from locale text_key to the Settings toggle that controls it
