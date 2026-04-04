@@ -80,6 +80,7 @@ _LANDING_UPDATABLE_FIELDS = frozenset(
         'analytics_click_enabled',
         'analytics_view_goal',
         'analytics_click_goal',
+        'sticky_pay_button',
     }
 )
 

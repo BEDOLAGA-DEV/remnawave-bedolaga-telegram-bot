@@ -31,6 +31,8 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix='/landing', tags=['Landing Pages'])
 
 
+
+
 class LandingFeature(BaseModel):
     icon: str = ''
     title: str = ''
@@ -100,6 +102,7 @@ class LandingConfigResponse(BaseModel):
     analytics_click_enabled: bool = False
     analytics_view_goal: str | None = None
     analytics_click_goal: str | None = None
+    sticky_pay_button: bool = False
 
 
 _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
@@ -158,6 +161,8 @@ class PurchaseStatusResponse(BaseModel):
     auto_login_token: str | None = None
     recipient_in_bot: bool | None = None
     bot_link: str | None = None
+
+
 
 
 def _mask_contact(value: str) -> str:
@@ -376,6 +381,7 @@ async def _load_landing_tariffs(
     return landing_tariffs
 
 
+
 # IMPORTANT: /purchase/{token} must come BEFORE /{slug} to avoid shadowing
 # (FastAPI checks routes in definition order; "purchase" would match {slug})
 
@@ -537,6 +543,7 @@ async def get_landing_config(
         analytics_click_enabled=landing.analytics_click_enabled,
         analytics_view_goal=landing.analytics_view_goal,
         analytics_click_goal=landing.analytics_click_goal,
+        sticky_pay_button=getattr(landing, "sticky_pay_button", False) or False,
     )
 
 

@@ -209,6 +209,8 @@ class LandingCreateRequest(BaseModel):
     analytics_click_enabled: bool | None = None
     analytics_view_goal: str | None = Field(default=None, max_length=100)
     analytics_click_goal: str | None = Field(default=None, max_length=100)
+    sticky_pay_button: bool | None = False
+    sticky_pay_button: bool | None = False
 
     @field_validator('background_config')
     @classmethod
@@ -322,6 +324,7 @@ class LandingUpdateRequest(BaseModel):
     analytics_click_enabled: bool | None = None
     analytics_view_goal: str | None = Field(default=None, max_length=100)
     analytics_click_goal: str | None = Field(default=None, max_length=100)
+    sticky_pay_button: bool | None = False
 
     @field_validator('background_config')
     @classmethod
@@ -473,6 +476,7 @@ class LandingDetailResponse(BaseModel):
     analytics_click_enabled: bool | None = None
     analytics_view_goal: str | None = Field(default=None, max_length=100)
     analytics_click_goal: str | None = Field(default=None, max_length=100)
+    sticky_pay_button: bool | None = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -1084,6 +1088,7 @@ def _landing_to_detail(landing: LandingPage) -> LandingDetailResponse:
         analytics_click_enabled=landing.analytics_click_enabled,
         analytics_view_goal=landing.analytics_view_goal,
         analytics_click_goal=landing.analytics_click_goal,
+        sticky_pay_button=getattr(landing, "sticky_pay_button", False) or False,
         created_at=landing.created_at,
         updated_at=landing.updated_at,
     )
