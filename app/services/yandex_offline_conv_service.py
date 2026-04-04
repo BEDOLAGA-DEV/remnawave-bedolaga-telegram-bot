@@ -24,8 +24,6 @@ from app.database.crud.yandex_client_id import (
     upsert_cid,
 )
 from app.database.database import AsyncSessionLocal
-
-
 logger = structlog.get_logger(__name__)
 
 LOG_PREFIX = '[YandexOfflineConv]'
@@ -36,23 +34,17 @@ RETRY_DELAY = 1.0
 
 _CID_RE = re.compile(r'^[A-Za-z0-9._:-]{4,128}$')
 _http_client: httpx.AsyncClient | None = None
-
-
 def _get_client() -> httpx.AsyncClient:
     global _http_client
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(timeout=TIMEOUT)
     return _http_client
-
-
 def _is_enabled() -> bool:
     return bool(
         settings.YANDEX_OFFLINE_CONV_ENABLED
         and settings.YANDEX_OFFLINE_CONV_COUNTER_ID
         and settings.YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET
     )
-
-
 def _normalize_cid(cid: str | None) -> str | None:
     if not isinstance(cid, str):
         return None
@@ -60,22 +52,16 @@ def _normalize_cid(cid: str | None) -> str | None:
     if not cid or not _CID_RE.match(cid):
         return None
     return cid
-
-
 def _mask_cid(cid: str) -> str:
     if len(cid) <= 4:
         return '****'
     return '*' * (len(cid) - 4) + cid[-4:]
-
-
 def _base_payload(cid: str) -> dict[str, str]:
     return {
         'tid': settings.YANDEX_OFFLINE_CONV_COUNTER_ID,
         'cid': cid,
         'ms': settings.YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET,
     }
-
-
 def _pageview_payload(cid: str) -> dict[str, str]:
     payload = _base_payload(cid)
     payload.update(
@@ -86,8 +72,6 @@ def _pageview_payload(cid: str) -> dict[str, str]:
         }
     )
     return payload
-
-
 def _event_payload(cid: str, event_action: str) -> dict[str, str]:
     payload = _base_payload(cid)
     payload.update(
@@ -97,8 +81,6 @@ def _event_payload(cid: str, event_action: str) -> dict[str, str]:
         }
     )
     return payload
-
-
 def _ecommerce_purchase_payload(
     cid: str,
     amount_rubles: float,
@@ -115,24 +97,21 @@ def _ecommerce_purchase_payload(
     )
     currency = getattr(settings, 'YANDEX_OFFLINE_CONV_CURRENCY', '') or 'RUB'
     payload = _base_payload(cid)
-    payload.update(
-        {
-            't': 'event',
-            'ea': 'purchase',
-            'pa': 'purchase',
-            'ti': order_id or str(int(time.time())),
-            'tr': str(amount_rubles),
-            'cu': currency,
-            'ev': str(amount_rubles),
-            'pr1id': 'subscription',
-            'pr1nm': product_name or service_name,
-            'pr1ca': product_category or 'subscription',
-            'pr1pr': str(amount_rubles),
-            'pr1qt': '1',
-        }
-    )
+    payload.update({
+        't': 'event',
+        'ea': 'purchase',
+        'pa': 'purchase',
+        'ti': order_id or str(int(time.time())),
+        'tr': str(amount_rubles),
+        'cu': currency,
+        'ev': str(amount_rubles),
+        'pr1id': 'subscription',
+        'pr1nm': product_name or service_name,
+        'pr1ca': product_category or 'subscription',
+        'pr1pr': str(amount_rubles),
+        'pr1qt': '1',
+    })
     return payload
-
 
 async def _post_collect(payload: dict[str, str], kind: str, cid: str) -> bool:
     """POST to mc.yandex.ru/collect with retries. Returns True on success."""
@@ -171,18 +150,12 @@ async def _post_collect(payload: dict[str, str], kind: str, cid: str) -> bool:
             return False
 
     return False
-
-
 async def _send_event(cid: str, event_action: str) -> bool:
     """Send event directly — no pageview needed, user has active Metrika session."""
     return await _post_collect(_event_payload(cid, event_action), event_action, cid)
-
-
 # --- Background task helpers ---
 
 _background_tasks: set[asyncio.Task] = set()
-
-
 def _task_done(task):
     """Log errors from background conversion tasks."""
     _background_tasks.discard(task)
@@ -191,8 +164,6 @@ def _task_done(task):
     exc = task.exception()
     if exc:
         logger.error(f'{LOG_PREFIX} Background task failed', error=str(exc))
-
-
 def spawn_bg(coro) -> None:
     """Spawn a background Yandex conversion task with proper reference tracking.
 
@@ -205,8 +176,6 @@ def spawn_bg(coro) -> None:
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
     task.add_done_callback(_task_done)
-
-
 async def _fire_bg(event_name: str, event_fn, user_id: int, **kwargs) -> None:
     """Generic background wrapper: opens a session, calls event_fn, logs errors."""
     try:
@@ -214,23 +183,15 @@ async def _fire_bg(event_name: str, event_fn, user_id: int, **kwargs) -> None:
             await event_fn(db, user_id, **kwargs)
     except Exception as exc:
         logger.warning(f'{LOG_PREFIX} Background {event_name} event failed', user_id=user_id, error=str(exc))
-
-
 async def fire_registration_bg(user_id: int) -> None:
     """Fire registration event in background with its own DB session."""
     await _fire_bg('registration', on_registration, user_id)
-
-
 async def fire_trial_bg(user_id: int) -> None:
     """Fire trial event in background with its own DB session."""
     await _fire_bg('trial', on_trial, user_id)
-
-
 async def fire_purchase_bg(user_id: int, amount_kopeks: int) -> None:
     """Fire purchase event in background with its own DB session."""
     await _fire_bg('purchase', on_purchase, user_id, amount_kopeks=amount_kopeks)
-
-
 # --- Public API ---
 async def store_cid(
     db: AsyncSession,
@@ -250,8 +211,6 @@ async def store_cid(
     except Exception as exc:
         logger.error('failed to store CID', user_id=user_id, error=str(exc))
         return False
-
-
 async def store_cid_and_fire_registration(
     user_id: int,
     cid: str | None,
@@ -272,8 +231,6 @@ async def store_cid_and_fire_registration(
                 spawn_bg(fire_registration_bg(user_id))
     except Exception as exc:
         logger.warning(f'{LOG_PREFIX} Failed to store CID and fire registration', user_id=user_id, error=str(exc))
-
-
 async def on_registration(db: AsyncSession, user_id: int) -> None:
     """Fire registration event (once per user)."""
     if not _is_enabled():
@@ -291,8 +248,6 @@ async def on_registration(db: AsyncSession, user_id: int) -> None:
             logger.info('registration event sent', user_id=user_id)
     except Exception as exc:
         logger.error('registration event failed', user_id=user_id, error=str(exc))
-
-
 async def on_trial(db: AsyncSession, user_id: int) -> None:
     """Fire trial-add event (once per user)."""
     if not _is_enabled():
@@ -310,8 +265,6 @@ async def on_trial(db: AsyncSession, user_id: int) -> None:
             logger.info('trial-add event sent', user_id=user_id)
     except Exception as exc:
         logger.error('trial-add event failed', user_id=user_id, error=str(exc))
-
-
 async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> None:
     """Fire ecommerce purchase event (every payment)."""
     if not _is_enabled():
@@ -329,8 +282,6 @@ async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> Non
             logger.info('purchase event sent', user_id=user_id, amount=amount_rubles)
     except Exception as exc:
         logger.error('purchase event failed', user_id=user_id, error=str(exc))
-
-
 def parse_cid_from_start_param(param: str) -> tuple[str | None, str]:
     """Extract Yandex CID from bot start parameter.
 

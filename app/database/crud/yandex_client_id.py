@@ -22,23 +22,26 @@ async def upsert_cid(
     source: str = 'web',
     counter_id: str | None = None,
 ) -> YandexClientIdMap:
-    """Insert Yandex ClientID for a user, protecting the first CID (ON CONFLICT DO NOTHING)."""
+    """Insert or update Yandex ClientID for a user (race-safe via ON CONFLICT)."""
+    now = datetime.now(UTC)
+    values = {
+        'yandex_cid': cid,
+        'source': source,
+        'updated_at': now,
+    }
+    if counter_id:
+        values['counter_id'] = counter_id
+
     stmt = (
         pg_insert(YandexClientIdMap)
         .values(user_id=user_id, yandex_cid=cid, source=source, counter_id=counter_id)
-        .on_conflict_do_nothing(index_elements=['user_id'])
+        .on_conflict_do_update(index_elements=['user_id'], set_=values)
         .returning(YandexClientIdMap)
     )
 
     result = await db.execute(stmt)
     await db.flush()
-    row = result.scalar_one_or_none()
-    if row is not None:
-        return row
-    # Conflict: CID already exists — return existing record
-    existing = await get_cid(db, user_id)
-    assert existing is not None
-    return existing
+    return result.scalar_one()
 
 
 async def get_cid(db: AsyncSession, user_id: int) -> YandexClientIdMap | None:
