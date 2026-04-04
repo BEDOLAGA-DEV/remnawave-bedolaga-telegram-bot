@@ -31,7 +31,6 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix='/landing', tags=['Landing Pages'])
 
 
-# ============ Schemas ============
 
 
 class LandingFeature(BaseModel):
@@ -100,9 +99,9 @@ class LandingConfigResponse(BaseModel):
     discount: LandingDiscountInfo | None = None  # null if no active discount
     background_config: dict | None = None
     analytics_view_enabled: bool = False
-    analytics_view_goal: str = 'landing_view'
     analytics_click_enabled: bool = False
-    analytics_click_goal: str = 'landing_pay'
+    analytics_view_goal: str | None = None
+    analytics_click_goal: str | None = None
 
 
 _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
@@ -163,7 +162,6 @@ class PurchaseStatusResponse(BaseModel):
     bot_link: str | None = None
 
 
-# ============ Helpers ============
 
 
 def _mask_contact(value: str) -> str:
@@ -382,7 +380,6 @@ async def _load_landing_tariffs(
     return landing_tariffs
 
 
-# ============ Routes ============
 
 # IMPORTANT: /purchase/{token} must come BEFORE /{slug} to avoid shadowing
 # (FastAPI checks routes in definition order; "purchase" would match {slug})
@@ -541,10 +538,10 @@ async def get_landing_config(
         meta_description=resolve_locale_text(landing.meta_description, lang) or None,
         discount=discount,
         background_config=landing.background_config,
-        analytics_view_enabled=landing.analytics_view_enabled or False,
-        analytics_view_goal=landing.analytics_view_goal or 'landing_view',
-        analytics_click_enabled=landing.analytics_click_enabled or False,
-        analytics_click_goal=landing.analytics_click_goal or 'landing_pay',
+        analytics_view_enabled=landing.analytics_view_enabled,
+        analytics_click_enabled=landing.analytics_click_enabled,
+        analytics_view_goal=landing.analytics_view_goal,
+        analytics_click_goal=landing.analytics_click_goal,
     )
 
 

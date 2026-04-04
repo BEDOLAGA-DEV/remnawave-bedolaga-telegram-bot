@@ -1,6 +1,5 @@
 """Admin routes for landing page management in cabinet."""
 
-import zoneinfo
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -207,9 +206,9 @@ class LandingCreateRequest(BaseModel):
     discount_badge_text: dict[str, str] | None = None
     background_config: dict | None = None
     analytics_view_enabled: bool | None = None
-    analytics_view_goal: str | None = None
     analytics_click_enabled: bool | None = None
-    analytics_click_goal: str | None = None
+    analytics_view_goal: str | None = Field(default=None, max_length=100)
+    analytics_click_goal: str | None = Field(default=None, max_length=100)
 
     @field_validator('background_config')
     @classmethod
@@ -320,9 +319,9 @@ class LandingUpdateRequest(BaseModel):
     discount_badge_text: dict[str, str] | None = None
     background_config: dict | None = None
     analytics_view_enabled: bool | None = None
-    analytics_view_goal: str | None = None
     analytics_click_enabled: bool | None = None
-    analytics_click_goal: str | None = None
+    analytics_view_goal: str | None = Field(default=None, max_length=100)
+    analytics_click_goal: str | None = Field(default=None, max_length=100)
 
     @field_validator('background_config')
     @classmethod
@@ -436,10 +435,6 @@ class LandingListItem(BaseModel):
     method_count: int
     purchase_stats: PurchaseStats
     has_active_discount: bool = False
-    analytics_view_enabled: bool = False
-    analytics_view_goal: str = 'landing_view'
-    analytics_click_enabled: bool = False
-    analytics_click_goal: str = 'landing_pay'
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -474,10 +469,10 @@ class LandingDetailResponse(BaseModel):
     discount_ends_at: datetime | None = None
     discount_badge_text: dict[str, str] | None = None
     background_config: dict | None = None
-    analytics_view_enabled: bool = False
-    analytics_view_goal: str = 'landing_view'
-    analytics_click_enabled: bool = False
-    analytics_click_goal: str = 'landing_pay'
+    analytics_view_enabled: bool | None = None
+    analytics_click_enabled: bool | None = None
+    analytics_view_goal: str | None = Field(default=None, max_length=100)
+    analytics_click_goal: str | None = Field(default=None, max_length=100)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -544,7 +539,6 @@ class LandingPurchaseItem(BaseModel):
     currency: str
     payment_method: str | None = None
     status: str
-    referrer: str | None = None
     created_at: datetime | None = None
     paid_at: datetime | None = None
 
@@ -608,10 +602,6 @@ async def list_landings(
                     expired=stats.get('expired', 0),
                 ),
                 has_active_discount=discount_active,
-                analytics_view_enabled=landing.analytics_view_enabled or False,
-                analytics_view_goal=landing.analytics_view_goal or 'landing_view',
-                analytics_click_enabled=landing.analytics_click_enabled or False,
-                analytics_click_goal=landing.analytics_click_goal or 'landing_pay',
                 created_at=landing.created_at,
                 updated_at=landing.updated_at,
             )
@@ -660,10 +650,6 @@ async def create_landing_page(
         discount_ends_at=request.discount_ends_at,
         discount_badge_text=request.discount_badge_text,
         background_config=request.background_config,
-        analytics_view_enabled=request.analytics_view_enabled,
-        analytics_view_goal=request.analytics_view_goal,
-        analytics_click_enabled=request.analytics_click_enabled,
-        analytics_click_goal=request.analytics_click_goal,
     )
 
     logger.info('Admin created landing page', admin_id=admin.id, slug=landing.slug, landing_id=landing.id)
@@ -816,14 +802,10 @@ _STATS_PERIOD_DAYS = 30
 @router.get('/{landing_id}/stats', response_model=LandingStatsResponse)
 async def get_landing_stats(
     landing_id: int,
-    tz: str = Query(default='UTC'),
     admin: User = Depends(require_permission('landings:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> LandingStatsResponse:
     """Get daily statistics and tariff breakdown for a landing page."""
-    _valid_timezones = zoneinfo.available_timezones()
-    user_tz = tz if tz and tz in _valid_timezones else 'UTC'
-
     landing = await get_landing_by_id(db, landing_id)
     if landing is None:
         raise HTTPException(
@@ -857,7 +839,7 @@ async def get_landing_stats(
     # -- Daily stats for last N days --
     now = datetime.now(UTC)
     cutoff = now - timedelta(days=_STATS_PERIOD_DAYS)
-    day_at_utc = func.date(func.timezone(user_tz, GuestPurchase.paid_at))
+    day_at_utc = func.date(func.timezone('UTC', GuestPurchase.paid_at))
     daily_result = await db.execute(
         select(
             day_at_utc.label('day'),
@@ -876,7 +858,7 @@ async def get_landing_stats(
     daily_rows = {str(r.day): r for r in daily_result.all()}
 
     # Created per day (all statuses, by created_at)
-    day_created_utc = func.date(func.timezone(user_tz, GuestPurchase.created_at))
+    day_created_utc = func.date(func.timezone('UTC', GuestPurchase.created_at))
     created_result = await db.execute(
         select(
             day_created_utc.label('day'),
@@ -892,10 +874,7 @@ async def get_landing_stats(
     created_rows = {str(r.day): r.created for r in created_result.all()}
 
     # Fill missing days with zeros
-    try:
-        today = datetime.now(zoneinfo.ZoneInfo(user_tz)).date()
-    except Exception:
-        today = now.date()
+    today = now.date()
     daily_stats: list[LandingDailyStat] = []
     for i in range(_STATS_PERIOD_DAYS, -1, -1):
         day = today - timedelta(days=i)
@@ -1012,7 +991,6 @@ async def get_landing_purchases(
             GuestPurchase.currency,
             GuestPurchase.payment_method,
             GuestPurchase.status,
-            GuestPurchase.referrer,
             GuestPurchase.created_at,
             GuestPurchase.paid_at,
         )
@@ -1038,7 +1016,6 @@ async def get_landing_purchases(
             currency=row.currency,
             payment_method=row.payment_method,
             status=row.status,
-            referrer=row.referrer,
             created_at=row.created_at,
             paid_at=row.paid_at,
         )
@@ -1103,10 +1080,10 @@ def _landing_to_detail(landing: LandingPage) -> LandingDetailResponse:
         discount_ends_at=landing.discount_ends_at,
         discount_badge_text=landing.discount_badge_text,
         background_config=landing.background_config,
-        analytics_view_enabled=landing.analytics_view_enabled or False,
-        analytics_view_goal=landing.analytics_view_goal or 'landing_view',
-        analytics_click_enabled=landing.analytics_click_enabled or False,
-        analytics_click_goal=landing.analytics_click_goal or 'landing_pay',
+        analytics_view_enabled=landing.analytics_view_enabled,
+        analytics_click_enabled=landing.analytics_click_enabled,
+        analytics_view_goal=landing.analytics_view_goal,
+        analytics_click_goal=landing.analytics_click_goal,
         created_at=landing.created_at,
         updated_at=landing.updated_at,
     )

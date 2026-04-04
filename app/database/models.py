@@ -3260,15 +3260,13 @@ class LandingPage(Base):
     discount_starts_at = Column(AwareDateTime(), nullable=True)
     discount_ends_at = Column(AwareDateTime(), nullable=True)
     discount_badge_text = Column(JSON, nullable=True)  # LocaleDict {"ru": "...", "en": "..."}
+    analytics_view_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    analytics_click_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    analytics_view_goal = Column(String(100), nullable=True)
+    analytics_click_goal = Column(String(100), nullable=True)
     background_config = Column(
         JSON, nullable=True
     )  # AnimationConfig: {enabled, type, settings, opacity, blur, reducedOnMobile}
-    # Per-landing analytics goals (JS Yandex.Metrika reachGoal)
-    analytics_view_enabled = Column(Boolean, default=False, server_default='false')
-    analytics_view_goal = Column(String(100), default='landing_view', server_default='landing_view')
-    analytics_click_enabled = Column(Boolean, default=False, server_default='false')
-    analytics_click_goal = Column(String(100), default='landing_pay', server_default='landing_pay')
-
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
 
@@ -3331,7 +3329,6 @@ class GuestPurchase(Base):
     retry_count = Column(Integer, nullable=False, default=0, server_default='0')
     receipt_uuid = Column(String(255), nullable=True, index=True)
     receipt_created_at = Column(AwareDateTime(), nullable=True)
-    referrer = Column(String(500), nullable=True)
 
     landing = relationship('LandingPage', back_populates='guest_purchases', lazy='selectin')
     tariff = relationship('Tariff', lazy='selectin')
@@ -3413,3 +3410,16 @@ class NewsTag(Base):
 
     def __repr__(self) -> str:
         return f"<NewsTag id={self.id} name='{self.name}'>"
+
+class YandexClientIdMap(Base):
+    __tablename__ = 'yandex_client_id_map'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), unique=True, nullable=False)
+    yandex_cid = Column(String(128), nullable=False)
+    source = Column(String(10), nullable=False, default='web')
+    counter_id = Column(String(32), nullable=True)
+    registration_sent = Column(Boolean, default=False, nullable=False)
+    trial_sent = Column(Boolean, default=False, nullable=False)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+    user = relationship('User', foreign_keys=[user_id])
