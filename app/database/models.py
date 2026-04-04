@@ -3260,8 +3260,8 @@ class LandingPage(Base):
     discount_starts_at = Column(AwareDateTime(), nullable=True)
     discount_ends_at = Column(AwareDateTime(), nullable=True)
     discount_badge_text = Column(JSON, nullable=True)  # LocaleDict {"ru": "...", "en": "..."}
-    analytics_view_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
-    analytics_click_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    analytics_view_enabled = Column(Boolean, nullable=False, default=False, server_default='false')
+    analytics_click_enabled = Column(Boolean, nullable=False, default=False, server_default='false')
     analytics_view_goal = Column(String(100), nullable=True)
     analytics_click_goal = Column(String(100), nullable=True)
     background_config = Column(
@@ -3410,6 +3410,7 @@ class NewsTag(Base):
 
     def __repr__(self) -> str:
         return f"<NewsTag id={self.id} name='{self.name}'>"
+
 
 class YandexClientIdMap(Base):
     __tablename__ = 'yandex_client_id_map'

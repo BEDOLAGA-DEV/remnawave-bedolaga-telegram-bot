@@ -31,8 +31,6 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix='/landing', tags=['Landing Pages'])
 
 
-
-
 class LandingFeature(BaseModel):
     icon: str = ''
     title: str = ''
@@ -160,8 +158,6 @@ class PurchaseStatusResponse(BaseModel):
     auto_login_token: str | None = None
     recipient_in_bot: bool | None = None
     bot_link: str | None = None
-
-
 
 
 def _mask_contact(value: str) -> str:
@@ -378,7 +374,6 @@ async def _load_landing_tariffs(
         )
 
     return landing_tariffs
-
 
 
 # IMPORTANT: /purchase/{token} must come BEFORE /{slug} to avoid shadowing
