@@ -140,6 +140,7 @@ class NotificationDeliveryService:
         bot: Bot | None = None,
         telegram_message: str | None = None,
         telegram_markup: Any | None = None,
+        send_email: bool = True,
     ) -> bool:
         """
         Send notification to user through appropriate channel.
@@ -151,51 +152,75 @@ class NotificationDeliveryService:
             bot: Telegram bot instance (required for Telegram users)
             telegram_message: Pre-formatted Telegram message (optional)
             telegram_markup: Telegram keyboard markup (optional)
+            send_email: Whether to attempt sending the notification via email.
+                If True (default), email will be used when the user has a valid address.
+                Set to False to restrict delivery to Telegram only.
 
         Returns:
             True if notification was sent successfully through at least one channel
         """
         if user.status in (UserStatus.BLOCKED.value, UserStatus.DELETED.value):
-            logger.debug('Пропускаем уведомление для неактивного пользователя', user_id=user.id, status=user.status)
+            logger.debug(
+                'Пропускаем уведомление для неактивного пользователя',
+                user_id=user.id,
+                status=user.status,
+            )
             return False
+
+        tasks = []
+        channel_names = []
 
         if user.telegram_id:
-            # User has Telegram - send via bot
-            return await self._send_telegram_notification(
-                user=user,
-                notification_type=notification_type,
-                context=context,
-                bot=bot,
-                message=telegram_message,
-                markup=telegram_markup,
+            tasks.append(
+                self._send_telegram_notification(
+                    user=user,
+                    notification_type=notification_type,
+                    context=context,
+                    bot=bot,
+                    message=telegram_message,
+                    markup=telegram_markup,
+                )
             )
-        if user.email and user.email_verified:
-            # Email-only user - send via email and WebSocket
-            results = await asyncio.gather(
-                self._send_email_notification(user, notification_type, context),
-                self._send_websocket_notification(user, notification_type, context),
-                return_exceptions=True,
-            )
+            channel_names.append('telegram')
 
-            email_sent = results[0] is True
-            ws_sent = results[1] is True
+        if send_email and user.email and user.email_verified:
+            tasks.append(self._send_email_notification(user, notification_type, context))
+            channel_names.append('email')
+            tasks.append(self._send_websocket_notification(user, notification_type, context))
+            channel_names.append('websocket')
 
-            if email_sent or ws_sent:
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            success_channels = []
+            failed_channels = []
+
+            for result, channel_name in zip(results, channel_names, strict=True):
+                if result is True:
+                    success_channels.append(channel_name)
+                else:
+                    failed_channels.append(channel_name)
+                    if isinstance(result, Exception):
+                        logger.warning(
+                            'Ошибка отправки уведомления по каналу',
+                            user_id=user.id,
+                            channel=channel_name,
+                            error=str(result),
+                        )
+            if success_channels:
                 logger.info(
-                    'Уведомление отправлено email-пользователю (email ws=)',
+                    'Уведомления отправлены пользователю',
                     notification_type_value=notification_type.value,
                     user_id=user.id,
-                    email_sent=email_sent,
-                    ws_sent=ws_sent,
+                    success_channels=success_channels,
                 )
                 return True
-            logger.warning(
-                'Не удалось отправить уведомление email-пользователю',
-                notification_type_value=notification_type.value,
-                user_id=user.id,
-            )
+            logger.warning('Все каналы уведомления не сработали', user_id=user.id)
             return False
-        logger.debug('Пользователь не имеет telegram_id или verified email, пропускаем уведомление', user_id=user.id)
+        logger.debug(
+            'Пользователь не имеет telegram_id или verified email, пропускаем уведомление',
+            user_id=user.id,
+        )
         return False
 
     async def _send_telegram_notification(
@@ -209,7 +234,10 @@ class NotificationDeliveryService:
     ) -> bool:
         """Send notification via Telegram bot."""
         if not bot:
-            logger.warning('Bot instance not provided for Telegram notification to user', telegram_id=user.telegram_id)
+            logger.warning(
+                'Bot instance not provided for Telegram notification to user',
+                telegram_id=user.telegram_id,
+            )
             return False
 
         if not message:
@@ -235,7 +263,10 @@ class NotificationDeliveryService:
             return True
 
         except TimeoutError:
-            logger.warning('Timeout при отправке Telegram уведомления пользователю', telegram_id=user.telegram_id)
+            logger.warning(
+                'Timeout при отправке Telegram уведомления пользователю',
+                telegram_id=user.telegram_id,
+            )
             return False
 
         except TelegramForbiddenError:
@@ -243,7 +274,11 @@ class NotificationDeliveryService:
             return False
 
         except TelegramBadRequest as e:
-            logger.warning('Ошибка отправки Telegram уведомления пользователю', telegram_id=user.telegram_id, e=e)
+            logger.warning(
+                'Ошибка отправки Telegram уведомления пользователю',
+                telegram_id=user.telegram_id,
+                e=e,
+            )
             return False
 
         except Exception as e:
