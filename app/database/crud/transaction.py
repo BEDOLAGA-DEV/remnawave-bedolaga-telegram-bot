@@ -5,7 +5,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database.models import PaymentMethod, Transaction, TransactionType, User
+from app.database.models import GuestPurchase, GuestPurchaseStatus, PaymentMethod, Transaction, TransactionType, User
 
 
 logger = structlog.get_logger(__name__)
@@ -25,6 +25,8 @@ REAL_PAYMENT_METHODS = [
     PaymentMethod.CLOUDPAYMENTS.value,
     PaymentMethod.FREEKASSA.value,
     PaymentMethod.KASSA_AI.value,
+    PaymentMethod.RIOPAY.value,
+    PaymentMethod.SEVERPAY.value,
 ]
 
 
@@ -38,11 +40,26 @@ async def create_transaction(
     external_id: str | None = None,
     is_completed: bool = True,
     created_at: datetime | None = None,
+    *,
+    commit: bool = True,
 ) -> Transaction:
+    # SUBSCRIPTION_PAYMENT / GIFT_PAYMENT — always store as negative (debit from user balance)
+    # Keep original for downstream consumers (events, contests)
+    stored_amount = (
+        -amount_kopeks
+        if type in (TransactionType.SUBSCRIPTION_PAYMENT, TransactionType.GIFT_PAYMENT) and amount_kopeks > 0
+        else amount_kopeks
+    )
+
+    # Default payment_method to BALANCE for subscription/gift payments from bot (not landing)
+    # to avoid double-counting with DEPOSIT in revenue calculations
+    if payment_method is None and type in (TransactionType.SUBSCRIPTION_PAYMENT, TransactionType.GIFT_PAYMENT):
+        payment_method = PaymentMethod.BALANCE
+
     transaction = Transaction(
         user_id=user_id,
         type=type.value,
-        amount_kopeks=amount_kopeks,
+        amount_kopeks=stored_amount,
         description=description,
         payment_method=payment_method.value if payment_method else None,
         external_id=external_id,
@@ -52,17 +69,82 @@ async def create_transaction(
     )
 
     db.add(transaction)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(transaction)
 
     logger.info(
         '💳 Создана транзакция: на ₽ для пользователя',
         type_value=type.value,
-        amount_kopeks=amount_kopeks / 100,
+        amount_kopeks=stored_amount / 100,
         user_id=user_id,
     )
 
-    # Отправляем событие о транзакции
+    # Side-effects skipped when commit=False to preserve caller's transaction atomicity.
+    # Callers using commit=False should call emit_transaction_side_effects() after their own db.commit().
+    if commit:
+        try:
+            from app.services.event_emitter import event_emitter
+
+            await event_emitter.emit(
+                'payment.completed' if type == TransactionType.DEPOSIT else 'transaction.created',
+                {
+                    'transaction_id': transaction.id,
+                    'user_id': user_id,
+                    'type': type.value,
+                    'amount_kopeks': abs(amount_kopeks),
+                    'amount_rubles': abs(amount_kopeks) / 100,
+                    'payment_method': payment_method.value if payment_method else None,
+                    'external_id': external_id,
+                    'is_completed': is_completed,
+                    'description': description,
+                },
+                db=db,
+            )
+        except Exception as error:
+            logger.warning('Failed to emit transaction event', error=error)
+
+        try:
+            from app.services.promo_group_assignment import (
+                maybe_assign_promo_group_by_total_spent,
+            )
+
+            await maybe_assign_promo_group_by_total_spent(db, user_id)
+        except Exception as exc:
+            logger.warning('Не удалось проверить автовыдачу промогруппы для пользователя', user_id=user_id, exc=exc)
+        if type == TransactionType.SUBSCRIPTION_PAYMENT and is_completed:
+            try:
+                from app.services.referral_contest_service import referral_contest_service
+
+                await referral_contest_service.on_subscription_payment(
+                    db,
+                    user_id,
+                    abs(amount_kopeks),
+                )
+            except Exception as exc:
+                logger.debug('Не удалось записать событие конкурса для пользователя', user_id=user_id, exc=exc)
+
+    return transaction
+
+
+async def emit_transaction_side_effects(
+    db: AsyncSession,
+    transaction: Transaction,
+    *,
+    amount_kopeks: int,
+    user_id: int,
+    type: TransactionType,
+    payment_method: PaymentMethod | None = None,
+    external_id: str | None = None,
+    is_completed: bool = True,
+    description: str = '',
+) -> None:
+    """Fire side-effects that were deferred when create_transaction(commit=False) was used.
+
+    Call this AFTER db.commit() to emit events and run promo checks.
+    """
     try:
         from app.services.event_emitter import event_emitter
 
@@ -72,8 +154,8 @@ async def create_transaction(
                 'transaction_id': transaction.id,
                 'user_id': user_id,
                 'type': type.value,
-                'amount_kopeks': amount_kopeks,
-                'amount_rubles': amount_kopeks / 100,
+                'amount_kopeks': abs(amount_kopeks),
+                'amount_rubles': abs(amount_kopeks) / 100,
                 'payment_method': payment_method.value if payment_method else None,
                 'external_id': external_id,
                 'is_completed': is_completed,
@@ -82,7 +164,7 @@ async def create_transaction(
             db=db,
         )
     except Exception as error:
-        logger.warning('Failed to emit transaction event', error=error)
+        logger.warning('Failed to emit deferred transaction event', error=error)
 
     try:
         from app.services.promo_group_assignment import (
@@ -91,20 +173,19 @@ async def create_transaction(
 
         await maybe_assign_promo_group_by_total_spent(db, user_id)
     except Exception as exc:
-        logger.debug('Не удалось проверить автовыдачу промогруппы для пользователя', user_id=user_id, exc=exc)
-    if type == TransactionType.SUBSCRIPTION_PAYMENT:
+        logger.warning('Не удалось проверить автовыдачу промогруппы для пользователя', user_id=user_id, exc=exc)
+
+    if type == TransactionType.SUBSCRIPTION_PAYMENT and is_completed:
         try:
             from app.services.referral_contest_service import referral_contest_service
 
             await referral_contest_service.on_subscription_payment(
                 db,
                 user_id,
-                amount_kopeks,
+                abs(amount_kopeks),
             )
         except Exception as exc:
             logger.debug('Не удалось записать событие конкурса для пользователя', user_id=user_id, exc=exc)
-
-    return transaction
 
 
 async def get_transaction_by_id(db: AsyncSession, transaction_id: int) -> Transaction | None:
@@ -177,7 +258,7 @@ async def complete_transaction(db: AsyncSession, transaction: Transaction) -> Tr
 
         await maybe_assign_promo_group_by_total_spent(db, transaction.user_id)
     except Exception as exc:
-        logger.debug(
+        logger.warning(
             'Не удалось проверить автовыдачу промогруппы для пользователя', user_id=transaction.user_id, exc=exc
         )
 
@@ -202,11 +283,11 @@ async def get_transactions_statistics(
     if not end_date:
         end_date = datetime.now(UTC)
 
-    # Доход считаем только по реальным платежам (исключаем колесо, промокоды, админские пополнения)
+    # Доход считаем по реальным платежам + прямые покупки подписок (лендинги)
     income_result = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+        select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
             and_(
-                Transaction.type == TransactionType.DEPOSIT.value,
+                Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                 Transaction.is_completed == True,
                 Transaction.created_at >= start_date,
                 Transaction.created_at <= end_date,
@@ -217,7 +298,7 @@ async def get_transactions_statistics(
     total_income = income_result.scalar()
 
     expenses_result = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+        select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
             and_(
                 Transaction.type == TransactionType.WITHDRAWAL.value,
                 Transaction.is_completed == True,
@@ -244,7 +325,7 @@ async def get_transactions_statistics(
         select(
             Transaction.type,
             func.count(Transaction.id).label('count'),
-            func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('total_amount'),
+            func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('total_amount'),
         )
         .where(
             and_(
@@ -263,11 +344,11 @@ async def get_transactions_statistics(
         select(
             Transaction.payment_method,
             func.count(Transaction.id).label('count'),
-            func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('total_amount'),
+            func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('total_amount'),
         )
         .where(
             and_(
-                Transaction.type == TransactionType.DEPOSIT.value,
+                Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                 Transaction.is_completed == True,
                 Transaction.created_at >= start_date,
                 Transaction.created_at <= end_date,
@@ -287,11 +368,11 @@ async def get_transactions_statistics(
     )
     transactions_today = today_result.scalar()
 
-    # Доход за сегодня - только реальные платежи
+    # Доход за сегодня — реальные платежи + прямые покупки подписок (лендинги)
     today_income_result = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+        select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
             and_(
-                Transaction.type == TransactionType.DEPOSIT.value,
+                Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                 Transaction.is_completed == True,
                 Transaction.created_at >= today,
                 Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
@@ -315,24 +396,50 @@ async def get_transactions_statistics(
 
 
 async def get_revenue_by_period(db: AsyncSession, days: int = 30) -> list[dict]:
-    """Доход по дням - только реальные платежи."""
+    """Доход по дням — реальные платежи + гостевые покупки (лендинг/кабинет)."""
     start_date = datetime.now(UTC) - timedelta(days=days)
 
-    result = await db.execute(
+    # Transactions: deposits + subscription payments via real payment methods
+    tx_query = (
         select(
             func.date(Transaction.created_at).label('date'),
-            func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('amount'),
+            func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('amount'),
         )
         .where(
             and_(
-                Transaction.type == TransactionType.DEPOSIT.value,
+                Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                 Transaction.is_completed == True,
                 Transaction.created_at >= start_date,
                 Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
             )
         )
         .group_by(func.date(Transaction.created_at))
-        .order_by(func.date(Transaction.created_at))
+    )
+
+    # Guest purchases: delivered (landing/cabinet direct purchases)
+    gp_query = (
+        select(
+            func.date(GuestPurchase.paid_at).label('date'),
+            func.coalesce(func.sum(GuestPurchase.amount_kopeks), 0).label('amount'),
+        )
+        .where(
+            and_(
+                GuestPurchase.status == GuestPurchaseStatus.DELIVERED.value,
+                GuestPurchase.paid_at >= start_date,
+            )
+        )
+        .group_by(func.date(GuestPurchase.paid_at))
+    )
+
+    # Union and aggregate
+    combined = union_all(tx_query, gp_query).subquery()
+    result = await db.execute(
+        select(
+            combined.c.date,
+            func.sum(combined.c.amount).label('amount'),
+        )
+        .group_by(combined.c.date)
+        .order_by(combined.c.date)
     )
 
     return [{'date': row.date, 'amount_kopeks': row.amount} for row in result]

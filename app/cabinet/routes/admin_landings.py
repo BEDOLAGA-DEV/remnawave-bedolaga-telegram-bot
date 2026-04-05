@@ -810,6 +810,7 @@ _STATS_PERIOD_DAYS = 30
 @router.get('/{landing_id}/stats', response_model=LandingStatsResponse)
 async def get_landing_stats(
     landing_id: int,
+    tz: str = 'UTC',
     admin: User = Depends(require_permission('landings:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> LandingStatsResponse:
@@ -845,9 +846,18 @@ async def get_landing_stats(
     conversion_rate = round(total_successful / total_created * 100, 1) if total_created > 0 else 0.0
 
     # -- Daily stats for last N days --
-    now = datetime.now(UTC)
+    # Validate timezone
+    _tz = tz if tz and len(tz) < 50 else 'UTC'
+    try:
+        import zoneinfo
+
+        _tzi = zoneinfo.ZoneInfo(_tz)
+        now = datetime.now(_tzi)
+    except Exception:
+        _tz = 'UTC'
+        now = datetime.now(UTC)
     cutoff = now - timedelta(days=_STATS_PERIOD_DAYS)
-    day_at_utc = func.date(func.timezone('UTC', GuestPurchase.paid_at))
+    day_at_utc = func.date(func.timezone(_tz, GuestPurchase.paid_at))
     daily_result = await db.execute(
         select(
             day_at_utc.label('day'),
@@ -866,7 +876,7 @@ async def get_landing_stats(
     daily_rows = {str(r.day): r for r in daily_result.all()}
 
     # Created per day (all statuses, by created_at)
-    day_created_utc = func.date(func.timezone('UTC', GuestPurchase.created_at))
+    day_created_utc = func.date(func.timezone(_tz, GuestPurchase.created_at))
     created_result = await db.execute(
         select(
             day_created_utc.label('day'),
