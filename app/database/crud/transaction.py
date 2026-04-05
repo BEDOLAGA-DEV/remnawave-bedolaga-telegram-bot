@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -297,6 +297,18 @@ async def get_transactions_statistics(
     )
     total_income = income_result.scalar()
 
+    # Guest purchases (landing/cabinet)
+    gp_income_result = await db.execute(
+        select(func.coalesce(func.sum(GuestPurchase.amount_kopeks), 0)).where(
+            and_(
+                GuestPurchase.status == GuestPurchaseStatus.DELIVERED.value,
+                GuestPurchase.paid_at >= start_date,
+                GuestPurchase.paid_at <= end_date,
+            )
+        )
+    )
+    total_income += gp_income_result.scalar()
+
     expenses_result = await db.execute(
         select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
             and_(
@@ -380,6 +392,17 @@ async def get_transactions_statistics(
         )
     )
     income_today = today_income_result.scalar()
+
+    # Guest purchases today
+    gp_today_result = await db.execute(
+        select(func.coalesce(func.sum(GuestPurchase.amount_kopeks), 0)).where(
+            and_(
+                GuestPurchase.status == GuestPurchaseStatus.DELIVERED.value,
+                GuestPurchase.paid_at >= today,
+            )
+        )
+    )
+    income_today += gp_today_result.scalar()
 
     return {
         'period': {'start_date': start_date, 'end_date': end_date},
