@@ -858,19 +858,19 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         if user:
             await _activate_pending_gift_after_registration(db, state, user, message.answer)
 
-    # Store Yandex CID from start parameter (before state.clear)
-    _ym_cid = data.get("yandex_cid")
-    if _ym_cid:
-        try:
-            from app.services import yandex_offline_conv_service as yandex_conv
-            await yandex_conv.store_cid(db, user.id, _ym_cid, source="bot")
-            await db.commit()
-            logger.info("Yandex CID stored for new user", user_id=user.id)
-        except Exception:
-            pass
-            await state.update_data(pending_gift_token=None)
-            # Refresh user to pick up newly created subscriptions
-            await db.refresh(user, attribute_names=['subscriptions'])
+        # Store Yandex CID from start parameter (before state.clear)
+        _ym_cid = data.get("yandex_cid")
+        if _ym_cid:
+            try:
+                from app.services import yandex_offline_conv_service as yandex_conv
+                await yandex_conv.store_cid(db, user.id, _ym_cid, source="bot")
+                await db.commit()
+                logger.info("Yandex CID stored for new user", user_id=user.id)
+            except Exception:
+                pass
+        await state.update_data(pending_gift_token=None)
+        # Refresh user to pick up newly created subscriptions
+        await db.refresh(user, attribute_names=['subscriptions'])
 
         user_subs_for_flags = getattr(user, 'subscriptions', None) or []
         first_sub_for_flags = next(
