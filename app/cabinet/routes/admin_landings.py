@@ -210,7 +210,6 @@ class LandingCreateRequest(BaseModel):
     analytics_view_goal: str | None = Field(default=None, max_length=100)
     analytics_click_goal: str | None = Field(default=None, max_length=100)
     sticky_pay_button: bool | None = False
-    sticky_pay_button: bool | None = False
 
     @field_validator('background_config')
     @classmethod
@@ -654,6 +653,11 @@ async def create_landing_page(
         discount_ends_at=request.discount_ends_at,
         discount_badge_text=request.discount_badge_text,
         background_config=request.background_config,
+        analytics_view_enabled=request.analytics_view_enabled or False,
+        analytics_click_enabled=request.analytics_click_enabled or False,
+        analytics_view_goal=request.analytics_view_goal,
+        analytics_click_goal=request.analytics_click_goal,
+        sticky_pay_button=request.sticky_pay_button or False,
     )
 
     logger.info('Admin created landing page', admin_id=admin.id, slug=landing.slug, landing_id=landing.id)
