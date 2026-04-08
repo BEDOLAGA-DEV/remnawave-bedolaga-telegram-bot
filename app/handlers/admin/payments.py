@@ -10,7 +10,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.crud.transaction import get_successful_topups, get_transaction_by_id
+from app.database.crud.transaction import get_successful_topups, get_successful_topups_for_export, get_transaction_by_id
 from app.database.models import PaymentMethod, Transaction, User
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
@@ -877,6 +877,15 @@ def _build_successful_list_keyboard(
             ]
         )
 
+    # Export buttons
+    buttons.append(
+        [
+            InlineKeyboardButton(text='📥 CSV 7d', callback_data='admin_stopups_csv_7'),
+            InlineKeyboardButton(text='📥 CSV 30d', callback_data='admin_stopups_csv_30'),
+            InlineKeyboardButton(text='📥 CSV all', callback_data='admin_stopups_csv_0'),
+        ]
+    )
+
     if total_pages > 1:
         nav: list[InlineKeyboardButton] = []
         if page > 1:
@@ -1009,6 +1018,67 @@ async def show_successful_topup_detail(
 
 @admin_required
 @error_handler
+async def export_successful_topups_csv(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+) -> None:
+    """Export successful top-ups as CSV file."""
+    import csv
+    import io
+
+    from aiogram.types import BufferedInputFile
+
+    texts = get_texts(db_user.language)
+
+    # Parse days from callback data: admin_stopups_csv_7, admin_stopups_csv_30, admin_stopups_csv_0
+    try:
+        days = int(callback.data.split('_')[-1])
+    except (ValueError, IndexError):
+        days = 30
+
+    transactions = await get_successful_topups_for_export(db, days=days if days > 0 else None)
+
+    if not transactions:
+        await callback.answer(
+            texts.t('ADMIN_STOPUPS_EXPORT_EMPTY', 'No transactions to export'),
+            show_alert=True,
+        )
+        return
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['ID', 'Date', 'Amount (RUB)', 'Method', 'User ID', 'Username', 'External ID', 'Description'])
+
+    total_amount = 0
+    for txn in transactions:
+        amount_rub = abs(txn.amount_kopeks) / 100
+        total_amount += amount_rub
+        user = txn.user
+        writer.writerow([
+            txn.id,
+            txn.created_at.strftime('%Y-%m-%d %H:%M:%S') if txn.created_at else '',
+            f'{amount_rub:.2f}',
+            _method_display_from_str(txn.payment_method),
+            user.telegram_id or user.email or user.id if user else '',
+            user.username or user.full_name or '' if user else '',
+            txn.external_id or '',
+            txn.description or '',
+        ])
+
+    csv_bytes = output.getvalue().encode('utf-8-sig')  # BOM for Excel compatibility
+    period = f'last_{days}d' if days > 0 else 'all'
+    filename = f'topups_{period}_{datetime.now(UTC).strftime("%Y%m%d_%H%M%S")}.csv'
+
+    await callback.message.answer_document(
+        document=BufferedInputFile(csv_bytes, filename=filename),
+        caption=f'📥 Export: {len(transactions)} transactions, total {total_amount:.2f} RUB ({period})',
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
 async def admin_refund_stars(message: types.Message, db_user: User, db: AsyncSession, **kwargs) -> None:
     parts = message.text.split()
     if len(parts) != 3:
@@ -1051,3 +1121,4 @@ def register_handlers(dp: Dispatcher) -> None:
     dp.callback_query.register(show_successful_topups, F.data == 'admin_successful_topups')
     dp.callback_query.register(show_successful_topups, F.data.startswith('admin_stopups_p_'))
     dp.callback_query.register(show_successful_topup_detail, F.data.startswith('admin_stxn_'))
+    dp.callback_query.register(export_successful_topups_csv, F.data.startswith('admin_stopups_csv_'))

@@ -215,6 +215,30 @@ async def get_successful_topups(
     return result.scalars().all(), total
 
 
+async def get_successful_topups_for_export(
+    db: AsyncSession,
+    *,
+    days: int | None = None,
+) -> list[Transaction]:
+    """Get all completed deposit transactions for CSV export, optionally filtered by days."""
+    conditions = [
+        Transaction.type == TransactionType.DEPOSIT.value,
+        Transaction.is_completed.is_(True),
+        Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+    ]
+    if days:
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        conditions.append(Transaction.created_at >= cutoff)
+
+    result = await db.execute(
+        select(Transaction)
+        .options(selectinload(Transaction.user))
+        .where(and_(*conditions))
+        .order_by(Transaction.created_at.desc())
+    )
+    return result.scalars().all()
+
+
 async def get_transaction_by_id(db: AsyncSession, transaction_id: int) -> Transaction | None:
     result = await db.execute(
         select(Transaction).options(selectinload(Transaction.user)).where(Transaction.id == transaction_id)
