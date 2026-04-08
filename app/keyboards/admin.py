@@ -77,6 +77,26 @@ def get_admin_main_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
                     callback_data='admin_successful_topups',
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_MAIN_WL_ANALYTICS', '📊 WL-аналитика'),
+                    callback_data='admin_wl_analytics',
+                ),
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_MAIN_REFERRAL_STATS', '👥 Реф. статистика'),
+                    callback_data='admin_referral_stats',
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_MAIN_BOT_ROLES', '👑 Роли'),
+                    callback_data='admin_bot_roles',
+                ),
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_MAIN_SCHEDULED_PROMOS', '🎁 Акции'),
+                    callback_data='admin_scheduled_promos',
+                ),
+            ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
         ]
     )
@@ -171,6 +191,12 @@ def get_admin_support_submenu_keyboard(language: str = 'ru') -> InlineKeyboardMa
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_SUPPORT_SETTINGS', '🛟 Настройки поддержки'),
                     callback_data='admin_support_settings',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_SUPPORT_QUICK_REPLIES', '📋 Быстрые ответы'),
+                    callback_data='admin_quick_replies',
                 )
             ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_panel')],

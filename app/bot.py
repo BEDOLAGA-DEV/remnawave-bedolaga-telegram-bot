@@ -58,6 +58,8 @@ from app.handlers.admin import (
     user_messages as admin_user_messages,
     users as admin_users,
     welcome_text as admin_welcome_text,
+    wl_analytics as admin_wl_analytics,
+    referral_stats as admin_referral_stats,
 )
 from app.handlers.channel_member import register_handlers as register_channel_member_handlers
 from app.handlers.gift_activation import register_handlers as register_gift_activation_handlers
@@ -221,6 +223,8 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_public_offer.register_handlers(dp)
     admin_faq.register_handlers(dp)
     admin_payments.register_handlers(dp)
+    admin_wl_analytics.register_handlers(dp)
+    admin_referral_stats.register_handlers(dp)
     admin_trials.register_handlers(dp)
     admin_tariffs.register_handlers(dp)
     admin_bulk_ban.register_bulk_ban_handlers(dp)

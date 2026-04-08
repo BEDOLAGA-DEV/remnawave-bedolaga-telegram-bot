@@ -10,6 +10,9 @@ from app.config import settings
 from app.database.crud.rules import clear_all_rules, get_rules_statistics
 from app.database.crud.ticket import TicketCRUD
 from app.database.models import User
+from app.handlers.admin import bot_roles as bot_roles_handlers
+from app.handlers.admin import quick_replies as quick_replies_handlers
+from app.handlers.admin import scheduled_promos as scheduled_promos_handlers
 from app.handlers.admin import support_settings as support_settings_handlers
 from app.keyboards.admin import (
     get_admin_communications_submenu_keyboard,
@@ -382,6 +385,12 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_moderator_panel, F.data == 'moderator_panel')
     # Support settings module
     support_settings_handlers.register_handlers(dp)
+    # Bot roles (RBAC for bot)
+    bot_roles_handlers.register_handlers(dp)
+    # Quick replies for support tickets
+    quick_replies_handlers.register_handlers(dp)
+    # Scheduled promotions
+    scheduled_promos_handlers.register_handlers(dp)
 
     dp.message.register(clear_rules_command, Command('clear_rules'))
 

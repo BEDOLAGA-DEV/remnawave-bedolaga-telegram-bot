@@ -285,3 +285,21 @@ class ReferralWithdrawalStates(StatesGroup):
     waiting_for_amount = State()
     waiting_for_payment_details = State()
     confirming = State()
+
+
+class BotRoleStates(StatesGroup):
+    waiting_for_telegram_id = State()
+    selecting_permissions = State()
+
+
+class QuickReplyStates(StatesGroup):
+    waiting_for_title = State()
+    waiting_for_text = State()
+    waiting_for_category = State()
+
+
+class ScheduledPromoStates(StatesGroup):
+    waiting_for_name = State()
+    waiting_for_discount = State()
+    waiting_for_start_date = State()
+    waiting_for_end_date = State()

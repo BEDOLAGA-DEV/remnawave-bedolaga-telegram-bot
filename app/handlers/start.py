@@ -375,6 +375,28 @@ async def _apply_campaign_bonus_if_needed(
     if not campaign or not campaign.is_active:
         return None
 
+    # If campaign has a partner, ensure the user is linked as their referral
+    if campaign.partner_user_id and not user.referred_by_id and campaign.partner_user_id != user.id:
+        user.referred_by_id = campaign.partner_user_id
+        await db.commit()
+        logger.info(
+            'Campaign referral linking: set referred_by_id from campaign partner',
+            user_id=user.id,
+            partner_user_id=campaign.partner_user_id,
+            campaign_id=campaign.id,
+        )
+        try:
+            from app.services.referral_service import process_referral_registration
+
+            await process_referral_registration(db, user.id, campaign.partner_user_id)
+        except Exception as ref_error:
+            logger.error(
+                'Error processing campaign referral registration',
+                user_id=user.id,
+                partner_user_id=campaign.partner_user_id,
+                error=ref_error,
+            )
+
     service = AdvertisingCampaignService()
     result = await service.apply_campaign_bonus(db, user, campaign)
     if not result.success:

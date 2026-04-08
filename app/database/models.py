@@ -2626,6 +2626,9 @@ class Ticket(Base):
     title = Column(String(255), nullable=False)
     status = Column(String(20), default=TicketStatus.OPEN.value, nullable=False)
     priority = Column(String(20), default='normal', nullable=False)  # low, normal, high, urgent
+    category = Column(String(50), nullable=True)  # billing, technical, account, other
+    assigned_to = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    first_response_at = Column(AwareDateTime(), nullable=True)  # SLA tracking
     # Блокировка ответов пользователя в этом тикете
     user_reply_block_permanent = Column(Boolean, default=False, nullable=False)
     user_reply_block_until = Column(AwareDateTime(), nullable=True)
@@ -3462,3 +3465,70 @@ class NewsTag(Base):
 
     def __repr__(self) -> str:
         return f"<NewsTag id={self.id} name='{self.name}'>"
+
+
+# ── Bot Admin Roles (Feature 1: RBAC for bot handlers) ────────────────
+
+
+class BotAdminRole(Base):
+    """Per-user bot admin role with granular section permissions."""
+
+    __tablename__ = 'bot_admin_roles'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, unique=True)
+    permissions = Column(JSON, default=list, nullable=False)  # list of section strings
+    created_by = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+
+    user = relationship('User', foreign_keys=[user_id], backref='bot_admin_role')
+    creator = relationship('User', foreign_keys=[created_by])
+
+    def __repr__(self) -> str:
+        return f'<BotAdminRole id={self.id} user_id={self.user_id} permissions={self.permissions}>'
+
+
+# ── Ticket Quick Replies (Feature 2: Support Tickets v2) ──────────────
+
+
+class TicketQuickReply(Base):
+    """Template quick reply for support tickets."""
+
+    __tablename__ = 'ticket_quick_replies'
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    text = Column(Text, nullable=False)
+    category = Column(String(50), nullable=True)
+    created_by = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+
+    creator = relationship('User', foreign_keys=[created_by])
+
+    def __repr__(self) -> str:
+        return f"<TicketQuickReply id={self.id} title='{self.title}'>"
+
+
+# ── Scheduled Promotions (Feature 3) ──────────────────────────────────
+
+
+class ScheduledPromo(Base):
+    """Time-limited promotional discount for tariffs."""
+
+    __tablename__ = 'scheduled_promos'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    discount_percent = Column(Integer, nullable=False)  # 5-90%
+    tariff_ids = Column(JSON, default=list)  # empty = all tariffs
+    promo_text = Column(Text, nullable=True)  # banner text
+    start_at = Column(AwareDateTime(), nullable=False)
+    end_at = Column(AwareDateTime(), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+
+    creator = relationship('User', foreign_keys=[created_by])
+
+    def __repr__(self) -> str:
+        return f"<ScheduledPromo id={self.id} name='{self.name}' discount={self.discount_percent}%>"

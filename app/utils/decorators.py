@@ -45,6 +45,65 @@ def admin_required(func: Callable) -> Callable:
     return wrapper
 
 
+def role_required(section: str):
+    """Check that the user is a superadmin (ADMIN_IDS) or has the given section in BotAdminRole permissions.
+
+    Usage::
+
+        @role_required('users')
+        @error_handler
+        async def handler(event, ...):
+            ...
+    """
+
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        async def wrapper(event: types.Update, *args, **kwargs) -> Any:
+            user = None
+            if isinstance(event, (types.Message, types.CallbackQuery)):
+                user = event.from_user
+
+            if not user:
+                return None
+
+            # Superadmins always pass
+            if settings.is_admin(user.id):
+                return await func(event, *args, **kwargs)
+
+            # Check BotAdminRole permissions via db session from kwargs
+            db = kwargs.get('db')
+            if db is not None:
+                from app.database.crud.bot_role import BotRoleCRUD
+
+                db_user = kwargs.get('db_user')
+                uid = db_user.id if db_user else None
+                if uid is not None:
+                    role = await BotRoleCRUD.get_bot_role(db, uid)
+                    if role and section in (role.permissions or []):
+                        return await func(event, *args, **kwargs)
+
+            texts = get_texts()
+            try:
+                if isinstance(event, types.Message):
+                    await event.answer(texts.ACCESS_DENIED)
+                elif isinstance(event, types.CallbackQuery):
+                    await event.answer(texts.ACCESS_DENIED, show_alert=True)
+            except TelegramBadRequest as e:
+                if 'query is too old' not in str(e).lower():
+                    raise
+
+            logger.warning(
+                'role_required: доступ запрещён',
+                user_id=user.id,
+                section=section,
+            )
+            return None
+
+        return wrapper
+
+    return decorator
+
+
 def auth_required(func: Callable) -> Callable:
     """
     Простая проверка на наличие пользователя в апдейте. Middleware уже подтягивает db_user,
