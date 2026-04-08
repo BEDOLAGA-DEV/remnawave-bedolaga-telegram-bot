@@ -188,6 +188,33 @@ async def emit_transaction_side_effects(
             logger.debug('Не удалось записать событие конкурса для пользователя', user_id=user_id, exc=exc)
 
 
+async def get_successful_topups(
+    db: AsyncSession,
+    *,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[Transaction], int]:
+    """Get completed deposit transactions with real payment methods."""
+    base_filter = and_(
+        Transaction.type == TransactionType.DEPOSIT.value,
+        Transaction.is_completed.is_(True),
+        Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+    )
+
+    count_result = await db.execute(select(func.count(Transaction.id)).where(base_filter))
+    total = count_result.scalar_one()
+
+    result = await db.execute(
+        select(Transaction)
+        .options(selectinload(Transaction.user))
+        .where(base_filter)
+        .order_by(Transaction.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return result.scalars().all(), total
+
+
 async def get_transaction_by_id(db: AsyncSession, transaction_id: int) -> Transaction | None:
     result = await db.execute(
         select(Transaction).options(selectinload(Transaction.user)).where(Transaction.id == transaction_id)

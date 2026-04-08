@@ -10,7 +10,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.models import PaymentMethod, User
+from app.database.crud.transaction import get_successful_topups, get_transaction_by_id
+from app.database.models import PaymentMethod, Transaction, User
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.services.payment_verification_service import (
@@ -842,6 +843,170 @@ async def export_payments(
     await callback.answer(texts.t('ADMIN_PAYMENTS_EXPORT_SUCCESS', '✅ Файл отправлен'))
 
 
+def _method_display_from_str(method_str: str | None) -> str:
+    """Display name for payment method stored as string in Transaction."""
+    if not method_str:
+        return '—'
+    try:
+        return _method_display(PaymentMethod(method_str))
+    except ValueError:
+        return method_str
+
+
+def _build_successful_list_keyboard(
+    transactions: list[Transaction],
+    *,
+    page: int,
+    total_pages: int,
+    language: str,
+) -> InlineKeyboardMarkup:
+    buttons: list[list[InlineKeyboardButton]] = []
+    texts = get_texts(language)
+
+    for txn in transactions:
+        method_name = _method_display_from_str(txn.payment_method)
+        amount = settings.format_price(abs(txn.amount_kopeks))
+        user = txn.user
+        username = format_username(user.username, user.telegram_id, user.full_name) if user else '?'
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f'{method_name} — {amount} ({username})',
+                    callback_data=f'admin_stxn_{txn.id}',
+                )
+            ]
+        )
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 1:
+            nav.append(InlineKeyboardButton(text='⬅️', callback_data=f'admin_stopups_p_{page - 1}'))
+        nav.append(InlineKeyboardButton(text=f'{page}/{total_pages}', callback_data='admin_stopups_p_current'))
+        if page < total_pages:
+            nav.append(InlineKeyboardButton(text='➡️', callback_data=f'admin_stopups_p_{page + 1}'))
+        buttons.append(nav)
+
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='admin_panel')])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@admin_required
+@error_handler
+async def show_successful_topups(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+) -> None:
+    """Show paginated list of all successful top-ups."""
+    texts = get_texts(db_user.language)
+
+    page = 1
+    if callback.data.startswith('admin_stopups_p_'):
+        try:
+            page = int(callback.data.split('_')[-1])
+        except ValueError:
+            page = 1
+
+    offset = (max(page, 1) - 1) * PAGE_SIZE
+    transactions, total = await get_successful_topups(db, limit=PAGE_SIZE, offset=offset)
+    total_pages = max(1, math.ceil(total / PAGE_SIZE))
+    page = min(max(page, 1), total_pages)
+
+    header = texts.t('ADMIN_SUCCESSFUL_TOPUPS_TITLE', '✅ <b>Successful top-ups</b>')
+    lines = [header, '', f'Total: {total}', '']
+
+    if transactions:
+        start_idx = (page - 1) * PAGE_SIZE
+        for idx, txn in enumerate(transactions, start=start_idx + 1):
+            method_name = _method_display_from_str(txn.payment_method)
+            amount = settings.format_price(abs(txn.amount_kopeks))
+            created = format_datetime(txn.created_at)
+            age = format_time_ago(txn.created_at, db_user.language)
+            user = txn.user
+            if user:
+                username = format_username(user.username, user.telegram_id, user.full_name)
+                user_id_display = user.telegram_id or user.email or f'#{user.id}'
+                user_line = f'   👤 {html.escape(username)} (<code>{user_id_display}</code>)'
+            else:
+                user_line = '   👤 —'
+
+            lines.append(f'{idx}. <b>{html.escape(method_name)}</b> — {amount}')
+            lines.append(f'   🕒 {created} ({age})')
+            lines.append(user_line)
+            if txn.external_id:
+                lines.append(f'   🆔 <code>{html.escape(str(txn.external_id))}</code>')
+            lines.append('')
+    else:
+        lines.append(texts.t('ADMIN_SUCCESSFUL_TOPUPS_EMPTY', 'No successful top-ups yet.'))
+
+    keyboard = _build_successful_list_keyboard(
+        transactions, page=page, total_pages=total_pages, language=db_user.language
+    )
+
+    await callback.message.edit_text('\n'.join(lines), parse_mode='HTML', reply_markup=keyboard)
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def show_successful_topup_detail(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+) -> None:
+    """Show details of a single successful transaction."""
+    texts = get_texts(db_user.language)
+
+    try:
+        txn_id = int(callback.data.split('_')[-1])
+    except (ValueError, IndexError):
+        await callback.answer('Invalid ID', show_alert=True)
+        return
+
+    txn = await get_transaction_by_id(db, txn_id)
+    if not txn:
+        await callback.answer('Transaction not found', show_alert=True)
+        return
+
+    method_name = _method_display_from_str(txn.payment_method)
+    amount = settings.format_price(abs(txn.amount_kopeks))
+    created = format_datetime(txn.created_at)
+    age = format_time_ago(txn.created_at, db_user.language)
+
+    lines = [
+        texts.t('ADMIN_SUCCESSFUL_TOPUP_DETAIL', '✅ <b>Top-up details</b>'),
+        '',
+        f'<b>{html.escape(method_name)}</b>',
+        '',
+        f'💰 Amount: {amount}',
+        f'🕒 Created: {created} ({age})',
+    ]
+
+    if txn.completed_at:
+        lines.append(f'✅ Completed: {format_datetime(txn.completed_at)}')
+
+    if txn.external_id:
+        lines.append(f'🆔 External ID: <code>{html.escape(str(txn.external_id))}</code>')
+
+    if txn.description:
+        lines.append(f'📝 {html.escape(txn.description)}')
+
+    user = txn.user
+    if user:
+        username = format_username(user.username, user.telegram_id, user.full_name)
+        user_id_display = user.telegram_id or user.email or f'#{user.id}'
+        lines.append(f'👤 {html.escape(username)} (<code>{user_id_display}</code>)')
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=texts.BACK, callback_data='admin_successful_topups')],
+        ]
+    )
+
+    await callback.message.edit_text('\n'.join(lines), parse_mode='HTML', reply_markup=keyboard)
+    await callback.answer()
+
+
 @admin_required
 @error_handler
 async def admin_refund_stars(message: types.Message, db_user: User, db: AsyncSession, **kwargs) -> None:
@@ -881,3 +1046,8 @@ def register_handlers(dp: Dispatcher) -> None:
     )
     dp.callback_query.register(show_payments_overview, F.data.startswith('admin_payments_page_'))
     dp.callback_query.register(show_payments_overview, F.data == 'admin_payments')
+
+    # Successful top-ups
+    dp.callback_query.register(show_successful_topups, F.data == 'admin_successful_topups')
+    dp.callback_query.register(show_successful_topups, F.data.startswith('admin_stopups_p_'))
+    dp.callback_query.register(show_successful_topup_detail, F.data.startswith('admin_stxn_'))

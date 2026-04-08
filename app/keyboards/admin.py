@@ -71,6 +71,12 @@ def get_admin_main_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
                     callback_data='admin_payments',
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_MAIN_SUCCESSFUL_TOPUPS', '✅ Успешные пополнения'),
+                    callback_data='admin_successful_topups',
+                ),
+            ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
         ]
     )
