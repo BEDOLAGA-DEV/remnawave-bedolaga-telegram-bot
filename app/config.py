@@ -242,7 +242,7 @@ class Settings(BaseSettings):
     # "traffic" - цена зависит от текущего лимита трафика (цена пакета трафика)
     # "traffic_with_purchased" - цена = базовый трафик + докупленный трафик (рекомендуется)
     TRAFFIC_RESET_PRICE_MODE: str = 'traffic_with_purchased'
-    # 바зовая цена сброса в копейках (используется если режим "period" или как минимальная цена)
+    # Базовая цена сброса в копейках (используется если режим "period" или как минимальная цена)
     TRAFFIC_RESET_BASE_PRICE: int = 0  # 0 = использовать PERIOD_PRICES[30]
 
     WL_TRAFFIC_TOPUP_ENABLED: bool = True

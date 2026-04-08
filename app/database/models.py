@@ -1054,6 +1054,9 @@ class Tariff(Base):
     # Режим сброса трафика: DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET (по умолчанию берётся из конфига)
     traffic_reset_mode = Column(String(20), nullable=True, default=None)  # None = использовать глобальную настройку
 
+    # UUID сквада из Remnawave для привязки тарифа к конкретной группе серверов
+    external_squad_uuid = Column(String(255), nullable=True, default=None)
+
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
 
