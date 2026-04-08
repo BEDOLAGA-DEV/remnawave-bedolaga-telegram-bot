@@ -1,7 +1,7 @@
 """add trial_duration_days to tariffs
 
-Revision ID: 0015
-Revises: 0014
+Revision ID: 0054
+Revises: 0053
 Create Date: 2026-03-05
 
 Adds per-tariff trial duration override column.
@@ -13,8 +13,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0015'
-down_revision: Union[str, None] = '0014'
+revision: str = '0054'
+down_revision: Union[str, None] = '0053'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

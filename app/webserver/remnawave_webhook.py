@@ -97,20 +97,30 @@ def create_remnawave_webhook_router(bot: Bot) -> APIRouter:
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Extract and validate event info
-        scope = payload.get('scope', '')
-        event = payload.get('event', '')
+        # Extract and validate event info. Recent RemnaWave payloads send only
+        # the fully-qualified event name (for example "user.modified") without
+        # a separate top-level scope field.
+        event = str(payload.get('event', '') or '').strip()
+        scope = str(payload.get('scope', '') or '').strip()
         data = payload.get('data')
 
-        if not scope or not event:
-            logger.warning('RemnaWave webhook: missing scope or event')
+        if not event:
+            logger.warning('RemnaWave webhook: missing event')
             return JSONResponse(
-                {'status': 'error', 'reason': 'missing_scope_or_event'},
+                {'status': 'error', 'reason': 'missing_event'},
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
+        if not scope and '.' in event:
+            scope = event.split('.', 1)[0]
+
         if not isinstance(data, dict):
             data = {}
+
+        # Inject meta into data so handlers can access it via data.get('_meta')
+        meta = payload.get('meta')
+        if isinstance(meta, dict):
+            data['_meta'] = meta
 
         # RemnaWave sends event as full qualified name (e.g. "user.modified"),
         # so we use event directly instead of concatenating scope + event.
@@ -119,8 +129,9 @@ def create_remnawave_webhook_router(bot: Bot) -> APIRouter:
 
         # Process event — return 200 to prevent retries for application-level errors.
         # Only return non-200 for infrastructure failures (DB unavailable).
-        # Admin events (node/service/crm) don't need a DB session.
-        if webhook_service.is_admin_event(event_name):
+        # Admin-only events (node/service/crm) don't need a DB session.
+        # Dual events (admin + user, e.g. torrent_blocker.report) need DB for user handler.
+        if webhook_service.is_admin_event(event_name) and not webhook_service.needs_db_session(event_name):
             try:
                 processed = await webhook_service.process_event(None, event_name, data)
                 return JSONResponse({'status': 'ok', 'processed': processed})
@@ -128,7 +139,7 @@ def create_remnawave_webhook_router(bot: Bot) -> APIRouter:
                 logger.exception('RemnaWave webhook processing error for event', event_name=event_name)
                 return JSONResponse({'status': 'ok', 'processed': False})
 
-        # User events require a DB session
+        # User events and dual events require a DB session
         try:
             async with AsyncSessionLocal() as db:
                 try:

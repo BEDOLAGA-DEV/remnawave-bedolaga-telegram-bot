@@ -641,6 +641,7 @@ class MiniAppTariffSwitchRequest(BaseModel):
 
     init_data: str = Field(...)
     tariff_id: int = Field(...)
+    subscription_id: int | None = Field(default=None, alias='subscriptionId')
 
 
 class MiniAppTariffSwitchPreviewResponse(BaseModel):
@@ -679,6 +680,7 @@ class MiniAppDailySubscriptionToggleRequest(BaseModel):
     """Запрос на паузу/возобновление суточной подписки."""
 
     init_data: str = Field(...)
+    subscription_id: int | None = Field(default=None, alias='subscriptionId')
 
 
 class MiniAppDailySubscriptionToggleResponse(BaseModel):

@@ -3,6 +3,7 @@
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -49,15 +50,11 @@ class NodeStatus(BaseModel):
     is_disabled: bool
     users_online: int
     traffic_used_bytes: int | None = None
-    uptime: str | None = None
-    xray_version: str | None = None
-    node_version: str | None = None
     last_status_message: str | None = None
-    xray_uptime: str | None = None
+    xray_uptime: int = 0
     is_xray_running: bool | None = None
-    cpu_count: int | None = None
-    cpu_model: str | None = None
-    total_ram: str | None = None
+    versions: dict[str, str] | None = None
+    system: dict[str, Any] | None = None
     country_code: str | None = None
 
 
@@ -469,15 +466,11 @@ async def _get_nodes_overview() -> NodesOverview:
                 is_disabled=n.get('is_disabled', False),
                 users_online=n.get('users_online', 0) or 0,
                 traffic_used_bytes=n.get('traffic_used_bytes'),
-                uptime=n.get('uptime'),
-                xray_version=n.get('xray_version'),
-                node_version=n.get('node_version'),
                 last_status_message=n.get('last_status_message'),
-                xray_uptime=n.get('xray_uptime'),
+                xray_uptime=n.get('xray_uptime', 0) or 0,
                 is_xray_running=n.get('is_xray_running'),
-                cpu_count=n.get('cpu_count'),
-                cpu_model=n.get('cpu_model'),
-                total_ram=n.get('total_ram'),
+                versions=n.get('versions'),
+                system=n.get('system'),
                 country_code=n.get('country_code'),
             )
             for n in nodes

@@ -62,29 +62,49 @@ async def on_user_joined_channel(event: ChatMemberUpdated, bot: Bot) -> None:
     async with AsyncSessionLocal() as db:
         try:
             db_user = await get_user_by_telegram_id(db, user.id)
-            if not db_user or not db_user.subscription:
+            if not db_user:
                 return
             if db_user.status == UserStatus.BLOCKED.value:
                 return
 
-            subscription = db_user.subscription
-            if subscription.status != SubscriptionStatus.DISABLED.value:
+            subs = getattr(db_user, 'subscriptions', None) or []
+            disabled_subs = [
+                s
+                for s in subs
+                if s.status == SubscriptionStatus.DISABLED.value and (not s.end_date or s.end_date > datetime.now(UTC))
+            ]
+            if not disabled_subs:
                 return
 
-            # Don't reactivate expired subscriptions
-            if subscription.end_date and subscription.end_date <= datetime.now(UTC):
-                return
-
-            await reactivate_subscription(db, subscription)
-            logger.info('Subscription reactivated via channel event', telegram_id=user.id)
+            for subscription in disabled_subs:
+                await reactivate_subscription(db, subscription)
+                # Ставим штамп чтобы webhook user.disabled (echo от нашего disable)
+                # не переотключил подписку при быстрой реподписке
+                subscription.last_webhook_update_at = datetime.now(UTC)
+            logger.info(
+                'Subscriptions reactivated via channel event',
+                telegram_id=user.id,
+                count=len(disabled_subs),
+            )
 
             # Re-enable in RemnaWave panel
-            if db_user.remnawave_uuid:
-                service = SubscriptionService()
-                try:
-                    await service.enable_remnawave_user(db_user.remnawave_uuid)
-                except Exception as api_error:
-                    logger.error('Failed to enable RemnaWave user', error=api_error)
+            service = SubscriptionService()
+            for subscription in disabled_subs:
+                _uuid = (
+                    subscription.remnawave_uuid
+                    if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+                    else db_user.remnawave_uuid
+                )
+                if settings.is_multi_tariff_enabled() and not subscription.remnawave_uuid:
+                    logger.warning(
+                        'Multi-tariff: subscription missing remnawave_uuid, using user fallback',
+                        subscription_id=getattr(subscription, 'id', None),
+                    )
+                if _uuid:
+                    try:
+                        await service.enable_remnawave_user(_uuid)
+                    except Exception as api_error:
+                        logger.error('Failed to enable RemnaWave user', error=api_error)
 
             # Notify the user
             try:
@@ -130,27 +150,45 @@ async def on_user_left_channel(event: ChatMemberUpdated, bot: Bot) -> None:
     async with AsyncSessionLocal() as db:
         try:
             db_user = await get_user_by_telegram_id(db, user.id)
-            if not db_user or not db_user.subscription:
+            if not db_user:
                 return
 
-            subscription = db_user.subscription
-            if subscription.status != SubscriptionStatus.ACTIVE.value:
+            subs = getattr(db_user, 'subscriptions', None) or []
+            active_subs = [
+                s
+                for s in subs
+                if s.status == SubscriptionStatus.ACTIVE.value
+                and channel_subscription_service.should_disable_subscription(channel_settings, s.is_trial)
+            ]
+            if not active_subs:
                 return
 
-            # Per-channel settings: check if this channel requires deactivation
-            if not channel_subscription_service.should_disable_subscription(channel_settings, subscription.is_trial):
-                return
-
-            await deactivate_subscription(db, subscription)
-            logger.info('Subscription deactivated via channel event', telegram_id=user.id)
+            for subscription in active_subs:
+                await deactivate_subscription(db, subscription)
+            logger.info(
+                'Subscriptions deactivated via channel event',
+                telegram_id=user.id,
+                count=len(active_subs),
+            )
 
             # Disable in RemnaWave panel
-            if db_user.remnawave_uuid:
-                service = SubscriptionService()
-                try:
-                    await service.disable_remnawave_user(db_user.remnawave_uuid)
-                except Exception as api_error:
-                    logger.error('Failed to disable RemnaWave user', error=api_error)
+            service = SubscriptionService()
+            for subscription in active_subs:
+                _uuid = (
+                    subscription.remnawave_uuid
+                    if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+                    else db_user.remnawave_uuid
+                )
+                if settings.is_multi_tariff_enabled() and not subscription.remnawave_uuid:
+                    logger.warning(
+                        'Multi-tariff: subscription missing remnawave_uuid, using user fallback',
+                        subscription_id=getattr(subscription, 'id', None),
+                    )
+                if _uuid:
+                    try:
+                        await service.disable_remnawave_user(_uuid)
+                    except Exception as api_error:
+                        logger.error('Failed to disable RemnaWave user', error=api_error)
 
             # Notify the user with channel subscription keyboard
             try:

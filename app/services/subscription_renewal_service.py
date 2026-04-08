@@ -491,7 +491,12 @@ class SubscriptionRenewalService:
         subscription_service = SubscriptionService()
         try:
             await db.refresh(user)
-            if getattr(user, 'remnawave_uuid', None):
+            _renew_uuid = (
+                subscription_after.remnawave_uuid
+                if settings.is_multi_tariff_enabled() and subscription_after.remnawave_uuid
+                else getattr(user, 'remnawave_uuid', None)
+            )
+            if _renew_uuid:
                 await subscription_service.update_remnawave_user(
                     db,
                     subscription_after,

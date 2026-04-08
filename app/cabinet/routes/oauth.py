@@ -234,6 +234,19 @@ async def oauth_callback(
         referred_by_id=referrer_id,
     )
     logger.info('New OAuth user created', provider=provider, user_id=user.id)
+
+    # Commit user before panel sync (sync does its own commit/rollback)
+    await db.commit()
+
+    # Sync existing panel subscriptions by email (if verified)
+    if user_info.email and user_info.email_verified:
+        try:
+            from app.cabinet.routes.auth import _sync_subscription_from_panel_by_email
+
+            await _sync_subscription_from_panel_by_email(db, user)
+        except Exception:
+            logger.warning('Failed to sync panel subscription for new OAuth user', user_id=user.id, exc_info=True)
+
     return await _finalize_oauth_login(
         db, user, provider, request.campaign_slug, request.referral_code, is_new_user=True
     )

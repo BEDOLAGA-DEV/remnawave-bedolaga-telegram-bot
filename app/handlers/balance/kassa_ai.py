@@ -39,6 +39,11 @@ _KASSA_AI_METHOD_CONFIG = {
         'display_name': settings.get_kassa_ai_card_display_name,
         'unavailable_text': 'KassaAI Карта временно недоступна',
     },
+    'kassa_ai_sberpay': {
+        'is_enabled': settings.is_kassa_ai_sberpay_enabled,
+        'display_name': settings.get_kassa_ai_sberpay_display_name,
+        'unavailable_text': 'KassaAI SberPay временно недоступен',
+    },
 }
 
 
@@ -360,68 +365,13 @@ async def start_kassa_ai_card_topup(
     """Start KassaAI Card top-up process."""
     await _start_kassa_ai_sub_topup(callback, db_user, db, state, 'kassa_ai_card')
 
+
 @error_handler
-async def process_kassa_ai_quick_amount(
+async def start_kassa_ai_sberpay_topup(
     callback: types.CallbackQuery,
     db_user: User,
     db: AsyncSession,
     state: FSMContext,
 ):
-    """Handle quick amount selection for KassaAI."""
-    texts = get_texts(db_user.language)
-    # Extract amount from callback data: topup_amount|kassa_ai|{amount_kopeks}
-    try:
-        parts = callback.data.split('|')
-        if len(parts) >= 3:
-            amount_kopeks = int(parts[2])
-        else:
-            await callback.answer('Invalid callback data', show_alert=True)
-            return
-    except (ValueError, IndexError):
-        await callback.answer('Invalid amount', show_alert=True)
-        return
-
-    # Проверка ограничения на пополнение
-    if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
-        support_url = settings.get_support_contact_url()
-        keyboard = []
-        if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url, style='primary')])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance', style='danger')])
-
-        await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        )
-        return
-
-    # Validate amount
-    min_amount = settings.KASSA_AI_MIN_AMOUNT_KOPEKS
-    max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS
-
-    if amount_kopeks < min_amount:
-        await callback.answer(
-            texts.t('AMOUNT_TOO_LOW_SHORT', 'Сумма слишком мала'),
-            show_alert=True,
-        )
-        return
-
-    if amount_kopeks > max_amount:
-        await callback.answer(
-            texts.t('AMOUNT_TOO_HIGH_SHORT', 'Сумма слишком велика'),
-            show_alert=True,
-        )
-        return
-
-    await callback.answer()
-    await state.clear()
-
-    await _create_kassa_ai_payment_and_respond(
-        message_or_callback=callback.message,
-        db_user=db_user,
-        db=db,
-        amount_kopeks=amount_kopeks,
-        edit_message=True,
-    )
+    """Start KassaAI SberPay top-up process."""
+    await _start_kassa_ai_sub_topup(callback, db_user, db, state, 'kassa_ai_sberpay')

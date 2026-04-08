@@ -92,11 +92,14 @@ class KassaAiPaymentMixin:
 
         try:
             # Используем API для создания заказа
+            # KassaAI требует email в формате {telegram_id}@telegram.org
+            target_email = email or (f'{user.telegram_id}@telegram.org' if user and user.telegram_id else None)
+
             result = await kassa_ai_service.create_order(
                 order_id=order_id,
                 amount=amount_rubles,
                 currency=currency,
-                email=email,
+                email=target_email,
                 payment_system_id=payment_system_id
                 if payment_system_id is not None
                 else settings.KASSA_AI_PAYMENT_SYSTEM_ID,

@@ -243,6 +243,8 @@ class BotConfigurationService:
         'PRICE_360_DAYS': 'SUBSCRIPTION_PRICES',
         'PAID_SUBSCRIPTION_USER_TAG': 'SUBSCRIPTION_PRICES',
         'TRAFFIC_PACKAGES_CONFIG': 'TRAFFIC_PACKAGES',
+        'MULTI_TARIFF_ENABLED': 'SUBSCRIPTIONS_CORE',
+        'MAX_ACTIVE_SUBSCRIPTIONS': 'SUBSCRIPTIONS_CORE',
         'BASE_PROMO_GROUP_PERIOD_DISCOUNTS_ENABLED': 'SUBSCRIPTIONS_CORE',
         'BASE_PROMO_GROUP_PERIOD_DISCOUNTS': 'SUBSCRIPTIONS_CORE',
         'DEFAULT_AUTOPAY_ENABLED': 'AUTOPAY',
@@ -562,6 +564,29 @@ class BotConfigurationService:
             'format': 'Выберите сквад из списка или очистите значение.',
             'example': 'd4aa2b8c-9a36-4f31-93a2-6f07dad05fba',
             'warning': 'Убедитесь, что выбранный сквад активен и доступен для подписки.',
+        },
+        'MULTI_TARIFF_ENABLED': {
+            'description': (
+                'Разрешает пользователям покупать несколько тарифов одновременно. '
+                'Каждый тариф создаёт отдельную подписку с собственными серверами и лимитами.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': (
+                'Работает только в режиме продаж «Тарифы». '
+                'При включении синхронизация с панелью переключается на мультитарифный режим.'
+            ),
+            'dependencies': 'SALES_MODE=tariffs, MAX_ACTIVE_SUBSCRIPTIONS',
+        },
+        'MAX_ACTIVE_SUBSCRIPTIONS': {
+            'description': (
+                'Максимальное количество одновременных активных подписок у одного пользователя. '
+                'Применяется только в мультитарифном режиме.'
+            ),
+            'format': 'Целое число от 1 и выше.',
+            'example': '10',
+            'warning': 'Большое значение может усложнить управление подписками для пользователя.',
+            'dependencies': 'MULTI_TARIFF_ENABLED',
         },
         'DEVICES_SELECTION_ENABLED': {
             'description': 'Разрешает пользователям выбирать количество устройств при покупке и продлении подписки.',
@@ -935,6 +960,11 @@ class BotConfigurationService:
         },
         'WEBHOOK_NOTIFY_DEVICES': {
             'description': 'Уведомления о подключении и отключении устройств.',
+            'format': 'Булево значение.',
+            'example': 'true',
+        },
+        'WEBHOOK_NOTIFY_TORRENT_DETECTED': {
+            'description': 'Уведомление пользователю при обнаружении торрент-трафика.',
             'format': 'Булево значение.',
             'example': 'true',
         },

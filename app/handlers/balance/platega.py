@@ -20,8 +20,7 @@ logger = structlog.get_logger(__name__)
 
 
 def _get_active_methods() -> list[int]:
-    methods = settings.get_platega_active_methods()
-    return [code for code in methods if code in {2, 10, 11, 12, 13}]
+    return settings.get_platega_active_methods()
 
 
 async def _prompt_amount(

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database.crud.promo_offer_log import log_promo_offer_action
 from app.database.models import (
     DiscountOffer,
@@ -31,8 +32,17 @@ class PromoOfferService:
         user: User,
         offer: DiscountOffer,
     ) -> tuple[bool, list[str] | None, datetime | None, str]:
-        subscription = getattr(user, 'subscription', None)
-        if not subscription:
+        # Collect target subscriptions: all active in multi-tariff, single otherwise
+        if settings.is_multi_tariff_enabled():
+            subs = getattr(user, 'subscriptions', None) or []
+            target_subs = [s for s in subs if s.is_active and not getattr(s, 'is_daily_tariff', False)]
+            if not target_subs:
+                target_subs = [s for s in subs if s.is_active]
+        else:
+            single = getattr(user, 'subscription', None)
+            target_subs = [single] if single else []
+
+        if not target_subs:
             return False, None, None, 'subscription_missing'
 
         payload = offer.extra_data or {}
@@ -51,8 +61,11 @@ class PromoOfferService:
 
         squad_uuids = list(dict.fromkeys(squad_uuids))
 
-        connected = {str(item) for item in subscription.connected_squads or []}
-        if squad_uuids and set(squad_uuids).issubset(connected):
+        # Check if ALL subscriptions already have all squads
+        all_already = all(
+            set(squad_uuids).issubset({str(s) for s in (sub.connected_squads or [])}) for sub in target_subs
+        )
+        if all_already:
             return False, None, None, 'already_connected'
 
         try:
@@ -66,71 +79,78 @@ class PromoOfferService:
         now = datetime.now(UTC)
         expires_at = now + timedelta(hours=duration_hours)
 
-        original_connected = set(connected)
-        newly_added: list[str] = []
-        changes_made = False
+        all_newly_added: list[str] = []
+        any_sync_failed = False
 
-        for squad_uuid in squad_uuids:
-            normalized_uuid = str(squad_uuid)
-            existing_result = await db.execute(
-                select(SubscriptionTemporaryAccess)
-                .where(
-                    SubscriptionTemporaryAccess.offer_id == offer.id,
-                    SubscriptionTemporaryAccess.squad_uuid == normalized_uuid,
+        for subscription in target_subs:
+            connected = {str(item) for item in subscription.connected_squads or []}
+            original_connected = set(connected)
+            sub_newly_added: list[str] = []
+
+            for squad_uuid in squad_uuids:
+                normalized_uuid = str(squad_uuid)
+                # Check existing temp access for this subscription + offer + squad
+                existing_result = await db.execute(
+                    select(SubscriptionTemporaryAccess)
+                    .where(
+                        SubscriptionTemporaryAccess.offer_id == offer.id,
+                        SubscriptionTemporaryAccess.subscription_id == subscription.id,
+                        SubscriptionTemporaryAccess.squad_uuid == normalized_uuid,
+                    )
+                    .order_by(SubscriptionTemporaryAccess.id.desc())
                 )
-                .order_by(SubscriptionTemporaryAccess.id.desc())
-            )
-            existing_access = existing_result.scalars().first()
-            if existing_access and existing_access.is_active:
-                if existing_access.expires_at < expires_at:
-                    existing_access.expires_at = expires_at
-                    changes_made = True
-                continue
+                existing_access = existing_result.scalars().first()
+                if existing_access and existing_access.is_active:
+                    existing_access.expires_at = max(existing_access.expires_at, expires_at)
+                    continue
 
-            was_already_connected = normalized_uuid in connected
-            if not was_already_connected:
-                connected.add(normalized_uuid)
-                newly_added.append(normalized_uuid)
-                changes_made = True
+                was_already_connected = normalized_uuid in connected
+                if not was_already_connected:
+                    connected.add(normalized_uuid)
+                    sub_newly_added.append(normalized_uuid)
 
-            access_entry = SubscriptionTemporaryAccess(
-                subscription_id=subscription.id,
-                offer_id=offer.id,
-                squad_uuid=normalized_uuid,
-                expires_at=expires_at,
-                is_active=True,
-                was_already_connected=was_already_connected,
-            )
-            db.add(access_entry)
-            changes_made = True
-
-        connected_changed = connected != original_connected
-
-        if newly_added:
-            subscription.connected_squads = list(connected)
-            subscription.updated_at = now
-            changes_made = True
-
-        if connected_changed:
-            remnawave_user = await self.subscription_service.update_remnawave_user(
-                db,
-                subscription,
-                sync_squads=True,
-            )
-            if remnawave_user is None:
-                await db.rollback()
-                await db.refresh(subscription)
-                logger.error(
-                    'Не удалось синхронизировать временный доступ подписки с RemnaWave', subscription_id=subscription.id
+                access_entry = SubscriptionTemporaryAccess(
+                    subscription_id=subscription.id,
+                    offer_id=offer.id,
+                    squad_uuid=normalized_uuid,
+                    expires_at=expires_at,
+                    is_active=True,
+                    was_already_connected=was_already_connected,
                 )
-                return False, None, None, 'remnawave_sync_failed'
+                db.add(access_entry)
 
-            await db.refresh(subscription)
-        elif changes_made:
-            await db.commit()
-            await db.refresh(subscription)
+            if sub_newly_added:
+                subscription.connected_squads = list(connected)
+                subscription.updated_at = now
+                for s in sub_newly_added:
+                    if s not in all_newly_added:
+                        all_newly_added.append(s)
 
-        return True, newly_added, expires_at, 'ok'
+            if connected != original_connected:
+                remnawave_user = await self.subscription_service.update_remnawave_user(
+                    db,
+                    subscription,
+                    sync_squads=True,
+                )
+                if remnawave_user is None:
+                    logger.error(
+                        'Не удалось синхронизировать тестовый доступ с RemnaWave',
+                        subscription_id=subscription.id,
+                    )
+                    any_sync_failed = True
+
+        if any_sync_failed and not all_newly_added:
+            await db.rollback()
+            return False, None, None, 'remnawave_sync_failed'
+
+        await db.commit()
+        for sub in target_subs:
+            try:
+                await db.refresh(sub)
+            except Exception:
+                pass
+
+        return True, all_newly_added, expires_at, 'ok'
 
     async def cleanup_expired_test_access(self, db: AsyncSession) -> int:
         now = datetime.now(UTC)

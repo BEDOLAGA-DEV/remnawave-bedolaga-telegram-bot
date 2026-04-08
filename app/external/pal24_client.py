@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -194,7 +195,7 @@ class Pal24Client:
         except Pal24APIError:
             logger.error('Pal24 signature verification failed: missing token')
             return False
-        return expected == signature.upper()
+        return hmac.compare_digest(expected, signature.upper())
 
     @staticmethod
     def normalize_amount(amount_kopeks: int) -> Decimal:

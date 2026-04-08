@@ -189,7 +189,7 @@ class FreekassaService:
         # Приводим amount к int, если это целое число
         final_amount = int(amount) if float(amount).is_integer() else amount
         expected_sign = hashlib.md5(f'{shop_id}:{final_amount}:{self.secret2}:{order_id}'.encode()).hexdigest()
-        return sign.lower() == expected_sign.lower()
+        return hmac.compare_digest(sign.lower(), expected_sign.lower())
 
     def verify_webhook_ip(self, ip: str) -> bool:
         """Проверяет, что IP входит в разрешенный список Freekassa."""

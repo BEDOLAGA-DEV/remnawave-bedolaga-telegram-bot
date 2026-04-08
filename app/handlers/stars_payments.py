@@ -45,7 +45,16 @@ async def _handle_wheel_spin_payment(
         # Проверяем наличие активной подписки
         from app.database.crud.subscription import get_subscription_by_user_id
 
-        subscription = await get_subscription_by_user_id(db, user.id)
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+            active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+            # Wheel eligibility: any active non-daily subscription qualifies
+            non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+            eligible = non_daily or active_subs
+            subscription = max(eligible, key=lambda s: s.days_left) if eligible else None
+        else:
+            subscription = await get_subscription_by_user_id(db, user.id)
         if not subscription or not subscription.is_active:
             # Конвертируем Stars в баланс как компенсацию
             rubles_fallback = TelegramStarsService.calculate_rubles_from_stars(stars_amount)

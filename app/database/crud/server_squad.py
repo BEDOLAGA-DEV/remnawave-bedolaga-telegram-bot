@@ -430,7 +430,7 @@ async def get_server_connected_users(db: AsyncSession, server_id: int) -> list[U
             ),
         )
         .where(or_(*connection_filters))
-        .options(selectinload(User.subscription))
+        .options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
         .order_by(User.id)
     )
 

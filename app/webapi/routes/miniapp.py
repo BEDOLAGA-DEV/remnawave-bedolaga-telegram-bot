@@ -2797,7 +2797,7 @@ async def _load_devices_info(user: User) -> tuple[int, list[MiniAppDevice]]:
 
     try:
         async with service.get_api_client() as api:
-            response = await api.get_user_devices(remnawave_uuid)
+            response = await api.get_user_devices_all(remnawave_uuid)
     except RemnaWaveConfigurationError:
         logger.debug('RemnaWave configuration missing while loading devices')
         return 0, []
@@ -3025,8 +3025,8 @@ def _is_trial_available_for_user(user: User) -> bool:
     if getattr(user, 'has_had_paid_subscription', False):
         return False
 
-    subscription = getattr(user, 'subscription', None)
-    if subscription is not None:
+    subs = getattr(user, 'subscriptions', None) or []
+    if any(s.is_active for s in subs):
         return False
 
     return True
@@ -3105,7 +3105,18 @@ async def get_subscription_details(
             detail=detail,
         )
 
-    subscription = getattr(user, 'subscription', None)
+    subs = getattr(user, 'subscriptions', None) or []
+    if subs:
+        # Prefer non-daily active subscription with most days remaining
+        active = [s for s in subs if s.is_active]
+        if active:
+            non_daily = [s for s in active if not getattr(s, 'is_daily_tariff', False)]
+            pool = non_daily or active
+            subscription = max(pool, key=lambda s: s.days_left)
+        else:
+            subscription = max(subs, key=lambda s: s.id) if subs else None
+    else:
+        subscription = None
     usage_synced = False
 
     if subscription and _is_remnawave_configured():
@@ -3652,7 +3663,7 @@ async def update_subscription_autopay_endpoint(
     db: AsyncSession = Depends(get_db_session),
 ) -> MiniAppSubscriptionAutopayResponse:
     user = await _authorize_miniapp_user(payload.init_data, db)
-    subscription = _ensure_paid_subscription(user)
+    subscription = _ensure_paid_subscription(user, subscription_id=payload.subscription_id)
     _validate_subscription_id(payload.subscription_id, subscription)
 
     # Суточные подписки имеют свой механизм продления (DailySubscriptionService),
@@ -4473,19 +4484,35 @@ def _build_renewal_success_message(
     amount_label = settings.format_price(max(0, charged_amount))
     date_label = format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M') if subscription.end_date else ''
 
+    tariff_label = ''
+    if settings.is_multi_tariff_enabled() and getattr(subscription, 'tariff', None):
+        tariff_label = f' «{subscription.tariff.name}»'
+
     if language_code in {'ru', 'fa'}:
         if charged_amount > 0:
             message = (
-                f'Подписка продлена до {date_label}. ' if date_label else 'Подписка продлена. '
+                f'Подписка{tariff_label} продлена до {date_label}. '
+                if date_label
+                else f'Подписка{tariff_label} продлена. '
             ) + f'Списано {amount_label}.'
         else:
-            message = f'Подписка продлена до {date_label}.' if date_label else 'Подписка успешно продлена.'
+            message = (
+                f'Подписка{tariff_label} продлена до {date_label}.'
+                if date_label
+                else f'Подписка{tariff_label} успешно продлена.'
+            )
     elif charged_amount > 0:
         message = (
-            f'Subscription renewed until {date_label}. ' if date_label else 'Subscription renewed. '
+            f'Subscription{tariff_label} renewed until {date_label}. '
+            if date_label
+            else f'Subscription{tariff_label} renewed. '
         ) + f'Charged {amount_label}.'
     else:
-        message = f'Subscription renewed until {date_label}.' if date_label else 'Subscription renewed successfully.'
+        message = (
+            f'Subscription{tariff_label} renewed until {date_label}.'
+            if date_label
+            else f'Subscription{tariff_label} renewed successfully.'
+        )
 
     if promo_discount_value > 0:
         discount_label = settings.format_price(promo_discount_value)
@@ -4745,8 +4772,13 @@ def _ensure_paid_subscription(
     user: User,
     *,
     allowed_statuses: Collection[str] | None = None,
+    subscription_id: int | None = None,
 ) -> Subscription:
-    subscription = getattr(user, 'subscription', None)
+    subs = getattr(user, 'subscriptions', None) or []
+    if subscription_id:
+        subscription = next((s for s in subs if s.id == subscription_id), None)
+    else:
+        subscription = next((s for s in subs if getattr(s, 'is_active', False)), None)
     if not subscription:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
@@ -5070,8 +5102,20 @@ async def get_subscription_renewal_options_endpoint(
     subscription = _ensure_paid_subscription(
         user,
         allowed_statuses={'active', 'trial', 'expired'},
+        subscription_id=payload.subscription_id,
     )
     _validate_subscription_id(payload.subscription_id, subscription)
+
+    # Block classic subscription renewal when tariff mode is active
+    if settings.is_tariffs_mode() and not subscription.tariff_id:
+        return MiniAppSubscriptionRenewalOptionsResponse(
+            periods=[],
+            currency=(getattr(user, 'balance_currency', None) or 'RUB').upper(),
+            balance_kopeks=getattr(user, 'balance_kopeks', 0),
+            balance_label=settings.format_price(getattr(user, 'balance_kopeks', 0)),
+            status_message='Classic subscriptions cannot be renewed. Please purchase a tariff.',
+            sales_mode=settings.get_sales_mode(),
+        )
 
     periods, pricing_map, default_period_id = await _prepare_subscription_renewal_options(
         db,
@@ -5160,8 +5204,19 @@ async def submit_subscription_renewal_endpoint(
     subscription = _ensure_paid_subscription(
         user,
         allowed_statuses={'active', 'trial', 'expired'},
+        subscription_id=payload.subscription_id,
     )
     _validate_subscription_id(payload.subscription_id, subscription)
+
+    # Block classic subscription renewal when tariff mode is active
+    if settings.is_tariffs_mode() and not subscription.tariff_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'classic_subscription_blocked',
+                'message': 'Classic subscriptions cannot be renewed. Please purchase a tariff.',
+            },
+        )
 
     period_days: int | None = None
     if payload.period_days is not None:
@@ -5558,6 +5613,7 @@ async def get_subscription_settings_endpoint(
     subscription = _ensure_paid_subscription(
         user,
         allowed_statuses={'active', 'trial'},
+        subscription_id=payload.subscription_id,
     )
     _validate_subscription_id(payload.subscription_id, subscription)
 
@@ -5578,6 +5634,7 @@ async def update_subscription_servers_endpoint(
     subscription = _ensure_paid_subscription(
         user,
         allowed_statuses={'active', 'trial'},
+        subscription_id=payload.subscription_id,
     )
     _validate_subscription_id(payload.subscription_id, subscription)
     old_servers = list(getattr(subscription, 'connected_squads', []) or [])
@@ -5811,6 +5868,7 @@ async def update_subscription_traffic_endpoint(
     subscription = _ensure_paid_subscription(
         user,
         allowed_statuses={'active', 'trial'},
+        subscription_id=payload.subscription_id,
     )
     _validate_subscription_id(payload.subscription_id, subscription)
     old_traffic = subscription.traffic_limit_gb
@@ -5965,6 +6023,7 @@ async def update_subscription_devices_endpoint(
     subscription = _ensure_paid_subscription(
         user,
         allowed_statuses={'active', 'trial'},
+        subscription_id=payload.subscription_id,
     )
     _validate_subscription_id(payload.subscription_id, subscription)
 
@@ -6370,7 +6429,14 @@ async def get_tariffs_endpoint(
     tariffs = await get_tariffs_for_user(db, promo_group_id)
 
     # Текущий тариф пользователя
-    subscription = getattr(user, 'subscription', None)
+    subs = getattr(user, 'subscriptions', None) or []
+    active = [s for s in subs if s.is_active]
+    if active:
+        non_daily = [s for s in active if not getattr(s, 'is_daily_tariff', False)]
+        pool = non_daily or active
+        subscription = max(pool, key=lambda s: s.days_left)
+    else:
+        subscription = subs[0] if subs else None
     current_tariff_id = subscription.tariff_id if subscription else None
     current_tariff_model: MiniAppCurrentTariff | None = None
     current_tariff = None
@@ -6480,10 +6546,10 @@ async def purchase_tariff_endpoint(
         payload.period_days = 1
 
     # Calculate price via PricingEngine (single source of truth)
-    subscription = getattr(user, 'subscription', None)
-    device_limit = None
-    if subscription and subscription.tariff_id == tariff.id:
-        device_limit = subscription.device_limit
+    subs = getattr(user, 'subscriptions', None) or []
+    # Find subscription with same tariff for device limit inheritance
+    matching_sub = next((s for s in subs if s.tariff_id == tariff.id and s.is_active), None)
+    device_limit = matching_sub.device_limit if matching_sub else None
 
     result = await pricing_engine.calculate_tariff_purchase_price(
         tariff,
@@ -6497,8 +6563,8 @@ async def purchase_tariff_endpoint(
     group_pcts = bd.get('group_discount_pct', {})
     discount_percent = group_pcts.get('period', 0)
 
-    # Проверяем баланс
-    if user.balance_kopeks < price_kopeks:
+    # Проверяем баланс (при 100% скидке — пропускаем)
+    if price_kopeks > 0 and user.balance_kopeks < price_kopeks:
         missing = price_kopeks - user.balance_kopeks
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -6676,7 +6742,13 @@ async def preview_tariff_switch_endpoint(
             detail={'code': 'tariffs_mode_disabled', 'message': 'Tariffs mode is not enabled'},
         )
 
-    subscription = getattr(user, 'subscription', None)
+    subs = getattr(user, 'subscriptions', None) or []
+    active = [s for s in subs if s.is_active and s.tariff_id]
+    subscription = active[0] if len(active) == 1 else None
+    if not subscription:
+        # If multiple active or none, require explicit subscription_id
+        if hasattr(payload, 'subscription_id') and payload.subscription_id:
+            subscription = next((s for s in subs if s.id == payload.subscription_id), None)
     if not subscription or not subscription.tariff_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -6763,7 +6835,11 @@ async def switch_tariff_endpoint(
             detail={'code': 'tariffs_mode_disabled', 'message': 'Tariffs mode is not enabled'},
         )
 
-    subscription = getattr(user, 'subscription', None)
+    subs = getattr(user, 'subscriptions', None) or []
+    if payload.subscription_id:
+        subscription = next((s for s in subs if s.id == payload.subscription_id), None)
+    else:
+        subscription = next((s for s in subs if s.is_active and s.tariff_id), None)
     if not subscription or not subscription.tariff_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -6778,7 +6854,6 @@ async def switch_tariff_endpoint(
         .execution_options(populate_existing=True)
     )
     subscription = locked_result.scalar_one()
-    user.subscription = subscription
 
     if subscription.status not in ('active', 'trial'):
         raise HTTPException(
@@ -7015,7 +7090,7 @@ async def purchase_traffic_topup_endpoint(
     from app.webapi.schemas.miniapp import MiniAppTrafficTopupResponse
 
     user = await _authorize_miniapp_user(payload.init_data, db)
-    subscription = _ensure_paid_subscription(user)
+    subscription = _ensure_paid_subscription(user, subscription_id=payload.subscription_id)
     _validate_subscription_id(payload.subscription_id, subscription)
 
     # Проверяем режим тарифов
@@ -7119,8 +7194,8 @@ async def purchase_traffic_topup_endpoint(
         subscription.end_date,
     )
 
-    # Проверяем баланс
-    if user.balance_kopeks < final_price:
+    # Проверяем баланс (при 100% скидке — пропускаем)
+    if final_price > 0 and user.balance_kopeks < final_price:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
@@ -7159,8 +7234,13 @@ async def purchase_traffic_topup_endpoint(
         service = SubscriptionService()
         await service.update_remnawave_user(db, subscription)
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        if getattr(user, 'remnawave_uuid', None) and subscription.status == 'active':
-            await service.enable_remnawave_user(user.remnawave_uuid)
+        _en_uuid = (
+            subscription.remnawave_uuid
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+            else getattr(user, 'remnawave_uuid', None)
+        )
+        if _en_uuid and subscription.status == 'active':
+            await service.enable_remnawave_user(_en_uuid)
     except Exception as e:
         logger.error('Ошибка синхронизации с RemnaWave при докупке трафика', error=e)
 
@@ -7195,7 +7275,11 @@ async def toggle_daily_subscription_pause_endpoint(
     from app.webapi.schemas.miniapp import MiniAppDailySubscriptionToggleResponse
 
     user = await _authorize_miniapp_user(payload.init_data, db)
-    subscription = user.subscription
+    subs = getattr(user, 'subscriptions', None) or []
+    if payload.subscription_id:
+        subscription = next((s for s in subs if s.id == payload.subscription_id), None)
+    else:
+        subscription = next((s for s in subs if s.tariff_id), None)
 
     if not subscription:
         raise HTTPException(
@@ -7224,8 +7308,15 @@ async def toggle_daily_subscription_pause_endpoint(
     # and to ensure is_daily_paused mutation is not overwritten by populate_existing
     from app.database.crud.user import lock_user_for_pricing
 
+    target_sub_id = subscription.id
     user = await lock_user_for_pricing(db, user.id)
-    subscription = user.subscription
+    locked_subs = getattr(user, 'subscriptions', None) or []
+    subscription = next((s for s in locked_subs if s.id == target_sub_id), None)
+    if not subscription:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={'code': 'subscription_lost', 'message': 'Subscription not found after lock'},
+        )
 
     # Определяем состояние из LOCKED экземпляра
     from app.database.models import SubscriptionStatus

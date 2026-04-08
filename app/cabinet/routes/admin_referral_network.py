@@ -1108,7 +1108,7 @@ async def get_network_user_detail(
     # Fetch user with subscription eagerly loaded
     stmt = (
         select(User)
-        .options(selectinload(User.subscription).selectinload(Subscription.tariff))
+        .options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
         .where(User.id == user_id)
     )
     result = await db.execute(stmt)
@@ -1204,14 +1204,16 @@ async def get_network_user_detail(
     subscription_name: str | None = None
     subscription_end: str | None = None
     subscription_status: str | None = None
-    if user.subscription is not None:
-        if user.subscription.tariff is not None:
-            subscription_name = user.subscription.tariff.name
-        subscription_end = _format_datetime(user.subscription.end_date)
+    subs = getattr(user, 'subscriptions', None) or []
+    subscription = next((s for s in subs if s.is_active), subs[0] if subs else None)
+    if subscription is not None:
+        if subscription.tariff is not None:
+            subscription_name = subscription.tariff.name
+        subscription_end = _format_datetime(subscription.end_date)
         subscription_status = _compute_subscription_status(
-            user.subscription.is_trial,
-            user.subscription.status,
-            user.subscription.end_date,
+            subscription.is_trial,
+            subscription.status,
+            subscription.end_date,
             datetime.now(UTC),
         )
 

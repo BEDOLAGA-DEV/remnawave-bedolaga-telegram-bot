@@ -5,6 +5,7 @@ from aiogram import Dispatcher, F, types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database.crud.promo_group import get_promo_groups_with_counts
 from app.database.crud.server_squad import (
     delete_server_squad,
@@ -362,7 +363,17 @@ async def show_server_users(callback: types.CallbackQuery, db_user: User, db: As
         if len(display_name) > 30:
             display_name = display_name[:27] + '...'
 
-        subscription_status = user.subscription.status_display if user.subscription else '❌ Нет подписки'
+        if settings.is_multi_tariff_enabled() and hasattr(user, 'subscriptions') and user.subscriptions:
+            status_parts = []
+            for sub in user.subscriptions:
+                emoji = '🟢' if sub.is_active else '🔴'
+                name = sub.tariff.name if sub.tariff else f'#{sub.id}'
+                status_parts.append(f'{emoji}{name}')
+            subscription_status = ', '.join(status_parts)
+        elif user.subscription:
+            subscription_status = user.subscription.status_display
+        else:
+            subscription_status = '❌ Нет подписки'
         status_icon = _get_status_icon(subscription_status)
 
         if status_icon:

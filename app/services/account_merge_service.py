@@ -133,6 +133,7 @@ def _build_subscription_preview(sub: Subscription | None) -> dict[str, Any] | No
 
 def _build_user_preview(user: User) -> dict[str, Any]:
     """Формирует превью данных пользователя для предварительного просмотра мержа."""
+    subs = getattr(user, 'subscriptions', None) or []
     return {
         'id': user.id,
         'username': user.username,
@@ -140,7 +141,8 @@ def _build_user_preview(user: User) -> dict[str, Any]:
         'email': user.email,
         'auth_methods': compute_auth_methods(user),
         'balance_kopeks': user.balance_kopeks,
-        'subscription': _build_subscription_preview(user.subscription),
+        'subscription': _build_subscription_preview(subs[0] if subs else None),
+        'subscriptions_count': len(subs),
         'created_at': user.created_at,
     }
 
@@ -244,6 +246,65 @@ async def _delete_remnawave_user_with_fallback(remnawave_uuid: str) -> None:
             )
 
 
+async def _sync_transferred_subscriptions_to_panel(
+    primary: User,
+    transferred_subs: list[Subscription],
+) -> None:
+    """Updates RemnaWave panel description for subscriptions transferred to primary user.
+
+    After account merge transfers subscriptions from secondary to primary,
+    the panel still shows the old secondary user's telegramId/username in the
+    description. This function patches each subscription in RemnaWave so admin
+    views reflect the actual owner.
+
+    Failures are logged per-subscription but never propagate — panel desync is
+    non-fatal and can be fixed by a manual resync later.
+    """
+    subs_with_uuid = [s for s in transferred_subs if getattr(s, 'remnawave_uuid', None)]
+    if not subs_with_uuid:
+        return
+
+    new_description = settings.format_remnawave_user_description(
+        full_name=primary.full_name,
+        username=primary.username,
+        telegram_id=primary.telegram_id,
+        email=getattr(primary, 'email', None),
+        user_id=primary.id,
+    )
+
+    try:
+        async with _get_remnawave_api() as api:
+            for sub in subs_with_uuid:
+                try:
+                    await api.update_user(
+                        uuid=sub.remnawave_uuid,
+                        description=new_description,
+                        telegram_id=primary.telegram_id,
+                        email=getattr(primary, 'email', None),
+                    )
+                    logger.info(
+                        'Synced transferred subscription description to panel',
+                        subscription_id=sub.id,
+                        remnawave_uuid=sub.remnawave_uuid,
+                        primary_user_id=primary.id,
+                    )
+                except Exception:
+                    logger.warning(
+                        'Failed to sync transferred subscription to panel',
+                        subscription_id=sub.id,
+                        remnawave_uuid=sub.remnawave_uuid,
+                        primary_user_id=primary.id,
+                        exc_info=True,
+                    )
+    except Exception:
+        logger.warning(
+            'Failed to connect to RemnaWave API for post-merge sync',
+            primary_user_id=primary.id,
+            subscription_count=len(subs_with_uuid),
+            exc_info=True,
+        )
+
+
 async def _handle_subscription_merge(
     db: AsyncSession,
     primary: User,
@@ -258,8 +319,114 @@ async def _handle_subscription_merge(
         secondary: Вторичный пользователь.
         keep_subscription_from: 'primary' или 'secondary' — чью подписку оставить.
     """
-    primary_sub = primary.subscription
-    secondary_sub = secondary.subscription
+    # Multi-tariff mode: transfer ALL subscriptions from secondary to primary
+    # Handles uq_subscriptions_user_tariff_active: (user_id, tariff_id) WHERE status IN ('active','trial')
+    if settings.is_multi_tariff_enabled():
+        secondary_subs = list(getattr(secondary, 'subscriptions', None) or [])
+        primary_subs = list(getattr(primary, 'subscriptions', None) or [])
+        secondary_legacy_uuid = secondary.remnawave_uuid
+
+        # Build set of primary's active tariff_ids for conflict detection
+        primary_active_tariff_ids: set[int] = set()
+        for ps in primary_subs:
+            if ps.tariff_id is not None and ps.status in ('active', 'trial'):
+                primary_active_tariff_ids.add(ps.tariff_id)
+
+        transferred: list[Subscription] = []
+        if secondary_subs:
+            for sub in secondary_subs:
+                sub_tariff_id = getattr(sub, 'tariff_id', None)
+                sub_remnawave_uuid = getattr(sub, 'remnawave_uuid', None)
+
+                # Check for tariff conflict: primary already has active sub for the same tariff
+                if (
+                    sub_tariff_id is not None
+                    and sub.status in ('active', 'trial')
+                    and sub_tariff_id in primary_active_tariff_ids
+                ):
+                    # Resolve conflict: keep the subscription with the later end_date
+                    primary_conflict = next(
+                        (
+                            ps
+                            for ps in primary_subs
+                            if ps.tariff_id == sub_tariff_id and ps.status in ('active', 'trial')
+                        ),
+                        None,
+                    )
+                    if primary_conflict:
+                        primary_end = getattr(primary_conflict, 'end_date', None)
+                        secondary_end = getattr(sub, 'end_date', None)
+                        # None end_date = lifetime/unlimited → always wins over a finite date
+                        secondary_wins = (secondary_end is None and primary_end is not None) or (
+                            secondary_end is not None and primary_end is not None and secondary_end > primary_end
+                        )
+                        if secondary_wins:
+                            # Secondary sub is better — expire primary's, transfer secondary's
+                            logger.info(
+                                'Tariff conflict resolved: secondary sub wins, expiring primary sub',
+                                tariff_id=sub_tariff_id,
+                                primary_sub_id=primary_conflict.id,
+                                primary_end=str(primary_end),
+                                secondary_sub_id=sub.id,
+                                secondary_end=str(secondary_end),
+                            )
+                            primary_conflict.status = 'expired'
+                            primary_conflict.autopay_enabled = False
+                            await db.flush()
+                            sub.user_id = primary.id
+                            transferred.append(sub)
+                        else:
+                            # Primary sub is equal or better — expire secondary's, then transfer it as expired
+                            logger.info(
+                                'Tariff conflict resolved: primary sub kept, expiring secondary sub before transfer',
+                                tariff_id=sub_tariff_id,
+                                primary_sub_id=primary_conflict.id,
+                                secondary_sub_id=sub.id,
+                            )
+                            sub.status = 'expired'
+                            sub.autopay_enabled = False
+                            sub.user_id = primary.id
+                            transferred.append(sub)
+                        continue
+
+                sub.user_id = primary.id
+                transferred.append(sub)
+                logger.info(
+                    'Transferred subscription during account merge',
+                    subscription_id=sub.id,
+                    tariff_id=sub_tariff_id,
+                    from_user=secondary.id,
+                    to_user=primary.id,
+                    remnawave_uuid=sub_remnawave_uuid,
+                )
+                if sub_remnawave_uuid and secondary_legacy_uuid and sub_remnawave_uuid == secondary_legacy_uuid:
+                    logger.warning(
+                        'Transferred subscription remnawave_uuid matches secondary legacy uuid — manual panel review required',
+                        subscription_id=sub.id,
+                        remnawave_uuid=sub_remnawave_uuid,
+                        secondary_user_id=secondary.id,
+                        primary_user_id=primary.id,
+                    )
+            await db.flush()
+            logger.info(
+                'Мерж подписок (multi-tariff): перенесено подписок secondary на primary',
+                count=len(transferred),
+                primary_id=primary.id,
+                secondary_id=secondary.id,
+            )
+            # Sync transferred subscriptions in RemnaWave panel so description
+            # reflects the primary user (telegramId, username, email).
+            await _sync_transferred_subscriptions_to_panel(primary, transferred)
+        # Clean up legacy remnawave_uuid on secondary
+        if secondary.remnawave_uuid:
+            secondary.remnawave_uuid = None
+        return
+
+    # Legacy single-subscription mode
+    primary_subs = getattr(primary, 'subscriptions', None) or []
+    secondary_subs = getattr(secondary, 'subscriptions', None) or []
+    primary_sub = primary_subs[0] if primary_subs else None
+    secondary_sub = secondary_subs[0] if secondary_subs else None
     has_primary_sub = primary_sub is not None
     has_secondary_sub = secondary_sub is not None
 
@@ -765,6 +932,8 @@ async def execute_merge(
         )
 
     # 14. Помечаем secondary как удалённый и очищаем ВСЕ unique constraint и FK поля
+    # NOTE: In multi-tariff mode, all secondary subscriptions were already transferred to primary
+    # in _handle_subscription_merge. Do NOT clear their remnawave_uuid — they are now primary's subs.
     secondary.status = UserStatus.DELETED.value
     secondary.referral_code = None
     secondary.remnawave_uuid = None

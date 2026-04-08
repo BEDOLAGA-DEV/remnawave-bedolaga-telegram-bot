@@ -35,7 +35,7 @@ class TributeService:
 
     def verify_webhook_signature(self, payload: str, signature: str) -> bool:
         if not self.api_key:
-            logger.error('API key не настроен, отклоняем webhook')
+            logger.error('Tribute API key не настроен — отклоняем webhook')
             return False
 
         try:

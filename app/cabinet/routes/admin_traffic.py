@@ -21,6 +21,8 @@ from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.traffic import (
     ExportCsvRequest,
     ExportCsvResponse,
+    SubscriptionEnrichmentInfo,
+    SubscriptionTrafficInfo,
     TrafficEnrichmentResponse,
     TrafficNodeInfo,
     TrafficUsageResponse,
@@ -156,15 +158,42 @@ def _compute_date_range(period_days: int) -> tuple[str, str]:
 
 
 async def _load_user_map(db: AsyncSession) -> dict[str, User]:
-    """Load all users with remnawave_uuid, eagerly loading subscription + tariff."""
-    stmt = (
+    """Load all users with remnawave_uuid, eagerly loading subscription + tariff.
+
+    In multi-tariff mode UUIDs live on Subscription rows, not on User.
+    Both sources are merged so the caller gets a complete uuid → User map.
+    """
+    from app.config import settings
+
+    # Build user map from both user-level and subscription-level UUIDs
+    user_map: dict[str, User] = {}
+
+    # Legacy: user-level UUIDs
+    stmt_users = (
         select(User)
         .where(User.remnawave_uuid.isnot(None))
-        .options(selectinload(User.subscription).selectinload(Subscription.tariff))
+        .options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
     )
-    result = await db.execute(stmt)
-    users = result.scalars().all()
-    return {u.remnawave_uuid: u for u in users if u.remnawave_uuid}
+    result_users = await db.execute(stmt_users)
+    users = result_users.scalars().all()
+    for u in users:
+        if u.remnawave_uuid:
+            user_map[u.remnawave_uuid] = u
+
+    # Multi-tariff: subscription-level UUIDs
+    if settings.is_multi_tariff_enabled():
+        stmt_subs = (
+            select(Subscription)
+            .where(Subscription.remnawave_uuid.isnot(None))
+            .options(selectinload(Subscription.user).selectinload(User.subscriptions).selectinload(Subscription.tariff))
+        )
+        result_subs = await db.execute(stmt_subs)
+        subs = result_subs.scalars().all()
+        for sub in subs:
+            if sub.remnawave_uuid and sub.user and sub.remnawave_uuid not in user_map:
+                user_map[sub.remnawave_uuid] = sub.user
+
+    return user_map
 
 
 def _build_traffic_items(
@@ -202,19 +231,23 @@ def _build_traffic_items(
             ):
                 continue
 
-        sub = user.subscription
+        subs = getattr(user, 'subscriptions', None) or []
+
+        # Primary subscription for backward-compat top-level fields
+        primary_sub = next((s for s in subs if s.is_active), subs[0] if subs else None)
         tariff_name = None
         subscription_status = None
         traffic_limit_gb = 0.0
         device_limit = 1
 
-        if sub:
-            subscription_status = _get_status(sub)
-            traffic_limit_gb = float(sub.traffic_limit_gb or 0)
-            device_limit = sub.device_limit or 1
-            if sub.tariff:
-                tariff_name = sub.tariff.name
+        if primary_sub:
+            subscription_status = _get_status(primary_sub)
+            traffic_limit_gb = float(primary_sub.traffic_limit_gb or 0)
+            device_limit = primary_sub.device_limit or 1
+            if primary_sub.tariff:
+                tariff_name = primary_sub.tariff.name
 
+        # Filtering uses primary sub values (keeps existing filter semantics)
         if tariff_filter is not None:
             if (tariff_name or '') not in tariff_filter:
                 continue
@@ -229,6 +262,18 @@ def _build_traffic_items(
 
         total_bytes = sum(traffic.values())
 
+        # Build per-subscription detail list for multi-subscription display
+        subscriptions_traffic = [
+            SubscriptionTrafficInfo(
+                subscription_id=sub.id,
+                tariff_name=sub.tariff.name if sub.tariff else None,
+                status=_get_status(sub),
+                traffic_limit_gb=float(sub.traffic_limit_gb or 0),
+                device_limit=sub.device_limit or 1,
+            )
+            for sub in subs
+        ]
+
         items.append(
             UserTrafficItem(
                 user_id=user.id,
@@ -242,6 +287,7 @@ def _build_traffic_items(
                 device_limit=device_limit,
                 node_traffic=traffic,
                 total_bytes=total_bytes,
+                subscriptions=subscriptions_traffic,
             )
         )
 
@@ -305,15 +351,21 @@ async def get_traffic_usage(
     # Collect all available tariff names (before filtering)
     available_tariffs = sorted(
         {
-            u.subscription.tariff.name
+            sub.tariff.name
             for u in user_map.values()
-            if u.subscription and u.subscription.tariff and u.subscription.tariff.name
+            for sub in (getattr(u, 'subscriptions', None) or [])
+            if sub.tariff and sub.tariff.name
         }
     )
 
     # Collect all available statuses (before filtering)
     available_statuses = sorted(
-        {_get_status(sub) for u in user_map.values() if (sub := u.subscription) and _get_status(sub)}
+        {
+            _get_status(sub)
+            for u in user_map.values()
+            for sub in (getattr(u, 'subscriptions', None) or [])
+            if _get_status(sub)
+        }
     )
 
     # Parse tariff filter
@@ -466,20 +518,34 @@ async def _build_enrichment(db: AsyncSession, user_map: dict[str, User]) -> dict
     enrichment: dict[int, UserTrafficEnrichment] = {}
     for uuid, user in user_map.items():
         uid = user.id
-        sub = user.subscription
+        subs_list = getattr(user, 'subscriptions', None) or []
+
+        # Primary subscription for backward-compat top-level date fields
+        primary_sub = next((s for s in subs_list if s.is_active), subs_list[0] if subs_list else None)
 
         start_date = None
         end_date = None
-        if sub:
-            if sub.start_date:
-                start_date = sub.start_date.isoformat()
-            if sub.end_date:
-                end_date = sub.end_date.isoformat()
+        if primary_sub:
+            if primary_sub.start_date:
+                start_date = primary_sub.start_date.isoformat()
+            if primary_sub.end_date:
+                end_date = primary_sub.end_date.isoformat()
 
         last_node_name = None
         last_uuid = last_node_uuid_by_user.get(uid)
         if last_uuid:
             last_node_name = node_uuid_to_name.get(last_uuid)
+
+        # Build per-subscription enrichment list for multi-subscription display
+        subscriptions_enrichment = [
+            SubscriptionEnrichmentInfo(
+                subscription_id=sub.id,
+                tariff_name=sub.tariff.name if sub.tariff else None,
+                start_date=sub.start_date.isoformat() if sub.start_date else None,
+                end_date=sub.end_date.isoformat() if sub.end_date else None,
+            )
+            for sub in subs_list
+        ]
 
         enrichment[uid] = UserTrafficEnrichment(
             devices_connected=devices_by_user.get(uid, 0),
@@ -487,6 +553,7 @@ async def _build_enrichment(db: AsyncSession, user_map: dict[str, User]) -> dict
             subscription_start_date=start_date,
             subscription_end_date=end_date,
             last_node_name=last_node_name,
+            subscriptions=subscriptions_enrichment,
         )
 
     return enrichment

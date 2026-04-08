@@ -268,12 +268,9 @@ class NewsCreateRequest(BaseModel):
     @field_validator('slug')
     @classmethod
     def sanitize_slug(cls, v: str | None) -> str | None:
-        """Ensure slug contains only URL-safe characters."""
+        """Ensure slug contains only URL-safe characters, transliterating Cyrillic."""
         if v is not None:
-            # Strip anything that isn't alphanumeric, hyphen, or underscore
-            sanitized = re.sub(r'[^a-zA-Z0-9_-]', '-', v)
-            sanitized = _MULTI_HYPHEN_RE.sub('-', sanitized).strip('-')
-            return sanitized or 'untitled'
+            return _slugify(v)
         return v
 
 
@@ -320,11 +317,9 @@ class NewsUpdateRequest(BaseModel):
     @field_validator('slug')
     @classmethod
     def sanitize_slug(cls, v: str | None) -> str | None:
-        """Ensure slug contains only URL-safe characters."""
+        """Ensure slug contains only URL-safe characters, transliterating Cyrillic."""
         if v is not None:
-            sanitized = re.sub(r'[^a-zA-Z0-9_-]', '-', v)
-            sanitized = _MULTI_HYPHEN_RE.sub('-', sanitized).strip('-')
-            return sanitized or 'untitled'
+            return _slugify(v)
         return v
 
 

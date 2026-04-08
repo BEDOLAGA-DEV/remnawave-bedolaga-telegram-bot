@@ -1,7 +1,7 @@
 """add wl traffic fields
 
-Revision ID: 0016
-Revises: 0015
+Revision ID: 0055
+Revises: 0054
 Create Date: 2026-03-24
 
 """
@@ -11,8 +11,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0016'
-down_revision: Union[str, None] = '0015'
+revision: str = '0055'
+down_revision: Union[str, None] = '0054'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

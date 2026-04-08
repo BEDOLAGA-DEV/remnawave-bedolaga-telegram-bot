@@ -182,6 +182,7 @@ def create_web_api_app() -> FastAPI:
         redoc_url=None,
         openapi_url=docs_config.get('openapi_url'),
         swagger_ui_parameters={'persistAuthorization': True},
+        redirect_slashes=False,
     )
 
     add_redoc_endpoint(

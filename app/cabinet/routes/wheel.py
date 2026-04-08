@@ -20,6 +20,7 @@ from app.cabinet.schemas.wheel import (
     WheelConfigResponse,
     WheelPrizeDisplay,
 )
+from app.config import settings
 from app.database.crud.wheel import (
     get_or_create_wheel_config,
     get_user_spin_history,
@@ -48,10 +49,22 @@ async def get_wheel_config(
     # Проверяем доступность
     availability = await wheel_service.check_availability(db, user)
 
-    # Проверяем наличие подписки
-    from app.database.crud.subscription import get_subscription_by_user_id
+    # Проверяем наличие подписки (multi-tariff aware)
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
-    subscription = await get_subscription_by_user_id(db, user.id)
+        active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+        # Check if user has any active subscription for wheel access
+        if active_subs:
+            _non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+            _pool = _non_daily or active_subs
+            subscription = max(_pool, key=lambda s: s.days_left)
+        else:
+            subscription = None
+    else:
+        from app.database.crud.subscription import get_subscription_by_user_id
+
+        subscription = await get_subscription_by_user_id(db, user.id)
     has_subscription = subscription is not None and subscription.is_active
 
     prizes_display = [
@@ -64,6 +77,14 @@ async def get_wheel_config(
         )
         for p in prizes
     ]
+
+    # Build eligible subscriptions for frontend picker
+    eligible_subs_display = None
+    if availability.eligible_subscriptions:
+        eligible_subs_display = [
+            {'id': s.id, 'tariff_name': s.tariff_name, 'days_left': s.days_left}
+            for s in availability.eligible_subscriptions
+        ]
 
     return WheelConfigResponse(
         is_enabled=config.is_enabled,
@@ -82,6 +103,7 @@ async def get_wheel_config(
         user_balance_kopeks=availability.user_balance_kopeks,
         required_balance_kopeks=availability.required_balance_kopeks,
         has_subscription=has_subscription,
+        eligible_subscriptions=eligible_subs_display,
     )
 
 
@@ -113,7 +135,7 @@ async def spin_wheel(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Крутить колесо удачи."""
-    result = await wheel_service.spin(db, user, request.payment_type.value)
+    result = await wheel_service.spin(db, user, request.payment_type.value, subscription_id=request.subscription_id)
 
     if not result.success:
         # Возвращаем ошибку в теле ответа, а не HTTP exception
@@ -218,10 +240,22 @@ async def create_stars_invoice(
             detail='Оплата Stars не включена',
         )
 
-    # Проверяем наличие активной подписки
-    from app.database.crud.subscription import get_subscription_by_user_id
+    # Проверяем наличие активной подписки (multi-tariff aware)
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
-    subscription = await get_subscription_by_user_id(db, user.id)
+        active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+        # Check if user has any active subscription for Stars invoice
+        if active_subs:
+            _non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+            _pool = _non_daily or active_subs
+            subscription = max(_pool, key=lambda s: s.days_left)
+        else:
+            subscription = None
+    else:
+        from app.database.crud.subscription import get_subscription_by_user_id
+
+        subscription = await get_subscription_by_user_id(db, user.id)
     if not subscription or not subscription.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

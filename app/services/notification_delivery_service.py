@@ -79,6 +79,7 @@ class NotificationType(Enum):
     WEBHOOK_USER_NOT_CONNECTED = 'webhook_user_not_connected'
     WEBHOOK_DEVICE_ADDED = 'webhook_device_added'
     WEBHOOK_DEVICE_DELETED = 'webhook_device_deleted'
+    WEBHOOK_TORRENT_DETECTED = 'webhook_torrent_detected'
 
     # Other
     BROADCAST = 'broadcast'

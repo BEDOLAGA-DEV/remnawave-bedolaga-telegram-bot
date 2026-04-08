@@ -65,6 +65,7 @@ from ..auth.email_verification import (
     is_token_expired,
 )
 from ..auth.jwt_handler import get_refresh_token_expires_at
+from ..auth.merge_service import create_merge_token
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 from ..ip_utils import get_client_ip
 from ..schemas.auth import (
@@ -322,94 +323,123 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                 logger.debug('No subscription found in panel for email', email=user.email)
                 return
 
-            # Take first user if multiple found
-            panel_user = panel_users[0]
-            logger.info('Found subscription in panel for email', email=user.email, uuid=panel_user.uuid)
-
-            # Check if another user already owns this remnawave_uuid
-            from app.database.crud.user import get_user_by_remnawave_uuid
-
-            existing_owner = await get_user_by_remnawave_uuid(db, panel_user.uuid)
-            if existing_owner and existing_owner.id != user.id:
-                logger.warning(
-                    'Panel UUID already belongs to another user, skipping sync',
-                    email=user.email,
-                    panel_uuid=panel_user.uuid,
-                    existing_owner_id=existing_owner.id,
-                )
-                return
-
-            # Link user to panel
-            user.remnawave_uuid = panel_user.uuid
-
-            # Create or update subscription
-            from app.database.crud.subscription import get_subscription_by_user_id
+            # In multi-tariff mode, sync ALL panel users (each = one subscription)
+            # In single-tariff mode, process only the first
+            from app.database.crud.subscription import get_active_subscriptions_by_user_id, get_subscription_by_user_id
             from app.database.models import Subscription, SubscriptionStatus
 
-            existing_sub = await get_subscription_by_user_id(db, user.id)
+            panel_users_to_sync = panel_users if settings.is_multi_tariff_enabled() else panel_users[:1]
 
-            # Parse panel data — panel returns local time with misleading +00:00 offset
-            expire_at = panel_datetime_to_utc(panel_user.expire_at)
-            traffic_limit_gb = panel_user.traffic_limit_bytes // (1024**3) if panel_user.traffic_limit_bytes > 0 else 0
-            traffic_used_gb = panel_user.used_traffic_bytes / (1024**3) if panel_user.used_traffic_bytes > 0 else 0
+            for panel_user in panel_users_to_sync:
+                logger.info('Syncing panel subscription for email', email=user.email, uuid=panel_user.uuid)
 
-            # Extract squad UUIDs from active_internal_squads
-            connected_squads = [s.get('uuid', '') for s in (panel_user.active_internal_squads or []) if s.get('uuid')]
+                # Check if another user already owns this remnawave_uuid
+                if settings.is_multi_tariff_enabled():
+                    from sqlalchemy import select as _select
 
-            # Device limit from panel
-            device_limit = panel_user.hwid_device_limit or 0
+                    from app.database.models import Subscription as _Subscription
 
-            # Determine status — expire_at is now naive UTC
-            current_time = datetime.now(UTC)
+                    _sub_result = await db.execute(
+                        _select(_Subscription).where(_Subscription.remnawave_uuid == panel_user.uuid)
+                    )
+                    _existing_sub = _sub_result.scalar_one_or_none()
+                    if _existing_sub and _existing_sub.user_id != user.id:
+                        logger.warning(
+                            'Panel UUID already owned by another user subscription, skipping',
+                            email=user.email,
+                            panel_uuid=panel_user.uuid,
+                            existing_owner_id=_existing_sub.user_id,
+                        )
+                        continue
+                else:
+                    from app.database.crud.user import get_user_by_remnawave_uuid
 
-            if panel_user.status.value == 'ACTIVE' and expire_at > current_time:
-                sub_status = SubscriptionStatus.ACTIVE
-            elif expire_at <= current_time:
-                sub_status = SubscriptionStatus.EXPIRED
-            else:
-                sub_status = SubscriptionStatus.DISABLED
+                    existing_owner = await get_user_by_remnawave_uuid(db, panel_user.uuid)
+                    if existing_owner and existing_owner.id != user.id:
+                        logger.warning(
+                            'Panel UUID already belongs to another user, skipping',
+                            email=user.email,
+                            panel_uuid=panel_user.uuid,
+                            existing_owner_id=existing_owner.id,
+                        )
+                        continue
 
-            if existing_sub:
-                # Update existing subscription (expire_at already naive UTC)
-                existing_sub.end_date = expire_at
-                existing_sub.traffic_limit_gb = traffic_limit_gb
-                existing_sub.traffic_used_gb = traffic_used_gb
-                existing_sub.status = sub_status.value
-                existing_sub.remnawave_short_uuid = panel_user.short_uuid
-                existing_sub.subscription_url = panel_user.subscription_url
-                existing_sub.subscription_crypto_link = panel_user.happ_crypto_link
-                existing_sub.connected_squads = connected_squads
-                existing_sub.device_limit = device_limit
-                existing_sub.is_trial = False  # Panel subscription is not trial
-                logger.info(
-                    'Updated subscription for email user squads: devices',
-                    email=user.email,
-                    connected_squads=connected_squads,
-                    device_limit=device_limit,
+                # Link user to panel (only in single-tariff mode)
+                if not settings.is_multi_tariff_enabled():
+                    user.remnawave_uuid = panel_user.uuid
+
+                # Find existing subscription
+                if settings.is_multi_tariff_enabled():
+                    active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+                    existing_sub = next(
+                        (s for s in active_subs if s.remnawave_uuid == panel_user.uuid),
+                        None,
+                    )
+                else:
+                    existing_sub = await get_subscription_by_user_id(db, user.id)
+
+                # Parse panel data
+                expire_at = panel_datetime_to_utc(panel_user.expire_at)
+                traffic_limit_gb = (
+                    panel_user.traffic_limit_bytes // (1024**3) if panel_user.traffic_limit_bytes > 0 else 0
                 )
-            else:
-                # Create new subscription (expire_at and current_time already naive UTC)
-                new_sub = Subscription(
-                    user_id=user.id,
-                    start_date=current_time,
-                    end_date=expire_at,
-                    traffic_limit_gb=traffic_limit_gb,
-                    traffic_used_gb=traffic_used_gb,
-                    status=sub_status.value,
-                    is_trial=False,
-                    remnawave_short_uuid=panel_user.short_uuid,
-                    subscription_url=panel_user.subscription_url,
-                    subscription_crypto_link=panel_user.happ_crypto_link,
-                    connected_squads=connected_squads,
-                    device_limit=device_limit,
-                )
-                db.add(new_sub)
-                logger.info(
-                    'Created subscription for email user squads: devices',
-                    email=user.email,
-                    connected_squads=connected_squads,
-                    device_limit=device_limit,
-                )
+                traffic_used_gb = panel_user.used_traffic_bytes / (1024**3) if panel_user.used_traffic_bytes > 0 else 0
+                connected_squads = [
+                    s.get('uuid', '') for s in (panel_user.active_internal_squads or []) if s.get('uuid')
+                ]
+                device_limit = panel_user.hwid_device_limit or 0
+
+                # Determine status
+                current_time = datetime.now(UTC)
+                if panel_user.status.value == 'ACTIVE' and expire_at > current_time:
+                    sub_status = SubscriptionStatus.ACTIVE
+                elif expire_at <= current_time:
+                    sub_status = SubscriptionStatus.EXPIRED
+                else:
+                    sub_status = SubscriptionStatus.DISABLED
+
+                if existing_sub:
+                    existing_sub.end_date = expire_at
+                    existing_sub.traffic_limit_gb = traffic_limit_gb
+                    existing_sub.traffic_used_gb = traffic_used_gb
+                    existing_sub.status = sub_status.value
+                    existing_sub.remnawave_short_uuid = panel_user.short_uuid
+                    existing_sub.subscription_url = panel_user.subscription_url
+                    existing_sub.subscription_crypto_link = panel_user.happ_crypto_link
+                    existing_sub.connected_squads = connected_squads
+                    existing_sub.device_limit = device_limit
+                    existing_sub.is_trial = False
+                    logger.info(
+                        'Updated subscription for email user',
+                        email=user.email,
+                        uuid=panel_user.uuid,
+                    )
+                else:
+                    from app.database.crud.subscription import generate_unique_short_id
+
+                    _short_id = await generate_unique_short_id(db)
+                    new_sub = Subscription(
+                        user_id=user.id,
+                        start_date=current_time,
+                        end_date=expire_at,
+                        traffic_limit_gb=traffic_limit_gb,
+                        traffic_used_gb=traffic_used_gb,
+                        status=sub_status.value,
+                        is_trial=False,
+                        remnawave_uuid=panel_user.uuid if settings.is_multi_tariff_enabled() else None,
+                        remnawave_short_id=_short_id,
+                        remnawave_short_uuid=panel_user.short_uuid,
+                        subscription_url=panel_user.subscription_url,
+                        subscription_crypto_link=panel_user.happ_crypto_link,
+                        connected_squads=connected_squads,
+                        device_limit=device_limit,
+                    )
+                    db.add(new_sub)
+                    logger.info(
+                        'Created subscription for email user',
+                        email=user.email,
+                        uuid=panel_user.uuid,
+                    )
 
             await db.commit()
 
@@ -484,6 +514,22 @@ async def auth_telegram(
         except Exception as e:
             logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
 
+    # Fallback: check Redis for pending referral from /start (user opened cabinet before completing bot registration)
+    if not referrer_id and not user and telegram_id:
+        try:
+            from app.services.referral_service import get_pending_referral
+
+            pending = await get_pending_referral(telegram_id)
+            if pending and pending.get('referrer_id'):
+                referrer_id = pending['referrer_id']
+                logger.info(
+                    'Resolved referral from Redis pending_referral (cabinet)',
+                    telegram_id=telegram_id,
+                    referrer_id=referrer_id,
+                )
+        except Exception as e:
+            logger.warning('Failed to check pending referral', error=e)
+
     is_new_user = not user
     if not user:
         # Create new user from Telegram initData
@@ -530,6 +576,15 @@ async def auth_telegram(
 
     # Process referral code (only for new users — existing users cannot be assigned a referrer)
     await _process_referral_code(db, user, request.referral_code, is_new_user=is_new_user)
+
+    # Clear Redis pending referral after successful user creation with referral
+    if referrer_id:
+        try:
+            from app.services.referral_service import clear_pending_referral
+
+            await clear_pending_referral(telegram_id)
+        except Exception:
+            pass
 
     # Process campaign bonus
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
@@ -628,6 +683,15 @@ async def auth_telegram_widget(
 
     # Process referral code (only for new users — existing users cannot be assigned a referrer)
     await _process_referral_code(db, user, request.referral_code, is_new_user=is_new_user)
+
+    # Clear Redis pending referral after successful registration
+    if referrer_id and request.id:
+        try:
+            from app.services.referral_service import clear_pending_referral
+
+            await clear_pending_referral(request.id)
+        except Exception:
+            pass
 
     # Process campaign bonus
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
@@ -767,6 +831,15 @@ async def auth_telegram_oidc(
     # Process referral code (only for new users — existing users cannot be assigned a referrer)
     await _process_referral_code(db, user, request.referral_code, is_new_user=is_new_user)
 
+    # Clear Redis pending referral after successful registration
+    if referrer_id and telegram_id:
+        try:
+            from app.services.referral_service import clear_pending_referral
+
+            await clear_pending_referral(telegram_id)
+        except Exception:
+            pass
+
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
     if response.campaign_bonus:
         response.user = _user_to_response(user)
@@ -857,6 +930,7 @@ async def link_telegram_widget(
 @router.post('/email/register')
 async def register_email(
     request: EmailRegisterRequest,
+    raw_request: Request,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -865,7 +939,24 @@ async def register_email(
 
     Requires valid JWT token from Telegram authentication.
     Sends verification email to the provided address.
+    If the email belongs to another active user, offers account merge.
     """
+    # Rate limit
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'email_register', limit=5, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    # Check if user already has a verified email — block before doing anything else
+    if user.email and user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='You already have a verified email',
+        )
+
     # Check for disposable email
     if disposable_email_service.is_disposable(request.email):
         raise HTTPException(
@@ -873,21 +964,38 @@ async def register_email(
             detail='Disposable email addresses are not allowed',
         )
 
-    # Check if email already exists (case-insensitive)
+    # Check if email already exists (case-insensitive, exclude deleted users)
     email_lower = (request.email or '').strip().lower()
-    existing_user = await db.execute(select(User).where(func.lower(User.email) == email_lower))
-    if existing_user.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='This email is already registered',
+    existing_result = await db.execute(
+        select(User).where(
+            func.lower(User.email) == email_lower,
+            User.status != UserStatus.DELETED.value,
         )
-
-    # Check if user already has email
-    if user.email and user.email_verified:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='You already have a verified email',
+    )
+    existing_email_user = existing_result.scalar_one_or_none()
+    if existing_email_user:
+        if existing_email_user.id == user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='This email is already linked to your account',
+            )
+        # Offer account merge instead of blocking
+        logger.info(
+            'Email register conflict: email already linked to another user, offering merge',
+            current_user_id=user.id,
+            existing_user_id=existing_email_user.id,
         )
+        merge_token = await create_merge_token(
+            primary_user_id=user.id,
+            secondary_user_id=existing_email_user.id,
+            provider='email',
+            provider_id=email_lower,
+        )
+        return {
+            'message': 'Account merge required',
+            'merge_required': True,
+            'merge_token': merge_token,
+        }
 
     # Update user
     user.email = request.email
@@ -1047,6 +1155,11 @@ async def register_email_standalone(
         user.email_verified_at = datetime.now(UTC)
         await db.commit()
         logger.info('Email auto-verified (test or verification disabled)', email=request.email, user_id=user.id)
+        # Sync existing panel subscription (same as manual verification flow)
+        try:
+            await _sync_subscription_from_panel_by_email(db, user)
+        except Exception:
+            logger.warning('Failed to sync panel subscription after auto-verify', user_id=user.id, exc_info=True)
     else:
         # Сгенерировать токен верификации
         verification_token = generate_verification_token()

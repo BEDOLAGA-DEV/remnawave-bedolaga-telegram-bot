@@ -20,6 +20,7 @@ class PromocodeActivateRequest(BaseModel):
     """Request to activate a promo code."""
 
     code: str = Field(..., min_length=1, max_length=50, description='Promo code to activate')
+    subscription_id: int | None = Field(None, description='Subscription ID for multi-tariff promo codes')
 
 
 class PromocodeActivateResponse(BaseModel):
@@ -41,7 +42,7 @@ class PromocodeDeactivateResponse(BaseModel):
     discount_percent: int = 0
 
 
-@router.post('/activate', response_model=PromocodeActivateResponse)
+@router.post('/activate')
 async def activate_promocode(
     request: PromocodeActivateRequest,
     user: User = Depends(get_current_cabinet_user),
@@ -50,7 +51,17 @@ async def activate_promocode(
     """Activate a promo code for the current user."""
     promocode_service = PromoCodeService()
 
-    result = await promocode_service.activate_promocode(db=db, user_id=user.id, code=request.code.strip())
+    result = await promocode_service.activate_promocode(
+        db=db, user_id=user.id, code=request.code.strip(), subscription_id=request.subscription_id
+    )
+
+    if result.get('error') == 'select_subscription':
+        return {
+            'success': False,
+            'error': 'select_subscription',
+            'eligible_subscriptions': result.get('eligible_subscriptions', []),
+            'code': result.get('code', request.code.strip()),
+        }
 
     if result['success']:
         balance_before_rubles = result.get('balance_before_kopeks', 0) / 100
@@ -72,6 +83,7 @@ async def activate_promocode(
         'already_used_by_user': 'You have already used this promo code',
         'active_discount_exists': 'You already have an active discount. Deactivate it first via /deactivate-discount',
         'no_subscription_for_days': 'This promo code requires an active or expired subscription',
+        'subscription_not_found': 'Subscription not found',
         'not_first_purchase': 'This promo code is only available for first purchase',
         'daily_limit': 'Too many promo code activations today',
         'user_not_found': 'User not found',

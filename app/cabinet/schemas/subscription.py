@@ -88,6 +88,10 @@ class RenewalRequest(BaseModel):
     """Request to renew subscription."""
 
     period_days: int = Field(..., ge=1, le=3650, description='Renewal period in days')
+    subscription_id: int | None = Field(
+        default=None,
+        description='ID of subscription to renew (required in multi-tariff mode)',
+    )
 
 
 class TrafficPackageResponse(BaseModel):

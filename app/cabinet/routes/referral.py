@@ -119,7 +119,11 @@ async def get_referral_list(
 ):
     """Get list of invited users."""
     # Base query with eager loading of subscription relationship
-    query = select(User).options(selectinload(User.subscription)).where(User.referred_by_id == user.id)
+    query = (
+        select(User)
+        .options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
+        .where(User.referred_by_id == user.id)
+    )
 
     # Get total count
     count_query = select(func.count()).select_from(User).where(User.referred_by_id == user.id)
@@ -139,7 +143,7 @@ async def get_referral_list(
             username=r.username,
             first_name=r.first_name,
             created_at=r.created_at,
-            has_subscription=r.subscription is not None,
+            has_subscription=bool(getattr(r, 'subscriptions', None)),
             has_paid=r.has_had_paid_subscription,
         )
         for r in referrals

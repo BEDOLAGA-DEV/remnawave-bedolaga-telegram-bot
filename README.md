@@ -118,8 +118,8 @@ Bedolaga — полнофункциональная платформа для п
 | 💳 | **Freekassa** | NSPK СБП, карты | RUB |
 | 💳 | **Kassa AI** | СБП, карты, SberPay | RUB |
 | 💳 | **PayPalych (Pal24)** | Карты, СБП | RUB |
-| 💳 | **Platega** | Карты, СБП, крипто | RUB |
-| 💳 | **WATA** | СБП, Карты | RUB |
+| 🤝 | **[Platega](https://t.me/ArstanPlatega)** 🔸 | Карты, СБП, крипто | RUB |
+| 🤝 | **[WATA](https://t.me/wyrz_wata)** 🔸 | СБП, Карты | RUB |
 | 💳 | **MulenPay** | Карты | RUB |
 | 💳 | **RioPay** | Карты | RUB |
 | 💳 | **SeverPay** | СБП, карты | RUB |
@@ -127,11 +127,25 @@ Bedolaga — полнофункциональная платформа для п
 
 </div>
 
+> 🔸 — официальный партнёр Bedolaga (особые условия по кодовому слову **`bedolaga`**)
+>
 > Все провайдеры работают параллельно через единый веб-сервер на порту 8080. Подробная настройка — в [документации](https://docs.bedolagam.ru/bot/payments).
 
 <div align="center">
 <table>
 <tr>
+<td align="center">
+
+<img src=".github/assets/platega-logo.jpg" alt="Platega" width="60" />
+
+**🤝 Официальный партнёр Platega**
+
+Bedolaga — официальный партнёр платёжной системы **Platega**.<br>
+Пользователи бота получают **особые условия** при подключении по кодовому слову **`bedolaga`**
+
+📩 По вопросам: [@ArstanPlatega](https://t.me/ArstanPlatega)
+
+</td>
 <td align="center">
 
 <img src=".github/assets/wata-logo.jpg" alt="WATA" width="60" />

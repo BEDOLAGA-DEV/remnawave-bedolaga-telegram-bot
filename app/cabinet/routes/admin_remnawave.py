@@ -5,6 +5,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.crud.server_squad import (
@@ -129,22 +130,22 @@ def _serialize_node(node_data: dict[str, Any]) -> NodeInfo:
         is_disabled=bool(node_data.get('is_disabled')),
         is_node_online=bool(node_data.get('is_node_online')),
         is_xray_running=bool(node_data.get('is_xray_running')),
-        users_online=node_data.get('users_online'),
+        users_online=node_data.get('users_online', 0),
         traffic_used_bytes=node_data.get('traffic_used_bytes'),
         traffic_limit_bytes=node_data.get('traffic_limit_bytes'),
         last_status_change=_parse_datetime(node_data.get('last_status_change')),
         last_status_message=node_data.get('last_status_message'),
-        xray_uptime=node_data.get('xray_uptime'),
+        xray_uptime=node_data.get('xray_uptime', 0) or 0,
         is_traffic_tracking_active=bool(node_data.get('is_traffic_tracking_active', False)),
         traffic_reset_day=node_data.get('traffic_reset_day'),
         notify_percent=node_data.get('notify_percent'),
         consumption_multiplier=float(node_data.get('consumption_multiplier', 1.0)),
-        cpu_count=node_data.get('cpu_count'),
-        cpu_model=node_data.get('cpu_model'),
-        total_ram=node_data.get('total_ram'),
         created_at=_parse_datetime(node_data.get('created_at')),
         updated_at=_parse_datetime(node_data.get('updated_at')),
         provider_uuid=node_data.get('provider_uuid'),
+        versions=node_data.get('versions'),
+        system=node_data.get('system'),
+        active_plugin_uuid=node_data.get('active_plugin_uuid'),
     )
 
 
@@ -208,11 +209,9 @@ async def get_system_statistics(
         users_by_status=stats.get('users_by_status', {}),
         server_info=ServerInfo(
             cpu_cores=server_data.get('cpu_cores', 0),
-            cpu_physical_cores=server_data.get('cpu_physical_cores', 0),
             memory_total=server_data.get('memory_total', 0),
             memory_used=server_data.get('memory_used', 0),
             memory_free=server_data.get('memory_free', 0),
-            memory_available=server_data.get('memory_available', 0),
             uptime_seconds=server_data.get('uptime_seconds', 0),
         ),
         bandwidth=Bandwidth(
@@ -397,15 +396,21 @@ async def perform_node_action(
     )
 
 
+class RestartAllNodesPayload(BaseModel):
+    force_restart: bool = False
+
+
 @router.post('/nodes/restart-all', response_model=NodeActionResponse)
 async def restart_all_nodes(
+    payload: RestartAllNodesPayload | None = None,
     admin: User = Depends(require_permission('remnawave:manage')),
 ) -> NodeActionResponse:
     """Restart all nodes."""
     service = _get_service()
     _ensure_configured(service)
 
-    success = await service.restart_all_nodes()
+    force = payload.force_restart if payload else False
+    success = await service.restart_all_nodes(force_restart=force)
 
     if success:
         logger.info('Admin restarted all nodes', telegram_id=admin.telegram_id)

@@ -129,14 +129,26 @@ class AdvertisingCampaignService:
         user: User,
         campaign: AdvertisingCampaign,
     ) -> CampaignBonusResult:
-        existing_subscription = await get_subscription_by_user_id(db, user.id)
-        if existing_subscription:
-            logger.warning(
-                '⚠️ У пользователя уже есть подписка, бонус кампании пропущен',
-                format_user_log=_format_user_log(user),
-                campaign_id=campaign.id,
-            )
-            return CampaignBonusResult(success=False)
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+            active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+            if active_subs:
+                # Multi-tariff: extend the best existing subscription instead of blocking
+                _non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+                _pool = _non_daily or active_subs
+                existing_subscription = max(_pool, key=lambda s: s.days_left)
+            else:
+                existing_subscription = None
+        else:
+            existing_subscription = await get_subscription_by_user_id(db, user.id)
+            if existing_subscription:
+                logger.warning(
+                    '⚠️ У пользователя уже есть подписка, бонус кампании пропущен',
+                    format_user_log=_format_user_log(user),
+                    campaign_id=campaign.id,
+                )
+                return CampaignBonusResult(success=False)
 
         duration_days = campaign.subscription_duration_days or 0
         if duration_days <= 0:
@@ -159,21 +171,48 @@ class AdvertisingCampaignService:
             except Exception as error:
                 logger.error('Не удалось подобрать сквад для кампании', campaign_id=campaign.id, error=error)
 
-        new_subscription = await create_paid_subscription(
-            db=db,
-            user_id=user.id,
-            duration_days=duration_days,
-            traffic_limit_gb=traffic_limit or 0,
-            device_limit=device_limit,
-            connected_squads=squads,
-            update_server_counters=True,
-            is_trial=True,
-        )
+        if existing_subscription:
+            # Multi-tariff: extend the best existing subscription
+            from app.database.crud.subscription import extend_subscription
 
-        try:
-            await self.subscription_service.create_remnawave_user(db, new_subscription)
-        except Exception as error:
-            logger.error('❌ Ошибка синхронизации RemnaWave для кампании', campaign_id=campaign.id, error=error)
+            await extend_subscription(db, existing_subscription, duration_days)
+            try:
+                await self.subscription_service.update_remnawave_user(db, existing_subscription)
+            except Exception as error:
+                logger.error(
+                    '❌ Ошибка синхронизации RemnaWave при продлении кампании', campaign_id=campaign.id, error=error
+                )
+
+            logger.info(
+                '🎁 Подписка пользователя продлена по кампании на дней',
+                format_user_log=_format_user_log(user),
+                campaign_id=campaign.id,
+                duration_days=duration_days,
+                subscription_id=existing_subscription.id,
+            )
+        else:
+            new_subscription = await create_paid_subscription(
+                db=db,
+                user_id=user.id,
+                duration_days=duration_days,
+                traffic_limit_gb=traffic_limit or 0,
+                device_limit=device_limit,
+                connected_squads=squads,
+                update_server_counters=True,
+                is_trial=True,
+            )
+
+            try:
+                await self.subscription_service.create_remnawave_user(db, new_subscription)
+            except Exception as error:
+                logger.error('❌ Ошибка синхронизации RemnaWave для кампании', campaign_id=campaign.id, error=error)
+
+            logger.info(
+                '🎁 Пользователю выдана подписка по кампании на дней',
+                format_user_log=_format_user_log(user),
+                campaign_id=campaign.id,
+                duration_days=duration_days,
+            )
 
         await record_campaign_registration(
             db,
@@ -181,13 +220,6 @@ class AdvertisingCampaignService:
             user_id=user.id,
             bonus_type='subscription',
             subscription_duration_days=duration_days,
-        )
-
-        logger.info(
-            '🎁 Пользователю выдана подписка по кампании на дней',
-            format_user_log=_format_user_log(user),
-            campaign_id=campaign.id,
-            duration_days=duration_days,
         )
 
         return CampaignBonusResult(
@@ -231,14 +263,26 @@ class AdvertisingCampaignService:
         campaign: AdvertisingCampaign,
     ) -> CampaignBonusResult:
         """Выдача тарифа на определённое время."""
-        existing_subscription = await get_subscription_by_user_id(db, user.id)
-        if existing_subscription:
-            logger.warning(
-                '⚠️ У пользователя уже есть подписка, бонус тарифа кампании пропущен',
-                format_user_log=_format_user_log(user),
-                campaign_id=campaign.id,
-            )
-            return CampaignBonusResult(success=False)
+        existing_subscription = None
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+            active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+            if active_subs and campaign.tariff_id:
+                # Multi-tariff: only check for THIS specific tariff
+                same_tariff_subs = [s for s in active_subs if s.tariff_id == campaign.tariff_id]
+                if same_tariff_subs:
+                    existing_subscription = max(same_tariff_subs, key=lambda s: s.days_left)
+                # If no sub for this tariff, existing_subscription stays None -> create new
+        else:
+            existing_subscription = await get_subscription_by_user_id(db, user.id)
+            if existing_subscription:
+                logger.warning(
+                    '⚠️ У пользователя уже есть подписка, бонус тарифа кампании пропущен',
+                    format_user_log=_format_user_log(user),
+                    campaign_id=campaign.id,
+                )
+                return CampaignBonusResult(success=False)
 
         if not campaign.tariff_id:
             logger.error('❌ Кампания не имеет указанного тарифа для выдачи', campaign_id=campaign.id)
@@ -273,23 +317,56 @@ class AdvertisingCampaignService:
             except Exception as error:
                 logger.error('Не удалось подобрать сквад для тарифа кампании', campaign_id=campaign.id, error=error)
 
-        # Создаём подписку как платную (не trial) с привязкой к тарифу
-        new_subscription = await create_paid_subscription(
-            db=db,
-            user_id=user.id,
-            duration_days=duration_days,
-            traffic_limit_gb=traffic_limit or 0,
-            device_limit=device_limit,
-            connected_squads=squads,
-            update_server_counters=True,
-            is_trial=False,  # Это полноценная подписка, не пробная
-            tariff_id=tariff.id,
-        )
+        if existing_subscription:
+            # Multi-tariff: extend the existing subscription for this tariff
+            from app.database.crud.subscription import extend_subscription
 
-        try:
-            await self.subscription_service.create_remnawave_user(db, new_subscription)
-        except Exception as error:
-            logger.error('❌ Ошибка синхронизации RemnaWave для тарифа кампании', campaign_id=campaign.id, error=error)
+            await extend_subscription(db, existing_subscription, duration_days, tariff_id=tariff.id)
+            try:
+                await self.subscription_service.update_remnawave_user(db, existing_subscription)
+            except Exception as error:
+                logger.error(
+                    '❌ Ошибка синхронизации RemnaWave при продлении тарифа кампании',
+                    campaign_id=campaign.id,
+                    error=error,
+                )
+
+            logger.info(
+                '🎁 Подписка пользователя продлена по тарифу кампании на дней',
+                format_user_log=_format_user_log(user),
+                tariff_name=tariff.name,
+                campaign_id=campaign.id,
+                duration_days=duration_days,
+                subscription_id=existing_subscription.id,
+            )
+        else:
+            # Создаём подписку как платную (не trial) с привязкой к тарифу
+            new_subscription = await create_paid_subscription(
+                db=db,
+                user_id=user.id,
+                duration_days=duration_days,
+                traffic_limit_gb=traffic_limit or 0,
+                device_limit=device_limit,
+                connected_squads=squads,
+                update_server_counters=True,
+                is_trial=False,
+                tariff_id=tariff.id,
+            )
+
+            try:
+                await self.subscription_service.create_remnawave_user(db, new_subscription)
+            except Exception as error:
+                logger.error(
+                    '❌ Ошибка синхронизации RemnaWave для тарифа кампании', campaign_id=campaign.id, error=error
+                )
+
+            logger.info(
+                '🎁 Пользователю выдан тариф по кампании на дней',
+                format_user_log=_format_user_log(user),
+                tariff_name=tariff.name,
+                campaign_id=campaign.id,
+                duration_days=duration_days,
+            )
 
         await record_campaign_registration(
             db,
@@ -298,14 +375,6 @@ class AdvertisingCampaignService:
             bonus_type='tariff',
             tariff_id=tariff.id,
             tariff_duration_days=duration_days,
-        )
-
-        logger.info(
-            "🎁 Пользователю выдан тариф '' по кампании на дней",
-            format_user_log=_format_user_log(user),
-            tariff_name=tariff.name,
-            campaign_id=campaign.id,
-            duration_days=duration_days,
         )
 
         return CampaignBonusResult(

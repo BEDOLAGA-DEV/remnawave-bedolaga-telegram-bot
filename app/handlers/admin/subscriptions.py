@@ -3,6 +3,7 @@ from aiogram import Dispatcher, F, types
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database.crud.subscription import (
     get_all_subscriptions,
     get_expired_subscriptions,
@@ -364,8 +365,11 @@ async def send_expiry_reminders(callback: types.CallbackQuery, db_user: User, db
 
                 days_left = max(1, subscription.days_left)
 
+                tariff_label = ''
+                if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
+                    tariff_label = f' «{subscription.tariff.name}»'
                 reminder_text = f"""
-⚠️ <b>Подписка истекает!</b>
+⚠️ <b>Подписка{tariff_label} истекает!</b>
 
 Ваша подписка истекает через {days_left} день(а).
 

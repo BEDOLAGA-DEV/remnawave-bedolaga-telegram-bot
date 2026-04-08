@@ -55,6 +55,7 @@ from .promo import router as promo_router
 from .promocode import router as promocode_router
 from .referral import router as referral_router
 from .subscription import router as subscription_router
+from .subscription_modules.multi_tariff import router as multi_tariff_subscription_router
 from .ticket_notifications import (
     admin_router as admin_ticket_notifications_router,
     router as ticket_notifications_router,
@@ -67,7 +68,7 @@ from .withdrawal import router as withdrawal_router
 
 
 # Main cabinet router
-router = APIRouter(prefix='/cabinet', tags=['Cabinet'])
+router = APIRouter(prefix='/cabinet', tags=['Cabinet'], redirect_slashes=False)
 
 # Include all sub-routers
 router.include_router(auth_router)
@@ -75,6 +76,7 @@ router.include_router(oauth_router)
 router.include_router(account_linking_router)
 router.include_router(merge_router)
 router.include_router(subscription_router)
+router.include_router(multi_tariff_subscription_router)
 router.include_router(balance_router)
 router.include_router(referral_router)
 router.include_router(partner_application_router)

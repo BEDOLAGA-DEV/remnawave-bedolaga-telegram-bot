@@ -249,6 +249,7 @@ class TelegramStarsMixin:
                 db=db,
                 user_id=user.id,
                 period_days=period_days,
+                subscription_id=payload_data.subscription_id,
             )
         except Exception as error:
             logger.error(
@@ -303,12 +304,23 @@ class TelegramStarsMixin:
                 traffic_limit = getattr(subscription, 'traffic_limit_gb', 0) or 0
                 traffic_label = 'Безлимит' if traffic_limit == 0 else f'{int(traffic_limit)} ГБ'
 
+                tariff_line = ''
+                if settings.is_multi_tariff_enabled() and getattr(subscription, 'tariff_id', None):
+                    try:
+                        from app.database.crud.tariff import get_tariff_by_id
+
+                        _t = await get_tariff_by_id(db, subscription.tariff_id)
+                        if _t:
+                            tariff_line = f'\n📦 Тариф: «{_t.name}»'
+                    except Exception:
+                        pass
                 success_message = (
                     '✅ <b>Подписка успешно активирована!</b>\n\n'
                     f'📅 Период: {period_display} дней\n'
                     f'📱 Устройства: {getattr(subscription, "device_limit", 1)}\n'
                     f'📊 Трафик: {traffic_label}\n'
-                    f'⭐ Оплата: {stars_amount} ⭐ ({settings.format_price(amount_kopeks)})\n\n'
+                    f'⭐ Оплата: {stars_amount} ⭐ ({settings.format_price(amount_kopeks)})'
+                    f'{tariff_line}\n\n'
                     "🔗 Для подключения перейдите в раздел 'Моя подписка'"
                 )
 

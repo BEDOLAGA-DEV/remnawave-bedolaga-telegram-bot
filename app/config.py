@@ -133,6 +133,7 @@ class Settings(BaseSettings):
     WEBHOOK_NOTIFY_NOT_CONNECTED: bool = True
     WEBHOOK_NOTIFY_BANDWIDTH_THRESHOLD: bool = True
     WEBHOOK_NOTIFY_DEVICES: bool = True
+    WEBHOOK_NOTIFY_TORRENT_DETECTED: bool = True
 
     TRIAL_DURATION_DAYS: int = 3
     TRIAL_TRAFFIC_LIMIT_GB: int = 10
@@ -219,6 +220,11 @@ class Settings(BaseSettings):
     # - classic: классический режим (выбор серверов, трафика, устройств, периода отдельно)
     # - tariffs: режим тарифов (готовые пакеты с фиксированными параметрами)
     SALES_MODE: str = 'tariffs'
+
+    # Multi-tariff mode: allows users to purchase multiple tariffs simultaneously
+    # Only works when SALES_MODE='tariffs'
+    MULTI_TARIFF_ENABLED: bool = False
+    MAX_ACTIVE_SUBSCRIPTIONS: int = 10
 
     # ID тарифа для триала в режиме тарифов (0 = использовать стандартные настройки триала)
     # Если указан ID тарифа, параметры триала берутся из тарифа (traffic_limit_gb, device_limit, allowed_squads)
@@ -478,7 +484,7 @@ class Settings(BaseSettings):
     PLATEGA_RETURN_URL: str | None = None
     PLATEGA_FAILED_URL: str | None = None
     PLATEGA_CURRENCY: str = 'RUB'
-    PLATEGA_ACTIVE_METHODS: str = '2,10,11,12,13'
+    PLATEGA_ACTIVE_METHODS: str = '2,11,12,13'
     PLATEGA_INLINE_METHODS: bool = True
     PLATEGA_MIN_AMOUNT_KOPEKS: int = 10000
     PLATEGA_MAX_AMOUNT_KOPEKS: int = 100000000
@@ -569,6 +575,8 @@ class Settings(BaseSettings):
     KASSA_AI_SBP_DISPLAY_NAME: str = 'СБП (KassaAI)'
     KASSA_AI_CARD_ENABLED: bool = False  # Карты РФ — payment_system_id=36
     KASSA_AI_CARD_DISPLAY_NAME: str = 'Карта (KassaAI)'
+    KASSA_AI_SBERPAY_ENABLED: bool = False  # SberPay — payment_system_id=43
+    KASSA_AI_SBERPAY_DISPLAY_NAME: str = 'SberPay (KassaAI)'
 
     # RioPay (api.riopay.online) v2.0.1
     RIOPAY_ENABLED: bool = False
@@ -1697,6 +1705,14 @@ class Settings(BaseSettings):
     def get_disabled_mode_device_limit(self) -> int | None:
         return self.get_devices_selection_disabled_amount()
 
+    def is_multi_tariff_enabled(self) -> bool:
+        """Проверяет, включен ли мультитарифный режим."""
+        return self.MULTI_TARIFF_ENABLED and self.SALES_MODE == 'tariffs'
+
+    def get_max_active_subscriptions(self) -> int:
+        """Максимальное число одновременных подписок (>1 только в multi-tariff)."""
+        return self.MAX_ACTIVE_SUBSCRIPTIONS if self.is_multi_tariff_enabled() else 1
+
     def is_tariffs_mode(self) -> bool:
         """Проверяет, включен ли режим продаж 'Тарифы'."""
         return self.SALES_MODE == 'tariffs'
@@ -1847,7 +1863,7 @@ class Settings(BaseSettings):
             except ValueError:
                 logger.warning('Некорректный код метода Platega', part=part)
                 continue
-            if method_code in {2, 10, 11, 12, 13} and method_code not in seen:
+            if method_code in {2, 11, 12, 13} and method_code not in seen:
                 methods.append(method_code)
                 seen.add(method_code)
 
@@ -1860,8 +1876,7 @@ class Settings(BaseSettings):
     def get_platega_method_definitions() -> dict[int, dict[str, str]]:
         return {
             2: {'name': 'СБП (QR)', 'title': '🏦 СБП (QR)'},
-            10: {'name': 'Банковские карты (RUB)', 'title': '💳 Карты (RUB)'},
-            11: {'name': 'Банковские карты', 'title': '💳 Банковские карты'},
+            11: {'name': 'Карты (RUB)', 'title': '💳 Карты (RUB)'},
             12: {'name': 'Международные карты', 'title': '🌍 Международные карты'},
             13: {'name': 'Криптовалюта', 'title': '🪙 Криптовалюта'},
         }
@@ -1988,6 +2003,16 @@ class Settings(BaseSettings):
 
     def get_kassa_ai_card_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_card_display_name())
+
+    def is_kassa_ai_sberpay_enabled(self) -> bool:
+        return self.KASSA_AI_SBERPAY_ENABLED and self.is_kassa_ai_enabled()
+
+    def get_kassa_ai_sberpay_display_name(self) -> str:
+        name = (self.KASSA_AI_SBERPAY_DISPLAY_NAME or '').strip()
+        return name if name else 'SberPay (KassaAI)'
+
+    def get_kassa_ai_sberpay_display_name_html(self) -> str:
+        return html.escape(self.get_kassa_ai_sberpay_display_name())
 
     def is_payment_verification_auto_check_enabled(self) -> bool:
         return self.PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED

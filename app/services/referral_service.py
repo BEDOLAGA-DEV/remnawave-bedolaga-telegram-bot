@@ -1,5 +1,7 @@
 import html
+import json
 
+import redis.asyncio as aioredis
 import structlog
 from aiogram import Bot
 from sqlalchemy import delete
@@ -16,6 +18,85 @@ from app.utils.user_utils import get_effective_referral_commission_percent
 
 
 logger = structlog.get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Pending referral helpers (Redis)
+# ---------------------------------------------------------------------------
+_PENDING_REFERRAL_TTL = 7 * 24 * 3600  # 7 days
+
+_redis_client: aioredis.Redis | None = None
+_redis_initialized: bool = False
+
+
+def _get_redis() -> aioredis.Redis | None:
+    """Lazy async Redis client for pending referral storage."""
+    global _redis_client, _redis_initialized
+    if _redis_initialized:
+        return _redis_client
+    try:
+        _redis_client = aioredis.from_url(settings.REDIS_URL)
+        _redis_initialized = True
+        logger.debug('Redis client for pending referrals initialized')
+    except Exception as exc:
+        logger.warning('Failed to initialize Redis for pending referrals', error=exc)
+        _redis_client = None
+        _redis_initialized = True
+    return _redis_client
+
+
+async def save_pending_referral(telegram_id: int, referral_code: str, referrer_id: int) -> bool:
+    """Save pending referral to Redis for a not-yet-registered user.
+
+    Called from /start handler immediately after resolving the referral code.
+    The pending referral is picked up by create_user() or cabinet auth.
+    """
+    client = _get_redis()
+    if client is None:
+        return False
+    try:
+        key = f'pending_referral:{telegram_id}'
+        data = json.dumps({'referral_code': referral_code, 'referrer_id': referrer_id})
+        await client.setex(key, _PENDING_REFERRAL_TTL, data)
+        logger.info(
+            'Saved pending referral to Redis',
+            telegram_id=telegram_id,
+            referral_code=referral_code,
+            referrer_id=referrer_id,
+        )
+        return True
+    except Exception as exc:
+        logger.warning('Failed to save pending referral to Redis', error=exc)
+        return False
+
+
+async def get_pending_referral(telegram_id: int) -> dict[str, str | int] | None:
+    """Get pending referral from Redis.
+
+    Returns ``{'referral_code': ..., 'referrer_id': ...}`` or ``None``.
+    """
+    client = _get_redis()
+    if client is None:
+        return None
+    try:
+        key = f'pending_referral:{telegram_id}'
+        data = await client.get(key)
+        if data:
+            return json.loads(data)
+        return None
+    except Exception as exc:
+        logger.warning('Failed to get pending referral from Redis', error=exc)
+        return None
+
+
+async def clear_pending_referral(telegram_id: int) -> None:
+    """Clear pending referral after successful registration."""
+    client = _get_redis()
+    if client is None:
+        return
+    try:
+        await client.delete(f'pending_referral:{telegram_id}')
+    except Exception:
+        pass
 
 
 async def _is_commission_limit_reached(db: AsyncSession, referrer_id: int, referral_id: int) -> bool:
@@ -132,16 +213,23 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
                 f'По вашей ссылке зарегистрировался пользователь <b>{html.escape(new_user.full_name)}</b>!\n\n'
                 f'💰 Когда он пополнит баланс от {settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS)}, '
             )
-            if settings.REFERRAL_INVITER_BONUS_KOPEKS > 0:
+            if settings.REFERRAL_INVITER_BONUS_KOPEKS > 0 and commission_percent > 0:
                 inviter_notification += (
                     f'вы получите {settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS)} + '
                     f'{commission_percent}% от суммы пополнения.\n\n'
                 )
-            else:
+            elif settings.REFERRAL_INVITER_BONUS_KOPEKS > 0:
+                inviter_notification += (
+                    f'вы получите {settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS)}.\n\n'
+                )
+            elif commission_percent > 0:
                 inviter_notification += f'вы получите {commission_percent}% от суммы.\n\n'
-            inviter_notification += (
-                f'📈 С каждого последующего пополнения вы будете получать {commission_percent}% комиссии.'
-            )
+            else:
+                inviter_notification += 'вы получите уведомление.\n\n'
+            if commission_percent > 0:
+                inviter_notification += (
+                    f'📈 С каждого последующего пополнения вы будете получать {commission_percent}% комиссии.'
+                )
             await send_referral_notification(
                 bot, referrer.telegram_id, inviter_notification, user=referrer, referral_name=new_user.full_name
             )
@@ -349,9 +437,13 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
                             f'Ваш реферал <b>{html.escape(user.full_name)}</b> сделал первое пополнение '
                             f'на {settings.format_price(topup_amount_kopeks)}!\n\n'
                             f'🎁 Ваша награда: {settings.format_price(inviter_bonus)}'
-                            f' ({bonus_breakdown})\n\n'
-                            f'📈 Теперь с каждого его пополнения вы будете получать {commission_percent}% комиссии.'
+                            f' ({bonus_breakdown})'
                         )
+                        if commission_percent > 0:
+                            inviter_bonus_notification += (
+                                f'\n\n📈 Теперь с каждого его пополнения вы будете получать '
+                                f'{commission_percent}% комиссии.'
+                            )
                         await send_referral_notification(
                             bot,
                             referrer.telegram_id,

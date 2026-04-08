@@ -15,6 +15,7 @@ from app.database.crud.server_squad import get_all_server_squads
 from app.database.crud.tariff import (
     create_tariff,
     delete_tariff,
+    get_active_subscriptions_count_by_tariff_id,
     get_tariff_by_id,
     get_tariff_subscriptions_count,
     get_tariffs_with_subscriptions_count,
@@ -241,6 +242,7 @@ def _format_traffic_reset_mode(mode: str | None) -> str:
         'DAY': '📅 Ежедневно',
         'WEEK': '📆 Еженедельно',
         'MONTH': '🗓️ Ежемесячно',
+        'MONTH_ROLLING': '🔄 Скользящий месяц',
         'NO_RESET': '🚫 Никогда',
     }
     if mode is None:
@@ -2487,11 +2489,33 @@ async def confirm_delete_tariff(
         await callback.answer('Тариф не найден', show_alert=True)
         return
 
+    active_count = await get_active_subscriptions_count_by_tariff_id(db, tariff_id)
+
+    if active_count > 0:
+        total_count = await get_tariff_subscriptions_count(db, tariff_id)
+        await callback.message.edit_text(
+            f'🗑️ <b>Удаление тарифа</b>\n\n'
+            f'Невозможно удалить тариф <b>{html.escape(tariff.name)}</b>.\n\n'
+            f'⚠️ <b>Активных подписок:</b> {active_count} (всего: {total_count})\n'
+            f'Сначала деактивируйте тариф и дождитесь окончания всех активных подписок, '
+            f'либо переведите подписки на другой тариф.',
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text='◀️ Назад к тарифу', callback_data=f'admin_tariff_view:{tariff_id}')],
+                ]
+            ),
+            parse_mode='HTML',
+        )
+        await callback.answer()
+        return
+
     subs_count = await get_tariff_subscriptions_count(db, tariff_id)
 
     warning = ''
     if subs_count > 0:
-        warning = f'\n\n⚠️ <b>Внимание!</b> На этом тарифе {subs_count} подписок.\nОни будут отвязаны от тарифа.'
+        warning = (
+            f'\n\n⚠️ <b>Внимание!</b> На этом тарифе {subs_count} неактивных подписок.\nОни потеряют привязку к тарифу.'
+        )
 
     await callback.message.edit_text(
         f'🗑️ <b>Удаление тарифа</b>\n\nВы действительно хотите удалить тариф <b>{html.escape(tariff.name)}</b>?{warning}',
@@ -2524,6 +2548,15 @@ async def delete_tariff_confirmed(
 
     if not tariff:
         await callback.answer('Тариф не найден', show_alert=True)
+        return
+
+    # Защита от удаления тарифа с активными подписками (FK RESTRICT)
+    active_count = await get_active_subscriptions_count_by_tariff_id(db, tariff.id)
+    if active_count > 0:
+        await callback.answer(
+            f'Невозможно удалить тариф: {active_count} активных подписок. Сначала деактивируйте тариф.',
+            show_alert=True,
+        )
         return
 
     tariff_name = tariff.name
@@ -3013,6 +3046,7 @@ TRAFFIC_RESET_MODES = [
     ('DAY', '📅 Ежедневно', 'Трафик сбрасывается каждый день'),
     ('WEEK', '📆 Еженедельно', 'Трафик сбрасывается каждую неделю'),
     ('MONTH', '🗓️ Ежемесячно', 'Трафик сбрасывается каждый месяц'),
+    ('MONTH_ROLLING', '🔄 Скользящий месяц', 'Трафик сбрасывается через 30 дней от первого подключения'),
     ('NO_RESET', '🚫 Никогда', 'Трафик не сбрасывается автоматически'),
 ]
 

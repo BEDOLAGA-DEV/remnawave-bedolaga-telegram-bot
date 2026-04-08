@@ -18,6 +18,7 @@ logger = structlog.get_logger(__name__)
 KASSA_AI_SUB_METHODS = {
     'kassa_ai_sbp': {'payment_system_id': 44},
     'kassa_ai_card': {'payment_system_id': 36},
+    'kassa_ai_sberpay': {'payment_system_id': 43},
 }
 
 # Кэш для публичного IP
@@ -126,7 +127,7 @@ class KassaAiService:
             sign_str = f'{shop_id}:{amount_str}:{self.secret2}:{order_id}'
             expected_sign = hashlib.md5(sign_str.encode('utf-8')).hexdigest()
 
-            return expected_sign.lower() == sign.lower()
+            return hmac.compare_digest(expected_sign.lower(), sign.lower())
         except Exception as e:
             logger.error('KassaAI webhook verify error', error=e)
             return False

@@ -309,7 +309,7 @@ async def claim_promo_offer(
 
     # Handle test access offers
     if effect_type == 'test_access':
-        await db.refresh(user, ['subscription'])
+        await db.refresh(user, ['subscriptions'])
         success, newly_added, expires_at, error_code = await promo_offer_service.grant_test_access(
             db,
             user,

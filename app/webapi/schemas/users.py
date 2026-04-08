@@ -29,11 +29,14 @@ class SubscriptionSummary(BaseModel):
     subscription_url: str | None = None
     subscription_crypto_link: str | None = None
     connected_squads: list[str] = Field(default_factory=list)
+    tariff_id: int | None = None
+    tariff_name: str | None = None
 
 
 class UserResponse(BaseModel):
     id: int
     telegram_id: int | None = None
+    email: str | None = None
     username: str | None = None
     first_name: str | None = None
     last_name: str | None = None
@@ -50,6 +53,7 @@ class UserResponse(BaseModel):
     last_activity: datetime | None = None
     promo_group: PromoGroupSummary | None = None
     subscription: SubscriptionSummary | None = None
+    subscriptions: list[SubscriptionSummary] = Field(default_factory=list)
 
 
 class UserListResponse(BaseModel):
@@ -97,3 +101,7 @@ class UserSubscriptionCreateRequest(BaseModel):
     squad_uuid: str | None = None
     connected_squads: list[str] | None = None
     replace_existing: bool = False
+    subscription_id: int | None = Field(
+        default=None,
+        description='ID of existing subscription to replace (required in multi-tariff mode when replace_existing=true)',
+    )

@@ -432,12 +432,15 @@ class CryptoBotPaymentMixin:
             )
             return False
 
-        subscription = getattr(user, 'subscription', None)
-        if not subscription or subscription.id != descriptor.subscription_id:
+        # Find the specific subscription by ID with ownership check
+        from app.database.crud.subscription import get_subscription_by_id_for_user
+
+        subscription = await get_subscription_by_id_for_user(db, descriptor.subscription_id, user.id)
+        if not subscription:
             logger.warning(
-                'Продление через CryptoBot отклонено: подписка не совпадает с ожидаемой',
-                current_subscription_id=getattr(subscription, 'id', None),
+                'Продление через CryptoBot отклонено: подписка не найдена или не принадлежит пользователю',
                 expected_subscription_id=descriptor.subscription_id,
+                user_id=user.id,
             )
             return False
 

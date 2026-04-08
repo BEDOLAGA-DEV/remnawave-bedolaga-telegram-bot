@@ -20,6 +20,7 @@ class MenuContext:
     has_had_paid_subscription: bool = False
     balance_kopeks: int = 0
     subscription: Any | None = None
+    subscriptions: list[Any] = field(default_factory=list)
     show_resume_checkout: bool = False
     has_saved_cart: bool = False
     custom_buttons: list[InlineKeyboardButton] = field(default_factory=list)

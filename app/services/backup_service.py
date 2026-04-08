@@ -603,7 +603,7 @@ class BackupService:
                         query = select(model)
 
                         if model == User:
-                            query = query.options(selectinload(User.subscription))
+                            query = query.options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
                         elif model == Subscription:
                             query = query.options(selectinload(Subscription.user))
                         elif model == Transaction:

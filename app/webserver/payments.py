@@ -794,8 +794,8 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 return JSONResponse({'code': 0})
             except Exception as e:
                 logger.exception('CloudPayments check webhook error', e=e)
-                # В случае ошибки всё равно разрешаем платёж
-                return JSONResponse({'code': 0})
+                # В случае ошибки отклоняем платёж (fail-closed)
+                return JSONResponse({'code': 13})
 
         # CloudPayments Pay webhook (успешная оплата)
         @router.post(settings.CLOUDPAYMENTS_WEBHOOK_PATH + '/pay')
@@ -821,7 +821,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 webhook_data = cloudpayments_service.parse_webhook_data(dict(form_data))
             except Exception as error:
                 logger.error('CloudPayments pay webhook parse error', error=error)
-                return JSONResponse({'code': 0})  # Возвращаем 0, чтобы не было повторов
+                return JSONResponse({'code': 13})
 
             # Обрабатываем платёж
             await _process_payment_service_callback(
@@ -856,7 +856,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 webhook_data = cloudpayments_service.parse_webhook_data(dict(form_data))
             except Exception as error:
                 logger.error('CloudPayments fail webhook parse error', error=error)
-                return JSONResponse({'code': 0})
+                return JSONResponse({'code': 13})
 
             # Обрабатываем неуспешный платёж
             await _process_payment_service_callback(
@@ -945,7 +945,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 return JSONResponse({'code': 0})
             except Exception as e:
                 logger.exception('CloudPayments universal webhook error', e=e)
-                return JSONResponse({'code': 0})
+                return JSONResponse({'code': 13})
 
         routes_registered = True
 

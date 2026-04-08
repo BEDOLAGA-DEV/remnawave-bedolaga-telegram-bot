@@ -91,22 +91,22 @@ def _serialize_node(node_data: dict[str, Any]) -> RemnaWaveNode:
         is_disabled=bool(node_data.get('is_disabled')),
         is_node_online=bool(node_data.get('is_node_online')),
         is_xray_running=bool(node_data.get('is_xray_running')),
-        users_online=node_data.get('users_online'),
+        users_online=node_data.get('users_online', 0),
         traffic_used_bytes=node_data.get('traffic_used_bytes'),
         traffic_limit_bytes=node_data.get('traffic_limit_bytes'),
         last_status_change=_parse_last_updated(node_data.get('last_status_change')),
         last_status_message=node_data.get('last_status_message'),
-        xray_uptime=node_data.get('xray_uptime'),
+        xray_uptime=node_data.get('xray_uptime', 0) or 0,
         is_traffic_tracking_active=bool(node_data.get('is_traffic_tracking_active', False)),
         traffic_reset_day=node_data.get('traffic_reset_day'),
         notify_percent=node_data.get('notify_percent'),
         consumption_multiplier=float(node_data.get('consumption_multiplier', 1.0)),
-        cpu_count=node_data.get('cpu_count'),
-        cpu_model=node_data.get('cpu_model'),
-        total_ram=node_data.get('total_ram'),
         created_at=_parse_last_updated(node_data.get('created_at')),
         updated_at=_parse_last_updated(node_data.get('updated_at')),
         provider_uuid=node_data.get('provider_uuid'),
+        versions=node_data.get('versions'),
+        system=node_data.get('system'),
+        active_plugin_uuid=node_data.get('active_plugin_uuid'),
     )
 
 
@@ -264,12 +264,14 @@ async def manage_node(
 
 @router.post('/nodes/restart', response_model=RemnaWaveNodeActionResponse)
 async def restart_all_nodes(
+    body: dict[str, Any] | None = None,
     _: Any = Security(require_api_token),
 ) -> RemnaWaveNodeActionResponse:
     service = _get_service()
     _ensure_service_configured(service)
 
-    success = await service.restart_all_nodes()
+    force = (body or {}).get('force_restart', False)
+    success = await service.restart_all_nodes(force_restart=force)
     detail = 'Команда перезапуска отправлена' if success else 'Не удалось перезапустить ноды'
     return RemnaWaveNodeActionResponse(success=success, detail=detail)
 

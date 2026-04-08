@@ -35,45 +35,47 @@ class SubscriptionStatusMiddleware(BaseMiddleware):
         db = data.get('db')
         user = data.get('db_user')
 
-        if db and user and user.subscription:
+        if db and user and getattr(user, 'subscriptions', None):
             try:
                 current_time = datetime.now(UTC)
-                subscription = user.subscription
+                needs_commit = False
 
-                # Суточные подписки управляются DailySubscriptionService — не экспайрим их тут
-                tariff = getattr(subscription, 'tariff', None)
-                is_active_daily = tariff and getattr(tariff, 'is_daily', False) and not subscription.is_daily_paused
+                # Check all subscriptions (multi-tariff aware)
+                for subscription in user.subscriptions:
+                    # Суточные подписки управляются DailySubscriptionService — не экспайрим их тут
+                    tariff = getattr(subscription, 'tariff', None)
+                    is_active_daily = tariff and getattr(tariff, 'is_daily', False) and not subscription.is_daily_paused
 
-                if (
-                    subscription.status == SubscriptionStatus.ACTIVE.value
-                    and subscription.end_date
-                    and subscription.end_date <= current_time
-                    and not is_active_daily
-                ):
-                    # Вычисляем насколько давно истекла подписка
-                    time_since_expiry = current_time - subscription.end_date
+                    if (
+                        subscription.status == SubscriptionStatus.ACTIVE.value
+                        and subscription.end_date
+                        and subscription.end_date <= current_time
+                        and not is_active_daily
+                    ):
+                        time_since_expiry = current_time - subscription.end_date
 
-                    # Деактивируем только если прошло больше буфера (защита от race condition)
-                    if time_since_expiry > timedelta(minutes=EXPIRATION_BUFFER_MINUTES):
-                        subscription.status = SubscriptionStatus.EXPIRED.value
-                        subscription.updated_at = current_time
-                        await db.commit()
+                        if time_since_expiry > timedelta(minutes=EXPIRATION_BUFFER_MINUTES):
+                            subscription.status = SubscriptionStatus.EXPIRED.value
+                            subscription.updated_at = current_time
+                            needs_commit = True
 
-                        logger.warning(
-                            '⏰ Middleware DEACTIVATION: подписка (user_id=) деактивирована. end_date=, просрочена на',
-                            subscription_id=subscription.id,
-                            user_id=user.id,
-                            end_date=subscription.end_date,
-                            time_since_expiry=time_since_expiry,
-                        )
-                    else:
-                        # Подписка только что истекла - не деактивируем сразу (может быть продление)
-                        logger.debug(
-                            '⏰ Middleware: подписка пользователя истекла недавно ждём буфер мин',
-                            user_id=user.id,
-                            time_since_expiry=time_since_expiry,
-                            EXPIRATION_BUFFER_MINUTES=EXPIRATION_BUFFER_MINUTES,
-                        )
+                            logger.warning(
+                                '⏰ Middleware DEACTIVATION: подписка (user_id=) деактивирована. end_date=, просрочена на',
+                                subscription_id=subscription.id,
+                                user_id=user.id,
+                                end_date=subscription.end_date,
+                                time_since_expiry=time_since_expiry,
+                            )
+                        else:
+                            logger.debug(
+                                '⏰ Middleware: подписка пользователя истекла недавно ждём буфер мин',
+                                user_id=user.id,
+                                time_since_expiry=time_since_expiry,
+                                EXPIRATION_BUFFER_MINUTES=EXPIRATION_BUFFER_MINUTES,
+                            )
+
+                if needs_commit:
+                    await db.commit()
 
             except Exception as e:
                 logger.error('Ошибка проверки статуса подписки', error=e)

@@ -1321,29 +1321,22 @@ class AdminNotificationService:
         *,
         is_pending_activation: bool = False,
     ) -> bool:
-        """Send admin notification for a guest (landing page) purchase."""
+        """Send admin notification for a guest/gift purchase (landing or cabinet)."""
         if not self._is_enabled():
             return False
 
         try:
-            if is_pending_activation:
+            is_cabinet = purchase.source == 'cabinet'
+
+            # Event title
+            if is_cabinet and purchase.is_gift:
+                event_title = '🎁 ПОДАРОК ИЗ КАБИНЕТА'
+            elif is_pending_activation:
                 event_title = '⏳ ПОКУПКА С ЛЕНДИНГА (ожидает активации)'
             elif purchase.is_gift:
                 event_title = '🎁 ПОКУПКА В ПОДАРОК С ЛЕНДИНГА'
             else:
                 event_title = '🛒 ПОКУПКА С ЛЕНДИНГА'
-
-            # Landing page slug
-            landing_slug = '—'
-            try:
-                landing = purchase.landing
-                if landing:
-                    landing_slug = landing.slug
-                elif purchase.landing_id:
-                    landing_slug = f'ID:{purchase.landing_id}'
-            except Exception:
-                if purchase.landing_id:
-                    landing_slug = f'ID:{purchase.landing_id}'
 
             # Contact info
             contact_display = html.escape(purchase.contact_value or '—')
@@ -1354,14 +1347,38 @@ class AdminNotificationService:
             message_lines = [
                 f'<b>{event_title}</b>',
                 '',
-                f'🌐 Страница: <b>/buy/{html.escape(landing_slug)}</b>',
-                f'{contact_icon} Покупатель: <code>{contact_display}</code>',
             ]
 
+            if is_cabinet:
+                # Cabinet gift: show buyer with link to user profile
+                buyer = getattr(purchase, 'buyer', None)
+                if buyer:
+                    buyer_name = f'@{buyer.username}' if buyer.username else buyer.email or f'id:{buyer.id}'
+                    message_lines.append(f'👤 Покупатель: <code>{html.escape(buyer_name)}</code>')
+                else:
+                    message_lines.append(f'{contact_icon} Покупатель: <code>{contact_display}</code>')
+            else:
+                # Landing: show page slug and buyer contact
+                landing_slug = '—'
+                try:
+                    landing = purchase.landing
+                    if landing:
+                        landing_slug = landing.slug
+                    elif purchase.landing_id:
+                        landing_slug = f'ID:{purchase.landing_id}'
+                except Exception:
+                    if purchase.landing_id:
+                        landing_slug = f'ID:{purchase.landing_id}'
+                message_lines.append(f'🌐 Страница: <b>/buy/{html.escape(landing_slug)}</b>')
+                message_lines.append(f'{contact_icon} Покупатель: <code>{contact_display}</code>')
+
             if purchase.is_gift:
-                recipient_value = html.escape(purchase.gift_recipient_value or '—')
-                recipient_icon = '📧' if purchase.gift_recipient_type == 'email' else '📱'
-                message_lines.append(f'{recipient_icon} Получатель: <code>{recipient_value}</code>')
+                if purchase.gift_recipient_value:
+                    recipient_icon = '📧' if purchase.gift_recipient_type == 'email' else '📱'
+                    recipient_value = html.escape(purchase.gift_recipient_value)
+                    message_lines.append(f'{recipient_icon} Получатель: <code>{recipient_value}</code>')
+                else:
+                    message_lines.append('🔗 Получатель: <i>по коду активации</i>')
                 if purchase.gift_message:
                     raw_msg = purchase.gift_message[:100]
                     suffix = '…' if len(purchase.gift_message) > 100 else ''

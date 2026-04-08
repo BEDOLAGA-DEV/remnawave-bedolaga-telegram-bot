@@ -770,14 +770,57 @@ class YooKassaPaymentMixin:
                     # Загружаем пользователя с подпиской и промо-группой
                     full_user_result = await db.execute(
                         select(User)
-                        .options(selectinload(User.subscription))
+                        .options(selectinload(User.subscriptions).selectinload(SubscriptionModel.tariff))
                         .options(selectinload(User.user_promo_groups))
                         .where(User.id == user.id)
                     )
                     full_user = full_user_result.scalar_one_or_none()
 
                     # Используем обновленные данные или исходные, если не удалось обновить
-                    subscription = full_user.subscription if full_user else getattr(user, 'subscription', None)
+                    full_subs = getattr(full_user, 'subscriptions', []) if full_user else []
+                    fallback_subs = getattr(user, 'subscriptions', [])
+                    all_subs = full_subs or fallback_subs
+                    _active = [s for s in all_subs if s.status in ('active', 'trial')]
+                    if _active:
+                        _non_daily = [s for s in _active if not getattr(s, 'is_daily_tariff', False)]
+                        _pool = _non_daily or _active
+                        subscription = max(_pool, key=lambda s: s.days_left)
+                    else:
+                        subscription = all_subs[0] if all_subs else None
+
+                    # Validate subscription_id from metadata matches the resolved subscription
+                    if is_recurrent_topup and subscription is not None:
+                        _meta_sub_id = payment_metadata.get('subscription_id')
+                        if _meta_sub_id and str(subscription.id) != _meta_sub_id:
+                            # Heuristic picked the wrong sub — resolve correct one from metadata
+                            try:
+                                _correct_sub_id = int(_meta_sub_id)
+                                _correct_sub = next(
+                                    (s for s in all_subs if s.id == _correct_sub_id),
+                                    None,
+                                )
+                                if _correct_sub:
+                                    logger.info(
+                                        'Recurrent payment: resolved correct subscription from metadata',
+                                        meta_sub_id=_meta_sub_id,
+                                        heuristic_sub_id=subscription.id,
+                                        user_id=user.id,
+                                    )
+                                    subscription = _correct_sub
+                                else:
+                                    logger.warning(
+                                        'Recurrent payment subscription_id mismatch, metadata sub not found in user subs',
+                                        expected_sub_id=_meta_sub_id,
+                                        actual_sub_id=subscription.id,
+                                        user_id=user.id,
+                                    )
+                            except (ValueError, TypeError):
+                                logger.warning(
+                                    'Recurrent payment: invalid subscription_id in metadata',
+                                    meta_sub_id=_meta_sub_id,
+                                    user_id=user.id,
+                                )
+
                     promo_group = (
                         full_user.get_primary_promo_group()
                         if full_user
@@ -913,8 +956,12 @@ class YooKassaPaymentMixin:
                         # Активируем pending подписку пользователя
                         from app.database.crud.subscription import activate_pending_subscription
 
+                        order_subscription_id = int(order_id) if order_id is not None else None
                         subscription = await activate_pending_subscription(
-                            db=db, user_id=user.id, period_days=subscription_period
+                            db=db,
+                            user_id=user.id,
+                            period_days=subscription_period,
+                            subscription_id=order_subscription_id,
                         )
 
                         if subscription:
@@ -949,12 +996,23 @@ class YooKassaPaymentMixin:
                             if getattr(self, 'bot', None) and user.telegram_id:
                                 from aiogram import types
 
+                                tariff_line = ''
+                                if settings.is_multi_tariff_enabled() and getattr(subscription, 'tariff_id', None):
+                                    try:
+                                        from app.database.crud.tariff import get_tariff_by_id
+
+                                        _t = await get_tariff_by_id(db, subscription.tariff_id)
+                                        if _t:
+                                            tariff_line = f'\n📦 Тариф: «{_t.name}»'
+                                    except Exception:
+                                        pass
                                 success_message = (
                                     f'✅ <b>Подписка успешно активирована!</b>\n\n'
                                     f'📅 Период: {subscription_period} дней\n'
                                     f'📱 Устройства: 1\n'
                                     f'📊 Трафик: Безлимит\n'
-                                    f'💳 Оплата: {settings.format_price(payment.amount_kopeks)} (YooKassa)\n\n'
+                                    f'💳 Оплата: {settings.format_price(payment.amount_kopeks)} (YooKassa)'
+                                    f'{tariff_line}\n\n'
                                     f"🔗 Для подключения перейдите в раздел 'Моя подписка'"
                                 )
 
@@ -1001,22 +1059,18 @@ class YooKassaPaymentMixin:
                                     # Загружаем пользователя с подпиской и промо-группой
                                     full_user_result = await db.execute(
                                         select(User)
-                                        .options(selectinload(User.subscription))
+                                        .options(
+                                            selectinload(User.subscriptions).selectinload(SubscriptionModel.tariff)
+                                        )
                                         .options(selectinload(User.user_promo_groups))
                                         .where(User.id == user.id)
                                     )
                                     full_user = full_user_result.scalar_one_or_none()
 
-                                    # Загружаем подписку отдельно, если нужно
-                                    subscription_result = await db.execute(
-                                        select(SubscriptionModel).where(SubscriptionModel.user_id == user.id)
-                                    )
-                                    subscription_db = subscription_result.scalar_one_or_none()
-
                                     await notification_service.send_subscription_purchase_notification(
                                         db,
                                         full_user or user,
-                                        subscription_db or subscription,
+                                        subscription,
                                         transaction,
                                         subscription_period,
                                         was_trial_conversion=False,

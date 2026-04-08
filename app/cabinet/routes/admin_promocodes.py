@@ -28,6 +28,7 @@ from app.database.crud.promocode import (
     get_promocodes_list,
     update_promocode,
 )
+from app.database.crud.tariff import get_tariff_by_id
 from app.database.models import PromoCode, PromoCodeType, PromoCodeUse, PromoGroup, User
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -55,6 +56,8 @@ class PromoCodeResponse(BaseModel):
     valid_from: datetime
     valid_until: datetime | None = None
     promo_group_id: int | None = None
+    tariff_id: int | None = None
+    tariff_name: str | None = None
     created_by: int | None = None
     created_at: datetime
     updated_at: datetime
@@ -93,6 +96,7 @@ class PromoCodeCreateRequest(BaseModel):
     is_active: bool = True
     first_purchase_only: bool = False
     promo_group_id: int | None = None
+    tariff_id: int | None = None
 
 
 class PromoCodeUpdateRequest(BaseModel):
@@ -106,6 +110,7 @@ class PromoCodeUpdateRequest(BaseModel):
     is_active: bool | None = None
     first_purchase_only: bool | None = None
     promo_group_id: int | None = None
+    tariff_id: int | None = None
 
 
 # ============== PromoGroup Schemas ==============
@@ -168,7 +173,12 @@ def _normalize_datetime(value: datetime | None) -> datetime | None:
     return value
 
 
-def _serialize_promocode(promocode: PromoCode) -> PromoCodeResponse:
+async def _serialize_promocode(db: AsyncSession, promocode: PromoCode) -> PromoCodeResponse:
+    tariff_name = None
+    if promocode.tariff_id:
+        tariff = await get_tariff_by_id(db, promocode.tariff_id)
+        tariff_name = tariff.name if tariff else None
+
     promo_type = PromoCodeType(promocode.type)
     return PromoCodeResponse(
         id=promocode.id,
@@ -186,6 +196,8 @@ def _serialize_promocode(promocode: PromoCode) -> PromoCodeResponse:
         valid_from=promocode.valid_from,
         valid_until=promocode.valid_until,
         promo_group_id=promocode.promo_group_id,
+        tariff_id=promocode.tariff_id,
+        tariff_name=tariff_name,
         created_by=promocode.created_by,
         created_at=promocode.created_at,
         updated_at=promocode.updated_at,
@@ -315,8 +327,9 @@ async def list_promocodes(
     total = await get_promocodes_count(db, is_active=is_active) or 0
     promocodes = await get_promocodes_list(db, offset=offset, limit=limit, is_active=is_active)
 
+    serialized = [await _serialize_promocode(db, p) for p in promocodes]
     return PromoCodeListResponse(
-        items=[_serialize_promocode(promocode) for promocode in promocodes],
+        items=serialized,
         total=int(total),
         limit=limit,
         offset=offset,
@@ -335,7 +348,7 @@ async def get_promocode(
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo code not found')
 
     stats = await get_promocode_statistics(db, promocode_id)
-    base = _serialize_promocode(promocode)
+    base = await _serialize_promocode(db, promocode)
     recent_uses = [_serialize_recent_use(use) for use in stats.get('recent_uses', [])]
 
     return PromoCodeDetailResponse(
@@ -388,11 +401,13 @@ async def create_promocode_endpoint(
         update_fields['first_purchase_only'] = payload.first_purchase_only
     if payload.promo_group_id is not None:
         update_fields['promo_group_id'] = payload.promo_group_id
+    if payload.tariff_id is not None:
+        update_fields['tariff_id'] = payload.tariff_id
 
     if update_fields:
         promocode = await update_promocode(db, promocode, **update_fields)
 
-    return _serialize_promocode(promocode)
+    return await _serialize_promocode(db, promocode)
 
 
 @router.patch('/{promocode_id}', response_model=PromoCodeResponse)
@@ -446,11 +461,14 @@ async def update_promocode_endpoint(
     if payload.promo_group_id is not None:
         updates['promo_group_id'] = payload.promo_group_id
 
+    if payload.tariff_id is not None:
+        updates['tariff_id'] = payload.tariff_id if payload.tariff_id != 0 else None
+
     if not updates:
-        return _serialize_promocode(promocode)
+        return await _serialize_promocode(db, promocode)
 
     promocode = await update_promocode(db, promocode, **updates)
-    return _serialize_promocode(promocode)
+    return await _serialize_promocode(db, promocode)
 
 
 @router.delete(

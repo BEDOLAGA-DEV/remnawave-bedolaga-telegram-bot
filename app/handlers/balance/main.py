@@ -133,7 +133,7 @@ async def route_payment_by_method(
             )
         return True
 
-    if payment_method in ('kassa_ai', 'kassa_ai_sbp', 'kassa_ai_card'):
+    if payment_method in ('kassa_ai', 'kassa_ai_sbp', 'kassa_ai_card', 'kassa_ai_sberpay'):
         from .kassa_ai import process_kassa_ai_payment_amount
 
         async with AsyncSessionLocal() as db:
@@ -783,12 +783,23 @@ def register_balance_handlers(dp: Dispatcher):
 
     from .kassa_ai import (
         start_kassa_ai_card_topup,
+        start_kassa_ai_sberpay_topup,
         start_kassa_ai_sbp_topup,
         start_kassa_ai_topup,
     )
 
     dp.callback_query.register(start_kassa_ai_topup, F.data == 'nz!_topup_kassa_ai')
-    dp.callback_query.register(process_kassa_ai_quick_amount, F.data.startswith('nz!_topup_amount|kassa_ai|'))
+    dp.callback_query.register(start_kassa_ai_sbp_topup, F.data == 'nz!_topup_kassa_ai_sbp')
+    dp.callback_query.register(start_kassa_ai_card_topup, F.data == 'nz!_topup_kassa_ai_card')
+    dp.callback_query.register(start_kassa_ai_sberpay_topup, F.data == 'nz!_topup_kassa_ai_sberpay')
+
+    from .riopay import start_riopay_topup
+
+    dp.callback_query.register(start_riopay_topup, F.data == 'nz!_topup_riopay')
+
+    from .severpay import start_severpay_topup
+
+    dp.callback_query.register(start_severpay_topup, F.data == 'nz!_topup_severpay')
 
     from .mulenpay import check_mulenpay_payment_status
 

@@ -73,6 +73,7 @@ class SeverPayPaymentMixin:
             user = await payment_module.get_user_by_id(db, user_id)
             tg_id = user.telegram_id if user else user_id
         else:
+            user = None
             tg_id = 'guest'
 
         # Генерируем уникальный order_id с telegram_id для удобного поиска
@@ -94,12 +95,17 @@ class SeverPayPaymentMixin:
         }
 
         try:
+            # SeverPay требует обязательный client_email
+            target_email = email or (
+                f'{user.telegram_id}@telegram.org' if user and user.telegram_id else f'{tg_id}@telegram.org'
+            )
+
             # Используем API для создания платежа
             result = await severpay_service.create_payment(
                 order_id=order_id,
                 amount=amount_rubles,
                 currency=currency,
-                client_email=email or '',
+                client_email=target_email,
                 client_id=str(tg_id),
                 url_return=return_url or settings.SEVERPAY_RETURN_URL,
                 lifetime=lifetime,
