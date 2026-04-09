@@ -1238,6 +1238,52 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 logger.exception('SeverPay webhook processing error', error=e)
             # Always return 200 {"status": true} — SeverPay retries on any non-200
             return JSONResponse({'status': True}, status_code=status.HTTP_200_OK)
+    # External Gateway webhook
+    if settings.is_external_gateway_enabled():
+
+        @router.post(settings.EXTERNAL_GATEWAY_WEBHOOK_PATH)
+        async def external_gateway_callback(request: Request) -> JSONResponse:
+            # Верификация секрета
+            received_secret = request.headers.get('X-Webhook-Secret', '')
+            if not hmac.compare_digest(received_secret, settings.EXTERNAL_GATEWAY_WEBHOOK_SECRET):
+                logger.warning('External Gateway webhook: неверный секрет')
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'invalid_secret'},
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                )
+
+            try:
+                callback_data = await request.json()
+            except Exception as parse_error:
+                logger.error('External Gateway webhook: ошибка парсинга JSON', error=parse_error)
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'invalid_json'},
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+            db_generator = get_db()
+            try:
+                db = await db_generator.__anext__()
+            except StopAsyncIteration:
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'db_error'},
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            try:
+                success = await payment_service.process_external_gateway_callback(db, callback_data)
+                return JSONResponse({'success': success})
+            except Exception as e:
+                logger.exception('External Gateway webhook: ошибка обработки', e=e)
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'processing_error'},
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            finally:
+                try:
+                    await db_generator.__anext__()
+                except StopAsyncIteration:
+                    pass
 
         routes_registered = True
 
@@ -1261,6 +1307,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     'kassa_ai_enabled': settings.is_kassa_ai_enabled(),
                     'riopay_enabled': settings.is_riopay_enabled(),
                     'severpay_enabled': settings.is_severpay_enabled(),
+                    'external_gateway_enabled': settings.is_external_gateway_enabled(),
                 }
             )
 

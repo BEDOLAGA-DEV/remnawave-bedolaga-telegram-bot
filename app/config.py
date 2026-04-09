@@ -585,6 +585,25 @@ class Settings(BaseSettings):
     SEVERPAY_WEBHOOK_PATH: str = '/severpay-webhook'
     SEVERPAY_RETURN_URL: str | None = None
     SEVERPAY_LIFETIME: int = 1440  # minutes, 30-4320
+    # External Gateway -- универсальный внешний шлюз
+    EXTERNAL_GATEWAY_ENABLED: bool = False
+    EXTERNAL_GATEWAY_URL: str = ''  # Базовый URL шлюза (https://pay.example.com)
+    EXTERNAL_GATEWAY_API_KEY: str = ''
+    EXTERNAL_GATEWAY_WEBHOOK_SECRET: str = ''
+    EXTERNAL_GATEWAY_DISPLAY_NAME: str = 'Оплата картой'
+    EXTERNAL_GATEWAY_DISPLAY_EMOJI: str = '💳'
+    EXTERNAL_GATEWAY_CURRENCY: str = 'RUB'
+    EXTERNAL_GATEWAY_MIN_AMOUNT_KOPEKS: int = 10000
+    EXTERNAL_GATEWAY_MAX_AMOUNT_KOPEKS: int = 10000000
+    EXTERNAL_GATEWAY_WEBHOOK_PATH: str = '/ext-gateway-callback'
+    EXTERNAL_GATEWAY_WEBHOOK_HOST: str = '0.0.0.0'
+    EXTERNAL_GATEWAY_WEBHOOK_PORT: int = 8090
+    EXTERNAL_GATEWAY_CREATE_PATH: str = '/create.php'
+    EXTERNAL_GATEWAY_STATUS_PATH: str = '/status.php'
+    EXTERNAL_GATEWAY_RETURN_URL: str = ''
+    EXTERNAL_GATEWAY_PAYMENT_TIMEOUT_SECONDS: int = 3600
+    EXTERNAL_GATEWAY_PAYMENT_METHOD: str = ''
+    EXTERNAL_GATEWAY_METHODS: str = ''  # Мульти-метод: stripe:💳:Оплата картой,paypal:💰:PayPal
 
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
@@ -1992,6 +2011,41 @@ class Settings(BaseSettings):
 
     def get_kassa_ai_sberpay_display_name_html(self) -> str:
         return html.escape(self.get_kassa_ai_sberpay_display_name())
+    def is_external_gateway_enabled(self) -> bool:
+        return (
+            self.EXTERNAL_GATEWAY_ENABLED
+            and bool(self.EXTERNAL_GATEWAY_URL)
+            and bool(self.EXTERNAL_GATEWAY_API_KEY)
+        )
+
+    def get_external_gateway_display_name(self) -> str:
+        return self.EXTERNAL_GATEWAY_DISPLAY_NAME or 'Оплата картой'
+
+    def get_external_gateway_display_name_html(self) -> str:
+        return html.escape(self.get_external_gateway_display_name())
+
+    def get_external_gateway_methods(self) -> list[dict[str, str]]:
+        """Парсит EXTERNAL_GATEWAY_METHODS в список {'value': ..., 'emoji': ..., 'name': ...}."""
+        raw = (self.EXTERNAL_GATEWAY_METHODS or '').strip()
+        if not raw:
+            return []
+        methods: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for part in raw.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            pieces = part.split(':', 2)
+            if len(pieces) < 3:
+                continue
+            value, emoji, name = pieces[0].strip(), pieces[1].strip(), pieces[2].strip()
+            if value and value not in seen:
+                methods.append({'value': value, 'emoji': emoji or '💳', 'name': name or value})
+                seen.add(value)
+        return methods
+
+    def has_external_gateway_methods(self) -> bool:
+        return len(self.get_external_gateway_methods()) > 0
 
     def is_payment_verification_auto_check_enabled(self) -> bool:
         return self.PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED
