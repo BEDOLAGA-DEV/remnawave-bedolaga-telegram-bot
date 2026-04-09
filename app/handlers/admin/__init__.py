@@ -25,6 +25,7 @@ from . import (
     quick_replies,
     referrals,
     remnawave,
+    reviews,
     reports,
     required_channels,
     rules,

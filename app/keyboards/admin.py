@@ -97,6 +97,12 @@ def get_admin_main_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
                     callback_data='admin_scheduled_promos',
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_MAIN_REVIEWS', '⭐ Отзывы'),
+                    callback_data='admin_reviews',
+                ),
+            ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
         ]
     )
@@ -134,6 +140,12 @@ def get_admin_promo_submenu_keyboard(language: str = 'ru') -> InlineKeyboardMark
                 )
             ],
             [InlineKeyboardButton(text=texts.ADMIN_PROMO_GROUPS, callback_data='admin_promo_groups')],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_ACHIEVEMENTS', '\U0001f3c6 \u0414\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u044f'),
+                    callback_data='admin_achievements',
+                )
+            ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_panel')],
         ]
     )

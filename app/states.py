@@ -303,3 +303,17 @@ class ScheduledPromoStates(StatesGroup):
     waiting_for_discount = State()
     waiting_for_start_date = State()
     waiting_for_end_date = State()
+
+
+class AchievementAdminStates(StatesGroup):
+    waiting_for_name = State()
+    waiting_for_emoji = State()
+    waiting_for_condition_type = State()
+    waiting_for_condition_value = State()
+    waiting_for_reward_type = State()
+    waiting_for_reward_value = State()
+
+
+class ReviewStates(StatesGroup):
+    rating = State()
+    text = State()

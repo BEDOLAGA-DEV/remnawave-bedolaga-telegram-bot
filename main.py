@@ -172,6 +172,7 @@ async def main():
     version_check_task = None
     traffic_monitoring_task = None
     daily_subscription_task = None
+    weekly_digest_task = None
     polling_task = None
     web_api_server = None
     telegram_webhook_enabled = False
@@ -676,6 +677,22 @@ async def main():
             else:
                 version_check_task = None
                 stage.skip('Проверка версий отключена настройками')
+
+        async with timeline.stage(
+            'Еженедельный дайджест',
+            '📊',
+            success_message='Сервис дайджеста запущен',
+        ) as stage:
+            if settings.WEEKLY_DIGEST_ENABLED:
+                from app.database.database import AsyncSessionLocal
+                from app.services.weekly_digest_service import WeeklyDigestService
+
+                weekly_digest_service = WeeklyDigestService(bot, AsyncSessionLocal)
+                weekly_digest_task = asyncio.create_task(weekly_digest_service.start())
+                stage.log(f'День отправки: {settings.WEEKLY_DIGEST_DAY} (0=Пн, 6=Вс)')
+            else:
+                weekly_digest_task = None
+                stage.skip('Еженедельный дайджест отключен настройками')
 
         async with timeline.stage(
             'Запуск polling',

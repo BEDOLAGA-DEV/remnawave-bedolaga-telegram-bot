@@ -1281,6 +1281,7 @@ class User(Base):
     admin_roles_rel = relationship('UserRole', foreign_keys='[UserRole.user_id]', back_populates='user')
     notification_settings = Column(JSON, nullable=True, default=dict)
     last_pinned_message_id = Column(Integer, nullable=True)
+    digest_enabled = Column(Boolean, default=True, server_default='true')
 
     # Ограничения пользователя
     restriction_topup = Column(Boolean, default=False, nullable=False)  # Запрет пополнения
@@ -3532,3 +3533,70 @@ class ScheduledPromo(Base):
 
     def __repr__(self) -> str:
         return f"<ScheduledPromo id={self.id} name='{self.name}' discount={self.discount_percent}%>"
+
+
+# ── User Reviews (Feature: Reviews for Bonus) ─────────────────────────
+
+
+class UserReview(Base):
+    """User review with optional bonus and channel forwarding."""
+
+    __tablename__ = 'user_reviews'
+    __table_args__ = (UniqueConstraint('user_id', name='uq_user_review_user'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    rating = Column(Integer, nullable=False)  # 1-5
+    text = Column(Text, nullable=False)
+    bonus_kopeks = Column(Integer, default=0)
+    is_approved = Column(Boolean, default=False)
+    channel_message_id = Column(Integer, nullable=True)  # message ID in review channel
+    created_at = Column(AwareDateTime(), default=func.now())
+
+    user = relationship('User')
+
+    def __repr__(self) -> str:
+        return f"<UserReview id={self.id} user_id={self.user_id} rating={self.rating}>"
+
+
+class WeeklyDigestRecord(Base):
+    __tablename__ = 'weekly_digest_records'
+    __table_args__ = (UniqueConstraint('user_id', 'week_year', name='uq_digest_user_week'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    week_year = Column(String(10), nullable=False)  # e.g. "2026-W15"
+    sent_at = Column(AwareDateTime(), default=func.now())
+
+
+class AchievementTemplate(Base):
+    __tablename__ = 'achievement_templates'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    emoji = Column(String(10), default='🏆')
+    condition_type = Column(String(50), nullable=False)
+    # condition_types: 'total_spent_kopeks', 'days_active', 'referral_count',
+    #                  'traffic_gb', 'topup_count', 'review_left'
+    condition_value = Column(Integer, nullable=False)
+    reward_type = Column(String(50), nullable=False)
+    # reward_types: 'balance_kopeks', 'traffic_gb', 'subscription_days', 'none'
+    reward_value = Column(Integer, default=0)
+    reward_duration_days = Column(Integer, nullable=True)  # for traffic_gb rewards
+    is_active = Column(Boolean, default=True)
+    display_order = Column(Integer, default=0)
+    created_at = Column(AwareDateTime(), default=func.now())
+
+
+class UserAchievement(Base):
+    __tablename__ = 'user_achievements'
+    __table_args__ = (UniqueConstraint('user_id', 'template_id', name='uq_user_achievement'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    template_id = Column(Integer, ForeignKey('achievement_templates.id', ondelete='CASCADE'), nullable=False)
+    unlocked_at = Column(AwareDateTime(), default=func.now())
+    reward_claimed = Column(Boolean, default=False)
+    template = relationship('AchievementTemplate')
+    user = relationship('User')

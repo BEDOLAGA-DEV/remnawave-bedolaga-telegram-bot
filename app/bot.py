@@ -6,19 +6,23 @@ from aiogram.fsm.storage.redis import RedisStorage
 
 from app.config import settings
 from app.handlers import (
+    achievements as user_achievements,
     balance,
     common,
     contests as user_contests,
+    digest,
     menu,
     polls as user_polls,
     promocode,
     referral,
+    review,
     server_status,
     simple_subscription,
     start,
     subscription,
     support,
     tickets,
+    troubleshoot,
 )
 from app.handlers.admin import (
     backup as admin_backup,
@@ -46,6 +50,7 @@ from app.handlers.admin import (
     remnawave as admin_remnawave,
     reports as admin_reports,
     required_channels as admin_required_channels,
+    reviews as admin_reviews,
     rules as admin_rules,
     servers as admin_servers,
     statistics as admin_statistics,
@@ -60,6 +65,7 @@ from app.handlers.admin import (
     welcome_text as admin_welcome_text,
     wl_analytics as admin_wl_analytics,
     referral_stats as admin_referral_stats,
+    achievements as admin_achievements,
 )
 from app.handlers.channel_member import register_handlers as register_channel_member_handlers
 from app.handlers.gift_activation import register_handlers as register_gift_activation_handlers
@@ -192,6 +198,8 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     support.register_handlers(dp)
     server_status.register_handlers(dp)
     tickets.register_handlers(dp)
+    review.register_handlers(dp)
+    troubleshoot.register_handlers(dp)
     admin_main.register_handlers(dp)
     admin_users.register_handlers(dp)
     admin_subscriptions.register_handlers(dp)
@@ -225,14 +233,18 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_payments.register_handlers(dp)
     admin_wl_analytics.register_handlers(dp)
     admin_referral_stats.register_handlers(dp)
+    admin_reviews.register_handlers(dp)
     admin_trials.register_handlers(dp)
     admin_tariffs.register_handlers(dp)
     admin_bulk_ban.register_bulk_ban_handlers(dp)
     admin_blacklist.register_blacklist_handlers(dp)
     admin_blocked_users.register_handlers(dp)
     admin_required_channels.register_handlers(dp)
+    admin_achievements.register_handlers(dp)
     register_channel_member_handlers(dp)
     register_gift_activation_handlers(dp)
+    digest.register_handlers(dp)
+    user_achievements.register_handlers(dp)
     common.register_handlers(dp)
     register_stars_handlers(dp)
     user_contests.register_handlers(dp)

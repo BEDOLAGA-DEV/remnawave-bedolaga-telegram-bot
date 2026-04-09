@@ -282,6 +282,11 @@ class Settings(BaseSettings):
     # Для обратной совместимости со старыми конфигами
     REFERRAL_CONTESTS_ENABLED: bool = False
 
+    # Отзывы за бонус
+    REVIEW_BONUS_KOPEKS: int = 5000
+    REVIEW_MIN_DAYS: int = 7
+    REVIEW_CHANNEL_ID: int = 0
+
     BLACKLIST_CHECK_ENABLED: bool = False
     BLACKLIST_GITHUB_URL: str | None = None
     BLACKLIST_UPDATE_INTERVAL_HOURS: int = 24
@@ -832,6 +837,13 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = True
 
     # Ban System Integration (NoZapretBan monitoring)
+    # Weekly digest
+    WEEKLY_DIGEST_ENABLED: bool = True
+    WEEKLY_DIGEST_DAY: int = 1  # 0=Mon, 6=Sun
+
+    # Achievements
+    ACHIEVEMENTS_ENABLED: bool = True
+
     BAN_SYSTEM_ENABLED: bool = False
     BAN_SYSTEM_API_URL: str | None = None  # e.g., http://ban-server:8000
     BAN_SYSTEM_API_TOKEN: str | None = None

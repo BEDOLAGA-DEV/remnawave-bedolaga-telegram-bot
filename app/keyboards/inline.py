@@ -751,6 +751,15 @@ def get_main_menu_keyboard(
             InlineKeyboardButton(text=texts.t('CONTESTS_BUTTON', '🎲 Конкурсы'), callback_data='nz!_contests_menu', style='primary')
         )
 
+    # Troubleshoot / Help
+    paired_buttons.append(
+        InlineKeyboardButton(
+            text=texts.t('MENU_TROUBLESHOOT', '❓ Помощь'),
+            callback_data='nz!_troubleshoot',
+            style='primary',
+        )
+    )
+
     # Custom buttons
     if custom_buttons:
         for button in custom_buttons:
