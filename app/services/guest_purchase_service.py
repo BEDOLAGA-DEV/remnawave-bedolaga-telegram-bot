@@ -15,7 +15,12 @@ from app.cabinet.auth.jwt_handler import create_auto_login_token
 from app.cabinet.auth.password_utils import hash_password
 from app.config import settings
 from app.database.crud.landing import create_guest_purchase
-from app.database.crud.subscription import create_paid_subscription, get_subscription_by_user_id, replace_subscription
+from app.database.crud.subscription import (
+    create_paid_subscription,
+    extend_subscription,
+    get_subscription_by_user_id,
+    replace_subscription,
+)
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import _get_or_create_default_promo_group
@@ -28,6 +33,7 @@ from app.database.models import (
     Transaction,
     TransactionType,
     User,
+    _aware,
 )
 from app.services.subscription_service import SubscriptionService
 
@@ -1039,7 +1045,24 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
             from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
             existing_for_tariff = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
-            if existing_for_tariff:
+            _has_time = (
+                existing_for_tariff is not None
+                and existing_for_tariff.end_date is not None
+                and _aware(existing_for_tariff.end_date) > datetime.now(UTC)
+            )
+            if existing_for_tariff and _has_time:
+                # Extend existing active/trial subscription instead of replacing (preserve remaining days)
+                subscription = await extend_subscription(
+                    db,
+                    existing_for_tariff,
+                    purchase.period_days,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    commit=False,
+                )
+            elif existing_for_tariff:
+                # Expired subscription — replace with fresh dates
                 subscription = await replace_subscription(
                     db,
                     existing_for_tariff,
@@ -1066,7 +1089,25 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                 )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
-            if existing_subscription is not None:
+            _sub_has_time = (
+                existing_subscription is not None
+                and existing_subscription.end_date is not None
+                and _aware(existing_subscription.end_date) > datetime.now(UTC)
+            )
+            if existing_subscription is not None and _sub_has_time:
+                # Extend existing active subscription (preserve remaining days)
+                subscription = await extend_subscription(
+                    db,
+                    existing_subscription,
+                    purchase.period_days,
+                    tariff_id=tariff.id,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    commit=False,
+                )
+            elif existing_subscription is not None:
+                # Expired subscription — replace with fresh dates
                 subscription = await replace_subscription(
                     db,
                     existing_subscription,

@@ -67,7 +67,7 @@ async def get_renewal_options(
     for period in periods:
         pricing = await pricing_engine.calculate_renewal_price(db, subscription, period, user=user)
 
-        if pricing.final_total <= 0 and pricing.base_price <= 0:
+        if pricing.final_total <= 0 and pricing.original_total <= 0:
             continue
 
         original_price = pricing.original_total
@@ -155,7 +155,7 @@ async def renew_subscription(
     promo_offer_discount_value = pricing.promo_offer_discount
     promo_offer_discount_percent = pricing.breakdown.get('offer_discount_pct', 0)
 
-    if price_kopeks <= 0 and pricing.base_price <= 0:
+    if price_kopeks <= 0 and pricing.original_total <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Invalid renewal period',

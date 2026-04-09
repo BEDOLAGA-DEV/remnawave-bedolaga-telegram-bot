@@ -96,12 +96,13 @@ async def get_subscription_by_user_id(db: AsyncSession, user_id: int) -> Subscri
         )
         .where(Subscription.user_id == user_id)
         .order_by(
-            # Active/trial subscriptions first, then by creation date
+            # Active/trial subscriptions first, then by end_date (most remaining time)
             case(
                 (Subscription.status == SubscriptionStatus.ACTIVE.value, 0),
                 (Subscription.status == SubscriptionStatus.TRIAL.value, 1),
                 else_=2,
             ),
+            Subscription.end_date.desc().nulls_last(),
             Subscription.created_at.desc(),
         )
         .limit(1)

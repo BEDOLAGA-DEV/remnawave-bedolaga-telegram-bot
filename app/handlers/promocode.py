@@ -197,6 +197,8 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
         error_messages = {
             'not_found': texts.PROMOCODE_INVALID,
             'expired': texts.PROMOCODE_EXPIRED,
+            'inactive': texts.t('PROMOCODE_INACTIVE', '❌ Промокод деактивирован'),
+            'not_yet_valid': texts.t('PROMOCODE_NOT_YET_VALID', '❌ Промокод ещё не начал действовать'),
             'used': texts.PROMOCODE_USED,
             'already_used_by_user': texts.PROMOCODE_USED,
             'not_first_purchase': texts.t(

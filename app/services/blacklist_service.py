@@ -86,33 +86,38 @@ class BlacklistService:
                     if not line or line.startswith('#'):
                         continue  # Пропускаем пустые строки и комментарии
 
-                    # В формате '7021477105 #@MAMYT_PAXAL2016, перепродажа подписок'
+                    # В формате '7021477105 # @MAMYT_PAXAL2016, перепродажа подписок'
                     # только первая часть до пробела - это Telegram ID, всё остальное комментарий
-                    parts = line.split()
-                    if not parts:
-                        continue
-
                     try:
-                        telegram_id = int(parts[0])  # Первое число - это Telegram ID
-                        # Всё остальное - просто комментарий, не используем его для логики
-                        # Но можем использовать первую часть после ID как username для отображения
-                        username = ''
-                        if len(parts) > 1:
-                            # Берем вторую часть как username (если начинается с @)
-                            if parts[1].startswith('@'):
-                                username = parts[1]
+                        # 1. Разделяем строку на ID и всё остальное по символу '#'
+                        if '#' in line:
+                            id_part, content_part = line.split('#', 1)
+                            telegram_id = int(id_part.strip())
+                            content = content_part.strip()
+                        else:
+                            # Если решётки нет, пробуем просто взять первое число
+                            parts = line.split(maxsplit=1)
+                            telegram_id = int(parts[0])
+                            content = parts[1].strip() if len(parts) > 1 else ''
 
-                        # По умолчанию используем "Занесен в черный список", если нет другой информации
+                        # 2. Обрабатываем контент: вычленяем username, если он есть в начале
+                        username = ''
                         reason = 'Занесен в черный список'
 
-                        # Если есть запятая в строке, можем использовать часть после нее как причину
-                        full_line_after_id = line[len(str(telegram_id)) :].strip()
-                        if ',' in full_line_after_id:
-                            # Извлекаем причину после запятой
-                            after_comma = full_line_after_id.split(',', 1)[1].strip()
-                            reason = after_comma
+                        if content:
+                            if content.startswith('@'):
+                                # Разбиваем контент только по первому пробелу
+                                # content_parts[0] будет юзернеймом, content_parts[1] — причиной
+                                content_parts = content.split(maxsplit=1)
+                                username = content_parts[0]
+                                if len(content_parts) > 1:
+                                    reason = content_parts[1].strip()
+                            else:
+                                # Если собачки нет, значит весь контент — это причина
+                                reason = content
 
                         blacklist_data.append((telegram_id, username, reason))
+
                     except ValueError:
                         # Если не удается преобразовать в число, это не ID
                         logger.warning(

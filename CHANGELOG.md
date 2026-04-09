@@ -1,5 +1,59 @@
 # Changelog
 
+## [3.45.2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.45.1...v3.45.2) (2026-04-08)
+
+
+### Bug Fixes
+
+* batch bug fixes from user complaints ([31adcfd](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/31adcfded4b161bf515d4d6b25b4395e543208f4))
+* batch bug fixes from user complaints ([78f963b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/78f963bf5e7b3439d7614584c4041f88be5beb4a))
+* исправление парсинга черного списка (поддержка '#' и извлечение username) ([357d94d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/357d94d1b0d7fc8036b00cbb6b75175c29821751))
+* исправление парсинга черного списка (поддержка '#' и извлечение username) ([2f71846](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2f7184627a0fb598a8c0208905cdecf0e4bb04a7))
+
+## [3.45.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.45.0...v3.45.1) (2026-04-03)
+
+
+### Bug Fixes
+
+* add missing WEBHOOK_TORRENT_DETECTED mapping + dedup before uniq… ([4165eae](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4165eaea7adfdaf683b1ece16c8c93a9c4ed216d))
+* add missing WEBHOOK_TORRENT_DETECTED mapping + dedup before unique index in migration 0053 ([3b5d5a1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3b5d5a18a1122ef50868fd038a09109d17795a74))
+
+## [3.45.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.44.0...v3.45.0) (2026-04-03)
+
+
+### New Features
+
+* send torrent blocker notification to user (not just admin) ([2f9d003](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2f9d00343bee2980cc89bd24361259073b97127a))
+
+
+### Bug Fixes
+
+* resolve multiple subscription bugs — LIMITED status, trial tariff blocking, traffic reset strategy, classic mode pricing, 100% discount support ([9b7ac47](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9b7ac47f16076e546da62062ff7ce18d7c308988))
+* restore missing import + rewrite user.deleted webhook to properly deactivate all subscriptions ([819f09a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/819f09a68ec95237294bae97f31c644044a3623f))
+* subscription system bugfixes + torrent notifications + user deletion cleanup ([7d24e8d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/7d24e8d7047c7a3a1c417e655a6fbccbe5ae577d))
+
+## [3.44.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.43.1...v3.44.0) (2026-04-02)
+
+
+### New Features
+
+* add SberPay as KassaAI sub-method (payment_system_id=43) ([9d63635](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9d636355026ad1e50d045e78ffa21e76cfef0774))
+
+
+### Bug Fixes
+
+* address review issues in PR [#2829](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/2829) webhook intentional deletion guard ([977950b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/977950b97f07eecf089152d3f4e678fda373e1e6))
+* autopay failure notifications ignoring 6h cooldown ([991f0b4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/991f0b43e1e73446690a4fbec7c5c5642ac8c406))
+* middleware disables panel VPN for all subs ignoring per-channel settings ([f284351](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f284351c51a6843db0771a92338ec770d5f0d8d2))
+* NameError in SeverPay guest payment flow ([2d42152](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2d42152f5491b14cc45388e0ffccf8a61848a2f6))
+* notification sent for non-deactivated subs + webhook race condition ([b04157c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b04157c91327d9031e9f603a6ad33c708e27d753))
+* Pal24 card/sbp option not passed to API in cabinet balance topup ([6713921](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/67139218878dca3e75974eb5b5a2ce91d5b1438e))
+* prevent nested state saves and None state loss in promo handler ([b607993](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b607993854d1374e7d7c2afbb7fe5cc8824732f5))
+* promo code activation destroys balance input FSM state ([2466590](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/246659032de812f1d4502029ab139f3104237d5c))
+* remove non-existent Platega method code 10, rename 11 to Карты (RUB) ([033d0da](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/033d0da5e0033a2310431586a291b529e3ccb89a))
+* send telegram_id@telegram.org as email to Kassa AI ([3dc72b0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3dc72b00e751a69966d2d5830492c82e055b72e6))
+* send telegram_id@telegram.org as email to SeverPay ([08ca947](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/08ca947b2b2bb29782c86e7b5d6bea71e2811751))
+
 ## [3.43.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.43.0...v3.43.1) (2026-03-31)
 
 

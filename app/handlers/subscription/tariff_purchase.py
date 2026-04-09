@@ -928,8 +928,8 @@ async def handle_custom_confirm(
     )
     total_price = result.final_total
 
-    # Проверяем, что цена за период валидна
-    if result.base_price == 0 and not tariff.can_purchase_custom_days():
+    # Проверяем, что цена за период валидна (original_total — цена до скидок)
+    if result.original_total == 0 and not tariff.can_purchase_custom_days():
         await callback.answer('Выбранный период недоступен для этого тарифа', show_alert=True)
         return
 

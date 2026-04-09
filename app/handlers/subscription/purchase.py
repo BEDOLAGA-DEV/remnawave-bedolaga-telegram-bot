@@ -1735,8 +1735,8 @@ async def handle_extend_subscription(
             # original = price before ALL discounts, final = price with all discounts
             total_original_price = pricing.original_total
 
-            # Пропускаем периоды с нулевой ценой — защита от бесплатного продления
-            if pricing.final_total <= 0 and pricing.base_price <= 0:
+            # Пропускаем периоды с нулевой ценой (если оригинальная цена тоже 0 — не настроен)
+            if pricing.final_total <= 0 and pricing.original_total <= 0:
                 continue
 
             renewal_prices[days] = {

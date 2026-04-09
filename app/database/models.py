@@ -933,6 +933,13 @@ class PromoGroup(Base):
         if period_days in discounts:
             return discounts[period_days]
 
+        # For daily tariffs (period_days=1): fallback to the smallest configured period discount.
+        # Admins configure discounts for standard periods (30, 90, 180, 360) but not for daily.
+        # If all periods have 100% discount, daily should too.
+        if period_days <= 1 and discounts:
+            smallest_period = min(discounts)
+            return discounts[smallest_period]
+
         if self.is_default:
             try:
                 from app.config import settings

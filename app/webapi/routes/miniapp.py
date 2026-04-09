@@ -4137,6 +4137,8 @@ async def activate_promo_code(
         'invalid': 'Promo code must not be empty',
         'not_found': 'Promo code not found',
         'expired': 'Promo code expired',
+        'inactive': 'Promo code is deactivated',
+        'not_yet_valid': 'Promo code is not yet active',
         'used': 'Promo code already used',
         'already_used_by_user': 'Promo code already used by this user',
         'no_subscription_for_days': 'This promo code requires an active or expired subscription',

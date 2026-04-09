@@ -376,15 +376,16 @@ class RemnaWaveAPI:
                     except json.JSONDecodeError:
                         response_data = {'raw_response': response_text}
 
-                    if response.status == 429 and attempt < max_retries:
+                    if response.status in (429, 502, 503, 504) and attempt < max_retries:
                         retry_after = float(response.headers.get('Retry-After', base_delay * (2**attempt)))
                         logger.warning(
-                            'Rate limited (429) on , retry / after s',
-                            method=method,
-                            endpoint=endpoint,
-                            attempt=attempt + 1,
-                            max_retries=max_retries,
-                            retry_after=retry_after,
+                            'Retryable %s on %s %s, retry %s/%s after %ss',
+                            response.status,
+                            method,
+                            endpoint,
+                            attempt + 1,
+                            max_retries,
+                            retry_after,
                         )
                         await asyncio.sleep(retry_after)
                         continue

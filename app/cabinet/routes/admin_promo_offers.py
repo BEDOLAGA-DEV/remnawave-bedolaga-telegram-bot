@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar
 
 import structlog
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot_factory import create_bot
@@ -127,6 +127,20 @@ class PromoOfferBroadcastRequest(BaseModel):
     send_notification: bool = Field(False, description='Send Telegram notification to users')
     message_text: str | None = Field(None, description='Custom message text (HTML)')
     button_text: str | None = Field(None, description='Button text')
+
+    _TARGET_ALIASES: ClassVar[dict[str, str]] = {
+        'no_sub': 'no',
+        'all_users': 'all',
+        'active_subscribers': 'active',
+        'trial_users': 'trial',
+    }
+
+    @validator('target')
+    def normalize_target(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        return cls._TARGET_ALIASES.get(normalized, normalized)
 
 
 class PromoOfferBroadcastResponse(BaseModel):

@@ -316,7 +316,7 @@ async def _prepare_auto_extend_context(
         )
         return None
 
-    if price_kopeks <= 0 and pricing.base_price <= 0:
+    if price_kopeks <= 0 and pricing.original_total <= 0:
         logger.warning(
             '🔁 Автопокупка: некорректная цена продления у пользователя',
             price_kopeks=price_kopeks,
@@ -2172,7 +2172,7 @@ async def try_auto_extend_expired_after_topup(
         breakdown=pricing.breakdown,
     )
 
-    if renewal_cost <= 0 and pricing.base_price <= 0:
+    if renewal_cost <= 0 and pricing.original_total <= 0:
         logger.warning(
             '❌ Автопродление expired: некорректная стоимость',
             format_user_id=_format_user_id(user),
