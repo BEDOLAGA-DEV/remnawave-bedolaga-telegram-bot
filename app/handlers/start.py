@@ -1814,6 +1814,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
             await callback.message.answer(
                 offer_text,
                 reply_markup=get_post_registration_keyboard(user.language),
+                parse_mode='HTML',
             )
             logger.info('✅ Приветственное сообщение отправлено пользователю', telegram_id=user.telegram_id)
             if pinned_message and not pinned_message.send_before_menu:
@@ -2168,6 +2169,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
             await message.answer(
                 offer_text,
                 reply_markup=keyboard,
+                parse_mode='HTML',
             )
             logger.info('✅ Приветственное сообщение отправлено пользователю', telegram_id=user.telegram_id)
             if pinned_message and not pinned_message.send_before_menu:

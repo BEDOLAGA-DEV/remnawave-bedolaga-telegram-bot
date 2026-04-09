@@ -264,6 +264,7 @@ async def show_service_rules(callback: types.CallbackQuery, db_user: User, db: A
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')]]
         ),
+        parse_mode='HTML',
     )
     await callback.answer()
 
@@ -552,6 +553,7 @@ async def show_faq_pages(
         caption,
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
         disable_web_page_preview=settings.DISABLE_WEB_PAGE_PREVIEW,
+        parse_mode='HTML',
     )
     await callback.answer()
 
@@ -689,6 +691,7 @@ async def show_faq_page(
         message_text,
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
         disable_web_page_preview=settings.DISABLE_WEB_PAGE_PREVIEW,
+        parse_mode='HTML',
     )
     await callback.answer()
 
@@ -806,6 +809,7 @@ async def show_privacy_policy(
         message_text,
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
         disable_web_page_preview=settings.DISABLE_WEB_PAGE_PREVIEW,
+        parse_mode='HTML',
     )
     await callback.answer()
 
@@ -923,6 +927,7 @@ async def show_public_offer(
         message_text,
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
         disable_web_page_preview=settings.DISABLE_WEB_PAGE_PREVIEW,
+        parse_mode='HTML',
     )
     await callback.answer()
 
