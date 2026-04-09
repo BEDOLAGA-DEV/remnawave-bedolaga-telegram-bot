@@ -177,8 +177,11 @@ class UserDetailResponse(BaseModel):
     last_activity: datetime | None = None
     cabinet_last_login: datetime | None = None
 
-    # Subscription
+    # Subscription (legacy single, kept for backward compat)
     subscription: UserSubscriptionInfo | None = None
+
+    # All subscriptions (multi-tariff)
+    subscriptions: list[UserSubscriptionInfo] = []
 
     # Promo group
     promo_group: UserPromoGroupInfo | None = None
@@ -285,6 +288,9 @@ class UpdateSubscriptionRequest(BaseModel):
         ..., description='Action: extend, shorten, set_end_date, change_tariff, set_traffic, toggle_autopay, cancel'
     )
 
+    # Target subscription (required in multi-tariff mode for non-create actions)
+    subscription_id: int | None = Field(None, description='Subscription ID to target (multi-tariff)')
+
     # For extend action
     days: int | None = Field(None, ge=1, le=3650, description='Days to extend')
 
@@ -384,6 +390,37 @@ class UpdateReferralCommissionResponse(BaseModel):
     success: bool
     old_commission_percent: int | None = None
     new_commission_percent: int | None = None
+    message: str
+
+
+class AssignReferrerRequest(BaseModel):
+    """Request to manually assign a referrer to a user."""
+
+    referrer_id: int = Field(..., gt=0, description='ID of the referrer user')
+
+
+class AssignReferrerResponse(BaseModel):
+    """Response after referrer assignment."""
+
+    success: bool
+    old_referrer_id: int | None = None
+    new_referrer_id: int | None = None
+    message: str
+
+
+class RemoveReferrerResponse(BaseModel):
+    """Response after removing a user's referrer."""
+
+    success: bool
+    old_referrer_id: int | None = None
+    message: str
+
+
+class RemoveReferralResponse(BaseModel):
+    """Response after removing a specific referral from a user."""
+
+    success: bool
+    removed_user_id: int
     message: str
 
 
@@ -607,6 +644,10 @@ class PanelSyncStatusResponse(BaseModel):
     telegram_id: int | None = None
     remnawave_uuid: str | None = None
     last_sync: datetime | None = None
+
+    # Multi-tariff context
+    subscription_id: int | None = None
+    subscription_tariff_name: str | None = None
 
     # Bot data
     bot_subscription_status: str | None = None

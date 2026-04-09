@@ -45,7 +45,7 @@ class RioPayService:
     def _get_headers(self) -> dict[str, str]:
         """Формирует заголовки для API запросов."""
         return {
-            'x-api-token': self.api_token,
+            'X-Api-Token': self.api_token,
             'Content-Type': 'application/json',
         }
 
@@ -67,11 +67,9 @@ class RioPayService:
         self,
         *,
         amount: float,
-        currency: str = 'RUB',
         external_id: str,
         purpose: str = 'Пополнение баланса',
         success_url: str | None = None,
-        fail_url: str | None = None,
     ) -> dict[str, Any]:
         """
         Создает заказ через API RioPay.
@@ -82,21 +80,17 @@ class RioPayService:
         """
         payload: dict[str, Any] = {
             'amount': str(amount),
-            'currency': currency,
             'externalId': external_id,
             'purpose': purpose,
         }
 
         if success_url:
             payload['successUrl'] = success_url
-        if fail_url:
-            payload['failUrl'] = fail_url
 
         logger.info(
             'RioPay API create_order',
             external_id=external_id,
             amount=amount,
-            currency=currency,
         )
 
         try:

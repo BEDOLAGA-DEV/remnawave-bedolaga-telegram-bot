@@ -5,14 +5,15 @@ Auto-assigns the Superadmin role to users listed in ADMIN_IDS / ADMIN_EMAILS
 config on bot startup. Runs once during the startup sequence.
 """
 
-from datetime import UTC, datetime
 from typing import Final
 
 import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.database.crud.rbac import SUPERADMIN_LEVEL, UserRoleCRUD
 from app.database.models import AdminRole, User, UserRole
 
 
@@ -129,15 +130,15 @@ async def _ensure_preset_roles(db: AsyncSession) -> AdminRole | None:
         result = await db.execute(
             select(AdminRole).where(AdminRole.is_system.is_(True), AdminRole.level == preset['level'])
         )
-        existing = result.scalar_one_or_none()
+        existing = result.scalars().first()
 
         # Fallback: поиск по имени (для ролей, созданных до этого фикса)
         if existing is None:
             result = await db.execute(select(AdminRole).where(AdminRole.name == preset['name']))
-            existing = result.scalar_one_or_none()
+            existing = result.scalars().first()
 
         if existing is not None:
-            if existing.level == 999:  # Superadmin level
+            if existing.level == SUPERADMIN_LEVEL:
                 superadmin_role = existing
             # Добавить НОВЫЕ permissions из кода, не трогая существующие (админ мог кастомизировать)
             if existing.is_system:
@@ -196,6 +197,8 @@ async def bootstrap_superadmins(db: AsyncSession) -> None:
         if not admin_ids and not admin_emails:
             logger.debug('No admin IDs or emails configured, skipping superadmin assignment')
             await db.commit()
+            # Safety check even when no IDs configured — someone may have cleared them
+            await _warn_if_no_superadmins(db, admin_ids, admin_emails)
             return
 
         role_id: int = superadmin_role.id
@@ -213,21 +216,107 @@ async def bootstrap_superadmins(db: AsyncSession) -> None:
             if assigned:
                 assigned_count += 1
 
-        # ── 4. Commit all changes ──────────────────────────────────────
+        # ── 4. Revoke superadmin from users NOT in env ───────────────
+        revoked_count = await _revoke_stale_superadmins(
+            db,
+            role_id=role_id,
+            admin_ids=admin_ids,
+            admin_emails=admin_emails,
+        )
+
+        # ── 5. Commit all changes ──────────────────────────────────────
         await db.commit()
 
-        if assigned_count > 0:
+        if assigned_count > 0 or revoked_count > 0:
             logger.info(
                 'Superadmin bootstrap completed',
                 assigned_count=assigned_count,
+                revoked_count=revoked_count,
                 role_id=role_id,
             )
         else:
-            logger.debug('Superadmin bootstrap: no new assignments needed')
+            logger.debug('Superadmin bootstrap: no changes needed')
+
+        # ── 6. Safety: warn if no active superadmins exist ────────────
+        await _warn_if_no_superadmins(db, admin_ids, admin_emails)
 
     except Exception:
         await db.rollback()
         logger.exception('Failed to bootstrap superadmins, continuing startup')
+
+
+async def _revoke_stale_superadmins(
+    db: AsyncSession,
+    *,
+    role_id: int,
+    admin_ids: list[int],
+    admin_emails: list[str],
+) -> int:
+    """Revoke superadmin from users who are no longer in env config.
+
+    Env config (ADMIN_IDS / ADMIN_EMAILS) is the single source of truth.
+    If a user was removed from env, their superadmin DB role is deactivated
+    on the next bot restart.
+
+    Returns the number of revoked assignments.
+    """
+    result = await db.execute(
+        select(UserRole)
+        .options(selectinload(UserRole.user))
+        .where(
+            UserRole.role_id == role_id,
+            UserRole.is_active.is_(True),
+        )
+    )
+    active_assignments = result.scalars().all()
+
+    admin_ids_set = set(admin_ids)
+    admin_emails_set = {e.lower() for e in admin_emails}
+
+    revoked = 0
+    for assignment in active_assignments:
+        user = assignment.user
+        if user is None:
+            continue
+
+        # Check if user is still in env config.
+        # email_verified is required — symmetric with _ensure_role_by_email.
+        in_env_by_id = user.telegram_id is not None and user.telegram_id in admin_ids_set
+        in_env_by_email = user.email is not None and user.email_verified and user.email.lower() in admin_emails_set
+
+        if not in_env_by_id and not in_env_by_email:
+            assignment.is_active = False
+            await db.flush()
+            revoked += 1
+            logger.warning(
+                'Revoked Superadmin role: user removed from env config',
+                user_id=user.id,
+                telegram_id=user.telegram_id,
+                email=user.email,
+                user_role_id=assignment.id,
+            )
+
+    return revoked
+
+
+async def _warn_if_no_superadmins(
+    db: AsyncSession,
+    admin_ids: list[int],
+    admin_emails: list[str],
+) -> None:
+    """Log critical/warning if no active superadmin RBAC roles exist in DB."""
+    active = await UserRoleCRUD.get_superadmin_count(db)
+    if active > 0:
+        return
+    if not admin_ids and not admin_emails:
+        logger.critical(
+            'No active superadmins exist and no ADMIN_IDS/ADMIN_EMAILS configured. '
+            'Cabinet admin access is not possible until this is resolved.',
+        )
+    else:
+        logger.warning(
+            'No active superadmin RBAC roles in DB. Legacy config admins (ADMIN_IDS/ADMIN_EMAILS) still have access.',
+        )
 
 
 async def _ensure_role_by_telegram_id(
@@ -256,13 +345,18 @@ async def _ensure_role_by_email(
     email: str,
     role_id: int,
 ) -> bool:
-    """Assign Superadmin role to user found by email (case-insensitive). Returns True if assigned."""
-    result = await db.execute(select(User).where(func.lower(User.email) == email.lower()))
+    """Assign Superadmin role to user found by verified email (case-insensitive). Returns True if assigned."""
+    result = await db.execute(
+        select(User).where(
+            func.lower(User.email) == email.lower(),
+            User.email_verified.is_(True),
+        )
+    )
     user = result.scalar_one_or_none()
 
     if user is None:
         logger.debug(
-            'Admin user (email) not yet registered, skipping',
+            'Admin user (email) not yet registered or not verified, skipping',
             email=email,
         )
         return False
@@ -279,12 +373,12 @@ async def _assign_if_missing(
 ) -> bool:
     """Create or reactivate a UserRole row for this user/role pair.
 
-    Handles the unique constraint on (user_id, role_id) by checking for
-    ANY existing assignment (active or inactive) and reactivating if needed.
+    Env config (ADMIN_IDS / ADMIN_EMAILS) is the source of truth for
+    Superadmin assignments.  If a previously revoked assignment exists,
+    it is reactivated — the env config always wins.
 
     Returns True if a new assignment was created or an inactive one was reactivated.
     """
-    # Check for ANY existing assignment (active or not) to respect unique constraint
     result = await db.execute(
         select(UserRole).where(
             UserRole.user_id == user_id,
@@ -301,14 +395,13 @@ async def _assign_if_missing(
                 identifier=identifier,
             )
             return False
-        # Reactivate previously revoked assignment
+
+        # Reactivate: env config is the source of truth
         existing.is_active = True
-        existing.assigned_at = datetime.now(UTC)
         await db.flush()
         logger.info(
-            'Reactivated Superadmin role for user',
+            'Reactivated Superadmin role (user is in env config)',
             user_id=user_id,
-            role_id=role_id,
             identifier=identifier,
             user_role_id=existing.id,
         )

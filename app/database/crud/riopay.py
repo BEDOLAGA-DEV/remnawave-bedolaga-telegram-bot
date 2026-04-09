@@ -15,7 +15,7 @@ logger = structlog.get_logger(__name__)
 async def create_riopay_payment(
     db: AsyncSession,
     *,
-    user_id: int,
+    user_id: int | None,
     order_id: str,
     amount_kopeks: int,
     currency: str = 'RUB',
@@ -63,6 +63,17 @@ async def get_riopay_payment_by_riopay_order_id(db: AsyncSession, riopay_order_i
 async def get_riopay_payment_by_id(db: AsyncSession, payment_id: int) -> RioPayPayment | None:
     """Получает платеж по ID."""
     result = await db.execute(select(RioPayPayment).where(RioPayPayment.id == payment_id))
+    return result.scalar_one_or_none()
+
+
+async def get_riopay_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> RioPayPayment | None:
+    """Получает платеж по ID с блокировкой FOR UPDATE (для защиты от TOCTOU race)."""
+    result = await db.execute(
+        select(RioPayPayment)
+        .where(RioPayPayment.id == payment_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     return result.scalar_one_or_none()
 
 

@@ -151,6 +151,13 @@ class CryptoBotPaymentMixin:
                 )
                 return True
 
+            # Lock payment row immediately to prevent concurrent webhook processing (TOCTOU race)
+            locked = await cryptobot_crud.get_cryptobot_payment_by_invoice_id_for_update(db, invoice_id)
+            if not locked:
+                logger.error('CryptoBot: не удалось заблокировать платёж', invoice_id=invoice_id)
+                return False
+            payment = locked
+
             if payment.status == 'paid':
                 logger.info('CryptoBot платеж уже обработан', invoice_id=invoice_id)
                 return True
@@ -164,13 +171,14 @@ class CryptoBotPaymentMixin:
             else:
                 paid_at = datetime.now(UTC)
 
-            updated_payment = await cryptobot_crud.update_cryptobot_payment_status(
-                db,
-                invoice_id,
-                status,
-                paid_at,
-                commit=False,
-            )
+            # Inline field updates — NO intermediate commit that would release FOR UPDATE lock
+            payment.status = status
+            payment.updated_at = datetime.now(UTC)
+            if status == 'paid' and paid_at:
+                payment.paid_at = paid_at
+            await db.flush()
+
+            updated_payment = payment
 
             descriptor = decode_payment_payload(
                 getattr(updated_payment, 'payload', '') or '',
@@ -202,11 +210,7 @@ class CryptoBotPaymentMixin:
                 if renewal_handled:
                     return True
 
-            locked = await cryptobot_crud.get_cryptobot_payment_by_id_for_update(db, updated_payment.id)
-            if not locked:
-                logger.error('CryptoBot: не удалось заблокировать платёж', payment_id=updated_payment.id)
-                return False
-            updated_payment = locked
+            # FOR UPDATE lock already acquired above — no need to re-lock
 
             # --- Guest purchase flow (landing page) ---
             # CryptoBot stores guest metadata in the payload field (JSON string),
@@ -428,12 +432,15 @@ class CryptoBotPaymentMixin:
             )
             return False
 
-        subscription = getattr(user, 'subscription', None)
-        if not subscription or subscription.id != descriptor.subscription_id:
+        # Find the specific subscription by ID with ownership check
+        from app.database.crud.subscription import get_subscription_by_id_for_user
+
+        subscription = await get_subscription_by_id_for_user(db, descriptor.subscription_id, user.id)
+        if not subscription:
             logger.warning(
-                'Продление через CryptoBot отклонено: подписка не совпадает с ожидаемой',
-                current_subscription_id=getattr(subscription, 'id', None),
+                'Продление через CryptoBot отклонено: подписка не найдена или не принадлежит пользователю',
                 expected_subscription_id=descriptor.subscription_id,
+                user_id=user.id,
             )
             return False
 

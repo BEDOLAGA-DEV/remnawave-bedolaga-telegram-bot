@@ -1,5 +1,20 @@
 """Shared formatting utilities for traffic, price, and period display."""
 
+import html
+
+
+def safe_html_name(name: str | None) -> str:
+    """HTML-escape a display name for Telegram HTML messages."""
+    return html.escape(name or '')
+
+
+def user_html_link(user) -> str:
+    """Build an HTML-safe clickable user link for Telegram messages."""
+    safe = safe_html_name(user.full_name)
+    if getattr(user, 'telegram_id', None):
+        return f'<a href="tg://user?id={user.telegram_id}">{safe}</a>'
+    return f'<b>{safe}</b>'
+
 
 def format_traffic(gb: int) -> str:
     """Форматирует трафик."""

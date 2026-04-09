@@ -1,3 +1,4 @@
+import html
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import structlog
@@ -293,7 +294,7 @@ def _build_edit_menu_content(
     header = texts.t(
         'ADMIN_PROMO_GROUP_EDIT_MENU_TITLE',
         '✏️ Настройки промогруппы «{name}»',
-    ).format(name=group.name)
+    ).format(name=html.escape(group.name))
 
     lines = [header]
     lines.extend(_format_discount_lines(texts, group))
@@ -462,28 +463,17 @@ async def show_promo_groups_menu(
 
         keyboard_rows = []
         for group, member_count in groups:
+            icon = '⭐' if group.is_default else '🎯'
             default_suffix = texts.t('ADMIN_PROMO_GROUPS_DEFAULT_LABEL', ' (базовая)') if group.is_default else ''
-            group_lines = [
-                f'{"⭐" if group.is_default else "🎯"} <b>{group.name}</b>{default_suffix}',
-            ]
-            group_lines.extend(_format_discount_lines(texts, group))
-            group_lines.append(_format_auto_assign_line(texts, group))
-            group_lines.append(
-                texts.t(
-                    'ADMIN_PROMO_GROUPS_MEMBERS_COUNT',
-                    'Участников: {count}',
-                ).format(count=member_count)
-            )
-
-            period_lines = _format_period_discounts_lines(texts, group, db_user.language)
-            group_lines.extend(period_lines)
-            group_lines.append('')
-
-            lines.extend(group_lines)
+            members_label = texts.t(
+                'ADMIN_PROMO_GROUPS_MEMBERS_COUNT',
+                'Участников: {count}',
+            ).format(count=member_count)
+            lines.append(f'{icon} <b>{html.escape(group.name)}</b>{default_suffix} — {members_label}')
             keyboard_rows.append(
                 [
                     types.InlineKeyboardButton(
-                        text=f'{"⭐" if group.is_default else "🎯"} {group.name}',
+                        text=f'{icon} {group.name}',
                         callback_data=f'promo_group_manage_{group.id}',
                     )
                 ]
@@ -535,7 +525,7 @@ async def show_promo_group_details(
         texts.t(
             'ADMIN_PROMO_GROUP_DETAILS_TITLE',
             '💳 <b>Промогруппа:</b> {name}',
-        ).format(name=group.name)
+        ).format(name=html.escape(group.name))
     ]
     lines.extend(_format_discount_lines(texts, group))
     lines.append(_format_auto_assign_line(texts, group))
@@ -813,7 +803,7 @@ async def process_create_group_auto_assign(
 
     await state.clear()
     await message.answer(
-        texts.t('ADMIN_PROMO_GROUP_CREATED', 'Промогруппа «{name}» создана.').format(name=group.name),
+        texts.t('ADMIN_PROMO_GROUP_CREATED', 'Промогруппа «{name}» создана.').format(name=html.escape(group.name)),
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -886,7 +876,7 @@ async def prompt_edit_promo_group_field(
         prompt = texts.t(
             'ADMIN_PROMO_GROUP_EDIT_NAME_PROMPT',
             'Введите новое название промогруппы (текущее: {name}):',
-        ).format(name=group.name)
+        ).format(name=html.escape(group.name))
     elif field == 'priority':
         await state.set_state(AdminStates.editing_promo_group_priority)
         prompt = texts.t(
@@ -962,7 +952,7 @@ async def process_edit_group_name(
         texts,
         group,
         data.get('language', db_user.language),
-        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=group.name),
+        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=html.escape(group.name)),
     )
 
 
@@ -1004,7 +994,7 @@ async def process_edit_group_priority(
         texts,
         group,
         data.get('language', db_user.language),
-        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=group.name),
+        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=html.escape(group.name)),
     )
 
 
@@ -1039,7 +1029,7 @@ async def process_edit_group_traffic(
         texts,
         group,
         data.get('language', db_user.language),
-        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=group.name),
+        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=html.escape(group.name)),
     )
 
 
@@ -1074,7 +1064,7 @@ async def process_edit_group_servers(
         texts,
         group,
         data.get('language', db_user.language),
-        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=group.name),
+        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=html.escape(group.name)),
     )
 
 
@@ -1109,7 +1099,7 @@ async def process_edit_group_devices(
         texts,
         group,
         data.get('language', db_user.language),
-        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=group.name),
+        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=html.escape(group.name)),
     )
 
 
@@ -1149,7 +1139,7 @@ async def process_edit_group_period_discounts(
         texts,
         group,
         data.get('language', db_user.language),
-        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=group.name),
+        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=html.escape(group.name)),
     )
 
 
@@ -1193,7 +1183,7 @@ async def process_edit_group_auto_assign(
         texts,
         group,
         data.get('language', db_user.language),
-        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=group.name),
+        texts.t('ADMIN_PROMO_GROUP_UPDATED', 'Промогруппа «{name}» обновлена.').format(name=html.escape(group.name)),
     )
 
 
@@ -1223,19 +1213,20 @@ async def show_promo_group_members(
     title = texts.t(
         'ADMIN_PROMO_GROUP_MEMBERS_TITLE',
         '👥 Участники группы {name}',
-    ).format(name=group.name)
+    ).format(name=html.escape(group.name))
 
     if not members:
         body = texts.t('ADMIN_PROMO_GROUP_MEMBERS_EMPTY', 'В этой группе пока нет участников.')
     else:
         lines = []
         for index, user in enumerate(members, start=offset + 1):
-            username = f'@{user.username}' if user.username else '—'
+            username = f'@{html.escape(user.username)}' if user.username else '—'
+            safe_name = html.escape(user.full_name or '')
             if user.telegram_id:
-                user_link = f'<a href="tg://user?id={user.telegram_id}">{user.full_name}</a>'
+                user_link = f'<a href="tg://user?id={user.telegram_id}">{safe_name}</a>'
                 tg_display = str(user.telegram_id)
             else:
-                user_link = f'<b>{user.full_name}</b>'
+                user_link = f'<b>{safe_name}</b>'
                 tg_display = user.email or f'#{user.id}'
             lines.append(f'{index}. {user_link} (ID {user.id}, {username}, TG {tg_display})')
         body = '\n'.join(lines)
@@ -1284,7 +1275,7 @@ async def request_delete_promo_group(
     confirm_text = texts.t(
         'ADMIN_PROMO_GROUP_DELETE_CONFIRM',
         'Удалить промогруппу «{name}»? Все пользователи будут переведены в базовую группу.',
-    ).format(name=group.name)
+    ).format(name=html.escape(group.name))
 
     await callback.message.edit_text(
         confirm_text,
@@ -1319,7 +1310,7 @@ async def delete_promo_group_confirmed(
         return
 
     await callback.message.edit_text(
-        texts.t('ADMIN_PROMO_GROUP_DELETED', 'Промогруппа «{name}» удалена.').format(name=group.name),
+        texts.t('ADMIN_PROMO_GROUP_DELETED', 'Промогруппа «{name}» удалена.').format(name=html.escape(group.name)),
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='admin_promo_groups')]]
         ),

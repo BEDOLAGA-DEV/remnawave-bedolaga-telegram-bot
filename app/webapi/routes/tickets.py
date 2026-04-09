@@ -4,13 +4,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.bot_factory import create_bot
 from app.database.crud.ticket import TicketCRUD, TicketMessageCRUD
 from app.database.models import Ticket, TicketMessage, TicketStatus
 
@@ -224,10 +221,7 @@ async def reply_to_ticket(
         media_caption=payload.media_caption,
     )
 
-    bot = Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = create_bot()
     try:
         from app.handlers.admin.tickets import notify_user_about_ticket_reply
 
@@ -286,10 +280,7 @@ async def get_ticket_message_media(
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'Media not found for this message')
 
     media_url: str | None = None
-    bot = Bot(
-        token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = create_bot()
     try:
         file = await bot.get_file(message.media_file_id)
         if file.file_path:

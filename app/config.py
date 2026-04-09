@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import time
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlparse
+from urllib.parse import quote as _url_quote, urlparse
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -55,6 +55,17 @@ class Settings(BaseSettings):
     ADMIN_NOTIFICATIONS_TOPIC_ID: int | None = None
     ADMIN_NOTIFICATIONS_TICKET_TOPIC_ID: int | None = None
     ADMIN_NOTIFICATIONS_NALOG_TOPIC_ID: int | None = None
+
+    # Раздельные топики для уведомлений (если не задано — fallback на ADMIN_NOTIFICATIONS_TOPIC_ID)
+    ADMIN_NOTIFICATIONS_PURCHASES_TOPIC_ID: int | None = None  # Покупки подписок
+    ADMIN_NOTIFICATIONS_RENEWALS_TOPIC_ID: int | None = None  # Продления
+    ADMIN_NOTIFICATIONS_TRIALS_TOPIC_ID: int | None = None  # Триалы
+    ADMIN_NOTIFICATIONS_BALANCE_TOPIC_ID: int | None = None  # Пополнение баланса
+    ADMIN_NOTIFICATIONS_ADDONS_TOPIC_ID: int | None = None  # Докупка трафика/устройств/серверов
+    ADMIN_NOTIFICATIONS_INFRASTRUCTURE_TOPIC_ID: int | None = None  # Ноды, техработы, статус панели
+    ADMIN_NOTIFICATIONS_ERRORS_TOPIC_ID: int | None = None  # Ошибки бота
+    ADMIN_NOTIFICATIONS_PROMO_TOPIC_ID: int | None = None  # Промокоды, кампании, промогруппы
+    ADMIN_NOTIFICATIONS_PARTNERS_TOPIC_ID: int | None = None  # Партнёрки, выводы, админ-действия
 
     # Настройки очереди чеков NaloGO
     NALOGO_QUEUE_CHECK_INTERVAL: int = 300  # Интервал проверки очереди (секунды)
@@ -107,6 +118,7 @@ class Settings(BaseSettings):
     REMNAWAVE_WEBHOOK_ENABLED: bool = False
     REMNAWAVE_WEBHOOK_PATH: str = '/remnawave-webhook'
     REMNAWAVE_WEBHOOK_SECRET: str | None = None  # HMAC-SHA256 shared secret (min 32 chars)
+    REMNAWAVE_WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS: bool = True
 
     # Webhook user notification toggles (what Telegram messages users receive from webhook events)
     WEBHOOK_NOTIFY_USER_ENABLED: bool = True
@@ -121,6 +133,7 @@ class Settings(BaseSettings):
     WEBHOOK_NOTIFY_NOT_CONNECTED: bool = True
     WEBHOOK_NOTIFY_BANDWIDTH_THRESHOLD: bool = True
     WEBHOOK_NOTIFY_DEVICES: bool = True
+    WEBHOOK_NOTIFY_TORRENT_DETECTED: bool = True
 
     TRIAL_DURATION_DAYS: int = 3
     TRIAL_TRAFFIC_LIMIT_GB: int = 10
@@ -195,6 +208,11 @@ class Settings(BaseSettings):
     # - classic: классический режим (выбор серверов, трафика, устройств, периода отдельно)
     # - tariffs: режим тарифов (готовые пакеты с фиксированными параметрами)
     SALES_MODE: str = 'tariffs'
+
+    # Multi-tariff mode: allows users to purchase multiple tariffs simultaneously
+    # Only works when SALES_MODE='tariffs'
+    MULTI_TARIFF_ENABLED: bool = False
+    MAX_ACTIVE_SUBSCRIPTIONS: int = 10
 
     # ID тарифа для триала в режиме тарифов (0 = использовать стандартные настройки триала)
     # Если указан ID тарифа, параметры триала берутся из тарифа (traffic_limit_gb, device_limit, allowed_squads)
@@ -353,10 +371,9 @@ class Settings(BaseSettings):
     YOOKASSA_TRUSTED_PROXY_NETWORKS: str = ''
     YOOKASSA_MIN_AMOUNT_KOPEKS: int = 5000
     YOOKASSA_MAX_AMOUNT_KOPEKS: int = 1000000
-    YOOKASSA_QUICK_AMOUNT_SELECTION_ENABLED: bool = False
     YOOKASSA_RECURRENT_ENABLED: bool = False
     YOOKASSA_RECURRENT_REQUIRED: bool = False
-    DISABLE_TOPUP_BUTTONS: bool = False
+    YOOKASSA_TEST_MODE: bool = False
     SUPPORT_TOPUP_ENABLED: bool = True
     PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED: bool = False
     PAYMENT_VERIFICATION_AUTO_CHECK_INTERVAL_MINUTES: int = 10
@@ -366,6 +383,7 @@ class Settings(BaseSettings):
     NALOGO_PASSWORD: str | None = None
     NALOGO_DEVICE_ID: str | None = None
     NALOGO_STORAGE_PATH: str = './nalogo_tokens.json'
+    NALOGO_PROXY_URL: str | None = None  # SOCKS proxy for nalog.ru; falls back to PROXY_URL if not set
 
     AUTO_PURCHASE_AFTER_TOPUP_ENABLED: bool = False
 
@@ -450,7 +468,8 @@ class Settings(BaseSettings):
     PLATEGA_RETURN_URL: str | None = None
     PLATEGA_FAILED_URL: str | None = None
     PLATEGA_CURRENCY: str = 'RUB'
-    PLATEGA_ACTIVE_METHODS: str = '2,10,11,12,13'
+    PLATEGA_ACTIVE_METHODS: str = '2,11,12,13'
+    PLATEGA_INLINE_METHODS: bool = True
     PLATEGA_MIN_AMOUNT_KOPEKS: int = 10000
     PLATEGA_MAX_AMOUNT_KOPEKS: int = 100000000
     PLATEGA_WEBHOOK_PATH: str = '/platega-webhook'
@@ -535,6 +554,13 @@ class Settings(BaseSettings):
     KASSA_AI_WEBHOOK_PORT: int = 8089
     # Способ оплаты: 44 = СБП (QR код), 36 = Карты РФ, 43 = SberPay
     KASSA_AI_PAYMENT_SYSTEM_ID: int = 44
+    # Раздельные методы оплаты KassaAI (отображаются как отдельные кнопки)
+    KASSA_AI_SBP_ENABLED: bool = False  # СБП — payment_system_id=44
+    KASSA_AI_SBP_DISPLAY_NAME: str = 'СБП (KassaAI)'
+    KASSA_AI_CARD_ENABLED: bool = False  # Карты РФ — payment_system_id=36
+    KASSA_AI_CARD_DISPLAY_NAME: str = 'Карта (KassaAI)'
+    KASSA_AI_SBERPAY_ENABLED: bool = False  # SberPay — payment_system_id=43
+    KASSA_AI_SBERPAY_DISPLAY_NAME: str = 'SberPay (KassaAI)'
 
     # RioPay (api.riopay.online) v2.0.1
     RIOPAY_ENABLED: bool = False
@@ -548,6 +574,17 @@ class Settings(BaseSettings):
     RIOPAY_SUCCESS_URL: str | None = None
     RIOPAY_FAIL_URL: str | None = None
 
+    # SeverPay (severpay.io)
+    SEVERPAY_ENABLED: bool = False
+    SEVERPAY_MID: int | None = None  # Merchant ID
+    SEVERPAY_TOKEN: str | None = None  # Secret token for HMAC-SHA256
+    SEVERPAY_DISPLAY_NAME: str = 'SeverPay'
+    SEVERPAY_CURRENCY: str = 'RUB'
+    SEVERPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
+    SEVERPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    SEVERPAY_WEBHOOK_PATH: str = '/severpay-webhook'
+    SEVERPAY_RETURN_URL: str | None = None
+    SEVERPAY_LIFETIME: int = 1440  # minutes, 30-4320
     # External Gateway -- универсальный внешний шлюз
     EXTERNAL_GATEWAY_ENABLED: bool = False
     EXTERNAL_GATEWAY_URL: str = ''  # Базовый URL шлюза (https://pay.example.com)
@@ -574,6 +611,13 @@ class Settings(BaseSettings):
     CONNECT_BUTTON_MODE: str = 'miniapp_subscription'
     MINIAPP_CUSTOM_URL: str = ''
     MINIAPP_STATIC_PATH: str = 'miniapp'
+
+    # Media upload settings (news article images/videos)
+    MEDIA_UPLOAD_DIR: str = './uploads'
+    MEDIA_MAX_IMAGE_SIZE_MB: int = 10
+    MEDIA_MAX_VIDEO_SIZE_MB: int = 50
+    MEDIA_IMAGE_MAX_DIMENSION: int = 2048
+    MEDIA_JPEG_QUALITY: int = 85
     MINIAPP_PURCHASE_URL: str = ''
     MINIAPP_SERVICE_NAME_EN: str = 'Bedolaga VPN'
     MINIAPP_SERVICE_NAME_RU: str = 'Bedolaga VPN'
@@ -796,6 +840,27 @@ class Settings(BaseSettings):
     BAN_SYSTEM_API_TOKEN: str | None = None
     BAN_SYSTEM_REQUEST_TIMEOUT: int = 30
 
+    # SOCKS5 proxy for routing bot traffic to Telegram API
+    # Format: socks5://user:password@host:port or socks5://host:port
+    PROXY_URL: str | None = None
+
+    @field_validator('PROXY_URL', 'NALOGO_PROXY_URL', mode='before')
+    @classmethod
+    def validate_proxy_url(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        if parsed.scheme not in ('socks5', 'socks5h', 'socks4'):
+            raise ValueError(
+                f'Proxy URL must use socks5://, socks5h://, or socks4:// scheme, got: {parsed.scheme!r}. '
+                'HTTP proxies are not supported for security reasons.'
+            )
+        if not parsed.hostname:
+            raise ValueError('Proxy URL must contain a hostname')
+        return value
+
     @field_validator('MAIN_MENU_MODE', mode='before')
     @classmethod
     def normalize_main_menu_mode(cls, value: str | None) -> str:
@@ -921,6 +986,17 @@ class Settings(BaseSettings):
     def is_sqlite(self) -> bool:
         """Проверяет, используется ли SQLite"""
         return 'sqlite' in self.get_database_url()
+
+    def get_proxy_url(self) -> str | None:
+        """Return SOCKS5 proxy URL or None."""
+        return self.PROXY_URL if self.PROXY_URL else None
+
+    def get_nalogo_proxy_url(self) -> str | None:
+        """Return SOCKS proxy URL for nalogo or None.
+
+        Uses NALOGO_PROXY_URL if set, otherwise falls back to PROXY_URL.
+        """
+        return self.NALOGO_PROXY_URL or self.PROXY_URL
 
     def is_admin(self, telegram_id: int | None = None, email: str | None = None) -> bool:
         """
@@ -1093,12 +1169,17 @@ class Settings(BaseSettings):
         username_clean = (username or '').lstrip('@')
         full_name_value = full_name or ''
 
+        # Remnawave разрешает только буквы, цифры, подчёркивания и дефисы
+        def _sanitize(value: str) -> str:
+            result = re.sub(r'[^0-9A-Za-z_-]+', '_', value)
+            return re.sub(r'_+', '_', result).strip('_-')
+
         # Для email-пользователей формируем уникальный identifier
         if telegram_id:
             identifier = str(telegram_id)
         elif email:
-            email_prefix = email.split('@')[0][:10]
-            identifier = f'email_{email_prefix}_{user_id}' if user_id else f'email_{email_prefix}'
+            email_prefix = _sanitize(email.split('@')[0][:10])
+            identifier = _sanitize(f'email_{email_prefix}_{user_id}' if user_id else f'email_{email_prefix}')
         elif user_id:
             identifier = f'id_{user_id}'
         else:
@@ -1112,20 +1193,18 @@ class Settings(BaseSettings):
                 'username_clean': username_clean,
                 'telegram_id': str(telegram_id) if telegram_id else identifier,
                 'identifier': identifier,
-                'email': email.split('@')[0] if email else '',
+                'email': _sanitize(email.split('@')[0]) if email else '',
                 'user_id': str(user_id) if user_id else '',
             },
         )
 
         raw_username = template.format_map(values).strip()
-        # Remnawave разрешает только буквы, цифры, подчёркивания и дефисы
-        sanitized_username = re.sub(r'[^0-9A-Za-z_-]+', '_', raw_username)
-        sanitized_username = re.sub(r'_+', '_', sanitized_username).strip('_-')
+        sanitized_username = _sanitize(raw_username)
 
         if not sanitized_username:
-            sanitized_username = f'user_{identifier}'
+            sanitized_username = _sanitize(f'user_{identifier}')
 
-        return sanitized_username[:36]
+        return sanitized_username[:36].strip('_-') or 'user'
 
     @staticmethod
     def parse_daily_time_list(raw_value: str | None) -> list[time]:
@@ -1256,10 +1335,6 @@ class Settings(BaseSettings):
             return normalized in {'1', 'true', 'yes', 'on'}
 
         return bool(value)
-
-    def is_quick_amount_buttons_enabled(self) -> bool:
-        """Показывать ли кнопки быстрого выбора суммы пополнения."""
-        return self.YOOKASSA_QUICK_AMOUNT_SELECTION_ENABLED and not self.DISABLE_TOPUP_BUTTONS
 
     def get_available_languages(self) -> list[str]:
         defaults = ['ru', 'en', 'ua', 'zh', 'fa']
@@ -1437,23 +1512,43 @@ class Settings(BaseSettings):
 
     _CABINET_URL_DEFAULT = 'https://example.com/cabinet'
 
+    def _encode_referral_code(self, referral_code: str) -> str:
+        """Validate and URL-encode a referral code."""
+        if not referral_code:
+            raise ValueError('referral_code must not be empty or None')
+        return _url_quote(referral_code, safe='')
+
+    def _normalized_cabinet_url(self) -> str | None:
+        """Return normalized cabinet URL, or None if not configured."""
+        cabinet_url = (self.CABINET_URL or '').strip().rstrip('/')
+        if not cabinet_url or cabinet_url == self._CABINET_URL_DEFAULT:
+            return None
+        return cabinet_url
+
     def get_referral_link(self, referral_code: str, bot_username: str | None = None) -> str:
         """Build a referral link pointing to the web cabinet.
 
         Falls back to a Telegram bot deep link when CABINET_URL is not configured.
         """
-        from urllib.parse import quote
+        cabinet_link = self.get_cabinet_referral_link(referral_code)
+        if cabinet_link:
+            return cabinet_link
+        return self.get_bot_referral_link(referral_code, bot_username)
 
-        if not referral_code:
-            raise ValueError('referral_code must not be empty or None')
-
-        safe_code = quote(referral_code, safe='')
-        cabinet_url = (self.CABINET_URL or '').strip().rstrip('/')
-        if cabinet_url and cabinet_url != self._CABINET_URL_DEFAULT:
-            sep = '&' if '?' in cabinet_url else '?'
-            return f'{cabinet_url}{sep}ref={safe_code}'
+    def get_bot_referral_link(self, referral_code: str, bot_username: str | None = None) -> str:
+        """Always return the Telegram bot deep link for a referral code."""
+        safe_code = self._encode_referral_code(referral_code)
         username = bot_username or self.get_bot_username() or 'bot'
         return f'https://t.me/{username}?start={safe_code}'
+
+    def get_cabinet_referral_link(self, referral_code: str) -> str | None:
+        """Return the cabinet referral link, or None if cabinet is not configured."""
+        cabinet_url = self._normalized_cabinet_url()
+        if not cabinet_url:
+            return None
+        safe_code = self._encode_referral_code(referral_code)
+        sep = '&' if '?' in cabinet_url else '?'
+        return f'{cabinet_url}{sep}ref={safe_code}'
 
     def is_deep_links_enabled(self) -> bool:
         return self.ENABLE_DEEP_LINKS
@@ -1608,6 +1703,14 @@ class Settings(BaseSettings):
     def get_disabled_mode_device_limit(self) -> int | None:
         return self.get_devices_selection_disabled_amount()
 
+    def is_multi_tariff_enabled(self) -> bool:
+        """Проверяет, включен ли мультитарифный режим."""
+        return self.MULTI_TARIFF_ENABLED and self.SALES_MODE == 'tariffs'
+
+    def get_max_active_subscriptions(self) -> int:
+        """Максимальное число одновременных подписок (>1 только в multi-tariff)."""
+        return self.MAX_ACTIVE_SUBSCRIPTIONS if self.is_multi_tariff_enabled() else 1
+
     def is_tariffs_mode(self) -> bool:
         """Проверяет, включен ли режим продаж 'Тарифы'."""
         return self.SALES_MODE == 'tariffs'
@@ -1758,7 +1861,7 @@ class Settings(BaseSettings):
             except ValueError:
                 logger.warning('Некорректный код метода Platega', part=part)
                 continue
-            if method_code in {2, 10, 11, 12, 13} and method_code not in seen:
+            if method_code in {2, 11, 12, 13} and method_code not in seen:
                 methods.append(method_code)
                 seen.add(method_code)
 
@@ -1771,8 +1874,7 @@ class Settings(BaseSettings):
     def get_platega_method_definitions() -> dict[int, dict[str, str]]:
         return {
             2: {'name': 'СБП (QR)', 'title': '🏦 СБП (QR)'},
-            10: {'name': 'Банковские карты (RUB)', 'title': '💳 Карты (RUB)'},
-            11: {'name': 'Банковские карты', 'title': '💳 Банковские карты'},
+            11: {'name': 'Карты (RUB)', 'title': '💳 Карты (RUB)'},
             12: {'name': 'Международные карты', 'title': '🌍 Международные карты'},
             13: {'name': 'Криптовалюта', 'title': '🪙 Криптовалюта'},
         }
@@ -1870,6 +1972,45 @@ class Settings(BaseSettings):
     def get_riopay_display_name_html(self) -> str:
         return html.escape(self.get_riopay_display_name())
 
+    def is_severpay_enabled(self) -> bool:
+        return self.SEVERPAY_ENABLED and self.SEVERPAY_MID is not None and self.SEVERPAY_TOKEN is not None
+
+    def get_severpay_display_name(self) -> str:
+        name = (self.SEVERPAY_DISPLAY_NAME or '').strip()
+        return name if name else 'SeverPay'
+
+    def get_severpay_display_name_html(self) -> str:
+        return html.escape(self.get_severpay_display_name())
+
+    def is_kassa_ai_sbp_enabled(self) -> bool:
+        return self.KASSA_AI_SBP_ENABLED and self.is_kassa_ai_enabled()
+
+    def get_kassa_ai_sbp_display_name(self) -> str:
+        name = (self.KASSA_AI_SBP_DISPLAY_NAME or '').strip()
+        return name if name else 'СБП (KassaAI)'
+
+    def get_kassa_ai_sbp_display_name_html(self) -> str:
+        return html.escape(self.get_kassa_ai_sbp_display_name())
+
+    def is_kassa_ai_card_enabled(self) -> bool:
+        return self.KASSA_AI_CARD_ENABLED and self.is_kassa_ai_enabled()
+
+    def get_kassa_ai_card_display_name(self) -> str:
+        name = (self.KASSA_AI_CARD_DISPLAY_NAME or '').strip()
+        return name if name else 'Карта (KassaAI)'
+
+    def get_kassa_ai_card_display_name_html(self) -> str:
+        return html.escape(self.get_kassa_ai_card_display_name())
+
+    def is_kassa_ai_sberpay_enabled(self) -> bool:
+        return self.KASSA_AI_SBERPAY_ENABLED and self.is_kassa_ai_enabled()
+
+    def get_kassa_ai_sberpay_display_name(self) -> str:
+        name = (self.KASSA_AI_SBERPAY_DISPLAY_NAME or '').strip()
+        return name if name else 'SberPay (KassaAI)'
+
+    def get_kassa_ai_sberpay_display_name_html(self) -> str:
+        return html.escape(self.get_kassa_ai_sberpay_display_name())
     def is_external_gateway_enabled(self) -> bool:
         return (
             self.EXTERNAL_GATEWAY_ENABLED
@@ -2154,13 +2295,17 @@ class Settings(BaseSettings):
         except (ValueError, AttributeError):
             return [30, 60, 90, 180, 360]
 
-    def get_balance_payment_description(self, amount_kopeks: int, telegram_user_id: int | None = None) -> str:
+    def get_balance_payment_description(
+        self, amount_kopeks: int, telegram_user_id: int | None = None, user_db_id: int | None = None
+    ) -> str:
         # Базовое описание
         description = f'{self.PAYMENT_BALANCE_DESCRIPTION} на {self.format_price(amount_kopeks)}'
 
-        # Если передан user_id, добавляем его
+        # Добавляем идентификатор пользователя (TG ID приоритет, fallback на DB ID)
         if telegram_user_id is not None:
             description += f' (ID {telegram_user_id})'
+        elif user_db_id is not None:
+            description += f' (U{user_db_id})'
 
         # Формируем финальную строку по шаблону
         return self.PAYMENT_BALANCE_TEMPLATE.format(service_name=self.PAYMENT_SERVICE_NAME, description=description)
@@ -2572,6 +2717,9 @@ class Settings(BaseSettings):
         if not raw_path:
             raw_path = 'miniapp'
         return Path(raw_path)
+
+    def get_media_upload_path(self) -> Path:
+        return Path(self.MEDIA_UPLOAD_DIR)
 
     # Cabinet methods
     def is_cabinet_enabled(self) -> bool:

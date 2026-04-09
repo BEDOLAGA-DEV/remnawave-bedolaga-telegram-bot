@@ -1,3 +1,4 @@
+import html
 import math
 from datetime import UTC, datetime, time
 from zoneinfo import ZoneInfo
@@ -70,7 +71,7 @@ def _format_contest_summary(contest, texts, tz: ZoneInfo) -> str:
         f'Дневная сводка: <b>{summary_times}</b>',
     ]
     if contest.prize_text:
-        parts.append(texts.t('ADMIN_CONTEST_PRIZE', 'Приз: {prize}').format(prize=contest.prize_text))
+        parts.append(texts.t('ADMIN_CONTEST_PRIZE', 'Приз: {prize}').format(prize=html.escape(contest.prize_text)))
     if contest.last_daily_summary_date:
         parts.append(
             texts.t('ADMIN_CONTEST_LAST_DAILY', 'Последняя сводка: {date}').format(
@@ -188,7 +189,7 @@ async def list_contests(
         lines.append(texts.t('ADMIN_CONTESTS_EMPTY', 'Пока нет созданных конкурсов.'))
     else:
         for contest in contests:
-            lines.append(f'• <b>{contest.title}</b> (#{contest.id})')
+            lines.append(f'• <b>{html.escape(contest.title)}</b> (#{contest.id})')
             contest_tz = _ensure_timezone(contest.timezone or settings.TIMEZONE)
             lines.append(_format_contest_summary(contest, texts, contest_tz))
             lines.append('')
@@ -250,21 +251,21 @@ async def show_contest_details(
     total_events = await get_contest_events_count(db, contest.id) + virtual_count
 
     lines = [
-        f'🏆 <b>{contest.title}</b>',
+        f'🏆 <b>{html.escape(contest.title)}</b>',
         _format_contest_summary(contest, texts, tz),
         texts.t('ADMIN_CONTEST_TOTAL_EVENTS', 'Зачётов: <b>{count}</b>').format(count=total_events),
     ]
 
     if contest.description:
         lines.append('')
-        lines.append(contest.description)
+        lines.append(html.escape(contest.description))
 
     if leaderboard:
         lines.append('')
         lines.append(texts.t('ADMIN_CONTEST_LEADERBOARD_TITLE', '📊 Топ участников:'))
         for idx, (name, score, _, is_virtual) in enumerate(leaderboard, start=1):
             virt_mark = ' 👻' if is_virtual else ''
-            lines.append(f'{idx}. {name}{virt_mark} — {score}')
+            lines.append(f'{idx}. {html.escape(name)}{virt_mark} — {score}')
 
     await callback.message.edit_text(
         '\n'.join(lines),
@@ -444,7 +445,7 @@ async def show_leaderboard(
     ]
     for idx, (name, score, _, is_virtual) in enumerate(leaderboard, start=1):
         virt_mark = ' 👻' if is_virtual else ''
-        lines.append(f'{idx}. {name}{virt_mark} — {score}')
+        lines.append(f'{idx}. {html.escape(name)}{virt_mark} — {score}')
 
     await callback.message.edit_text(
         '\n'.join(lines),
@@ -690,7 +691,7 @@ async def show_detailed_stats(
     # Общее сообщение с основной статистикой
     general_lines = [
         '📈 <b>Статистика конкурса</b>',
-        f'🏆 {contest.title}',
+        f'🏆 {html.escape(contest.title)}',
         '',
         f'👥 Участников (рефереров): <b>{stats["total_participants"]}</b>',
         f'📨 Приглашено рефералов: <b>{stats["total_invited"]}</b>',
@@ -751,7 +752,7 @@ async def show_detailed_stats_page(
     for p in page_participants:
         lines.extend(
             [
-                f'• <b>{p["full_name"]}</b>',
+                f'• <b>{html.escape(p["full_name"] or "")}</b>',
                 f'  📨 Приглашено: {p["total_referrals"]}',
                 f'  💰 Оплатили: {p["paid_referrals"]}',
                 f'  ❌ Не оплатили: {p["unpaid_referrals"]}',
@@ -828,7 +829,7 @@ async def sync_contest(
     lines = [
         '✅ <b>Синхронизация завершена!</b>',
         '',
-        f'📊 <b>Конкурс:</b> {contest.title}',
+        f'📊 <b>Конкурс:</b> {html.escape(contest.title)}',
         f'📅 <b>Период:</b> {contest.start_at.strftime("%d.%m.%Y")} - {contest.end_at.strftime("%d.%m.%Y")}',
         '🔍 <b>Фильтр транзакций:</b>',
         f'   <code>{start_str}</code>',
@@ -870,7 +871,7 @@ async def sync_contest(
     # Обновляем основное сообщение с новой статистикой
     detailed_stats = await referral_contest_service.get_detailed_contest_stats(db, contest_id)
     general_lines = [
-        f'🏆 <b>{contest.title}</b>',
+        f'🏆 <b>{html.escape(contest.title)}</b>',
         f'📅 Период: {contest.start_at.strftime("%d.%m.%Y")} - {contest.end_at.strftime("%d.%m.%Y")}',
         '',
         f'👥 Участников (рефереров): <b>{detailed_stats["total_participants"]}</b>',
@@ -927,7 +928,7 @@ async def debug_contest_transactions(
     lines = [
         '🔍 <b>Отладка транзакций конкурса</b>',
         '',
-        f'📊 <b>Конкурс:</b> {contest.title}',
+        f'📊 <b>Конкурс:</b> {html.escape(contest.title)}',
         '📅 <b>Период фильтрации:</b>',
         f'   Начало: <code>{debug_data.get("contest_start")}</code>',
         f'   Конец: <code>{debug_data.get("contest_end")}</code>',
@@ -1002,10 +1003,10 @@ async def show_virtual_participants(
 
     vps = await list_virtual_participants(db, contest_id)
 
-    lines = [f'👻 <b>Виртуальные участники</b> — {contest.title}', '']
+    lines = [f'👻 <b>Виртуальные участники</b> — {html.escape(contest.title)}', '']
     if vps:
         for vp in vps:
-            lines.append(f'• {vp.display_name} — {vp.referral_count} реф.')
+            lines.append(f'• {html.escape(vp.display_name)} — {vp.referral_count} реф.')
     else:
         lines.append('Пока нет виртуальных участников.')
 
@@ -1156,10 +1157,10 @@ async def delete_virtual_participant_handler(
     vps = await list_virtual_participants(db, contest_id)
     contest = await get_referral_contest(db, contest_id)
 
-    lines = [f'👻 <b>Виртуальные участники</b> — {contest.title}', '']
+    lines = [f'👻 <b>Виртуальные участники</b> — {html.escape(contest.title)}', '']
     if vps:
         for v in vps:
-            lines.append(f'• {v.display_name} — {v.referral_count} реф.')
+            lines.append(f'• {html.escape(v.display_name)} — {v.referral_count} реф.')
     else:
         lines.append('Пока нет виртуальных участников.')
 

@@ -198,7 +198,7 @@ async def get_rendered_override(
         for key, value in context.items():
             body_html = body_html.replace(f'{{{key}}}', html.escape(str(value)))
 
-    rendered = templates._get_base_template(body_html, language)
+    rendered = templates._wrap_override_template(body_html, language)
     subject = override['subject']
 
     # Also substitute in subject

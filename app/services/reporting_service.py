@@ -476,7 +476,7 @@ class ReportingService:
         """
         return select(
             func.count(Transaction.id),
-            func.coalesce(func.sum(Transaction.amount_kopeks), 0),
+            func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0),
         ).where(
             Transaction.type == TransactionType.DEPOSIT.value,
             Transaction.is_completed == true(),

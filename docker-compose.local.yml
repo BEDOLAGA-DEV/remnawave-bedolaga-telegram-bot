@@ -69,6 +69,7 @@ services:
       - ./locales:/app/locales:rw
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
+      - ./uploads:/app/uploads:rw
       - ./vpn_logo.png:/app/vpn_logo.png:ro
     ports:
       - '${WEB_API_PORT:-8080}:8080'

@@ -74,6 +74,39 @@ class EmailNotificationTemplates:
 
         return template_func(language, context)
 
+    def _wrap_override_template(self, content: str, language: str = 'ru') -> str:
+        """Wrap override template content appropriately based on its structure.
+
+        Three-tier detection:
+        1. Full HTML document (<!DOCTYPE or <html>) — return as-is, no wrapping
+        2. Styled content (has <style> tag or background CSS) — minimal HTML wrapper
+           without forced colors, headers, or footers
+        3. Simple HTML fragment — wrap with base template (header, footer, white bg)
+           for backward compatibility
+        """
+        content_stripped = content.strip()
+        content_lower = content_stripped.lower()
+
+        # Tier 1: Full HTML document — return as-is
+        if content_lower.startswith('<!doctype') or content_lower.startswith('<html'):
+            return content_stripped
+
+        # Tier 2: Styled content — minimal wrapper without forced styling
+        if '<style' in content_lower or 'background' in content_lower:
+            return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0;">
+    {content}
+</body>
+</html>"""
+
+        # Tier 3: Simple HTML fragment — use base template for structure
+        return self._get_base_template(content, language)
+
     def _get_base_template(self, content: str, language: str = 'ru') -> str:
         """Wrap content in base HTML template."""
         footer_texts = {
@@ -318,18 +351,26 @@ class EmailNotificationTemplates:
         """Template for subscription expiring notification."""
         days_left = context.get('days_left', 0)
         expires_at = context.get('expires_at', '')
+        tariff_name = html.escape(context.get('tariff_name', ''))
+        tariff_suffix_ru = f' «{tariff_name}»' if tariff_name else ''
+        tariff_suffix_en = f' "{tariff_name}"' if tariff_name else ''
+        tariff_line_ru = f'<p>Тариф: <strong>{tariff_name}</strong></p>' if tariff_name else ''
+        tariff_line_en = f'<p>Plan: <strong>{tariff_name}</strong></p>' if tariff_name else ''
+        tariff_line_zh = f'<p>套餐: <strong>{tariff_name}</strong></p>' if tariff_name else ''
+        tariff_line_ua = f'<p>Тариф: <strong>{tariff_name}</strong></p>' if tariff_name else ''
 
         subjects = {
-            'ru': f'Подписка истекает через {days_left} дн.',
-            'en': f'Subscription expires in {days_left} day(s)',
+            'ru': f'Подписка{tariff_suffix_ru} истекает через {days_left} дн.',
+            'en': f'Subscription{tariff_suffix_en} expires in {days_left} day(s)',
             'zh': f'订阅将在 {days_left} 天后到期',
-            'ua': f'Підписка закінчується через {days_left} дн.',
+            'ua': f'Підписка{tariff_suffix_ru} закінчується через {days_left} дн.',
         }
 
         bodies = {
             'ru': f"""
                 <h2>Подписка скоро истекает</h2>
                 <div class="highlight warning">
+                    {tariff_line_ru}
                     <p>Ваша подписка истекает через <strong>{days_left}</strong> дн.</p>
                     <p>Дата истечения: <strong>{expires_at}</strong></p>
                 </div>
@@ -339,6 +380,7 @@ class EmailNotificationTemplates:
             'en': f"""
                 <h2>Subscription Expiring Soon</h2>
                 <div class="highlight warning">
+                    {tariff_line_en}
                     <p>Your subscription expires in <strong>{days_left}</strong> day(s).</p>
                     <p>Expiration date: <strong>{expires_at}</strong></p>
                 </div>
@@ -348,6 +390,7 @@ class EmailNotificationTemplates:
             'zh': f"""
                 <h2>订阅即将到期</h2>
                 <div class="highlight warning">
+                    {tariff_line_zh}
                     <p>您的订阅将在 <strong>{days_left}</strong> 天后到期。</p>
                     <p>到期日期: <strong>{expires_at}</strong></p>
                 </div>
@@ -357,6 +400,7 @@ class EmailNotificationTemplates:
             'ua': f"""
                 <h2>Підписка скоро закінчується</h2>
                 <div class="highlight warning">
+                    {tariff_line_ua}
                     <p>Ваша підписка закінчується через <strong>{days_left}</strong> дн.</p>
                     <p>Дата закінчення: <strong>{expires_at}</strong></p>
                 </div>
@@ -372,17 +416,26 @@ class EmailNotificationTemplates:
 
     def _subscription_expired_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
         """Template for subscription expired notification."""
+        tariff_name = html.escape(context.get('tariff_name', ''))
+        tariff_suffix_ru = f' «{tariff_name}»' if tariff_name else ''
+        tariff_suffix_en = f' "{tariff_name}"' if tariff_name else ''
+        tariff_line_ru = f'<p>Тариф: <strong>{tariff_name}</strong></p>' if tariff_name else ''
+        tariff_line_en = f'<p>Plan: <strong>{tariff_name}</strong></p>' if tariff_name else ''
+        tariff_line_zh = f'<p>套餐: <strong>{tariff_name}</strong></p>' if tariff_name else ''
+        tariff_line_ua = f'<p>Тариф: <strong>{tariff_name}</strong></p>' if tariff_name else ''
+
         subjects = {
-            'ru': 'Подписка истекла',
-            'en': 'Subscription Expired',
+            'ru': f'Подписка{tariff_suffix_ru} истекла',
+            'en': f'Subscription{tariff_suffix_en} Expired',
             'zh': '订阅已到期',
-            'ua': 'Підписка закінчилась',
+            'ua': f'Підписка{tariff_suffix_ru} закінчилась',
         }
 
         bodies = {
             'ru': f"""
                 <h2>Подписка истекла</h2>
                 <div class="highlight danger">
+                    {tariff_line_ru}
                     <p>Ваша подписка истекла. Доступ к VPN отключён.</p>
                 </div>
                 <p>Оформите новую подписку, чтобы продолжить использование сервиса.</p>
@@ -391,6 +444,7 @@ class EmailNotificationTemplates:
             'en': f"""
                 <h2>Subscription Expired</h2>
                 <div class="highlight danger">
+                    {tariff_line_en}
                     <p>Your subscription has expired. VPN access has been disabled.</p>
                 </div>
                 <p>Purchase a new subscription to continue using our service.</p>
@@ -399,6 +453,7 @@ class EmailNotificationTemplates:
             'zh': f"""
                 <h2>订阅已到期</h2>
                 <div class="highlight danger">
+                    {tariff_line_zh}
                     <p>您的订阅已到期。VPN访问已被禁用。</p>
                 </div>
                 <p>请购买新订阅以继续使用我们的服务。</p>
@@ -407,6 +462,7 @@ class EmailNotificationTemplates:
             'ua': f"""
                 <h2>Підписка закінчилась</h2>
                 <div class="highlight danger">
+                    {tariff_line_ua}
                     <p>Ваша підписка закінчилась. Доступ до VPN вимкнено.</p>
                 </div>
                 <p>Оформіть нову підписку, щоб продовжити використання сервісу.</p>
@@ -422,18 +478,24 @@ class EmailNotificationTemplates:
     def _subscription_renewed_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
         """Template for subscription renewed notification."""
         new_expires_at = context.get('new_expires_at', '')
+        tariff_name = html.escape(context.get('tariff_name', ''))
+        tariff_suffix_ru = f' «{tariff_name}»' if tariff_name else ''
+        tariff_suffix_en = f' "{tariff_name}"' if tariff_name else ''
+        tariff_line_ru = f'<p>Тариф: <strong>{tariff_name}</strong></p>' if tariff_name else ''
+        tariff_line_en = f'<p>Plan: <strong>{tariff_name}</strong></p>' if tariff_name else ''
 
         subjects = {
-            'ru': 'Подписка продлена',
-            'en': 'Subscription Renewed',
+            'ru': f'Подписка{tariff_suffix_ru} продлена',
+            'en': f'Subscription{tariff_suffix_en} Renewed',
             'zh': '订阅已续订',
-            'ua': 'Підписку продовжено',
+            'ua': f'Підписку{tariff_suffix_ru} продовжено',
         }
 
         bodies = {
             'ru': f"""
                 <h2>Подписка успешно продлена!</h2>
                 <div class="highlight success">
+                    {tariff_line_ru}
                     <p>Ваша подписка была успешно продлена.</p>
                     <p>Новая дата истечения: <strong>{new_expires_at}</strong></p>
                 </div>
@@ -443,6 +505,7 @@ class EmailNotificationTemplates:
             'en': f"""
                 <h2>Subscription Successfully Renewed!</h2>
                 <div class="highlight success">
+                    {tariff_line_en}
                     <p>Your subscription has been successfully renewed.</p>
                     <p>New expiration date: <strong>{new_expires_at}</strong></p>
                 </div>
@@ -459,18 +522,24 @@ class EmailNotificationTemplates:
     def _subscription_activated_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
         """Template for subscription activated notification."""
         expires_at = context.get('expires_at', '')
+        tariff_name = html.escape(context.get('tariff_name', ''))
+        tariff_suffix_ru = f' «{tariff_name}»' if tariff_name else ''
+        tariff_suffix_en = f' "{tariff_name}"' if tariff_name else ''
+        tariff_line_ru = f'<p>Тариф: <strong>{tariff_name}</strong></p>' if tariff_name else ''
+        tariff_line_en = f'<p>Plan: <strong>{tariff_name}</strong></p>' if tariff_name else ''
 
         subjects = {
-            'ru': 'Подписка активирована',
-            'en': 'Subscription Activated',
+            'ru': f'Подписка{tariff_suffix_ru} активирована',
+            'en': f'Subscription{tariff_suffix_en} Activated',
             'zh': '订阅已激活',
-            'ua': 'Підписку активовано',
+            'ua': f'Підписку{tariff_suffix_ru} активовано',
         }
 
         bodies = {
             'ru': f"""
                 <h2>Подписка активирована!</h2>
                 <div class="highlight success">
+                    {tariff_line_ru}
                     <p>Ваша VPN подписка успешно активирована.</p>
                     <p>Действует до: <strong>{expires_at}</strong></p>
                 </div>
@@ -480,6 +549,7 @@ class EmailNotificationTemplates:
             'en': f"""
                 <h2>Subscription Activated!</h2>
                 <div class="highlight success">
+                    {tariff_line_en}
                     <p>Your VPN subscription has been successfully activated.</p>
                     <p>Valid until: <strong>{expires_at}</strong></p>
                 </div>
@@ -1340,6 +1410,8 @@ class EmailNotificationTemplates:
         tariff_name = html.escape(context.get('tariff_name', ''))
         period_days = context.get('period_days', 0)
         cabinet_url = html.escape(context.get('cabinet_url', ''))
+        cabinet_email = html.escape(context.get('cabinet_email', ''))
+        cabinet_password = context.get('cabinet_password', '')
 
         subjects = {
             'ru': 'Ваша VPN подписка готова',
@@ -1349,6 +1421,66 @@ class EmailNotificationTemplates:
             'fa': 'اشتراک VPN شما آماده است',
         }
 
+        creds_block_ru = (
+            f"""
+                <div class="highlight">
+                    <p><strong>Данные для входа в личный кабинет:</strong></p>
+                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
+                    <p><strong>Пароль:</strong> <code>{cabinet_password}</code></p>
+                </div>
+        """
+            if cabinet_password
+            else ''
+        )
+
+        creds_block_en = (
+            f"""
+                <div class="highlight">
+                    <p><strong>Your cabinet login credentials:</strong></p>
+                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
+                    <p><strong>Password:</strong> <code>{cabinet_password}</code></p>
+                </div>
+        """
+            if cabinet_password
+            else ''
+        )
+
+        creds_block_zh = (
+            f"""
+                <div class="highlight">
+                    <p><strong>个人中心登录信息：</strong></p>
+                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
+                    <p><strong>密码:</strong> <code>{cabinet_password}</code></p>
+                </div>
+        """
+            if cabinet_password
+            else ''
+        )
+
+        creds_block_ua = (
+            f"""
+                <div class="highlight">
+                    <p><strong>Дані для входу в особистий кабінет:</strong></p>
+                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
+                    <p><strong>Пароль:</strong> <code>{cabinet_password}</code></p>
+                </div>
+        """
+            if cabinet_password
+            else ''
+        )
+
+        creds_block_fa = (
+            f"""
+                <div class="highlight">
+                    <p><strong>اطلاعات ورود به پنل کاربری:</strong></p>
+                    <p><strong>Email:</strong> <code>{cabinet_email}</code></p>
+                    <p><strong>رمز عبور:</strong> <code>{cabinet_password}</code></p>
+                </div>
+        """
+            if cabinet_password
+            else ''
+        )
+
         bodies = {
             'ru': f"""
                 <h2>Ваша VPN подписка готова!</h2>
@@ -1356,6 +1488,7 @@ class EmailNotificationTemplates:
                     <p>Тариф: <strong>{tariff_name}</strong></p>
                     <p>Период: <strong>{period_days} дней</strong></p>
                 </div>
+                {creds_block_ru}
                 <p>Подписка активирована в вашем личном кабинете.</p>
                 <p style="text-align: center;"><a href="{cabinet_url}" class="button">Перейти в личный кабинет</a></p>
             """,
@@ -1365,6 +1498,7 @@ class EmailNotificationTemplates:
                     <p>Plan: <strong>{tariff_name}</strong></p>
                     <p>Period: <strong>{period_days} days</strong></p>
                 </div>
+                {creds_block_en}
                 <p>Your subscription has been activated in your cabinet.</p>
                 <p style="text-align: center;"><a href="{cabinet_url}" class="button">Go to Cabinet</a></p>
             """,
@@ -1374,6 +1508,7 @@ class EmailNotificationTemplates:
                     <p>套餐: <strong>{tariff_name}</strong></p>
                     <p>期限: <strong>{period_days} 天</strong></p>
                 </div>
+                {creds_block_zh}
                 <p>订阅已在您的个人中心激活。</p>
                 <p style="text-align: center;"><a href="{cabinet_url}" class="button">前往个人中心</a></p>
             """,
@@ -1383,6 +1518,7 @@ class EmailNotificationTemplates:
                     <p>Тариф: <strong>{tariff_name}</strong></p>
                     <p>Період: <strong>{period_days} днів</strong></p>
                 </div>
+                {creds_block_ua}
                 <p>Підписка активована у вашому особистому кабінеті.</p>
                 <p style="text-align: center;"><a href="{cabinet_url}" class="button">Перейти до кабінету</a></p>
             """,
@@ -1392,6 +1528,7 @@ class EmailNotificationTemplates:
                     <p>طرح: <strong>{tariff_name}</strong></p>
                     <p>مدت: <strong>{period_days} روز</strong></p>
                 </div>
+                {creds_block_fa}
                 <p>اشتراک شما در پنل کاربری فعال شده است.</p>
                 <p style="text-align: center;"><a href="{cabinet_url}" class="button">رفتن به پنل کاربری</a></p>
             """,

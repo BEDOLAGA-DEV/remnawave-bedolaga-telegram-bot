@@ -113,15 +113,28 @@ def get_available_payment_methods() -> list[dict[str, str]]:
 
     if settings.is_platega_enabled() and settings.get_platega_active_methods():
         platega_name = settings.get_platega_display_name()
-        methods.append(
-            {
-                'id': 'platega',
-                'name': 'Банковская карта',
-                'icon': '💳',
-                'description': f'через {platega_name} (карты + СБП)',
-                'callback': 'topup_platega',
-            }
-        )
+        if settings.PLATEGA_INLINE_METHODS:
+            for method_code in settings.get_platega_active_methods():
+                info = settings.get_platega_method_definitions().get(method_code, {})
+                methods.append(
+                    {
+                        'id': f'platega_m{method_code}',
+                        'name': info.get('name', f'Метод {method_code}'),
+                        'icon': info.get('title', '💳').split(' ', 1)[0] if info.get('title') else '💳',
+                        'description': f'через {platega_name}',
+                        'callback': f'topup_platega_m{method_code}',
+                    }
+                )
+        else:
+            methods.append(
+                {
+                    'id': 'platega',
+                    'name': 'Банковская карта',
+                    'icon': '💳',
+                    'description': f'через {platega_name} (карты + СБП)',
+                    'callback': 'topup_platega',
+                }
+            )
 
     if settings.is_cloudpayments_enabled():
         cloudpayments_name = settings.get_cloudpayments_display_name()
@@ -282,6 +295,14 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_heleket_enabled()
     if method_id == 'platega':
         return settings.is_platega_enabled() and bool(settings.get_platega_active_methods())
+    if method_id.startswith('platega_m'):
+        if not settings.is_platega_enabled():
+            return False
+        try:
+            code = int(method_id[len('platega_m') :])
+        except ValueError:
+            return False
+        return code in settings.get_platega_active_methods()
     if method_id == 'cloudpayments':
         return settings.is_cloudpayments_enabled()
     if method_id == 'freekassa':

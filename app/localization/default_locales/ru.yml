@@ -41,3 +41,21 @@ PAYMENT_METHODS_NONE_AVAILABLE: |
   Выберите способ пополнения:
 SUPPORT_TOPUP_DISABLED: "Пополнение через поддержку отключено. Попробуйте другой способ оплаты."
 
+ADMIN_PAYMENTS_TITLE: "💳 <b>Проверка пополнений</b>"
+ADMIN_PAYMENTS_DESCRIPTION: "Список ожидающих проверки пополнений за последние 24 часа."
+ADMIN_PAYMENTS_NOTICE: "Нажмите на платёж для подробностей и ручной проверки."
+ADMIN_PAYMENTS_EMPTY: "Нет ожидающих пополнений за последние 24 часа."
+ADMIN_PAYMENTS_ITEM_DETAILS: "📄 #{number}"
+ADMIN_PAYMENTS_CHECKABLE_COUNT: "🔄 Доступно для проверки: {count}"
+ADMIN_PAYMENTS_CHECK_ALL: "🔄 Проверить все"
+ADMIN_PAYMENTS_EXPORT: "📥 Выгрузить в файл"
+ADMIN_PAYMENTS_NO_CHECKABLE: "Нет платежей для проверки"
+ADMIN_PAYMENTS_CHECKING_ALL: "🔄 Проверяю {count} платежей..."
+ADMIN_PAYMENTS_CHECK_ALL_RESULT: "🔄 <b>Результат проверки</b>"
+ADMIN_PAYMENTS_CHECK_ALL_CHECKED: "✅ Проверено: {count}"
+ADMIN_PAYMENTS_CHECK_ALL_CONFIRMED: "💰 Подтверждено: {count}"
+ADMIN_PAYMENTS_CHECK_ALL_FAILED: "❌ Ошибок: {count}"
+ADMIN_PAYMENTS_EXPORT_EMPTY: "Нет платежей для экспорта"
+ADMIN_PAYMENTS_EXPORT_CAPTION: "📊 Выгрузка пополнений"
+ADMIN_PAYMENTS_EXPORT_SUCCESS: "✅ Файл отправлен"
+

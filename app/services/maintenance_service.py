@@ -65,11 +65,11 @@ class MaintenanceService:
             return False
 
         try:
-            from app.services.admin_notification_service import AdminNotificationService
+            from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
 
             notification_service = AdminNotificationService(self._bot)
 
-            if not notification_service._is_enabled():
+            if not notification_service.is_enabled:
                 logger.debug('Уведомления администраторов отключены')
                 return False
 
@@ -79,7 +79,9 @@ class MaintenanceService:
             timestamp = format_local_datetime(datetime.now(UTC), '%d.%m.%Y %H:%M:%S %Z')
             formatted_message = f'{emoji} <b>ТЕХНИЧЕСКИЕ РАБОТЫ</b>\n\n{message}\n\n⏰ <i>{timestamp}</i>'
 
-            return await notification_service._send_message(formatted_message)
+            return await notification_service.send_admin_notification(
+                formatted_message, category=NotificationCategory.INFRASTRUCTURE
+            )
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления через AdminNotificationService', error=e)

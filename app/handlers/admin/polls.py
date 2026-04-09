@@ -886,7 +886,7 @@ async def _render_poll_details(poll: Poll, language: str) -> str:
     texts = get_texts(language)
     lines = [f'🗳️ <b>{html.escape(poll.title)}</b>']
     if poll.description:
-        lines.append(poll.description)
+        lines.append(html.escape(poll.description))
 
     lines.append(_format_reward_text(poll, language))
     lines.append(texts.t('ADMIN_POLLS_QUESTIONS_COUNT', 'Вопросов: {count}').format(count=len(poll.questions)))

@@ -293,12 +293,25 @@ class ContestAttemptService:
         prize_value = template.prize_value or '1'
 
         if prize_type == PrizeType.DAYS.value:
-            subscription = await get_subscription_by_user_id(db, user_id)
+            if settings.is_multi_tariff_enabled():
+                from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+                active_subs = await get_active_subscriptions_by_user_id(db, user_id)
+                # Contest prize: prefer non-daily subscription with most days left
+                non_daily = [s for s in active_subs if not (s.tariff and getattr(s.tariff, 'is_daily', False))]
+                eligible = non_daily or active_subs
+                subscription = max(eligible, key=lambda s: s.days_left) if eligible else None
+            else:
+                subscription = await get_subscription_by_user_id(db, user_id)
             if not subscription:
                 return ''
             days = int(prize_value) if prize_value.isdigit() else 1
             await extend_subscription(db, subscription, days)
-            return texts.t('CONTEST_PRIZE_GRANTED', 'Бонус {days} дней зачислен!').format(days=days)
+            tariff_name = getattr(subscription.tariff, 'name', None) if subscription.tariff else None
+            prize_text = texts.t('CONTEST_PRIZE_GRANTED', 'Бонус {days} дней зачислен!').format(days=days)
+            if tariff_name:
+                prize_text += f' (подписка "{tariff_name}")'
+            return prize_text
 
         if prize_type == PrizeType.BALANCE.value:
             user = await get_user_by_id(db, user_id)

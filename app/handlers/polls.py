@@ -1,4 +1,5 @@
 import asyncio
+import html
 from datetime import UTC, datetime
 
 import structlog
@@ -39,7 +40,7 @@ async def _render_question_text(
         current=current_index,
         total=total,
     )
-    lines = [f'🗳️ <b>{poll_title}</b>', '', header, '', question.text]
+    lines = [f'🗳️ <b>{html.escape(poll_title)}</b>', '', header, '', html.escape(question.text)]
     return '\n'.join(lines)
 
 

@@ -5,7 +5,6 @@ API роуты колеса удачи для пользователей.
 import math
 import time
 
-import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -50,10 +49,22 @@ async def get_wheel_config(
     # Проверяем доступность
     availability = await wheel_service.check_availability(db, user)
 
-    # Проверяем наличие подписки
-    from app.database.crud.subscription import get_subscription_by_user_id
+    # Проверяем наличие подписки (multi-tariff aware)
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
-    subscription = await get_subscription_by_user_id(db, user.id)
+        active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+        # Check if user has any active subscription for wheel access
+        if active_subs:
+            _non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+            _pool = _non_daily or active_subs
+            subscription = max(_pool, key=lambda s: s.days_left)
+        else:
+            subscription = None
+    else:
+        from app.database.crud.subscription import get_subscription_by_user_id
+
+        subscription = await get_subscription_by_user_id(db, user.id)
     has_subscription = subscription is not None and subscription.is_active
 
     prizes_display = [
@@ -66,6 +77,14 @@ async def get_wheel_config(
         )
         for p in prizes
     ]
+
+    # Build eligible subscriptions for frontend picker
+    eligible_subs_display = None
+    if availability.eligible_subscriptions:
+        eligible_subs_display = [
+            {'id': s.id, 'tariff_name': s.tariff_name, 'days_left': s.days_left}
+            for s in availability.eligible_subscriptions
+        ]
 
     return WheelConfigResponse(
         is_enabled=config.is_enabled,
@@ -84,6 +103,7 @@ async def get_wheel_config(
         user_balance_kopeks=availability.user_balance_kopeks,
         required_balance_kopeks=availability.required_balance_kopeks,
         has_subscription=has_subscription,
+        eligible_subscriptions=eligible_subs_display,
     )
 
 
@@ -115,7 +135,7 @@ async def spin_wheel(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Крутить колесо удачи."""
-    result = await wheel_service.spin(db, user, request.payment_type.value)
+    result = await wheel_service.spin(db, user, request.payment_type.value, subscription_id=request.subscription_id)
 
     if not result.success:
         # Возвращаем ошибку в теле ответа, а не HTTP exception
@@ -220,10 +240,22 @@ async def create_stars_invoice(
             detail='Оплата Stars не включена',
         )
 
-    # Проверяем наличие активной подписки
-    from app.database.crud.subscription import get_subscription_by_user_id
+    # Проверяем наличие активной подписки (multi-tariff aware)
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
-    subscription = await get_subscription_by_user_id(db, user.id)
+        active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+        # Check if user has any active subscription for Stars invoice
+        if active_subs:
+            _non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+            _pool = _non_daily or active_subs
+            subscription = max(_pool, key=lambda s: s.days_left)
+        else:
+            subscription = None
+    else:
+        from app.database.crud.subscription import get_subscription_by_user_id
+
+        subscription = await get_subscription_by_user_id(db, user.id)
     if not subscription or not subscription.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -251,44 +283,31 @@ async def create_stars_invoice(
 
     # Создаем invoice через Telegram Bot API
     try:
-        bot_token = settings.BOT_TOKEN
-        api_url = f'https://api.telegram.org/bot{bot_token}/createInvoiceLink'
+        from aiogram.exceptions import TelegramAPIError
+        from aiogram.types import LabeledPrice
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                api_url,
-                json={
-                    'title': 'Колесо удачи',
-                    'description': f'Спин колеса удачи ({stars_amount} ⭐)',
-                    'payload': payload,
-                    'provider_token': '',  # Пустой для Stars
-                    'currency': 'XTR',
-                    'prices': [{'label': 'Спин колеса', 'amount': stars_amount}],
-                },
+        from app.bot_factory import create_bot
+
+        async with create_bot() as bot:
+            invoice_url = await bot.create_invoice_link(
+                title='Колесо удачи',
+                description=f'Спин колеса удачи ({stars_amount} ⭐)',
+                payload=payload,
+                provider_token='',
+                currency='XTR',
+                prices=[LabeledPrice(label='Спин колеса', amount=stars_amount)],
             )
 
-            result = response.json()
+        logger.info('Created Stars invoice for wheel spin: user=, stars', user_id=user.id, stars_amount=stars_amount)
 
-            if not result.get('ok'):
-                logger.error('Telegram API error', result=result)
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail='Ошибка создания инвойса',
-                )
+        return StarsInvoiceResponse(
+            invoice_url=invoice_url,
+            stars_amount=stars_amount,
+        )
 
-            invoice_url = result['result']
-            logger.info(
-                'Created Stars invoice for wheel spin: user=, stars', user_id=user.id, stars_amount=stars_amount
-            )
-
-            return StarsInvoiceResponse(
-                invoice_url=invoice_url,
-                stars_amount=stars_amount,
-            )
-
-    except httpx.HTTPError as e:
-        logger.error('HTTP error creating invoice', error=e)
+    except TelegramAPIError as e:
+        logger.error('Error creating invoice', error=e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Ошибка соединения с Telegram',
+            detail='Ошибка создания инвойса',
         )

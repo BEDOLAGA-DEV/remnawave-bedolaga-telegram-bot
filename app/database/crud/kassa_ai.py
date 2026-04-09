@@ -65,7 +65,12 @@ async def get_kassa_ai_payment_by_id(db: AsyncSession, payment_id: int) -> Kassa
 
 
 async def get_kassa_ai_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> KassaAiPayment | None:
-    result = await db.execute(select(KassaAiPayment).where(KassaAiPayment.id == payment_id).with_for_update())
+    result = await db.execute(
+        select(KassaAiPayment)
+        .where(KassaAiPayment.id == payment_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     return result.scalar_one_or_none()
 
 

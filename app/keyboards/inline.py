@@ -473,7 +473,12 @@ def _build_cabinet_main_menu_keyboard(
                 case 'subscription':
                     if not section_cfg.get('enabled', True):
                         continue
-                    sub_text = section_cfg.get('labels', {}).get(language, '') or texts.MENU_SUBSCRIPTION
+                    default_sub_text = (
+                        texts.t('MY_SUBSCRIPTIONS_BUTTON', '📱 Мои подписки')
+                        if settings.is_multi_tariff_enabled()
+                        else texts.MENU_SUBSCRIPTION
+                    )
+                    sub_text = section_cfg.get('labels', {}).get(language, '') or default_sub_text
                     row_buttons.append(_cabinet_button(sub_text, '/subscription', 'menu_subscription'))
 
                 case 'balance':
@@ -633,7 +638,11 @@ def get_main_menu_keyboard(
                     [
                         InlineKeyboardButton(
                             text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                            callback_data='open_subscription_link',
+                            callback_data=(
+                                'subscription_connect'
+                                if settings.is_multi_tariff_enabled()
+                                else 'open_subscription_link'
+                            ),
                         )
                     ]
                 )
@@ -645,7 +654,12 @@ def get_main_menu_keyboard(
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
             keyboard.append(happ_row)
-        paired_buttons.append(InlineKeyboardButton(text=texts.MENU_SUBSCRIPTION, callback_data='menu_subscription'))
+        sub_btn_text = (
+            texts.t('MY_SUBSCRIPTIONS_BUTTON', '📱 Мои подписки')
+            if settings.is_multi_tariff_enabled()
+            else texts.MENU_SUBSCRIPTION
+        )
+        paired_buttons.append(InlineKeyboardButton(text=sub_btn_text, callback_data='menu_subscription'))
 
         # Добавляем кнопку докупки трафика для лимитированных подписок
         # В режиме тарифов проверяем tariff_id (детальная проверка в хендлере)
@@ -1056,6 +1070,13 @@ def get_subscription_keyboard(
     texts = get_texts(language)
     keyboard = []
 
+    # Sub ID suffix for multi-tariff callback routing
+    _sub_suffix = (
+        f':{subscription.id}'
+        if settings.is_multi_tariff_enabled() and subscription and hasattr(subscription, 'id')
+        else ''
+    )
+
     if has_subscription:
         subscription_link = get_display_subscription_link(subscription) if subscription else None
         if subscription_link:
@@ -1084,7 +1105,8 @@ def get_subscription_keyboard(
                     keyboard.append(
                         [
                             InlineKeyboardButton(
-                                text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
+                                text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                                callback_data=f'subscription_connect{_sub_suffix}',
                             )
                         ]
                     )
@@ -1097,7 +1119,7 @@ def get_subscription_keyboard(
                     [
                         InlineKeyboardButton(
                             text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                            callback_data='open_subscription_link',
+                            callback_data=f'open_subscription_link{_sub_suffix}',
                         )
                     ]
                 )
@@ -1105,7 +1127,8 @@ def get_subscription_keyboard(
                 keyboard.append(
                     [
                         InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
+                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                            callback_data=f'subscription_connect{_sub_suffix}',
                         )
                     ]
                 )
@@ -1122,7 +1145,8 @@ def get_subscription_keyboard(
             keyboard.append(
                 [
                     InlineKeyboardButton(
-                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
+                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                        callback_data=f'subscription_connect{_sub_suffix}',
                     )
                 ]
             )
@@ -1446,7 +1470,7 @@ def get_devices_keyboard(current: int, language: str = DEFAULT_LANGUAGE) -> Inli
     keyboard = []
 
     start_devices = settings.DEFAULT_DEVICE_LIMIT
-    max_devices = settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else 50
+    max_devices = settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else 100
     end_devices = min(max_devices + 1, start_devices + 10)
 
     buttons = []
@@ -1612,14 +1636,26 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
 
     if settings.is_platega_enabled() and settings.get_platega_active_methods():
         platega_name = settings.get_platega_display_name()
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('PAYMENT_PLATEGA', f'💳 {platega_name}'),
-                    callback_data=_build_callback('platega'),
+        if settings.PLATEGA_INLINE_METHODS:
+            for method_code in settings.get_platega_active_methods():
+                title = settings.get_platega_method_display_title(method_code)
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            text=f'{title} ({platega_name})',
+                            callback_data=_build_callback(f'platega_m{method_code}'),
+                        )
+                    ]
                 )
-            ]
-        )
+        else:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('PAYMENT_PLATEGA', f'💳 {platega_name}'),
+                        callback_data=_build_callback('platega'),
+                    )
+                ]
+            )
         has_direct_payment_methods = True
 
     if settings.is_cryptobot_enabled():
@@ -1695,7 +1731,48 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
-    if settings.is_kassa_ai_enabled():
+    if settings.is_kassa_ai_sbp_enabled():
+        sbp_name = settings.get_kassa_ai_sbp_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_KASSA_AI_SBP', f'📱 {sbp_name}'),
+                    callback_data=_build_callback('kassa_ai_sbp'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_kassa_ai_card_enabled():
+        card_name = settings.get_kassa_ai_card_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_KASSA_AI_CARD', f'💳 {card_name}'),
+                    callback_data=_build_callback('kassa_ai_card'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_kassa_ai_sberpay_enabled():
+        sberpay_name = settings.get_kassa_ai_sberpay_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_KASSA_AI_SBERPAY', f'💳 {sberpay_name}'),
+                    callback_data=_build_callback('kassa_ai_sberpay'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if (
+        settings.is_kassa_ai_enabled()
+        and not settings.is_kassa_ai_sbp_enabled()
+        and not settings.is_kassa_ai_card_enabled()
+        and not settings.is_kassa_ai_sberpay_enabled()
+    ):
         kassa_ai_name = settings.get_kassa_ai_display_name()
         keyboard.append(
             [
@@ -1718,6 +1795,16 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
+    if settings.is_severpay_enabled():
+        severpay_name = settings.get_severpay_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_SEVERPAY', f'💳 Банковская карта ({severpay_name})'),
+                    callback_data=_build_callback('severpay'),
+                )
+            ]
+        )
     if settings.is_external_gateway_enabled():
         ext_gw_methods = settings.get_external_gateway_methods()
         if ext_gw_methods:
@@ -1803,43 +1890,20 @@ def get_yookassa_payment_keyboard(
 
 def get_autopay_notification_keyboard(subscription_id: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
     texts = get_texts(language)
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                build_miniapp_or_callback_button(
-                    text=texts.t('TOPUP_BALANCE_BUTTON', '💳 Пополнить баланс'), callback_data='balance_topup'
-                )
-            ],
-            [
-                build_miniapp_or_callback_button(
-                    text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'), callback_data='menu_subscription'
-                )
-            ],
-        ]
+    sub_btn_text = (
+        texts.t('MY_SUBSCRIPTIONS_BUTTON', '📱 Мои подписки')
+        if settings.is_multi_tariff_enabled()
+        else texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка')
     )
 
-
-def get_subscription_expiring_keyboard(subscription_id: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
-    texts = get_texts(language)
-
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                build_miniapp_or_callback_button(
-                    text=texts.MENU_EXTEND_SUBSCRIPTION, callback_data='subscription_extend'
-                )
-            ],
             [
                 build_miniapp_or_callback_button(
                     text=texts.t('TOPUP_BALANCE_BUTTON', '💳 Пополнить баланс'), callback_data='balance_topup'
                 )
             ],
-            [
-                build_miniapp_or_callback_button(
-                    text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'), callback_data='menu_subscription'
-                )
-            ],
+            [build_miniapp_or_callback_button(text=sub_btn_text, callback_data='menu_subscription')],
         ]
     )
 
@@ -1963,8 +2027,9 @@ def get_confirmation_keyboard(
     )
 
 
-def get_autopay_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+def get_autopay_keyboard(language: str = DEFAULT_LANGUAGE, sub_id: int | None = None) -> InlineKeyboardMarkup:
     texts = get_texts(language)
+    back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -1976,7 +2041,7 @@ def get_autopay_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
                     text=texts.t('AUTOPAY_SET_DAYS_BUTTON', '⚙️ Настроить дни'), callback_data='autopay_set_days'
                 )
             ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
         ]
     )
 
@@ -2073,12 +2138,14 @@ def get_add_traffic_keyboard(
     language: str = DEFAULT_LANGUAGE,
     subscription_end_date: datetime = None,
     discount_percent: int = 0,
+    sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     from app.config import settings
 
     texts = get_texts(language)
     language_code = (language or DEFAULT_LANGUAGE).split('-')[0].lower()
     use_russian_fallback = language_code in {'ru', 'fa'}
+    back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
 
     # Считаем по дням (как в кабинете и подтверждении)
     if subscription_end_date:
@@ -2102,7 +2169,7 @@ def get_add_traffic_keyboard(
                         callback_data='no_traffic_packages',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
             ]
         )
 
@@ -2137,7 +2204,7 @@ def get_add_traffic_keyboard(
 
         buttons.append([InlineKeyboardButton(text=text, callback_data=f'add_traffic_{gb}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2147,6 +2214,7 @@ def get_add_traffic_keyboard_from_tariff(
     packages: dict,  # {gb: price_kopeks}
     subscription_end_date: datetime = None,
     discount_percent: int = 0,
+    sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     """
     Клавиатура для докупки трафика из настроек тарифа.
@@ -2156,10 +2224,12 @@ def get_add_traffic_keyboard_from_tariff(
         packages: Словарь {ГБ: цена_в_копейках} из тарифа
         subscription_end_date: Дата окончания подписки для расчета цены
         discount_percent: Процент скидки
+        sub_id: ID подписки для формирования обратной ссылки в multi-tariff режиме
     """
     texts = get_texts(language)
     language_code = (language or DEFAULT_LANGUAGE).split('-')[0].lower()
     use_russian_fallback = language_code in {'ru', 'fa'}
+    back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
 
     if not packages:
         return InlineKeyboardMarkup(
@@ -2170,7 +2240,7 @@ def get_add_traffic_keyboard_from_tariff(
                         callback_data='no_traffic_packages',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
             ]
         )
 
@@ -2202,7 +2272,7 @@ def get_add_traffic_keyboard_from_tariff(
 
         buttons.append([InlineKeyboardButton(text=text, callback_data=f'add_traffic_{gb}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2213,6 +2283,7 @@ def get_change_devices_keyboard(
     subscription_end_date: datetime = None,
     discount_percent: int = 0,
     tariff=None,  # Тариф для цены за устройство
+    back_callback: str = 'subscription_settings',
 ) -> InlineKeyboardMarkup:
     from app.config import settings
 
@@ -2245,11 +2316,10 @@ def get_change_devices_keyboard(
     if tariff_max_devices and tariff_max_devices > 0:
         max_devices = tariff_max_devices
     else:
-        max_devices = settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else 20
+        max_devices = settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else 100
 
-    # Минимальное количество устройств: device_limit тарифа или 1
-    tariff_min_devices = (getattr(tariff, 'device_limit', 1) or 1) if tariff else 1
-    min_devices = max(1, tariff_min_devices)
+    # Минимум при уменьшении всегда 1 (device_limit тарифа — это "включено при покупке", а не нижняя граница)
+    min_devices = 1
 
     start_range = max(min_devices, min(current_devices - 3, max_devices - 6))
     end_range = min(max_devices + 1, max(current_devices + 4, 7))
@@ -2261,7 +2331,6 @@ def get_change_devices_keyboard(
             price_text = ''
         elif devices_count > current_devices:
             emoji = '➕'
-            devices_count - current_devices
 
             current_chargeable = max(0, current_devices - default_device_limit)
             new_chargeable = max(0, devices_count - default_device_limit)
@@ -2298,13 +2367,16 @@ def get_change_devices_keyboard(
             0, [InlineKeyboardButton(text=current_button, callback_data=f'change_devices_{current_devices}')]
         )
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='subscription_settings')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_confirm_change_devices_keyboard(
-    new_devices_count: int, price: int, language: str = DEFAULT_LANGUAGE
+    new_devices_count: int,
+    price: int,
+    language: str = DEFAULT_LANGUAGE,
+    back_callback: str = 'subscription_settings',
 ) -> InlineKeyboardMarkup:
     texts = get_texts(language)
 
@@ -2316,7 +2388,7 @@ def get_confirm_change_devices_keyboard(
                     callback_data=f'confirm_change_devices_{new_devices_count}_{price}',
                 )
             ],
-            [InlineKeyboardButton(text=texts.CANCEL, callback_data='subscription_settings')],
+            [InlineKeyboardButton(text=texts.CANCEL, callback_data=back_callback)],
         ]
     )
 
@@ -2374,8 +2446,10 @@ def get_manage_countries_keyboard(
     language: str = DEFAULT_LANGUAGE,
     subscription_end_date: datetime = None,
     discount_percent: int = 0,
+    sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     texts = get_texts(language)
+    back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
 
     # Считаем по дням (как в кабинете и подтверждении)
     if subscription_end_date:
@@ -2450,7 +2524,7 @@ def get_manage_countries_keyboard(
 
     buttons.append([InlineKeyboardButton(text=apply_text, callback_data='countries_apply')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2458,11 +2532,13 @@ def get_manage_countries_keyboard(
 def get_device_selection_keyboard(
     language: str = DEFAULT_LANGUAGE,
     platforms: list[dict] | None = None,
+    sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     from app.config import settings
     from app.handlers.subscription.common import get_localized_value
 
     texts = get_texts(language)
+    back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
 
     keyboard: list[list[InlineKeyboardButton]] = []
 
@@ -2486,16 +2562,21 @@ def get_device_selection_keyboard(
             keyboard.append(row)
 
     if settings.CONNECT_BUTTON_MODE == 'guide':
+        _osl_cb = (
+            f'open_subscription_link:{sub_id}'
+            if sub_id and settings.is_multi_tariff_enabled()
+            else 'open_subscription_link'
+        )
         keyboard.append(
             [
                 InlineKeyboardButton(
                     text=texts.t('SHOW_SUBSCRIPTION_LINK', '📋 Показать ссылку подписки'),
-                    callback_data='open_subscription_link',
+                    callback_data=_osl_cb,
                 )
             ]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -2506,10 +2587,12 @@ def get_connection_guide_keyboard(
     device_type: str,
     language: str = DEFAULT_LANGUAGE,
     has_other_apps: bool = False,
+    sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     from app.handlers.subscription.common import create_deep_link, get_localized_value, resolve_button_url
 
     texts = get_texts(language)
+    back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
 
     keyboard: list[list[InlineKeyboardButton]] = []
 
@@ -2555,11 +2638,16 @@ def get_connection_guide_keyboard(
                         ]
                     )
                 elif settings.is_happ_cryptolink_mode():
+                    _osl_cb = (
+                        f'open_subscription_link:{sub_id}'
+                        if sub_id and settings.is_multi_tariff_enabled()
+                        else 'open_subscription_link'
+                    )
                     keyboard.append(
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                                callback_data='open_subscription_link',
+                                callback_data=_osl_cb,
                                 style='success',
                             )
                         ]
@@ -2596,19 +2684,18 @@ def get_connection_guide_keyboard(
             ]
         )
 
+    _sc_cb = (
+        f'subscription_connect:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'subscription_connect'
+    )
     keyboard.extend(
         [
             [
                 InlineKeyboardButton(
                     text=texts.t('CHOOSE_ANOTHER_DEVICE', '📱 Выбрать другое устройство'),
-                    callback_data='subscription_connect',
+                    callback_data=_sc_cb,
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'), callback_data='menu_subscription'
-                )
-            ],
+            [InlineKeyboardButton(text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'), callback_data=back_cb)],
         ]
     )
 
@@ -2650,6 +2737,7 @@ def get_specific_app_keyboard(
     app: dict,
     device_type: str,
     language: str = DEFAULT_LANGUAGE,
+    sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     # Reuse the connection guide keyboard logic — same buttons, just always shows "Other apps"
     return get_connection_guide_keyboard(
@@ -2658,6 +2746,7 @@ def get_specific_app_keyboard(
         device_type,
         language,
         has_other_apps=True,
+        sub_id=sub_id,
     )
 
 
@@ -2734,7 +2823,10 @@ def get_cryptobot_payment_keyboard(
 
 
 def get_devices_management_keyboard(
-    devices: list[dict], pagination, language: str = DEFAULT_LANGUAGE
+    devices: list[dict],
+    pagination,
+    language: str = DEFAULT_LANGUAGE,
+    back_callback: str = 'subscription_settings',
 ) -> InlineKeyboardMarkup:
     texts = get_texts(language)
 
@@ -2784,7 +2876,7 @@ def get_devices_management_keyboard(
         ]
     )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='subscription_settings')])
+    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

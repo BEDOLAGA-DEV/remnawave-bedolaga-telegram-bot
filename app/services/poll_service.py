@@ -1,4 +1,5 @@
 import asyncio
+import html
 from collections.abc import Iterable
 from types import SimpleNamespace
 
@@ -28,9 +29,9 @@ logger = structlog.get_logger(__name__)
 def _build_poll_invitation_text(poll: Poll, language: str) -> str:
     texts = get_texts(language)
 
-    lines: list[str] = [f'🗳️ <b>{poll.title}</b>']
+    lines: list[str] = [f'🗳️ <b>{html.escape(poll.title)}</b>']
     if poll.description:
-        lines.append(poll.description)
+        lines.append(html.escape(poll.description))
 
     if poll.reward_enabled and poll.reward_amount_kopeks > 0:
         reward_line = texts.t(

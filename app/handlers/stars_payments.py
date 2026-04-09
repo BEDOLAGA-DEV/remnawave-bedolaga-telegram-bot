@@ -1,3 +1,4 @@
+import html
 from decimal import ROUND_HALF_UP, Decimal
 
 import structlog
@@ -40,7 +41,16 @@ async def _handle_wheel_spin_payment(
         # Проверяем наличие активной подписки
         from app.database.crud.subscription import get_subscription_by_user_id
 
-        subscription = await get_subscription_by_user_id(db, user.id)
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+            active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+            # Wheel eligibility: any active non-daily subscription qualifies
+            non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+            eligible = non_daily or active_subs
+            subscription = max(eligible, key=lambda s: s.days_left) if eligible else None
+        else:
+            subscription = await get_subscription_by_user_id(db, user.id)
         if not subscription or not subscription.is_active:
             # Конвертируем Stars в баланс как компенсацию
             rubles_fallback = TelegramStarsService.calculate_rubles_from_stars(stars_amount)
@@ -136,7 +146,7 @@ async def _handle_wheel_spin_payment(
         emoji = selected_prize.emoji or '🎁'
         await message.answer(
             f'🎰 <b>Колесо удачи!</b>\n\n'
-            f'{emoji} <b>{selected_prize.display_name}</b>\n\n'
+            f'{emoji} <b>{html.escape(selected_prize.display_name)}</b>\n\n'
             f'{prize_message}\n\n'
             f'⭐ Потрачено: {stars_amount} Stars',
             parse_mode='HTML',
@@ -353,10 +363,6 @@ async def _handle_guest_purchase_payment(
                 user_id=user.id,
                 stars_amount=stars_amount,
                 purchase_token_prefix=purchase_token[:5],
-            )
-        elif result is False:
-            await message.answer(
-                '❌ Произошла ошибка при обработке подарочной подписки. Обратитесь в поддержку.',
             )
         else:
             logger.error('try_fulfill_guest_purchase returned None for Stars gift', payload=payload)

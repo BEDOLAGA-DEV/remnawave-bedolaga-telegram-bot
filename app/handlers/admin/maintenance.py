@@ -1,3 +1,5 @@
+import html
+
 import structlog
 from aiogram import Dispatcher, F, types
 from aiogram.fsm.context import FSMContext
@@ -133,7 +135,7 @@ async def process_maintenance_reason(message: types.Message, db_user: User, db: 
     if success:
         response_text = 'Режим техработ включен'
         if reason:
-            response_text += f'\nПричина: {reason}'
+            response_text += f'\nПричина: {html.escape(reason)}'
     else:
         response_text = 'Ошибка включения режима техработ'
 

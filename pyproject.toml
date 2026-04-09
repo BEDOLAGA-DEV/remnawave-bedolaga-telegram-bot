@@ -1,6 +1,6 @@
 [project]
 name = 'remnawave-bedolaga-telegram-bot'
-version = "3.32.4"
+version = "3.45.2"
 description = 'Telegram bot for RemnaWave VPN service'
 readme = 'README.md'
 license = { text = 'MIT' }
@@ -24,6 +24,8 @@ dependencies = [
     'pyzipper>=0.3.6',
     'structlog>=25.1.0,<26',
     'rich>=14.0',
+    'aiohttp-socks>=0.10.1',
+    'httpx[socks]>=0.27.0',
 ]
 
 [dependency-groups]

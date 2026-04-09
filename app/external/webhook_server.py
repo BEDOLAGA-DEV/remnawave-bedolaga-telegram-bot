@@ -377,7 +377,10 @@ class WebhookServer:
             signature = request.headers.get('Crypto-Pay-API-Signature')
             logger.info('CryptoBot Signature', signature=signature)
 
-            if signature and settings.CRYPTOBOT_WEBHOOK_SECRET:
+            if settings.CRYPTOBOT_API_TOKEN:
+                if not signature:
+                    logger.error('CryptoBot webhook без подписи')
+                    return web.json_response({'status': 'error', 'reason': 'missing_signature'}, status=401)
                 from app.external.cryptobot import CryptoBotService
 
                 cryptobot_service = CryptoBotService()

@@ -22,9 +22,10 @@ from app.database.crud.user import (
     get_user_by_id,
     get_user_by_referral_code,
     get_user_by_telegram_id,
+    subtract_user_balance,
     update_user,
 )
-from app.database.models import PromoGroup, Subscription, User, UserStatus
+from app.database.models import PaymentMethod, PromoGroup, Subscription, User, UserStatus
 from app.services.subscription_service import SubscriptionService
 
 from ..dependencies import get_db_session, require_api_token
@@ -60,6 +61,7 @@ def _serialize_subscription(subscription: Subscription | None) -> SubscriptionSu
     if not subscription:
         return None
 
+    tariff = getattr(subscription, 'tariff', None)
     return SubscriptionSummary(
         id=subscription.id,
         status=subscription.status,
@@ -75,16 +77,20 @@ def _serialize_subscription(subscription: Subscription | None) -> SubscriptionSu
         subscription_url=subscription.subscription_url,
         subscription_crypto_link=subscription.subscription_crypto_link,
         connected_squads=list(subscription.connected_squads or []),
+        tariff_id=subscription.tariff_id,
+        tariff_name=tariff.name if tariff is not None else None,
     )
 
 
 def _serialize_user(user: User) -> UserResponse:
     subscription = getattr(user, 'subscription', None)
     promo_group = getattr(user, 'promo_group', None)
+    all_subscriptions = getattr(user, 'subscriptions', None) or []
 
     return UserResponse(
         id=user.id,
         telegram_id=user.telegram_id,
+        email=user.email,
         username=user.username,
         first_name=user.first_name,
         last_name=user.last_name,
@@ -101,6 +107,7 @@ def _serialize_user(user: User) -> UserResponse:
         last_activity=user.last_activity,
         promo_group=_serialize_promo_group(promo_group),
         subscription=_serialize_subscription(subscription),
+        subscriptions=[_serialize_subscription(s) for s in all_subscriptions if s is not None],
     )
 
 
@@ -131,7 +138,7 @@ async def list_users(
     search: str | None = Query(default=None),
 ) -> UserListResponse:
     base_query = select(User).options(
-        selectinload(User.subscription),
+        selectinload(User.subscriptions).selectinload(Subscription.tariff),
         selectinload(User.promo_group),
     )
 
@@ -311,13 +318,24 @@ async def update_balance(
     if not found_user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
 
-    success = await add_user_balance(
-        db,
-        found_user,
-        amount_kopeks=payload.amount_kopeks,
-        description=payload.description or 'Корректировка через веб-API',
-        create_transaction=payload.create_transaction,
-    )
+    if payload.amount_kopeks > 0:
+        success = await add_user_balance(
+            db,
+            found_user,
+            amount_kopeks=payload.amount_kopeks,
+            description=payload.description or 'Корректировка через веб-API',
+            create_transaction=payload.create_transaction,
+            payment_method=PaymentMethod.MANUAL,
+        )
+    else:
+        success = await subtract_user_balance(
+            db,
+            found_user,
+            amount_kopeks=abs(payload.amount_kopeks),
+            description=payload.description or 'Корректировка через веб-API',
+            create_transaction=payload.create_transaction,
+            payment_method=PaymentMethod.MANUAL,
+        )
 
     if not success:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, 'Failed to update balance')
@@ -356,11 +374,37 @@ async def create_user_subscription(
     """
     user = await _get_user_by_id_or_telegram_id(db, user_id)
 
-    existing = await get_subscription_by_user_id(db, user.id)
-    if existing and not payload.replace_existing:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, 'User already has a subscription. Use replace_existing=true to replace it'
-        )
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+        active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+        if payload.replace_existing and payload.subscription_id:
+            from app.database.crud.subscription import get_subscription_by_id
+
+            existing = await get_subscription_by_id(db, payload.subscription_id)
+            if existing and existing.user_id != user.id:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Subscription does not belong to this user')
+        elif payload.replace_existing and active_subs:
+            if len(active_subs) == 1:
+                existing = active_subs[0]
+            else:
+                _non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+                _pool = _non_daily or active_subs
+                existing = max(_pool, key=lambda s: s.days_left)
+        else:
+            existing = None
+        if active_subs and not payload.replace_existing:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                'User already has a subscription. Use replace_existing=true to replace it',
+            )
+    else:
+        existing = await get_subscription_by_user_id(db, user.id)
+        if existing and not payload.replace_existing:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                'User already has a subscription. Use replace_existing=true to replace it',
+            )
 
     forced_devices = None
     if not settings.is_devices_selection_enabled():
@@ -432,7 +476,11 @@ async def create_user_subscription(
                 update_server_counters=True,
             )
 
-        # Создаем пользователя в RemnaWave для платных подписок
+        subscription_service = SubscriptionService()
+        await subscription_service.create_remnawave_user(db, subscription)
+
+    # Provision trial subscriptions in RemnaWave as well
+    if payload.is_trial:
         subscription_service = SubscriptionService()
         await subscription_service.create_remnawave_user(db, subscription)
 
@@ -444,25 +492,48 @@ async def create_user_subscription(
 @router.delete('/{user_id}/subscription', response_model=UserResponse)
 async def delete_user_subscription(
     user_id: int,
+    subscription_id: int | None = None,
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> UserResponse:
     """
     Деактивировать подписку пользователя.
     Подписка не удаляется физически, а помечается как DISABLED.
+    In multi-tariff mode, subscription_id query param specifies which subscription to deactivate.
     """
     user = await _get_user_by_id_or_telegram_id(db, user_id)
 
-    subscription = await get_subscription_by_user_id(db, user.id)
+    if settings.is_multi_tariff_enabled():
+        if subscription_id:
+            from app.database.crud.subscription import get_subscription_by_id
+
+            subscription = await get_subscription_by_id(db, subscription_id)
+            if subscription and subscription.user_id != user.id:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Subscription does not belong to this user')
+        else:
+            from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+            active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+            if not active_subs:
+                subscription = None
+            elif len(active_subs) == 1:
+                subscription = active_subs[0]
+            else:
+                _non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+                _pool = _non_daily or active_subs
+                subscription = max(_pool, key=lambda s: s.days_left)
+    else:
+        subscription = await get_subscription_by_user_id(db, user.id)
     if not subscription:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'User has no subscription')
 
     await deactivate_subscription(db, subscription)
 
     # Деактивируем пользователя в RemnaWave, если есть UUID
-    if user.remnawave_uuid:
+    remnawave_uuid = subscription.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
+    if remnawave_uuid:
         subscription_service = SubscriptionService()
-        await subscription_service.disable_remnawave_user(user.remnawave_uuid)
+        await subscription_service.disable_remnawave_user(remnawave_uuid)
 
     # Перезагружаем пользователя
     user = await get_user_by_id(db, user.id)

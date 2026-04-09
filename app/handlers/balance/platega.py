@@ -1,5 +1,7 @@
 """Handlers for Platega balance interactions."""
 
+import html
+
 import structlog
 from aiogram import types
 from aiogram.fsm.context import FSMContext
@@ -18,8 +20,7 @@ logger = structlog.get_logger(__name__)
 
 
 def _get_active_methods() -> list[int]:
-    methods = settings.get_platega_active_methods()
-    return [code for code in methods if code in {2, 10, 11, 12, 13}]
+    return settings.get_platega_active_methods()
 
 
 async def _prompt_amount(
@@ -71,13 +72,6 @@ async def _prompt_amount(
 
     keyboard = get_back_keyboard(db_user.language)
 
-    if settings.is_quick_amount_buttons_enabled():
-        from .main import get_quick_amount_buttons
-
-        quick_amount_buttons = await get_quick_amount_buttons(db_user.language, db_user)
-        if quick_amount_buttons:
-            keyboard.inline_keyboard = quick_amount_buttons + keyboard.inline_keyboard
-
     await message.edit_text(
         prompt_template.format(
             method_name=method_name,
@@ -105,7 +99,7 @@ async def start_platega_payment(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
@@ -197,6 +191,55 @@ async def handle_platega_method_selection(
 
 
 @error_handler
+async def start_platega_direct_method(
+    callback: types.CallbackQuery,
+    db_user: User,
+    state: FSMContext,
+):
+    """Handle direct Platega method selection from the main payment screen (inline mode)."""
+    texts = get_texts(db_user.language)
+
+    try:
+        method_code = int(callback.data.removeprefix('topup_platega_m'))
+    except (ValueError, IndexError):
+        await callback.answer('❌ Некорректный способ оплаты', show_alert=True)
+        return
+
+    if getattr(db_user, 'restriction_topup', False):
+        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
+        support_url = settings.get_support_contact_url()
+        keyboard = []
+        if support_url:
+            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+
+        await callback.message.edit_text(
+            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
+            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+        )
+        await callback.answer()
+        return
+
+    if not settings.is_platega_enabled():
+        await callback.answer(
+            texts.t(
+                'PLATEGA_TEMPORARILY_UNAVAILABLE',
+                '❌ Оплата через Platega временно недоступна',
+            ),
+            show_alert=True,
+        )
+        return
+
+    if method_code not in _get_active_methods():
+        await callback.answer('⚠️ Этот способ сейчас недоступен', show_alert=True)
+        return
+
+    await _prompt_amount(callback.message, db_user, state, method_code)
+    await callback.answer()
+
+
+@error_handler
 async def process_platega_payment_amount(
     message: types.Message,
     db_user: User,
@@ -208,7 +251,7 @@ async def process_platega_payment_amount(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
+        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
@@ -250,7 +293,8 @@ async def process_platega_payment_amount(
             texts.t(
                 'PLATEGA_AMOUNT_TOO_LOW',
                 'Минимальная сумма для оплаты через Platega: {amount}',
-            ).format(amount=settings.format_price(settings.PLATEGA_MIN_AMOUNT_KOPEKS))
+            ).format(amount=settings.format_price(settings.PLATEGA_MIN_AMOUNT_KOPEKS)),
+            reply_markup=get_back_keyboard(db_user.language),
         )
         return
 
@@ -259,7 +303,8 @@ async def process_platega_payment_amount(
             texts.t(
                 'PLATEGA_AMOUNT_TOO_HIGH',
                 'Максимальная сумма для оплаты через Platega: {amount}',
-            ).format(amount=settings.format_price(settings.PLATEGA_MAX_AMOUNT_KOPEKS))
+            ).format(amount=settings.format_price(settings.PLATEGA_MAX_AMOUNT_KOPEKS)),
+            reply_markup=get_back_keyboard(db_user.language),
         )
         return
 

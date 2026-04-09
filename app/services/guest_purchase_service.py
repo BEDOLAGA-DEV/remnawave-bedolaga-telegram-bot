@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import structlog
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +15,12 @@ from app.cabinet.auth.jwt_handler import create_auto_login_token
 from app.cabinet.auth.password_utils import hash_password
 from app.config import settings
 from app.database.crud.landing import create_guest_purchase
-from app.database.crud.subscription import create_paid_subscription, get_subscription_by_user_id, replace_subscription
+from app.database.crud.subscription import (
+    create_paid_subscription,
+    extend_subscription,
+    get_subscription_by_user_id,
+    replace_subscription,
+)
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import _get_or_create_default_promo_group
@@ -25,8 +30,10 @@ from app.database.models import (
     LandingPage,
     PaymentMethod,
     Tariff,
+    Transaction,
     TransactionType,
     User,
+    _aware,
 )
 from app.services.subscription_service import SubscriptionService
 
@@ -46,11 +53,10 @@ async def _send_admin_notification(
     if not getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) or not settings.BOT_TOKEN:
         return
     try:
-        from aiogram import Bot
-
+        from app.bot_factory import create_bot
         from app.services.admin_notification_service import AdminNotificationService
 
-        async with Bot(token=settings.BOT_TOKEN) as bot:
+        async with create_bot() as bot:
             service = AdminNotificationService(bot)
             await service.send_guest_purchase_notification(
                 purchase,
@@ -177,6 +183,97 @@ async def create_purchase(
     return purchase
 
 
+async def _create_nalogo_receipt_for_purchase(
+    db: AsyncSession,
+    purchase: GuestPurchase,
+    user: User,
+    transaction: Transaction | None = None,
+) -> None:
+    """Create NaloGO fiscal receipt for a guest purchase (best-effort)."""
+    if not settings.is_nalogo_enabled():
+        return
+
+    # Без payment_id нет dedup-ключа в Redis — нельзя гарантировать идемпотентность
+    if not purchase.payment_id:
+        logger.warning(
+            'Cannot create NaloGO receipt: purchase has no payment_id',
+            purchase_id=purchase.id,
+        )
+        return
+
+    # Нулевые/отрицательные суммы не фискализируем
+    if purchase.amount_kopeks <= 0:
+        return
+
+    # Защита от дублей: если у транзакции или покупки уже есть чек — не создаём новый
+    if transaction and transaction.receipt_uuid:
+        logger.info(
+            'NaloGO receipt already exists for guest purchase (transaction)',
+            purchase_id=purchase.id,
+            receipt_uuid=transaction.receipt_uuid,
+        )
+        return
+
+    if purchase.receipt_uuid:
+        logger.info(
+            'NaloGO receipt already exists for guest purchase (purchase)',
+            purchase_id=purchase.id,
+            receipt_uuid=purchase.receipt_uuid,
+        )
+        return
+
+    try:
+        from app.services.nalogo_service import NaloGoService
+
+        nalogo_service = NaloGoService()
+        if not nalogo_service.configured:
+            return
+
+        amount_rubles = purchase.amount_kopeks / 100
+        # Не передаём telegram_user_id в описание чека — privacy (VPN-сервис)
+        receipt_name = settings.get_balance_payment_description(purchase.amount_kopeks)
+
+        receipt_uuid = await nalogo_service.create_receipt(
+            name=receipt_name,
+            amount=amount_rubles,
+            quantity=1,
+            payment_id=purchase.payment_id,
+            telegram_user_id=user.telegram_id,
+            amount_kopeks=purchase.amount_kopeks,
+        )
+
+        if receipt_uuid:
+            logger.info(
+                'NaloGO receipt created for guest purchase',
+                purchase_id=purchase.id,
+                receipt_uuid=receipt_uuid,
+                saved_to_transaction=transaction is not None,
+            )
+            # Всегда сохраняем receipt_uuid на purchase (persistent dedup)
+            try:
+                purchase.receipt_uuid = receipt_uuid
+                purchase.receipt_created_at = datetime.now(UTC)
+                if transaction:
+                    transaction.receipt_uuid = receipt_uuid
+                    transaction.receipt_created_at = datetime.now(UTC)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                logger.warning(
+                    'Failed to save receipt_uuid to purchase/transaction',
+                    purchase_id=purchase.id,
+                    receipt_uuid=receipt_uuid,
+                )
+    except Exception as exc:
+        from app.utils.proxy import sanitize_proxy_error
+
+        logger.error(
+            'Failed to create nalogo receipt for guest purchase',
+            purchase_id=purchase.id,
+            error=sanitize_proxy_error(exc),
+        )
+
+
 async def fulfill_purchase(
     db: AsyncSession,
     purchase_token: str,
@@ -219,6 +316,7 @@ async def fulfill_purchase(
             recipient_value,
             purchase=purchase,
             pre_resolved_telegram_id=pre_resolved_telegram_id,
+            tariff_id=purchase.tariff_id,
         )
 
         # Load tariff early — needed for both PENDING_ACTIVATION and DELIVERED paths
@@ -249,7 +347,14 @@ async def fulfill_purchase(
             return purchase
 
         # Check if user already has a subscription
-        existing_subscription = await get_subscription_by_user_id(db, user.id)
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            # In multi-tariff mode, only block if user already has THIS SPECIFIC tariff active.
+            # Different tariffs can be purchased simultaneously — that's the whole point.
+            existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
+        else:
+            existing_subscription = await get_subscription_by_user_id(db, user.id)
         if existing_subscription is not None and (existing_subscription.is_active or purchase.is_gift):
             # Active subscription or gift with any existing subscription — hold for manual activation
             purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
@@ -257,7 +362,7 @@ async def fulfill_purchase(
             if recipient_type == 'email' and not purchase.is_gift and is_new_account:
                 purchase.auto_login_token = create_auto_login_token(user.id)
             await db.commit()
-            await db.refresh(purchase, attribute_names=['landing', 'user'])
+            await db.refresh(purchase, attribute_names=['landing', 'user', 'buyer'])
 
             try:
                 await send_guest_notification(
@@ -271,6 +376,10 @@ async def fulfill_purchase(
                 logger.exception('Failed to send pending_activation notification', purchase_id=purchase.id)
 
             await _send_admin_notification(purchase, notification_tariff_name, is_pending_activation=True)
+
+            # Создаем чек через NaloGO (деньги получены, чек нужен)
+            await _create_nalogo_receipt_for_purchase(db, purchase, user)
+            await db.refresh(purchase)  # guard: inner rollback may expire the object
 
             # Clear plaintext password after email delivery
             if purchase.cabinet_password:
@@ -333,12 +442,13 @@ async def fulfill_purchase(
             purchase.auto_login_token = create_auto_login_token(user.id)
 
         await db.commit()
-        await db.refresh(purchase, attribute_names=['landing', 'user'])
+        await db.refresh(purchase, attribute_names=['landing', 'user', 'buyer'])
 
         # Create transaction so promo group auto-assignment and contest tracking work
+        transaction = None
         try:
             payment_method_enum = _resolve_payment_method(purchase.payment_method)
-            await create_transaction(
+            transaction = await create_transaction(
                 db=db,
                 user_id=user.id,
                 type=TransactionType.SUBSCRIPTION_PAYMENT,
@@ -363,6 +473,12 @@ async def fulfill_purchase(
             logger.exception('Failed to send delivery notification', purchase_id=purchase.id)
 
         await _send_admin_notification(purchase, notification_tariff_name, is_pending_activation=False)
+
+        # Создаем чек через NaloGO
+        await _create_nalogo_receipt_for_purchase(db, purchase, user, transaction)
+
+        # Refresh purchase: если внутри nalogo helper был rollback, объект expired
+        await db.refresh(purchase)
 
         # Clear plaintext password after email delivery — no longer needed in DB
         if purchase.cabinet_password:
@@ -392,24 +508,41 @@ async def fulfill_purchase(
     return purchase
 
 
+def _resolve_base_payment_method(method_str: str | None) -> str:
+    """Resolve base payment method string by stripping sub-option suffixes.
+
+    'yookassa_sbp' → 'yookassa', 'kassa_ai' → 'kassa_ai' (enum match keeps it),
+    'platega_2' → 'platega'.
+    """
+    if not method_str:
+        return ''
+    # If exact enum match, return as-is (handles 'telegram_stars', 'kassa_ai', etc.)
+    try:
+        PaymentMethod(method_str)
+        return method_str
+    except ValueError:
+        pass
+    # Strip sub-option suffix
+    if '_' in method_str:
+        base = method_str.rsplit('_', 1)[0]
+        try:
+            PaymentMethod(base)
+            return base
+        except ValueError:
+            pass
+    return method_str
+
+
 def _resolve_payment_method(method_str: str | None) -> PaymentMethod | None:
     """Convert payment method string from GuestPurchase to PaymentMethod enum."""
     if not method_str:
         return None
-    # Try exact match first (handles 'telegram_stars', 'kassa_ai', 'yookassa', etc.)
+    base = _resolve_base_payment_method(method_str)
     try:
-        return PaymentMethod(method_str)
+        return PaymentMethod(base)
     except ValueError:
-        pass
-    # Strip sub-option suffix ('yookassa_sbp' → 'yookassa', 'platega_2' → 'platega')
-    if '_' in method_str:
-        base_method = method_str.split('_')[0]
-        try:
-            return PaymentMethod(base_method)
-        except ValueError:
-            pass
-    logger.debug('Unknown payment method for transaction', method=method_str)
-    return None
+        logger.debug('Unknown payment method for transaction', method=method_str)
+        return None
 
 
 def _mask_email(email: str) -> str:
@@ -434,6 +567,7 @@ async def _find_or_create_user(
     contact_value: str,
     purchase: GuestPurchase | None = None,
     pre_resolved_telegram_id: int | None = None,
+    tariff_id: int | None = None,
 ) -> tuple[User, bool]:
     """Find user by email/telegram username or create a new one.
 
@@ -473,14 +607,21 @@ async def _find_or_create_user(
 
         # Create new email user with verified cabinet account
         plain_password = secrets.token_urlsafe(12)
-        default_group = await _get_or_create_default_promo_group(db)
+        # Resolve promo group: prefer tariff's allowed group, fallback to default
+        resolved_group = None
+        if tariff_id:
+            tariff_obj = await get_tariff_by_id(db, tariff_id)
+            if tariff_obj and tariff_obj.allowed_promo_groups:
+                resolved_group = tariff_obj.allowed_promo_groups[0]
+        if not resolved_group:
+            resolved_group = await _get_or_create_default_promo_group(db)
         user = User(
             auth_type='email',
             email=contact_value,
             email_verified=True,
             email_verified_at=datetime.now(UTC),
             password_hash=hash_password(plain_password),
-            promo_group_id=default_group.id,
+            promo_group_id=resolved_group.id,
         )
         if purchase:
             purchase.cabinet_password = plain_password
@@ -529,9 +670,9 @@ async def _find_or_create_user(
     resolved_telegram_id: int | None = pre_resolved_telegram_id
     if resolved_telegram_id is None:
         try:
-            from aiogram import Bot
+            from app.bot_factory import create_bot
 
-            async with Bot(token=settings.BOT_TOKEN) as bot:
+            async with create_bot() as bot:
                 chat = await asyncio.wait_for(
                     bot.get_chat(chat_id=f'@{username}'),
                     timeout=5.0,
@@ -639,10 +780,9 @@ async def _send_telegram_gift_notification(
     try:
         import html as html_mod
 
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        from app.bot_factory import create_bot
 
         gift_from = ''
         if purchase.contact_value:
@@ -674,10 +814,7 @@ async def _send_telegram_gift_notification(
                 ]
             )
 
-        async with Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        ) as bot:
+        async with create_bot() as bot:
             await bot.send_message(
                 chat_id=user.telegram_id,
                 text=text,
@@ -894,7 +1031,6 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
     notification_language = user.language or 'ru'
 
     try:
-        existing_subscription = await get_subscription_by_user_id(db, user.id)
         subscription_service = SubscriptionService()
 
         squads = list(tariff.allowed_squads or [])
@@ -904,31 +1040,98 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
             all_servers, _ = await get_all_server_squads(db, available_only=True)
             squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
-        if existing_subscription is not None:
-            subscription = await replace_subscription(
-                db,
-                existing_subscription,
-                duration_days=purchase.period_days,
-                traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
-                connected_squads=squads,
-                is_trial=False,
-                update_server_counters=True,
-                commit=False,
+        # In multi-tariff mode, always create a new subscription (new Remnawave user)
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            existing_for_tariff = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
+            _has_time = (
+                existing_for_tariff is not None
+                and existing_for_tariff.end_date is not None
+                and _aware(existing_for_tariff.end_date) > datetime.now(UTC)
             )
-            subscription.tariff_id = tariff.id
+            if existing_for_tariff and _has_time:
+                # Extend existing active/trial subscription instead of replacing (preserve remaining days)
+                subscription = await extend_subscription(
+                    db,
+                    existing_for_tariff,
+                    purchase.period_days,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    commit=False,
+                )
+            elif existing_for_tariff:
+                # Expired subscription — replace with fresh dates
+                subscription = await replace_subscription(
+                    db,
+                    existing_for_tariff,
+                    duration_days=purchase.period_days,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    is_trial=False,
+                    update_server_counters=True,
+                    commit=False,
+                )
+                subscription.tariff_id = tariff.id
+            else:
+                subscription = await create_paid_subscription(
+                    db=db,
+                    user_id=user.id,
+                    duration_days=purchase.period_days,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    tariff_id=tariff.id,
+                    update_server_counters=True,
+                    commit=False,
+                )
         else:
-            subscription = await create_paid_subscription(
-                db=db,
-                user_id=user.id,
-                duration_days=purchase.period_days,
-                traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
-                connected_squads=squads,
-                tariff_id=tariff.id,
-                update_server_counters=True,
-                commit=False,
+            existing_subscription = await get_subscription_by_user_id(db, user.id)
+            _sub_has_time = (
+                existing_subscription is not None
+                and existing_subscription.end_date is not None
+                and _aware(existing_subscription.end_date) > datetime.now(UTC)
             )
+            if existing_subscription is not None and _sub_has_time:
+                # Extend existing active subscription (preserve remaining days)
+                subscription = await extend_subscription(
+                    db,
+                    existing_subscription,
+                    purchase.period_days,
+                    tariff_id=tariff.id,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    commit=False,
+                )
+            elif existing_subscription is not None:
+                # Expired subscription — replace with fresh dates
+                subscription = await replace_subscription(
+                    db,
+                    existing_subscription,
+                    duration_days=purchase.period_days,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    is_trial=False,
+                    update_server_counters=True,
+                    commit=False,
+                )
+                subscription.tariff_id = tariff.id
+            else:
+                subscription = await create_paid_subscription(
+                    db=db,
+                    user_id=user.id,
+                    duration_days=purchase.period_days,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    tariff_id=tariff.id,
+                    update_server_counters=True,
+                    commit=False,
+                )
 
         await subscription_service.create_remnawave_user(db, subscription)
         await db.refresh(subscription)
@@ -942,7 +1145,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
 
         # Single atomic commit: subscription + purchase status + user changes
         await db.commit()
-        await db.refresh(purchase, attribute_names=['landing', 'user'])
+        await db.refresh(purchase, attribute_names=['landing', 'user', 'buyer'])
 
         # Create transaction so promo group auto-assignment and contest tracking work
         try:
@@ -1002,14 +1205,16 @@ async def retry_stuck_paid_purchases(
     stale_minutes: int = 5,
     limit: int = 10,
     max_age_hours: int = 24,
+    max_retries: int = 20,
 ) -> int:
     """Retry fulfillment for purchases stuck in PAID status.
 
     Finds purchases that have been in PAID status for longer than stale_minutes
-    (but not older than max_age_hours) and attempts to fulfill them in isolated
-    sessions. Returns the number of successfully retried purchases.
+    (but not older than max_age_hours, and with retry_count < max_retries) and
+    attempts to fulfill them in isolated sessions.
 
-    Purchases older than max_age_hours are left for manual investigation.
+    Purchases exceeding max_retries are marked FAILED and an admin alert is sent.
+    Returns the number of successfully retried purchases.
     """
     from app.database.database import AsyncSessionLocal
 
@@ -1018,10 +1223,12 @@ async def retry_stuck_paid_purchases(
 
     # Collect tokens only — each retry gets its own session.
     # NULL paid_at is included via or_() as a safety net for data anomalies.
+    # Filter retry_count < max_retries in SQL to avoid wasting LIMIT slots.
     result = await db.execute(
         select(GuestPurchase.token)
         .where(
             GuestPurchase.status == GuestPurchaseStatus.PAID.value,
+            GuestPurchase.retry_count < max_retries,
             or_(GuestPurchase.paid_at < cutoff, GuestPurchase.paid_at.is_(None)),
             or_(GuestPurchase.paid_at > max_age, GuestPurchase.paid_at.is_(None)),
             # Exclude code-only gifts — they stay PAID intentionally until activated
@@ -1032,6 +1239,9 @@ async def retry_stuck_paid_purchases(
     )
     tokens = result.scalars().all()
 
+    # Separately fail exhausted purchases (retry_count >= max_retries)
+    await _fail_exhausted_purchases_batch(db, GuestPurchaseStatus.PAID, max_retries, max_age)
+
     if not tokens:
         return 0
 
@@ -1039,6 +1249,7 @@ async def retry_stuck_paid_purchases(
     for token in tokens:
         try:
             async with AsyncSessionLocal() as retry_db:
+                await _increment_retry_count(retry_db, token)
                 await fulfill_purchase(retry_db, token)
                 retried += 1
                 logger.info('Retried stuck purchase successfully', token_prefix=token[:5])
@@ -1053,12 +1264,15 @@ async def retry_stuck_pending_activation(
     stale_minutes: int = 10,
     limit: int = 10,
     max_age_hours: int = 24,
+    max_retries: int = 20,
 ) -> int:
     """Retry activation for purchases stuck in PENDING_ACTIVATION status.
 
     This handles the case where activate_purchase() failed after the status
     was already transitioned to PENDING_ACTIVATION (e.g., Remnawave panel was
     temporarily down). Each retry runs in an isolated session.
+
+    Purchases exceeding max_retries are marked FAILED and an admin alert is sent.
     """
     from app.database.database import AsyncSessionLocal
 
@@ -1069,6 +1283,7 @@ async def retry_stuck_pending_activation(
         select(GuestPurchase.token)
         .where(
             GuestPurchase.status == GuestPurchaseStatus.PENDING_ACTIVATION.value,
+            GuestPurchase.retry_count < max_retries,
             or_(GuestPurchase.paid_at < cutoff, GuestPurchase.paid_at.is_(None)),
             or_(GuestPurchase.paid_at > max_age, GuestPurchase.paid_at.is_(None)),
             GuestPurchase.user_id.isnot(None),
@@ -1078,6 +1293,9 @@ async def retry_stuck_pending_activation(
     )
     tokens = result.scalars().all()
 
+    # Separately fail exhausted purchases (retry_count >= max_retries)
+    await _fail_exhausted_purchases_batch(db, GuestPurchaseStatus.PENDING_ACTIVATION, max_retries, max_age)
+
     if not tokens:
         return 0
 
@@ -1085,6 +1303,7 @@ async def retry_stuck_pending_activation(
     for token in tokens:
         try:
             async with AsyncSessionLocal() as retry_db:
+                await _increment_retry_count(retry_db, token)
                 await activate_purchase(retry_db, token)
                 retried += 1
                 logger.info('Retried stuck pending_activation successfully', token_prefix=token[:5])
@@ -1092,3 +1311,368 @@ async def retry_stuck_pending_activation(
             logger.exception('Failed to retry stuck pending_activation', token_prefix=token[:5])
 
     return retried
+
+
+async def _increment_retry_count(db: AsyncSession, purchase_token: str) -> None:
+    """Atomically increment retry_count via UPDATE statement (no SELECT, no identity map pollution)."""
+    await db.execute(
+        update(GuestPurchase)
+        .where(GuestPurchase.token == purchase_token)
+        .values(retry_count=GuestPurchase.retry_count + 1)
+    )
+    await db.commit()
+
+
+async def _fail_exhausted_purchases_batch(
+    db: AsyncSession,
+    status: GuestPurchaseStatus,
+    max_retries: int,
+    max_age: datetime,
+) -> None:
+    """Find and mark exhausted purchases as FAILED, then send admin alerts."""
+    from app.database.crud.landing import update_purchase_status
+    from app.database.database import AsyncSessionLocal
+
+    result = await db.execute(
+        select(GuestPurchase.token, GuestPurchase.retry_count)
+        .where(
+            GuestPurchase.status == status.value,
+            GuestPurchase.retry_count >= max_retries,
+            or_(GuestPurchase.paid_at > max_age, GuestPurchase.paid_at.is_(None)),
+        )
+        .limit(10)
+    )
+    exhausted = result.all()
+
+    for token, retry_count in exhausted:
+        # Collect alert data before closing the session
+        alert_data: dict | None = None
+        try:
+            async with AsyncSessionLocal() as fail_db:
+                row = await fail_db.execute(select(GuestPurchase).where(GuestPurchase.token == token).with_for_update())
+                purchase = row.scalars().first()
+                if purchase and purchase.status not in (
+                    GuestPurchaseStatus.DELIVERED.value,
+                    GuestPurchaseStatus.FAILED.value,
+                ):
+                    # Capture alert data before commit expires attributes
+                    alert_data = {
+                        'id': purchase.id,
+                        'token': purchase.token,
+                        'amount_kopeks': purchase.amount_kopeks,
+                        'payment_method': purchase.payment_method,
+                        'payment_id': purchase.payment_id,
+                        'contact_type': purchase.contact_type,
+                        'contact_value': purchase.contact_value,
+                        'created_at': purchase.created_at,
+                    }
+                    await update_purchase_status(fail_db, token, GuestPurchaseStatus.FAILED)
+                    logger.error(
+                        'Purchase exceeded max retries — marked FAILED',
+                        token_prefix=token[:5],
+                        retry_count=retry_count,
+                        phase=status.value,
+                    )
+        except Exception:
+            logger.exception('Failed to mark exhausted purchase as FAILED', token_prefix=token[:5])
+
+        # Send alert OUTSIDE the session (no row lock held)
+        if alert_data:
+            await _send_stuck_purchase_alert(alert_data, retry_count, status.value)
+
+
+async def _send_stuck_purchase_alert(data: dict, retry_count: int, phase: str) -> None:
+    """Send admin notification about a purchase that exhausted all retries.
+
+    Accepts a plain dict (not ORM object) so it can be called after the session is closed.
+    """
+    if not getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) or not settings.BOT_TOKEN:
+        return
+    try:
+        import html as html_mod
+
+        from app.bot_factory import create_bot
+        from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
+
+        amount_rub = data['amount_kopeks'] / 100
+        contact_value = html_mod.escape(str(data.get('contact_value', '?')))
+        contact_type = html_mod.escape(str(data.get('contact_type', '?')))
+        text = (
+            f'<b>STUCK PURCHASE — retries exhausted</b>\n\n'
+            f'Token: <code>{data["token"][:8]}...</code>\n'
+            f'Status: <code>{phase}</code> → <code>FAILED</code>\n'
+            f'Retries: <b>{retry_count}</b>\n'
+            f'Amount: <b>{amount_rub:.0f} ₽</b>\n'
+            f'Payment: <code>{html_mod.escape(str(data.get("payment_method") or "?"))}</code>\n'
+            f'Payment ID: <code>{html_mod.escape(str(data.get("payment_id") or "?"))}</code>\n'
+            f'Contact: {contact_type}: <code>{contact_value}</code>\n'
+            f'Created: {data["created_at"]:%Y-%m-%d %H:%M UTC}\n\n'
+            f'Requires manual investigation.'
+        )
+
+        async with create_bot() as bot:
+            service = AdminNotificationService(bot)
+            await service.send_admin_notification(text, category=NotificationCategory.ERRORS)
+    except Exception:
+        logger.warning('Failed to send stuck purchase admin alert', purchase_id=data.get('id'), exc_info=True)
+
+
+async def _send_amount_mismatch_alert(
+    purchase: GuestPurchase,
+    provider_amount_kopeks: int,
+    provider_payment_id: str,
+    payment_method: str | None,
+) -> None:
+    """Send admin alert when recovery detects an amount mismatch (possible fraud or bug)."""
+    if not getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) or not settings.BOT_TOKEN:
+        return
+    try:
+        import html as html_mod
+
+        from app.bot_factory import create_bot
+        from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
+
+        text = (
+            f'<b>AMOUNT MISMATCH — purchase marked FAILED</b>\n\n'
+            f'Token: <code>{purchase.token[:8]}...</code>\n'
+            f'Expected: <b>{purchase.amount_kopeks / 100:.0f} ₽</b>\n'
+            f'Provider: <b>{provider_amount_kopeks / 100:.0f} ₽</b>\n'
+            f'Payment: <code>{html_mod.escape(str(payment_method or "?"))}</code>\n'
+            f'Payment ID: <code>{html_mod.escape(str(provider_payment_id))}</code>\n'
+            f'Contact: {html_mod.escape(str(purchase.contact_type))}: '
+            f'<code>{html_mod.escape(str(purchase.contact_value))}</code>\n\n'
+            f'Requires manual investigation.'
+        )
+
+        async with create_bot() as bot:
+            service = AdminNotificationService(bot)
+            await service.send_admin_notification(text, category=NotificationCategory.ERRORS)
+    except Exception:
+        logger.warning('Failed to send amount mismatch alert', purchase_id=purchase.id, exc_info=True)
+
+
+async def recover_stuck_pending_purchases(
+    db: AsyncSession,
+    stale_minutes: int = 10,
+    limit: int = 10,
+    max_age_hours: int = 24,
+) -> int:
+    """Recover purchases stuck in PENDING by checking provider payment status.
+
+    Queries all payment provider tables (YooKassa, Heleket, CryptoBot, etc.)
+    for succeeded payments matching the purchase_token. If a provider payment
+    is confirmed but the GuestPurchase is still PENDING (webhook was lost or
+    processing failed), marks the purchase as PAID so retry_stuck_paid_purchases
+    can fulfill it. Includes amount verification.
+
+    Returns the number of recovered purchases.
+    """
+    from app.database.database import AsyncSessionLocal
+
+    cutoff = datetime.now(UTC) - timedelta(minutes=stale_minutes)
+    max_age = datetime.now(UTC) - timedelta(hours=max_age_hours)
+
+    # Find PENDING purchases older than stale_minutes but younger than max_age_hours
+    result = await db.execute(
+        select(GuestPurchase.token, GuestPurchase.payment_method)
+        .where(
+            GuestPurchase.status == GuestPurchaseStatus.PENDING.value,
+            GuestPurchase.created_at < cutoff,
+            GuestPurchase.created_at > max_age,
+        )
+        .order_by(GuestPurchase.created_at.asc())
+        .limit(limit)
+    )
+    pending_purchases = result.all()
+
+    if not pending_purchases:
+        return 0
+
+    recovered = 0
+    for token, payment_method in pending_purchases:
+        try:
+            async with AsyncSessionLocal() as recover_db:
+                paid = await _check_and_recover_pending_purchase(recover_db, token, payment_method)
+                if paid:
+                    recovered += 1
+        except Exception:
+            logger.exception('Failed to recover pending purchase', token_prefix=token[:5])
+
+    return recovered
+
+
+async def _find_succeeded_provider_payment(
+    db: AsyncSession,
+    base_method: str,
+    purchase_token: str,
+) -> tuple[str, int | None] | None:
+    """Query provider payment tables for a succeeded payment matching purchase_token.
+
+    Returns ``(provider_payment_id, amount_kopeks)`` or ``None``.
+    ``amount_kopeks`` is ``None`` when the amount check should be skipped
+    (e.g., CryptoBot where USD→RUB conversion introduces imprecision).
+    """
+    from sqlalchemy import cast
+    from sqlalchemy.types import JSON as SA_JSON
+
+    from app.database.models import (
+        CloudPaymentsPayment,
+        CryptoBotPayment,
+        FreekassaPayment,
+        HeleketPayment,
+        KassaAiPayment,
+        MulenPayPayment,
+        Pal24Payment,
+        PlategaPayment,
+        RioPayPayment,
+        SeverPayPayment,
+        WataPayment,
+        YooKassaPayment,
+    )
+
+    # --- CryptoBot: special case — payload field (text JSON), skip amount check ---
+    if base_method == 'cryptobot':
+        result = await db.execute(
+            select(CryptoBotPayment).where(
+                CryptoBotPayment.status == 'paid',
+                CryptoBotPayment.payload.like('{%'),
+                cast(CryptoBotPayment.payload, SA_JSON)['purchase_token'].as_string() == purchase_token,
+            )
+        )
+        p = result.scalars().first()
+        return (p.invoice_id, None) if p else None
+
+    # --- All other providers: metadata_json['purchase_token'] + is_paid/status filters ---
+    model = None
+    payment_id_attr: str = ''
+    extra_conditions: list = []
+
+    if base_method.startswith('yookassa'):
+        model = YooKassaPayment
+        payment_id_attr = 'yookassa_payment_id'
+        extra_conditions = [YooKassaPayment.status == 'succeeded', YooKassaPayment.is_paid.is_(True)]
+    elif base_method == 'heleket':
+        model = HeleketPayment
+        payment_id_attr = 'uuid'
+        extra_conditions = [HeleketPayment.status.in_(['paid', 'paid_over'])]
+    elif base_method == 'mulenpay':
+        model = MulenPayPayment
+        payment_id_attr = 'uuid'
+        extra_conditions = [MulenPayPayment.is_paid.is_(True)]
+    elif base_method == 'pal24':
+        model = Pal24Payment
+        payment_id_attr = 'bill_id'
+        extra_conditions = [Pal24Payment.is_paid.is_(True)]
+    elif base_method == 'wata':
+        model = WataPayment
+        payment_id_attr = 'payment_link_id'
+        extra_conditions = [WataPayment.is_paid.is_(True)]
+    elif base_method == 'platega':
+        model = PlategaPayment
+        payment_id_attr = 'platega_transaction_id'
+        extra_conditions = [PlategaPayment.is_paid.is_(True)]
+    elif base_method == 'cloudpayments':
+        model = CloudPaymentsPayment
+        payment_id_attr = 'invoice_id'
+        extra_conditions = [CloudPaymentsPayment.status == 'completed', CloudPaymentsPayment.is_paid.is_(True)]
+    elif base_method == 'freekassa':
+        model = FreekassaPayment
+        payment_id_attr = 'order_id'
+        extra_conditions = [FreekassaPayment.status == 'success', FreekassaPayment.is_paid.is_(True)]
+    elif base_method == 'kassa_ai':
+        model = KassaAiPayment
+        payment_id_attr = 'order_id'
+        extra_conditions = [KassaAiPayment.status == 'success', KassaAiPayment.is_paid.is_(True)]
+    elif base_method == 'riopay':
+        model = RioPayPayment
+        payment_id_attr = 'order_id'
+        extra_conditions = [RioPayPayment.status == 'success', RioPayPayment.is_paid.is_(True)]
+    elif base_method == 'severpay':
+        model = SeverPayPayment
+        payment_id_attr = 'order_id'
+        extra_conditions = [SeverPayPayment.status == 'success', SeverPayPayment.is_paid.is_(True)]
+
+    if model is None:
+        return None
+
+    result = await db.execute(
+        select(model).where(
+            model.metadata_json['purchase_token'].as_string() == purchase_token,
+            *extra_conditions,
+        )
+    )
+    p = result.scalars().first()
+    if p is None:
+        return None
+
+    payment_id = str(getattr(p, payment_id_attr))
+    # amount_kopeks: Integer column for most providers, @property for Heleket
+    amount = getattr(p, 'amount_kopeks', None)
+    return (payment_id, amount)
+
+
+async def _check_and_recover_pending_purchase(
+    db: AsyncSession,
+    purchase_token: str,
+    payment_method: str | None,
+) -> bool:
+    """Check if a PENDING purchase has a succeeded payment and transition to PAID.
+
+    Uses SELECT ... FOR UPDATE on the GuestPurchase row to prevent concurrent
+    webhook processing from racing with the recovery.
+    Verifies amount match between provider payment and guest purchase.
+    """
+    from app.database.crud.landing import update_purchase_status
+
+    # Lock the row to prevent TOCTOU race with concurrent webhook processing
+    result = await db.execute(select(GuestPurchase).where(GuestPurchase.token == purchase_token).with_for_update())
+    purchase = result.scalars().first()
+    if purchase is None or purchase.status != GuestPurchaseStatus.PENDING.value:
+        return False
+
+    # Resolve base method: 'yookassa_sbp' → 'yookassa', 'kassa_ai' stays 'kassa_ai'
+    base_method = _resolve_base_payment_method(payment_method)
+
+    match = await _find_succeeded_provider_payment(db, base_method, purchase_token)
+    if match is None:
+        if base_method:
+            logger.debug(
+                'No succeeded provider payment found for PENDING purchase',
+                token_prefix=purchase_token[:5],
+                payment_method=payment_method,
+            )
+        return False
+
+    provider_payment_id, provider_amount_kopeks = match
+
+    # Amount verification (skip when provider_amount_kopeks is None, e.g., crypto)
+    if provider_amount_kopeks is not None and provider_amount_kopeks != purchase.amount_kopeks:
+        logger.error(
+            'Amount mismatch during PENDING recovery — skipping',
+            token_prefix=purchase_token[:5],
+            provider_amount=provider_amount_kopeks,
+            purchase_amount=purchase.amount_kopeks,
+            payment_method=payment_method,
+        )
+        # Mark FAILED to prevent repeated mismatch logs every cycle
+        from app.database.crud.landing import update_purchase_status as _update_status
+
+        await _update_status(db, purchase_token, GuestPurchaseStatus.FAILED)
+        await _send_amount_mismatch_alert(purchase, provider_amount_kopeks, provider_payment_id, payment_method)
+        return False
+
+    # Transition PENDING → PAID for retry_stuck_paid_purchases to handle
+    await update_purchase_status(
+        db,
+        purchase_token,
+        GuestPurchaseStatus.PAID,
+        payment_id=provider_payment_id,
+        paid_at=datetime.now(UTC),
+    )
+    logger.info(
+        'Recovered stuck PENDING purchase → PAID',
+        token_prefix=purchase_token[:5],
+        payment_method=payment_method,
+        provider_payment_id=provider_payment_id,
+    )
+    return True

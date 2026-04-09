@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.riopay import (
     create_riopay_payment as crud_create_riopay_payment,
+    get_riopay_payment_by_id_for_update,
     get_riopay_payment_by_order_id,
     get_riopay_payment_by_riopay_order_id,
     update_riopay_payment_status,
@@ -42,11 +43,13 @@ class RioPayPaymentMixin:
         self,
         db: AsyncSession,
         *,
-        user_id: int,
+        user_id: int | None,
         amount_kopeks: int,
         description: str = 'Пополнение баланса',
         email: str | None = None,
         language: str = 'ru',
+        success_url: str | None = None,
+        fail_url: str | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж RioPay.
@@ -76,13 +79,15 @@ class RioPayPaymentMixin:
             return None
 
         # Получаем telegram_id пользователя для order_id
-        user = await get_user_by_id(db, user_id)
-        tg_id = user.telegram_id if user else user_id
+        if user_id is not None:
+            user = await get_user_by_id(db, user_id)
+            tg_id = user.telegram_id if user else user_id
+        else:
+            tg_id = 'guest'
 
         # Генерируем уникальный order_id с telegram_id для удобного поиска
         order_id = f'rp{tg_id}_{uuid.uuid4().hex[:6]}'
         amount_rubles = amount_kopeks / 100
-        currency = settings.RIOPAY_CURRENCY
 
         # Срок действия платежа (1 час по умолчанию)
         expires_at = datetime.now(UTC) + timedelta(hours=1)
@@ -100,11 +105,9 @@ class RioPayPaymentMixin:
             # Используем API для создания заказа
             result = await riopay_service.create_order(
                 amount=amount_rubles,
-                currency=currency,
                 external_id=order_id,
                 purpose=description,
-                success_url=settings.RIOPAY_SUCCESS_URL,
-                fail_url=settings.RIOPAY_FAIL_URL,
+                success_url=success_url or settings.RIOPAY_SUCCESS_URL,
             )
 
             payment_url = result.get('paymentLink')
@@ -124,7 +127,7 @@ class RioPayPaymentMixin:
                 user_id=user_id,
                 order_id=order_id,
                 amount_kopeks=amount_kopeks,
-                currency=currency,
+                currency=settings.RIOPAY_CURRENCY,
                 description=description,
                 payment_url=payment_url,
                 riopay_order_id=riopay_order_id,
@@ -138,7 +141,7 @@ class RioPayPaymentMixin:
                 order_id=order_id,
                 user_id=user_id,
                 amount_rubles=amount_rubles,
-                currency=currency,
+                currency=settings.RIOPAY_CURRENCY,
             )
 
             return {
@@ -146,7 +149,7 @@ class RioPayPaymentMixin:
                 'riopay_order_id': riopay_order_id,
                 'amount_kopeks': amount_kopeks,
                 'amount_rubles': amount_rubles,
-                'currency': currency,
+                'currency': settings.RIOPAY_CURRENCY,
                 'payment_url': payment_url,
                 'expires_at': expires_at.isoformat(),
                 'local_payment_id': local_payment.id,
@@ -200,7 +203,14 @@ class RioPayPaymentMixin:
                 )
                 return False
 
-            # Проверка дублирования
+            # Lock payment row immediately to prevent concurrent webhook processing (TOCTOU race)
+            locked = await get_riopay_payment_by_id_for_update(db, payment.id)
+            if not locked:
+                logger.error('RioPay: не удалось заблокировать платёж', payment_id=payment.id)
+                return False
+            payment = locked
+
+            # Re-check is_paid from the locked row
             if payment.is_paid:
                 logger.info('RioPay webhook: платеж уже обработан', order_id=payment.order_id)
                 return True
@@ -239,23 +249,33 @@ class RioPayPaymentMixin:
                     )
                     return False
 
-            # Обновляем статус платежа только после проверки суммы
-            payment = await update_riopay_payment_status(
-                db=db,
-                payment=payment,
-                status=internal_status,
-                is_paid=is_paid,
-                riopay_order_id=riopay_order_id,
-                payment_method=payload.get('paymentType'),
-                callback_payload=callback_payload,
-            )
-
-            # Финализируем платеж если оплачен
             if is_paid:
+                # Inline field updates — NO intermediate commit that would release FOR UPDATE lock
+                payment.status = internal_status
+                payment.is_paid = True
+                payment.paid_at = datetime.now(UTC)
+                payment.updated_at = datetime.now(UTC)
+                if riopay_order_id:
+                    payment.riopay_order_id = riopay_order_id
+                if payload.get('paymentType') is not None:
+                    payment.payment_method = payload.get('paymentType')
+                payment.callback_payload = callback_payload
+                await db.flush()
+
                 return await self._finalize_riopay_payment(
                     db, payment, riopay_order_id=riopay_order_id, trigger='webhook'
                 )
 
+            # Non-success status — safe to use update with commit
+            await update_riopay_payment_status(
+                db=db,
+                payment=payment,
+                status=internal_status,
+                is_paid=False,
+                riopay_order_id=riopay_order_id,
+                payment_method=payload.get('paymentType'),
+                callback_payload=callback_payload,
+            )
             return True
 
         except Exception as e:
@@ -270,9 +290,26 @@ class RioPayPaymentMixin:
         riopay_order_id: str | None,
         trigger: str,
     ) -> bool:
-        """Создаёт транзакцию, начисляет баланс и отправляет уведомления."""
+        """Создаёт транзакцию, начисляет баланс и отправляет уведомления.
+
+        FOR UPDATE lock already acquired by caller — do NOT acquire again here.
+        """
         if payment.transaction_id:
             logger.info('RioPay платеж уже привязан к транзакции', order_id=payment.order_id, trigger=trigger)
+            return True
+
+        # --- Guest purchase flow (landing page / gift) ---
+        riopay_metadata = dict(getattr(payment, 'metadata_json', {}) or {})
+        from app.services.payment.common import try_fulfill_guest_purchase
+
+        guest_result = await try_fulfill_guest_purchase(
+            db,
+            metadata=riopay_metadata,
+            payment_amount_kopeks=payment.amount_kopeks,
+            provider_payment_id=str(riopay_order_id) if riopay_order_id else payment.order_id,
+            provider_name='riopay',
+        )
+        if guest_result is not None:
             return True
 
         # Получаем пользователя
@@ -286,7 +323,7 @@ class RioPayPaymentMixin:
             )
             return False
 
-        # Создаем транзакцию
+        # Создаем транзакцию (commit=False to keep FOR UPDATE lock intact)
         transaction = await create_transaction(
             db,
             user_id=payment.user_id,
@@ -297,15 +334,13 @@ class RioPayPaymentMixin:
             external_id=str(riopay_order_id) if riopay_order_id else payment.order_id,
             is_completed=True,
             created_at=getattr(payment, 'created_at', None),
+            commit=False,
         )
 
-        # Связываем платеж с транзакцией
-        await update_riopay_payment_status(
-            db=db,
-            payment=payment,
-            status=payment.status,
-            transaction_id=transaction.id,
-        )
+        # Связываем платеж с транзакцией (inline — no commit to preserve lock)
+        payment.transaction_id = transaction.id
+        payment.updated_at = datetime.now(UTC)
+        await db.flush()
 
         old_balance = user.balance_kopeks
         was_first_topup = not user.has_made_first_topup
@@ -327,6 +362,22 @@ class RioPayPaymentMixin:
         topup_status = 'Первое пополнение' if was_first_topup else 'Пополнение'
 
         await db.commit()
+
+        # Emit deferred side-effects after atomic commit (events, promo group checks)
+        try:
+            from app.database.crud.transaction import emit_transaction_side_effects
+
+            await emit_transaction_side_effects(
+                db,
+                transaction,
+                amount_kopeks=payment.amount_kopeks,
+                user_id=payment.user_id,
+                type=TransactionType.DEPOSIT,
+                payment_method=PaymentMethod.RIOPAY,
+                external_id=str(riopay_order_id) if riopay_order_id else payment.order_id,
+            )
+        except Exception as error:
+            logger.error('Ошибка emit_transaction_side_effects RioPay', error=error)
 
         # Обработка реферального пополнения
         try:
@@ -462,29 +513,45 @@ class RioPayPaymentMixin:
                                         'is_paid': False,
                                     }
 
-                            logger.info('RioPay payment confirmed via API', order_id=payment.order_id)
+                            # Lock payment row before finalization (TOCTOU race protection)
+                            locked = await get_riopay_payment_by_id_for_update(db, payment.id)
+                            if not locked:
+                                logger.error(
+                                    'RioPay status check: не удалось заблокировать платёж',
+                                    payment_id=payment.id,
+                                )
+                            elif locked.is_paid:
+                                # Another concurrent handler already processed — skip
+                                logger.info(
+                                    'RioPay платеж уже оплачен после блокировки',
+                                    order_id=locked.order_id,
+                                )
+                                payment = locked
+                            else:
+                                payment = locked
+                                logger.info('RioPay payment confirmed via API', order_id=payment.order_id)
 
-                            callback_payload = {
-                                'check_source': 'api',
-                                'riopay_order_data': order_data,
-                            }
+                                callback_payload = {
+                                    'check_source': 'api',
+                                    'riopay_order_data': order_data,
+                                }
 
-                            payment = await update_riopay_payment_status(
-                                db=db,
-                                payment=payment,
-                                status='success',
-                                is_paid=True,
-                                riopay_order_id=payment.riopay_order_id,
-                                payment_method=order_data.get('paymentType'),
-                                callback_payload=callback_payload,
-                            )
+                                # Inline field updates — NO intermediate commit
+                                payment.status = 'success'
+                                payment.is_paid = True
+                                payment.paid_at = datetime.now(UTC)
+                                payment.updated_at = datetime.now(UTC)
+                                if order_data.get('paymentType') is not None:
+                                    payment.payment_method = order_data.get('paymentType')
+                                payment.callback_payload = callback_payload
+                                await db.flush()
 
-                            await self._finalize_riopay_payment(
-                                db,
-                                payment,
-                                riopay_order_id=payment.riopay_order_id,
-                                trigger='api_check',
-                            )
+                                await self._finalize_riopay_payment(
+                                    db,
+                                    payment,
+                                    riopay_order_id=payment.riopay_order_id,
+                                    trigger='api_check',
+                                )
                         elif internal_status != payment.status:
                             # Обновляем статус если изменился
                             payment = await update_riopay_payment_status(

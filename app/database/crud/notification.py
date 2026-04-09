@@ -34,6 +34,8 @@ async def record_notification(
     subscription_id: int,
     notification_type: str,
     days_before: int | None = None,
+    *,
+    commit: bool = True,
 ) -> None:
     already_exists = await notification_sent(db, user_id, subscription_id, notification_type, days_before)
     if already_exists:
@@ -45,7 +47,8 @@ async def record_notification(
         days_before=days_before,
     )
     db.add(notification)
-    await db.commit()
+    if commit:
+        await db.commit()
 
 
 async def clear_notifications(db: AsyncSession, subscription_id: int, *, commit: bool = True) -> None:
@@ -58,6 +61,8 @@ async def clear_notification_by_type(
     db: AsyncSession,
     subscription_id: int,
     notification_type: str,
+    *,
+    commit: bool = True,
 ) -> None:
     await db.execute(
         delete(SentNotification).where(
@@ -65,4 +70,5 @@ async def clear_notification_by_type(
             SentNotification.notification_type == notification_type,
         )
     )
-    await db.commit()
+    if commit:
+        await db.commit()

@@ -3,6 +3,7 @@
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -49,15 +50,11 @@ class NodeStatus(BaseModel):
     is_disabled: bool
     users_online: int
     traffic_used_bytes: int | None = None
-    uptime: str | None = None
-    xray_version: str | None = None
-    node_version: str | None = None
     last_status_message: str | None = None
-    xray_uptime: str | None = None
+    xray_uptime: int = 0
     is_xray_running: bool | None = None
-    cpu_count: int | None = None
-    cpu_model: str | None = None
-    total_ram: str | None = None
+    versions: dict[str, str] | None = None
+    system: dict[str, Any] | None = None
     country_code: str | None = None
 
 
@@ -275,6 +272,14 @@ async def get_dashboard_stats(
         # Get tariff statistics
         tariff_stats = await _get_tariff_stats(db)
 
+        # Derive income_today from revenue_chart to ensure consistency with chart
+        today_str = now.date().isoformat()
+        income_today_from_chart = sum(
+            item.get('amount_kopeks', 0) for item in revenue_data if str(item.get('date', '')) == today_str
+        )
+        # Use chart-derived value if available, otherwise fall back to trans_stats
+        income_today_kopeks = income_today_from_chart or trans_stats.get('today', {}).get('income_kopeks', 0)
+
         # Build response
         return DashboardStats(
             nodes=nodes_data,
@@ -290,8 +295,8 @@ async def get_dashboard_stats(
                 trial_to_paid_conversion=sub_stats.get('trial_to_paid_conversion', 0.0),
             ),
             financial=FinancialStats(
-                income_today_kopeks=trans_stats.get('today', {}).get('income_kopeks', 0),
-                income_today_rubles=trans_stats.get('today', {}).get('income_kopeks', 0) / 100,
+                income_today_kopeks=income_today_kopeks,
+                income_today_rubles=income_today_kopeks / 100,
                 income_month_kopeks=trans_stats.get('totals', {}).get('income_kopeks', 0),
                 income_month_rubles=trans_stats.get('totals', {}).get('income_kopeks', 0) / 100,
                 income_total_kopeks=all_time_stats.get('totals', {}).get('income_kopeks', 0),
@@ -461,15 +466,11 @@ async def _get_nodes_overview() -> NodesOverview:
                 is_disabled=n.get('is_disabled', False),
                 users_online=n.get('users_online', 0) or 0,
                 traffic_used_bytes=n.get('traffic_used_bytes'),
-                uptime=n.get('uptime'),
-                xray_version=n.get('xray_version'),
-                node_version=n.get('node_version'),
                 last_status_message=n.get('last_status_message'),
-                xray_uptime=n.get('xray_uptime'),
+                xray_uptime=n.get('xray_uptime', 0) or 0,
                 is_xray_running=n.get('is_xray_running'),
-                cpu_count=n.get('cpu_count'),
-                cpu_model=n.get('cpu_model'),
-                total_ram=n.get('total_ram'),
+                versions=n.get('versions'),
+                system=n.get('system'),
                 country_code=n.get('country_code'),
             )
             for n in nodes
@@ -926,9 +927,9 @@ async def get_recent_payments(
         total_count = total_count_result.scalar() or 0
 
         today_total_result = await db.execute(
-            select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+            select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
                 and_(
-                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                     Transaction.is_completed == True,
                     Transaction.created_at >= today_start,
                     Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
@@ -938,9 +939,9 @@ async def get_recent_payments(
         total_today = today_total_result.scalar() or 0
 
         week_total_result = await db.execute(
-            select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+            select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
                 and_(
-                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                     Transaction.is_completed == True,
                     Transaction.created_at >= week_ago,
                     Transaction.payment_method.in_(REAL_PAYMENT_METHODS),

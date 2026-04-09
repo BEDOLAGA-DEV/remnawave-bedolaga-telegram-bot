@@ -1,4 +1,5 @@
 from aiogram import types
+from aiogram.fsm.context import FSMContext
 from aiogram.types import InaccessibleMessage, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,16 +20,64 @@ from app.utils.subscription_utils import (
 from .common import get_platforms_list, load_app_config_async, logger
 
 
-async def handle_connect_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def _resolve_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state=None):
+    """Resolve subscription — delegates to shared resolve_subscription_from_context."""
+    from .common import resolve_subscription_from_context
+
+    return await resolve_subscription_from_context(callback, db_user, db, state)
+
+
+async def handle_connect_subscription(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
     # Проверяем, доступно ли сообщение для редактирования
     if isinstance(callback.message, InaccessibleMessage):
         await callback.answer()
         return
 
     texts = get_texts(db_user.language)
-    subscription = db_user.subscription
+
+    # В режиме мульти-тарифов без явного sub_id в callback — показываем выбор подписки.
+    if settings.is_multi_tariff_enabled() and callback.data == 'subscription_connect':
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+        active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)
+        if len(active_subs) > 1:
+            from datetime import UTC, datetime
+
+            from app.database.crud.tariff import get_tariff_by_id as _get_tariff
+
+            keyboard = []
+            for sub in sorted(active_subs, key=lambda s: s.id):
+                tariff_name = ''
+                if sub.tariff_id:
+                    _t = await _get_tariff(db, sub.tariff_id)
+                    tariff_name = _t.name if _t else f'#{sub.id}'
+                else:
+                    tariff_name = f'Подписка #{sub.id}'
+                days_left = max(0, (sub.end_date - datetime.now(UTC)).days) if sub.end_date else 0
+                keyboard.append(
+                    [
+                        types.InlineKeyboardButton(
+                            text=f'🔗 {tariff_name} ({days_left}д.)',
+                            callback_data=f'sl:{sub.id}',
+                        )
+                    ]
+                )
+            keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+            await callback.message.edit_text(
+                '🔗 <b>Подключиться</b>\n\nВыберите подписку:',
+                reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+            )
+            await callback.answer()
+            return
+
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
     subscription_link = get_display_subscription_link(subscription)
     hide_subscription_link = settings.should_hide_subscription_link()
+    back_cb = f'sm:{sub_id}' if settings.is_multi_tariff_enabled() else 'menu_subscription'
 
     if not subscription_link:
         await callback.answer(
@@ -51,7 +100,7 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
                         web_app=types.WebAppInfo(url=subscription_link),
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
             ]
         )
 
@@ -85,7 +134,7 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
                         web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
             ]
         )
 
@@ -105,7 +154,7 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
             rows.append(happ_row)
-        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -124,14 +173,16 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
             [
                 InlineKeyboardButton(
                     text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                    callback_data='open_subscription_link',
+                    callback_data=f'open_subscription_link:{sub_id}'
+                    if settings.is_multi_tariff_enabled()
+                    else 'open_subscription_link',
                 )
             ]
         ]
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
             rows.append(happ_row)
-        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -165,7 +216,7 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
                     ]
                 ),
                 parse_mode='HTML',
@@ -195,17 +246,22 @@ async def handle_connect_subscription(callback: types.CallbackQuery, db_user: Us
 
         await callback.message.edit_text(
             device_text,
-            reply_markup=get_device_selection_keyboard(db_user.language, platforms=platforms),
+            reply_markup=get_device_selection_keyboard(db_user.language, platforms=platforms, sub_id=sub_id),
             parse_mode='HTML',
         )
 
     await callback.answer()
 
 
-async def handle_open_subscription_link(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def handle_open_subscription_link(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
     texts = get_texts(db_user.language)
-    subscription = db_user.subscription
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
     subscription_link = get_display_subscription_link(subscription)
+    back_cb = f'sm:{sub_id}' if settings.is_multi_tariff_enabled() else 'menu_subscription'
 
     if not subscription_link:
         await callback.answer(
@@ -299,10 +355,13 @@ async def handle_open_subscription_link(callback: types.CallbackQuery, db_user: 
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), callback_data='subscription_connect'
+                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                        callback_data=f'subscription_connect:{sub_id}'
+                        if settings.is_multi_tariff_enabled()
+                        else 'subscription_connect',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
             ]
         ),
         parse_mode='HTML',

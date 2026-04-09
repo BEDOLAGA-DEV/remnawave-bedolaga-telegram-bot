@@ -479,6 +479,11 @@ class PricingEngine:
         Prevents purchased top-ups from inflating the tier lookup."""
         total_gb = traffic_limit_gb or 0
         purchased_gb = purchased_traffic_gb or 0
+
+        # 0 = unlimited traffic — has its own price tier, return directly
+        if total_gb == 0:
+            return settings.get_traffic_price(0)
+
         base_gb = max(0, total_gb - purchased_gb)
 
         base_price = settings.get_traffic_price(base_gb) if base_gb > 0 else 0

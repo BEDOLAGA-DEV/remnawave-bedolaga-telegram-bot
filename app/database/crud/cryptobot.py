@@ -67,8 +67,24 @@ async def get_cryptobot_payment_by_id(db: AsyncSession, payment_id: int) -> Cryp
     return result.scalar_one_or_none()
 
 
+async def get_cryptobot_payment_by_invoice_id_for_update(db: AsyncSession, invoice_id: str) -> CryptoBotPayment | None:
+    result = await db.execute(
+        select(CryptoBotPayment)
+        .options(selectinload(CryptoBotPayment.user))
+        .where(CryptoBotPayment.invoice_id == invoice_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_cryptobot_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> CryptoBotPayment | None:
-    result = await db.execute(select(CryptoBotPayment).where(CryptoBotPayment.id == payment_id).with_for_update())
+    result = await db.execute(
+        select(CryptoBotPayment)
+        .where(CryptoBotPayment.id == payment_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     return result.scalar_one_or_none()
 
 

@@ -88,6 +88,7 @@ class BlockCheckResult:
     status: BlockCheckStatus
     error_message: str | None = None
     remnawave_uuid: str | None = None
+    remnawave_uuids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -159,6 +160,9 @@ class BlockedUsersService:
 
     async def _check_single_user(self, user: User) -> BlockCheckResult:
         """Проверяет одного пользователя."""
+        sub_uuids = [s.remnawave_uuid for s in (getattr(user, 'subscriptions', None) or []) if s.remnawave_uuid]
+        remnawave_uuids = sub_uuids or ([user.remnawave_uuid] if user.remnawave_uuid else [])
+
         if not user.telegram_id:
             return BlockCheckResult(
                 user_id=user.id,
@@ -167,6 +171,7 @@ class BlockedUsersService:
                 full_name=user.full_name,
                 status=BlockCheckStatus.NO_TELEGRAM_ID,
                 remnawave_uuid=user.remnawave_uuid,
+                remnawave_uuids=remnawave_uuids,
             )
 
         status = await self.check_user_blocked(user.telegram_id)
@@ -178,6 +183,7 @@ class BlockedUsersService:
             full_name=user.full_name,
             status=status,
             remnawave_uuid=user.remnawave_uuid,
+            remnawave_uuids=remnawave_uuids,
         )
 
     async def scan_all_users(
@@ -204,7 +210,7 @@ class BlockedUsersService:
         result = BlockedUsersScanResult()
 
         # Формируем запрос
-        query = select(User).options(selectinload(User.subscription))
+        query = select(User).options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
         if only_active:
             query = query.where(User.status == UserStatus.ACTIVE.value)
         query = query.where(User.telegram_id.isnot(None))
@@ -292,7 +298,9 @@ class BlockedUsersService:
         try:
             # Получаем пользователя
             user_result = await db.execute(
-                select(User).options(selectinload(User.subscription)).where(User.id == user_id)
+                select(User)
+                .options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
+                .where(User.id == user_id)
             )
             user = user_result.scalar_one_or_none()
 
@@ -319,12 +327,10 @@ class BlockedUsersService:
             # 2. Транзакции (после платежей)
             await db.execute(delete(Transaction).where(Transaction.user_id == user.id))
 
-            # 3. Подписки
-            if user.subscription:
-                await db.execute(
-                    delete(SubscriptionServer).where(SubscriptionServer.subscription_id == user.subscription.id)
-                )
-                await db.execute(delete(Subscription).where(Subscription.user_id == user.id))
+            # 3. Подписки — cleanup ALL subscriptions' servers, then delete all subscriptions
+            for sub in getattr(user, 'subscriptions', None) or []:
+                await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id == sub.id))
+            await db.execute(delete(Subscription).where(Subscription.user_id == user.id))
             await db.execute(delete(SubscriptionConversion).where(SubscriptionConversion.user_id == user.id))
             await db.execute(delete(SubscriptionEvent).where(SubscriptionEvent.user_id == user.id))
 
@@ -417,12 +423,17 @@ class BlockedUsersService:
         for i, user_result in enumerate(blocked_users):
             try:
                 if action in (BlockedUserAction.DELETE_FROM_REMNAWAVE, BlockedUserAction.DELETE_BOTH):
-                    if user_result.remnawave_uuid:
-                        success = await self.delete_user_from_remnawave(user_result.remnawave_uuid)
+                    uuids_to_delete = user_result.remnawave_uuids or (
+                        [user_result.remnawave_uuid] if user_result.remnawave_uuid else []
+                    )
+                    for rw_uuid in uuids_to_delete:
+                        success = await self.delete_user_from_remnawave(rw_uuid)
                         if success:
                             result.deleted_from_remnawave += 1
                         else:
-                            result.errors.append(f'Ошибка удаления {user_result.telegram_id} из Remnawave')
+                            result.errors.append(
+                                f'Ошибка удаления {user_result.telegram_id} (uuid={rw_uuid}) из Remnawave'
+                            )
                         # Задержка для избежания rate limit
                         await asyncio.sleep(self.API_DELAY_SECONDS)
 

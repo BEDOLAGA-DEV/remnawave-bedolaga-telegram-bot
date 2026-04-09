@@ -61,16 +61,17 @@ async def get_conversion_statistics(db: AsyncSession) -> dict:
     total_conversions = total_conversions_result.scalar() or 0
 
     # Подсчитываем пользователей с платными подписками
-    users_with_paid_result = await db.execute(select(func.count(User.id)).where(User.has_had_paid_subscription == True))
+    users_with_paid_result = await db.execute(
+        select(func.count(User.id)).where(User.has_had_paid_subscription.is_(True))
+    )
     users_with_paid = users_with_paid_result.scalar() or 0
 
     # Подсчитываем всех пользователей с подписками (использовавших триал)
-    # Считаем что все новые пользователи начинают с триала
     total_users_with_subscriptions_result = await db.execute(select(func.count(func.distinct(Subscription.user_id))))
     total_users_with_subscriptions = total_users_with_subscriptions_result.scalar() or 0
 
     # Расчёт конверсии: (оплатившие) / (всего с подписками) * 100
-    # Это показывает какой % пользователей, получивших подписку, в итоге оплатили
+    # Знаменатель = все юзеры с подписками (включая уже конвертированных)
     if total_users_with_subscriptions > 0:
         conversion_rate = round((users_with_paid / total_users_with_subscriptions) * 100, 1)
     else:

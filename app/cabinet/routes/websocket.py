@@ -317,7 +317,8 @@ async def notify_user_balance_change(
 
 async def notify_user_subscription_activated(
     user_id: int,
-    expires_at: str,
+    subscription_id: int | None = None,
+    expires_at: str = '',
     tariff_name: str = '',
 ) -> None:
     """Уведомить пользователя об активации подписки."""
@@ -325,6 +326,7 @@ async def notify_user_subscription_activated(
         user_id,
         {
             'type': 'subscription.activated',
+            'subscription_id': subscription_id,
             'expires_at': expires_at,
             'tariff_name': tariff_name,
         },
@@ -359,7 +361,8 @@ async def notify_user_subscription_expired(user_id: int) -> None:
 
 async def notify_user_subscription_renewed(
     user_id: int,
-    new_expires_at: str,
+    subscription_id: int | None = None,
+    new_expires_at: str = '',
     amount_kopeks: int = 0,
 ) -> None:
     """Уведомить пользователя о продлении подписки."""
@@ -367,6 +370,7 @@ async def notify_user_subscription_renewed(
         user_id,
         {
             'type': 'subscription.renewed',
+            'subscription_id': subscription_id,
             'new_expires_at': new_expires_at,
             'amount_kopeks': amount_kopeks,
             'amount_rubles': amount_kopeks / 100,

@@ -1,19 +1,28 @@
 """Покупка подписки по тарифам."""
 
+import html
 from datetime import UTC, datetime, timedelta
 
 import structlog
 from aiogram import Dispatcher, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.crud.subscription import create_paid_subscription, extend_subscription, get_subscription_by_user_id
+from app.database.crud.subscription import (
+    create_paid_subscription,
+    extend_subscription,
+    get_active_subscriptions_by_user_id,
+    get_subscription_by_id_for_user,
+    get_subscription_by_user_id,
+)
 from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
-from app.database.models import Tariff, TransactionType, User
+from app.database.database import AsyncSessionLocal
+from app.database.models import Tariff, Transaction, TransactionType, User
 from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.subscription_service import SubscriptionService
@@ -24,6 +33,54 @@ from app.utils.promo_offer import get_user_active_promo_discount_percent
 
 
 logger = structlog.get_logger(__name__)
+
+
+async def _persist_failed_refund(
+    user_id: int,
+    amount_kopeks: int,
+    reason: str,
+    error: Exception,
+) -> None:
+    """Persist a failed refund record via a fresh DB session so it can be retried later.
+
+    Uses AsyncSessionLocal directly because the caller's session may be in a broken state
+    (e.g. after a rolled-back transaction or connection error).
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            record = Transaction(
+                user_id=user_id,
+                type=TransactionType.FAILED_REFUND.value,
+                amount_kopeks=amount_kopeks,
+                description=f'{reason} | error: {error}',
+                is_completed=False,
+                created_at=datetime.now(UTC),
+            )
+            session.add(record)
+            await session.commit()
+            logger.warning(
+                'Записан failed_refund для последующей обработки',
+                user_id=user_id,
+                amount_kopeks=amount_kopeks,
+                transaction_id=record.id,
+            )
+    except Exception as persist_error:
+        # Last resort: if even persisting the record fails, log everything needed for manual recovery
+        logger.critical(
+            'НЕВОЗМОЖНО сохранить failed_refund — требуется ручное вмешательство',
+            user_id=user_id,
+            amount_kopeks=amount_kopeks,
+            reason=reason,
+            original_error=str(error),
+            persist_error=persist_error,
+        )
+
+
+async def _resolve_subscription(callback, db_user, db, state=None):
+    """Resolve subscription — delegates to shared resolve_subscription_from_context."""
+    from .common import resolve_subscription_from_context
+
+    return await resolve_subscription_from_context(callback, db_user, db, state)
 
 
 def _apply_promo_discount(price: int, group_pct: int, offer_pct: int = 0) -> int:
@@ -59,9 +116,12 @@ def format_tariffs_list_text(
     tariffs: list[Tariff],
     db_user: User | None = None,
     has_period_discounts: bool = False,
+    purchased_tariff_ids: set[int] | None = None,
 ) -> str:
     """Форматирует текст со списком тарифов для отображения."""
     lines = ['📦 <b>Выберите тариф</b>']
+    if purchased_tariff_ids is None:
+        purchased_tariff_ids = set()
 
     if has_period_discounts:
         lines.append('🎁 <i>Скидки по периодам</i>')
@@ -102,11 +162,14 @@ def format_tariffs_list_text(
                 price_text = f'от {format_price_kopeks(min_price, compact=True)}{discount_icon}'
 
         # Компактный формат: Название — 250 ГБ / 10 📱 от 179₽🔥
-        lines.append(f'<b>{tariff.name}</b> — {traffic} / {tariff.device_limit} 📱 {price_text}')
+        purchased_mark = ' ✅' if tariff.id in purchased_tariff_ids else ''
+        lines.append(
+            f'<b>{html.escape(tariff.name)}</b>{purchased_mark} — {traffic} / {tariff.device_limit} 📱 {price_text}'
+        )
 
         # Описание тарифа если есть
         if tariff.description:
-            lines.append(f'<i>{tariff.description}</i>')
+            lines.append(f'<i>{html.escape(tariff.description)}</i>')
 
         lines.append('')
 
@@ -116,13 +179,19 @@ def format_tariffs_list_text(
 def get_tariffs_keyboard(
     tariffs: list[Tariff],
     language: str,
+    purchased_tariff_ids: set[int] | None = None,
 ) -> InlineKeyboardMarkup:
     """Создает компактную клавиатуру выбора тарифов (только названия)."""
     texts = get_texts(language)
+    if purchased_tariff_ids is None:
+        purchased_tariff_ids = set()
     buttons = []
 
     for tariff in tariffs:
-        buttons.append([InlineKeyboardButton(text=tariff.name, callback_data=f'tariff_select:{tariff.id}')])
+        if tariff.id in purchased_tariff_ids:
+            buttons.append([InlineKeyboardButton(text=f'✅ {tariff.name}', callback_data=f'tariff_select:{tariff.id}')])
+        else:
+            buttons.append([InlineKeyboardButton(text=tariff.name, callback_data=f'tariff_select:{tariff.id}')])
 
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
 
@@ -238,7 +307,7 @@ def format_tariff_info_for_user(
 
     traffic = format_traffic(tariff.traffic_limit_gb)
 
-    text = f"""📦 <b>{tariff.name}</b>
+    text = f"""📦 <b>{html.escape(tariff.name)}</b>
 
 <b>Параметры:</b>
 • Трафик: {traffic}
@@ -246,7 +315,7 @@ def format_tariff_info_for_user(
 """
 
     if tariff.description:
-        text += f'\n📝 {tariff.description}\n'
+        text += f'\n📝 {html.escape(tariff.description)}\n'
 
     if discount_percent > 0:
         text += f'\n🎁 <b>Ваша скидка: {discount_percent}%</b>\n'
@@ -438,7 +507,7 @@ async def format_custom_tariff_preview(
 
     traffic_display = f'{traffic_gb} ГБ' if traffic_gb > 0 else format_traffic(tariff.traffic_limit_gb)
 
-    text = f"""📦 <b>{tariff.name}</b>
+    text = f"""📦 <b>{html.escape(tariff.name)}</b>
 
 <b>Настройте параметры:</b>
 """
@@ -497,10 +566,17 @@ async def show_tariffs_list(
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')]]
             ),
-            parse_mode='HTML',
         )
         await callback.answer()
         return
+
+    # В мульти-тарифе определяем какие тарифы уже куплены
+    purchased_tariff_ids: set[int] = set()
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+        active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)
+        purchased_tariff_ids = {s.tariff_id for s in active_subs if s.tariff_id and not s.is_trial}
 
     # Проверяем есть ли у пользователя скидки по периодам
     promo_group = db_user.get_primary_promo_group() if hasattr(db_user, 'get_primary_promo_group') else None
@@ -513,10 +589,11 @@ async def show_tariffs_list(
             has_period_discounts = True
 
     # Формируем текст со списком тарифов и их характеристиками
-    tariffs_text = format_tariffs_list_text(tariffs, db_user, has_period_discounts)
+    tariffs_text = format_tariffs_list_text(tariffs, db_user, has_period_discounts, purchased_tariff_ids)
 
     await callback.message.edit_text(
-        tariffs_text, reply_markup=get_tariffs_keyboard(tariffs, db_user.language), parse_mode='HTML'
+        tariffs_text,
+        reply_markup=get_tariffs_keyboard(tariffs, db_user.language, purchased_tariff_ids),
     )
 
     await callback.answer()
@@ -537,6 +614,20 @@ async def select_tariff(
         await callback.answer('Тариф недоступен', show_alert=True)
         return
 
+    # В мульти-тарифе проверяем не куплен ли уже этот тариф
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+        _active = await get_active_subscriptions_by_user_id(db, db_user.id)
+        _existing = next((s for s in _active if s.tariff_id == tariff_id and not s.is_trial), None)
+        if _existing:
+            days_left = max(0, (_existing.end_date - datetime.now(UTC)).days) if _existing.end_date else 0
+            await callback.answer(
+                f'Тариф «{tariff.name}» уже активен ({days_left} дн.). Продлите через "Мои подписки".',
+                show_alert=True,
+            )
+            return
+
     # Проверяем, суточный ли это тариф
     is_daily = getattr(tariff, 'is_daily', False)
 
@@ -554,7 +645,7 @@ async def select_tariff(
         if user_balance >= daily_price:
             await callback.message.edit_text(
                 f'✅ <b>Подтверждение покупки</b>\n\n'
-                f'📦 Тариф: <b>{tariff.name}</b>\n'
+                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'📊 Трафик: {traffic}\n'
                 f'📱 Устройств: {tariff.device_limit}\n'
                 f'🔄 Тип: <b>Суточный</b>\n\n'
@@ -568,6 +659,14 @@ async def select_tariff(
             )
         else:
             missing = daily_price - user_balance
+
+            # Ищем существующую подписку для передачи subscription_id в корзину
+            if settings.is_multi_tariff_enabled():
+                from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+                _daily_existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
+            else:
+                _daily_existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
             # Сохраняем данные корзины для автопокупки суточного тарифа
             cart_data = {
@@ -584,12 +683,13 @@ async def select_tariff(
                 'traffic_limit_gb': tariff.traffic_limit_gb,
                 'device_limit': tariff.device_limit,
                 'allowed_squads': tariff.allowed_squads or [],
+                'subscription_id': _daily_existing_sub.id if _daily_existing_sub else None,
             }
             await user_cart_service.save_user_cart(db_user.id, cart_data)
 
             await callback.message.edit_text(
                 f'❌ <b>Недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{tariff.name}</b>\n'
+                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'🔄 Тип: Суточный\n'
                 f'💰 Цена: {format_price_kopeks(daily_price)}/день'
                 f'{discount_text}\n\n'
@@ -828,14 +928,14 @@ async def handle_custom_confirm(
     )
     total_price = result.final_total
 
-    # Проверяем, что цена за период валидна
-    if result.base_price == 0 and not tariff.can_purchase_custom_days():
+    # Проверяем, что цена за период валидна (original_total — цена до скидок)
+    if result.original_total == 0 and not tariff.can_purchase_custom_days():
         await callback.answer('Выбранный период недоступен для этого тарифа', show_alert=True)
         return
 
-    # Проверяем баланс (user already locked, balance is fresh)
+    # Проверяем баланс (при 100% скидке — пропускаем)
     user_balance = db_user.balance_kopeks or 0
-    if user_balance < total_price:
+    if total_price > 0 and user_balance < total_price:
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
 
@@ -879,7 +979,11 @@ async def handle_custom_confirm(
     traffic_limit = custom_traffic if tariff.can_purchase_custom_traffic() else tariff.traffic_limit_gb
 
     # Проверяем есть ли уже подписка
-    existing_subscription = await get_subscription_by_user_id(db, db_user.id)
+    if settings.is_multi_tariff_enabled():
+        active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)
+        existing_subscription = next((s for s in active_subs if s.tariff_id == tariff.id), None)
+    else:
+        existing_subscription = await get_subscription_by_user_id(db, db_user.id)
 
     try:
         if existing_subscription:
@@ -916,20 +1020,28 @@ async def handle_custom_confirm(
         try:
             from app.database.crud.user import add_user_balance
 
-            await add_user_balance(
+            refund_success = await add_user_balance(
                 db,
                 db_user,
                 total_price,
                 'Возврат: ошибка покупки кастомного тарифа',
                 create_transaction=True,
                 transaction_type=TransactionType.REFUND,
+                commit=False,
             )
+            if not refund_success:
+                await _persist_failed_refund(
+                    user_id=db_user.id,
+                    amount_kopeks=total_price,
+                    reason='Возврат: ошибка покупки кастомного тарифа',
+                    error=Exception('add_user_balance returned False'),
+                )
             # Restore promo offer if consumed
             if consume_promo and saved_promo_percent > 0:
                 db_user.promo_offer_discount_percent = saved_promo_percent
                 db_user.promo_offer_discount_source = saved_promo_source
                 db_user.promo_offer_discount_expires_at = saved_promo_expires
-                await db.commit()
+            await db.commit()
         except Exception as refund_error:
             logger.critical(
                 'CRITICAL: не удалось вернуть средства после ошибки покупки кастомного тарифа',
@@ -979,9 +1091,13 @@ async def handle_custom_confirm(
         except Exception as e:
             logger.error('Ошибка отправки уведомления админу', error=e)
 
-        # Очищаем корзину после успешной покупки
+        # Очищаем корзину после успешной покупки (per-subscription в multi-tariff)
         try:
-            await user_cart_service.delete_user_cart(db_user.id)
+            _cart_sub_id = getattr(subscription, 'id', None) if subscription else None
+            if _cart_sub_id and settings.is_multi_tariff_enabled():
+                await user_cart_service.delete_subscription_cart(db_user.id, _cart_sub_id)
+            else:
+                await user_cart_service.delete_user_cart(db_user.id)
         except Exception as e:
             logger.error('Ошибка очистки корзины', error=e)
 
@@ -991,7 +1107,7 @@ async def handle_custom_confirm(
 
         await callback.message.edit_text(
             f'🎉 <b>Подписка успешно оформлена!</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic_display}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'📅 Период: {format_period(custom_days)}\n'
@@ -999,7 +1115,14 @@ async def handle_custom_confirm(
             f'Перейдите в раздел «Подписка» для подключения.',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                    [
+                        InlineKeyboardButton(
+                            text='📱 Моя подписка',
+                            callback_data=f'sm:{subscription.id}'
+                            if settings.is_multi_tariff_enabled() and subscription
+                            else 'menu_subscription',
+                        )
+                    ],
                     [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
                 ]
             ),
@@ -1115,7 +1238,7 @@ async def select_tariff_period(
 
         await callback.message.edit_text(
             f'✅ <b>Подтверждение покупки</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'📅 Период: {format_period(period)}\n'
@@ -1129,6 +1252,14 @@ async def select_tariff_period(
     else:
         # Недостаточно средств - сохраняем корзину для автопокупки
         missing = final_price - user_balance
+
+        # Ищем существующую подписку для передачи subscription_id в корзину
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            _existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
+        else:
+            _existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
         # Сохраняем данные корзины для автопокупки после пополнения
         cart_data = {
@@ -1145,12 +1276,13 @@ async def select_tariff_period(
             'device_limit': tariff.device_limit,
             'allowed_squads': tariff.allowed_squads or [],
             'discount_percent': discount_percent,
+            'subscription_id': _existing_sub.id if _existing_sub else None,
         }
         await user_cart_service.save_user_cart(db_user.id, cart_data)
 
         await callback.message.edit_text(
             f'❌ <b>Недостаточно средств</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📅 Период: {format_period(period)}\n'
             f'💰 Стоимость: {format_price_kopeks(final_price)}\n\n'
             f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
@@ -1186,6 +1318,11 @@ async def confirm_tariff_purchase(
         await callback.answer('Тариф недоступен', show_alert=True)
         return
 
+    # Validate period is available for this tariff
+    if str(period) not in (tariff.period_prices or {}):
+        await callback.answer('Период недоступен', show_alert=True)
+        return
+
     # Lock user BEFORE price computation to prevent TOCTOU on promo offer
     from app.database.crud.user import lock_user_for_pricing
 
@@ -1194,7 +1331,14 @@ async def confirm_tariff_purchase(
     # Calculate price via PricingEngine (single source of truth)
     from app.services.pricing_engine import pricing_engine
 
-    existing_sub = await get_subscription_by_user_id(db, db_user.id)
+    # In multi-tariff mode, look for existing subscription for this specific tariff
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+        existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
+    else:
+        existing_sub = await get_subscription_by_user_id(db, db_user.id)
+
     device_limit = None
     if existing_sub and existing_sub.tariff_id == tariff.id:
         device_limit = existing_sub.device_limit
@@ -1209,7 +1353,7 @@ async def confirm_tariff_purchase(
 
     # Проверяем баланс (user already locked, balance is fresh)
     user_balance = db_user.balance_kopeks or 0
-    if user_balance < final_price:
+    if final_price > 0 and user_balance < final_price:
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
 
@@ -1252,8 +1396,65 @@ async def confirm_tariff_purchase(
     existing_subscription = existing_sub
 
     try:
-        if existing_subscription:
-            # Продлеваем существующую подписку и обновляем параметры тарифа
+        if settings.is_multi_tariff_enabled():
+            if existing_subscription and existing_subscription.tariff_id == tariff.id:
+                # Extend existing subscription for this tariff
+                effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
+                subscription = await extend_subscription(
+                    db,
+                    existing_subscription,
+                    days=period,
+                    tariff_id=tariff.id,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=effective_device_limit,
+                    connected_squads=squads,
+                )
+            else:
+                # Guard: enforce MAX_ACTIVE_SUBSCRIPTIONS limit
+                active_count = len(await get_active_subscriptions_by_user_id(db, db_user.id))
+                if active_count >= settings.get_max_active_subscriptions():
+                    from app.database.crud.user import add_user_balance
+
+                    refund_success = await add_user_balance(
+                        db,
+                        db_user,
+                        final_price,
+                        'Возврат: превышен лимит подписок',
+                        create_transaction=True,
+                        transaction_type=TransactionType.REFUND,
+                        commit=False,
+                    )
+                    if not refund_success:
+                        await _persist_failed_refund(
+                            user_id=db_user.id,
+                            amount_kopeks=final_price,
+                            reason='Возврат: превышен лимит подписок',
+                            error=Exception('add_user_balance returned False'),
+                        )
+                    # Restore promo offer if consumed
+                    if consume_promo and saved_promo_percent > 0:
+                        db_user.promo_offer_discount_percent = saved_promo_percent
+                        db_user.promo_offer_discount_source = saved_promo_source
+                        db_user.promo_offer_discount_expires_at = saved_promo_expires
+                    await db.commit()
+                    await callback.answer(
+                        f'Максимум подписок: {settings.get_max_active_subscriptions()}',
+                        show_alert=True,
+                    )
+                    return
+
+                # Create NEW subscription for this tariff (multi-tariff: new Remnawave user)
+                subscription = await create_paid_subscription(
+                    db=db,
+                    user_id=db_user.id,
+                    duration_days=period,
+                    traffic_limit_gb=tariff.traffic_limit_gb,
+                    device_limit=tariff.device_limit,
+                    connected_squads=squads,
+                    tariff_id=tariff.id,
+                )
+        elif existing_subscription:
+            # Legacy single-subscription: extend or switch
             # Сохраняем докупленные устройства при продлении того же тарифа
             if existing_subscription.tariff_id == tariff.id:
                 effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
@@ -1279,6 +1480,45 @@ async def confirm_tariff_purchase(
                 connected_squads=squads,
                 tariff_id=tariff.id,
             )
+    except IntegrityError as e:
+        # Partial unique index violation: user already has active subscription for this tariff
+        logger.warning('Тариф уже активен у пользователя', tariff_id=tariff_id, user_id=db_user.id, error=e)
+        await db.rollback()
+        try:
+            from app.database.crud.user import add_user_balance
+
+            refund_success = await add_user_balance(
+                db,
+                db_user,
+                final_price,
+                'Возврат: тариф уже активен',
+                create_transaction=True,
+                transaction_type=TransactionType.REFUND,
+                commit=False,
+            )
+            if not refund_success:
+                await _persist_failed_refund(
+                    user_id=db_user.id,
+                    amount_kopeks=final_price,
+                    reason='Возврат: тариф уже активен (add_user_balance returned False)',
+                    error=Exception('add_user_balance returned False'),
+                )
+            # Restore promo offer if consumed (atomic with refund)
+            if consume_promo and saved_promo_percent > 0:
+                db_user.promo_offer_discount_percent = saved_promo_percent
+                db_user.promo_offer_discount_source = saved_promo_source
+                db_user.promo_offer_discount_expires_at = saved_promo_expires
+            await db.commit()
+        except Exception as refund_error:
+            logger.critical('CRITICAL: не удалось вернуть средства', user_id=db_user.id, refund_error=refund_error)
+            await _persist_failed_refund(
+                user_id=db_user.id,
+                amount_kopeks=final_price,
+                reason='Возврат: тариф уже активен',
+                error=refund_error,
+            )
+        await callback.answer('У вас уже есть активная подписка на этот тариф', show_alert=True)
+        return
     except Exception as e:
         logger.error('Ошибка создания/продления подписки при покупке тарифа', error=e, exc_info=True)
         await db.rollback()
@@ -1286,26 +1526,40 @@ async def confirm_tariff_purchase(
         try:
             from app.database.crud.user import add_user_balance
 
-            await add_user_balance(
+            refund_success = await add_user_balance(
                 db,
                 db_user,
                 final_price,
                 'Возврат: ошибка покупки тарифа',
                 create_transaction=True,
                 transaction_type=TransactionType.REFUND,
+                commit=False,
             )
-            # Restore promo offer if consumed
+            if not refund_success:
+                await _persist_failed_refund(
+                    user_id=db_user.id,
+                    amount_kopeks=final_price,
+                    reason='Возврат: ошибка покупки тарифа (add_user_balance returned False)',
+                    error=Exception('add_user_balance returned False'),
+                )
+            # Restore promo offer if consumed (atomic with refund)
             if consume_promo and saved_promo_percent > 0:
                 db_user.promo_offer_discount_percent = saved_promo_percent
                 db_user.promo_offer_discount_source = saved_promo_source
                 db_user.promo_offer_discount_expires_at = saved_promo_expires
-                await db.commit()
+            await db.commit()
         except Exception as refund_error:
             logger.critical(
                 'CRITICAL: не удалось вернуть средства после ошибки покупки тарифа',
                 user_id=db_user.id,
                 price_kopeks=final_price,
                 refund_error=refund_error,
+            )
+            await _persist_failed_refund(
+                user_id=db_user.id,
+                amount_kopeks=final_price,
+                reason='Возврат: ошибка покупки тарифа',
+                error=refund_error,
             )
         await callback.answer('Произошла ошибка при оформлении подписки', show_alert=True)
         return
@@ -1351,9 +1605,13 @@ async def confirm_tariff_purchase(
     except Exception as e:
         logger.error('Ошибка отправки уведомления админу', error=e)
 
-    # Очищаем корзину после успешной покупки
+    # Очищаем корзину после успешной покупки (per-subscription в multi-tariff)
     try:
-        await user_cart_service.delete_user_cart(db_user.id)
+        _cart_sub_id = getattr(subscription, 'id', None) if subscription else None
+        if _cart_sub_id and settings.is_multi_tariff_enabled():
+            await user_cart_service.delete_subscription_cart(db_user.id, _cart_sub_id)
+        else:
+            await user_cart_service.delete_user_cart(db_user.id)
         logger.info('Корзина очищена после покупки тарифа для пользователя', telegram_id=db_user.telegram_id)
     except Exception as e:
         logger.error('Ошибка очистки корзины', error=e)
@@ -1364,7 +1622,7 @@ async def confirm_tariff_purchase(
 
     await callback.message.edit_text(
         f'🎉 <b>Подписка успешно оформлена!</b>\n\n'
-        f'📦 Тариф: <b>{tariff.name}</b>\n'
+        f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
         f'📊 Трафик: {traffic}\n'
         f'📱 Устройств: {tariff.device_limit}\n'
         f'📅 Период: {format_period(period)}\n'
@@ -1372,7 +1630,14 @@ async def confirm_tariff_purchase(
         f'Перейдите в раздел «Подписка» для подключения.',
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                [
+                    InlineKeyboardButton(
+                        text='📱 Моя подписка',
+                        callback_data=f'sm:{subscription.id}'
+                        if settings.is_multi_tariff_enabled() and subscription
+                        else 'menu_subscription',
+                    )
+                ],
                 [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
             ]
         ),
@@ -1429,7 +1694,7 @@ async def confirm_daily_tariff_purchase(
 
     # Проверяем баланс (user already locked, balance is fresh)
     user_balance = db_user.balance_kopeks or 0
-    if user_balance < final_daily_price:
+    if final_daily_price > 0 and user_balance < final_daily_price:
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
 
@@ -1464,12 +1729,16 @@ async def confirm_daily_tariff_purchase(
         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
     # Проверяем есть ли уже подписка
-    existing_subscription = await get_subscription_by_user_id(db, db_user.id)
+    if settings.is_multi_tariff_enabled():
+        active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)
+        existing_subscription = next((s for s in active_subs if s.tariff_id == tariff.id), None)
+    else:
+        existing_subscription = await get_subscription_by_user_id(db, db_user.id)
 
     try:
         if existing_subscription:
             # Обновляем существующую подписку на суточный тариф
-            # Сохраняем докупленные устройства при смене тарифа
+            # Сбрасываем лимит устройств на базу нового тарифа (докупленные не переносятся)
             from app.database.crud.subscription import calc_device_limit_on_tariff_switch
 
             old_tariff = (
@@ -1528,14 +1797,23 @@ async def confirm_daily_tariff_purchase(
         try:
             from app.database.crud.user import add_user_balance
 
-            await add_user_balance(
+            refund_success = await add_user_balance(
                 db,
                 db_user,
                 final_daily_price,
                 'Возврат: ошибка покупки суточного тарифа',
                 create_transaction=True,
                 transaction_type=TransactionType.REFUND,
+                commit=False,
             )
+            if not refund_success:
+                await _persist_failed_refund(
+                    user_id=db_user.id,
+                    amount_kopeks=final_daily_price,
+                    reason='Возврат: ошибка покупки суточного тарифа',
+                    error=Exception('add_user_balance returned False'),
+                )
+            await db.commit()
         except Exception as refund_error:
             logger.critical(
                 'CRITICAL: не удалось вернуть средства после ошибки покупки суточного тарифа',
@@ -1584,9 +1862,13 @@ async def confirm_daily_tariff_purchase(
     except Exception as e:
         logger.error('Ошибка отправки уведомления админу', error=e)
 
-    # Очищаем корзину после успешной покупки
+    # Очищаем корзину после успешной покупки (per-subscription в multi-tariff)
     try:
-        await user_cart_service.delete_user_cart(db_user.id)
+        _cart_sub_id = getattr(subscription, 'id', None) if subscription else None
+        if _cart_sub_id and settings.is_multi_tariff_enabled():
+            await user_cart_service.delete_subscription_cart(db_user.id, _cart_sub_id)
+        else:
+            await user_cart_service.delete_user_cart(db_user.id)
         logger.info('Корзина очищена после покупки суточного тарифа для пользователя', telegram_id=db_user.telegram_id)
     except Exception as e:
         logger.error('Ошибка очистки корзины', error=e)
@@ -1597,7 +1879,7 @@ async def confirm_daily_tariff_purchase(
 
     await callback.message.edit_text(
         f'🎉 <b>Суточная подписка оформлена!</b>\n\n'
-        f'📦 Тариф: <b>{tariff.name}</b>\n'
+        f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
         f'📊 Трафик: {traffic}\n'
         f'📱 Устройств: {tariff.device_limit}\n'
         f'🔄 Тип: Суточный\n'
@@ -1606,7 +1888,14 @@ async def confirm_daily_tariff_purchase(
         f'Перейдите в раздел «Подписка» для подключения.',
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                [
+                    InlineKeyboardButton(
+                        text='📱 Моя подписка',
+                        callback_data=f'sm:{subscription.id}'
+                        if settings.is_multi_tariff_enabled() and subscription
+                        else 'menu_subscription',
+                    )
+                ],
                 [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
             ]
         ),
@@ -1708,7 +1997,51 @@ async def show_tariff_extend(
     """Показывает экран продления по текущему тарифу."""
     get_texts(db_user.language)
 
-    subscription = await get_subscription_by_user_id(db, db_user.id)
+    if settings.is_multi_tariff_enabled():
+        sub_id = None
+        parts = (callback.data or '').split(':')
+        if len(parts) >= 2:
+            try:
+                sub_id = int(parts[-1])
+            except (ValueError, TypeError):
+                pass
+        if sub_id:
+            subscription = await get_subscription_by_id_for_user(db, sub_id, db_user.id)
+        else:
+            active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)
+            if len(active_subs) > 1:
+                # Show subscription picker for extending
+                keyboard = []
+                for sub in sorted(active_subs, key=lambda s: s.id):
+                    tariff_name = ''
+                    if sub.tariff_id:
+                        _t = await get_tariff_by_id(db, sub.tariff_id)
+                        tariff_name = _t.name if _t else f'#{sub.id}'
+                    else:
+                        tariff_name = f'Подписка #{sub.id}'
+                    days_left = max(0, (sub.end_date - datetime.now(UTC)).days) if sub.end_date else 0
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                text=f'🔄 {tariff_name} ({days_left}д.)',
+                                callback_data=f'se:{sub.id}',
+                            )
+                        ]
+                    )
+                keyboard.append([InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+                await callback.message.edit_text(
+                    '🔄 <b>Продление подписки</b>\n\nВыберите подписку для продления:',
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+                    parse_mode='HTML',
+                )
+                await callback.answer()
+                return
+            if active_subs:
+                subscription = active_subs[0]
+            else:
+                subscription = None
+    else:
+        subscription = await get_subscription_by_user_id(db, db_user.id)
     if not subscription or not subscription.tariff_id:
         await callback.answer('Тариф не найден', show_alert=True)
         return
@@ -1738,7 +2071,7 @@ async def show_tariff_extend(
 
     await callback.message.edit_text(
         f'🔄 <b>Продление подписки</b>{discount_hint}\n\n'
-        f'📦 Тариф: <b>{tariff.name}</b>\n'
+        f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
         f'📊 Трафик: {traffic}\n'
         f'📱 Устройств: {actual_device_limit}\n\n'
         'Выберите период продления:',
@@ -1774,7 +2107,7 @@ async def select_tariff_extend_period(
         await callback.answer('Тариф недоступен', show_alert=True)
         return
 
-    subscription = await get_subscription_by_user_id(db, db_user.id)
+    subscription, _sub_id = await _resolve_subscription(callback, db_user, db, state)
     actual_device_limit = (subscription.device_limit if subscription else None) or tariff.device_limit
 
     # Calculate price via PricingEngine (per-category discounts: period + devices)
@@ -1805,7 +2138,7 @@ async def select_tariff_extend_period(
 
         await callback.message.edit_text(
             f'✅ <b>Подтверждение продления</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {actual_device_limit}\n'
             f'📅 Период: {format_period(period)}\n'
@@ -1840,7 +2173,7 @@ async def select_tariff_extend_period(
 
         await callback.message.edit_text(
             f'❌ <b>Недостаточно средств</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📅 Период: {format_period(period)}\n'
             f'💰 К оплате: {format_price_kopeks(final_price)}\n\n'
             f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
@@ -1859,8 +2192,7 @@ async def select_tariff_extend_period(
         extend_tariff_id=tariff_id,
         extend_period=period,
         extend_discount_percent=discount_percent,
-        extend_group_pct=group_pct,
-        extend_offer_pct=offer_pct,
+        active_subscription_id=subscription.id if subscription else None,
     )
     await callback.answer()
 
@@ -1882,7 +2214,12 @@ async def confirm_tariff_extend(
         await callback.answer('Тариф недоступен', show_alert=True)
         return
 
-    subscription = await get_subscription_by_user_id(db, db_user.id)
+    # Validate period is available for this tariff
+    if str(period) not in (tariff.period_prices or {}):
+        await callback.answer('Период недоступен', show_alert=True)
+        return
+
+    subscription, _sub_id = await _resolve_subscription(callback, db_user, db, state)
     if not subscription:
         await callback.answer('Подписка не найдена', show_alert=True)
         return
@@ -1907,7 +2244,7 @@ async def confirm_tariff_extend(
 
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
-    if user_balance < final_price:
+    if final_price > 0 and user_balance < final_price:
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
 
@@ -1927,11 +2264,17 @@ async def confirm_tariff_extend(
             await callback.answer('Ошибка списания баланса', show_alert=True)
             return
 
-        # Продлеваем подписку (параметры тарифа не меняются, только добавляется время)
+        # Запоминаем, был ли триал ДО продления
+        was_trial = subscription.is_trial
+
+        # Продлеваем подписку; для триала передаём tariff_id чтобы сбросить is_trial
         subscription = await extend_subscription(
             db,
             subscription,
             days=period,
+            tariff_id=tariff.id if was_trial else None,
+            traffic_limit_gb=tariff.traffic_limit_gb if was_trial else None,
+            device_limit=actual_device_limit if was_trial else None,
         )
 
         # Обновляем пользователя в Remnawave
@@ -1940,8 +2283,8 @@ async def confirm_tariff_extend(
             await subscription_service.create_remnawave_user(
                 db,
                 subscription,
-                reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
-                reset_reason='продление тарифа',
+                reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT or was_trial,
+                reset_reason='конвертация триала' if was_trial else 'продление тарифа',
             )
         except Exception as e:
             logger.error('Ошибка обновления Remnawave', error=e)
@@ -1964,16 +2307,20 @@ async def confirm_tariff_extend(
                 subscription,
                 None,  # Транзакция отсутствует, оплата с баланса
                 period,
-                was_trial_conversion=False,
+                was_trial_conversion=was_trial,
                 amount_kopeks=final_price,
                 purchase_type='renewal',
             )
         except Exception as e:
             logger.error('Ошибка отправки уведомления админу', error=e)
 
-        # Очищаем корзину после успешной покупки
+        # Очищаем корзину после успешной покупки (per-subscription в multi-tariff)
         try:
-            await user_cart_service.delete_user_cart(db_user.id)
+            _cart_sub_id = getattr(subscription, 'id', None) if subscription else None
+            if _cart_sub_id and settings.is_multi_tariff_enabled():
+                await user_cart_service.delete_subscription_cart(db_user.id, _cart_sub_id)
+            else:
+                await user_cart_service.delete_user_cart(db_user.id)
             logger.info('Корзина очищена после продления тарифа для пользователя', telegram_id=db_user.telegram_id)
         except Exception as e:
             logger.error('Ошибка очистки корзины', error=e)
@@ -1984,14 +2331,21 @@ async def confirm_tariff_extend(
 
         await callback.message.edit_text(
             f'🎉 <b>Подписка успешно продлена!</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {actual_device_limit}\n'
             f'📅 Добавлено: {format_period(period)}\n'
             f'💰 Списано: {format_price_kopeks(final_price)}',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                    [
+                        InlineKeyboardButton(
+                            text='📱 Моя подписка',
+                            callback_data=f'sm:{subscription.id}'
+                            if settings.is_multi_tariff_enabled() and subscription
+                            else 'menu_subscription',
+                        )
+                    ],
                     [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
                 ]
             ),
@@ -2061,10 +2415,10 @@ def format_tariff_switch_list_text(
                     discount_icon = '🔥'
                 price_text = f'от {format_price_kopeks(min_price, compact=True)}{discount_icon}'
 
-        lines.append(f'<b>{tariff.name}</b> — {traffic} / {tariff.device_limit} 📱 {price_text}')
+        lines.append(f'<b>{html.escape(tariff.name)}</b> — {traffic} / {tariff.device_limit} 📱 {price_text}')
 
         if tariff.description:
-            lines.append(f'<i>{tariff.description}</i>')
+            lines.append(f'<i>{html.escape(tariff.description)}</i>')
 
         lines.append('')
 
@@ -2170,9 +2524,8 @@ async def show_tariff_switch_list(
     await state.clear()
 
     # Проверяем наличие активной подписки
-    subscription = await get_subscription_by_user_id(db, db_user.id)
+    subscription, _sub_id = await _resolve_subscription(callback, db_user, db, state)
     if not subscription:
-        await callback.answer('У вас нет активной подписки', show_alert=True)
         return
 
     current_tariff_id = subscription.tariff_id
@@ -2181,8 +2534,13 @@ async def show_tariff_switch_list(
     promo_group_id = getattr(db_user, 'promo_group_id', None)
     tariffs = await get_tariffs_for_user(db, promo_group_id)
 
-    # Фильтруем текущий тариф
-    available_tariffs = [t for t in tariffs if t.id != current_tariff_id]
+    # Filter out ALL tariffs user already has active subscriptions for
+    if settings.is_multi_tariff_enabled():
+        _all_active = await get_active_subscriptions_by_user_id(db, db_user.id)
+        _purchased_ids = {s.tariff_id for s in _all_active if s.tariff_id}
+        available_tariffs = [t for t in tariffs if t.id not in _purchased_ids]
+    else:
+        available_tariffs = [t for t in tariffs if t.id != current_tariff_id]
 
     if not available_tariffs:
         await callback.message.edit_text(
@@ -2200,7 +2558,7 @@ async def show_tariff_switch_list(
     if current_tariff_id:
         current_tariff = await get_tariff_by_id(db, current_tariff_id)
         if current_tariff:
-            current_tariff_name = current_tariff.name
+            current_tariff_name = html.escape(current_tariff.name)
 
     # Проверяем есть ли у пользователя скидки по периодам
     promo_group = db_user.get_primary_promo_group() if hasattr(db_user, 'get_primary_promo_group') else None
@@ -2214,17 +2572,18 @@ async def show_tariff_switch_list(
 
     # Формируем текст со списком тарифов
     switch_text = format_tariff_switch_list_text(
-        tariffs, current_tariff_id, current_tariff_name, db_user, has_period_discounts
+        available_tariffs, current_tariff_id, current_tariff_name, db_user, has_period_discounts
     )
 
     await callback.message.edit_text(
         switch_text,
-        reply_markup=get_tariff_switch_keyboard(tariffs, current_tariff_id, db_user.language),
+        reply_markup=get_tariff_switch_keyboard(available_tariffs, current_tariff_id, db_user.language),
         parse_mode='HTML',
     )
 
     await state.update_data(
         current_tariff_id=current_tariff_id,
+        active_subscription_id=subscription.id,
     )
     await callback.answer()
 
@@ -2259,8 +2618,8 @@ async def select_tariff_switch(
         discount_text = f'\n💎 Скидка: {daily_discount}%' if daily_discount > 0 else ''
         user_balance = db_user.balance_kopeks or 0
 
-        # Проверяем текущую подписку на оставшиеся дни
-        current_subscription = await get_subscription_by_user_id(db, db_user.id)
+        # Проверяем текущую подписку на оставшиеся дни (switched FROM, not TO)
+        current_subscription, _sw_sub_id = await _resolve_subscription(callback, db_user, db, state)
         days_warning = ''
         if current_subscription and current_subscription.end_date:
             remaining = current_subscription.end_date - datetime.now(UTC)
@@ -2271,7 +2630,7 @@ async def select_tariff_switch(
         if user_balance >= daily_price:
             await callback.message.edit_text(
                 f'✅ <b>Подтверждение смены тарифа</b>\n\n'
-                f'📦 Новый тариф: <b>{tariff.name}</b>\n'
+                f'📦 Новый тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'📊 Трафик: {traffic}\n'
                 f'📱 Устройств: {tariff.device_limit}\n'
                 f'🔄 Тип: <b>Суточный</b>\n\n'
@@ -2297,7 +2656,7 @@ async def select_tariff_switch(
             missing = daily_price - user_balance
             await callback.message.edit_text(
                 f'❌ <b>Недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{tariff.name}</b>\n'
+                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'🔄 Тип: Суточный\n'
                 f'💰 Цена: {format_price_kopeks(daily_price)}/день'
                 f'{discount_text}\n\n'
@@ -2314,7 +2673,7 @@ async def select_tariff_switch(
             )
     else:
         # Для обычного тарифа показываем выбор периода
-        info_text = f"""📦 <b>{tariff.name}</b>
+        info_text = f"""📦 <b>{html.escape(tariff.name)}</b>
 
 <b>Параметры нового тарифа:</b>
 • Трафик: {traffic}
@@ -2322,7 +2681,7 @@ async def select_tariff_switch(
 """
 
         if tariff.description:
-            info_text += f'\n📝 {tariff.description}\n'
+            info_text += f'\n📝 {html.escape(tariff.description)}\n'
 
         info_text += '\n⚠️ Оплачивается полная стоимость тарифа.\nВыберите период:'
 
@@ -2383,10 +2742,10 @@ async def select_tariff_switch_period(
     if current_tariff_id:
         current_tariff = await get_tariff_by_id(db, current_tariff_id)
         if current_tariff:
-            current_tariff_name = current_tariff.name
+            current_tariff_name = html.escape(current_tariff.name)
 
-    # Получаем текущую подписку для расчёта оставшегося времени
-    subscription = await get_subscription_by_user_id(db, db_user.id)
+    # Получаем текущую подписку (switched FROM, not TO) для расчёта оставшегося времени
+    subscription, _sw_period_sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription and subscription.end_date:
         max(0, (subscription.end_date - datetime.now(UTC)).days)
 
@@ -2401,7 +2760,7 @@ async def select_tariff_switch_period(
         await callback.message.edit_text(
             f'✅ <b>Подтверждение переключения тарифа</b>\n\n'
             f'📌 Текущий тариф: <b>{current_tariff_name}</b>\n'
-            f'📦 Новый тариф: <b>{tariff.name}</b>\n'
+            f'📦 Новый тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'{time_info}\n'
@@ -2416,7 +2775,7 @@ async def select_tariff_switch_period(
         missing = final_price - user_balance
         await callback.message.edit_text(
             f'❌ <b>Недостаточно средств</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📅 Период: {format_period(period)}\n'
             f'💰 К оплате: {format_price_kopeks(final_price)}\n\n'
             f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
@@ -2450,12 +2809,17 @@ async def confirm_tariff_switch(
         await callback.answer('Тариф недоступен', show_alert=True)
         return
 
+    # Validate period is available for this tariff
+    if str(period) not in (tariff.period_prices or {}):
+        await callback.answer('Период недоступен', show_alert=True)
+        return
+
     from app.database.crud.user import lock_user_for_pricing
 
     db_user = await lock_user_for_pricing(db, db_user.id)
 
-    # Проверяем наличие подписки (need device_limit for pricing)
-    subscription = await get_subscription_by_user_id(db, db_user.id)
+    # Проверяем наличие подписки (switched FROM — resolved via FSM state)
+    subscription, _sw_confirm_sub_id = await _resolve_subscription(callback, db_user, db, state)
     if not subscription:
         await callback.answer('У вас нет активной подписки', show_alert=True)
         return
@@ -2463,9 +2827,8 @@ async def confirm_tariff_switch(
     # Calculate price via PricingEngine (handles per-category discounts + extra devices)
     from app.services.pricing_engine import pricing_engine
 
-    effective_device_limit = (
-        subscription.device_limit if subscription.tariff_id == tariff.id else (tariff.device_limit or 0)
-    )
+    # New tariff device_limit applies on switch (extra devices not transferred)
+    effective_device_limit = tariff.device_limit or 0
     result = await pricing_engine.calculate_tariff_purchase_price(
         tariff,
         period,
@@ -2477,7 +2840,7 @@ async def confirm_tariff_switch(
 
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
-    if user_balance < final_price:
+    if final_price > 0 and user_balance < final_price:
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
 
@@ -2541,13 +2904,23 @@ async def confirm_tariff_switch(
 
         # Гарантированный сброс устройств при смене тарифа
         await db.refresh(db_user)
-        if db_user.remnawave_uuid:
+        _reset_uuid = (
+            subscription.remnawave_uuid
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+            else db_user.remnawave_uuid
+        )
+        if settings.is_multi_tariff_enabled() and not getattr(subscription, 'remnawave_uuid', None):
+            logger.warning(
+                'Multi-tariff: subscription missing remnawave_uuid, using user fallback',
+                subscription_id=getattr(subscription, 'id', None),
+            )
+        if _reset_uuid:
             try:
                 from app.services.remnawave_service import RemnaWaveService
 
                 service = RemnaWaveService()
                 async with service.get_api_client() as api:
-                    await api.reset_user_devices(db_user.remnawave_uuid)
+                    await api.reset_user_devices(_reset_uuid)
                     logger.info('🔧 Сброшены устройства при смене тарифа для user_id', db_user_id=db_user.id)
             except Exception as e:
                 logger.error('Ошибка сброса устройств при смене тарифа', error=e)
@@ -2577,9 +2950,13 @@ async def confirm_tariff_switch(
         except Exception as e:
             logger.error('Ошибка отправки уведомления админу', error=e)
 
-        # Очищаем корзину после успешной покупки
+        # Очищаем корзину после успешной покупки (per-subscription в multi-tariff)
         try:
-            await user_cart_service.delete_user_cart(db_user.id)
+            _cart_sub_id = getattr(subscription, 'id', None) if subscription else None
+            if _cart_sub_id and settings.is_multi_tariff_enabled():
+                await user_cart_service.delete_subscription_cart(db_user.id, _cart_sub_id)
+            else:
+                await user_cart_service.delete_user_cart(db_user.id)
             logger.info('Корзина очищена после смены тарифа для пользователя', telegram_id=db_user.telegram_id)
         except Exception as e:
             logger.error('Ошибка очистки корзины', error=e)
@@ -2593,7 +2970,7 @@ async def confirm_tariff_switch(
 
         await callback.message.edit_text(
             f'🎉 <b>Тариф успешно изменён!</b>\n\n'
-            f'📦 Новый тариф: <b>{tariff.name}</b>\n'
+            f'📦 Новый тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'💰 Списано: {format_price_kopeks(final_price)}\n'
@@ -2601,7 +2978,14 @@ async def confirm_tariff_switch(
             f'Перейдите в раздел «Подписка» для просмотра деталей.',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                    [
+                        InlineKeyboardButton(
+                            text='📱 Моя подписка',
+                            callback_data=f'sm:{subscription.id}'
+                            if settings.is_multi_tariff_enabled() and subscription
+                            else 'menu_subscription',
+                        )
+                    ],
                     [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
                 ]
             ),
@@ -2662,12 +3046,12 @@ async def confirm_daily_tariff_switch(
 
     # Проверяем баланс (user already locked, balance is fresh)
     user_balance = db_user.balance_kopeks or 0
-    if user_balance < final_daily_price:
+    if final_daily_price > 0 and user_balance < final_daily_price:
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
 
-    # Проверяем наличие подписки
-    subscription = await get_subscription_by_user_id(db, db_user.id)
+    # Проверяем наличие подписки — ищем подписку FROM (текущую), не TO (новый тариф)
+    subscription, _sub_id = await _resolve_subscription(callback, db_user, db, state)
     if not subscription:
         await callback.answer('У вас нет активной подписки', show_alert=True)
         return
@@ -2699,7 +3083,7 @@ async def confirm_daily_tariff_switch(
             squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
         # Обновляем подписку на суточный тариф
-        # Сохраняем докупленные устройства при смене тарифа
+        # Сбрасываем лимит устройств на базу нового тарифа (докупленные не переносятся)
         from app.database.crud.subscription import calc_device_limit_on_tariff_switch
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
@@ -2748,13 +3132,23 @@ async def confirm_daily_tariff_switch(
 
         # Гарантированный сброс устройств при смене тарифа
         await db.refresh(db_user)
-        if db_user.remnawave_uuid:
+        _reset_uuid_daily = (
+            subscription.remnawave_uuid
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+            else db_user.remnawave_uuid
+        )
+        if settings.is_multi_tariff_enabled() and not getattr(subscription, 'remnawave_uuid', None):
+            logger.warning(
+                'Multi-tariff: subscription missing remnawave_uuid, using user fallback',
+                subscription_id=getattr(subscription, 'id', None),
+            )
+        if _reset_uuid_daily:
             try:
                 from app.services.remnawave_service import RemnaWaveService
 
                 service = RemnaWaveService()
                 async with service.get_api_client() as api:
-                    await api.reset_user_devices(db_user.remnawave_uuid)
+                    await api.reset_user_devices(_reset_uuid_daily)
                     logger.info('🔧 Сброшены устройства при смене на суточный тариф для user_id', db_user_id=db_user.id)
             except Exception as e:
                 logger.error('Ошибка сброса устройств при смене тарифа', error=e)
@@ -2790,7 +3184,7 @@ async def confirm_daily_tariff_switch(
 
         await callback.message.edit_text(
             f'🎉 <b>Тариф успешно изменён!</b>\n\n'
-            f'📦 Новый тариф: <b>{tariff.name}</b>\n'
+            f'📦 Новый тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'🔄 Тип: Суточный\n'
@@ -2798,7 +3192,14 @@ async def confirm_daily_tariff_switch(
             f'ℹ️ Следующее списание через 24 часа.',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                    [
+                        InlineKeyboardButton(
+                            text='📱 Моя подписка',
+                            callback_data=f'sm:{subscription.id}'
+                            if settings.is_multi_tariff_enabled() and subscription
+                            else 'menu_subscription',
+                        )
+                    ],
                     [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
                 ]
             ),
@@ -2813,14 +3214,23 @@ async def confirm_daily_tariff_switch(
         try:
             from app.database.crud.user import add_user_balance
 
-            await add_user_balance(
+            refund_success = await add_user_balance(
                 db,
                 db_user,
                 final_daily_price,
                 'Возврат: ошибка смены на суточный тариф',
                 create_transaction=True,
                 transaction_type=TransactionType.REFUND,
+                commit=False,
             )
+            if not refund_success:
+                await _persist_failed_refund(
+                    user_id=db_user.id,
+                    amount_kopeks=final_daily_price,
+                    reason='Возврат: ошибка смены на суточный тариф',
+                    error=Exception('add_user_balance returned False'),
+                )
+            await db.commit()
         except Exception as refund_error:
             logger.critical(
                 'CRITICAL: не удалось вернуть средства после ошибки смены на суточный тариф',
@@ -2866,7 +3276,7 @@ def format_instant_switch_list_text(
     """Форматирует текст со списком тарифов для мгновенного переключения."""
     lines = [
         '📦 <b>Мгновенная смена тарифа</b>',
-        f'📌 Текущий: <b>{current_tariff.name}</b>',
+        f'📌 Текущий: <b>{html.escape(current_tariff.name)}</b>',
         f'⏰ Осталось: <b>{remaining_days} дн.</b>',
         '',
         '💡 При переключении остаток дней сохраняется.',
@@ -2890,10 +3300,10 @@ def format_instant_switch_list_text(
         else:
             cost_text = '⬇️ Бесплатно'
 
-        lines.append(f'<b>{tariff.name}</b> — {traffic} / {tariff.device_limit} 📱 {cost_text}')
+        lines.append(f'<b>{html.escape(tariff.name)}</b> — {traffic} / {tariff.device_limit} 📱 {cost_text}')
 
         if tariff.description:
-            lines.append(f'<i>{tariff.description}</i>')
+            lines.append(f'<i>{html.escape(tariff.description)}</i>')
 
         lines.append('')
 
@@ -2971,13 +3381,13 @@ async def show_instant_switch_list(
     await state.clear()
 
     # Проверяем наличие активной подписки
-    subscription = await get_subscription_by_user_id(db, db_user.id)
+    subscription, _sub_id = await _resolve_subscription(callback, db_user, db, state)
     if not subscription:
-        await callback.answer('У вас нет активной подписки', show_alert=True)
         return
 
     if not subscription.tariff_id:
-        await callback.answer('У вашей подписки нет тарифа', show_alert=True)
+        # Legacy subscription without tariff — redirect to tariff_switch migration flow
+        await show_tariff_switch_list(callback, db_user, db, state)
         return
 
     # Получаем текущий тариф
@@ -3009,8 +3419,13 @@ async def show_instant_switch_list(
     promo_group_id = getattr(db_user, 'promo_group_id', None)
     tariffs = await get_tariffs_for_user(db, promo_group_id)
 
-    # Фильтруем текущий тариф
-    available_tariffs = [t for t in tariffs if t.id != current_tariff.id]
+    # Filter out ALL tariffs user already has active subscriptions for
+    if settings.is_multi_tariff_enabled():
+        _all_active_instant = await get_active_subscriptions_by_user_id(db, db_user.id)
+        _purchased_ids_instant = {s.tariff_id for s in _all_active_instant if s.tariff_id}
+        available_tariffs = [t for t in tariffs if t.id not in _purchased_ids_instant]
+    else:
+        available_tariffs = [t for t in tariffs if t.id != current_tariff.id]
 
     if not available_tariffs:
         await callback.message.edit_text(
@@ -3024,17 +3439,20 @@ async def show_instant_switch_list(
         return
 
     # Формируем текст со списком тарифов
-    switch_text = format_instant_switch_list_text(tariffs, current_tariff, remaining_days, db_user)
+    switch_text = format_instant_switch_list_text(available_tariffs, current_tariff, remaining_days, db_user)
 
     await callback.message.edit_text(
         switch_text,
-        reply_markup=get_instant_switch_keyboard(tariffs, current_tariff, remaining_days, db_user.language, db_user),
+        reply_markup=get_instant_switch_keyboard(
+            available_tariffs, current_tariff, remaining_days, db_user.language, db_user
+        ),
         parse_mode='HTML',
     )
 
     await state.update_data(
         current_tariff_id=current_tariff.id,
         remaining_days=remaining_days,
+        active_subscription_id=subscription.id,
     )
     await callback.answer()
 
@@ -3060,8 +3478,8 @@ async def preview_instant_switch(
     current_tariff_id = data.get('current_tariff_id')
     remaining_days = data.get('remaining_days', 0)
 
-    # Если данных нет в state, получаем заново
-    subscription = await get_subscription_by_user_id(db, db_user.id)
+    # Resolve the subscription being switched FROM (via FSM state active_subscription_id)
+    subscription, _isw_sub_id = await _resolve_subscription(callback, db_user, db, state)
     if not subscription or not subscription.tariff_id:
         await callback.answer('Подписка не найдена', show_alert=True)
         return
@@ -3111,10 +3529,10 @@ async def preview_instant_switch(
         if user_balance >= daily_price:
             await callback.message.edit_text(
                 f'🔄 <b>Переключение на суточный тариф</b>\n\n'
-                f'📌 Текущий: <b>{current_tariff.name}</b>\n'
+                f'📌 Текущий: <b>{html.escape(current_tariff.name)}</b>\n'
                 f'   • Трафик: {current_traffic}\n'
                 f'   • Устройств: {current_tariff.device_limit}\n\n'
-                f'📦 Новый: <b>{new_tariff.name}</b>\n'
+                f'📦 Новый: <b>{html.escape(new_tariff.name)}</b>\n'
                 f'   • Трафик: {traffic}\n'
                 f'   • Устройств: {new_tariff.device_limit}\n'
                 f'   • Тип: 🔄 Суточный\n\n'
@@ -3130,7 +3548,7 @@ async def preview_instant_switch(
             missing = daily_price - user_balance
             await callback.message.edit_text(
                 f'❌ <b>Недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{new_tariff.name}</b>\n'
+                f'📦 Тариф: <b>{html.escape(new_tariff.name)}</b>\n'
                 f'🔄 Тип: Суточный\n'
                 f'💰 Цена: {format_price_kopeks(daily_price)}/день'
                 f'{discount_text}\n\n'
@@ -3156,10 +3574,10 @@ async def preview_instant_switch(
         if user_balance >= upgrade_cost:
             await callback.message.edit_text(
                 f'⬆️ <b>Повышение тарифа</b>\n\n'
-                f'📌 Текущий: <b>{current_tariff.name}</b>\n'
+                f'📌 Текущий: <b>{html.escape(current_tariff.name)}</b>\n'
                 f'   • Трафик: {current_traffic}\n'
                 f'   • Устройств: {current_tariff.device_limit}\n\n'
-                f'📦 Новый: <b>{new_tariff.name}</b>\n'
+                f'📦 Новый: <b>{html.escape(new_tariff.name)}</b>\n'
                 f'   • Трафик: {traffic}\n'
                 f'   • Устройств: {new_tariff.device_limit}\n\n'
                 f'⏰ Осталось дней: <b>{remaining_days}</b>\n'
@@ -3173,7 +3591,7 @@ async def preview_instant_switch(
             missing = upgrade_cost - user_balance
             await callback.message.edit_text(
                 f'❌ <b>Недостаточно средств</b>\n\n'
-                f'📦 Новый тариф: <b>{new_tariff.name}</b>\n'
+                f'📦 Новый тариф: <b>{html.escape(new_tariff.name)}</b>\n'
                 f'💰 Требуется доплата: {format_price_kopeks(upgrade_cost)}\n\n'
                 f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
                 f'⚠️ Не хватает: <b>{format_price_kopeks(missing)}</b>',
@@ -3184,10 +3602,10 @@ async def preview_instant_switch(
         # Downgrade или тот же уровень - бесплатно
         await callback.message.edit_text(
             f'⬇️ <b>Переключение тарифа</b>\n\n'
-            f'📌 Текущий: <b>{current_tariff.name}</b>\n'
+            f'📌 Текущий: <b>{html.escape(current_tariff.name)}</b>\n'
             f'   • Трафик: {current_traffic}\n'
             f'   • Устройств: {current_tariff.device_limit}\n\n'
-            f'📦 Новый: <b>{new_tariff.name}</b>\n'
+            f'📦 Новый: <b>{html.escape(new_tariff.name)}</b>\n'
             f'   • Трафик: {traffic}\n'
             f'   • Устройств: {new_tariff.device_limit}\n\n'
             f'⏰ Осталось дней: <b>{remaining_days}</b>\n'
@@ -3222,8 +3640,8 @@ async def confirm_instant_switch(
         await callback.answer('Тариф недоступен', show_alert=True)
         return
 
-    # Проверяем подписку
-    subscription = await get_subscription_by_user_id(db, db_user.id)
+    # Проверяем подписку (switched FROM — resolved via FSM state)
+    subscription, _isw_confirm_sub_id = await _resolve_subscription(callback, db_user, db, state)
     if not subscription:
         await callback.answer('Подписка не найдена', show_alert=True)
         return
@@ -3290,7 +3708,7 @@ async def confirm_instant_switch(
         is_new_daily = getattr(new_tariff, 'is_daily', False)
 
         # Обновляем подписку с новыми параметрами тарифа
-        # Сохраняем докупленные устройства при смене тарифа
+        # Сбрасываем лимит устройств на базу нового тарифа (докупленные не переносятся)
         from app.database.crud.subscription import calc_device_limit_on_tariff_switch
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
@@ -3388,13 +3806,23 @@ async def confirm_instant_switch(
 
         # Гарантированный сброс устройств при смене тарифа
         await db.refresh(db_user)
-        if db_user.remnawave_uuid:
+        _reset_uuid_instant = (
+            subscription.remnawave_uuid
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+            else db_user.remnawave_uuid
+        )
+        if settings.is_multi_tariff_enabled() and not getattr(subscription, 'remnawave_uuid', None):
+            logger.warning(
+                'Multi-tariff: subscription missing remnawave_uuid, using user fallback',
+                subscription_id=getattr(subscription, 'id', None),
+            )
+        if _reset_uuid_instant:
             try:
                 from app.services.remnawave_service import RemnaWaveService
 
                 service = RemnaWaveService()
                 async with service.get_api_client() as api:
-                    await api.reset_user_devices(db_user.remnawave_uuid)
+                    await api.reset_user_devices(_reset_uuid_instant)
                     logger.info(
                         '🔧 Сброшены устройства при мгновенном переключении тарифа для user_id', db_user_id=db_user.id
                     )
@@ -3435,7 +3863,7 @@ async def confirm_instant_switch(
         if is_new_daily:
             await callback.message.edit_text(
                 f'🎉 <b>Тариф успешно изменён!</b>\n\n'
-                f'📦 Новый тариф: <b>{new_tariff.name}</b>\n'
+                f'📦 Новый тариф: <b>{html.escape(new_tariff.name)}</b>\n'
                 f'📊 Трафик: {traffic}\n'
                 f'📱 Устройств: {new_tariff.device_limit}\n'
                 f'🔄 Тип: Суточный\n'
@@ -3443,7 +3871,14 @@ async def confirm_instant_switch(
                 f'ℹ️ Следующее списание через 24 часа.',
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                        [
+                            InlineKeyboardButton(
+                                text='📱 Моя подписка',
+                                callback_data=f'sm:{subscription.id}'
+                                if settings.is_multi_tariff_enabled() and subscription
+                                else 'menu_subscription',
+                            )
+                        ],
                         [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
                     ]
                 ),
@@ -3457,14 +3892,21 @@ async def confirm_instant_switch(
 
             await callback.message.edit_text(
                 f'🎉 <b>Тариф успешно изменён!</b>\n\n'
-                f'📦 Новый тариф: <b>{new_tariff.name}</b>\n'
+                f'📦 Новый тариф: <b>{html.escape(new_tariff.name)}</b>\n'
                 f'📊 Трафик: {traffic}\n'
                 f'📱 Устройств: {new_tariff.device_limit}\n'
                 f'⏰ Осталось дней: {remaining_days}\n'
                 f'{cost_text}',
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                        [
+                            InlineKeyboardButton(
+                                text='📱 Моя подписка',
+                                callback_data=f'sm:{subscription.id}'
+                                if settings.is_multi_tariff_enabled() and subscription
+                                else 'menu_subscription',
+                            )
+                        ],
                         [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
                     ]
                 ),
@@ -3496,22 +3938,26 @@ async def return_to_saved_tariff_cart(
     tariff = await get_tariff_by_id(db, tariff_id)
     if not tariff or not tariff.is_active:
         await callback.answer('❌ Тариф больше недоступен', show_alert=True)
-        # Очищаем корзину
-        await user_cart_service.delete_user_cart(db_user.id)
+        # Очищаем корзину (per-subscription в multi-tariff)
+        _cart_sub_id = cart_data.get('subscription_id')
+        if _cart_sub_id and settings.is_multi_tariff_enabled():
+            await user_cart_service.delete_subscription_cart(db_user.id, _cart_sub_id)
+        else:
+            await user_cart_service.delete_user_cart(db_user.id)
         return
 
     total_price = cart_data.get('total_price', 0)
     user_balance = db_user.balance_kopeks or 0
     traffic = format_traffic(tariff.traffic_limit_gb)
 
-    # Проверяем баланс
-    if user_balance < total_price:
+    # Проверяем баланс (при 100% скидке — пропускаем)
+    if total_price > 0 and user_balance < total_price:
         missing = total_price - user_balance
 
         if cart_mode == 'daily_tariff_purchase':
             await callback.message.edit_text(
                 f'❌ <b>Все еще недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{tariff.name}</b>\n'
+                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'🔄 Тип: Суточный\n'
                 f'💰 Стоимость: {format_price_kopeks(total_price)}\n\n'
                 f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
@@ -3523,7 +3969,7 @@ async def return_to_saved_tariff_cart(
             period = cart_data.get('period_days', 30)
             await callback.message.edit_text(
                 f'❌ <b>Все еще недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{tariff.name}</b>\n'
+                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'📅 Период: {format_period(period)}\n'
                 f'💰 Стоимость: {format_price_kopeks(total_price)}\n\n'
                 f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
@@ -3535,7 +3981,7 @@ async def return_to_saved_tariff_cart(
             period = cart_data.get('period_days', 30)
             await callback.message.edit_text(
                 f'❌ <b>Все еще недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{tariff.name}</b>\n'
+                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'📅 Период: {format_period(period)}\n'
                 f'💰 Стоимость: {format_price_kopeks(total_price)}\n\n'
                 f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
@@ -3554,7 +4000,7 @@ async def return_to_saved_tariff_cart(
 
         await callback.message.edit_text(
             f'✅ <b>Подтверждение покупки</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'🔄 Тип: Суточный\n'
@@ -3574,7 +4020,7 @@ async def return_to_saved_tariff_cart(
 
         await callback.message.edit_text(
             f'✅ <b>Подтверждение продления</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'📅 Период: {format_period(period)}\n'
@@ -3604,7 +4050,7 @@ async def return_to_saved_tariff_cart(
 
         await callback.message.edit_text(
             f'✅ <b>Подтверждение покупки</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
+            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'📅 Период: {format_period(period)}\n'

@@ -40,6 +40,8 @@ async def _finalize_oauth_login(
     provider: str,
     campaign_slug: str | None = None,
     referral_code: str | None = None,
+    *,
+    is_new_user: bool = False,
 ) -> AuthResponse:
     """Update last login, create tokens, store refresh token."""
     user.cabinet_last_login = datetime.now(UTC)
@@ -47,10 +49,10 @@ async def _finalize_oauth_login(
     auth_response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, auth_response.refresh_token, device_info=f'oauth:{provider}')
 
-    # Process referral code (before campaign bonus, which may also set referrer)
+    # Process referral code (only for new users — existing users cannot be assigned a referrer)
     from .auth import _process_referral_code, _user_to_response
 
-    await _process_referral_code(db, user, referral_code)
+    await _process_referral_code(db, user, referral_code, is_new_user=is_new_user)
 
     auth_response.campaign_bonus = await _process_campaign_bonus(db, user, campaign_slug)
     if auth_response.campaign_bonus:
@@ -232,4 +234,19 @@ async def oauth_callback(
         referred_by_id=referrer_id,
     )
     logger.info('New OAuth user created', provider=provider, user_id=user.id)
-    return await _finalize_oauth_login(db, user, provider, request.campaign_slug, request.referral_code)
+
+    # Commit user before panel sync (sync does its own commit/rollback)
+    await db.commit()
+
+    # Sync existing panel subscriptions by email (if verified)
+    if user_info.email and user_info.email_verified:
+        try:
+            from app.cabinet.routes.auth import _sync_subscription_from_panel_by_email
+
+            await _sync_subscription_from_panel_by_email(db, user)
+        except Exception:
+            logger.warning('Failed to sync panel subscription for new OAuth user', user_id=user.id, exc_info=True)
+
+    return await _finalize_oauth_login(
+        db, user, provider, request.campaign_slug, request.referral_code, is_new_user=True
+    )

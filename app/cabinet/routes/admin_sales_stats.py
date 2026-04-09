@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.crud.transaction import REAL_PAYMENT_METHODS
 from app.database.models import (
+    PaymentMethod,
     Subscription,
     SubscriptionConversion,
     SubscriptionStatus,
@@ -87,6 +88,7 @@ class SalesSummary(BaseModel):
     """Summary stats for the top cards."""
 
     total_revenue_kopeks: int
+    manual_topup_kopeks: int
     active_subscriptions: int
     active_trials: int
     new_trials: int
@@ -110,11 +112,11 @@ async def get_sales_summary(
     try:
         period_start, period_end = _parse_period(days, start_date, end_date)
 
-        # Total revenue (deposits with real payment methods)
+        # Total revenue (deposits + direct subscription payments with real payment methods)
         revenue_result = await db.execute(
-            select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+            select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
                 and_(
-                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                     Transaction.is_completed == True,
                     Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
                     Transaction.created_at >= period_start,
@@ -123,6 +125,20 @@ async def get_sales_summary(
             )
         )
         total_revenue = revenue_result.scalar() or 0
+
+        # Manual top-ups by admins
+        manual_topup_result = await db.execute(
+            select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
+                and_(
+                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.is_completed == True,
+                    Transaction.payment_method == PaymentMethod.MANUAL.value,
+                    Transaction.created_at >= period_start,
+                    Transaction.created_at <= period_end,
+                )
+            )
+        )
+        manual_topup = manual_topup_result.scalar() or 0
 
         # Consolidated subscription counts: active paid, active trial, new trials in period
         sub_counts_result = await db.execute(
@@ -170,6 +186,7 @@ async def get_sales_summary(
         new_trials = row.new_trials or 0
 
         # Trial-to-paid conversion in period
+        # Method 1: SubscriptionConversion records (only created by some purchase flows)
         conversions_result = await db.execute(
             select(func.count(SubscriptionConversion.id)).where(
                 and_(
@@ -178,9 +195,29 @@ async def get_sales_summary(
                 )
             )
         )
-        conversions = conversions_result.scalar() or 0
-        # Cap at 100%: conversions from previous periods can exceed current new_trials
-        conversion_rate = min(round((conversions / new_trials * 100), 1), 100.0) if new_trials > 0 else 0.0
+        conversion_records = conversions_result.scalar() or 0
+
+        # Method 2: Users registered in period who have paid (catches all purchase flows)
+        converted_users_result = await db.execute(
+            select(func.count(User.id)).where(
+                and_(
+                    User.created_at >= period_start,
+                    User.created_at <= period_end,
+                    User.has_had_paid_subscription.is_(True),
+                )
+            )
+        )
+        converted_users = converted_users_result.scalar() or 0
+
+        # Use the higher count to catch conversions from all purchase flows
+        conversions = max(conversion_records, converted_users)
+
+        # new_trials only counts REMAINING trials (is_trial=True), but converted users
+        # had is_trial flipped to False. Add conversions back to get total trial starters.
+        total_trial_starters = new_trials + conversions
+        conversion_rate = (
+            min(round((conversions / total_trial_starters * 100), 1), 100.0) if total_trial_starters > 0 else 0.0
+        )
 
         # Renewals count
         renewals_subquery = (
@@ -209,7 +246,7 @@ async def get_sales_summary(
 
         # Add-on revenue
         addon_revenue_result = await db.execute(
-            select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+            select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
                 and_(
                     Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                     Transaction.is_completed == True,
@@ -219,10 +256,11 @@ async def get_sales_summary(
                 )
             )
         )
-        addon_revenue = abs(addon_revenue_result.scalar() or 0)
+        addon_revenue = addon_revenue_result.scalar() or 0
 
         return SalesSummary(
-            total_revenue_kopeks=total_revenue,
+            total_revenue_kopeks=total_revenue + manual_topup,
+            manual_topup_kopeks=manual_topup,
             active_subscriptions=active_subs,
             active_trials=active_trials,
             new_trials=new_trials,
@@ -290,6 +328,7 @@ async def get_trials_stats(
         )
         total_trials = total_result.scalar() or 0
 
+        # Conversion: SubscriptionConversion records + fallback to has_had_paid_subscription
         conversions_result = await db.execute(
             select(func.count(SubscriptionConversion.id)).where(
                 and_(
@@ -298,9 +337,25 @@ async def get_trials_stats(
                 )
             )
         )
-        conversions = conversions_result.scalar() or 0
-        # Cap at 100%: conversions from previous periods can exceed current period trials
-        conversion_rate = min(round((conversions / total_trials * 100), 1), 100.0) if total_trials > 0 else 0.0
+        conversion_records = conversions_result.scalar() or 0
+
+        converted_users_result = await db.execute(
+            select(func.count(User.id)).where(
+                and_(
+                    User.created_at >= period_start,
+                    User.created_at <= period_end,
+                    User.has_had_paid_subscription.is_(True),
+                )
+            )
+        )
+        converted_users = converted_users_result.scalar() or 0
+        conversions = max(conversion_records, converted_users)
+
+        # total_trials only counts remaining is_trial=True; add conversions for total starters
+        total_trial_starters = total_trials + conversions
+        conversion_rate = (
+            min(round((conversions / total_trial_starters * 100), 1), 100.0) if total_trial_starters > 0 else 0.0
+        )
 
         avg_duration_result = await db.execute(
             select(func.avg(SubscriptionConversion.trial_duration_days)).where(
@@ -1022,10 +1077,11 @@ async def get_deposits_stats(
     try:
         period_start, period_end = _parse_period(days, start_date, end_date)
 
+        methods_with_manual = [*REAL_PAYMENT_METHODS, PaymentMethod.MANUAL.value]
         base_filter = and_(
-            Transaction.type == TransactionType.DEPOSIT.value,
+            Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
             Transaction.is_completed == True,
-            Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+            Transaction.payment_method.in_(methods_with_manual),
             Transaction.created_at >= period_start,
             Transaction.created_at <= period_end,
         )
@@ -1033,7 +1089,7 @@ async def get_deposits_stats(
         totals_result = await db.execute(
             select(
                 func.count(Transaction.id).label('count'),
-                func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('amount'),
+                func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('amount'),
             ).where(base_filter)
         )
         totals = totals_result.one()
@@ -1045,11 +1101,11 @@ async def get_deposits_stats(
             select(
                 Transaction.payment_method.label('method'),
                 func.count(Transaction.id).label('count'),
-                func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('amount'),
+                func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('amount'),
             )
             .where(base_filter)
             .group_by(Transaction.payment_method)
-            .order_by(func.sum(Transaction.amount_kopeks).desc())
+            .order_by(func.sum(func.abs(Transaction.amount_kopeks)).desc())
         )
         by_method = [
             DepositByMethodItem(method=row.method or 'unknown', count=row.count, amount_kopeks=row.amount)
@@ -1060,7 +1116,7 @@ async def get_deposits_stats(
             select(
                 func.date(Transaction.created_at).label('date'),
                 func.count(Transaction.id).label('count'),
-                func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('amount'),
+                func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('amount'),
             )
             .where(base_filter)
             .group_by(func.date(Transaction.created_at))
@@ -1076,12 +1132,12 @@ async def get_deposits_stats(
         ]
 
         # Daily deposits grouped by payment method
-        # base_filter already excludes NULLs via .in_(REAL_PAYMENT_METHODS), no coalesce needed
+        # base_filter already excludes NULLs via .in_(methods_with_manual), no coalesce needed
         daily_by_method_query = await db.execute(
             select(
                 func.date(Transaction.created_at).label('date'),
                 Transaction.payment_method.label('method'),
-                func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('amount'),
+                func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('amount'),
             )
             .where(base_filter)
             .group_by(func.date(Transaction.created_at), Transaction.payment_method)

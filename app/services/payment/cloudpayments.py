@@ -147,6 +147,15 @@ class CloudPaymentsPaymentMixin:
         token = webhook_data.get('token')
         test_mode = webhook_data.get('test_mode', False)
 
+        # Reject test-mode payments when not in test mode
+        if test_mode and not getattr(settings, 'CLOUDPAYMENTS_TEST_MODE', False):
+            logger.warning(
+                'CloudPayments: rejecting test_mode payment in production',
+                invoice_id=invoice_id,
+                test_mode=test_mode,
+            )
+            return False
+
         if not invoice_id:
             logger.error('CloudPayments webhook без invoice_id')
             return False
@@ -452,17 +461,9 @@ class CloudPaymentsPaymentMixin:
         transaction: Any,
     ) -> None:
         """Send success notification to user via Telegram."""
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
 
-        from app.config import settings
+        from app.bot_factory import create_bot
         from app.localization.texts import get_texts
-
-        bot = Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
 
         # Skip email-only users (no telegram_id)
         if not user.telegram_id:
@@ -492,15 +493,18 @@ class CloudPaymentsPaymentMixin:
         if referrer_info:
             message += f'\n\n{referrer_info}'
 
-        try:
-            await bot.send_message(
-                chat_id=user.telegram_id,
-                text=message,
-                parse_mode='HTML',
-                reply_markup=keyboard,
-            )
-        except Exception as error:
-            logger.warning('Не удалось отправить уведомление пользователю', telegram_id=user.telegram_id, error=error)
+        async with create_bot() as bot:
+            try:
+                await bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=message,
+                    parse_mode='HTML',
+                    reply_markup=keyboard,
+                )
+            except Exception as error:
+                logger.warning(
+                    'Не удалось отправить уведомление пользователю', telegram_id=user.telegram_id, error=error
+                )
 
     async def _send_cloudpayments_fail_notification(
         self,
@@ -508,27 +512,20 @@ class CloudPaymentsPaymentMixin:
         message: str,
     ) -> None:
         """Send failure notification to user via Telegram."""
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
 
-        from app.config import settings
-
-        bot = Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
+        from app.bot_factory import create_bot
 
         text = f'❌ <b>Оплата не прошла</b>\n\n{message}'
 
-        try:
-            await bot.send_message(
-                chat_id=telegram_id,
-                text=text,
-                parse_mode='HTML',
-            )
-        except Exception as error:
-            logger.warning('Не удалось отправить уведомление пользователю', telegram_id=telegram_id, error=error)
+        async with create_bot() as bot:
+            try:
+                await bot.send_message(
+                    chat_id=telegram_id,
+                    text=text,
+                    parse_mode='HTML',
+                )
+            except Exception as error:
+                logger.warning('Не удалось отправить уведомление пользователю', telegram_id=telegram_id, error=error)
 
     async def get_cloudpayments_payment_status(
         self,

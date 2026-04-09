@@ -41,11 +41,13 @@ class AsyncHTTPClient:
         auth_provider: AuthProvider,
         default_headers: dict[str, str] | None = None,
         timeout: float = 10.0,
+        proxy_url: str | None = None,
     ):
         self.base_url = base_url
         self.auth_provider = auth_provider
         self.default_headers = default_headers or {}
         self.timeout = timeout
+        self.proxy_url = proxy_url
         self._refresh_lock = asyncio.Lock()
         self.max_retries = 2  # Same as PHP AuthenticationPlugin::RETRY_LIMIT
 
@@ -124,7 +126,7 @@ class AsyncHTTPClient:
         if json_data is not None:
             request_kwargs['json'] = json_data
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(proxy=self.proxy_url) as client:
             # Initial request
             response = await client.request(**request_kwargs)
 

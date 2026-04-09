@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -90,6 +90,19 @@ class AdminReplyRequest(BaseModel):
     """Admin reply to ticket."""
 
     message: str = Field(..., min_length=1, max_length=4000, description='Reply message')
+    media_type: str | None = Field(None, description='Media type: photo, video, or document')
+    media_file_id: str | None = Field(None, max_length=255, description='Telegram file_id from media upload')
+    media_caption: str | None = Field(None, max_length=1000, description='Caption for media')
+
+    @model_validator(mode='after')
+    def validate_media_fields(self) -> 'AdminReplyRequest':
+        if self.media_file_id and not self.media_type:
+            raise ValueError('media_type is required when media_file_id is provided')
+        if self.media_type and not self.media_file_id:
+            raise ValueError('media_file_id is required when media_type is provided')
+        if self.media_type and self.media_type not in {'photo', 'video', 'document'}:
+            raise ValueError('media_type must be one of: photo, video, document')
+        return self
 
 
 class AdminStatusUpdateRequest(BaseModel):
@@ -443,11 +456,16 @@ async def reply_to_ticket(
         )
 
     # Create admin message
+    has_media = bool(request.media_file_id)
     message = TicketMessage(
         ticket_id=ticket.id,
         user_id=ticket.user_id,
         message_text=request.message,
         is_from_admin=True,
+        has_media=has_media,
+        media_type=request.media_type if has_media else None,
+        media_file_id=request.media_file_id if has_media else None,
+        media_caption=request.media_caption if has_media else None,
         created_at=datetime.now(UTC),
     )
     db.add(message)
@@ -461,14 +479,9 @@ async def reply_to_ticket(
 
     # Try to notify user via Telegram
     try:
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
+        from app.bot_factory import create_bot
 
-        bot = Bot(
-            token=settings.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
+        bot = create_bot()
         try:
             from app.handlers.admin.tickets import notify_user_about_ticket_reply
 

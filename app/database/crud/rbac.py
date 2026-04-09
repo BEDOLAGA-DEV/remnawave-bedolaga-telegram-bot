@@ -38,8 +38,8 @@ _POLICY_UPDATABLE_FIELDS = frozenset(
     }
 )
 
-# Superadmin level constant
-_SUPERADMIN_LEVEL = 999
+# Superadmin level constant — single source of truth, imported by admin_roles and bootstrap
+SUPERADMIN_LEVEL = 999
 
 
 class AdminRoleCRUD:
@@ -241,21 +241,6 @@ class UserRoleCRUD:
         return user_role
 
     @staticmethod
-    async def revoke_role(db: AsyncSession, user_role_id: int) -> bool:
-        """Soft-revoke: set is_active=False. Returns False if not found."""
-        result = await db.execute(select(UserRole).where(UserRole.id == user_role_id))
-        user_role = result.scalar_one_or_none()
-        if not user_role:
-            return False
-
-        user_role.is_active = False
-        await db.flush()
-        logger.info(
-            'Revoked user role', user_role_id=user_role_id, user_id=user_role.user_id, role_id=user_role.role_id
-        )
-        return True
-
-    @staticmethod
     async def get_all_admins(
         db: AsyncSession,
         *,
@@ -296,14 +281,16 @@ class UserRoleCRUD:
 
     @staticmethod
     async def get_superadmin_count(db: AsyncSession) -> int:
-        """Count users with an active role at superadmin level (999)."""
+        """Count users with an active, non-expired role at superadmin level (999)."""
+        now = datetime.now(UTC)
         result = await db.execute(
             select(func.count(func.distinct(UserRole.user_id)))
             .join(AdminRole, UserRole.role_id == AdminRole.id)
             .where(
                 UserRole.is_active.is_(True),
                 AdminRole.is_active.is_(True),
-                AdminRole.level == _SUPERADMIN_LEVEL,
+                AdminRole.level == SUPERADMIN_LEVEL,
+                or_(UserRole.expires_at.is_(None), UserRole.expires_at > now),
             )
         )
         return result.scalar() or 0

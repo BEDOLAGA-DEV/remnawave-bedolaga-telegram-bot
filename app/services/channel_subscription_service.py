@@ -79,9 +79,19 @@ class ChannelSubscriptionService:
                 return ch
         return None
 
-    def should_disable_subscription(self, channel: dict, is_trial: bool) -> bool:
-        """Check if a channel's settings require subscription deactivation."""
+    @staticmethod
+    def should_disable_subscription(channel: dict, is_trial: bool) -> bool:
+        """Check if a channel's settings require subscription deactivation.
+
+        Respects both global and per-channel settings:
+        - Global CHANNEL_DISABLE_TRIAL_ON_UNSUBSCRIBE=False overrides per-channel for trials
+        - Per-channel disable_trial_on_leave / disable_paid_on_leave for fine-grained control
+        """
+        from app.config import settings
+
         if is_trial:
+            if not settings.CHANNEL_DISABLE_TRIAL_ON_UNSUBSCRIBE:
+                return False
             return channel.get('disable_trial_on_leave', True)
         return channel.get('disable_paid_on_leave', False)
 

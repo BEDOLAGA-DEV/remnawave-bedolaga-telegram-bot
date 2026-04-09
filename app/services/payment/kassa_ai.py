@@ -28,6 +28,7 @@ class KassaAiPaymentMixin:
         description: str = 'Пополнение баланса',
         email: str | None = None,
         language: str = 'ru',
+        payment_system_id: int | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж KassaAI.
@@ -91,12 +92,17 @@ class KassaAiPaymentMixin:
 
         try:
             # Используем API для создания заказа
+            # KassaAI требует email в формате {telegram_id}@telegram.org
+            target_email = email or (f'{user.telegram_id}@telegram.org' if user and user.telegram_id else None)
+
             result = await kassa_ai_service.create_order(
                 order_id=order_id,
                 amount=amount_rubles,
                 currency=currency,
-                email=email,
-                payment_system_id=settings.KASSA_AI_PAYMENT_SYSTEM_ID,
+                email=target_email,
+                payment_system_id=payment_system_id
+                if payment_system_id is not None
+                else settings.KASSA_AI_PAYMENT_SYSTEM_ID,
             )
 
             payment_url = result.get('location')
@@ -118,7 +124,9 @@ class KassaAiPaymentMixin:
                 currency=currency,
                 description=description,
                 payment_url=payment_url,
-                payment_system_id=settings.KASSA_AI_PAYMENT_SYSTEM_ID,
+                payment_system_id=payment_system_id
+                if payment_system_id is not None
+                else settings.KASSA_AI_PAYMENT_SYSTEM_ID,
                 expires_at=expires_at,
                 metadata_json=metadata,
             )
@@ -186,7 +194,14 @@ class KassaAiPaymentMixin:
                 logger.warning('KassaAI webhook: платеж не найден order_id', order_id=order_id)
                 return False
 
-            # Проверка дублирования
+            # Lock payment row immediately to prevent concurrent webhook processing (TOCTOU race)
+            locked = await kassa_ai_crud.get_kassa_ai_payment_by_id_for_update(db, payment.id)
+            if not locked:
+                logger.error('KassaAI webhook: не удалось заблокировать платёж', payment_id=payment.id)
+                return False
+            payment = locked
+
+            # Re-check is_paid from the locked row
             if payment.is_paid:
                 logger.info('KassaAI webhook: платеж уже обработан order_id', order_id=order_id)
                 return True
@@ -201,7 +216,7 @@ class KassaAiPaymentMixin:
                 )
                 return False
 
-            # Обновляем статус платежа
+            # Inline field updates — NO intermediate commit that would release FOR UPDATE lock
             callback_payload = {
                 'merchant_id': merchant_id,
                 'amount': amount,
@@ -209,16 +224,15 @@ class KassaAiPaymentMixin:
                 'intid': intid,
                 'cur_id': cur_id,
             }
-
-            payment = await kassa_ai_crud.update_kassa_ai_payment_status(
-                db=db,
-                payment=payment,
-                status='success',
-                is_paid=True,
-                kassa_ai_order_id=intid,
-                payment_system_id=cur_id,
-                callback_payload=callback_payload,
-            )
+            payment.status = 'success'
+            payment.is_paid = True
+            payment.paid_at = datetime.now(UTC)
+            payment.callback_payload = callback_payload
+            payment.kassa_ai_order_id = intid
+            if cur_id is not None:
+                payment.payment_system_id = cur_id
+            payment.updated_at = datetime.now(UTC)
+            await db.flush()
 
             # Финализируем платеж (начисляем баланс, создаем транзакцию)
             return await self._finalize_kassa_ai_payment(db, payment, intid=intid, trigger='webhook')
@@ -238,13 +252,7 @@ class KassaAiPaymentMixin:
         """Создаёт транзакцию, начисляет баланс и отправляет уведомления."""
         payment_module = import_module('app.services.payment_service')
 
-        kassa_ai_lock_crud = import_module('app.database.crud.kassa_ai')
-        locked = await kassa_ai_lock_crud.get_kassa_ai_payment_by_id_for_update(db, payment.id)
-        if not locked:
-            logger.error('KassaAI: не удалось заблокировать платёж', payment_id=payment.id)
-            return False
-        payment = locked
-
+        # FOR UPDATE lock already acquired by caller — just check idempotency
         if payment.transaction_id:
             logger.info(
                 'KassaAI платеж уже привязан к транзакции (trigger=)', order_id=payment.order_id, trigger=trigger
@@ -480,32 +488,43 @@ class KassaAiPaymentMixin:
                 if kai_status == 1:
                     logger.info('KassaAI payment confirmed via API', order_id=payment.order_id)
 
-                    callback_payload = {
-                        'check_source': 'api',
-                        'kai_order_data': target_order,
-                    }
+                    # Lock payment row before finalization to prevent concurrent double-processing
+                    locked = await kassa_ai_crud.get_kassa_ai_payment_by_id_for_update(db, payment.id)
+                    if not locked:
+                        logger.error('KassaAI status check: не удалось заблокировать платёж', payment_id=payment.id)
+                    elif locked.is_paid:
+                        # Another concurrent handler already processed — skip
+                        logger.info('KassaAI платеж уже оплачен после блокировки', order_id=locked.order_id)
+                        payment = locked
+                    else:
+                        payment = locked
 
-                    # ID заказа на стороне KassaAI
-                    kai_intid = str(target_order.get('fk_order_id') or target_order.get('id'))
+                        callback_payload = {
+                            'check_source': 'api',
+                            'kai_order_data': target_order,
+                        }
 
-                    # Обновляем статус
-                    payment = await kassa_ai_crud.update_kassa_ai_payment_status(
-                        db=db,
-                        payment=payment,
-                        status='success',
-                        is_paid=True,
-                        kassa_ai_order_id=kai_intid,
-                        payment_system_id=int(target_order.get('curID')) if target_order.get('curID') else None,
-                        callback_payload=callback_payload,
-                    )
+                        # ID заказа на стороне KassaAI
+                        kai_intid = str(target_order.get('fk_order_id') or target_order.get('id'))
 
-                    # Финализируем (начисляем баланс)
-                    await self._finalize_kassa_ai_payment(
-                        db,
-                        payment,
-                        intid=kai_intid,
-                        trigger='api_check',
-                    )
+                        # Inline field updates — NO intermediate commit that would release FOR UPDATE lock
+                        payment.status = 'success'
+                        payment.is_paid = True
+                        payment.paid_at = datetime.now(UTC)
+                        payment.callback_payload = callback_payload
+                        payment.kassa_ai_order_id = kai_intid
+                        if target_order.get('curID'):
+                            payment.payment_system_id = int(target_order['curID'])
+                        payment.updated_at = datetime.now(UTC)
+                        await db.flush()
+
+                        # Финализируем (начисляем баланс)
+                        await self._finalize_kassa_ai_payment(
+                            db,
+                            payment,
+                            intid=kai_intid,
+                            trigger='api_check',
+                        )
         except Exception as e:
             logger.error('Error checking KassaAI payment status', e=e)
 

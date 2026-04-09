@@ -603,7 +603,7 @@ class BackupService:
                         query = select(model)
 
                         if model == User:
-                            query = query.options(selectinload(User.subscription))
+                            query = query.options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
                         elif model == Subscription:
                             query = query.options(selectinload(Subscription.user))
                         elif model == Transaction:
@@ -1810,10 +1810,12 @@ class BackupService:
             notification_text += f'\n\n⏰ <i>{datetime.now(UTC).strftime("%d.%m.%Y %H:%M:%S")}</i>'
 
             try:
-                from app.services.admin_notification_service import AdminNotificationService
+                from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
 
                 admin_service = AdminNotificationService(self.bot)
-                await admin_service._send_message(notification_text)
+                await admin_service.send_admin_notification(
+                    notification_text, category=NotificationCategory.INFRASTRUCTURE
+                )
             except Exception as e:
                 logger.error('Ошибка отправки уведомления через AdminNotificationService', error=e)
 

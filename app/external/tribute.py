@@ -35,8 +35,8 @@ class TributeService:
 
     def verify_webhook_signature(self, payload: str, signature: str) -> bool:
         if not self.api_key:
-            logger.warning('API key не настроен, пропускаем проверку')
-            return True
+            logger.error('Tribute API key не настроен — отклоняем webhook')
+            return False
 
         try:
             expected_signature = hmac.new(self.api_key.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -72,18 +72,21 @@ class TributeService:
             status = None
             amount_kopeks = 0
             telegram_user_id = None
+            trb_user_id = None
 
             payment_id = webhook_data.get('id') or webhook_data.get('payment_id')
             status = webhook_data.get('status')
             amount_kopeks = webhook_data.get('amount', 0)
-            telegram_user_id = webhook_data.get('telegram_user_id') or webhook_data.get('user_id')
+            telegram_user_id = webhook_data.get('telegram_user_id')
+            trb_user_id = webhook_data.get('trb_user_id')
 
             if not payment_id and 'payload' in webhook_data:
                 data = webhook_data['payload']
                 payment_id = data.get('id') or data.get('payment_id')
                 status = data.get('status')
                 amount_kopeks = data.get('amount', 0)
-                telegram_user_id = data.get('telegram_user_id') or data.get('user_id')
+                telegram_user_id = data.get('telegram_user_id')
+                trb_user_id = data.get('trb_user_id')
 
             if not payment_id and 'name' in webhook_data:
                 event_name = webhook_data.get('name')
@@ -91,6 +94,7 @@ class TributeService:
                 payment_id = str(data.get('donation_request_id'))
                 amount_kopeks = data.get('amount', 0)
                 telegram_user_id = data.get('telegram_user_id')
+                trb_user_id = data.get('trb_user_id')
 
                 if event_name in ('new_donation', 'recurrent_donation'):
                     status = 'paid'
@@ -100,15 +104,19 @@ class TributeService:
                     status = 'unknown'
 
             logger.info(
-                '📝 Извлеченные данные: payment_id=, status=, amount_kopeks=, user_id',
+                '📝 Извлеченные данные: payment_id=, status=, amount_kopeks=, telegram_user_id=, trb_user_id=',
                 payment_id=payment_id,
                 status=status,
                 amount_kopeks=amount_kopeks,
                 telegram_user_id=telegram_user_id,
+                trb_user_id=trb_user_id,
             )
 
             if not telegram_user_id:
-                logger.error('❌ Не найден telegram_user_id в webhook данных')
+                logger.error(
+                    '❌ Не найден telegram_user_id в webhook данных',
+                    trb_user_id=trb_user_id,
+                )
                 logger.error(
                     '🔍 Полные данные для отладки', dumps=json.dumps(webhook_data, ensure_ascii=False, indent=2)
                 )
@@ -124,6 +132,7 @@ class TributeService:
                 'event_type': 'payment',
                 'payment_id': payment_id or f'tribute_{telegram_user_id}_{amount_kopeks}',
                 'user_id': telegram_user_id,
+                'trb_user_id': trb_user_id,
                 'amount_kopeks': int(amount_kopeks) if amount_kopeks else 0,
                 'status': status or 'paid',
                 'external_id': f'donation_{payment_id or "unknown"}',

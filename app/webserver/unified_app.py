@@ -89,6 +89,17 @@ def _create_base_app() -> FastAPI:
     return app
 
 
+def _mount_uploads_static(app: FastAPI) -> None:
+    """Mount the media uploads directory as a static file server at /uploads."""
+    uploads_path = settings.get_media_upload_path()
+    uploads_path.mkdir(parents=True, exist_ok=True)
+    try:
+        app.mount('/uploads', StaticFiles(directory=uploads_path), name='media-uploads')
+        logger.info('Media uploads static files mounted at /uploads', uploads_path=str(uploads_path))
+    except RuntimeError as error:  # pragma: no cover - defensive guard
+        logger.warning('Failed to mount media uploads static files', error=error)
+
+
 def _mount_miniapp_static(app: FastAPI) -> tuple[bool, Path]:
     static_path: Path = settings.get_miniapp_static_path()
     if not static_path.exists():
@@ -175,6 +186,7 @@ def create_unified_app(
         await disposable_email_service.stop()
 
     miniapp_mounted, miniapp_path = _mount_miniapp_static(app)
+    _mount_uploads_static(app)
 
     unified_health_path = '/health/unified' if settings.is_web_api_enabled() else '/health'
 

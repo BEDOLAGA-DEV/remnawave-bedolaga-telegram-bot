@@ -83,7 +83,6 @@ CABINET_MINIAPP_BUTTON_KEYS = {
     'connect',
     'subscription',
     'support',
-    'home',
 }
 
 
@@ -97,7 +96,11 @@ def get_updated_message_buttons_selector_keyboard(
     return get_updated_message_buttons_selector_keyboard_with_media(selected_buttons, False, language)
 
 
-def create_broadcast_keyboard(selected_buttons: list, language: str = 'ru') -> types.InlineKeyboardMarkup | None:
+def create_broadcast_keyboard(
+    selected_buttons: list,
+    language: str = 'ru',
+    custom_buttons: list[dict] | None = None,
+) -> types.InlineKeyboardMarkup | None:
     selected_buttons = selected_buttons or []
     keyboard: list[list[types.InlineKeyboardButton]] = []
     button_config_map = get_broadcast_button_config(language)
@@ -122,6 +125,20 @@ def create_broadcast_keyboard(selected_buttons: list, language: str = 'ru') -> t
                 )
         if row_buttons:
             keyboard.append(row_buttons)
+
+    # Append custom buttons (each on its own row)
+    if custom_buttons:
+        for btn in custom_buttons:
+            label = btn.get('label', '')
+            action_type = btn.get('action_type', 'callback')
+            action_value = btn.get('action_value', '')
+            if not label or not action_value:
+                continue
+            if action_type == 'url':
+                keyboard.append([types.InlineKeyboardButton(text=label, url=action_value)])
+            else:
+                # callback type
+                keyboard.append([types.InlineKeyboardButton(text=label, callback_data=action_value)])
 
     if not keyboard:
         return None
@@ -626,7 +643,7 @@ async def show_messages_history(callback: types.CallbackQuery, db_user: User, db
 {status_emoji} <b>{broadcast.created_at.strftime('%d.%m.%Y %H:%M')}</b>
 📊 Отправлено: {broadcast.sent_count}/{broadcast.total_count} ({success_rate}%)
 🎯 Аудитория: {get_target_name(broadcast.target_type)}
-👤 Админ: {broadcast.admin_name}
+👤 Админ: {html.escape(broadcast.admin_name or '')}
 📝 Сообщение: {message_preview}
 ━━━━━━━━━━━━━━━━━━━━━━━
 """
@@ -1460,7 +1477,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
         f'• Не доставлено: {failed_count}\n'
         f'• Всего пользователей: {total_users_count}\n'
         f'• Успешность: {success_rate}%{media_info}\n\n'
-        f'<b>Администратор:</b> {admin_name}'
+        f'<b>Администратор:</b> {html.escape(admin_name)}'
     )
 
     back_keyboard = types.InlineKeyboardMarkup(
@@ -1745,14 +1762,14 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         return [
             user
             for user in users
-            if user.subscription and user.subscription.is_active and not user.subscription.is_trial
+            if any(s.is_active and not s.is_trial for s in (getattr(user, 'subscriptions', None) or []))
         ]
 
     if target == 'trial':
-        return [user for user in users if user.subscription and user.subscription.is_trial]
+        return [user for user in users if any(s.is_trial for s in (getattr(user, 'subscriptions', None) or []))]
 
     if target == 'no':
-        return [user for user in users if not user.subscription or not user.subscription.is_active]
+        return [user for user in users if not any(s.is_active for s in (getattr(user, 'subscriptions', None) or []))]
 
     if target == 'expiring':
         expiring_subs = await get_expiring_subscriptions(db, 3)
@@ -1766,14 +1783,11 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         }
         expired_users = []
         for user in users:
-            subscription = user.subscription
-            if subscription:
-                if subscription.status in expired_statuses:
+            subs = getattr(user, 'subscriptions', None) or []
+            if subs:
+                has_expired = any(s.status in expired_statuses or (s.end_date <= now and not s.is_active) for s in subs)
+                if has_expired:
                     expired_users.append(user)
-                    continue
-                if subscription.end_date <= now and not subscription.is_active:
-                    expired_users.append(user)
-                    continue
             elif user.has_had_paid_subscription:
                 expired_users.append(user)
         return expired_users
@@ -1782,27 +1796,27 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         return [
             user
             for user in users
-            if user.subscription
-            and not user.subscription.is_trial
-            and user.subscription.is_active
-            and (user.subscription.traffic_used_gb or 0) <= 0
+            if any(
+                not s.is_trial and s.is_active and (s.traffic_used_gb or 0) <= 0
+                for s in (getattr(user, 'subscriptions', None) or [])
+            )
         ]
 
     if target == 'trial_zero':
         return [
             user
             for user in users
-            if user.subscription
-            and user.subscription.is_trial
-            and user.subscription.is_active
-            and (user.subscription.traffic_used_gb or 0) <= 0
+            if any(
+                s.is_trial and s.is_active and (s.traffic_used_gb or 0) <= 0
+                for s in (getattr(user, 'subscriptions', None) or [])
+            )
         ]
 
     if target == 'zero':
         return [
             user
             for user in users
-            if user.subscription and user.subscription.is_active and (user.subscription.traffic_used_gb or 0) <= 0
+            if any(s.is_active and (s.traffic_used_gb or 0) <= 0 for s in (getattr(user, 'subscriptions', None) or []))
         ]
 
     if target == 'expiring_subscribers':
@@ -1817,14 +1831,11 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         }
         expired_users = []
         for user in users:
-            subscription = user.subscription
-            if subscription:
-                if subscription.status in expired_statuses:
+            subs = getattr(user, 'subscriptions', None) or []
+            if subs:
+                has_expired = any(s.status in expired_statuses or (s.end_date <= now and not s.is_active) for s in subs)
+                if has_expired:
                     expired_users.append(user)
-                    continue
-                if subscription.end_date <= now and not subscription.is_active:
-                    expired_users.append(user)
-                    continue
             elif user.has_had_paid_subscription:
                 expired_users.append(user)
         return expired_users
@@ -1833,7 +1844,7 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         return [
             user
             for user in users
-            if user.subscription and user.subscription.status == SubscriptionStatus.DISABLED.value
+            if any(s.status == SubscriptionStatus.DISABLED.value for s in (getattr(user, 'subscriptions', None) or []))
         ]
 
     if target == 'trial_ending':
@@ -1842,10 +1853,10 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         return [
             user
             for user in users
-            if user.subscription
-            and user.subscription.is_trial
-            and user.subscription.is_active
-            and user.subscription.end_date <= in_3_days
+            if any(
+                s.is_trial and s.is_active and s.end_date <= in_3_days
+                for s in (getattr(user, 'subscriptions', None) or [])
+            )
         ]
 
     if target == 'trial_expired':
@@ -1853,7 +1864,7 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         return [
             user
             for user in users
-            if user.subscription and user.subscription.is_trial and user.subscription.end_date <= now
+            if any(s.is_trial and s.end_date <= now for s in (getattr(user, 'subscriptions', None) or []))
         ]
 
     if target == 'autopay_failed':
@@ -1898,7 +1909,7 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         return [
             user
             for user in users
-            if user.subscription and user.subscription.is_active and user.subscription.tariff_id == tariff_id
+            if any(s.is_active and s.tariff_id == tariff_id for s in (getattr(user, 'subscriptions', None) or []))
         ]
 
     return []

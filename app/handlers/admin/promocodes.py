@@ -1,3 +1,4 @@
+import html
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -94,7 +95,7 @@ async def show_promocodes_list(callback: types.CallbackQuery, db_user: User, db:
             text += f'📅 Дней: {promo.subscription_days}\n'
         elif promo.type == PromoCodeType.PROMO_GROUP.value:
             if promo.promo_group:
-                text += f'🏷️ Промогруппа: {promo.promo_group.name}\n'
+                text += f'🏷️ Промогруппа: {html.escape(promo.promo_group.name)}\n'
         elif promo.type == PromoCodeType.DISCOUNT.value:
             discount_hours = promo.subscription_days
             if discount_hours > 0:
@@ -170,7 +171,7 @@ async def show_promocode_management(callback: types.CallbackQuery, db_user: User
         text += f'📅 <b>Дней:</b> {promo.subscription_days}\n'
     elif promo.type == PromoCodeType.PROMO_GROUP.value:
         if promo.promo_group:
-            text += f'🏷️ <b>Промогруппа:</b> {promo.promo_group.name} (приоритет: {promo.promo_group.priority})\n'
+            text += f'🏷️ <b>Промогруппа:</b> {html.escape(promo.promo_group.name)} (приоритет: {promo.promo_group.priority})\n'
         elif promo.promo_group_id:
             text += f'🏷️ <b>Промогруппа ID:</b> {promo.promo_group_id} (не найдена)\n'
     elif promo.type == PromoCodeType.DISCOUNT.value:
@@ -472,7 +473,9 @@ async def process_promocode_code(message: types.Message, db_user: User, state: F
         text = f'🏷️ <b>Промокод:</b> <code>{code}</code>\n\nВыберите промогруппу для назначения:\n\n'
 
         for promo_group, user_count in groups_with_counts:
-            text += f'• {promo_group.name} (приоритет: {promo_group.priority}, пользователей: {user_count})\n'
+            text += (
+                f'• {html.escape(promo_group.name)} (приоритет: {promo_group.priority}, пользователей: {user_count})\n'
+            )
             keyboard.append(
                 [
                     types.InlineKeyboardButton(
@@ -509,7 +512,7 @@ async def process_promo_group_selection(
 
     await callback.message.edit_text(
         f'🏷️ <b>Промокод для промогруппы</b>\n\n'
-        f'Промогруппа: {promo_group.name}\n'
+        f'Промогруппа: {html.escape(promo_group.name)}\n'
         f'Приоритет: {promo_group.priority}\n\n'
         f'📊 Введите количество использований промокода (или 0 для безлимита):'
     )
@@ -1039,9 +1042,9 @@ async def show_promocode_stats(callback: types.CallbackQuery, db_user: User, db:
             use_date = format_datetime(use.used_at)
 
             if hasattr(use, 'user_username') and use.user_username:
-                user_display = f'@{use.user_username}'
+                user_display = f'@{html.escape(use.user_username)}'
             elif hasattr(use, 'user_full_name') and use.user_full_name:
-                user_display = use.user_full_name
+                user_display = html.escape(use.user_full_name)
             elif hasattr(use, 'user_telegram_id'):
                 user_display = f'ID{use.user_telegram_id}'
             else:

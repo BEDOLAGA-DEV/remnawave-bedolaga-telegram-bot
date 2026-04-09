@@ -158,7 +158,9 @@ class NalogoQueueService:
 
             # Логируем количество попыток (чек никогда не удаляется из очереди)
             if attempts >= 10:
-                logger.warning('Чек уже попыток, продолжаем пытаться...', payment_id=payment_id, attempts=attempts)
+                logger.warning(
+                    'Чек уже много попыток, продолжаем пытаться...', payment_id=payment_id, attempts=attempts
+                )
 
             # Пытаемся отправить чек
             try:
@@ -181,11 +183,14 @@ class NalogoQueueService:
 
                 # Формируем описание заново из настроек (если есть данные)
                 if amount_kopeks is not None:
-                    receipt_name = settings.get_balance_payment_description(amount_kopeks, telegram_user_id)
+                    receipt_name = settings.get_balance_payment_description(
+                        amount_kopeks, telegram_user_id=telegram_user_id
+                    )
                 else:
                     # Fallback на сохранённое имя
                     receipt_name = receipt_data.get(
-                        'name', settings.get_balance_payment_description(int(amount * 100), telegram_user_id)
+                        'name',
+                        settings.get_balance_payment_description(int(amount * 100), telegram_user_id=telegram_user_id),
                     )
 
                 receipt_uuid = await self._nalogo_service.create_receipt(

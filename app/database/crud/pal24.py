@@ -67,7 +67,12 @@ async def get_pal24_payment_by_id(db: AsyncSession, payment_id: int) -> Pal24Pay
 
 
 async def get_pal24_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> Pal24Payment | None:
-    result = await db.execute(select(Pal24Payment).where(Pal24Payment.id == payment_id).with_for_update())
+    result = await db.execute(
+        select(Pal24Payment)
+        .where(Pal24Payment.id == payment_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     return result.scalar_one_or_none()
 
 

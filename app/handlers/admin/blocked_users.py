@@ -5,6 +5,7 @@
 и выполнять очистку БД и панели Remnawave.
 """
 
+import html
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
@@ -437,7 +438,7 @@ async def show_blocked_list(
         name = user_data.get('full_name') or user_data.get('username') or 'Без имени'
         telegram_id = user_data.get('telegram_id', '?')
         text += BlockedUsersText.BLOCKED_USER_ROW.value.format(
-            name=name,
+            name=html.escape(name),
             telegram_id=telegram_id,
         )
 

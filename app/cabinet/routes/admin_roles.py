@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import sqlalchemy as sa
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.crud.rbac import AdminRoleCRUD, UserRoleCRUD
+from app.database.crud.rbac import SUPERADMIN_LEVEL, AdminRoleCRUD, UserRoleCRUD
 from app.database.models import User
 from app.services.permission_service import PERMISSION_REGISTRY, get_all_permissions
 
@@ -129,21 +130,26 @@ async def _role_to_response(db: AsyncSession, role) -> RoleResponse:
 
 
 async def _get_admin_level(db: AsyncSession, admin: User) -> int:
-    """Get the maximum role level of the current admin.
+    """Get the effective management level of the current admin.
 
-    Legacy config-based admins (ADMIN_IDS) get superadmin level (999+1=1000)
-    so they can manage all roles including level 999.
+    Superadmin-tier users (DB level 999 or legacy ADMIN_IDS) are promoted to
+    level 1000 so they can manage peer Superadmins.  Without this, the ``>=``
+    hierarchy guard would block 999-vs-999 operations.
     """
     from app.config import settings
 
     _perms, _names, max_level = await UserRoleCRUD.get_user_permissions(db, admin.id)
+
+    # DB-assigned Superadmins can manage peers
+    if max_level >= SUPERADMIN_LEVEL:
+        max_level = SUPERADMIN_LEVEL + 1
 
     # Legacy config-based admins always get the highest level
     if settings.is_admin(
         telegram_id=admin.telegram_id,
         email=admin.email if admin.email_verified else None,
     ):
-        max_level = max(max_level, 1000)
+        max_level = max(max_level, SUPERADMIN_LEVEL + 1)
 
     return max_level
 
@@ -339,6 +345,15 @@ async def update_role(
 
     update_data = payload.model_dump(exclude_unset=True)
 
+    # System roles: only permissions can be extended, block is_active/level changes
+    if role.is_system:
+        blocked = {'is_active', 'level'} & update_data.keys()
+        if blocked:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f'Cannot change {", ".join(sorted(blocked))} on a system role',
+            )
+
     # Validate level change
     if 'level' in update_data and update_data['level'] >= admin_level:
         raise HTTPException(
@@ -426,6 +441,14 @@ async def assign_role(
             detail='Role not found',
         )
 
+    # Superadmin role is managed exclusively via ADMIN_IDS/ADMIN_EMAILS env config
+    if role.level >= SUPERADMIN_LEVEL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Superadmin role is managed via ADMIN_IDS/ADMIN_EMAILS environment variables. '
+            'Add the user there and restart the bot.',
+        )
+
     admin_level = await _get_admin_level(db, admin)
 
     # Cannot assign a role with level >= own level
@@ -483,13 +506,11 @@ async def revoke_role(
     admin: User = Depends(require_permission('roles:assign')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Revoke a role assignment. Cannot remove the last superadmin."""
-    from sqlalchemy import select as sa_select
-
+    """Revoke a role assignment. Superadmin roles are managed via env config."""
     from app.database.models import UserRole
 
-    # Load the assignment to check hierarchy
-    result = await db.execute(sa_select(UserRole).where(UserRole.id == assignment_id))
+    # Lock the assignment row (FOR UPDATE held until commit)
+    result = await db.execute(sa.select(UserRole).where(UserRole.id == assignment_id).with_for_update())
     user_role = result.scalar_one_or_none()
     if not user_role:
         raise HTTPException(
@@ -504,6 +525,14 @@ async def revoke_role(
             detail='Associated role not found',
         )
 
+    # Superadmin role is managed exclusively via env config
+    if role.level >= SUPERADMIN_LEVEL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Superadmin role is managed via ADMIN_IDS/ADMIN_EMAILS environment variables. '
+            'Remove the user from env and restart the bot.',
+        )
+
     admin_level = await _get_admin_level(db, admin)
 
     # Cannot revoke a role at or above own level
@@ -513,23 +542,9 @@ async def revoke_role(
             detail='Cannot revoke a role at or above your own level',
         )
 
-    # Protect last superadmin (level 999)
-    superadmin_level = 999
-    if role.level == superadmin_level:
-        superadmin_count = await UserRoleCRUD.get_superadmin_count(db)
-        if superadmin_count <= 1:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail='Cannot remove the last superadmin',
-            )
-
-    revoked = await UserRoleCRUD.revoke_role(db, assignment_id)
-    if not revoked:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Failed to revoke role',
-        )
-
+    # Revoke directly on the locked object (avoid CRUD re-fetch without FOR UPDATE)
+    user_role.is_active = False
+    await db.flush()
     await db.commit()
 
     logger.info(
@@ -539,4 +554,5 @@ async def revoke_role(
         target_user_id=user_role.user_id,
         role_name=role.name,
     )
+
     return {'message': 'Role revoked', 'assignment_id': assignment_id}

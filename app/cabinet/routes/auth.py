@@ -28,10 +28,16 @@ from app.database.crud.user import (
     set_email_change_pending,
     verify_and_apply_email_change,
 )
-from app.database.models import CabinetRefreshToken, User
+from app.database.models import CabinetRefreshToken, User, UserStatus
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
 from app.services.referral_service import process_referral_registration
+from app.services.web_auth_service import (
+    WEB_AUTH_TOKEN_TTL,
+    consume_web_auth_token,
+    create_web_auth_token,
+    poll_web_auth_token,
+)
 from app.utils.cache import RateLimitCache, TokenReplayCache
 from app.utils.timezone import panel_datetime_to_utc
 
@@ -55,12 +61,15 @@ from ..auth.email_verification import (
     is_token_expired,
 )
 from ..auth.jwt_handler import get_refresh_token_expires_at
+from ..auth.merge_service import create_merge_token
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 from ..ip_utils import get_client_ip
 from ..schemas.auth import (
     AuthResponse,
     AutoLoginRequest,
     CampaignBonusInfo,
+    DeepLinkPollRequest,
+    DeepLinkTokenResponse,
     EmailChangeRequest,
     EmailChangeResponse,
     EmailChangeVerifyRequest,
@@ -188,12 +197,10 @@ async def _process_campaign_bonus(
             user.referred_by_id = campaign.partner_user_id
             await db.flush()
             try:
-                from aiogram import Bot
-                from aiogram.client.default import DefaultBotProperties
-                from aiogram.enums import ParseMode
+                from app.bot_factory import create_bot
 
-                bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-                await process_referral_registration(db, user.id, campaign.partner_user_id, bot=bot)
+                async with create_bot() as bot:
+                    await process_referral_registration(db, user.id, campaign.partner_user_id, bot=bot)
                 logger.info(
                     'Referral set from campaign partner',
                     user_id=user.id,
@@ -233,11 +240,39 @@ async def _process_referral_code(
     db: AsyncSession,
     user: User,
     referral_code: str | None,
+    *,
+    is_new_user: bool = False,
 ) -> None:
-    """Set referred_by_id for user if referral_code is valid. Never raises."""
-    if not referral_code or user.referred_by_id:
+    """Process referral for a newly created user. Never raises.
+
+    Only applies to new users (is_new_user=True). Existing users cannot be
+    assigned a referrer — same logic as the bot /start handler.
+
+    Handles two cases:
+    - referred_by_id already set by create_user() → fire registration event
+    - referred_by_id not set (resolution failed earlier) → resolve, set, fire
+    """
+    if not referral_code or not is_new_user:
         return
     try:
+        from app.bot_factory import create_bot
+
+        # Lock user row to prevent concurrent referral application (TOCTOU race)
+        await db.execute(select(User).where(User.id == user.id).with_for_update())
+        await db.refresh(user)
+
+        # Case 1: referred_by_id already set by create_user() — just fire the event
+        if user.referred_by_id:
+            async with create_bot() as bot:
+                await process_referral_registration(db, user.id, user.referred_by_id, bot=bot)
+            logger.info(
+                'Referral registration processed for pre-set referrer',
+                user_id=user.id,
+                referrer_id=user.referred_by_id,
+            )
+            return
+
+        # Case 2: referred_by_id not set — resolve referral code and set it
         referrer = await get_user_by_referral_code(db, referral_code)
         if not referrer:
             return
@@ -247,12 +282,9 @@ async def _process_referral_code(
             return
         user.referred_by_id = referrer.id
         await db.flush()
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
 
-        bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        await process_referral_registration(db, user.id, referrer.id, bot=bot)
+        async with create_bot() as bot:
+            await process_referral_registration(db, user.id, referrer.id, bot=bot)
         logger.info('Referral applied from code', user_id=user.id, referrer_id=referrer.id, referral_code=referral_code)
     except Exception as e:
         logger.error('Failed to process referral code', error=e, referral_code=referral_code)
@@ -283,94 +315,123 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                 logger.debug('No subscription found in panel for email', email=user.email)
                 return
 
-            # Take first user if multiple found
-            panel_user = panel_users[0]
-            logger.info('Found subscription in panel for email', email=user.email, uuid=panel_user.uuid)
-
-            # Check if another user already owns this remnawave_uuid
-            from app.database.crud.user import get_user_by_remnawave_uuid
-
-            existing_owner = await get_user_by_remnawave_uuid(db, panel_user.uuid)
-            if existing_owner and existing_owner.id != user.id:
-                logger.warning(
-                    'Panel UUID already belongs to another user, skipping sync',
-                    email=user.email,
-                    panel_uuid=panel_user.uuid,
-                    existing_owner_id=existing_owner.id,
-                )
-                return
-
-            # Link user to panel
-            user.remnawave_uuid = panel_user.uuid
-
-            # Create or update subscription
-            from app.database.crud.subscription import get_subscription_by_user_id
+            # In multi-tariff mode, sync ALL panel users (each = one subscription)
+            # In single-tariff mode, process only the first
+            from app.database.crud.subscription import get_active_subscriptions_by_user_id, get_subscription_by_user_id
             from app.database.models import Subscription, SubscriptionStatus
 
-            existing_sub = await get_subscription_by_user_id(db, user.id)
+            panel_users_to_sync = panel_users if settings.is_multi_tariff_enabled() else panel_users[:1]
 
-            # Parse panel data — panel returns local time with misleading +00:00 offset
-            expire_at = panel_datetime_to_utc(panel_user.expire_at)
-            traffic_limit_gb = panel_user.traffic_limit_bytes // (1024**3) if panel_user.traffic_limit_bytes > 0 else 0
-            traffic_used_gb = panel_user.used_traffic_bytes / (1024**3) if panel_user.used_traffic_bytes > 0 else 0
+            for panel_user in panel_users_to_sync:
+                logger.info('Syncing panel subscription for email', email=user.email, uuid=panel_user.uuid)
 
-            # Extract squad UUIDs from active_internal_squads
-            connected_squads = [s.get('uuid', '') for s in (panel_user.active_internal_squads or []) if s.get('uuid')]
+                # Check if another user already owns this remnawave_uuid
+                if settings.is_multi_tariff_enabled():
+                    from sqlalchemy import select as _select
 
-            # Device limit from panel
-            device_limit = panel_user.hwid_device_limit or 0
+                    from app.database.models import Subscription as _Subscription
 
-            # Determine status — expire_at is now naive UTC
-            current_time = datetime.now(UTC)
+                    _sub_result = await db.execute(
+                        _select(_Subscription).where(_Subscription.remnawave_uuid == panel_user.uuid)
+                    )
+                    _existing_sub = _sub_result.scalar_one_or_none()
+                    if _existing_sub and _existing_sub.user_id != user.id:
+                        logger.warning(
+                            'Panel UUID already owned by another user subscription, skipping',
+                            email=user.email,
+                            panel_uuid=panel_user.uuid,
+                            existing_owner_id=_existing_sub.user_id,
+                        )
+                        continue
+                else:
+                    from app.database.crud.user import get_user_by_remnawave_uuid
 
-            if panel_user.status.value == 'ACTIVE' and expire_at > current_time:
-                sub_status = SubscriptionStatus.ACTIVE
-            elif expire_at <= current_time:
-                sub_status = SubscriptionStatus.EXPIRED
-            else:
-                sub_status = SubscriptionStatus.DISABLED
+                    existing_owner = await get_user_by_remnawave_uuid(db, panel_user.uuid)
+                    if existing_owner and existing_owner.id != user.id:
+                        logger.warning(
+                            'Panel UUID already belongs to another user, skipping',
+                            email=user.email,
+                            panel_uuid=panel_user.uuid,
+                            existing_owner_id=existing_owner.id,
+                        )
+                        continue
 
-            if existing_sub:
-                # Update existing subscription (expire_at already naive UTC)
-                existing_sub.end_date = expire_at
-                existing_sub.traffic_limit_gb = traffic_limit_gb
-                existing_sub.traffic_used_gb = traffic_used_gb
-                existing_sub.status = sub_status.value
-                existing_sub.remnawave_short_uuid = panel_user.short_uuid
-                existing_sub.subscription_url = panel_user.subscription_url
-                existing_sub.subscription_crypto_link = panel_user.happ_crypto_link
-                existing_sub.connected_squads = connected_squads
-                existing_sub.device_limit = device_limit
-                existing_sub.is_trial = False  # Panel subscription is not trial
-                logger.info(
-                    'Updated subscription for email user squads: devices',
-                    email=user.email,
-                    connected_squads=connected_squads,
-                    device_limit=device_limit,
+                # Link user to panel (only in single-tariff mode)
+                if not settings.is_multi_tariff_enabled():
+                    user.remnawave_uuid = panel_user.uuid
+
+                # Find existing subscription
+                if settings.is_multi_tariff_enabled():
+                    active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+                    existing_sub = next(
+                        (s for s in active_subs if s.remnawave_uuid == panel_user.uuid),
+                        None,
+                    )
+                else:
+                    existing_sub = await get_subscription_by_user_id(db, user.id)
+
+                # Parse panel data
+                expire_at = panel_datetime_to_utc(panel_user.expire_at)
+                traffic_limit_gb = (
+                    panel_user.traffic_limit_bytes // (1024**3) if panel_user.traffic_limit_bytes > 0 else 0
                 )
-            else:
-                # Create new subscription (expire_at and current_time already naive UTC)
-                new_sub = Subscription(
-                    user_id=user.id,
-                    start_date=current_time,
-                    end_date=expire_at,
-                    traffic_limit_gb=traffic_limit_gb,
-                    traffic_used_gb=traffic_used_gb,
-                    status=sub_status.value,
-                    is_trial=False,
-                    remnawave_short_uuid=panel_user.short_uuid,
-                    subscription_url=panel_user.subscription_url,
-                    subscription_crypto_link=panel_user.happ_crypto_link,
-                    connected_squads=connected_squads,
-                    device_limit=device_limit,
-                )
-                db.add(new_sub)
-                logger.info(
-                    'Created subscription for email user squads: devices',
-                    email=user.email,
-                    connected_squads=connected_squads,
-                    device_limit=device_limit,
-                )
+                traffic_used_gb = panel_user.used_traffic_bytes / (1024**3) if panel_user.used_traffic_bytes > 0 else 0
+                connected_squads = [
+                    s.get('uuid', '') for s in (panel_user.active_internal_squads or []) if s.get('uuid')
+                ]
+                device_limit = panel_user.hwid_device_limit or 0
+
+                # Determine status
+                current_time = datetime.now(UTC)
+                if panel_user.status.value == 'ACTIVE' and expire_at > current_time:
+                    sub_status = SubscriptionStatus.ACTIVE
+                elif expire_at <= current_time:
+                    sub_status = SubscriptionStatus.EXPIRED
+                else:
+                    sub_status = SubscriptionStatus.DISABLED
+
+                if existing_sub:
+                    existing_sub.end_date = expire_at
+                    existing_sub.traffic_limit_gb = traffic_limit_gb
+                    existing_sub.traffic_used_gb = traffic_used_gb
+                    existing_sub.status = sub_status.value
+                    existing_sub.remnawave_short_uuid = panel_user.short_uuid
+                    existing_sub.subscription_url = panel_user.subscription_url
+                    existing_sub.subscription_crypto_link = panel_user.happ_crypto_link
+                    existing_sub.connected_squads = connected_squads
+                    existing_sub.device_limit = device_limit
+                    existing_sub.is_trial = False
+                    logger.info(
+                        'Updated subscription for email user',
+                        email=user.email,
+                        uuid=panel_user.uuid,
+                    )
+                else:
+                    from app.database.crud.subscription import generate_unique_short_id
+
+                    _short_id = await generate_unique_short_id(db)
+                    new_sub = Subscription(
+                        user_id=user.id,
+                        start_date=current_time,
+                        end_date=expire_at,
+                        traffic_limit_gb=traffic_limit_gb,
+                        traffic_used_gb=traffic_used_gb,
+                        status=sub_status.value,
+                        is_trial=False,
+                        remnawave_uuid=panel_user.uuid if settings.is_multi_tariff_enabled() else None,
+                        remnawave_short_id=_short_id,
+                        remnawave_short_uuid=panel_user.short_uuid,
+                        subscription_url=panel_user.subscription_url,
+                        subscription_crypto_link=panel_user.happ_crypto_link,
+                        connected_squads=connected_squads,
+                        device_limit=device_limit,
+                    )
+                    db.add(new_sub)
+                    logger.info(
+                        'Created subscription for email user',
+                        email=user.email,
+                        uuid=panel_user.uuid,
+                    )
 
             await db.commit()
 
@@ -400,7 +461,11 @@ async def auth_telegram(
             detail='Too many requests',
             headers={'Retry-After': '60'},
         )
-    user_data = validate_telegram_init_data(request.init_data)
+    # Telegram Desktop/iOS cache initData with stale auth_date (known Telegram bug:
+    # https://github.com/telegramdesktop/tdesktop/issues/28303).
+    # Use generous max_age: HMAC signature proves authenticity,
+    # JWT tokens handle actual session expiration after login.
+    user_data = validate_telegram_init_data(request.init_data, max_age_seconds=86400 * 30)
 
     if not user_data:
         raise HTTPException(
@@ -429,10 +494,35 @@ async def auth_telegram(
         try:
             referrer = await get_user_by_referral_code(db, request.referral_code)
             if referrer:
-                referrer_id = referrer.id
+                # Self-referral protection by telegram_id (user doesn't exist yet, can't compare user.id)
+                if referrer.telegram_id and referrer.telegram_id == telegram_id:
+                    logger.warning(
+                        'Self-referral attempt blocked via telegram_id',
+                        telegram_id=telegram_id,
+                        referral_code=request.referral_code,
+                    )
+                else:
+                    referrer_id = referrer.id
         except Exception as e:
             logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
 
+    # Fallback: check Redis for pending referral from /start (user opened cabinet before completing bot registration)
+    if not referrer_id and not user and telegram_id:
+        try:
+            from app.services.referral_service import get_pending_referral
+
+            pending = await get_pending_referral(telegram_id)
+            if pending and pending.get('referrer_id'):
+                referrer_id = pending['referrer_id']
+                logger.info(
+                    'Resolved referral from Redis pending_referral (cabinet)',
+                    telegram_id=telegram_id,
+                    referrer_id=referrer_id,
+                )
+        except Exception as e:
+            logger.warning('Failed to check pending referral', error=e)
+
+    is_new_user = not user
     if not user:
         # Create new user from Telegram initData
         logger.info('Creating new user from cabinet (initData): telegram_id', telegram_id=telegram_id)
@@ -461,7 +551,7 @@ async def auth_telegram(
         if updated:
             logger.info('User profile updated from initData', user_id=user.id)
 
-    if user.status != 'active':
+    if user.status != UserStatus.ACTIVE.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='User account is not active',
@@ -476,8 +566,17 @@ async def auth_telegram(
     # Store refresh token
     await _store_refresh_token(db, user.id, response.refresh_token)
 
-    # Process referral code (before campaign bonus, which may also set referrer)
-    await _process_referral_code(db, user, request.referral_code)
+    # Process referral code (only for new users — existing users cannot be assigned a referrer)
+    await _process_referral_code(db, user, request.referral_code, is_new_user=is_new_user)
+
+    # Clear Redis pending referral after successful user creation with referral
+    if referrer_id:
+        try:
+            from app.services.referral_service import clear_pending_referral
+
+            await clear_pending_referral(telegram_id)
+        except Exception:
+            pass
 
     # Process campaign bonus
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
@@ -510,7 +609,8 @@ async def auth_telegram_widget(
 
     widget_data = request.model_dump(exclude={'campaign_slug', 'referral_code'})
 
-    if not validate_telegram_login_widget(widget_data):
+    # Generous max_age: Telegram caches auth data with stale auth_date
+    if not validate_telegram_login_widget(widget_data, max_age_seconds=86400 * 30):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail='Invalid or expired Telegram authentication data',
@@ -524,10 +624,19 @@ async def auth_telegram_widget(
         try:
             referrer = await get_user_by_referral_code(db, request.referral_code)
             if referrer:
-                referrer_id = referrer.id
+                # Self-referral protection by telegram_id (user doesn't exist yet, can't compare user.id)
+                if referrer.telegram_id and referrer.telegram_id == request.id:
+                    logger.warning(
+                        'Self-referral attempt blocked via telegram_id',
+                        telegram_id=request.id,
+                        referral_code=request.referral_code,
+                    )
+                else:
+                    referrer_id = referrer.id
         except Exception as e:
             logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
 
+    is_new_user = not user
     if not user:
         # Create new user from Telegram data
         logger.info(
@@ -544,7 +653,7 @@ async def auth_telegram_widget(
         )
         logger.info('User created successfully: id=, telegram_id', user_id=user.id, telegram_id=user.telegram_id)
 
-    if user.status != 'active':
+    if user.status != UserStatus.ACTIVE.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='User account is not active',
@@ -564,8 +673,17 @@ async def auth_telegram_widget(
     response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, response.refresh_token)
 
-    # Process referral code (before campaign bonus, which may also set referrer)
-    await _process_referral_code(db, user, request.referral_code)
+    # Process referral code (only for new users — existing users cannot be assigned a referrer)
+    await _process_referral_code(db, user, request.referral_code, is_new_user=is_new_user)
+
+    # Clear Redis pending referral after successful registration
+    if referrer_id and request.id:
+        try:
+            from app.services.referral_service import clear_pending_referral
+
+            await clear_pending_referral(request.id)
+        except Exception:
+            pass
 
     # Process campaign bonus
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
@@ -656,10 +774,19 @@ async def auth_telegram_oidc(
         try:
             referrer = await get_user_by_referral_code(db, request.referral_code)
             if referrer:
-                referrer_id = referrer.id
-        except (ValueError, LookupError) as e:
-            logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=str(e))
+                # Self-referral protection by telegram_id (user doesn't exist yet, can't compare user.id)
+                if referrer.telegram_id and referrer.telegram_id == telegram_id:
+                    logger.warning(
+                        'Self-referral attempt blocked via telegram_id',
+                        telegram_id=telegram_id,
+                        referral_code=request.referral_code,
+                    )
+                else:
+                    referrer_id = referrer.id
+        except Exception as e:
+            logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
 
+    is_new_user = not user
     if not user:
         logger.info('Creating new user from cabinet OIDC', telegram_id=telegram_id, username=username)
         user = await create_user(
@@ -673,7 +800,7 @@ async def auth_telegram_oidc(
         )
         logger.info('User created successfully', user_id=user.id, telegram_id=user.telegram_id)
 
-    if user.status != 'active':
+    if user.status != UserStatus.ACTIVE.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='User account is not active',
@@ -693,7 +820,17 @@ async def auth_telegram_oidc(
     response = await _create_auth_response(user, db)
     await _store_refresh_token(db, user.id, response.refresh_token)
 
-    await _process_referral_code(db, user, request.referral_code)
+    # Process referral code (only for new users — existing users cannot be assigned a referrer)
+    await _process_referral_code(db, user, request.referral_code, is_new_user=is_new_user)
+
+    # Clear Redis pending referral after successful registration
+    if referrer_id and telegram_id:
+        try:
+            from app.services.referral_service import clear_pending_referral
+
+            await clear_pending_referral(telegram_id)
+        except Exception:
+            pass
 
     response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
     if response.campaign_bonus:
@@ -705,6 +842,7 @@ async def auth_telegram_oidc(
 @router.post('/email/register')
 async def register_email(
     request: EmailRegisterRequest,
+    raw_request: Request,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -713,7 +851,24 @@ async def register_email(
 
     Requires valid JWT token from Telegram authentication.
     Sends verification email to the provided address.
+    If the email belongs to another active user, offers account merge.
     """
+    # Rate limit
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'email_register', limit=5, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    # Check if user already has a verified email — block before doing anything else
+    if user.email and user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='You already have a verified email',
+        )
+
     # Check for disposable email
     if disposable_email_service.is_disposable(request.email):
         raise HTTPException(
@@ -721,21 +876,38 @@ async def register_email(
             detail='Disposable email addresses are not allowed',
         )
 
-    # Check if email already exists (case-insensitive)
+    # Check if email already exists (case-insensitive, exclude deleted users)
     email_lower = (request.email or '').strip().lower()
-    existing_user = await db.execute(select(User).where(func.lower(User.email) == email_lower))
-    if existing_user.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='This email is already registered',
+    existing_result = await db.execute(
+        select(User).where(
+            func.lower(User.email) == email_lower,
+            User.status != UserStatus.DELETED.value,
         )
-
-    # Check if user already has email
-    if user.email and user.email_verified:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='You already have a verified email',
+    )
+    existing_email_user = existing_result.scalar_one_or_none()
+    if existing_email_user:
+        if existing_email_user.id == user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='This email is already linked to your account',
+            )
+        # Offer account merge instead of blocking
+        logger.info(
+            'Email register conflict: email already linked to another user, offering merge',
+            current_user_id=user.id,
+            existing_user_id=existing_email_user.id,
         )
+        merge_token = await create_merge_token(
+            primary_user_id=user.id,
+            secondary_user_id=existing_email_user.id,
+            provider='email',
+            provider_id=email_lower,
+        )
+        return {
+            'message': 'Account merge required',
+            'merge_required': True,
+            'merge_token': merge_token,
+        }
 
     # Update user
     user.email = request.email
@@ -886,6 +1058,11 @@ async def register_email_standalone(
         user.email_verified_at = datetime.now(UTC)
         await db.commit()
         logger.info('Email auto-verified (test or verification disabled)', email=request.email, user_id=user.id)
+        # Sync existing panel subscription (same as manual verification flow)
+        try:
+            await _sync_subscription_from_panel_by_email(db, user)
+        except Exception:
+            logger.warning('Failed to sync panel subscription after auto-verify', user_id=user.id, exc_info=True)
     else:
         # Сгенерировать токен верификации
         verification_token = generate_verification_token()
@@ -929,12 +1106,10 @@ async def register_email_standalone(
     # Обработать реферальную регистрацию (если есть реферер)
     if referrer:
         try:
-            from aiogram import Bot
-            from aiogram.client.default import DefaultBotProperties
-            from aiogram.enums import ParseMode
+            from app.bot_factory import create_bot
 
-            bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-            await process_referral_registration(db, user.id, referrer.id, bot=bot)
+            async with create_bot() as bot:
+                await process_referral_registration(db, user.id, referrer.id, bot=bot)
             logger.info(
                 'Processed referral registration: user_id=, referrer_id', user_id=user.id, referrer_id=referrer.id
             )
@@ -1143,7 +1318,7 @@ async def login_email(
             detail='Please verify your email first',
         )
 
-    if user.status != 'active':
+    if user.status != UserStatus.ACTIVE.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='User account is not active',
@@ -1292,7 +1467,7 @@ async def auto_login(
             detail='User not found',
         )
 
-    if user.status != 'active':
+    if user.status != UserStatus.ACTIVE.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Account is deactivated',
@@ -1674,3 +1849,130 @@ async def get_email_change_status(
         'new_email': user.email_change_new,
         'expires_at': user.email_change_expires.isoformat() if user.email_change_expires else None,
     }
+
+
+# --- Deep link auth (fallback when oauth.telegram.org is blocked) ---
+
+
+@router.post('/deeplink/request', response_model=DeepLinkTokenResponse)
+async def request_deep_link_token(
+    raw_request: Request,
+):
+    """Generate a one-time deep link auth token.
+
+    Frontend shows t.me/{bot}?start=webauth_{token} to the user.
+    No auth required (user is not logged in yet).
+    """
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'deeplink_request', limit=10, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    try:
+        token = await create_web_auth_token()
+    except RuntimeError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Service temporarily unavailable',
+        )
+
+    bot_username = settings.get_bot_username()
+    if not bot_username:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Bot not configured',
+        )
+
+    return DeepLinkTokenResponse(
+        token=token,
+        bot_username=bot_username,
+        expires_in=WEB_AUTH_TOKEN_TTL,
+    )
+
+
+@router.post('/deeplink/poll', response_model=AuthResponse)
+async def poll_deep_link_token(
+    request: DeepLinkPollRequest,
+    raw_request: Request,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Poll for deep link auth completion.
+
+    Returns 202 if still pending, AuthResponse if completed, 410 if expired.
+    """
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'deeplink_poll', limit=60, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    data = await poll_web_auth_token(request.token)
+
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail='Token expired or not found',
+        )
+
+    if data.get('status') == 'pending':
+        raise HTTPException(
+            status_code=status.HTTP_202_ACCEPTED,
+            detail='Waiting for confirmation',
+        )
+
+    if data.get('status') != 'linked':
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail='Invalid token state',
+        )
+
+    # Token is linked - consume it atomically
+    consumed = await consume_web_auth_token(request.token)
+    if not consumed:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail='Token already consumed',
+        )
+
+    user_id = consumed.get('user_id')
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Invalid token data',
+        )
+
+    user = await get_user_by_id(db, int(user_id))
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='User not found',
+        )
+
+    if user.status != UserStatus.ACTIVE.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Account is deactivated',
+        )
+
+    user.cabinet_last_login = datetime.now(UTC)
+    await db.commit()
+
+    response = await _create_auth_response(user, db)
+    await _store_refresh_token(db, user.id, response.refresh_token, device_info='deep_link')
+
+    # Deep link auth is always for existing users — referral code not applicable
+    # (kept for campaign bonus processing only)
+
+    # Process campaign bonus
+    response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
+    if response.campaign_bonus:
+        response.user = _user_to_response(user)
+
+    logger.info('Deep link auth successful', user_id=user.id, telegram_id=user.telegram_id)
+
+    return response

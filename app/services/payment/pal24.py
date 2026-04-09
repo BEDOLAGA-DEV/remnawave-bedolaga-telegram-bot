@@ -240,34 +240,67 @@ class Pal24PaymentMixin:
                 logger.error('Pal24 платеж не найден: /', bill_id=bill_id, order_id=order_id)
                 return False
 
+            # Lock payment row immediately to prevent concurrent webhook processing (TOCTOU race)
+            pal24_lock_crud = import_module('app.database.crud.pal24')
+            locked = await pal24_lock_crud.get_pal24_payment_by_id_for_update(db, payment.id)
+            if not locked:
+                logger.error('Pal24: не удалось заблокировать платёж', payment_id=payment.id)
+                return False
+            payment = locked
+
             if payment.is_paid:
                 logger.info('Pal24 платеж уже обработан', bill_id=payment.bill_id)
                 return True
 
             if status in {'PAID', 'SUCCESS', 'OVERPAID'}:
+                # Verify payment amount matches expected
+                callback_amount_str = callback.get('OutSum') or callback.get('out_sum') or callback.get('Amount')
+                if callback_amount_str is not None:
+                    try:
+                        from decimal import Decimal
+
+                        received_kopeks = int(Decimal(str(callback_amount_str)) * 100)
+                        if abs(received_kopeks - payment.amount_kopeks) > 1:
+                            logger.error(
+                                'Pal24 amount mismatch',
+                                expected_kopeks=payment.amount_kopeks,
+                                received_kopeks=received_kopeks,
+                                bill_id=payment.bill_id,
+                            )
+                            return False
+                    except (ValueError, TypeError) as e:
+                        logger.warning('Pal24: не удалось распарсить сумму из callback', error=str(e))
+
                 metadata = getattr(payment, 'metadata_json', {}) or {}
                 if not isinstance(metadata, dict):
                     metadata = {}
 
-                payment = await payment_module.update_pal24_payment_status(
-                    db,
-                    payment,
-                    status=status,
-                    is_paid=True,
-                    paid_at=datetime.now(UTC),
-                    callback_payload=callback,
-                    payment_id=payment_id,
-                    payment_status=callback.get('Status') or status,
-                    payment_method=(
-                        callback.get('payment_method')
-                        or callback.get('PaymentMethod')
-                        or metadata.get('selected_method')
-                        or getattr(payment, 'payment_method', None)
-                    ),
-                    balance_amount=callback.get('BalanceAmount') or callback.get('balance_amount'),
-                    balance_currency=callback.get('BalanceCurrency') or callback.get('balance_currency'),
-                    payer_account=callback.get('AccountNumber') or callback.get('account') or callback.get('Account'),
+                # Inline field updates — NO intermediate commit that would release FOR UPDATE lock
+                payment.status = status
+                payment.is_paid = True
+                payment.paid_at = datetime.now(UTC)
+                payment.callback_payload = callback
+                if payment_id is not None:
+                    payment.payment_id = payment_id
+                payment.payment_status = callback.get('Status') or status
+                payment.payment_method = (
+                    callback.get('payment_method')
+                    or callback.get('PaymentMethod')
+                    or metadata.get('selected_method')
+                    or getattr(payment, 'payment_method', None)
                 )
+                balance_amount = callback.get('BalanceAmount') or callback.get('balance_amount')
+                if balance_amount is not None:
+                    payment.balance_amount = balance_amount
+                balance_currency = callback.get('BalanceCurrency') or callback.get('balance_currency')
+                if balance_currency is not None:
+                    payment.balance_currency = balance_currency
+                payer_account = callback.get('AccountNumber') or callback.get('account') or callback.get('Account')
+                if payer_account is not None:
+                    payment.payer_account = payer_account
+                payment.last_status = status
+                payment.updated_at = datetime.now(UTC)
+                await db.flush()
 
                 return await self._finalize_pal24_payment(
                     db,
@@ -336,23 +369,13 @@ class Pal24PaymentMixin:
 
         if invoice_message_removed:
             try:
-                await payment_module.update_pal24_payment_status(
-                    db,
-                    payment,
-                    status=payment.status,
-                    metadata=metadata,
-                )
                 payment.metadata_json = metadata
+                payment.updated_at = datetime.now(UTC)
+                await db.flush()
             except Exception as error:  # pragma: no cover - diagnostics
                 logger.warning('Не удалось обновить метаданные PayPalych после удаления счёта', error=error)
 
-        pal24_lock_crud = import_module('app.database.crud.pal24')
-        locked = await pal24_lock_crud.get_pal24_payment_by_id_for_update(db, payment.id)
-        if not locked:
-            logger.error('Pal24: не удалось заблокировать платёж', payment_id=payment.id)
-            return False
-        payment = locked
-
+        # FOR UPDATE lock already acquired by caller — just check idempotency
         if payment.transaction_id:
             logger.info('Pal24 платеж уже привязан к транзакции (trigger=)', bill_id=payment.bill_id, trigger=trigger)
             return True
@@ -643,14 +666,20 @@ class Pal24PaymentMixin:
 
             if payment.is_paid and not payment.transaction_id:
                 try:
-                    finalized = await self._finalize_pal24_payment(
-                        db,
-                        payment,
-                        payment_id=getattr(payment, 'payment_id', None),
-                        trigger='status_check',
-                    )
-                    if finalized:
-                        payment = await payment_module.get_pal24_payment_by_id(db, local_payment_id)
+                    # Acquire FOR UPDATE lock before finalization (status_check path)
+                    pal24_lock_crud = import_module('app.database.crud.pal24')
+                    locked = await pal24_lock_crud.get_pal24_payment_by_id_for_update(db, payment.id)
+                    if locked:
+                        payment = locked
+                        if not payment.transaction_id:
+                            finalized = await self._finalize_pal24_payment(
+                                db,
+                                payment,
+                                payment_id=getattr(payment, 'payment_id', None),
+                                trigger='status_check',
+                            )
+                            if finalized:
+                                payment = await payment_module.get_pal24_payment_by_id(db, local_payment_id)
                 except Exception as error:
                     logger.error('Ошибка автоматического начисления по Pal24 статусу', error=error, exc_info=True)
 

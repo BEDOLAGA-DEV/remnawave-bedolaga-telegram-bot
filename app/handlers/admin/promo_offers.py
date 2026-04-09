@@ -677,7 +677,7 @@ def _describe_offer(
     label = texts.t(config.get('label_key', ''), config.get('default_label', template.offer_type))
     icon = config.get('icon', '📨')
 
-    lines = [f'{icon} <b>{template.name}</b>', '']
+    lines = [f'{icon} <b>{html.escape(template.name)}</b>', '']
     lines.append(texts.t('ADMIN_PROMO_OFFER_TYPE', 'Тип: {label}').format(label=label))
     lines.append(texts.t('ADMIN_PROMO_OFFER_VALID', 'Срок действия: {hours} ч').format(hours=template.valid_hours))
 
@@ -1468,7 +1468,51 @@ async def show_selected_user_details(
         )
 
     subscription = getattr(user, 'subscription', None)
-    if subscription:
+    subscriptions_list = getattr(user, 'subscriptions', None) or []
+    if settings.is_multi_tariff_enabled() and subscriptions_list:
+        lines.append('')
+        lines.append(texts.t('ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION', '💳 <b>Подписки</b>'))
+        for sub in subscriptions_list:
+            tariff_name = sub.tariff.name if sub.tariff else f'#{sub.id}'
+            lines.append(f'<b>{tariff_name}</b>')
+            lines.append(
+                texts.t(
+                    'ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION_STATUS',
+                    'Статус: {status}',
+                ).format(status=sub.status_display)
+            )
+            end_date_text = (
+                format_datetime(sub.end_date)
+                if sub.end_date
+                else texts.t(
+                    'ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION_END_UNKNOWN',
+                    'не указано',
+                )
+            )
+            lines.append(
+                texts.t(
+                    'ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION_END',
+                    'Истекает: {date}',
+                ).format(date=end_date_text)
+            )
+            lines.append(
+                texts.t(
+                    'ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION_TRAFFIC',
+                    'Трафик: {used}/{limit} ГБ',
+                ).format(
+                    used=sub.traffic_used_gb or 0,
+                    limit=sub.traffic_limit_gb or 0,
+                )
+            )
+            connected = sub.connected_squads or []
+            if connected:
+                lines.append(
+                    texts.t(
+                        'ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION_SQUADS',
+                        'Подключено сквадов: {count}',
+                    ).format(count=len(connected))
+                )
+    elif subscription:
         lines.append('')
         lines.append(texts.t('ADMIN_PROMO_OFFER_SEND_USER_SUBSCRIPTION', '💳 <b>Подписка</b>'))
         lines.append(
@@ -1771,7 +1815,21 @@ async def show_selected_user_details(
             ).format(count=len(active_offers))
         )
 
-    if subscription:
+    if settings.is_multi_tariff_enabled() and subscriptions_list:
+        now = datetime.now(UTC)
+        sub_ids = [sub.id for sub in subscriptions_list]
+        result = await db.execute(
+            select(SubscriptionTemporaryAccess)
+            .options(selectinload(SubscriptionTemporaryAccess.offer))
+            .where(
+                SubscriptionTemporaryAccess.subscription_id.in_(sub_ids),
+                SubscriptionTemporaryAccess.is_active == True,
+                SubscriptionTemporaryAccess.expires_at > now,
+            )
+            .order_by(SubscriptionTemporaryAccess.expires_at.desc())
+        )
+        accesses = result.scalars().all()
+    elif subscription:
         now = datetime.now(UTC)
         result = await db.execute(
             select(SubscriptionTemporaryAccess)
@@ -1844,7 +1902,11 @@ async def show_selected_user_details(
 
 
 def _build_connect_button_rows(user: User, texts) -> list[list[InlineKeyboardButton]]:
-    subscription = getattr(user, 'subscription', None)
+    if settings.is_multi_tariff_enabled():
+        subs = getattr(user, 'subscriptions', None) or []
+        subscription = next((s for s in subs if s.subscription_url), None)
+    else:
+        subscription = getattr(user, 'subscription', None)
     if not subscription:
         return []
 
@@ -1930,12 +1992,25 @@ async def _send_offer_to_users(
             try:
                 # Используем отдельную сессию для изоляции транзакции
                 async with AsyncSessionLocal() as new_db:
+                    if settings.is_multi_tariff_enabled():
+                        _user_subs = getattr(user, 'subscriptions', None) or []
+                        _active_subs = [s for s in _user_subs if s.is_active]
+                        if _active_subs:
+                            _non_daily = [s for s in _active_subs if not getattr(s, 'is_daily_tariff', False)]
+                            _eligible = _non_daily or _active_subs
+                            _best = max(_eligible, key=lambda s: s.days_left)
+                            _offer_sub_id = _best.id
+                        elif _user_subs:
+                            _offer_sub_id = _user_subs[0].id
+                        else:
+                            _offer_sub_id = None
+                    else:
+                        _offer_sub = getattr(user, 'subscription', None)
+                        _offer_sub_id = _offer_sub.id if _offer_sub else None
                     offer_record = await upsert_discount_offer(
                         new_db,
                         user_id=user.id,
-                        subscription_id=getattr(user, 'subscription', None).id
-                        if getattr(user, 'subscription', None)
-                        else None,
+                        subscription_id=_offer_sub_id,
                         notification_type=f'promo_template_{template.id}',
                         discount_percent=template.discount_percent,
                         bonus_amount_kopeks=0,
@@ -2051,8 +2126,14 @@ async def send_offer_to_segment(callback: CallbackQuery, db_user: User, db: Asyn
     if template.offer_type == 'test_access' and squad_uuid:
         filtered_users: list[User] = []
         for user in users:
-            subscription = getattr(user, 'subscription', None)
-            connected = set(subscription.connected_squads or []) if subscription else set()
+            if settings.is_multi_tariff_enabled():
+                all_squads: set[str] = set()
+                for s in getattr(user, 'subscriptions', None) or []:
+                    all_squads.update(s.connected_squads or [])
+                connected = all_squads
+            else:
+                subscription = getattr(user, 'subscription', None)
+                connected = set(subscription.connected_squads or []) if subscription else set()
             if squad_uuid in connected:
                 continue
             filtered_users.append(user)

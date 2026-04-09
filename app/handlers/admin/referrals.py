@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -218,9 +219,9 @@ async def _show_top_referrers_filtered(callback: types.CallbackQuery, db: AsyncS
                 id_display = telegram_id or user_email or f'#{user_id}' if user_id else 'N/A'
 
                 if username:
-                    display_text = f'@{username} (ID{id_display})'
+                    display_text = f'@{html.escape(username)} (ID{id_display})'
                 elif display_name and display_name != f'ID{id_display}':
-                    display_text = f'{display_name} (ID{id_display})'
+                    display_text = f'{html.escape(display_name)} (ID{id_display})'
                 else:
                     display_text = f'ID{id_display}'
 
@@ -312,7 +313,7 @@ async def show_pending_withdrawal_requests(callback: types.CallbackQuery, db_use
 
     for req in requests[:10]:
         user = await get_user_by_id(db, req.user_id)
-        user_name = user.full_name if user else 'Неизвестно'
+        user_name = html.escape(user.full_name) if user and user.full_name else 'Неизвестно'
         user_tg_id = user.telegram_id if user else 'N/A'
 
         risk_emoji = (
@@ -359,7 +360,7 @@ async def view_withdrawal_request(callback: types.CallbackQuery, db_user: User, 
         return
 
     user = await get_user_by_id(db, request.user_id)
-    user_name = user.full_name if user else 'Неизвестно'
+    user_name = html.escape(user.full_name) if user and user.full_name else 'Неизвестно'
     user_tg_id = (user.telegram_id or user.email or f'#{user.id}') if user else 'N/A'
 
     analysis = json.loads(request.risk_analysis) if request.risk_analysis else {}
@@ -381,7 +382,7 @@ async def view_withdrawal_request(callback: types.CallbackQuery, db_user: User, 
 📊 Статус: {status_text}
 
 💳 <b>Реквизиты:</b>
-<code>{request.payment_details}</code>
+<code>{html.escape(request.payment_details or '')}</code>
 
 📅 Создана: {request.created_at.strftime('%d.%m.%Y %H:%M')}
 
@@ -639,7 +640,7 @@ async def process_test_referral_earning(message: types.Message, db_user: User, d
 
     await message.answer(
         f'✅ <b>Тестовое начисление создано!</b>\n\n'
-        f'👤 Пользователь: {target_user.full_name or "Без имени"}\n'
+        f'👤 Пользователь: {html.escape(target_user.full_name) if target_user.full_name else "Без имени"}\n'
         f'🆔 ID: <code>{target_telegram_id}</code>\n'
         f'💰 Сумма: <b>{amount_rubles:.0f}₽</b>\n'
         f'💳 Новый баланс: <b>{target_user.balance_kopeks / 100:.0f}₽</b>\n\n'
@@ -736,14 +737,17 @@ async def _show_diagnostics_for_period(callback: types.CallbackQuery, db: AsyncS
                     status = f'⚡ Другой реферер (ID{lost.current_referrer_id})'
 
                 # Имя или ID
-                user_name = lost.username or lost.full_name or f'ID{lost.telegram_id}'
                 if lost.username:
-                    user_name = f'@{lost.username}'
+                    user_name = f'@{html.escape(lost.username)}'
+                elif lost.full_name:
+                    user_name = html.escape(lost.full_name)
+                else:
+                    user_name = f'ID{lost.telegram_id}'
 
                 # Ожидаемый реферер
                 referrer_info = ''
                 if lost.expected_referrer_name:
-                    referrer_info = f' → {lost.expected_referrer_name}'
+                    referrer_info = f' → {html.escape(lost.expected_referrer_name)}'
                 elif lost.expected_referrer_id:
                     referrer_info = f' → ID{lost.expected_referrer_id}'
 
@@ -751,7 +755,7 @@ async def _show_diagnostics_for_period(callback: types.CallbackQuery, db: AsyncS
                 time_str = lost.click_time.strftime('%H:%M')
 
                 text += f'{i}. {user_name} — {status}\n'
-                text += f'   <code>{lost.referral_code}</code>{referrer_info} ({time_str})\n'
+                text += f'   <code>{html.escape(lost.referral_code)}</code>{referrer_info} ({time_str})\n'
 
             if len(report.lost_referrals) > 15:
                 text += f'\n<i>... и ещё {len(report.lost_referrals) - 15}</i>\n'
@@ -872,16 +876,22 @@ async def preview_referral_fixes(callback: types.CallbackQuery, db_user: User, d
 
         # Показываем первые 10 деталей
         for i, detail in enumerate(fix_report.details[:10], 1):
-            user_name = detail.username or detail.full_name or f'ID{detail.telegram_id}'
             if detail.username:
-                user_name = f'@{detail.username}'
+                user_name = f'@{html.escape(detail.username)}'
+            elif detail.full_name:
+                user_name = html.escape(detail.full_name)
+            else:
+                user_name = f'ID{detail.telegram_id}'
 
             if detail.error:
-                text += f'{i}. {user_name} — ❌ {detail.error}\n'
+                text += f'{i}. {user_name} — ❌ {html.escape(str(detail.error))}\n'
             else:
                 text += f'{i}. {user_name}\n'
                 if detail.referred_by_set:
-                    text += f'   • Реферер: {detail.referrer_name or f"ID{detail.referrer_id}"}\n'
+                    referrer_display = (
+                        html.escape(detail.referrer_name) if detail.referrer_name else f'ID{detail.referrer_id}'
+                    )
+                    text += f'   • Реферер: {referrer_display}\n'
                 if detail.had_first_topup:
                     text += f'   • Первое пополнение: {settings.format_price(detail.topup_amount_kopeks)}\n'
                 if detail.bonus_to_referral_kopeks > 0:
@@ -967,13 +977,19 @@ async def apply_referral_fixes(callback: types.CallbackQuery, db_user: User, db:
         for detail in fix_report.details:
             if not detail.error and success_count < 10:
                 success_count += 1
-                user_name = detail.username or detail.full_name or f'ID{detail.telegram_id}'
                 if detail.username:
-                    user_name = f'@{user_name}'
+                    user_name = f'@{html.escape(detail.username)}'
+                elif detail.full_name:
+                    user_name = html.escape(detail.full_name)
+                else:
+                    user_name = f'ID{detail.telegram_id}'
 
                 text += f'{success_count}. {user_name}\n'
                 if detail.referred_by_set:
-                    text += f'   • Реферер: {detail.referrer_name or f"ID{detail.referrer_id}"}\n'
+                    referrer_display = (
+                        html.escape(detail.referrer_name) if detail.referrer_name else f'ID{detail.referrer_id}'
+                    )
+                    text += f'   • Реферер: {referrer_display}\n'
                 if detail.bonus_to_referral_kopeks > 0:
                     text += f'   • Бонус рефералу: {settings.format_price(detail.bonus_to_referral_kopeks)}\n'
                 if detail.bonus_to_referrer_kopeks > 0:
@@ -989,8 +1005,13 @@ async def apply_referral_fixes(callback: types.CallbackQuery, db_user: User, db:
             for detail in fix_report.details:
                 if detail.error and error_count < 5:
                     error_count += 1
-                    user_name = detail.username or detail.full_name or f'ID{detail.telegram_id}'
-                    text += f'• {user_name}: {detail.error}\n'
+                    if detail.username:
+                        user_name = f'@{html.escape(detail.username)}'
+                    elif detail.full_name:
+                        user_name = html.escape(detail.full_name)
+                    else:
+                        user_name = f'ID{detail.telegram_id}'
+                    text += f'• {user_name}: {html.escape(str(detail.error))}\n'
             if fix_report.errors > 5:
                 text += f'<i>... и ещё {fix_report.errors - 5} ошибок</i>\n'
 
@@ -1055,8 +1076,12 @@ async def check_missing_bonuses(callback: types.CallbackQuery, db_user: User, db
 👤 <b>Список ({len(report.missing_bonuses)} чел.):</b>
 """
             for i, mb in enumerate(report.missing_bonuses[:15], 1):
-                referral_name = mb.referral_full_name or mb.referral_username or str(mb.referral_telegram_id)
-                referrer_name = mb.referrer_full_name or mb.referrer_username or str(mb.referrer_telegram_id)
+                referral_name = html.escape(
+                    mb.referral_full_name or mb.referral_username or str(mb.referral_telegram_id)
+                )
+                referrer_name = html.escape(
+                    mb.referrer_full_name or mb.referrer_username or str(mb.referrer_telegram_id)
+                )
                 text += f'\n{i}. <b>{referral_name}</b>'
                 text += f'\n   └ Пригласил: {referrer_name}'
                 text += f'\n   └ Пополнение: {mb.first_topup_amount_kopeks / 100:.0f}₽'
@@ -1191,9 +1216,9 @@ async def sync_referrals_with_contest(
                 total_created += stats.get('created', 0)
                 total_updated += stats.get('updated', 0)
                 total_skipped += stats.get('skipped', 0)
-                contest_results.append(f'• {contest.title}: +{stats.get("created", 0)} новых')
+                contest_results.append(f'• {html.escape(contest.title)}: +{stats.get("created", 0)} новых')
             else:
-                contest_results.append(f'• {contest.title}: ошибка')
+                contest_results.append(f'• {html.escape(contest.title)}: ошибка')
 
         text = f"""
 🏆 <b>Синхронизация с конкурсами завершена!</b>
@@ -1275,7 +1300,7 @@ async def receive_log_file(message: types.Message, db_user: User, db: AsyncSessi
 
     if file_ext not in ['.log', '.txt']:
         await message.answer(
-            f'❌ Неверный формат файла: {file_ext}\n\nПоддерживаются только текстовые файлы (.log, .txt)',
+            f'❌ Неверный формат файла: {html.escape(file_ext)}\n\nПоддерживаются только текстовые файлы (.log, .txt)',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
                     [types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_referral_diagnostics')]
@@ -1299,7 +1324,7 @@ async def receive_log_file(message: types.Message, db_user: User, db: AsyncSessi
 
     # Информируем о начале загрузки
     status_message = await message.answer(
-        f'📥 Загружаю файл {file_name} ({message.document.file_size / 1024 / 1024:.1f} MB)...'
+        f'📥 Загружаю файл {html.escape(file_name)} ({message.document.file_size / 1024 / 1024:.1f} MB)...'
     )
 
     temp_file_path = None
@@ -1316,7 +1341,9 @@ async def receive_log_file(message: types.Message, db_user: User, db: AsyncSessi
         logger.info('📥 Файл загружен: ( байт)', temp_file_path=temp_file_path, file_size=message.document.file_size)
 
         # Обновляем статус
-        await status_message.edit_text(f'🔍 Анализирую файл {file_name}...\n\nЭто может занять некоторое время.')
+        await status_message.edit_text(
+            f'🔍 Анализирую файл {html.escape(file_name)}...\n\nЭто может занять некоторое время.'
+        )
 
         # Анализируем файл
         from app.services.referral_diagnostics_service import referral_diagnostics_service
@@ -1325,7 +1352,7 @@ async def receive_log_file(message: types.Message, db_user: User, db: AsyncSessi
 
         # Формируем отчёт
         text = f"""
-🔍 <b>Анализ лог-файла: {file_name}</b>
+🔍 <b>Анализ лог-файла: {html.escape(file_name)}</b>
 
 <b>📊 Статистика переходов:</b>
 • Всего кликов по реф-ссылкам: {report.total_ref_clicks}
@@ -1348,14 +1375,17 @@ async def receive_log_file(message: types.Message, db_user: User, db: AsyncSessi
                     status = f'⚡ Другой реферер (ID{lost.current_referrer_id})'
 
                 # Имя или ID
-                user_name = lost.username or lost.full_name or f'ID{lost.telegram_id}'
                 if lost.username:
-                    user_name = f'@{lost.username}'
+                    user_name = f'@{html.escape(lost.username)}'
+                elif lost.full_name:
+                    user_name = html.escape(lost.full_name)
+                else:
+                    user_name = f'ID{lost.telegram_id}'
 
                 # Ожидаемый реферер
                 referrer_info = ''
                 if lost.expected_referrer_name:
-                    referrer_info = f' → {lost.expected_referrer_name}'
+                    referrer_info = f' → {html.escape(lost.expected_referrer_name)}'
                 elif lost.expected_referrer_id:
                     referrer_info = f' → ID{lost.expected_referrer_id}'
 
@@ -1363,7 +1393,7 @@ async def receive_log_file(message: types.Message, db_user: User, db: AsyncSessi
                 time_str = lost.click_time.strftime('%d.%m.%Y %H:%M')
 
                 text += f'{i}. {user_name} — {status}\n'
-                text += f'   <code>{lost.referral_code}</code>{referrer_info} ({time_str})\n'
+                text += f'   <code>{html.escape(lost.referral_code)}</code>{referrer_info} ({time_str})\n'
 
             if len(report.lost_referrals) > 15:
                 text += f'\n<i>... и ещё {len(report.lost_referrals) - 15}</i>\n'
@@ -1408,8 +1438,8 @@ async def receive_log_file(message: types.Message, db_user: User, db: AsyncSessi
         try:
             await status_message.edit_text(
                 f'❌ <b>Ошибка при анализе файла</b>\n\n'
-                f'Файл: {file_name}\n'
-                f'Ошибка: {e!s}\n\n'
+                f'Файл: {html.escape(file_name)}\n'
+                f'Ошибка: {html.escape(str(e))}\n\n'
                 f'Проверьте, что файл является текстовым логом бота.',
                 reply_markup=types.InlineKeyboardMarkup(
                     inline_keyboard=[
@@ -1428,7 +1458,7 @@ async def receive_log_file(message: types.Message, db_user: User, db: AsyncSessi
             )
         except:
             await message.answer(
-                f'❌ Ошибка при анализе файла: {e!s}',
+                f'❌ Ошибка при анализе файла: {html.escape(str(e))}',
                 reply_markup=types.InlineKeyboardMarkup(
                     inline_keyboard=[
                         [types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_referral_diagnostics')]

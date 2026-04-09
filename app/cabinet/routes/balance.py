@@ -4,15 +4,12 @@ import math
 import time
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-import httpx
 import structlog
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot_factory import create_bot
 from app.config import settings
 from app.database.crud.saved_payment_method import (
     deactivate_payment_method,
@@ -272,50 +269,37 @@ async def create_stars_invoice(
 
     # Create invoice through Telegram Bot API
     try:
-        bot_token = settings.BOT_TOKEN
-        api_url = f'https://api.telegram.org/bot{bot_token}/createInvoiceLink'
+        from aiogram.exceptions import TelegramAPIError
+        from aiogram.types import LabeledPrice
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                api_url,
-                json={
-                    'title': 'Пополнение баланса VPN',
-                    'description': f'Пополнение баланса на {normalized_kopeks / 100:.2f} ₽ ({stars_amount} ⭐)',
-                    'payload': payload,
-                    'provider_token': '',  # Empty for Stars
-                    'currency': 'XTR',
-                    'prices': [{'label': 'Пополнение баланса', 'amount': stars_amount}],
-                },
+        async with create_bot() as bot:
+            invoice_url = await bot.create_invoice_link(
+                title='Пополнение баланса VPN',
+                description=f'Пополнение баланса на {normalized_kopeks / 100:.2f} ₽ ({stars_amount} ⭐)',
+                payload=payload,
+                provider_token='',
+                currency='XTR',
+                prices=[LabeledPrice(label='Пополнение баланса', amount=stars_amount)],
             )
 
-            result = response.json()
+        logger.info(
+            'Created Stars invoice for balance top-up: user=, amount= kopeks, stars',
+            user_id=user.id,
+            amount_kopeks=request.amount_kopeks,
+            stars_amount=stars_amount,
+        )
 
-            if not result.get('ok'):
-                logger.error('Telegram API error', result=result)
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail='Failed to create Stars invoice',
-                )
+        return StarsInvoiceResponse(
+            invoice_url=invoice_url,
+            stars_amount=stars_amount,
+            amount_kopeks=normalized_kopeks,
+        )
 
-            invoice_url = result['result']
-            logger.info(
-                'Created Stars invoice for balance top-up: user=, amount= kopeks, stars',
-                user_id=user.id,
-                amount_kopeks=request.amount_kopeks,
-                stars_amount=stars_amount,
-            )
-
-            return StarsInvoiceResponse(
-                invoice_url=invoice_url,
-                stars_amount=stars_amount,
-                amount_kopeks=normalized_kopeks,
-            )
-
-    except httpx.HTTPError as e:
-        logger.error('HTTP error creating Stars invoice', error=e)
+    except TelegramAPIError as e:
+        logger.error('Error creating Stars invoice', error=e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Failed to connect to Telegram API',
+            detail='Failed to create Stars invoice',
         )
 
 
@@ -376,7 +360,7 @@ async def create_topup(
             option = (request.payment_option or '').strip().lower()
             # Use description with telegram_id for tax receipts
             description = settings.get_balance_payment_description(
-                request.amount_kopeks, telegram_user_id=user.telegram_id
+                request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
             )
             if option == 'sbp':
                 result = await payment_service.create_yookassa_sbp_payment(
@@ -439,7 +423,7 @@ async def create_topup(
                 amount_usd=amount_usd,
                 asset=settings.CRYPTOBOT_DEFAULT_ASSET,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
                 ),
                 payload=f'cabinet_topup_{user.id}_{request.amount_kopeks}',
             )
@@ -500,7 +484,7 @@ async def create_topup(
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
                 description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
                 ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_method_code=method_code,
@@ -529,7 +513,9 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks),
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 return_url=cabinet_return_url,
                 success_url=cabinet_success_url,
@@ -556,7 +542,9 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks),
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
 
@@ -586,8 +574,11 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks),
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                payment_method=option,
             )
 
             if result:
@@ -626,7 +617,9 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks),
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 return_url=cabinet_success_url,
                 failed_url=cabinet_failed_url,
@@ -653,7 +646,9 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks),
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
                 telegram_id=user.telegram_id,
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 return_url=cabinet_success_url,
@@ -681,7 +676,9 @@ async def create_topup(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks),
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
             )
 
@@ -701,14 +698,22 @@ async def create_topup(
                     detail='KassaAI payment method is unavailable',
                 )
 
+            # Use payment_option to select sbp or card
+            KASSA_AI_OPTION_MAP = {'sbp': 44, 'card': 36, 'sberpay': 43}
+            option = (request.payment_option or '').strip().lower()
+            ps_id = KASSA_AI_OPTION_MAP.get(option)  # None = use env default
+
             payment_service = PaymentService()
             result = await payment_service.create_kassa_ai_payment(
                 db=db,
                 user_id=user.id,
                 amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(request.amount_kopeks),
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
                 email=getattr(user, 'email', None),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                payment_system_id=ps_id,
             )
 
             if result and result.get('payment_url'):
@@ -718,6 +723,35 @@ async def create_topup(
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail='Failed to create KassaAI payment',
+                )
+
+        elif request.payment_method == 'riopay':
+            if not settings.is_riopay_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='RioPay payment method is unavailable',
+                )
+
+            payment_service = PaymentService()
+            result = await payment_service.create_riopay_payment(
+                db=db,
+                user_id=user.id,
+                amount_kopeks=request.amount_kopeks,
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
+                language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                success_url=cabinet_success_url,
+                fail_url=cabinet_failed_url,
+            )
+
+            if result and result.get('payment_url'):
+                payment_url = result.get('payment_url')
+                payment_id = str(result.get('local_payment_id') or result.get('riopay_order_id') or 'pending')
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Failed to create RioPay payment',
                 )
 
         elif request.payment_method == 'tribute':
@@ -730,6 +764,35 @@ async def create_topup(
             user_identifier = user.telegram_id or user.id
             payment_url = f'{settings.TRIBUTE_DONATE_LINK}&user_id={user_identifier}'
             payment_id = f'tribute_{user_identifier}_{request.amount_kopeks}'
+
+        elif request.payment_method == 'severpay':
+            if not settings.is_severpay_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='SeverPay payment method is unavailable',
+                )
+
+            payment_service = PaymentService()
+            result = await payment_service.create_severpay_payment(
+                db=db,
+                user_id=user.id,
+                amount_kopeks=request.amount_kopeks,
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
+                email=getattr(user, 'email', None),
+                language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                return_url=cabinet_success_url,
+            )
+
+            if result and result.get('payment_url'):
+                payment_url = result.get('payment_url')
+                payment_id = str(result.get('local_payment_id') or result.get('order_id') or 'pending')
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Failed to create SeverPay payment',
+                )
 
         else:
             # For other payment methods, redirect to bot
@@ -871,6 +934,17 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
         }
         return mapping.get(status, ('❓', 'Неизвестно'))
 
+    if record.method == PaymentMethod.RIOPAY:
+        mapping = {
+            'pending': ('⏳', 'Ожидает оплаты'),
+            'success': ('✅', 'Оплачено'),
+            'failed': ('❌', 'Ошибка'),
+            'canceled': ('❌', 'Отменено'),
+            'expired': ('⌛', 'Истёк'),
+            'amount_mismatch': ('⚠️', 'Несовпадение суммы'),
+        }
+        return mapping.get(status, ('❓', 'Неизвестно'))
+
     return '❓', 'Неизвестно'
 
 
@@ -901,6 +975,8 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status in {'pending', 'created', 'processing'}
     if record.method == PaymentMethod.KASSA_AI:
         return status in {'pending', 'created', 'processing'}
+    if record.method == PaymentMethod.RIOPAY:
+        return status in {'pending'}
     return False
 
 
@@ -924,7 +1000,12 @@ def _get_payment_url(record: PendingPayment) -> str | None:
         )
     elif record.method == PaymentMethod.PLATEGA:
         payment_url = getattr(payment, 'redirect_url', None) or payment_url
-    elif record.method in (PaymentMethod.CLOUDPAYMENTS, PaymentMethod.FREEKASSA, PaymentMethod.KASSA_AI):
+    elif record.method in (
+        PaymentMethod.CLOUDPAYMENTS,
+        PaymentMethod.FREEKASSA,
+        PaymentMethod.KASSA_AI,
+        PaymentMethod.RIOPAY,
+    ):
         payment_url = getattr(payment, 'payment_url', None) or payment_url
 
     return payment_url
@@ -1013,6 +1094,7 @@ async def get_latest_payment_by_method(
         MulenPayPayment,
         Pal24Payment,
         PlategaPayment,
+        RioPayPayment,
         WataPayment,
         YooKassaPayment,
     )
@@ -1028,6 +1110,7 @@ async def get_latest_payment_by_method(
         PaymentMethod.CLOUDPAYMENTS: CloudPaymentsPayment,
         PaymentMethod.FREEKASSA: FreekassaPayment,
         PaymentMethod.KASSA_AI: KassaAiPayment,
+        PaymentMethod.RIOPAY: RioPayPayment,
     }
 
     model = model_map.get(payment_method)
@@ -1149,7 +1232,7 @@ async def check_payment_status(
     old_is_paid = record.is_paid
 
     # Run manual check
-    bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = create_bot()
     try:
         payment_service = PaymentService(bot=bot)
         updated = await run_manual_check(db, payment_method, payment_id, payment_service)

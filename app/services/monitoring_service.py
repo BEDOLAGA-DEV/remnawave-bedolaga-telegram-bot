@@ -1,4 +1,5 @@
 import asyncio
+import html
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from app.database.crud.subscription import (
     get_expired_subscriptions,
     get_expiring_subscriptions,
     get_subscriptions_for_autopay,
+    reactivate_subscription,
 )
 from app.database.crud.user import (
     cleanup_expired_promo_offer_discounts,
@@ -47,7 +49,6 @@ from app.database.models import (
 from app.external.remnawave_api import (
     RemnaWaveAPIError,
     RemnaWaveUser,
-    TrafficLimitStrategy,
     UserStatus as RemnaWaveUserStatus,
 )
 from app.localization.texts import get_texts
@@ -56,7 +57,7 @@ from app.services.notification_delivery_service import (
 )
 from app.services.notification_settings_service import NotificationSettingsService
 from app.services.promo_offer_service import promo_offer_service
-from app.services.subscription_service import SubscriptionService
+from app.services.subscription_service import SubscriptionService, get_traffic_reset_strategy
 from app.utils.cache import cache
 from app.utils.message_patch import caption_exceeds_telegram_limit
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
@@ -88,6 +89,8 @@ class MonitoringService:
         self._notified_users: set[str] = set()
         self._last_cleanup = datetime.now(UTC)
         self._sla_task = None
+        # In-memory fallback для cooldown автоплатежей (на случай недоступности Redis)
+        self._autopay_fail_notified_at: dict[int, datetime] = {}
 
     async def _send_message_with_logo(
         self,
@@ -274,8 +277,76 @@ class MonitoringService:
         if (current_time - self._last_cleanup).total_seconds() >= 3600:
             old_count = len(self._notified_users)
             self._notified_users.clear()
+
+            # Чистим просроченные записи cooldown автоплатежей
+            cutoff = current_time - timedelta(seconds=AUTOPAY_INSUFFICIENT_BALANCE_COOLDOWN_SECONDS)
+            expired_ids = [uid for uid, ts in self._autopay_fail_notified_at.items() if ts < cutoff]
+            for uid in expired_ids:
+                del self._autopay_fail_notified_at[uid]
+
             self._last_cleanup = current_time
-            logger.info('🧹 Очищен кеш уведомлений ( записей)', old_count=old_count)
+            logger.info(
+                '🧹 Очищен кеш уведомлений',
+                old_count=old_count,
+                autopay_cooldown_evicted=len(expired_ids),
+                autopay_cooldown_remaining=len(self._autopay_fail_notified_at),
+            )
+
+    async def _check_autopay_fail_cooldown(self, user_id: int, user_identifier: str) -> bool:
+        """Проверяет, можно ли отправить уведомление об ошибке автоплатежа.
+
+        Использует Redis как primary хранилище cooldown, с in-memory fallback.
+        Returns True если уведомление можно отправить.
+        """
+        # 1. In-memory fallback (работает даже без Redis)
+        last_notified = self._autopay_fail_notified_at.get(user_id)
+        if last_notified:
+            elapsed = (datetime.now(UTC) - last_notified).total_seconds()
+            if elapsed < AUTOPAY_INSUFFICIENT_BALANCE_COOLDOWN_SECONDS:
+                logger.debug(
+                    'Пропуск уведомления об ошибке автоплатежа — in-memory cooldown активен',
+                    user_identifier=user_identifier,
+                    elapsed_seconds=int(elapsed),
+                )
+                return False
+
+        # 2. Redis check (если доступен)
+        cooldown_key = f'autopay_insufficient_balance_notified:{user_id}'
+        try:
+            if await cache.exists(cooldown_key):
+                logger.debug(
+                    'Пропуск уведомления об ошибке автоплатежа — Redis cooldown активен',
+                    user_identifier=user_identifier,
+                )
+                return False
+        except Exception as redis_err:
+            logger.warning(
+                'Ошибка проверки cooldown в Redis, используем in-memory fallback',
+                user_identifier=user_identifier,
+                redis_err=redis_err,
+            )
+
+        return True
+
+    async def _set_autopay_fail_cooldown(self, user_id: int, user_identifier: str) -> None:
+        """Устанавливает cooldown после отправки уведомления об ошибке автоплатежа."""
+        # In-memory (всегда)
+        self._autopay_fail_notified_at[user_id] = datetime.now(UTC)
+
+        # Redis (если доступен)
+        cooldown_key = f'autopay_insufficient_balance_notified:{user_id}'
+        try:
+            await cache.set(
+                cooldown_key,
+                1,
+                expire=AUTOPAY_INSUFFICIENT_BALANCE_COOLDOWN_SECONDS,
+            )
+        except Exception as redis_err:
+            logger.warning(
+                'Не удалось установить cooldown в Redis, in-memory fallback активен',
+                user_identifier=user_identifier,
+                redis_err=redis_err,
+            )
 
     async def _check_expired_subscriptions(self, db: AsyncSession):
         try:
@@ -292,11 +363,14 @@ class MonitoringService:
 
                 from app.database.crud.subscription import expire_subscription
 
+                # Capture tariff name before expire_subscription's db.refresh() expires the relationship
+                _tariff_name = subscription.tariff.name if getattr(subscription, 'tariff', None) else None
+
                 await expire_subscription(db, subscription)
 
                 user = await get_user_by_id(db, subscription.user_id)
                 if user and self.bot:
-                    await self._send_subscription_expired_notification(user)
+                    await self._send_subscription_expired_notification(user, subscription, tariff_name=_tariff_name)
 
                 logger.info(
                     "🔴 Подписка пользователя истекла и статус изменен на 'expired'", user_id=subscription.user_id
@@ -325,7 +399,14 @@ class MonitoringService:
                 return None
 
             user = await get_user_by_id(db, subscription.user_id)
-            if not user or not user.remnawave_uuid:
+            remnawave_uuid = (
+                subscription.remnawave_uuid
+                if settings.is_multi_tariff_enabled() and getattr(subscription, 'remnawave_uuid', None)
+                else user.remnawave_uuid
+                if user
+                else None
+            )
+            if not user or not remnawave_uuid:
                 logger.error('RemnaWave UUID не найден для пользователя', user_id=subscription.user_id)
                 return None
 
@@ -376,11 +457,13 @@ class MonitoringService:
                 hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
 
                 update_kwargs = dict(
-                    uuid=user.remnawave_uuid,
-                    status=RemnaWaveUserStatus.ACTIVE if is_active else RemnaWaveUserStatus.EXPIRED,
-                    expire_at=subscription.end_date,
+                    uuid=remnawave_uuid,
+                    status=RemnaWaveUserStatus.ACTIVE if is_active else RemnaWaveUserStatus.DISABLED,
+                    expire_at=subscription.end_date
+                    if is_active
+                    else max(subscription.end_date, current_time + timedelta(minutes=1)),
                     traffic_limit_bytes=self._gb_to_bytes(subscription.traffic_limit_gb),
-                    traffic_limit_strategy=TrafficLimitStrategy.MONTH,
+                    traffic_limit_strategy=get_traffic_reset_strategy(subscription.tariff),
                     description=settings.format_remnawave_user_description(
                         full_name=user.full_name, username=user.username, telegram_id=user.telegram_id
                     ),
@@ -404,7 +487,7 @@ class MonitoringService:
                 status_text = 'активным' if is_active else 'истёкшим'
                 logger.info(
                     '✅ Обновлен RemnaWave пользователь со статусом',
-                    remnawave_uuid=user.remnawave_uuid,
+                    remnawave_uuid=remnawave_uuid,
                     status_text=status_text,
                 )
                 return updated_user
@@ -439,13 +522,13 @@ class MonitoringService:
                     if not user:
                         continue
 
-                    # Use user.id for key to support both Telegram and email users
-                    user_key = f'user_{user.id}_today'
+                    # Use user.id + subscription.id for key to support multiple subscriptions per user
+                    sub_key = f'user_{user.id}_sub_{subscription.id}_today'
                     user_identifier = user.telegram_id or f'email:{user.id}'
 
                     if (
                         await notification_sent(db, user.id, subscription.id, 'expiring', days)
-                        or user_key in all_processed_users
+                        or sub_key in all_processed_users
                     ):
                         logger.debug(
                             'Уведомление уже отправлено, пропускаем',
@@ -460,7 +543,7 @@ class MonitoringService:
                     for other_days in warning_days:
                         if other_days < days:
                             other_subs = await self._get_expiring_paid_subscriptions(db, other_days)
-                            if any(s.user_id == user.id for s in other_subs):
+                            if any(s.id == subscription.id for s in other_subs):
                                 should_send = False
                                 logger.debug(
                                     '🎯 Пропускаем уведомление на дней для пользователя есть более срочное на дней',
@@ -482,7 +565,7 @@ class MonitoringService:
                         )
                         if success:
                             await record_notification(db, user.id, subscription.id, 'expiring', days)
-                            all_processed_users.add(user_key)
+                            all_processed_users.add(sub_key)
                             sent_count += 1
                             logger.info(
                                 '✅ Email-пользователю отправлено уведомление об истечении подписки через дней',
@@ -497,7 +580,7 @@ class MonitoringService:
                         )
                         if success:
                             await record_notification(db, user.id, subscription.id, 'expiring', days)
-                            all_processed_users.add(user_key)
+                            all_processed_users.add(sub_key)
                             sent_count += 1
                             logger.info(
                                 '✅ Пользователю отправлено уведомление об истечении подписки через дней',
@@ -528,6 +611,7 @@ class MonitoringService:
                 select(Subscription)
                 .join(Subscription.user)
                 .options(
+                    selectinload(Subscription.tariff),
                     selectinload(Subscription.user).selectinload(User.promo_group),
                     selectinload(Subscription.user)
                     .selectinload(User.user_promo_groups)
@@ -583,13 +667,9 @@ class MonitoringService:
         When CHANNEL_REQUIRED_FOR_ALL is True, checks ALL active subscriptions
         (not just trials). Otherwise only checks trial subscriptions.
         """
-        from app.database.crud.subscription import is_active_paid_subscription, is_recently_updated_by_webhook
+        from app.database.crud.subscription import is_recently_updated_by_webhook
 
         if not settings.CHANNEL_IS_REQUIRED_SUB:
-            return
-
-        if not settings.CHANNEL_DISABLE_TRIAL_ON_UNSUBSCRIBE and not settings.CHANNEL_REQUIRED_FOR_ALL:
-            logger.debug('Channel unsubscribe check disabled')
             return
 
         if not self.bot:
@@ -603,6 +683,14 @@ class MonitoringService:
         channels = await channel_subscription_service.get_required_channels()
         if not channels:
             return
+
+        # When no channel has any disable-on-leave rule, skip deactivation but
+        # still run reactivation to restore orphaned DISABLED subscriptions
+        # (e.g., admin turned off disable flags after subscriptions were already disabled).
+        has_any_disable_rule = any(
+            ch.get('disable_trial_on_leave', True) or ch.get('disable_paid_on_leave', False) for ch in channels
+        )
+        skip_deactivation = not has_any_disable_rule and not settings.CHANNEL_REQUIRED_FOR_ALL
 
         # Ensure bot is set on service
         if not channel_subscription_service.bot:
@@ -621,9 +709,13 @@ class MonitoringService:
             last_id = 0
 
             # Build the trial/all filter based on CHANNEL_REQUIRED_FOR_ALL setting
+            # Also include paid subs if any channel has disable_paid_on_leave=True,
+            # so monitoring can reconcile missed real-time events for paid users.
             from sqlalchemy import true as sa_true
 
-            is_trial_filter = sa_true() if settings.CHANNEL_REQUIRED_FOR_ALL else Subscription.is_trial.is_(True)
+            has_paid_disable_rule = any(ch.get('disable_paid_on_leave', False) for ch in channels)
+            include_all = settings.CHANNEL_REQUIRED_FOR_ALL or has_paid_disable_rule
+            is_trial_filter = sa_true() if include_all else Subscription.is_trial.is_(True)
 
             while True:
                 # Fresh session per batch to avoid long-running connections
@@ -664,6 +756,10 @@ class MonitoringService:
                         if not user or not user.telegram_id:
                             continue
 
+                        # Skip admins -- consistent with channel_member.py and channel_checker.py
+                        if settings.is_admin(user.telegram_id):
+                            continue
+
                         # Existing guard: skip if recently updated by webhook
                         if is_recently_updated_by_webhook(subscription):
                             logger.debug(
@@ -676,6 +772,7 @@ class MonitoringService:
 
                         # Rate-limited check for ALL channels
                         all_subscribed = True
+                        unsubscribed_channels: list[dict] = []
                         for ch in channels:
                             is_member = await channel_subscription_service._rate_limited_check(
                                 user.telegram_id, ch['channel_id']
@@ -686,14 +783,22 @@ class MonitoringService:
 
                             if not is_member:
                                 all_subscribed = False
+                                unsubscribed_channels.append(ch)
 
                         # DEACTIVATE: was active, now not subscribed to all
                         if subscription.status == SubscriptionStatus.ACTIVE.value and not all_subscribed:
-                            # Guard: always skip paid subscriptions (user paid money)
-                            if is_active_paid_subscription(subscription):
+                            if skip_deactivation:
                                 continue
 
-                            subscription = await deactivate_subscription(batch_db, subscription)
+                            # Respect per-channel disable_trial_on_leave / disable_paid_on_leave settings
+                            should_disable = any(
+                                channel_subscription_service.should_disable_subscription(ch, subscription.is_trial)
+                                for ch in unsubscribed_channels
+                            )
+                            if not should_disable:
+                                continue
+
+                            subscription = await deactivate_subscription(batch_db, subscription, commit=False)
                             disabled_count += 1
                             logger.info(
                                 'Subscription deactivated (channel unsubscribe)',
@@ -702,13 +807,18 @@ class MonitoringService:
                                 is_trial=subscription.is_trial,
                             )
 
-                            if user.remnawave_uuid:
+                            panel_uuid = (
+                                subscription.remnawave_uuid
+                                if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+                                else user.remnawave_uuid
+                            )
+                            if panel_uuid:
                                 try:
-                                    await self.subscription_service.disable_remnawave_user(user.remnawave_uuid)
+                                    await self.subscription_service.disable_remnawave_user(panel_uuid)
                                 except Exception as api_error:
                                     logger.error(
                                         'Failed to disable RemnaWave user',
-                                        remnawave_uuid=user.remnawave_uuid,
+                                        remnawave_uuid=panel_uuid,
                                         api_error=api_error,
                                     )
 
@@ -726,6 +836,7 @@ class MonitoringService:
                                             user.id,
                                             subscription.id,
                                             'trial_channel_unsubscribed',
+                                            commit=False,
                                         )
 
                         # REACTIVATE: was disabled, now subscribed to all
@@ -759,10 +870,12 @@ class MonitoringService:
                                 )
                                 continue
 
-                            subscription.status = SubscriptionStatus.ACTIVE.value
-                            subscription.updated_at = datetime.now(UTC)
-                            restored_count += 1
+                            subscription = await reactivate_subscription(batch_db, subscription, commit=False)
+                            if subscription.status != SubscriptionStatus.ACTIVE.value:
+                                # reactivate_subscription silently skipped (expired or wrong status)
+                                continue
 
+                            restored_count += 1
                             logger.info(
                                 'Subscription restored (channel resubscribe)',
                                 telegram_id=user.telegram_id,
@@ -771,9 +884,17 @@ class MonitoringService:
                             )
 
                             try:
-                                if user.remnawave_uuid:
-                                    await self.subscription_service.update_remnawave_user(batch_db, subscription)
+                                panel_uuid_restore = (
+                                    subscription.remnawave_uuid
+                                    if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+                                    else user.remnawave_uuid
+                                )
+                                if panel_uuid_restore:
+                                    await self.subscription_service.enable_remnawave_user(panel_uuid_restore)
                                 else:
+                                    # create_remnawave_user calls db.commit() internally --
+                                    # flush accumulated batch state first to preserve atomicity.
+                                    await batch_db.commit()
                                     await self.subscription_service.create_remnawave_user(batch_db, subscription)
                             except Exception as api_error:
                                 logger.error(
@@ -786,6 +907,7 @@ class MonitoringService:
                                 batch_db,
                                 subscription.id,
                                 'trial_channel_unsubscribed',
+                                commit=False,
                             )
 
                     # Commit all changes for this batch
@@ -1022,8 +1144,36 @@ class MonitoringService:
                     )
                     continue
 
+                # Skip classic subscriptions (tariff_id=NULL) when tariff mode is active
+                if settings.is_tariffs_mode() and not sub.tariff_id:
+                    logger.debug(
+                        'Пропускаем классическую подписку без тарифа в autopay (tariff mode)',
+                        sub_id=sub.id,
+                        user_id=sub.user_id,
+                    )
+                    # Notify user once that autopay won't work without a tariff
+                    autopay_legacy_key = f'autopay_legacy_notified:{sub.user_id}'
+                    try:
+                        if not await cache.exists(autopay_legacy_key):
+                            user = sub.user
+                            if user and user.telegram_id and self.bot:
+                                await self.bot.send_message(
+                                    chat_id=user.telegram_id,
+                                    text=(
+                                        '⚠️ <b>Автоплатёж приостановлен</b>\n\n'
+                                        'Ваша подписка была создана до введения тарифов. '
+                                        'Для работы автоплатежа необходимо выбрать тариф.\n\n'
+                                        'Перейдите в раздел «Моя подписка» → «Продлить», чтобы выбрать тариф.'
+                                    ),
+                                    parse_mode='HTML',
+                                )
+                            await cache.set(autopay_legacy_key, 1, expire=86400 * 7)
+                    except Exception as notify_err:
+                        logger.debug('Не удалось уведомить о пропуске autopay для legacy подписки', error=notify_err)
+                    continue
+
                 days_before_expiry = (sub.end_date - current_time).days
-                if days_before_expiry <= min(sub.autopay_days_before, 3):
+                if days_before_expiry <= min(sub.autopay_days_before or 3, 3):
                     autopay_subscriptions.append(sub)
 
             processed_count = 0
@@ -1162,7 +1312,9 @@ class MonitoringService:
 
                         # Send notification via appropriate channel
                         if user.telegram_id and self.bot:
-                            await self._send_autopay_success_notification(user, charge_amount, autopay_period)
+                            await self._send_autopay_success_notification(
+                                user, charge_amount, autopay_period, subscription=subscription
+                            )
                         elif not user.telegram_id:
                             # Email-only user - use notification delivery service
                             await notification_delivery_service.notify_autopay_success(
@@ -1181,61 +1333,34 @@ class MonitoringService:
                         )
                     else:
                         failed_count += 1
-                        if user.telegram_id and self.bot:
-                            await self._send_autopay_failed_notification(user, user.balance_kopeks, charge_amount)
-                        elif not user.telegram_id:
-                            await notification_delivery_service.notify_autopay_failed(
-                                user=user,
-                                reason='Ошибка списания средств',
-                            )
+                        if await self._check_autopay_fail_cooldown(user.id, user_identifier):
+                            if user.telegram_id and self.bot:
+                                await self._send_autopay_failed_notification(
+                                    user, user.balance_kopeks, charge_amount, subscription=subscription
+                                )
+                            elif not user.telegram_id:
+                                await notification_delivery_service.notify_autopay_failed(
+                                    user=user,
+                                    reason='Ошибка списания средств',
+                                )
+                            await self._set_autopay_fail_cooldown(user.id, user_identifier)
                         logger.warning(
                             '💳 Ошибка списания средств для автопродления пользователя', user_identifier=user_identifier
                         )
                 else:
                     failed_count += 1
 
-                    # Проверяем кулдаун уведомления через Redis, чтобы не спамить
-                    # при каждом срабатывании мониторинга
-                    cooldown_key = f'autopay_insufficient_balance_notified:{user.id}'
-                    should_notify = True
-
-                    try:
-                        if await cache.exists(cooldown_key):
-                            should_notify = False
-                            logger.debug(
-                                '💳 Пропуск уведомления о недостаточном балансе для пользователя — кулдаун активен',
-                                user_identifier=user_identifier,
-                            )
-                    except Exception as redis_err:
-                        # Fallback: если Redis недоступен — отправляем уведомление
-                        logger.warning(
-                            '⚠️ Ошибка проверки кулдауна в Redis для пользователя : . Отправляем уведомление.',
-                            user_identifier=user_identifier,
-                            redis_err=redis_err,
-                        )
-
-                    if should_notify:
+                    if await self._check_autopay_fail_cooldown(user.id, user_identifier):
                         if user.telegram_id and self.bot:
-                            await self._send_autopay_failed_notification(user, user.balance_kopeks, charge_amount)
+                            await self._send_autopay_failed_notification(
+                                user, user.balance_kopeks, charge_amount, subscription=subscription
+                            )
                         elif not user.telegram_id:
                             await notification_delivery_service.notify_autopay_failed(
                                 user=user,
                                 reason='Недостаточно средств на балансе',
                             )
-
-                        # Ставим ключ кулдауна после отправки
-                        try:
-                            await cache.set(
-                                cooldown_key,
-                                1,
-                                expire=AUTOPAY_INSUFFICIENT_BALANCE_COOLDOWN_SECONDS,
-                            )
-                        except Exception as redis_err:
-                            logger.warning(
-                                '⚠️ Не удалось установить кулдаун в Redis для пользователя',
-                                user_identifier=user_identifier,
-                                redis_err=redis_err,
-                            )
+                        await self._set_autopay_fail_cooldown(user.id, user_identifier)
 
                     logger.warning(
                         '💳 Недостаточно средств для автопродления у пользователя', user_identifier=user_identifier
@@ -1252,10 +1377,18 @@ class MonitoringService:
         except Exception as e:
             logger.error('Ошибка обработки автоплатежей', error=e)
 
-    async def _send_subscription_expired_notification(self, user: User) -> bool:
+    async def _send_subscription_expired_notification(
+        self, user: User, subscription: Subscription, *, tariff_name: str | None = None
+    ) -> bool:
         try:
-            message = """
-⛔ <b>Подписка истекла</b>
+            tariff_label = ''
+            if settings.is_multi_tariff_enabled():
+                if tariff_name:
+                    tariff_label = f' «{tariff_name}»'
+                elif hasattr(subscription, 'tariff') and subscription.tariff:
+                    tariff_label = f' «{subscription.tariff.name}»'
+            message = f"""
+⛔ <b>Подписка{tariff_label} истекла</b>
 
 Ваша подписка истекла. Для восстановления доступа продлите подписку.
 
@@ -1264,9 +1397,10 @@ class MonitoringService:
 
             from aiogram.types import InlineKeyboardMarkup
 
+            extend_callback = f'se:{subscription.id}' if settings.is_multi_tariff_enabled() else 'subscription_extend'
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [build_miniapp_or_callback_button(text='💎 Купить подписку', callback_data='menu_buy')],
+                    [build_miniapp_or_callback_button(text='💎 Продлить подписку', callback_data=extend_callback)],
                     [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='balance_topup')],
                 ]
             )
@@ -1338,9 +1472,13 @@ class MonitoringService:
                     )
 
             end_date = format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M')
+            # Add tariff name for multi-subscription clarity
+            tariff_label = ''
+            if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
+                tariff_label = f' «{subscription.tariff.name}»'
             message = texts.t(
                 'SUBSCRIPTION_EXPIRING_PAID',
-                '\n⚠️ <b>Подписка истекает через {days_text}!</b>\n\n'
+                '\n⚠️ <b>Подписка{tariff_label} истекает через {days_text}!</b>\n\n'
                 'Ваша платная подписка истекает {end_date}.\n\n'
                 '💳 <b>Автоплатеж:</b> {autopay_status}\n\n'
                 '{action_text}\n',
@@ -1349,19 +1487,32 @@ class MonitoringService:
                 end_date=end_date,
                 autopay_status=autopay_status,
                 action_text=action_text,
+                tariff_label=tariff_label,
             )
 
             from aiogram.types import InlineKeyboardMarkup
 
+            extend_callback = f'se:{subscription.id}' if settings.is_multi_tariff_enabled() else 'subscription_extend'
+            sub_btn_text = texts.t(
+                'BTN_MY_SUBSCRIPTIONS' if settings.is_multi_tariff_enabled() else 'BTN_MY_SUBSCRIPTION',
+                '📱 Мои подписки' if settings.is_multi_tariff_enabled() else '📱 Моя подписка',
+            )
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         build_miniapp_or_callback_button(
-                            text='⏰ Продлить подписку', callback_data='subscription_extend'
+                            text=texts.t('BTN_RENEW_SUBSCRIPTION', '⏰ Продлить подписку'),
+                            callback_data=extend_callback,
+                            cabinet_path='/subscription',
                         )
                     ],
-                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='balance_topup')],
-                    [build_miniapp_or_callback_button(text='📱 Моя подписка', callback_data='menu_subscription')],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('BTN_TOPUP_BALANCE', '💳 Пополнить баланс'),
+                            callback_data='balance_topup',
+                        )
+                    ],
+                    [build_miniapp_or_callback_button(text=sub_btn_text, callback_data='menu_subscription')],
                 ]
             )
 
@@ -1397,8 +1548,11 @@ class MonitoringService:
         try:
             get_texts(user.language)
 
-            message = """
-🎁 <b>Тестовая подписка скоро закончится!</b>
+            tariff_label = ''
+            if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
+                tariff_label = f' «{subscription.tariff.name}»'
+            message = f"""
+🎁 <b>Тестовая подписка{tariff_label} скоро закончится!</b>
 
 Ваша тестовая подписка истекает через 2 часа.
 
@@ -1524,26 +1678,32 @@ class MonitoringService:
     async def _send_expired_day1_notification(self, user: User, subscription: Subscription) -> bool:
         try:
             texts = get_texts(user.language)
+            tariff_label = ''
+            if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
+                tariff_label = f' «{subscription.tariff.name}»'
             template = texts.get(
                 'SUBSCRIPTION_EXPIRED_1D',
                 (
-                    '⛔ <b>Подписка закончилась</b>\n\n'
+                    '⛔ <b>Подписка{tariff_label} закончилась</b>\n\n'
                     'Доступ был отключён {end_date}. Продлите подписку, чтобы вернуться в сервис.'
                 ),
             )
             message = template.format(
                 end_date=format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M'),
                 price=settings.format_price(settings.PRICE_30_DAYS),
+                tariff_label=tariff_label,
             )
 
             from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+            extend_callback = f'se:{subscription.id}' if settings.is_multi_tariff_enabled() else 'subscription_extend'
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         build_miniapp_or_callback_button(
                             text=texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                            callback_data='subscription_extend',
+                            callback_data=extend_callback,
                         )
                     ],
                     [
@@ -1601,11 +1761,15 @@ class MonitoringService:
         try:
             texts = get_texts(user.language)
 
+            tariff_label = ''
+            if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
+                tariff_label = f' «{subscription.tariff.name}»'
+
             if wave == 'second':
                 template = texts.get(
                     'SUBSCRIPTION_EXPIRED_SECOND_WAVE',
                     (
-                        '🔥 <b>Скидка {percent}% на продление</b>\n\n'
+                        '🔥 <b>Скидка {percent}% на продление{tariff_label}</b>\n\n'
                         'Активируйте предложение, чтобы получить дополнительную скидку. '
                         'Она суммируется с вашей промогруппой и действует до {expires_at}.'
                     ),
@@ -1614,7 +1778,7 @@ class MonitoringService:
                 template = texts.get(
                     'SUBSCRIPTION_EXPIRED_THIRD_WAVE',
                     (
-                        '🎁 <b>Индивидуальная скидка {percent}%</b>\n\n'
+                        '🎁 <b>Индивидуальная скидка {percent}%{tariff_label}</b>\n\n'
                         'Прошло {trigger_days} дней без подписки — возвращайтесь и активируйте дополнительную скидку. '
                         'Она суммируется с промогруппой и действует до {expires_at}.'
                     ),
@@ -1624,9 +1788,12 @@ class MonitoringService:
                 percent=percent,
                 expires_at=format_local_datetime(expires_at, '%d.%m.%Y %H:%M'),
                 trigger_days=trigger_days or '',
+                tariff_label=tariff_label,
             )
 
             from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+            extend_callback = f'se:{subscription.id}' if settings.is_multi_tariff_enabled() else 'subscription_extend'
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
@@ -1638,7 +1805,7 @@ class MonitoringService:
                     [
                         build_miniapp_or_callback_button(
                             text=texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                            callback_data='subscription_extend',
+                            callback_data=extend_callback,
                         )
                     ],
                     [
@@ -1679,10 +1846,22 @@ class MonitoringService:
             logger.error('Ошибка отправки скидочного уведомления пользователю', telegram_id=user.telegram_id, e=e)
             return False
 
-    async def _send_autopay_success_notification(self, user: User, amount: int, days: int):
+    async def _send_autopay_success_notification(
+        self, user: User, amount: int, days: int, *, subscription: Subscription | None = None
+    ):
         try:
             texts = get_texts(user.language)
+            tariff_label = ''
+            if (
+                settings.is_multi_tariff_enabled()
+                and subscription
+                and hasattr(subscription, 'tariff')
+                and subscription.tariff
+            ):
+                tariff_label = f' «{subscription.tariff.name}»'
             message = texts.AUTOPAY_SUCCESS.format(days=days, amount=settings.format_price(amount))
+            if tariff_label:
+                message += f'\n📦 Тариф:{tariff_label}'
             await self._send_message_with_logo(
                 chat_id=user.telegram_id,
                 text=message,
@@ -1702,12 +1881,21 @@ class MonitoringService:
         except Exception as e:
             logger.error('Ошибка отправки уведомления об автоплатеже пользователю', telegram_id=user.telegram_id, e=e)
 
-    async def _send_autopay_failed_notification(self, user: User, balance: int, required: int):
+    async def _send_autopay_failed_notification(
+        self, user: User, balance: int, required: int, *, subscription: Subscription | None = None
+    ):
         try:
             texts = get_texts(user.language)
             message = texts.AUTOPAY_FAILED.format(
                 balance=settings.format_price(balance), required=settings.format_price(required)
             )
+            if (
+                settings.is_multi_tariff_enabled()
+                and subscription
+                and hasattr(subscription, 'tariff')
+                and subscription.tariff
+            ):
+                message += f'\n📦 Тариф: «{subscription.tariff.name}»'
 
             from aiogram.types import InlineKeyboardMarkup
 
@@ -1742,18 +1930,35 @@ class MonitoringService:
             )
 
     async def _retry_stuck_guest_purchases(self, db: AsyncSession):
-        try:
-            from app.services.guest_purchase_service import retry_stuck_paid_purchases, retry_stuck_pending_activation
+        from app.services.guest_purchase_service import (
+            recover_stuck_pending_purchases,
+            retry_stuck_paid_purchases,
+            retry_stuck_pending_activation,
+        )
 
+        # Phase 1: Recover PENDING purchases where provider payment already succeeded
+        try:
+            recovered = await recover_stuck_pending_purchases(db, stale_minutes=10, limit=10)
+            if recovered:
+                logger.info('Recovered stuck PENDING purchases', recovered=recovered)
+        except Exception:
+            logger.error('Error recovering stuck PENDING guest purchases', exc_info=True)
+
+        # Phase 2: Retry fulfillment for purchases in PAID status
+        try:
             retried = await retry_stuck_paid_purchases(db, stale_minutes=5, limit=10)
             if retried:
                 logger.info('Retried stuck guest purchases', retried=retried)
+        except Exception:
+            logger.error('Error retrying stuck PAID guest purchases', exc_info=True)
 
+        # Phase 3: Retry activation for purchases in PENDING_ACTIVATION status
+        try:
             retried_pa = await retry_stuck_pending_activation(db, stale_minutes=10, limit=10)
             if retried_pa:
                 logger.info('Retried stuck pending_activation purchases', retried=retried_pa)
         except Exception:
-            logger.error('Error retrying stuck guest purchases', exc_info=True)
+            logger.error('Error retrying stuck PENDING_ACTIVATION guest purchases', exc_info=True)
 
     async def _cleanup_inactive_users(self, db: AsyncSession):
         try:
@@ -1765,7 +1970,9 @@ class MonitoringService:
             deleted_count = 0
 
             for user in inactive_users:
-                if not user.subscription or not user.subscription.is_active:
+                # Check if user has ANY active subscription (multi-tariff aware)
+                has_active = any(sub.is_active for sub in (getattr(user, 'subscriptions', None) or []))
+                if not has_active:
                     success = await delete_user(db, user)
                     if success:
                         deleted_count += 1
@@ -1867,9 +2074,12 @@ class MonitoringService:
                         title = title[:57] + '...'
 
                     # Детали пользователя: имя, Telegram ID и username
-                    full_name = ticket.user.full_name if ticket.user else 'Unknown'
+                    full_name = html.escape(ticket.user.full_name or '') if ticket.user else 'Unknown'
                     telegram_id_display = ticket.user.telegram_id if ticket.user else '—'
-                    username_display = (ticket.user.username or 'отсутствует') if ticket.user else 'отсутствует'
+                    username_display = html.escape(
+                        (ticket.user.username or 'отсутствует') if ticket.user else 'отсутствует'
+                    )
+                    safe_title = html.escape(title) if title else '—'
 
                     text = (
                         f'⏰ <b>Ожидание ответа на тикет превышено</b>\n\n'
@@ -1877,7 +2087,7 @@ class MonitoringService:
                         f'👤 <b>Пользователь:</b> {full_name}\n'
                         f'🆔 <b>Telegram ID:</b> <code>{telegram_id_display}</code>\n'
                         f'📱 <b>Username:</b> @{username_display}\n'
-                        f'📝 <b>Заголовок:</b> {title or "—"}\n'
+                        f'📝 <b>Заголовок:</b> {safe_title}\n'
                         f'⏱️ <b>Ожидает ответа:</b> {waited_minutes} мин\n'
                     )
 

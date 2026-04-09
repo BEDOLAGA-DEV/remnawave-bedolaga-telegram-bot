@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import html
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 
@@ -694,11 +695,9 @@ class TrafficMonitoringServiceV2:
                     db_user = await get_user_by_remnawave_uuid(db, violation.user_uuid)
                     if db_user:
                         user_id_display = db_user.telegram_id or db_user.email or f'#{db_user.id}'
-                        user_info = (
-                            f'👤 <b>{db_user.full_name or "Без имени"}</b>\n🆔 ID: <code>{user_id_display}</code>\n'
-                        )
+                        user_info = f'👤 <b>{html.escape(db_user.full_name or "Без имени")}</b>\n🆔 ID: <code>{user_id_display}</code>\n'
                         if db_user.username:
-                            user_info += f'📱 Username: @{db_user.username}\n'
+                            user_info += f'📱 Username: @{html.escape(db_user.username)}\n'
 
                 if violation.check_type == 'fast':
                     check_type_emoji = '⚡'

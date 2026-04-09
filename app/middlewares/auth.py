@@ -212,6 +212,23 @@ class AuthMiddleware(BaseMiddleware):
                             )
                         )
 
+                    # Multi-tariff: sync all per-subscription panel users
+                    if settings.is_multi_tariff_enabled():
+                        description = settings.format_remnawave_user_description(
+                            full_name=db_user.full_name,
+                            username=db_user.username,
+                            telegram_id=db_user.telegram_id,
+                        )
+                        for sub in getattr(db_user, 'subscriptions', None) or []:
+                            if sub.remnawave_uuid and sub.remnawave_uuid != db_user.remnawave_uuid:
+                                asyncio.create_task(
+                                    _refresh_remnawave_description(
+                                        remnawave_uuid=sub.remnawave_uuid,
+                                        description=description,
+                                        telegram_id=db_user.telegram_id,
+                                    )
+                                )
+
                 data['db'] = db
                 data['db_user'] = db_user
                 data['is_admin'] = settings.is_admin(user.id)
@@ -243,8 +260,12 @@ class AuthMiddleware(BaseMiddleware):
                 logger.debug('AuthMiddleware: bot blocked by user, skipping')
                 return None
             except TelegramBadRequest as e:
-                if 'query is too old' in str(e):
+                error_msg = str(e).lower()
+                if 'query is too old' in error_msg:
                     logger.debug('AuthMiddleware: callback query expired, skipping')
+                    return None
+                if 'message is not modified' in error_msg:
+                    logger.debug('AuthMiddleware: message not modified, skipping')
                     return None
                 raise
             except Exception as e:

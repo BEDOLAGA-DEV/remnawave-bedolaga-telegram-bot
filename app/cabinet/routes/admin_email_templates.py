@@ -312,7 +312,7 @@ TEMPLATE_TYPES = [
             'zh': '通过落地页成功付款后发送给买家的邮件',
             'ua': 'Лист покупцю після успішної оплати через лендінг',
         },
-        'context_vars': ['tariff_name', 'period_days', 'cabinet_url'],
+        'context_vars': ['tariff_name', 'period_days', 'cabinet_url', 'cabinet_email', 'cabinet_password'],
     },
     {
         'type': 'guest_activation_required',
@@ -425,6 +425,8 @@ SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
         'tariff_name': 'Premium',
         'period_days': 30,
         'cabinet_url': 'https://example.com/cabinet',
+        'cabinet_email': 'user@example.com',
+        'cabinet_password': 'SecurePass123',
     },
     'guest_activation_required': {
         'tariff_name': 'Premium',
@@ -670,8 +672,8 @@ async def preview_template(
     language = data.language if data.language in AVAILABLE_LANGUAGES else 'ru'
 
     if data.body_html:
-        # Preview custom content wrapped in base template
-        rendered_html = templates_instance._get_base_template(data.body_html, language)
+        # Preview custom content — auto-detects styled vs simple HTML
+        rendered_html = templates_instance._wrap_override_template(data.body_html, language)
         subject = data.subject or notification_type
     else:
         # Preview default template

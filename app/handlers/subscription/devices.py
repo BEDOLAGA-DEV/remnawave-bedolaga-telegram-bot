@@ -2,6 +2,7 @@ import html as html_mod
 from datetime import UTC, datetime
 
 from aiogram import types
+from aiogram.fsm.context import FSMContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,9 +44,22 @@ from .common import (
 from .countries import _get_available_countries
 
 
-async def get_current_devices_detailed(db_user: User) -> dict:
+async def _resolve_subscription(callback, db_user, db, state=None):
+    """Resolve subscription — delegates to shared resolve_subscription_from_context."""
+    from .common import resolve_subscription_from_context
+
+    return await resolve_subscription_from_context(callback, db_user, db, state)
+
+
+def _get_remnawave_uuid(subscription, db_user):
+    """Get remnawave_uuid from subscription (multi-tariff) or user (legacy)."""
+    return getattr(subscription, 'remnawave_uuid', None) or db_user.remnawave_uuid
+
+
+async def get_current_devices_detailed(db_user: User, subscription=None) -> dict:
     try:
-        if not db_user.remnawave_uuid:
+        uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
+        if not uuid:
             return {'count': 0, 'devices': []}
 
         from app.services.remnawave_service import RemnaWaveService
@@ -53,7 +67,7 @@ async def get_current_devices_detailed(db_user: User) -> dict:
         service = RemnaWaveService()
 
         async with service.get_api_client() as api:
-            response = await api._make_request('GET', f'/api/hwid/devices/{db_user.remnawave_uuid}')
+            response = await api._make_request('GET', f'/api/hwid/devices/{uuid}')
 
             if response and 'response' in response:
                 devices_info = response['response']
@@ -114,9 +128,10 @@ async def get_servers_display_names(squad_uuids: list[str]) -> str:
         return f'{len(squad_uuids)} стран'
 
 
-async def get_current_devices_count(db_user: User) -> str:
+async def get_current_devices_count(db_user: User, subscription=None) -> str:
     try:
-        if not db_user.remnawave_uuid:
+        uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
+        if not uuid:
             return '—'
 
         from app.services.remnawave_service import RemnaWaveService
@@ -124,7 +139,7 @@ async def get_current_devices_count(db_user: User) -> str:
         service = RemnaWaveService()
 
         async with service.get_api_client() as api:
-            response = await api._make_request('GET', f'/api/hwid/devices/{db_user.remnawave_uuid}')
+            response = await api._make_request('GET', f'/api/hwid/devices/{uuid}')
 
             if response and 'response' in response:
                 total_devices = response['response'].get('total', 0)
@@ -136,9 +151,13 @@ async def get_current_devices_count(db_user: User) -> str:
         return '—'
 
 
-async def handle_change_devices(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def handle_change_devices(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
     texts = get_texts(db_user.language)
-    subscription = db_user.subscription
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
 
     if not subscription or subscription.is_trial:
         await callback.answer(
@@ -184,29 +203,18 @@ async def handle_change_devices(callback: types.CallbackQuery, db_user: User, db
     if tariff:
         price_per_device = tariff_device_price
         price_text = texts.format_price(price_per_device)
-        tariff_min_devices = getattr(tariff, 'device_limit', 1) or 1
-
-        # Добавляем информацию о минимальном лимите если он больше 1
-        min_devices_info = ''
-        if tariff_min_devices > 1:
-            min_devices_info = texts.t(
-                'CHANGE_DEVICES_MIN_LIMIT_INFO',
-                '\nМинимум для тарифа: {min_devices} устройств\n',
-            ).format(min_devices=tariff_min_devices)
-
         prompt_text = texts.t(
             'CHANGE_DEVICES_PROMPT_TARIFF',
             (
                 '📱 <b>Изменение количества устройств</b>\n\n'
                 'Текущий лимит: {current_devices} устройств\n'
                 'Цена за доп. устройство: {price}/мес\n'
-                '{min_devices_info}'
                 'Выберите новое количество устройств:\n\n'
                 '💡 <b>Важно:</b>\n'
                 '• При увеличении - доплата пропорционально оставшемуся времени\n'
                 '• При уменьшении - возврат средств не производится'
             ),
-        ).format(current_devices=current_devices, price=price_text, min_devices_info=min_devices_info)
+        ).format(current_devices=current_devices, price=price_text)
     else:
         prompt_text = texts.t(
             'CHANGE_DEVICES_PROMPT',
@@ -220,6 +228,9 @@ async def handle_change_devices(callback: types.CallbackQuery, db_user: User, db
             ),
         ).format(current_devices=current_devices)
 
+    # В мульти-тарифе кнопка "назад" ведёт к детальному виду подписки
+    back_cb = f'sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'subscription_settings'
+
     await callback.message.edit_text(
         prompt_text,
         reply_markup=get_change_devices_keyboard(
@@ -228,17 +239,25 @@ async def handle_change_devices(callback: types.CallbackQuery, db_user: User, db
             subscription.end_date,
             devices_discount_percent,
             tariff=tariff,
+            back_callback=back_cb,
         ),
-        parse_mode='HTML',
     )
 
     await callback.answer()
 
 
-async def confirm_change_devices(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    new_devices_count = int(callback.data.split('_')[2])
+async def confirm_change_devices(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
     texts = get_texts(db_user.language)
-    subscription = db_user.subscription
+    try:
+        new_devices_count = int(callback.data.split('_')[2])
+    except (ValueError, IndexError):
+        await callback.answer(texts.t('INVALID_REQUEST', 'Invalid request'), show_alert=True)
+        return
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
 
     # Проверяем тариф подписки
     tariff = None
@@ -277,7 +296,9 @@ async def confirm_change_devices(callback: types.CallbackQuery, db_user: User, d
 
     # Используем max_device_limit из тарифа если есть, иначе глобальную настройку
     tariff_max_devices = getattr(tariff, 'max_device_limit', None) if tariff else None
-    effective_max = tariff_max_devices or (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None)
+    effective_max = (tariff_max_devices if tariff_max_devices is not None and tariff_max_devices > 0 else None) or (
+        settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None
+    )
     if effective_max and new_devices_count > effective_max:
         await callback.answer(
             texts.t(
@@ -288,14 +309,13 @@ async def confirm_change_devices(callback: types.CallbackQuery, db_user: User, d
         )
         return
 
-    # Проверяем минимальное количество устройств на тарифе
-    tariff_min_devices = (getattr(tariff, 'device_limit', 1) or 1) if tariff else 1
-    if new_devices_count < tariff_min_devices:
+    # Минимум при уменьшении всегда 1 (device_limit тарифа — это "включено при покупке", а не нижняя граница)
+    if new_devices_count < 1:
         await callback.answer(
             texts.t(
                 'DEVICES_MIN_LIMIT_REACHED',
-                '⚠️ Минимальное количество устройств для вашего тарифа: {limit}',
-            ).format(limit=tariff_min_devices),
+                '⚠️ Минимальное количество устройств: {limit}',
+            ).format(limit=1),
             show_alert=True,
         )
         return
@@ -316,49 +336,25 @@ async def confirm_change_devices(callback: types.CallbackQuery, db_user: User, d
 
         devices_price_per_month = chargeable_devices * price_per_device
 
-        # Проверяем является ли тариф суточным
-        is_daily_tariff = tariff and getattr(tariff, 'is_daily', False)
+        # Считаем стоимость по оставшимся дням подписки
+        now = datetime.now(UTC)
+        days_left = max(1, (subscription.end_date - now).days)
+        period_hint_days = days_left
 
-        if is_daily_tariff:
-            # Для суточных тарифов считаем по дням (как в кабинете)
-            now = datetime.now(UTC)
-            days_left = max(1, (subscription.end_date - now).days)
-            period_hint_days = days_left
-
-            devices_discount_percent = PricingEngine.get_addon_discount_percent(
-                db_user,
-                'devices',
-                period_hint_days,
-            )
-            discounted_per_month, discount_per_month = apply_percentage_discount(
-                devices_price_per_month,
-                devices_discount_percent,
-            )
-            # Цена = месячная_цена * days_left / 30
-            price = int(discounted_per_month * days_left / 30)
-            price = max(100, price)  # Минимум 1 рубль
-            total_discount = int(discount_per_month * days_left / 30)
-            period_label = f'{days_left} дн.' if days_left > 1 else '1 день'
-        else:
-            # Для обычных тарифов - по дням (как в кабинете)
-            now = datetime.now(UTC)
-            days_left = max(1, (subscription.end_date - now).days)
-            period_hint_days = days_left
-
-            devices_discount_percent = PricingEngine.get_addon_discount_percent(
-                db_user,
-                'devices',
-                period_hint_days,
-            )
-            discounted_per_month, discount_per_month = apply_percentage_discount(
-                devices_price_per_month,
-                devices_discount_percent,
-            )
-            # Цена = месячная_цена * days_left / 30
-            price = int(discounted_per_month * days_left / 30)
-            price = max(100, price)  # Минимум 1 рубль
-            total_discount = int(discount_per_month * days_left / 30)
-            period_label = f'{days_left} дн.' if days_left > 1 else '1 день'
+        devices_discount_percent = PricingEngine.get_addon_discount_percent(
+            db_user,
+            'devices',
+            period_hint_days,
+        )
+        discounted_per_month, discount_per_month = apply_percentage_discount(
+            devices_price_per_month,
+            devices_discount_percent,
+        )
+        # Цена = месячная_цена * days_left / 30
+        price = int(discounted_per_month * days_left / 30)
+        price = max(100, price)  # Минимум 1 рубль
+        total_discount = int(discount_per_month * days_left / 30)
+        period_label = f'{days_left} дн.' if days_left > 1 else '1 день'
 
         if price > 0 and db_user.balance_kopeks < price:
             missing_kopeks = price - db_user.balance_kopeks
@@ -440,11 +436,12 @@ async def confirm_change_devices(callback: types.CallbackQuery, db_user: User, d
 
     # Проверяем количество подключённых устройств для предупреждения
     devices_warning = ''
-    if new_devices_count < current_devices and db_user.remnawave_uuid:
+    remnawave_uuid = _get_remnawave_uuid(subscription, db_user)
+    if new_devices_count < current_devices and remnawave_uuid:
         try:
             service = RemnaWaveService()
             async with service.get_api_client() as api:
-                response = await api._make_request('GET', f'/api/hwid/devices/{db_user.remnawave_uuid}')
+                response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
                 if response and 'response' in response:
                     connected_count = response['response'].get('total', 0)
                     if connected_count > new_devices_count:
@@ -482,21 +479,37 @@ async def confirm_change_devices(callback: types.CallbackQuery, db_user: User, d
 
     await callback.message.edit_text(
         confirm_text,
-        reply_markup=get_confirm_change_devices_keyboard(new_devices_count, price, db_user.language),
-        parse_mode='HTML',
+        reply_markup=get_confirm_change_devices_keyboard(
+            new_devices_count,
+            price,
+            db_user.language,
+            back_callback=f'sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'subscription_settings',
+        ),
     )
 
     await callback.answer()
 
 
-async def execute_change_devices(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def execute_change_devices(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
     callback_parts = callback.data.split('_')
-    new_devices_count = int(callback_parts[3])
+    texts = get_texts(db_user.language)
+    try:
+        new_devices_count = int(callback_parts[3])
+    except (ValueError, IndexError):
+        await callback.answer(texts.t('INVALID_REQUEST', 'Invalid request'), show_alert=True)
+        return
 
     db_user = await lock_user_for_pricing(db, db_user.id)
-
-    texts = get_texts(db_user.language)
-    subscription = db_user.subscription
+    # Re-resolve after lock since db_user was refreshed
+    subscription, _ = await _resolve_subscription(callback, db_user, db, state)
+    if not subscription:
+        await callback.answer(
+            texts.t('NO_ACTIVE_SUBSCRIPTION', '⚠️ У вас нет активной подписки'),
+            show_alert=True,
+        )
+        return
     current_devices = subscription.device_limit
 
     # Проверяем тариф подписки
@@ -525,14 +538,13 @@ async def execute_change_devices(callback: types.CallbackQuery, db_user: User, d
     else:
         price_per_device = settings.PRICE_PER_DEVICE
 
-    # Проверяем минимальное количество устройств на тарифе
-    tariff_min_devices = (getattr(tariff, 'device_limit', 1) or 1) if tariff else 1
-    if new_devices_count < tariff_min_devices:
+    # Минимум при уменьшении всегда 1 (device_limit тарифа — это "включено при покупке", а не нижняя граница)
+    if new_devices_count < 1:
         await callback.answer(
             texts.t(
                 'DEVICES_MIN_LIMIT_REACHED',
-                '⚠️ Минимальное количество устройств для вашего тарифа: {limit}',
-            ).format(limit=tariff_min_devices),
+                '⚠️ Минимальное количество устройств: {limit}',
+            ).format(limit=1),
             show_alert=True,
         )
         return
@@ -598,7 +610,9 @@ async def execute_change_devices(callback: types.CallbackQuery, db_user: User, d
         # Re-validate: prevent double-charge and max-limit violation
         if new_devices_count > current_devices:
             tariff_max_recheck = getattr(tariff, 'max_device_limit', None) if tariff else None
-            max_devices = tariff_max_recheck or (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None)
+            max_devices = (
+                tariff_max_recheck if tariff_max_recheck is not None and tariff_max_recheck > 0 else None
+            ) or (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None)
             if max_devices and new_devices_count > max_devices:
                 if price > 0:
                     user_refund = await db.execute(
@@ -646,16 +660,17 @@ async def execute_change_devices(callback: types.CallbackQuery, db_user: User, d
         await subscription_service.update_remnawave_user(db, subscription)
 
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        if db_user.remnawave_uuid and subscription.status == 'active':
-            await subscription_service.enable_remnawave_user(db_user.remnawave_uuid)
+        remnawave_uuid = _get_remnawave_uuid(subscription, db_user)
+        if remnawave_uuid and subscription.status == 'active':
+            await subscription_service.enable_remnawave_user(remnawave_uuid)
 
         # При уменьшении лимита - удалить лишние устройства (последние подключённые)
         devices_reset_count = 0
-        if new_devices_count < current_devices and db_user.remnawave_uuid:
+        if new_devices_count < current_devices and remnawave_uuid:
             try:
                 service = RemnaWaveService()
                 async with service.get_api_client() as api:
-                    response = await api._make_request('GET', f'/api/hwid/devices/{db_user.remnawave_uuid}')
+                    response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
                     if response and 'response' in response:
                         devices_list = response['response'].get('devices', [])
                         connected_count = len(devices_list)
@@ -681,7 +696,7 @@ async def execute_change_devices(callback: types.CallbackQuery, db_user: User, d
                                 device_hwid = device.get('hwid')
                                 if device_hwid:
                                     try:
-                                        delete_data = {'userUuid': db_user.remnawave_uuid, 'hwid': device_hwid}
+                                        delete_data = {'userUuid': remnawave_uuid, 'hwid': device_hwid}
                                         await api._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
                                         devices_reset_count += 1
                                         logger.info('✅ Удалено устройство', device_hwid=device_hwid)
@@ -755,9 +770,13 @@ async def execute_change_devices(callback: types.CallbackQuery, db_user: User, d
     await callback.answer()
 
 
-async def handle_device_management(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def handle_device_management(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
     texts = get_texts(db_user.language)
-    subscription = db_user.subscription
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
 
     if not subscription or subscription.is_trial:
         await callback.answer(
@@ -766,7 +785,8 @@ async def handle_device_management(callback: types.CallbackQuery, db_user: User,
         )
         return
 
-    if not db_user.remnawave_uuid:
+    remnawave_uuid = _get_remnawave_uuid(subscription, db_user)
+    if not remnawave_uuid:
         await callback.answer(
             texts.t('DEVICE_UUID_NOT_FOUND', '❌ UUID пользователя не найден'),
             show_alert=True,
@@ -779,7 +799,7 @@ async def handle_device_management(callback: types.CallbackQuery, db_user: User,
         service = RemnaWaveService()
 
         async with service.get_api_client() as api:
-            response = await api._make_request('GET', f'/api/hwid/devices/{db_user.remnawave_uuid}')
+            response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
 
             if response and 'response' in response:
                 devices_info = response['response']
@@ -794,7 +814,7 @@ async def handle_device_management(callback: types.CallbackQuery, db_user: User,
                     await callback.answer()
                     return
 
-                await show_devices_page(callback, db_user, devices_list, page=1)
+                await show_devices_page(callback, db_user, devices_list, page=1, sub_id=sub_id)
             else:
                 await callback.answer(
                     texts.t(
@@ -817,7 +837,9 @@ async def handle_device_management(callback: types.CallbackQuery, db_user: User,
     await callback.answer()
 
 
-async def show_devices_page(callback: types.CallbackQuery, db_user: User, devices_list: list[dict], page: int = 1):
+async def show_devices_page(
+    callback: types.CallbackQuery, db_user: User, devices_list: list[dict], page: int = 1, sub_id: int | None = None
+):
     texts = get_texts(db_user.language)
     devices_per_page = 5
 
@@ -857,14 +879,20 @@ async def show_devices_page(callback: types.CallbackQuery, db_user: User, device
 
     await callback.message.edit_text(
         devices_text,
-        reply_markup=get_devices_management_keyboard(pagination.items, pagination, db_user.language),
-        parse_mode='HTML',
+        reply_markup=get_devices_management_keyboard(
+            pagination.items,
+            pagination,
+            db_user.language,
+            back_callback=f'sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'subscription_settings',
+        ),
     )
 
 
-async def handle_devices_page(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def handle_devices_page(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
     page = int(callback.data.split('_')[2])
     texts = get_texts(db_user.language)
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    remnawave_uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
 
     try:
         from app.services.remnawave_service import RemnaWaveService
@@ -872,11 +900,11 @@ async def handle_devices_page(callback: types.CallbackQuery, db_user: User, db: 
         service = RemnaWaveService()
 
         async with service.get_api_client() as api:
-            response = await api._make_request('GET', f'/api/hwid/devices/{db_user.remnawave_uuid}')
+            response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
 
             if response and 'response' in response:
                 devices_list = response['response'].get('devices', [])
-                await show_devices_page(callback, db_user, devices_list, page=page)
+                await show_devices_page(callback, db_user, devices_list, page=page, sub_id=sub_id)
             else:
                 await callback.answer(
                     texts.t('DEVICE_FETCH_ERROR', '❌ Ошибка получения устройств'),
@@ -891,8 +919,12 @@ async def handle_devices_page(callback: types.CallbackQuery, db_user: User, db: 
         )
 
 
-async def handle_single_device_reset(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def handle_single_device_reset(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
     texts = get_texts(db_user.language)
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    remnawave_uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
     try:
         callback_parts = callback.data.split('_')
         if len(callback_parts) < 4:
@@ -922,7 +954,7 @@ async def handle_single_device_reset(callback: types.CallbackQuery, db_user: Use
         service = RemnaWaveService()
 
         async with service.get_api_client() as api:
-            response = await api._make_request('GET', f'/api/hwid/devices/{db_user.remnawave_uuid}')
+            response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
 
             if response and 'response' in response:
                 devices_list = response['response'].get('devices', [])
@@ -935,7 +967,7 @@ async def handle_single_device_reset(callback: types.CallbackQuery, db_user: Use
                     device_hwid = device.get('hwid')
 
                     if device_hwid:
-                        delete_data = {'userUuid': db_user.remnawave_uuid, 'hwid': device_hwid}
+                        delete_data = {'userUuid': remnawave_uuid, 'hwid': device_hwid}
 
                         await api._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
 
@@ -951,7 +983,7 @@ async def handle_single_device_reset(callback: types.CallbackQuery, db_user: Use
                             show_alert=True,
                         )
 
-                        updated_response = await api._make_request('GET', f'/api/hwid/devices/{db_user.remnawave_uuid}')
+                        updated_response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
                         if updated_response and 'response' in updated_response:
                             updated_devices = updated_response['response'].get('devices', [])
 
@@ -962,7 +994,7 @@ async def handle_single_device_reset(callback: types.CallbackQuery, db_user: Use
                                 if not updated_pagination.items and page > 1:
                                     page = page - 1
 
-                                await show_devices_page(callback, db_user, updated_devices, page=page)
+                                await show_devices_page(callback, db_user, updated_devices, page=page, sub_id=sub_id)
                             else:
                                 await callback.message.edit_text(
                                     texts.t(
@@ -1004,10 +1036,14 @@ async def handle_single_device_reset(callback: types.CallbackQuery, db_user: Use
         )
 
 
-async def handle_all_devices_reset_from_management(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def handle_all_devices_reset_from_management(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
     texts = get_texts(db_user.language)
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    remnawave_uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
 
-    if not db_user.remnawave_uuid:
+    if not remnawave_uuid:
         await callback.answer(
             texts.t('DEVICE_UUID_NOT_FOUND', '❌ UUID пользователя не найден'),
             show_alert=True,
@@ -1020,7 +1056,7 @@ async def handle_all_devices_reset_from_management(callback: types.CallbackQuery
         service = RemnaWaveService()
 
         async with service.get_api_client() as api:
-            devices_response = await api._make_request('GET', f'/api/hwid/devices/{db_user.remnawave_uuid}')
+            devices_response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
 
             if not devices_response or 'response' not in devices_response:
                 await callback.answer(
@@ -1050,7 +1086,7 @@ async def handle_all_devices_reset_from_management(callback: types.CallbackQuery
                 device_hwid = device.get('hwid')
                 if device_hwid:
                     try:
-                        delete_data = {'userUuid': db_user.remnawave_uuid, 'hwid': device_hwid}
+                        delete_data = {'userUuid': remnawave_uuid, 'hwid': device_hwid}
 
                         await api._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
                         success_count += 1
@@ -1129,10 +1165,12 @@ async def handle_all_devices_reset_from_management(callback: types.CallbackQuery
     await callback.answer()
 
 
-async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
     devices_count = int(callback.data.split('_')[2])
     texts = get_texts(db_user.language)
-    subscription = db_user.subscription
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
 
     # Проверяем тариф подписки
     tariff = None
@@ -1235,7 +1273,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         total_discount=total_discount / 100,
     )
 
-    if db_user.balance_kopeks < price:
+    if price > 0 and db_user.balance_kopeks < price:
         missing_kopeks = price - db_user.balance_kopeks
         required_text = f'{texts.format_price(price)} (за {period_label})'
         message_text = texts.t(
@@ -1332,8 +1370,9 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         await subscription_service.update_remnawave_user(db, subscription)
 
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        if db_user.remnawave_uuid and subscription.status == 'active':
-            await subscription_service.enable_remnawave_user(db_user.remnawave_uuid)
+        remnawave_uuid = _get_remnawave_uuid(subscription, db_user)
+        if remnawave_uuid and subscription.status == 'active':
+            await subscription_service.enable_remnawave_user(remnawave_uuid)
 
         await create_transaction(
             db=db,
@@ -1383,18 +1422,24 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
     await callback.answer()
 
 
-async def handle_reset_devices(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    await handle_device_management(callback, db_user, db)
+async def handle_reset_devices(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    await handle_device_management(callback, db_user, db, state)
 
 
-async def confirm_reset_devices(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    await handle_device_management(callback, db_user, db)
+async def confirm_reset_devices(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    await handle_device_management(callback, db_user, db, state)
 
 
-async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
     device_type = callback.data.split('_')[2]
     texts = get_texts(db_user.language)
-    subscription = db_user.subscription
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
     subscription_link = get_display_subscription_link(subscription)
 
     if not subscription_link:
@@ -1498,6 +1543,7 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
             device_type,
             db_user.language,
             has_other_apps=bool(other_apps),
+            sub_id=sub_id,
         ),
         parse_mode='HTML',
     )
@@ -1532,14 +1578,18 @@ async def handle_app_selection(callback: types.CallbackQuery, db_user: User, db:
     await callback.answer()
 
 
-async def handle_specific_app_guide(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def handle_specific_app_guide(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
     parts = callback.data.split('_', 2)
     if len(parts) < 3:
         await callback.answer('Invalid callback data', show_alert=True)
         return
     _, device_type, app_id = parts
     texts = get_texts(db_user.language)
-    subscription = db_user.subscription
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
 
     subscription_link = get_display_subscription_link(subscription)
 
@@ -1601,14 +1651,19 @@ async def handle_specific_app_guide(callback: types.CallbackQuery, db_user: User
             app,
             device_type,
             db_user.language,
+            sub_id=sub_id,
         ),
         parse_mode='HTML',
     )
     await callback.answer()
 
 
-async def show_device_connection_help(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    subscription = db_user.subscription
+async def show_device_connection_help(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
     subscription_link = get_display_subscription_link(subscription)
 
     if not subscription_link:

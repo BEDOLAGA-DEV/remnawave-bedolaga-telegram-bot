@@ -52,14 +52,17 @@ class _DailyGuard:
 _daily_guard = _DailyGuard()
 
 
-def _build_extend_keyboard(texts) -> InlineKeyboardMarkup:
+def _build_extend_keyboard(texts, subscription_id: int | None = None) -> InlineKeyboardMarkup:
     """Клавиатура с кнопкой продления подписки для уведомлений."""
+    extend_callback = (
+        f'se:{subscription_id}' if settings.is_multi_tariff_enabled() and subscription_id else 'subscription_extend'
+    )
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                    callback_data='subscription_extend',
+                    callback_data=extend_callback,
                 )
             ],
         ]
@@ -277,7 +280,9 @@ async def _process_single_subscription(
         logger.warning('YooKassa сервис не сконфигурирован для рекуррентных платежей')
         return 'skipped'
 
-    description = settings.get_balance_payment_description(topup_amount_kopeks)
+    description = settings.get_balance_payment_description(
+        topup_amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+    )
     metadata = {
         'user_id': str(user.id),
         'user_telegram_id': str(user.telegram_id) if user.telegram_id else '',
@@ -353,11 +358,13 @@ async def _process_single_subscription(
                 texts = get_texts(user.language)
                 payment_status = result.get('status', '')
                 if result.get('paid'):
-                    keyboard = _build_extend_keyboard(texts)
+                    keyboard = _build_extend_keyboard(texts, subscription.id)
                     msg = texts.t(
                         'RECURRENT_TOPUP_SUCCESS',
                         '✅ <b>Автоплатёж выполнен</b>\n\nБаланс пополнен на {amount} для продления подписки.',
                     ).format(amount=settings.format_price(topup_amount_kopeks))
+                    if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
+                        msg += f'\n📦 Тариф: «{subscription.tariff.name}»'
                     await bot.send_message(
                         chat_id=user.telegram_id,
                         text=msg,
@@ -381,11 +388,13 @@ async def _process_single_subscription(
             from app.localization.texts import get_texts
 
             texts = get_texts(user.language)
-            keyboard = _build_extend_keyboard(texts)
+            keyboard = _build_extend_keyboard(texts, subscription.id)
             msg = texts.t(
                 'RECURRENT_TOPUP_FAILED',
                 '❌ <b>Автоплатёж не удался</b>\n\nНе удалось списать {amount} ни с одной сохранённой карты для продления подписки.\n\nПополните баланс вручную, чтобы подписка не прервалась.',
             ).format(amount=settings.format_price(topup_amount_kopeks))
+            if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
+                msg += f'\n📦 Тариф: «{subscription.tariff.name}»'
             await bot.send_message(
                 chat_id=user.telegram_id,
                 text=msg,

@@ -3,6 +3,7 @@
 с анализом на подозрительную активность (отмывание денег).
 """
 
+import html
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -656,7 +657,7 @@ class ReferralWithdrawalService:
         if details.get('suspicious_referrals'):
             text += '\n🚨 <b>Подозрительные рефералы:</b>\n'
             for sr in details['suspicious_referrals'][:5]:
-                text += f'• {sr["name"]}: {sr["deposits_count"]} поп., {sr["deposits_total"] / 100:.0f}₽\n'
+                text += f'• {html.escape(sr["name"])}: {sr["deposits_count"]} поп., {sr["deposits_total"] / 100:.0f}₽\n'
                 text += f'  Флаги: {", ".join(sr["flags"])}\n'
 
         # Источники дохода

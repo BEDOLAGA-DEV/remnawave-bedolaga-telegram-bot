@@ -964,11 +964,10 @@ async def _send_crash_notification_on_error(error: Exception) -> None:
         return
 
     try:
-        from aiogram import Bot
-
+        from app.bot_factory import create_bot
         from app.services.startup_notification_service import send_crash_notification
 
-        bot = Bot(token=settings.BOT_TOKEN)
+        bot = create_bot()
         try:
             traceback_str = traceback.format_exc()
             await send_crash_notification(bot, error, traceback_str)

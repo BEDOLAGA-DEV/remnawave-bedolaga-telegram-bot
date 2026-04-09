@@ -174,6 +174,14 @@ class MulenPayPaymentMixin:
                 )
                 return False
 
+            # Lock payment row immediately to prevent concurrent webhook processing (TOCTOU race)
+            mulenpay_lock_crud = import_module('app.database.crud.mulenpay')
+            locked = await mulenpay_lock_crud.get_mulenpay_payment_by_id_for_update(db, payment.id)
+            if not locked:
+                logger.error('MulenPay: не удалось заблокировать платёж', payment_id=payment.id)
+                return False
+            payment = locked
+
             metadata = dict(getattr(payment, 'metadata_json', {}) or {})
             invoice_message = metadata.get('invoice_message') or {}
 
@@ -199,11 +207,9 @@ class MulenPayPaymentMixin:
             if payment.is_paid:
                 if invoice_message_removed:
                     try:
-                        await payment_module.update_mulenpay_payment_metadata(
-                            db,
-                            payment=payment,
-                            metadata=metadata,
-                        )
+                        payment.metadata_json = metadata
+                        payment.updated_at = datetime.now(UTC)
+                        await db.commit()
                     except Exception as error:  # pragma: no cover - diagnostics
                         logger.warning(
                             'Не удалось обновить метаданные после удаления счёта',
@@ -217,21 +223,16 @@ class MulenPayPaymentMixin:
                 return True
 
             if payment_status == 'success':
-                await payment_module.update_mulenpay_payment_status(
-                    db,
-                    payment=payment,
-                    status='success',
-                    callback_payload=callback_data,
-                    mulen_payment_id=mulen_payment_id_int,
-                    metadata=metadata,
-                )
-
-                mulenpay_lock_crud = import_module('app.database.crud.mulenpay')
-                locked = await mulenpay_lock_crud.get_mulenpay_payment_by_id_for_update(db, payment.id)
-                if not locked:
-                    logger.error('MulenPay: не удалось заблокировать платёж', payment_id=payment.id)
-                    return False
-                payment = locked
+                # Inline field updates — NO intermediate commit that would release FOR UPDATE lock
+                payment.status = 'success'
+                payment.is_paid = True
+                payment.paid_at = datetime.now(UTC)
+                payment.callback_payload = callback_data
+                if mulen_payment_id_int is not None and not payment.mulen_payment_id:
+                    payment.mulen_payment_id = mulen_payment_id_int
+                payment.metadata_json = metadata
+                payment.updated_at = datetime.now(UTC)
+                await db.flush()
 
                 if payment.transaction_id:
                     logger.info('Для платежа уже создана транзакция', display_name=display_name, uuid=payment.uuid)

@@ -244,6 +244,7 @@ class EmailAuthEnabledResponse(BaseModel):
     """Email auth enabled setting."""
 
     enabled: bool = True
+    verification_enabled: bool = True
 
 
 class EmailAuthEnabledUpdate(BaseModel):
@@ -838,10 +839,16 @@ async def get_email_auth_enabled(
 
     if email_auth_value is not None:
         enabled = email_auth_value.lower() == 'true'
-        return EmailAuthEnabledResponse(enabled=enabled)
+        return EmailAuthEnabledResponse(
+            enabled=enabled,
+            verification_enabled=settings.is_cabinet_email_verification_enabled(),
+        )
 
     # Default: check config setting
-    return EmailAuthEnabledResponse(enabled=settings.is_cabinet_email_auth_enabled())
+    return EmailAuthEnabledResponse(
+        enabled=settings.is_cabinet_email_auth_enabled(),
+        verification_enabled=settings.is_cabinet_email_verification_enabled(),
+    )
 
 
 @router.patch('/email-auth', response_model=EmailAuthEnabledResponse)
@@ -855,7 +862,10 @@ async def update_email_auth_enabled(
 
     logger.info('Admin set email auth enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
 
-    return EmailAuthEnabledResponse(enabled=payload.enabled)
+    return EmailAuthEnabledResponse(
+        enabled=payload.enabled,
+        verification_enabled=settings.is_cabinet_email_verification_enabled(),
+    )
 
 
 # ============ Telegram Widget Config Routes ============

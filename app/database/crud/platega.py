@@ -71,7 +71,12 @@ async def get_platega_payment_by_id(db: AsyncSession, payment_id: int) -> Plateg
 
 
 async def get_platega_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> PlategaPayment | None:
-    result = await db.execute(select(PlategaPayment).where(PlategaPayment.id == payment_id).with_for_update())
+    result = await db.execute(
+        select(PlategaPayment)
+        .where(PlategaPayment.id == payment_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     return result.scalar_one_or_none()
 
 

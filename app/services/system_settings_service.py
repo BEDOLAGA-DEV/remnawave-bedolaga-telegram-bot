@@ -90,6 +90,7 @@ class BotConfigurationService:
         'FREEKASSA': '💳 Freekassa',
         'KASSA_AI': '💳 KassaAI',
         'RIOPAY': '💳 RioPay',
+        'SEVERPAY': '💳 SeverPay',
         'YOOKASSA': '🟣 YooKassa',
         'PLATEGA': '💳 {platega_name}',
         'TRIBUTE': '🎁 Tribute',
@@ -217,6 +218,7 @@ class BotConfigurationService:
         'BOT_USERNAME': 'CORE',
         'DEFAULT_LANGUAGE': 'LOCALIZATION',
         'AVAILABLE_LANGUAGES': 'LOCALIZATION',
+        'REMNAWAVE_WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS': 'ADMIN_NOTIFICATIONS',
         'LANGUAGE_SELECTION_ENABLED': 'LOCALIZATION',
         'DEFAULT_DEVICE_LIMIT': 'SUBSCRIPTIONS_CORE',
         'DEFAULT_TRAFFIC_LIMIT_GB': 'SUBSCRIPTIONS_CORE',
@@ -241,6 +243,8 @@ class BotConfigurationService:
         'PRICE_360_DAYS': 'SUBSCRIPTION_PRICES',
         'PAID_SUBSCRIPTION_USER_TAG': 'SUBSCRIPTION_PRICES',
         'TRAFFIC_PACKAGES_CONFIG': 'TRAFFIC_PACKAGES',
+        'MULTI_TARIFF_ENABLED': 'SUBSCRIPTIONS_CORE',
+        'MAX_ACTIVE_SUBSCRIPTIONS': 'SUBSCRIPTIONS_CORE',
         'BASE_PROMO_GROUP_PERIOD_DISCOUNTS_ENABLED': 'SUBSCRIPTIONS_CORE',
         'BASE_PROMO_GROUP_PERIOD_DISCOUNTS': 'SUBSCRIPTIONS_CORE',
         'DEFAULT_AUTOPAY_ENABLED': 'AUTOPAY',
@@ -259,6 +263,15 @@ class BotConfigurationService:
         'ADMIN_NOTIFICATIONS_CHAT_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_TICKET_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_PURCHASES_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_RENEWALS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_TRIALS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_BALANCE_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_ADDONS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_INFRASTRUCTURE_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_ERRORS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_PROMO_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_PARTNERS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_REPORTS_ENABLED': 'ADMIN_REPORTS',
         'ADMIN_REPORTS_CHAT_ID': 'ADMIN_REPORTS',
         'ADMIN_REPORTS_TOPIC_ID': 'ADMIN_REPORTS',
@@ -274,7 +287,6 @@ class BotConfigurationService:
         'SIMPLE_SUBSCRIPTION_DEVICE_LIMIT': 'SIMPLE_SUBSCRIPTION',
         'SIMPLE_SUBSCRIPTION_TRAFFIC_GB': 'SIMPLE_SUBSCRIPTION',
         'SIMPLE_SUBSCRIPTION_SQUAD_UUID': 'SIMPLE_SUBSCRIPTION',
-        'DISABLE_TOPUP_BUTTONS': 'PAYMENT',
         'SUPPORT_TOPUP_ENABLED': 'PAYMENT',
         'ENABLE_NOTIFICATIONS': 'NOTIFICATIONS',
         'NOTIFICATION_RETRY_ATTEMPTS': 'NOTIFICATIONS',
@@ -350,6 +362,7 @@ class BotConfigurationService:
         'FREEKASSA_': 'FREEKASSA',
         'KASSA_AI_': 'KASSA_AI',
         'RIOPAY_': 'RIOPAY',
+        'SEVERPAY_': 'SEVERPAY',
         'PLATEGA_': 'PLATEGA',
         'MULENPAY_': 'MULENPAY',
         'PAL24_': 'PAL24',
@@ -550,6 +563,29 @@ class BotConfigurationService:
             'example': 'd4aa2b8c-9a36-4f31-93a2-6f07dad05fba',
             'warning': 'Убедитесь, что выбранный сквад активен и доступен для подписки.',
         },
+        'MULTI_TARIFF_ENABLED': {
+            'description': (
+                'Разрешает пользователям покупать несколько тарифов одновременно. '
+                'Каждый тариф создаёт отдельную подписку с собственными серверами и лимитами.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': (
+                'Работает только в режиме продаж «Тарифы». '
+                'При включении синхронизация с панелью переключается на мультитарифный режим.'
+            ),
+            'dependencies': 'SALES_MODE=tariffs, MAX_ACTIVE_SUBSCRIPTIONS',
+        },
+        'MAX_ACTIVE_SUBSCRIPTIONS': {
+            'description': (
+                'Максимальное количество одновременных активных подписок у одного пользователя. '
+                'Применяется только в мультитарифном режиме.'
+            ),
+            'format': 'Целое число от 1 и выше.',
+            'example': '10',
+            'warning': 'Большое значение может усложнить управление подписками для пользователя.',
+            'dependencies': 'MULTI_TARIFF_ENABLED',
+        },
         'DEVICES_SELECTION_ENABLED': {
             'description': 'Разрешает пользователям выбирать количество устройств при покупке и продлении подписки.',
             'format': 'Булево значение.',
@@ -570,7 +606,7 @@ class BotConfigurationService:
             'format': 'Булево значение.',
             'example': 'Включите после указания токена API и секрета вебхука.',
             'warning': 'Пустой токен или неверный вебхук приведут к отказам платежей.',
-            'dependencies': 'CRYPTOBOT_API_TOKEN, CRYPTOBOT_WEBHOOK_SECRET',
+            'dependencies': 'CRYPTOBOT_API_TOKEN',
         },
         'PAYMENT_VERIFICATION_AUTO_CHECK_ENABLED': {
             'description': (
@@ -833,6 +869,18 @@ class BotConfigurationService:
             'example': '60',
             'warning': 'Защита от спама уведомлениями по одному и тому же пользователю.',
         },
+        'REMNAWAVE_WEBHOOK_NOTIFY_NODE_CONNECTION_STATUS': {
+            'description': (
+                'Уведомления администраторам о потере и восстановлении соединения с нодами из webhook-ов RemnaWave.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'false',
+            'warning': (
+                'Отключает только события node.connection_lost и node.connection_restored. '
+                'Остальные инфраструктурные уведомления продолжают отправляться.'
+            ),
+            'dependencies': 'REMNAWAVE_WEBHOOK_ENABLED, ADMIN_NOTIFICATIONS_ENABLED',
+        },
         'WEBHOOK_NOTIFY_USER_ENABLED': {
             'description': (
                 'Глобальный переключатель уведомлений пользователям от вебхуков RemnaWave. '
@@ -893,6 +941,11 @@ class BotConfigurationService:
         },
         'WEBHOOK_NOTIFY_DEVICES': {
             'description': 'Уведомления о подключении и отключении устройств.',
+            'format': 'Булево значение.',
+            'example': 'true',
+        },
+        'WEBHOOK_NOTIFY_TORRENT_DETECTED': {
+            'description': 'Уведомление пользователю при обнаружении торрент-трафика.',
             'format': 'Булево значение.',
             'example': 'true',
         },

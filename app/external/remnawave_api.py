@@ -27,6 +27,7 @@ class TrafficLimitStrategy(Enum):
     DAY = 'DAY'
     WEEK = 'WEEK'
     MONTH = 'MONTH'
+    MONTH_ROLLING = 'MONTH_ROLLING'
 
 
 @dataclass
@@ -59,8 +60,6 @@ class RemnaWaveUser:
     created_at: datetime
     updated_at: datetime
     user_traffic: UserTraffic | None = None
-    sub_last_user_agent: str | None = None
-    sub_last_opened_at: datetime | None = None
     sub_revoked_at: datetime | None = None
     last_traffic_reset_at: datetime | None = None
     trojan_password: str | None = None
@@ -147,29 +146,27 @@ class RemnaWaveNode:
     country_code: str
     is_connected: bool
     is_disabled: bool
-    users_online: int | None
+    users_online: int
     traffic_used_bytes: int | None
     traffic_limit_bytes: int | None
     port: int | None = None
     is_connecting: bool = False
-    xray_version: str | None = None
-    node_version: str | None = None
     view_position: int = 0
     tags: list[str] | None = None
-    # Новые поля API
     last_status_change: datetime | None = None
     last_status_message: str | None = None
-    xray_uptime: str | None = None
+    xray_uptime: int = 0
     is_traffic_tracking_active: bool = False
     traffic_reset_day: int | None = None
     notify_percent: int | None = None
     consumption_multiplier: float = 1.0
-    cpu_count: int | None = None
-    cpu_model: str | None = None
-    total_ram: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     provider_uuid: str | None = None
+    # v2.7.0: replaced cpuCount/cpuModel/totalRam/xrayVersion/nodeVersion
+    versions: dict[str, str] | None = None  # {xray, node}
+    system: dict[str, Any] | None = None  # {info: {arch, cpus, cpuModel, memoryTotal, ...}, stats: {...}}
+    active_plugin_uuid: str | None = None
 
     @property
     def is_node_online(self) -> bool:
@@ -280,12 +277,6 @@ class RemnaWaveAPI:
             'X-Real-IP': '127.0.0.1',
         }
 
-        # Caddy авторизация — добавляется поверх основной
-        if self.caddy_token:
-            # Caddy Security: готовый base64 токен используется как есть
-            headers['Authorization'] = f'Basic {self.caddy_token}'
-            logger.debug('Используем Caddy Basic Auth')
-
         # Основная авторизация RemnaWave API
         if self.auth_type == 'basic' and self.username and self.password:
             credentials = f'{self.username}:{self.password}'
@@ -293,16 +284,16 @@ class RemnaWaveAPI:
             headers['X-Api-Key'] = f'Basic {encoded_credentials}'
             logger.debug('Используем Basic Auth в X-Api-Key заголовке')
         elif self.auth_type == 'caddy':
-            # Для caddy auth_type основная авторизация уже в Authorization header
-            # Но API ключ всё равно нужен для RemnaWave
+            # Caddy Security: caddy_token → X-Api-Key, api_key → Authorization: Bearer
             if self.api_key:
-                headers['X-Api-Key'] = self.api_key
-                logger.debug('Используем API ключ для RemnaWave + Caddy авторизацию')
+                headers['Authorization'] = f'Bearer {self.api_key}'
+            if self.caddy_token:
+                headers['X-Api-Key'] = self.caddy_token
+            logger.debug('Используем Caddy авторизацию')
         else:
             # api_key или bearer — стандартный режим
             headers['X-Api-Key'] = self.api_key
-            if not self.caddy_token:
-                headers['Authorization'] = f'Bearer {self.api_key}'
+            headers['Authorization'] = f'Bearer {self.api_key}'
             logger.debug('Используем API ключ в X-Api-Key заголовке')
 
         return headers
@@ -385,15 +376,16 @@ class RemnaWaveAPI:
                     except json.JSONDecodeError:
                         response_data = {'raw_response': response_text}
 
-                    if response.status == 429 and attempt < max_retries:
+                    if response.status in (429, 502, 503, 504) and attempt < max_retries:
                         retry_after = float(response.headers.get('Retry-After', base_delay * (2**attempt)))
                         logger.warning(
-                            'Rate limited (429) on , retry / after s',
-                            method=method,
-                            endpoint=endpoint,
-                            attempt=attempt + 1,
-                            max_retries=max_retries,
-                            retry_after=retry_after,
+                            'Retryable %s on %s %s, retry %s/%s after %ss',
+                            response.status,
+                            method,
+                            endpoint,
+                            attempt + 1,
+                            max_retries,
+                            retry_after,
                         )
                         await asyncio.sleep(retry_after)
                         continue
@@ -475,7 +467,22 @@ class RemnaWaveAPI:
             hwidDeviceLimit=data.get('hwidDeviceLimit'),
             status=data.get('status'),
         )
-        response = await self._make_request('POST', '/api/users', data)
+        try:
+            response = await self._make_request('POST', '/api/users', data)
+        except RemnaWaveAPIError as e:
+            # A039 = FK violation on externalSquadUuid — retry without it
+            error_code = (e.response_data or {}).get('errorCode', '')
+            if error_code == 'A039' and 'externalSquadUuid' in data:
+                stale_uuid = data.pop('externalSquadUuid')
+                logger.warning(
+                    'A039 FK violation on externalSquadUuid, retrying without it',
+                    stale_uuid=stale_uuid,
+                    username=data.get('username'),
+                )
+                response = await self._make_request('POST', '/api/users', data)
+            else:
+                logger.error('POST /api/users FAILED — full payload', payload=data)
+                raise
         user = self._parse_user(response['response'])
         logger.info(
             'POST /api/users response',
@@ -576,10 +583,20 @@ class RemnaWaveAPI:
 
         try:
             response = await self._make_request('PATCH', '/api/users', data)
-        except Exception:
-            # Логируем полный payload при ошибке для диагностики A039
-            logger.error('PATCH /api/users FAILED — full payload', payload=data)
-            raise
+        except RemnaWaveAPIError as e:
+            # A039 = FK violation on externalSquadUuid — retry without it
+            error_code = (e.response_data or {}).get('errorCode', '')
+            if error_code == 'A039' and 'externalSquadUuid' in data:
+                stale_uuid = data.pop('externalSquadUuid')
+                logger.warning(
+                    'A039 FK violation on externalSquadUuid, retrying without it',
+                    stale_uuid=stale_uuid,
+                    uuid=uuid,
+                )
+                response = await self._make_request('PATCH', '/api/users', data)
+            else:
+                logger.error('PATCH /api/users FAILED — full payload', payload=data)
+                raise
         user = self._parse_user(response['response'])
         logger.info(
             'PATCH /api/users response',
@@ -717,7 +734,7 @@ class RemnaWaveAPI:
 
     async def remove_users_from_internal_squad(self, uuid: str) -> bool:
         """Удаляет всех пользователей из Internal Squad (bulk action)"""
-        response = await self._make_request('POST', f'/api/internal-squads/{uuid}/bulk-actions/remove-users')
+        response = await self._make_request('DELETE', f'/api/internal-squads/{uuid}/bulk-actions/remove-users')
         return response['response']['eventSent']
 
     async def reorder_internal_squads(self, items: list[dict[str, Any]]) -> list[RemnaWaveInternalSquad]:
@@ -797,7 +814,7 @@ class RemnaWaveAPI:
 
     async def remove_users_from_external_squad(self, uuid: str) -> bool:
         """Удаляет всех пользователей из External Squad (bulk action)"""
-        response = await self._make_request('POST', f'/api/external-squads/{uuid}/bulk-actions/remove-users')
+        response = await self._make_request('DELETE', f'/api/external-squads/{uuid}/bulk-actions/remove-users')
         return response['response']['eventSent']
 
     async def reorder_external_squads(self, items: list[dict[str, Any]]) -> list[RemnaWaveExternalSquad]:
@@ -849,8 +866,9 @@ class RemnaWaveAPI:
         response = await self._make_request('POST', f'/api/nodes/{uuid}/actions/restart')
         return response['response']['eventSent']
 
-    async def restart_all_nodes(self) -> bool:
-        response = await self._make_request('POST', '/api/nodes/actions/restart-all')
+    async def restart_all_nodes(self, force_restart: bool = False) -> bool:
+        data = {'forceRestart': force_restart}
+        response = await self._make_request('POST', '/api/nodes/actions/restart-all', data)
         return response['response']['eventSent']
 
     async def get_subscription_info(self, short_uuid: str) -> SubscriptionInfo:
@@ -926,8 +944,71 @@ class RemnaWaveAPI:
         response = await self._make_request('GET', '/api/system/stats/nodes')
         return response['response']
 
+    async def get_nodes_metrics(self) -> dict[str, Any]:
+        response = await self._make_request('GET', '/api/system/nodes/metrics')
+        return response.get('response', {})
+
     async def get_nodes_realtime_usage(self) -> list[dict[str, Any]]:
-        return await self.get_bandwidth_stats_nodes_realtime()
+        """Get per-node metrics with per-inbound traffic breakdown.
+
+        Uses /api/system/nodes/metrics (replacement for removed /api/bandwidth-stats/nodes/realtime).
+        Returns list of dicts with node totals + inbounds/outbounds arrays.
+        """
+        try:
+            metrics = await self.get_nodes_metrics()
+            nodes = metrics.get('nodes', [])
+            if isinstance(metrics, list):
+                nodes = metrics
+            result = []
+            for node in nodes:
+                download_bytes = 0
+                upload_bytes = 0
+                inbounds = []
+                for ib in node.get('inboundsStats', []):
+                    ib_dl = parse_bytes(ib.get('download', '0'))
+                    ib_ul = parse_bytes(ib.get('upload', '0'))
+                    download_bytes += ib_dl
+                    upload_bytes += ib_ul
+                    inbounds.append(
+                        {
+                            'tag': ib.get('tag', 'unknown'),
+                            'downloadBytes': ib_dl,
+                            'uploadBytes': ib_ul,
+                            'totalBytes': ib_dl + ib_ul,
+                        }
+                    )
+
+                outbounds = []
+                for ob in node.get('outboundsStats', []):
+                    ob_dl = parse_bytes(ob.get('download', '0'))
+                    ob_ul = parse_bytes(ob.get('upload', '0'))
+                    outbounds.append(
+                        {
+                            'tag': ob.get('tag', 'unknown'),
+                            'downloadBytes': ob_dl,
+                            'uploadBytes': ob_ul,
+                            'totalBytes': ob_dl + ob_ul,
+                        }
+                    )
+
+                result.append(
+                    {
+                        'nodeUuid': node.get('nodeUuid', ''),
+                        'nodeName': node.get('nodeName', ''),
+                        'countryEmoji': node.get('countryEmoji', ''),
+                        'providerName': node.get('providerName', ''),
+                        'downloadBytes': download_bytes,
+                        'uploadBytes': upload_bytes,
+                        'totalBytes': download_bytes + upload_bytes,
+                        'usersOnline': node.get('usersOnline', 0),
+                        'inbounds': inbounds,
+                        'outbounds': outbounds,
+                    }
+                )
+            return result
+        except Exception as e:
+            logger.warning('Failed to get nodes metrics for realtime usage', error=e)
+            return []
 
     async def get_user_stats_usage(self, user_uuid: str, start_date: str, end_date: str) -> dict[str, Any]:
         return await self.get_bandwidth_stats_user_legacy(user_uuid, start_date, end_date)
@@ -937,10 +1018,6 @@ class RemnaWaveAPI:
     async def get_bandwidth_stats_nodes(self, start_date: str, end_date: str) -> dict[str, Any]:
         params = {'start': start_date, 'end': end_date}
         response = await self._make_request('GET', '/api/bandwidth-stats/nodes', params=params)
-        return response['response']
-
-    async def get_bandwidth_stats_nodes_realtime(self) -> list[dict[str, Any]]:
-        response = await self._make_request('GET', '/api/bandwidth-stats/nodes/realtime')
         return response['response']
 
     async def get_bandwidth_stats_node_users(
@@ -1064,9 +1141,35 @@ class RemnaWaveAPI:
                 return {'total': 0, 'devices': []}
             raise
 
+    async def get_user_devices_all(self, user_uuid: str) -> dict[str, Any]:
+        """GET /api/hwid/devices/{user_uuid} — all devices for a user (paginated)."""
+        all_devices: list[dict[str, Any]] = []
+        start = 0
+        page_size = 1000
+
+        try:
+            while True:
+                response = await self._make_request(
+                    'GET', f'/api/hwid/devices/{user_uuid}', params={'start': start, 'size': page_size}
+                )
+                data = response.get('response', {'devices': [], 'total': 0})
+                devices = data.get('devices', [])
+                total = data.get('total', 0)
+                all_devices.extend(devices)
+
+                if len(all_devices) >= total or not devices:
+                    break
+                start += len(devices)
+        except RemnaWaveAPIError as e:
+            if e.status_code == 404:
+                return {'total': 0, 'devices': []}
+            raise
+
+        return {'devices': all_devices, 'total': len(all_devices)}
+
     async def reset_user_devices(self, user_uuid: str) -> bool:
         try:
-            devices_info = await self.get_user_devices(user_uuid)
+            devices_info = await self.get_user_devices_all(user_uuid)
             devices = devices_info.get('devices', [])
 
             if not devices:
@@ -1172,8 +1275,6 @@ class RemnaWaveAPI:
             created_at=datetime.fromisoformat(user_data['createdAt'].replace('Z', '+00:00')),
             updated_at=datetime.fromisoformat(user_data['updatedAt'].replace('Z', '+00:00')),
             user_traffic=user_traffic,
-            sub_last_user_agent=user_data.get('subLastUserAgent'),
-            sub_last_opened_at=self._parse_optional_datetime(user_data.get('subLastOpenedAt')),
             sub_revoked_at=self._parse_optional_datetime(user_data.get('subRevokedAt')),
             last_traffic_reset_at=self._parse_optional_datetime(user_data.get('lastTrafficResetAt')),
             trojan_password=user_data.get('trojanPassword'),
@@ -1190,6 +1291,16 @@ class RemnaWaveAPI:
         if date_str:
             return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
         return None
+
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        """Safely convert a value to int, returning default on failure."""
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
 
     def _parse_inbound(self, inbound_data: dict) -> RemnaWaveInbound:
         """Парсит данные inbound"""
@@ -1238,29 +1349,26 @@ class RemnaWaveAPI:
             country_code=node_data.get('countryCode', ''),
             is_connected=node_data.get('isConnected', False),
             is_disabled=node_data.get('isDisabled', False),
-            users_online=node_data.get('usersOnline'),
+            users_online=node_data.get('usersOnline', 0),
             traffic_used_bytes=node_data.get('trafficUsedBytes'),
             traffic_limit_bytes=node_data.get('trafficLimitBytes'),
             port=node_data.get('port'),
             is_connecting=node_data.get('isConnecting', False),
-            xray_version=node_data.get('xrayVersion'),
-            node_version=node_data.get('nodeVersion'),
             view_position=node_data.get('viewPosition', 0),
             tags=node_data.get('tags', []),
-            # Новые поля API
             last_status_change=self._parse_optional_datetime(node_data.get('lastStatusChange')),
             last_status_message=node_data.get('lastStatusMessage'),
-            xray_uptime=node_data.get('xrayUptime'),
+            xray_uptime=self._safe_int(node_data.get('xrayUptime')),
             is_traffic_tracking_active=node_data.get('isTrafficTrackingActive', False),
             traffic_reset_day=node_data.get('trafficResetDay'),
             notify_percent=node_data.get('notifyPercent'),
             consumption_multiplier=node_data.get('consumptionMultiplier', 1.0),
-            cpu_count=node_data.get('cpuCount'),
-            cpu_model=node_data.get('cpuModel'),
-            total_ram=node_data.get('totalRam'),
             created_at=self._parse_optional_datetime(node_data.get('createdAt')),
             updated_at=self._parse_optional_datetime(node_data.get('updatedAt')),
             provider_uuid=node_data.get('providerUuid'),
+            versions=node_data.get('versions'),
+            system=node_data.get('system'),
+            active_plugin_uuid=node_data.get('activePluginUuid'),
         )
 
     def _parse_subscription_info(self, data: dict) -> SubscriptionInfo:
@@ -1296,12 +1404,23 @@ def format_bytes(bytes_value: int) -> str:
 
 
 def parse_bytes(size_str: str) -> int:
-    size_str = size_str.upper().strip()
+    size_str = size_str.strip()
 
-    units = {'B': 1, 'KB': 1024, 'MB': 1024**2, 'GB': 1024**3, 'TB': 1024**4}
+    # Check longest suffixes first; support both IEC (GiB) and SI (GB) units
+    units = [
+        ('TiB', 1024**4),
+        ('GiB', 1024**3),
+        ('MiB', 1024**2),
+        ('KiB', 1024),
+        ('TB', 1024**4),
+        ('GB', 1024**3),
+        ('MB', 1024**2),
+        ('KB', 1024),
+        ('B', 1),
+    ]
 
-    for unit, multiplier in units.items():
-        if size_str.endswith(unit):
+    for unit, multiplier in units:
+        if size_str.endswith(unit) or size_str.upper().endswith(unit.upper()):
             try:
                 value = float(size_str[: -len(unit)].strip())
                 return int(value * multiplier)

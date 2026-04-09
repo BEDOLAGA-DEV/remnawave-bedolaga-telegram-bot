@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from app.config import settings
 from app.database.crud.server_squad import get_all_server_squads
 from app.database.crud.tariff import (
     create_tariff,
@@ -656,7 +657,11 @@ async def _background_sync_squads(tariff_id: int, admin_id: int) -> None:
 
                 async def _sync_one(sub: Subscription) -> None:
                     nonlocal updated, failed
-                    remnawave_uuid = sub.user.remnawave_uuid if sub.user else None
+                    remnawave_uuid = (
+                        getattr(sub, 'remnawave_uuid', None)
+                        if settings.is_multi_tariff_enabled()
+                        else (sub.user.remnawave_uuid if sub.user else None)
+                    )
                     if not remnawave_uuid:
                         return
                     async with semaphore:
@@ -767,7 +772,11 @@ async def sync_tariff_squads(
                 skipped_count += 1
                 return 'skipped'
 
-            remnawave_uuid = sub.user.remnawave_uuid if sub.user else None
+            remnawave_uuid = (
+                getattr(sub, 'remnawave_uuid', None)
+                if settings.is_multi_tariff_enabled()
+                else (sub.user.remnawave_uuid if sub.user else None)
+            )
             if not remnawave_uuid:
                 skipped_count += 1
                 return 'skipped'

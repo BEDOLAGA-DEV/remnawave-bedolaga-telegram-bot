@@ -25,6 +25,8 @@ REAL_PAYMENT_METHODS = [
     PaymentMethod.CLOUDPAYMENTS.value,
     PaymentMethod.FREEKASSA.value,
     PaymentMethod.KASSA_AI.value,
+    PaymentMethod.RIOPAY.value,
+    PaymentMethod.SEVERPAY.value,
 ]
 
 
@@ -48,6 +50,11 @@ async def create_transaction(
         if type in (TransactionType.SUBSCRIPTION_PAYMENT, TransactionType.GIFT_PAYMENT) and amount_kopeks > 0
         else amount_kopeks
     )
+
+    # Default payment_method to BALANCE for subscription/gift payments from bot (not landing)
+    # to avoid double-counting with DEPOSIT in revenue calculations
+    if payment_method is None and type in (TransactionType.SUBSCRIPTION_PAYMENT, TransactionType.GIFT_PAYMENT):
+        payment_method = PaymentMethod.BALANCE
 
     transaction = Transaction(
         user_id=user_id,
@@ -106,7 +113,7 @@ async def create_transaction(
 
             await maybe_assign_promo_group_by_total_spent(db, user_id)
         except Exception as exc:
-            logger.debug('Не удалось проверить автовыдачу промогруппы для пользователя', user_id=user_id, exc=exc)
+            logger.warning('Не удалось проверить автовыдачу промогруппы для пользователя', user_id=user_id, exc=exc)
         if type == TransactionType.SUBSCRIPTION_PAYMENT and is_completed:
             try:
                 from app.services.referral_contest_service import referral_contest_service
@@ -166,7 +173,7 @@ async def emit_transaction_side_effects(
 
         await maybe_assign_promo_group_by_total_spent(db, user_id)
     except Exception as exc:
-        logger.debug('Не удалось проверить автовыдачу промогруппы для пользователя', user_id=user_id, exc=exc)
+        logger.warning('Не удалось проверить автовыдачу промогруппы для пользователя', user_id=user_id, exc=exc)
 
     if type == TransactionType.SUBSCRIPTION_PAYMENT and is_completed:
         try:
@@ -228,7 +235,12 @@ async def get_user_total_spent_kopeks(db: AsyncSession, user_id: int) -> int:
             and_(
                 Transaction.user_id == user_id,
                 Transaction.is_completed.is_(True),
-                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                Transaction.type.in_(
+                    [
+                        TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        TransactionType.GIFT_PAYMENT.value,
+                    ]
+                ),
             )
         )
     )
@@ -251,7 +263,7 @@ async def complete_transaction(db: AsyncSession, transaction: Transaction) -> Tr
 
         await maybe_assign_promo_group_by_total_spent(db, transaction.user_id)
     except Exception as exc:
-        logger.debug(
+        logger.warning(
             'Не удалось проверить автовыдачу промогруппы для пользователя', user_id=transaction.user_id, exc=exc
         )
 
@@ -276,11 +288,11 @@ async def get_transactions_statistics(
     if not end_date:
         end_date = datetime.now(UTC)
 
-    # Доход считаем только по реальным платежам (исключаем колесо, промокоды, админские пополнения)
+    # Доход считаем по реальным платежам + прямые покупки подписок (лендинги)
     income_result = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+        select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
             and_(
-                Transaction.type == TransactionType.DEPOSIT.value,
+                Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                 Transaction.is_completed == True,
                 Transaction.created_at >= start_date,
                 Transaction.created_at <= end_date,
@@ -337,11 +349,11 @@ async def get_transactions_statistics(
         select(
             Transaction.payment_method,
             func.count(Transaction.id).label('count'),
-            func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('total_amount'),
+            func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('total_amount'),
         )
         .where(
             and_(
-                Transaction.type == TransactionType.DEPOSIT.value,
+                Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                 Transaction.is_completed == True,
                 Transaction.created_at >= start_date,
                 Transaction.created_at <= end_date,
@@ -361,11 +373,11 @@ async def get_transactions_statistics(
     )
     transactions_today = today_result.scalar()
 
-    # Доход за сегодня - только реальные платежи
+    # Доход за сегодня — реальные платежи + прямые покупки подписок (лендинги)
     today_income_result = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+        select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
             and_(
-                Transaction.type == TransactionType.DEPOSIT.value,
+                Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                 Transaction.is_completed == True,
                 Transaction.created_at >= today,
                 Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
@@ -389,17 +401,17 @@ async def get_transactions_statistics(
 
 
 async def get_revenue_by_period(db: AsyncSession, days: int = 30) -> list[dict]:
-    """Доход по дням - только реальные платежи."""
+    """Доход по дням — реальные платежи + прямые покупки подписок (лендинги)."""
     start_date = datetime.now(UTC) - timedelta(days=days)
 
     result = await db.execute(
         select(
             func.date(Transaction.created_at).label('date'),
-            func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('amount'),
+            func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('amount'),
         )
         .where(
             and_(
-                Transaction.type == TransactionType.DEPOSIT.value,
+                Transaction.type.in_([TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value]),
                 Transaction.is_completed == True,
                 Transaction.created_at >= start_date,
                 Transaction.payment_method.in_(REAL_PAYMENT_METHODS),

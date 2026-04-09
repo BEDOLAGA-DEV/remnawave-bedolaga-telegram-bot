@@ -41,3 +41,21 @@ PAYMENT_METHODS_NONE_AVAILABLE: |
   Choose a top-up option:
 SUPPORT_TOPUP_DISABLED: "Top-ups via support are disabled. Please use another payment method."
 
+ADMIN_PAYMENTS_TITLE: "💳 <b>Top-up verification</b>"
+ADMIN_PAYMENTS_DESCRIPTION: "Pending top-ups from the last 24 hours."
+ADMIN_PAYMENTS_NOTICE: "Tap a payment for details and manual verification."
+ADMIN_PAYMENTS_EMPTY: "No pending top-ups in the last 24 hours."
+ADMIN_PAYMENTS_ITEM_DETAILS: "📄 #{number}"
+ADMIN_PAYMENTS_CHECKABLE_COUNT: "🔄 Available for verification: {count}"
+ADMIN_PAYMENTS_CHECK_ALL: "🔄 Check all"
+ADMIN_PAYMENTS_EXPORT: "📥 Export to file"
+ADMIN_PAYMENTS_NO_CHECKABLE: "No payments to check"
+ADMIN_PAYMENTS_CHECKING_ALL: "🔄 Checking {count} payments..."
+ADMIN_PAYMENTS_CHECK_ALL_RESULT: "🔄 <b>Verification result</b>"
+ADMIN_PAYMENTS_CHECK_ALL_CHECKED: "✅ Checked: {count}"
+ADMIN_PAYMENTS_CHECK_ALL_CONFIRMED: "💰 Confirmed: {count}"
+ADMIN_PAYMENTS_CHECK_ALL_FAILED: "❌ Errors: {count}"
+ADMIN_PAYMENTS_EXPORT_EMPTY: "No payments to export"
+ADMIN_PAYMENTS_EXPORT_CAPTION: "📊 Payments export"
+ADMIN_PAYMENTS_EXPORT_SUCCESS: "✅ File sent"
+

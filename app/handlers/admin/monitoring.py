@@ -1,4 +1,5 @@
 import asyncio
+import html
 from datetime import UTC, date, datetime, timedelta
 
 import structlog
@@ -741,7 +742,7 @@ async def traffic_check_callback(callback: CallbackQuery):
         if violations:
             text += '\n⚠️ <b>Превышения дельты:</b>\n'
             for v in violations[:10]:
-                name = v.full_name or v.user_uuid[:8]
+                name = html.escape(v.full_name or '') or v.user_uuid[:8]
                 text += f'• {name}: +{v.used_traffic_gb:.1f} ГБ\n'
             if len(violations) > 10:
                 text += f'... и ещё {len(violations) - 10}\n'

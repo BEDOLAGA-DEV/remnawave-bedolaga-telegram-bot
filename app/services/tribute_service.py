@@ -96,12 +96,14 @@ class TributeService:
             user_telegram_id = payment_data['user_id']
             amount_kopeks = payment_data['amount_kopeks']
             payment_id = payment_data['payment_id']
+            trb_user_id = payment_data.get('trb_user_id')
 
             logger.info(
-                'Обрабатываем успешный Tribute платеж: user_telegram_id=, amount=, payment_id',
+                'Обрабатываем успешный Tribute платеж: user_telegram_id=, amount=, payment_id=, trb_user_id=',
                 user_telegram_id=user_telegram_id,
                 amount_kopeks=amount_kopeks,
                 payment_id=payment_id,
+                trb_user_id=trb_user_id,
             )
 
             async for session in get_db():
@@ -218,6 +220,7 @@ class TributeService:
         try:
             user_id = payment_data['user_id']
             payment_id = payment_data['payment_id']
+            trb_user_id = payment_data.get('trb_user_id')
 
             async for session in get_db():
                 transaction = await get_transaction_by_external_id(
@@ -230,7 +233,11 @@ class TributeService:
 
                 await self._send_failure_notification(user_id)
 
-                logger.info('Обработан неудачный Tribute платеж для пользователя', user_id=user_id)
+                logger.info(
+                    'Обработан неудачный Tribute платеж для пользователя',
+                    user_id=user_id,
+                    trb_user_id=trb_user_id,
+                )
                 break
 
         except Exception as e:
@@ -241,6 +248,7 @@ class TributeService:
             user_id = refund_data['user_id']
             amount_kopeks = refund_data['amount_kopeks']
             payment_id = refund_data['payment_id']
+            trb_user_id = refund_data.get('trb_user_id')
 
             async for session in get_db():
                 await create_transaction(
@@ -269,7 +277,10 @@ class TributeService:
                 await self._send_refund_notification(user_id, amount_kopeks)
 
                 logger.info(
-                    'Обработан возврат Tribute: ₽ для пользователя', amount_kopeks=amount_kopeks / 100, user_id=user_id
+                    'Обработан возврат Tribute: ₽ для пользователя',
+                    amount_kopeks=amount_kopeks / 100,
+                    user_id=user_id,
+                    trb_user_id=trb_user_id,
                 )
                 break
 

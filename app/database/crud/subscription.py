@@ -1,8 +1,9 @@
+import secrets
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.exc import StaleDataError
@@ -23,6 +24,18 @@ from app.utils.timezone import format_local_datetime
 
 logger = structlog.get_logger(__name__)
 
+
+async def generate_unique_short_id(db: AsyncSession, max_attempts: int = 10) -> str:
+    """Generate a unique remnawave_short_id (6 hex chars) with collision check."""
+    for _ in range(max_attempts):
+        short_id = secrets.token_hex(3)
+        existing = await db.execute(select(Subscription.id).where(Subscription.remnawave_short_id == short_id).limit(1))
+        if existing.scalar_one_or_none() is None:
+            return short_id
+    # Fallback: 8 chars for extra entropy
+    return secrets.token_hex(4)
+
+
 _WEBHOOK_GUARD_SECONDS = 60
 
 
@@ -40,23 +53,18 @@ def calc_device_limit_on_tariff_switch(
     new_tariff_device_limit: int | None,
     max_device_limit: int | None = None,
 ) -> int:
-    """Calculate device_limit preserving extra purchased devices when switching tariffs.
+    """Calculate device_limit when switching tariffs.
 
-    Extra devices = current_device_limit - old_tariff_device_limit (clamped to 0).
-    Result = new_tariff_device_limit + extra_devices, capped at max_device_limit.
+    Resets to new tariff base device limit — previously purchased
+    extra devices are NOT carried over.  Capped at max_device_limit.
     """
-    old_base = old_tariff_device_limit if old_tariff_device_limit is not None else 0
-    current = current_device_limit if current_device_limit is not None else old_base
-    extra = max(0, current - old_base)
-
     new_base = new_tariff_device_limit if new_tariff_device_limit is not None else 1
-    total = new_base + extra
 
     effective_max = max_device_limit or (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None)
-    if effective_max and total > effective_max:
-        total = effective_max
+    if effective_max and new_base > effective_max:
+        new_base = effective_max
 
-    return total
+    return new_base
 
 
 def is_active_paid_subscription(subscription: Subscription | None) -> bool:
@@ -72,6 +80,14 @@ def is_active_paid_subscription(subscription: Subscription | None) -> bool:
 
 
 async def get_subscription_by_user_id(db: AsyncSession, user_id: int) -> Subscription | None:
+    """Get primary subscription for user.
+
+    Returns the first active/trial subscription, or the most recently created one.
+    Multi-tariff compatible: prioritizes active subscriptions.
+    For multi-tariff operations on a specific subscription, use get_subscription_by_id_for_user().
+    """
+    from app.database.models import SubscriptionStatus
+
     result = await db.execute(
         select(Subscription)
         .options(
@@ -79,7 +95,16 @@ async def get_subscription_by_user_id(db: AsyncSession, user_id: int) -> Subscri
             selectinload(Subscription.tariff),
         )
         .where(Subscription.user_id == user_id)
-        .order_by(Subscription.created_at.desc())
+        .order_by(
+            # Active/trial subscriptions first, then by end_date (most remaining time)
+            case(
+                (Subscription.status == SubscriptionStatus.ACTIVE.value, 0),
+                (Subscription.status == SubscriptionStatus.TRIAL.value, 1),
+                else_=2,
+            ),
+            Subscription.end_date.desc().nulls_last(),
+            Subscription.created_at.desc(),
+        )
         .limit(1)
     )
     subscription = result.scalar_one_or_none()
@@ -140,7 +165,17 @@ async def create_trial_subscription(
     end_date = datetime.now(UTC) + timedelta(days=duration_days)
 
     # Check for existing PENDING trial subscription (retry after failed payment)
-    existing = await get_subscription_by_user_id(db, user_id)
+    # In multi-tariff mode, only reuse a subscription for the SAME tariff to avoid
+    # overwriting a paid subscription for a different tariff.
+    existing = None
+    if settings.is_multi_tariff_enabled() and tariff_id:
+        for sub in await get_active_subscriptions_by_user_id(db, user_id):
+            if sub.tariff_id == tariff_id:
+                existing = sub
+                break
+    else:
+        existing = await get_subscription_by_user_id(db, user_id)
+
     if existing and existing.is_trial and existing.status == SubscriptionStatus.PENDING.value:
         existing.status = SubscriptionStatus.ACTIVE.value
         existing.start_date = datetime.now(UTC)
@@ -149,12 +184,16 @@ async def create_trial_subscription(
         existing.device_limit = device_limit
         existing.connected_squads = final_squads
         existing.tariff_id = tariff_id
+        if not existing.remnawave_short_id:
+            existing.remnawave_short_id = await generate_unique_short_id(db)
         await db.commit()
         await db.refresh(existing)
         logger.info(
             '🎁 Обновлена PENDING триальная подписка для пользователя', existing_id=existing.id, user_id=user_id
         )
         return existing
+
+    short_id = await generate_unique_short_id(db)
 
     subscription = Subscription(
         user_id=user_id,
@@ -165,9 +204,10 @@ async def create_trial_subscription(
         traffic_limit_gb=traffic_limit_gb,
         device_limit=device_limit,
         connected_squads=final_squads,
-        autopay_enabled=settings.is_autopay_enabled_by_default(),
+        autopay_enabled=False,
         autopay_days_before=settings.DEFAULT_AUTOPAY_DAYS_BEFORE,
         tariff_id=tariff_id,
+        remnawave_short_id=short_id,
     )
 
     db.add(subscription)
@@ -235,6 +275,8 @@ async def create_paid_subscription(
         except Exception as error:
             logger.error('❌ Не удалось получить fallback сквад', user_id=user_id, error=error)
 
+    short_id = await generate_unique_short_id(db)
+
     subscription = Subscription(
         user_id=user_id,
         status=SubscriptionStatus.ACTIVE.value,
@@ -247,6 +289,7 @@ async def create_paid_subscription(
         autopay_enabled=settings.is_autopay_enabled_by_default(),
         autopay_days_before=settings.DEFAULT_AUTOPAY_DAYS_BEFORE,
         tariff_id=tariff_id,
+        remnawave_short_id=short_id,
     )
 
     db.add(subscription)
@@ -255,6 +298,20 @@ async def create_paid_subscription(
         await db.refresh(subscription)
     else:
         await db.flush()
+
+    # Kill all trial subscriptions when creating a paid subscription
+    # Trial = probe, must die on any paid purchase (regardless of path: bot, cabinet, webhook)
+    if not is_trial:
+        try:
+            killed = await deactivate_user_trial_subscriptions(db, user_id, exclude_subscription_id=subscription.id)
+            if killed:
+                logger.info(
+                    'Deactivated trial subscriptions on paid purchase',
+                    user_id=user_id,
+                    killed_count=len(killed),
+                )
+        except Exception as trial_err:
+            logger.warning('Failed to deactivate trials on paid purchase', error=trial_err)
 
     logger.info(
         '💎 Создана платная подписка для пользователя ID: статус',
@@ -642,6 +699,21 @@ async def extend_subscription(
 
     await clear_notifications(db, subscription.id, commit=commit)
 
+    # Kill other trial subscriptions if this extension converts trial to paid
+    if not subscription.is_trial and days > 0:
+        try:
+            killed = await deactivate_user_trial_subscriptions(
+                db, subscription.user_id, exclude_subscription_id=subscription.id
+            )
+            if killed:
+                logger.info(
+                    'Deactivated trial subscriptions on extend',
+                    user_id=subscription.user_id,
+                    killed_count=len(killed),
+                )
+        except Exception as trial_err:
+            logger.warning('Failed to deactivate trials on extend', error=trial_err)
+
     logger.info('✅ Подписка продлена до', end_date=subscription.end_date)
     logger.info('📊 Новые параметры: статус=, окончание', status=subscription.status, end_date=subscription.end_date)
 
@@ -699,6 +771,7 @@ async def add_subscription_devices(db: AsyncSession, subscription: Subscription,
     locked_result = await db.execute(
         select(Subscription)
         .where(Subscription.id == subscription.id)
+        .options(selectinload(Subscription.tariff))
         .with_for_update()
         .execution_options(populate_existing=True)
     )
@@ -716,6 +789,18 @@ async def add_subscription_devices(db: AsyncSession, subscription: Subscription,
             max_devices=max_devices,
         )
         new_limit = max_devices
+
+    # Check tariff max device limit
+    tariff_max = subscription.tariff.max_device_limit if subscription.tariff else None
+    if tariff_max is not None and tariff_max > 0 and new_limit > tariff_max:
+        logger.warning(
+            '📱 Попытка превысить лимит устройств тарифа',
+            user_id=subscription.user_id,
+            current=subscription.device_limit,
+            requested=devices,
+            tariff_max_devices=tariff_max,
+        )
+        new_limit = tariff_max
 
     subscription.device_limit = new_limit
     subscription.updated_at = datetime.now(UTC)
@@ -817,10 +902,11 @@ async def decrement_subscription_server_counts(
 
 
 async def update_subscription_autopay(
-    db: AsyncSession, subscription: Subscription, enabled: bool, days_before: int = 3
+    db: AsyncSession, subscription: Subscription, enabled: bool, days_before: int | None = None
 ) -> Subscription:
     subscription.autopay_enabled = enabled
-    subscription.autopay_days_before = days_before
+    if days_before is not None:
+        subscription.autopay_days_before = days_before
     subscription.updated_at = datetime.now(UTC)
 
     await db.commit()
@@ -831,18 +917,19 @@ async def update_subscription_autopay(
     return subscription
 
 
-async def deactivate_subscription(db: AsyncSession, subscription: Subscription) -> Subscription:
+async def deactivate_subscription(db: AsyncSession, subscription: Subscription, *, commit: bool = True) -> Subscription:
     subscription.status = SubscriptionStatus.DISABLED.value
     subscription.updated_at = datetime.now(UTC)
 
-    await db.commit()
-    await db.refresh(subscription)
+    if commit:
+        await db.commit()
+        await db.refresh(subscription)
 
     logger.info('❌ Подписка пользователя деактивирована', user_id=subscription.user_id)
     return subscription
 
 
-async def reactivate_subscription(db: AsyncSession, subscription: Subscription) -> Subscription:
+async def reactivate_subscription(db: AsyncSession, subscription: Subscription, *, commit: bool = True) -> Subscription:
     """Реактивация подписки (например, после повторной подписки на канал или докупки трафика).
 
     Активирует если подписка была DISABLED или EXPIRED и ещё не истекла по времени.
@@ -866,8 +953,9 @@ async def reactivate_subscription(db: AsyncSession, subscription: Subscription) 
     subscription.status = SubscriptionStatus.ACTIVE.value
     subscription.updated_at = now
 
-    await db.commit()
-    await db.refresh(subscription)
+    if commit:
+        await db.commit()
+        await db.refresh(subscription)
 
     logger.info(
         '✅ Подписка реактивирована',
@@ -1361,6 +1449,7 @@ async def create_subscription_no_commit(
     if connected_squads is None:
         connected_squads = []
 
+    short_id = await generate_unique_short_id(db)
     subscription = Subscription(
         user_id=user_id,
         status=status,
@@ -1371,6 +1460,7 @@ async def create_subscription_no_commit(
         device_limit=device_limit,
         connected_squads=connected_squads,
         remnawave_short_uuid=remnawave_short_uuid,
+        remnawave_short_id=short_id,
         subscription_url=subscription_url,
         subscription_crypto_link=subscription_crypto_link,
         autopay_enabled=(settings.is_autopay_enabled_by_default() if autopay_enabled is None else autopay_enabled),
@@ -1411,6 +1501,7 @@ async def create_subscription(
     if connected_squads is None:
         connected_squads = []
 
+    short_id = await generate_unique_short_id(db)
     subscription = Subscription(
         user_id=user_id,
         status=status,
@@ -1421,6 +1512,7 @@ async def create_subscription(
         device_limit=device_limit,
         connected_squads=connected_squads,
         remnawave_short_uuid=remnawave_short_uuid,
+        remnawave_short_id=short_id,
         subscription_url=subscription_url,
         subscription_crypto_link=subscription_crypto_link,
         autopay_enabled=(settings.is_autopay_enabled_by_default() if autopay_enabled is None else autopay_enabled),
@@ -1447,6 +1539,7 @@ async def create_pending_subscription(
     payment_method: str = 'pending',
     total_price_kopeks: int = 0,
     is_trial: bool = False,
+    tariff_id: int | None = None,
 ) -> Subscription:
     """Creates a pending subscription that will be activated after payment.
 
@@ -1457,7 +1550,23 @@ async def create_pending_subscription(
     current_time = datetime.now(UTC)
     end_date = current_time + timedelta(days=duration_days)
 
-    existing_subscription = await get_subscription_by_user_id(db, user_id)
+    if settings.is_multi_tariff_enabled() and tariff_id:
+        active_subs = await get_active_subscriptions_by_user_id(db, user_id)
+        existing_subscription = next((s for s in active_subs if s.tariff_id == tariff_id), None)
+        if not existing_subscription:
+            # Also check non-active subs for this tariff
+            result = await db.execute(
+                select(Subscription)
+                .where(
+                    Subscription.user_id == user_id,
+                    Subscription.tariff_id == tariff_id,
+                )
+                .order_by(Subscription.created_at.desc())
+                .limit(1)
+            )
+            existing_subscription = result.scalar_one_or_none()
+    else:
+        existing_subscription = await get_subscription_by_user_id(db, user_id)
 
     if existing_subscription:
         if (
@@ -1480,6 +1589,8 @@ async def create_pending_subscription(
         existing_subscription.connected_squads = connected_squads or []
         existing_subscription.traffic_used_gb = 0.0
         existing_subscription.updated_at = current_time
+        if tariff_id is not None:
+            existing_subscription.tariff_id = tariff_id
 
         await db.commit()
         await db.refresh(existing_subscription)
@@ -1493,6 +1604,7 @@ async def create_pending_subscription(
         )
         return existing_subscription
 
+    short_id = await generate_unique_short_id(db)
     subscription = Subscription(
         user_id=user_id,
         status=SubscriptionStatus.PENDING.value,
@@ -1502,8 +1614,10 @@ async def create_pending_subscription(
         traffic_limit_gb=traffic_limit_gb,
         device_limit=device_limit,
         connected_squads=connected_squads or [],
+        tariff_id=tariff_id,
         autopay_enabled=settings.is_autopay_enabled_by_default(),
         autopay_days_before=settings.DEFAULT_AUTOPAY_DAYS_BEFORE,
+        remnawave_short_id=short_id,
     )
 
     db.add(subscription)
@@ -1531,6 +1645,7 @@ async def create_pending_trial_subscription(
     connected_squads: list[str] = None,
     payment_method: str = 'pending',
     total_price_kopeks: int = 0,
+    tariff_id: int | None = None,
 ) -> Subscription:
     """Creates a pending trial subscription. Wrapper for create_pending_subscription with is_trial=True."""
     return await create_pending_subscription(
@@ -1543,18 +1658,34 @@ async def create_pending_trial_subscription(
         payment_method=payment_method,
         total_price_kopeks=total_price_kopeks,
         is_trial=True,
+        tariff_id=tariff_id,
     )
 
 
-async def activate_pending_subscription(db: AsyncSession, user_id: int, period_days: int = None) -> Subscription | None:
+async def activate_pending_subscription(
+    db: AsyncSession,
+    user_id: int,
+    period_days: int = None,
+    subscription_id: int | None = None,
+) -> Subscription | None:
     """Активирует pending подписку пользователя, меняя её статус на ACTIVE."""
-    logger.info('Активация pending подписки: пользователь период дней', user_id=user_id, period_days=period_days)
+    logger.info(
+        'Активация pending подписки: пользователь период дней',
+        user_id=user_id,
+        period_days=period_days,
+        subscription_id=subscription_id,
+    )
 
-    # Находим pending подписку пользователя
+    # Находим pending подписку пользователя (последнюю созданную при наличии нескольких)
+    conditions = [
+        Subscription.user_id == user_id,
+        Subscription.status == SubscriptionStatus.PENDING.value,
+    ]
+    if subscription_id is not None:
+        conditions.append(Subscription.id == subscription_id)
+
     result = await db.execute(
-        select(Subscription).where(
-            and_(Subscription.user_id == user_id, Subscription.status == SubscriptionStatus.PENDING.value)
-        )
+        select(Subscription).where(and_(*conditions)).order_by(Subscription.created_at.desc()).limit(1)
     )
     pending_subscription = result.scalar_one_or_none()
 
@@ -1865,6 +1996,8 @@ async def update_daily_charge_time(
     db: AsyncSession,
     subscription: Subscription,
     charge_time: datetime = None,
+    *,
+    commit: bool = True,
 ) -> Subscription:
     """Обновляет время последнего суточного списания и продлевает подписку на 1 день."""
     now = charge_time or datetime.now(UTC)
@@ -1876,8 +2009,11 @@ async def update_daily_charge_time(
         subscription.end_date = new_end_date
         logger.info('📅 Продлена подписка до', subscription_id=subscription.id, new_end_date=new_end_date)
 
-    await db.commit()
-    await db.refresh(subscription)
+    if commit:
+        await db.commit()
+        await db.refresh(subscription)
+    else:
+        await db.flush()
 
     return subscription
 
@@ -1934,3 +2070,164 @@ async def toggle_daily_subscription_pause(
     if subscription.is_daily_paused:
         return await resume_daily_subscription(db, subscription)
     return await pause_daily_subscription(db, subscription)
+
+
+# ── Multi-tariff CRUD functions ──────────────────────────────────────────────
+
+
+async def get_active_subscriptions_by_user_id(db: AsyncSession, user_id: int) -> list[Subscription]:
+    """Get all active/trial/limited subscriptions for a user.
+
+    Includes LIMITED status because those subscriptions still have time remaining
+    (just ran out of traffic) and should be treated as "alive" for renewal,
+    duplicate prevention, and display purposes.
+    """
+    result = await db.execute(
+        select(Subscription)
+        .options(
+            selectinload(Subscription.user),
+            selectinload(Subscription.tariff),
+        )
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.status.in_(
+                [
+                    SubscriptionStatus.ACTIVE.value,
+                    SubscriptionStatus.TRIAL.value,
+                    SubscriptionStatus.LIMITED.value,
+                ]
+            ),
+        )
+        .order_by(Subscription.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def get_subscription_by_id_for_user(db: AsyncSession, subscription_id: int, user_id: int) -> Subscription | None:
+    """Get subscription by ID with ownership check (IDOR protection)."""
+    result = await db.execute(
+        select(Subscription)
+        .options(
+            selectinload(Subscription.user),
+            selectinload(Subscription.tariff),
+        )
+        .where(
+            Subscription.id == subscription_id,
+            Subscription.user_id == user_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_subscription_by_id(db: AsyncSession, subscription_id: int) -> Subscription | None:
+    """Get subscription by ID (admin use only, no ownership check)."""
+    result = await db.execute(
+        select(Subscription)
+        .options(
+            selectinload(Subscription.user),
+            selectinload(Subscription.tariff),
+        )
+        .where(Subscription.id == subscription_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_subscription_by_user_and_tariff(db: AsyncSession, user_id: int, tariff_id: int) -> Subscription | None:
+    """Get active/trial/limited subscription for a specific user+tariff combination.
+
+    Includes LIMITED status because those subscriptions still have time remaining
+    (just ran out of traffic) and should be extended rather than duplicated.
+    """
+    result = await db.execute(
+        select(Subscription)
+        .options(
+            selectinload(Subscription.user),
+            selectinload(Subscription.tariff),
+        )
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.tariff_id == tariff_id,
+            Subscription.status.in_(
+                [
+                    SubscriptionStatus.ACTIVE.value,
+                    SubscriptionStatus.TRIAL.value,
+                    SubscriptionStatus.LIMITED.value,
+                ]
+            ),
+        )
+        .order_by(Subscription.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def deactivate_user_trial_subscriptions(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    exclude_subscription_id: int | None = None,
+) -> list[Subscription]:
+    """Deactivate all trial subscriptions for a user.
+
+    Called when user purchases a paid tariff — trial is a probe that must die on purchase.
+    Returns remaining trial time in seconds (for TRIAL_ADD_REMAINING_DAYS_TO_PAID).
+    Handles both tariff-based and squad-based trials uniformly.
+    """
+    result = await db.execute(
+        select(Subscription).where(
+            Subscription.user_id == user_id,
+            Subscription.is_trial.is_(True),
+            Subscription.status.in_(
+                [
+                    SubscriptionStatus.ACTIVE.value,
+                    SubscriptionStatus.TRIAL.value,
+                ]
+            ),
+        )
+    )
+    trial_subs = list(result.scalars().all())
+
+    deactivated = []
+    for sub in trial_subs:
+        if exclude_subscription_id and sub.id == exclude_subscription_id:
+            continue
+        sub.status = SubscriptionStatus.DISABLED.value
+        sub.is_trial = False
+        sub.autopay_enabled = False
+        sub.updated_at = datetime.now(UTC)
+        deactivated.append(sub)
+        logger.info(
+            'Trial subscription deactivated on paid purchase',
+            subscription_id=sub.id,
+            user_id=user_id,
+            tariff_id=sub.tariff_id,
+        )
+
+    if deactivated:
+        await db.flush()
+
+    return deactivated
+
+
+async def get_all_subscriptions_by_user_id(db: AsyncSession, user_id: int) -> list[Subscription]:
+    """Get all subscriptions for a user (any status).
+
+    Ordering: active first, then trial, then everything else — newest first within each group.
+    """
+    result = await db.execute(
+        select(Subscription)
+        .options(
+            selectinload(Subscription.user),
+            selectinload(Subscription.tariff),
+        )
+        .where(Subscription.user_id == user_id)
+        .order_by(
+            case(
+                (Subscription.status == SubscriptionStatus.ACTIVE.value, 0),
+                (Subscription.status == SubscriptionStatus.TRIAL.value, 1),
+                else_=2,
+            ),
+            Subscription.created_at.desc(),
+        )
+    )
+    return list(result.scalars().all())

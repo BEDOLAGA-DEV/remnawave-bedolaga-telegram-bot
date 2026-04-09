@@ -138,9 +138,31 @@ async def create_subscription(
     _: Any = Security(require_api_token),
     db: AsyncSession = Depends(get_db_session),
 ) -> SubscriptionResponse:
-    existing = await get_subscription_by_user_id(db, payload.user_id)
-    if existing and not payload.replace_existing:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'User already has a subscription')
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+        active_subs = await get_active_subscriptions_by_user_id(db, payload.user_id)
+        if payload.replace_existing and payload.subscription_id:
+            from app.database.crud.subscription import get_subscription_by_id
+
+            existing = await get_subscription_by_id(db, payload.subscription_id)
+            if existing and existing.user_id != payload.user_id:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Subscription does not belong to this user')
+        elif payload.replace_existing and active_subs:
+            if len(active_subs) == 1:
+                existing = active_subs[0]
+            else:
+                _non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+                _pool = _non_daily or active_subs
+                existing = max(_pool, key=lambda s: s.days_left)
+        else:
+            existing = None
+        if active_subs and not payload.replace_existing:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'User already has a subscription')
+    else:
+        existing = await get_subscription_by_user_id(db, payload.user_id)
+        if existing and not payload.replace_existing:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'User already has a subscription')
 
     forced_devices = None
     if not settings.is_devices_selection_enabled():
@@ -264,8 +286,13 @@ async def add_subscription_traffic_endpoint(
     await service.update_remnawave_user(db, subscription)
 
     user = await get_user_by_id(db, subscription.user_id)
-    if user and user.remnawave_uuid and subscription.status == 'active':
-        await service.enable_remnawave_user(user.remnawave_uuid)
+    _enable_uuid = (
+        subscription.remnawave_uuid
+        if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+        else (user.remnawave_uuid if user else None)
+    )
+    if user and _enable_uuid and subscription.status == 'active':
+        await service.enable_remnawave_user(_enable_uuid)
 
     subscription = await _get_subscription(db, subscription.id)
     return _serialize_subscription(subscription)
@@ -289,8 +316,13 @@ async def add_subscription_devices_endpoint(
     await service.update_remnawave_user(db, subscription)
 
     user = await get_user_by_id(db, subscription.user_id)
-    if user and user.remnawave_uuid and subscription.status == 'active':
-        await service.enable_remnawave_user(user.remnawave_uuid)
+    _enable_uuid = (
+        subscription.remnawave_uuid
+        if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+        else (user.remnawave_uuid if user else None)
+    )
+    if user and _enable_uuid and subscription.status == 'active':
+        await service.enable_remnawave_user(_enable_uuid)
 
     subscription = await _get_subscription(db, subscription.id)
     return _serialize_subscription(subscription)
@@ -340,10 +372,17 @@ async def delete_subscription(
 
     await deactivate_subscription(db, subscription)
 
-    # Деактивируем пользователя в RemnaWave, если есть UUID
-    if subscription.user and subscription.user.remnawave_uuid:
+    # Деактивируем пользователя в RemnaWave (per-subscription UUID в мульти-тарифе)
+    from app.config import settings
+
+    disable_uuid = (
+        subscription.remnawave_uuid
+        if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+        else (subscription.user.remnawave_uuid if subscription.user else None)
+    )
+    if disable_uuid:
         subscription_service = SubscriptionService()
-        await subscription_service.disable_remnawave_user(subscription.user.remnawave_uuid)
+        await subscription_service.disable_remnawave_user(disable_uuid)
 
     subscription = await _get_subscription(db, subscription.id)
     return _serialize_subscription(subscription)

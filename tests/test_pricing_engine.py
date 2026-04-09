@@ -232,12 +232,19 @@ class TestCalculateTrafficPrice:
             price = engine._calculate_traffic_price(traffic_limit_gb=125, purchased_traffic_gb=100)
         assert price == 11000  # NOT 12000
 
-    def test_zero_traffic(self):
+    def test_unlimited_traffic_has_price(self):
         engine = PricingEngine()
         with patch('app.services.pricing_engine.settings') as ms:
-            ms.get_traffic_price.return_value = 0
+            ms.get_traffic_price.side_effect = lambda gb: {0: 20000, 5: 2000}.get(gb, 0)
             price = engine._calculate_traffic_price(traffic_limit_gb=0, purchased_traffic_gb=0)
-        assert price == 0
+        assert price == 20000  # 0 GB = unlimited, charged at unlimited tier
+
+    def test_unlimited_traffic_ignores_purchased(self):
+        engine = PricingEngine()
+        with patch('app.services.pricing_engine.settings') as ms:
+            ms.get_traffic_price.side_effect = lambda gb: {0: 20000, 50: 5000}.get(gb, 0)
+            price = engine._calculate_traffic_price(traffic_limit_gb=0, purchased_traffic_gb=50)
+        assert price == 20000  # unlimited tier, purchased ignored
 
     def test_purchased_exceeds_total(self):
         engine = PricingEngine()

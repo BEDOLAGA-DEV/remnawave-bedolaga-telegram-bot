@@ -58,7 +58,12 @@ async def get_mulenpay_payment_by_local_id(db: AsyncSession, payment_id: int) ->
 
 
 async def get_mulenpay_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> MulenPayPayment | None:
-    result = await db.execute(select(MulenPayPayment).where(MulenPayPayment.id == payment_id).with_for_update())
+    result = await db.execute(
+        select(MulenPayPayment)
+        .where(MulenPayPayment.id == payment_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     return result.scalar_one_or_none()
 
 

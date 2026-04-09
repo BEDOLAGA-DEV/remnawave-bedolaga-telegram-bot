@@ -4,7 +4,7 @@ from typing import Any
 
 import structlog
 from aiogram import Bot, types
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -96,12 +96,13 @@ class UserService:
                 f'💳 Текущий баланс: {settings.format_price(user.balance_kopeks)}\n\n'
                 f'Спасибо за использование нашего сервиса! 🎉'
             )
+            extend_callback = 'menu_subscription' if settings.is_multi_tariff_enabled() else 'subscription_extend'
             keyboard = types.InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                            callback_data='subscription_extend',
+                            callback_data=extend_callback,
                         )
                     ]
                 ]
@@ -117,10 +118,11 @@ class UserService:
                 f'Пополнение баланса НЕ активирует подписку автоматически!\n\n'
                 f'👇 <b>Выберите действие:</b>'
             )
+            extend_callback = 'menu_subscription' if settings.is_multi_tariff_enabled() else 'subscription_extend'
             keyboard = types.InlineKeyboardMarkup(
                 inline_keyboard=[
                     [types.InlineKeyboardButton(text='🚀 АКТИВИРОВАТЬ ПОДПИСКУ', callback_data='subscription_buy')],
-                    [types.InlineKeyboardButton(text='💎 ПРОДЛИТЬ ПОДПИСКУ', callback_data='subscription_extend')],
+                    [types.InlineKeyboardButton(text='💎 ПРОДЛИТЬ ПОДПИСКУ', callback_data=extend_callback)],
                     [
                         types.InlineKeyboardButton(
                             text='📱 ДОБАВИТЬ УСТРОЙСТВА', callback_data='subscription_add_devices'
@@ -166,16 +168,15 @@ class UserService:
             )
 
         keyboard_rows = []
-        if getattr(user, 'subscription', None) and user.subscription.status in {
-            'active',
-            'expired',
-            'trial',
-        }:
+        subs = getattr(user, 'subscriptions', None) or []
+        has_extendable = any(sub.status in {'active', 'expired', 'trial'} for sub in subs)
+        if has_extendable:
+            extend_callback = 'menu_subscription' if settings.is_multi_tariff_enabled() else 'subscription_extend'
             keyboard_rows.append(
                 [
                     types.InlineKeyboardButton(
                         text=get_texts(user.language).t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
-                        callback_data='subscription_extend',
+                        callback_data=extend_callback,
                     )
                 ]
             )
@@ -208,7 +209,18 @@ class UserService:
             if not user:
                 return None
 
-            subscription = await get_subscription_by_user_id(db, user_id)
+            if settings.is_multi_tariff_enabled():
+                from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+                active_subs = await get_active_subscriptions_by_user_id(db, user_id)
+                if active_subs:
+                    _non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+                    _pool = _non_daily or active_subs
+                    subscription = max(_pool, key=lambda s: s.days_left)
+                else:
+                    subscription = None
+            else:
+                subscription = await get_subscription_by_user_id(db, user_id)
             transactions_count = await get_user_transactions_count(db, user_id)
 
             return {
@@ -322,7 +334,7 @@ class UserService:
 
             query = (
                 select(User)
-                .options(selectinload(User.subscription))
+                .options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
                 .join(Subscription, Subscription.user_id == User.id)
                 .where(*base_filters)
                 .order_by(User.balance_kopeks.desc(), Subscription.end_date.asc())
@@ -370,17 +382,19 @@ class UserService:
                 User.balance_kopeks >= min_balance_kopeks,
             ]
 
-            # Основной запрос с LEFT JOIN для поддержки пользователей без подписки
+            # Subquery: user has at least one active/trial subscription
+            active_sub_exists = exists().where(
+                Subscription.user_id == User.id,
+                Subscription.status.in_(['active', 'trial']),
+            )
+
+            # Основной запрос: пользователи БЕЗ активных подписок
             query = (
                 select(User)
-                .options(selectinload(User.subscription))
-                .outerjoin(Subscription, Subscription.user_id == User.id)
+                .options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
                 .where(
                     *base_filters,
-                    or_(
-                        User.subscription == None,
-                        ~Subscription.status.in_(['active', 'trial']),
-                    ),
+                    ~active_sub_exists,
                 )
                 .order_by(User.balance_kopeks.desc(), User.created_at.desc())
                 .offset(offset)
@@ -390,16 +404,9 @@ class UserService:
             users = result.scalars().unique().all()
 
             # Запрос для подсчета общего количества
-            count_query = (
-                select(func.count(User.id))
-                .outerjoin(Subscription, Subscription.user_id == User.id)
-                .where(
-                    *base_filters,
-                    or_(
-                        User.subscription == None,
-                        ~Subscription.status.in_(['active', 'trial']),
-                    ),
-                )
+            count_query = select(func.count(User.id)).where(
+                *base_filters,
+                ~active_sub_exists,
             )
             total_count = (await db.execute(count_query)).scalar() or 0
             total_pages = (total_count + limit - 1) // limit if total_count else 0
@@ -464,7 +471,7 @@ class UserService:
                     AdvertisingCampaign,
                     AdvertisingCampaign.id == latest_campaign.c.campaign_id,
                 )
-                .options(selectinload(User.subscription))
+                .options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
                 .order_by(
                     AdvertisingCampaign.name.asc(),
                     latest_campaign.c.created_at.desc(),
@@ -674,18 +681,40 @@ class UserService:
 
             from app.database.crud.subscription import deactivate_subscription, is_active_paid_subscription
 
-            if is_active_paid_subscription(user.subscription):
+            subs = getattr(user, 'subscriptions', None) or []
+            has_active_paid = any(is_active_paid_subscription(sub) for sub in subs)
+
+            if has_active_paid:
                 logger.info(
                     '⏭️ Пропуск отключения RemnaWave и подписки: у пользователя активная оплаченная подписка',
                     user_id=user_id,
                     remnawave_uuid=user.remnawave_uuid,
                 )
             else:
-                if user.remnawave_uuid:
-                    try:
-                        from app.services.subscription_service import SubscriptionService
+                from app.services.subscription_service import SubscriptionService
 
-                        subscription_service = SubscriptionService()
+                subscription_service = SubscriptionService()
+
+                if settings.is_multi_tariff_enabled():
+                    # In multi-tariff mode, disable each subscription's panel user individually
+                    for sub in subs:
+                        panel_uuid = sub.remnawave_uuid
+                        if panel_uuid:
+                            try:
+                                await subscription_service.disable_remnawave_user(panel_uuid)
+                                logger.info(
+                                    '✅ RemnaWave пользователь деактивирован при блокировке',
+                                    remnawave_uuid=panel_uuid,
+                                    subscription_id=sub.id,
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    '❌ Ошибка деактивации RemnaWave при блокировке',
+                                    error=e,
+                                    subscription_id=sub.id,
+                                )
+                elif user.remnawave_uuid:
+                    try:
                         await subscription_service.disable_remnawave_user(user.remnawave_uuid)
                         logger.info(
                             '✅ RemnaWave пользователь деактивирован при блокировке',
@@ -694,8 +723,9 @@ class UserService:
                     except Exception as e:
                         logger.error('❌ Ошибка деактивации RemnaWave пользователя при блокировке', error=e)
 
-                if user.subscription:
-                    await deactivate_subscription(db, user.subscription)
+                for sub in subs:
+                    if sub.status in ['active', 'trial']:
+                        await deactivate_subscription(db, sub)
 
             await update_user(db, user, status=UserStatus.BLOCKED.value)
 
@@ -714,29 +744,31 @@ class UserService:
 
             await update_user(db, user, status=UserStatus.ACTIVE.value)
 
-            if user.subscription:
-                from app.database.models import SubscriptionStatus
+            from app.database.models import SubscriptionStatus
 
-                if user.subscription.end_date > datetime.now(UTC):
-                    user.subscription.status = SubscriptionStatus.ACTIVE.value
-                    await db.commit()
-                    await db.refresh(user.subscription)
-                    logger.info('🔄 Подписка пользователя восстановлена', user_id=user_id)
+            now = datetime.now(UTC)
+            for sub in getattr(user, 'subscriptions', None) or []:
+                if sub.end_date and sub.end_date > now and sub.status != SubscriptionStatus.ACTIVE.value:
+                    sub.status = SubscriptionStatus.ACTIVE.value
+                    try:
+                        from app.services.subscription_service import SubscriptionService
 
-                    if user.remnawave_uuid:
-                        try:
-                            from app.services.subscription_service import SubscriptionService
-
-                            subscription_service = SubscriptionService()
-                            await subscription_service.update_remnawave_user(db, user.subscription)
-                            logger.info(
-                                '✅ RemnaWave пользователь восстановлен при разблокировке',
-                                remnawave_uuid=user.remnawave_uuid,
-                            )
-                        except Exception as e:
-                            logger.error('❌ Ошибка восстановления RemnaWave пользователя при разблокировке', error=e)
-                else:
-                    logger.info('⏰ Подписка пользователя истекла, восстановление невозможно', user_id=user_id)
+                        subscription_service = SubscriptionService()
+                        await subscription_service.update_remnawave_user(db, sub)
+                        logger.info(
+                            '✅ RemnaWave подписка восстановлена при разблокировке',
+                            subscription_id=sub.id,
+                            remnawave_uuid=sub.remnawave_uuid
+                            if settings.is_multi_tariff_enabled()
+                            else user.remnawave_uuid,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            '❌ Ошибка восстановления RemnaWave подписки при разблокировке',
+                            subscription_id=sub.id,
+                            error=e,
+                        )
+            await db.commit()
 
             logger.info('Админ разблокировал пользователя', admin_id=admin_id, user_id=user_id)
             return True
@@ -766,89 +798,99 @@ class UserService:
                 '🗑️ Начинаем полное удаление пользователя (ID: )', user_id=user_id, user_id_display=user_id_display
             )
 
-            if user.remnawave_uuid:
-                from app.config import settings
-                from app.database.crud.subscription import is_active_paid_subscription
+            from app.config import settings
+            from app.database.crud.subscription import is_active_paid_subscription
 
-                if not force_panel_delete and is_active_paid_subscription(user.subscription):
+            # Collect all panel UUIDs to process
+            subs = getattr(user, 'subscriptions', None) or []
+            if settings.is_multi_tariff_enabled():
+                panel_uuids = [sub.remnawave_uuid for sub in subs if sub.remnawave_uuid]
+            else:
+                panel_uuids = [user.remnawave_uuid] if user.remnawave_uuid else []
+
+            if panel_uuids:
+                if not force_panel_delete and any(is_active_paid_subscription(sub) for sub in subs):
                     logger.info(
                         '⏭️ Пропуск отключения RemnaWave при удалении: у пользователя активная оплаченная подписка',
                         user_id=user_id,
-                        remnawave_uuid=user.remnawave_uuid,
                     )
                 else:
                     delete_mode = 'delete' if force_panel_delete else settings.get_remnawave_user_delete_mode()
 
-                    try:
-                        from app.services.remnawave_service import RemnaWaveService
+                    # Помечаем ВСЕ UUID до цикла, чтобы webhook от первого удаления
+                    # не пришёл раньше чем помечены остальные
+                    if delete_mode == 'delete':
+                        from app.services.remnawave_webhook_service import RemnaWaveWebhookService
 
-                        remnawave_service = RemnaWaveService()
-
-                        if delete_mode == 'delete':
-                            # Удаляем пользователя из панели Remnawave
-                            async with remnawave_service.get_api_client() as api:
-                                delete_success = await api.delete_user(user.remnawave_uuid)
-                                if delete_success:
-                                    result.panel_deleted = True
-                                    logger.info(
-                                        '✅ RemnaWave пользователь удален из панели',
-                                        remnawave_uuid=user.remnawave_uuid,
-                                    )
-                                else:
-                                    result.panel_error = 'Remnawave API вернул ошибку удаления'
-                                    logger.warning(
-                                        '⚠️ Не удалось удалить пользователя из панели Remnawave',
-                                        remnawave_uuid=user.remnawave_uuid,
-                                    )
-                        else:
-                            # Деактивируем пользователя в панели Remnawave
-                            from app.services.subscription_service import SubscriptionService
-
-                            subscription_service = SubscriptionService()
-                            disabled = await subscription_service.disable_remnawave_user(user.remnawave_uuid)
-                            result.panel_deleted = disabled
-                            if disabled:
-                                logger.info(
-                                    '✅ RemnaWave пользователь деактивирован',
-                                    remnawave_uuid=user.remnawave_uuid,
-                                    delete_mode=delete_mode,
-                                )
-                            else:
-                                result.panel_error = 'disable_remnawave_user вернул False'
-                                logger.warning(
-                                    '⚠️ Не удалось деактивировать пользователя в RemnaWave',
-                                    remnawave_uuid=user.remnawave_uuid,
-                                    delete_mode=delete_mode,
-                                )
-
-                    except Exception as e:
-                        result.panel_error = 'Ошибка обработки пользователя в Remnawave'
-                        logger.warning(
-                            '⚠️ Ошибка обработки пользователя в Remnawave (режим: )',
-                            delete_mode=delete_mode,
-                            error=e,
+                        RemnaWaveWebhookService.mark_intentional_panel_deletion(
+                            panel_uuids=panel_uuids,
+                            telegram_id=int(user.telegram_id) if user.telegram_id else None,
                         )
-                        # Если основное действие не удалось, попытаемся хотя бы деактивировать
-                        if delete_mode == 'delete':
-                            try:
+
+                    for panel_uuid in panel_uuids:
+                        try:
+                            from app.services.remnawave_service import RemnaWaveService
+
+                            remnawave_service = RemnaWaveService()
+
+                            if delete_mode == 'delete':
+                                async with remnawave_service.get_api_client() as api:
+                                    delete_success = await api.delete_user(panel_uuid)
+                                    if delete_success:
+                                        result.panel_deleted = True
+                                        logger.info(
+                                            '✅ RemnaWave пользователь удален из панели',
+                                            remnawave_uuid=panel_uuid,
+                                        )
+                                    else:
+                                        result.panel_error = 'Remnawave API вернул ошибку удаления'
+                                        logger.warning(
+                                            '⚠️ Не удалось удалить пользователя из панели Remnawave',
+                                            remnawave_uuid=panel_uuid,
+                                        )
+                            else:
                                 from app.services.subscription_service import SubscriptionService
 
                                 subscription_service = SubscriptionService()
-                                disabled = await subscription_service.disable_remnawave_user(user.remnawave_uuid)
+                                disabled = await subscription_service.disable_remnawave_user(panel_uuid)
+                                result.panel_deleted = disabled
                                 if disabled:
-                                    result.panel_deleted = True
-                                    result.panel_error = 'Удаление не удалось, пользователь деактивирован'
                                     logger.info(
-                                        '✅ RemnaWave пользователь деактивирован как fallback',
-                                        remnawave_uuid=user.remnawave_uuid,
+                                        '✅ RemnaWave пользователь деактивирован',
+                                        remnawave_uuid=panel_uuid,
+                                        delete_mode=delete_mode,
                                     )
                                 else:
+                                    result.panel_error = 'disable_remnawave_user вернул False'
                                     logger.warning(
-                                        '⚠️ Fallback деактивация RemnaWave тоже не удалась',
-                                        remnawave_uuid=user.remnawave_uuid,
+                                        '⚠️ Не удалось деактивировать пользователя в RemnaWave',
+                                        remnawave_uuid=panel_uuid,
+                                        delete_mode=delete_mode,
                                     )
-                            except Exception as fallback_e:
-                                logger.error('❌ Ошибка деактивации RemnaWave как fallback', fallback_e=fallback_e)
+
+                        except Exception as e:
+                            result.panel_error = 'Ошибка обработки пользователя в Remnawave'
+                            logger.warning(
+                                '⚠️ Ошибка обработки пользователя в Remnawave',
+                                delete_mode=delete_mode,
+                                remnawave_uuid=panel_uuid,
+                                error=e,
+                            )
+                            if delete_mode == 'delete':
+                                try:
+                                    from app.services.subscription_service import SubscriptionService
+
+                                    subscription_service = SubscriptionService()
+                                    disabled = await subscription_service.disable_remnawave_user(panel_uuid)
+                                    if disabled:
+                                        result.panel_deleted = True
+                                        result.panel_error = 'Удаление не удалось, пользователь деактивирован'
+                                        logger.info(
+                                            '✅ RemnaWave пользователь деактивирован как fallback',
+                                            remnawave_uuid=panel_uuid,
+                                        )
+                                except Exception as fallback_e:
+                                    logger.error('❌ Ошибка деактивации RemnaWave как fallback', fallback_e=fallback_e)
 
             try:
                 async with db.begin_nested():
@@ -1210,36 +1252,38 @@ class UserService:
 
             try:
                 async with db.begin_nested():
-                    if user.subscription:
-                        logger.info('🔄 Удаляем подписку', subscription_id=user.subscription.id)
+                    subs = getattr(user, 'subscriptions', None) or []
+                    if subs:
+                        all_squad_ids: set[str] = set()
+                        for sub in subs:
+                            logger.info('🔄 Удаляем подписку', subscription_id=sub.id)
+                            if sub.connected_squads:
+                                all_squad_ids.update(sub.connected_squads)
+                            await db.execute(
+                                delete(SubscriptionServer).where(SubscriptionServer.subscription_id == sub.id)
+                            )
 
-                        # Save squad info before deleting subscription
-                        squad_ids = user.subscription.connected_squads
-
-                        # Delete subscription_servers and subscription FIRST
-                        # Lock order: subscriptions → server_squads (matches webhook order)
-                        await db.execute(
-                            delete(SubscriptionServer).where(SubscriptionServer.subscription_id == user.subscription.id)
-                        )
+                        # Delete all subscriptions for this user
+                        # Lock order: subscriptions -> server_squads (matches webhook order)
                         await db.execute(delete(Subscription).where(Subscription.user_id == user_id))
                         await db.flush()
 
                         # Decrement server_squads.current_users AFTER subscription delete
                         # to match lock ordering with webhook and avoid deadlocks
-                        if squad_ids:
+                        if all_squad_ids:
                             try:
                                 from app.database.crud.server_squad import (
                                     get_server_ids_by_uuids,
                                     remove_user_from_servers,
                                 )
 
-                                int_squad_ids = await get_server_ids_by_uuids(db, list(squad_ids))
+                                int_squad_ids = await get_server_ids_by_uuids(db, list(all_squad_ids))
                                 if int_squad_ids:
                                     await remove_user_from_servers(db, int_squad_ids)
                             except Exception as sq_err:
                                 logger.warning('⚠️ Не удалось уменьшить счётчик серверов', error=sq_err)
             except Exception as e:
-                logger.error('❌ Ошибка удаления подписки', error=e)
+                logger.error('❌ Ошибка удаления подписок', error=e)
 
             try:
                 from app.database.models import (
@@ -1316,7 +1360,7 @@ class UserService:
 
             for user in inactive_users:
                 # Skip users with active paid subscriptions
-                if user.subscription and user.subscription.is_active:
+                if any(sub.is_active for sub in (getattr(user, 'subscriptions', None) or [])):
                     skipped_active_sub += 1
                     continue
 
@@ -1341,7 +1385,18 @@ class UserService:
             if not user:
                 return {}
 
-            subscription = await get_subscription_by_user_id(db, user_id)
+            if settings.is_multi_tariff_enabled():
+                from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+                active_subs = await get_active_subscriptions_by_user_id(db, user_id)
+                if active_subs:
+                    _non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
+                    _pool = _non_daily or active_subs
+                    subscription = max(_pool, key=lambda s: s.days_left)
+                else:
+                    subscription = None
+            else:
+                subscription = await get_subscription_by_user_id(db, user_id)
             transactions_count = await get_user_transactions_count(db, user_id)
 
             days_since_registration = (datetime.now(UTC) - user.created_at).days

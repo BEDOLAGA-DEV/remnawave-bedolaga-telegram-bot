@@ -306,9 +306,9 @@ async def create_gift_purchase(
         else:
             # 2) Fall back to Bot API (works for public usernames the bot has seen)
             try:
-                from aiogram import Bot
+                from app.bot_factory import create_bot
 
-                async with Bot(token=settings.BOT_TOKEN) as bot:
+                async with create_bot() as bot:
                     chat = await asyncio.wait_for(bot.get_chat(chat_id=f'@{tg_username}'), timeout=5.0)
                     pre_resolved_telegram_id = chat.id
             except Exception:
@@ -371,19 +371,23 @@ async def create_gift_purchase(
         # Stars payments need a Bot instance to create invoice links
         bot = None
         if body.payment_method == 'telegram_stars':
-            from aiogram import Bot
+            from app.bot_factory import create_bot
 
-            bot = Bot(token=settings.BOT_TOKEN)
+            bot = create_bot()
 
-        payment_service = PaymentService(bot=bot)
-        payment_result = await payment_service.create_guest_payment(
-            db=db,
-            amount_kopeks=price_kopeks,
-            payment_method=body.payment_method,
-            description=f'Gift: {tariff.name} ({body.period_days}d)',
-            purchase_token=purchase.token,
-            return_url=return_url,
-        )
+        try:
+            payment_service = PaymentService(bot=bot)
+            payment_result = await payment_service.create_guest_payment(
+                db=db,
+                amount_kopeks=price_kopeks,
+                payment_method=body.payment_method,
+                description=f'Gift: {tariff.name} ({body.period_days}d)',
+                purchase_token=purchase.token,
+                return_url=return_url,
+            )
+        finally:
+            if bot:
+                await bot.session.close()
 
         if payment_result is None:
             await db.rollback()
@@ -421,8 +425,8 @@ async def create_gift_purchase(
             warning=recipient_warning,
         )
 
-    # Balance mode
-    if user.balance_kopeks < price_kopeks:
+    # Balance mode (skip for 100% discount)
+    if price_kopeks > 0 and user.balance_kopeks < price_kopeks:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Insufficient balance',
@@ -720,7 +724,7 @@ async def activate_gift_by_code(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail='Too many requests')
 
     code = body.code.strip()
-    if code.upper().startswith('GIFT-'):
+    if code.upper().startswith('GIFT-') or code.upper().startswith('GIFT_'):
         code = code[5:]
 
     if len(code) < 8:

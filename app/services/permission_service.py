@@ -15,14 +15,11 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.crud.rbac import AccessPolicyCRUD, AuditLogCRUD, UserRoleCRUD
+from app.database.crud.rbac import SUPERADMIN_LEVEL, AccessPolicyCRUD, AuditLogCRUD, UserRoleCRUD
 
 
 if TYPE_CHECKING:
     from app.database.models import AccessPolicy, User
-
-
-SUPERADMIN_LEVEL = 999
 
 
 logger = structlog.get_logger(__name__)

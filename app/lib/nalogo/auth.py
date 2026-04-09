@@ -40,6 +40,7 @@ class AuthProviderImpl(AuthProvider):
         base_url: str = 'https://lknpd.nalog.ru/api',
         storage_path: str | None = None,
         device_id: str | None = None,
+        proxy_url: str | None = None,
     ):
         self.base_url_v1 = f'{base_url}/v1'
         self.base_url_v2 = f'{base_url}/v2'
@@ -47,6 +48,7 @@ class AuthProviderImpl(AuthProvider):
         self.device_id = device_id or generate_device_id()
         self.device_info = DeviceInfo(sourceDeviceId=self.device_id)
         self._token_data: dict[str, Any] | None = None
+        self.proxy_url = proxy_url
 
         # Default headers similar to PHP Authenticator
         self.default_headers = {
@@ -130,7 +132,7 @@ class AuthProviderImpl(AuthProvider):
             'deviceInfo': self.device_info.model_dump(),
         }
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(proxy=self.proxy_url) as client:
             response = await client.post(
                 f'{self.base_url_v1}/auth/lkfl',
                 json=request_data,
@@ -165,7 +167,7 @@ class AuthProviderImpl(AuthProvider):
             'requireTpToBeActive': True,
         }
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(proxy=self.proxy_url) as client:
             response = await client.post(
                 f'{self.base_url_v2}/auth/challenge/sms/start',
                 json=request_data,
@@ -200,7 +202,7 @@ class AuthProviderImpl(AuthProvider):
             'deviceInfo': self.device_info.model_dump(),
         }
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(proxy=self.proxy_url) as client:
             response = await client.post(
                 f'{self.base_url_v1}/auth/challenge/sms/verify',
                 json=request_data,
@@ -233,7 +235,7 @@ class AuthProviderImpl(AuthProvider):
         }
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(proxy=self.proxy_url) as client:
                 response = await client.post(
                     f'{self.base_url_v1}/auth/token',
                     json=request_data,

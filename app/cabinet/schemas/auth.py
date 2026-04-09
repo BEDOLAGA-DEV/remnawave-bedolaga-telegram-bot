@@ -187,3 +187,28 @@ class EmailChangeResponse(BaseModel):
     message: str = Field(..., description='Success message')
     new_email: str = Field(..., description='New email address pending verification')
     expires_in_minutes: int = Field(..., description='Code expiration time in minutes')
+
+
+class DeepLinkTokenResponse(BaseModel):
+    """Response with deep link auth token."""
+
+    token: str = Field(..., description='One-time auth token')
+    bot_username: str = Field(..., description='Bot username for deep link')
+    expires_in: int = Field(..., description='Token TTL in seconds')
+
+
+class DeepLinkPollRequest(BaseModel):
+    """Request to poll deep link auth status.
+
+    Deep link auth is always for existing bot users — referral codes are not applicable here.
+    Only campaign_slug is supported (campaign bonus can apply to existing users).
+    """
+
+    token: str = Field(..., min_length=16, max_length=128, description='Deep link auth token')
+    campaign_slug: str | None = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r'^[a-zA-Z0-9_-]+$',
+        description='Campaign slug captured from cabinet URL',
+    )

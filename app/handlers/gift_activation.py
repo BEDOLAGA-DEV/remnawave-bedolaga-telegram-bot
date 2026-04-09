@@ -6,6 +6,7 @@ import structlog
 from aiogram import Dispatcher, F, types
 from aiogram.types import InaccessibleMessage
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.database.database import AsyncSessionLocal
 from app.database.models import GuestPurchase
@@ -41,7 +42,11 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
     await callback.message.edit_text('⏳ Активируем подарок...', parse_mode=None)
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(GuestPurchase).where(GuestPurchase.id == purchase_id))
+        result = await db.execute(
+            select(GuestPurchase)
+            .options(selectinload(GuestPurchase.user), selectinload(GuestPurchase.tariff))
+            .where(GuestPurchase.id == purchase_id)
+        )
         purchase = result.scalars().first()
 
         if not purchase or purchase.user_id is None or purchase.user is None:

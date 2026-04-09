@@ -63,7 +63,7 @@ CATEGORY_GROUP_METADATA: dict[str, dict[str, object]] = {
     },
     'payments': {
         'title': '💳 Платежные системы',
-        'description': 'YooKassa, CryptoBot, Heleket, CloudPayments, Freekassa, MulenPay, PAL24, Wata, Platega, Tribute, Kassa AI, RioPay и Telegram Stars.',
+        'description': 'YooKassa, CryptoBot, Heleket, CloudPayments, Freekassa, MulenPay, PAL24, Wata, Platega, Tribute, Kassa AI, RioPay, SeverPay и Telegram Stars.',
         'icon': '💳',
         'categories': (
             'PAYMENT',
@@ -75,6 +75,7 @@ CATEGORY_GROUP_METADATA: dict[str, dict[str, object]] = {
             'FREEKASSA',
             'KASSA_AI',
             'RIOPAY',
+            'SEVERPAY',
             'MULENPAY',
             'PAL24',
             'WATA',
@@ -1256,6 +1257,9 @@ def _build_settings_keyboard(
     elif category_key == 'RIOPAY':
         label = texts.t('PAYMENT_RIOPAY', f'💳 {settings.get_riopay_display_name()}')
         test_payment_buttons.append([_test_button(f'{label} · тест', 'riopay')])
+    elif category_key == 'SEVERPAY':
+        label = texts.t('PAYMENT_SEVERPAY', f'💳 {settings.get_severpay_display_name()}')
+        test_payment_buttons.append([_test_button(f'{label} · тест', 'severpay')])
 
     if test_payment_buttons:
         rows.extend(test_payment_buttons)
@@ -1902,7 +1906,7 @@ async def test_payment_provider(
             return
 
         amount_kopeks = 10 * 100
-        description = (settings.get_balance_payment_description(amount_kopeks, telegram_user_id=db_user.telegram_id),)
+        description = settings.get_balance_payment_description(amount_kopeks, telegram_user_id=db_user.telegram_id)
         payment_result = await payment_service.create_yookassa_payment(
             db=db,
             user_id=db_user.id,

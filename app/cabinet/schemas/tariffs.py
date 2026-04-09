@@ -112,7 +112,7 @@ class TariffDetailResponse(BaseModel):
     is_daily: bool = False
     daily_price_kopeks: int = 0
     # Режим сброса трафика
-    traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, NO_RESET, None = глобальная настройка
+    traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = None
     # Показывать в подарках
@@ -170,7 +170,7 @@ class TariffCreateRequest(BaseModel):
     is_daily: bool = False
     daily_price_kopeks: int = Field(0, ge=0)
     # Режим сброса трафика
-    traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, NO_RESET, None = глобальная настройка
+    traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
     # Показывать в подарках
@@ -211,7 +211,7 @@ class TariffUpdateRequest(BaseModel):
     is_daily: bool | None = None
     daily_price_kopeks: int | None = Field(None, ge=0)
     # Режим сброса трафика
-    traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, NO_RESET, None = глобальная настройка
+    traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
     # Показывать в подарках

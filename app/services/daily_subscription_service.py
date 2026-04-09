@@ -93,7 +93,6 @@ class DailySubscriptionService:
                                 exc_info=True,
                             )
                             stats['errors'] += 1
-                    await db.commit()
                 except Exception as e:
                     logger.error('Ошибка при обработке подписок', error=e, exc_info=True)
                     await db.rollback()
@@ -142,8 +141,8 @@ class DailySubscriptionService:
             PricingEngine.apply_discount(raw_daily_price, daily_group_pct) if daily_group_pct > 0 else raw_daily_price
         )
 
-        # Проверяем баланс
-        if user.balance_kopeks < daily_price:
+        # Проверяем баланс (при 100% скидке — пропускаем)
+        if daily_price > 0 and user.balance_kopeks < daily_price:
             # Недостаточно средств - приостанавливаем подписку
             await suspend_daily_subscription_insufficient_balance(db, subscription)
 
@@ -163,19 +162,22 @@ class DailySubscriptionService:
         description = f'Суточная оплата тарифа «{tariff.name}»'
 
         try:
+            # commit=False для атомарности: баланс, транзакция и charge_time коммитятся вместе
             deducted = await subtract_user_balance(
                 db,
                 user,
                 daily_price,
                 description,
                 mark_as_paid_subscription=True,
+                commit=False,
             )
 
             if not deducted:
+                await db.rollback()
                 logger.warning('Не удалось списать средства для подписки', subscription_id=subscription.id)
                 return 'error'
 
-            # Создаём транзакцию
+            # Создаём транзакцию (без коммита — часть атомарной операции)
             transaction = await create_transaction(
                 db=db,
                 user_id=user.id,
@@ -183,11 +185,16 @@ class DailySubscriptionService:
                 amount_kopeks=daily_price,
                 description=description,
                 payment_method=PaymentMethod.BALANCE,
+                commit=False,
             )
 
-            # Обновляем время последнего списания и продлеваем подписку
+            # Обновляем время последнего списания и продлеваем подписку (без коммита)
             old_end_date = subscription.end_date
-            subscription = await update_daily_charge_time(db, subscription)
+            subscription = await update_daily_charge_time(db, subscription, commit=False)
+
+            # Атомарный коммит: баланс + транзакция + charge_time
+            await db.commit()
+            await db.refresh(user)
 
             user_id_display = user.telegram_id or user.email or f'#{user.id}'
             logger.info(
@@ -197,17 +204,64 @@ class DailySubscriptionService:
                 user_id_display=user_id_display,
             )
 
+            # Восстанавливаем connected_squads из тарифа, если очищены деактивацией
+            try:
+                if not subscription.connected_squads:
+                    squads = tariff.allowed_squads or []
+                    if not squads:
+                        from app.database.crud.server_squad import get_all_server_squads
+
+                        all_servers, _ = await get_all_server_squads(db, available_only=True, limit=10000)
+                        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+                    if squads:
+                        subscription.connected_squads = squads
+                        await db.commit()
+                        await db.refresh(subscription)
+            except Exception as sq_err:
+                logger.warning('Не удалось восстановить connected_squads', error=sq_err)
+
             # Синхронизируем с Remnawave (обновляем срок подписки)
             try:
                 from app.services.subscription_service import SubscriptionService
 
                 subscription_service = SubscriptionService()
-                await subscription_service.create_remnawave_user(
-                    db,
-                    subscription,
-                    reset_traffic=False,
-                    reset_reason=None,
+                _has_panel_user = (
+                    getattr(subscription, 'remnawave_uuid', None)
+                    if settings.is_multi_tariff_enabled()
+                    else getattr(user, 'remnawave_uuid', None)
                 )
+                if _has_panel_user:
+                    await subscription_service.update_remnawave_user(
+                        db,
+                        subscription,
+                        reset_traffic=False,
+                        reset_reason=None,
+                        sync_squads=True,
+                    )
+                else:
+                    await subscription_service.create_remnawave_user(
+                        db,
+                        subscription,
+                        reset_traffic=False,
+                        reset_reason=None,
+                    )
+                    # POST может игнорировать activeInternalSquads — отправляем PATCH
+                    await db.refresh(user)
+                    _sync_uuid = (
+                        getattr(subscription, 'remnawave_uuid', None)
+                        if settings.is_multi_tariff_enabled()
+                        else getattr(user, 'remnawave_uuid', None)
+                    )
+                    if _sync_uuid and subscription.connected_squads:
+                        try:
+                            await subscription_service.update_remnawave_user(
+                                db,
+                                subscription,
+                                reset_traffic=False,
+                                sync_squads=True,
+                            )
+                        except Exception as patch_err:
+                            logger.warning('Не удалось синхронизировать сквады после создания', error=patch_err)
             except Exception as e:
                 logger.warning('Не удалось обновить Remnawave', error=e)
 
@@ -237,6 +291,7 @@ class DailySubscriptionService:
             return 'charged'
 
         except Exception as e:
+            await db.rollback()
             logger.error(
                 'Ошибка при списании средств для подписки', subscription_id=subscription.id, error=e, exc_info=True
             )
@@ -248,10 +303,13 @@ class DailySubscriptionService:
         amount_rubles = amount_kopeks / 100
         balance_rubles = user.balance_kopeks / 100
 
+        tariff_label = ''
+        if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
+            tariff_label = f'\n📦 Тариф: «{subscription.tariff.name}»'
         message = (
             f'💳 <b>Суточное списание</b>\n\n'
             f'Списано: {amount_rubles:.2f} ₽\n'
-            f'Остаток баланса: {balance_rubles:.2f} ₽\n\n'
+            f'Остаток баланса: {balance_rubles:.2f} ₽{tariff_label}\n\n'
             f'Следующее списание через 24 часа.'
         )
 
@@ -275,8 +333,11 @@ class DailySubscriptionService:
         required_rubles = required_amount / 100
         balance_rubles = user.balance_kopeks / 100
 
+        tariff_label = ''
+        if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
+            tariff_label = f' «{subscription.tariff.name}»'
         message = (
-            f'⚠️ <b>Подписка приостановлена</b>\n\n'
+            f'⚠️ <b>Подписка{tariff_label} приостановлена</b>\n\n'
             f'Недостаточно средств для суточной оплаты.\n\n'
             f'Требуется: {required_rubles:.2f} ₽\n'
             f'Баланс: {balance_rubles:.2f} ₽\n\n'
@@ -353,7 +414,6 @@ class DailySubscriptionService:
                                 exc_info=True,
                             )
                             stats['errors'] += 1
-                    await db.commit()
                 except Exception as e:
                     logger.error('Ошибка при обработке сброса трафика', error=e, exc_info=True)
                     await db.rollback()
@@ -488,10 +548,13 @@ class DailySubscriptionService:
 
     async def _notify_traffic_reset(self, user: User, subscription: Subscription, reset_gb: int):
         """Уведомляет пользователя о сбросе докупленного трафика."""
+        tariff_label = ''
+        if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
+            tariff_label = f'\n📦 Тариф: «{subscription.tariff.name}»'
         message = (
             f'ℹ️ <b>Сброс докупленного трафика</b>\n\n'
             f'Ваш докупленный трафик ({reset_gb} ГБ) был сброшен, '
-            f'так как прошло 30 дней с момента первой докупки.\n\n'
+            f'так как прошло 30 дней с момента первой докупки.{tariff_label}\n\n'
             f'Текущий лимит трафика: {subscription.traffic_limit_gb} ГБ\n\n'
             f'Вы можете докупить трафик снова в любое время.'
         )

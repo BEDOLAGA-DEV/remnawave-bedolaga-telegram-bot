@@ -487,7 +487,8 @@ async def link_telegram(
 
     if request.init_data:
         # Mini App flow: validate initData
-        user_data = validate_telegram_init_data(request.init_data)
+        # Generous max_age: Telegram Desktop/iOS cache initData with stale auth_date
+        user_data = validate_telegram_init_data(request.init_data, max_age_seconds=86400 * 30)
         if not user_data or not user_data.get('id'):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -560,7 +561,8 @@ async def link_telegram(
         if request.photo_url is not None:
             widget_data['photo_url'] = request.photo_url
 
-        if not validate_telegram_login_widget(widget_data):
+        # Generous max_age: Telegram caches auth data with stale auth_date
+        if not validate_telegram_login_widget(widget_data, max_age_seconds=86400 * 30):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Invalid or expired Telegram Login Widget data',
