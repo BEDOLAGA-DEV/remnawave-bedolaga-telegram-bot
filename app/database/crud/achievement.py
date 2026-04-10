@@ -40,6 +40,13 @@ async def get_all_templates(db: AsyncSession) -> list[AchievementTemplate]:
     return list(result.scalars().all())
 
 
+async def get_template_by_id(db: AsyncSession, template_id: int) -> AchievementTemplate | None:
+    result = await db.execute(
+        select(AchievementTemplate).where(AchievementTemplate.id == template_id)
+    )
+    return result.scalar_one_or_none()
+
+
 async def create_template(
     db: AsyncSession,
     name: str,
@@ -49,17 +56,67 @@ async def create_template(
     reward_type: str,
     reward_value: int,
     reward_duration_days: int | None = None,
+    description: str | None = None,
+    is_active: bool = True,
+    display_order: int = 0,
 ) -> AchievementTemplate:
     template = AchievementTemplate(
         name=name,
+        description=description,
         emoji=emoji,
         condition_type=condition_type,
         condition_value=condition_value,
         reward_type=reward_type,
         reward_value=reward_value,
         reward_duration_days=reward_duration_days,
+        is_active=is_active,
+        display_order=display_order,
     )
     db.add(template)
+    await db.flush()
+    return template
+
+
+async def update_template(
+    db: AsyncSession,
+    template_id: int,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    emoji: str | None = None,
+    condition_type: str | None = None,
+    condition_value: int | None = None,
+    reward_type: str | None = None,
+    reward_value: int | None = None,
+    reward_duration_days: int | None = None,
+    is_active: bool | None = None,
+    display_order: int | None = None,
+    _description_set: bool = False,
+    _reward_duration_set: bool = False,
+) -> AchievementTemplate | None:
+    template = await get_template_by_id(db, template_id)
+    if not template:
+        return None
+    if name is not None:
+        template.name = name
+    if _description_set:
+        template.description = description
+    if emoji is not None:
+        template.emoji = emoji
+    if condition_type is not None:
+        template.condition_type = condition_type
+    if condition_value is not None:
+        template.condition_value = condition_value
+    if reward_type is not None:
+        template.reward_type = reward_type
+    if reward_value is not None:
+        template.reward_value = reward_value
+    if _reward_duration_set:
+        template.reward_duration_days = reward_duration_days
+    if is_active is not None:
+        template.is_active = is_active
+    if display_order is not None:
+        template.display_order = display_order
     await db.flush()
     return template
 
@@ -74,6 +131,27 @@ async def delete_template(db: AsyncSession, template_id: int) -> bool:
     await db.delete(template)
     await db.flush()
     return True
+
+
+async def count_unlocks_per_template(db: AsyncSession) -> dict[int, int]:
+    """Return a dict mapping template_id -> count of UserAchievement rows."""
+    result = await db.execute(
+        select(UserAchievement.template_id, func.count(UserAchievement.id))
+        .group_by(UserAchievement.template_id)
+    )
+    return {int(tid): int(cnt) for tid, cnt in result.all()}
+
+
+async def count_total_unlocks(db: AsyncSession) -> int:
+    result = await db.execute(select(func.count(UserAchievement.id)))
+    return int(result.scalar() or 0)
+
+
+async def count_unique_users_with_achievements(db: AsyncSession) -> int:
+    result = await db.execute(
+        select(func.count(func.distinct(UserAchievement.user_id)))
+    )
+    return int(result.scalar() or 0)
 
 
 # ---- User achievement CRUD ----
