@@ -3023,6 +3023,11 @@ async def sync_user_from_panel(
                     changes['remnawave_short_uuid'] = {'old': sub.remnawave_short_uuid, 'new': panel_user.short_uuid}
                     sub.remnawave_short_uuid = panel_user.short_uuid
 
+                # Update crypto link
+                if panel_user.happ_crypto_link and sub.subscription_crypto_link != panel_user.happ_crypto_link:
+                    changes['subscription_crypto_link'] = {'old': sub.subscription_crypto_link, 'new': '***'}
+                    sub.subscription_crypto_link = panel_user.happ_crypto_link
+
             # Update traffic usage if requested
             if request.update_traffic and sync_sub:
                 panel_traffic_used = panel_user.used_traffic_bytes / (1024**3) if panel_user.used_traffic_bytes else 0
