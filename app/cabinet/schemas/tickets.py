@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class TicketMessageResponse(BaseModel):
@@ -78,7 +78,13 @@ class TicketCreateRequest(BaseModel):
 class TicketMessageCreateRequest(BaseModel):
     """Request to add message to ticket."""
 
-    message: str = Field(..., min_length=1, max_length=4000, description='Message text')
+    message: str = Field(default='', max_length=4000, description='Message text')
     media_type: str | None = Field(None, description='Media type: photo, video, document')
     media_file_id: str | None = Field(None, description='Telegram file_id of uploaded media')
     media_caption: str | None = Field(None, max_length=1000, description='Media caption')
+
+    @model_validator(mode='after')
+    def validate_has_content(self) -> 'TicketMessageCreateRequest':
+        if not self.message.strip() and not self.media_file_id:
+            raise ValueError('message or media_file_id is required')
+        return self

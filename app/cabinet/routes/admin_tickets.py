@@ -89,7 +89,7 @@ class AdminTicketListResponse(BaseModel):
 class AdminReplyRequest(BaseModel):
     """Admin reply to ticket."""
 
-    message: str = Field(..., min_length=1, max_length=4000, description='Reply message')
+    message: str = Field(default='', max_length=4000, description='Reply message')
     media_type: str | None = Field(None, description='Media type: photo, video, or document')
     media_file_id: str | None = Field(None, max_length=255, description='Telegram file_id from media upload')
     media_caption: str | None = Field(None, max_length=1000, description='Caption for media')
@@ -102,6 +102,9 @@ class AdminReplyRequest(BaseModel):
             raise ValueError('media_file_id is required when media_type is provided')
         if self.media_type and self.media_type not in {'photo', 'video', 'document'}:
             raise ValueError('media_type must be one of: photo, video, document')
+        # Either message text or media is required
+        if not self.message.strip() and not self.media_file_id:
+            raise ValueError('message or media_file_id is required')
         return self
 
 
