@@ -1,5 +1,6 @@
 import structlog
 from aiogram import Dispatcher, F, types
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import User
 from app.localization.texts import get_texts
