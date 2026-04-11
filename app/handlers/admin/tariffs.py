@@ -276,7 +276,7 @@ def _format_wl_traffic_topup_packages(tariff: Tariff) -> str:
     lines = ['✅ Настроены']
     for gb in sorted(packages.keys()):
         price = packages[gb]
-        lines.append(f'  • {gb} ГБ: {_format_price_kopeks(price)}')
+        lines.append(f'  • {gb} ГБ: {format_price_kopeks(price)}')
 
     return '\n'.join(lines)
 
@@ -2207,7 +2207,7 @@ async def start_edit_tariff_wl_traffic(
     packages = tariff.get_wl_traffic_topup_packages() if hasattr(tariff, 'get_wl_traffic_topup_packages') else {}
     if packages:
         packages_display = '\n'.join(
-            f'  • {gb} ГБ: {_format_price_kopeks(price)}' for gb, price in sorted(packages.items())
+            f'  • {gb} ГБ: {format_price_kopeks(price)}' for gb, price in sorted(packages.items())
         )
     else:
         packages_display = '  Не настроены (глобальные цены)'
@@ -2346,7 +2346,7 @@ async def start_edit_wl_traffic_topup_packages(
     await state.update_data(tariff_id=tariff_id, language=db_user.language)
 
     packages_display = '\n'.join(
-        f'  • {gb} ГБ: {_format_price_kopeks(price)}' for gb, price in sorted(packages.items())
+        f'  • {gb} ГБ: {format_price_kopeks(price)}' for gb, price in sorted(packages.items())
     ) if packages else '  Не настроены'
 
     await callback.message.edit_text(
@@ -2411,7 +2411,7 @@ async def process_edit_wl_traffic_topup_packages(
 
     texts = get_texts(db_user.language)
     packages_display = '\n'.join(
-        f'  • {gb} ГБ: {_format_price_kopeks(price)}' for gb, price in sorted(packages.items())
+        f'  • {gb} ГБ: {format_price_kopeks(price)}' for gb, price in sorted(packages.items())
     )
 
     buttons = [

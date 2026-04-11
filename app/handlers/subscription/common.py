@@ -15,6 +15,7 @@ from app.database.models import Subscription, User
 from app.localization.texts import get_texts
 from app.utils.pricing_utils import (
     apply_percentage_discount,
+    resolve_discount_percent,
 )
 from app.utils.promo_offer import (
     get_user_active_promo_discount_percent,
@@ -120,6 +121,36 @@ def _get_promo_offer_discount_percent(user: User | None) -> int:
 
 def _apply_promo_offer_discount(user: User | None, amount: int) -> dict[str, int]:
     percent = _get_promo_offer_discount_percent(user)
+
+    if amount <= 0 or percent <= 0:
+        return {'discounted': amount, 'discount': 0, 'percent': 0}
+
+    discounted, discount_value = apply_percentage_discount(amount, percent)
+    return {'discounted': discounted, 'discount': discount_value, 'percent': percent}
+
+
+def _get_addon_discount_percent_for_user(
+    user: 'User | None',
+    category: str,
+    period_hint_days: int | None = None,
+) -> int:
+    """Return the discount percent for an addon category for the given user."""
+    if user is None:
+        return 0
+    promo_group = user.get_primary_promo_group() if hasattr(user, 'get_primary_promo_group') else None
+    if promo_group is not None and not getattr(promo_group, 'apply_discounts_to_addons', True):
+        return 0
+    return resolve_discount_percent(user, promo_group, category, period_days=period_hint_days)
+
+
+def _apply_addon_discount(
+    user: 'User | None',
+    category: str,
+    amount: int,
+    period_hint_days: int | None = None,
+) -> dict[str, int]:
+    """Apply addon discount for the given category and return discounted price info."""
+    percent = _get_addon_discount_percent_for_user(user, category, period_hint_days)
 
     if amount <= 0 or percent <= 0:
         return {'discounted': amount, 'discount': 0, 'percent': 0}

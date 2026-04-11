@@ -1056,7 +1056,8 @@ async def update_gift_enabled(
     await set_setting_value(db, GIFT_ENABLED_KEY, str(payload.enabled).lower())
     logger.info('Admin set gift enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
     return GiftEnabledResponse(enabled=payload.enabled)
-=======
+
+
 @router.get('/email-registration', response_model=EmailRegistrationEnabledResponse)
 async def get_email_registration_enabled(
     db: AsyncSession = Depends(get_cabinet_db),

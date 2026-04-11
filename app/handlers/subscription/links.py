@@ -305,6 +305,7 @@ async def handle_open_subscription_link(
             subscription_link,
             db_user.language,
             redirect_link=redirect_link,
+            show_not_working_button=True,
         )
 
         await callback.message.answer(

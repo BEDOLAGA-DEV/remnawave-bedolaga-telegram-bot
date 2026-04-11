@@ -154,11 +154,6 @@ async def start_simple_subscription_purchase(
                 'ℹ️ У вас уже есть триальная подписка. Она истекает через {days} дн.',
             ).format(days=days_left)
 
-    server_label = _get_simple_subscription_server_label(
-        texts,
-        subscription_params,
-        resolved_squad_uuid,
-    )
     show_devices = settings.is_devices_selection_enabled()
 
     message_lines = [
@@ -176,7 +171,6 @@ async def start_simple_subscription_purchase(
     message_lines.extend(
         [
             f'📊 Трафик: {traffic_label}',
-            f'🌍 Сервер: {server_label}',
             '',
             f'💰 Стоимость: {settings.format_price(price_kopeks)}',
             f'💳 Ваш баланс: {settings.format_price(user_balance_kopeks)}',
@@ -551,11 +545,6 @@ async def handle_simple_subscription_pay_with_balance(
             )
 
         # Отправляем уведомление об успешной покупке
-        server_label = _get_simple_subscription_server_label(
-            texts,
-            subscription_params,
-            resolved_squad_uuid,
-        )
         show_devices = settings.is_devices_selection_enabled()
 
         success_lines = [
@@ -573,7 +562,6 @@ async def handle_simple_subscription_pay_with_balance(
         success_lines.extend(
             [
                 f'📊 Трафик: {success_traffic_label}',
-                f'🌍 Сервер: {server_label}',
                 '',
                 f'💰 Списано с баланса: {settings.format_price(price_kopeks)}',
                 f'💳 Ваш баланс: {settings.format_price(db_user.balance_kopeks)}',
@@ -754,11 +742,6 @@ async def handle_simple_subscription_other_payment_methods(
     )
 
     # Отображаем доступные методы оплаты
-    server_label = _get_simple_subscription_server_label(
-        texts,
-        subscription_params,
-        resolved_squad_uuid,
-    )
     show_devices = settings.is_devices_selection_enabled()
 
     message_lines = [
@@ -776,7 +759,6 @@ async def handle_simple_subscription_other_payment_methods(
     message_lines.extend(
         [
             f'📊 Трафик: {payment_traffic_label}',
-            f'🌍 Сервер: {server_label}',
             '',
             f'💰 Стоимость: {settings.format_price(price_kopeks)}',
             '',
@@ -2291,11 +2273,6 @@ async def confirm_simple_subscription_purchase(
             )
 
         # Отправляем уведомление об успешной покупке
-        server_label = _get_simple_subscription_server_label(
-            texts,
-            subscription_params,
-            resolved_squad_uuid,
-        )
         show_devices = settings.is_devices_selection_enabled()
 
         success_lines = [
@@ -2313,7 +2290,6 @@ async def confirm_simple_subscription_purchase(
         success_lines.extend(
             [
                 f'📊 Трафик: {success_traffic_label}',
-                f'🌍 Сервер: {server_label}',
                 '',
                 f'💰 Списано с баланса: {settings.format_price(price_kopeks)}',
                 f'💳 Ваш баланс: {settings.format_price(db_user.balance_kopeks)}',

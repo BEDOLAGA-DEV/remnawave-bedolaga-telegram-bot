@@ -625,6 +625,33 @@ async def handle_sbp_payment(callback: types.CallbackQuery, db: AsyncSession):
 
 
 @error_handler
+async def handle_quick_amount_selection(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    """
+    Обработчик выбора суммы через кнопки быстрого выбора
+    """
+    current_state = await state.get_state()
+    if current_state != BalanceStates.waiting_for_amount:
+        await callback.answer('❌ Сначала выберите способ оплаты', show_alert=True)
+        return
+
+    try:
+        amount_kopeks = int(callback.data.split('_')[-1])
+
+        data = await state.get_data()
+        payment_method = data.get('payment_method', 'yookassa')
+
+        if not await route_payment_by_method(callback.message, db_user, amount_kopeks, state, payment_method):
+            await callback.answer('❌ Неизвестный способ оплаты', show_alert=True)
+            return
+
+    except ValueError:
+        await callback.answer('❌ Ошибка обработки суммы', show_alert=True)
+    except Exception as e:
+        logger.error('Ошибка обработки быстрого выбора суммы', error=e)
+        await callback.answer('❌ Ошибка обработки запроса', show_alert=True)
+
+
+@error_handler
 async def handle_topup_amount_callback(
     callback: types.CallbackQuery,
     db_user: User,
@@ -731,7 +758,7 @@ def register_balance_handlers(dp: Dispatcher):
     )
     dp.callback_query.register(
         start_platega_direct_method,
-        F.data.regexp(r'^topup_platega_m\d+$'),
+        F.data.regexp(r'^nz!_topup_platega_m\d+$'),
     )
 
     from .yookassa import check_yookassa_payment_status
@@ -763,12 +790,15 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_heleket_payment, F.data == 'nz!_topup_heleket')
     dp.callback_query.register(check_heleket_payment_status, F.data.startswith('nz!_check_heleket_'))
 
-    from .cloudpayments import start_cloudpayments_payment
+    from .cloudpayments import start_cloudpayments_payment, handle_cloudpayments_quick_amount
 
     dp.callback_query.register(start_cloudpayments_payment, F.data == 'nz!_topup_cloudpayments')
     dp.callback_query.register(handle_cloudpayments_quick_amount, F.data.startswith('nz!_topup_amount|cloudpayments|'))
 
     from .freekassa import (
+        process_freekassa_card_quick_amount,
+        process_freekassa_quick_amount,
+        process_freekassa_sbp_quick_amount,
         start_freekassa_card_topup,
         start_freekassa_sbp_topup,
         start_freekassa_topup,
@@ -782,6 +812,7 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(process_freekassa_card_quick_amount, F.data.startswith('nz!_topup_amount|freekassa_card|'))
 
     from .kassa_ai import (
+        process_kassa_ai_quick_amount,
         start_kassa_ai_card_topup,
         start_kassa_ai_sberpay_topup,
         start_kassa_ai_sbp_topup,
@@ -823,3 +854,7 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_quick_amount_selection, F.data.startswith('nz!_quick_amount_'))
 
     dp.callback_query.register(handle_topup_amount_callback, F.data.startswith('nz!_topup_amount|'))
+
+    dp.callback_query.register(handle_saved_cards_list, F.data == 'saved_cards_list')
+    dp.callback_query.register(handle_unlink_card, F.data.startswith('unlink_card_'))
+    dp.callback_query.register(handle_confirm_unlink, F.data.startswith('confirm_unlink_'))

@@ -465,7 +465,7 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
 
         # Save cart for auto-purchase after balance top-up
         cart_data = {
-            'cart_mode': 'add_traffic',
+            'cart_mode': 'add_wl_traffic',
             'subscription_id': subscription.id,
             'traffic_gb': traffic_gb,
             'price_kopeks': price,
@@ -550,6 +550,12 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
 
         await db.refresh(db_user)
         await db.refresh(subscription)
+
+        # Удаляем корзину — покупка выполнена вручную, авто-покупка не нужна
+        try:
+            await user_cart_service.delete_user_cart(db_user.id)
+        except Exception as e:
+            logger.warning('Не удалось удалить корзину после покупки WL-трафика', error=e)
 
         # Отправляем уведомление админам о докупке трафика
         try:

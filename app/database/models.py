@@ -1032,6 +1032,9 @@ class Tariff(Base):
     # {"5": 1000, "10": 2000, ...} (GB: price_kopeks). Пустой = использовать глобальные цены
     wl_traffic_topup_packages = Column(JSON, default=dict)
 
+    # Длительность триала для этого тарифа. None = использовать глобальный TRIAL_DURATION_DAYS
+    trial_duration_days = Column(Integer, nullable=True, default=None)
+
     # Суточный тариф - ежедневное списание
     is_daily = Column(Boolean, default=False, nullable=False)  # Является ли тариф суточным
     daily_price_kopeks = Column(Integer, default=0, nullable=False)  # Цена за день в копейках

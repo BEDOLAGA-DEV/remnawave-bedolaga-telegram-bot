@@ -223,7 +223,7 @@ def get_tariff_periods_keyboard(
         else:
             price_text = format_price_kopeks(price)
 
-        button_text = f'{_format_period(period)} — {price_text}'
+        button_text = f'{format_period(period)} — {price_text}'
         buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'nz!_tariff_period:{tariff.id}:{period}')])
 
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_tariff_list')])
@@ -1620,8 +1620,8 @@ async def confirm_tariff_purchase(
             f'📦 Тариф: <b>{tariff.name}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
-            f'📅 Период: {_format_period(period)}\n'
-            f'💰 Списано: {_format_price_kopeks(final_price)}\n\n'
+            f'📅 Период: {format_period(period)}\n'
+            f'💰 Списано: {format_price_kopeks(final_price)}\n\n'
             f'Перейдите в раздел «Подписка» для подключения.',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
@@ -1882,7 +1882,7 @@ async def confirm_daily_tariff_purchase(
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'🔄 Тип: Суточный\n'
-            f'💰 Списано: {_format_price_kopeks(daily_price)}\n\n'
+            f'💰 Списано: {format_price_kopeks(daily_price)}\n\n'
             f'ℹ️ Следующее списание через 24 часа.\n'
             f'Перейдите в раздел «Подписка» для подключения.',
             reply_markup=InlineKeyboardMarkup(
@@ -2038,7 +2038,7 @@ def get_tariff_extend_keyboard(
         else:
             price_text = format_price_kopeks(price)
 
-        button_text = f'{_format_period(period)} — {price_text}'
+        button_text = f'{format_period(period)} — {price_text}'
         buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'nz!_tariff_extend:{tariff.id}:{period}')])
 
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')])
@@ -2546,7 +2546,7 @@ def get_tariff_switch_periods_keyboard(
         else:
             price_text = format_price_kopeks(price)
 
-        button_text = f'{_format_period(period)} — {price_text}'
+        button_text = f'{format_period(period)} — {price_text}'
         buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'nz!_tariff_sw_period:{tariff.id}:{period}')])
 
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_tariff_switch')])

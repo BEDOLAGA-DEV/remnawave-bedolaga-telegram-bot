@@ -20,6 +20,7 @@ from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, Subscription, SubscriptionStatus, TransactionType, User
 from app.keyboards.inline import (
     get_back_keyboard,
+    get_countries_keyboard,
     get_devices_keyboard,
     get_extend_subscription_keyboard_with_prices,
     get_happ_download_button_row,
@@ -125,8 +126,15 @@ from .autopay import (
 )
 from .common import _get_promo_offer_discount_percent, update_traffic_prices
 from .countries import (
+    _build_countries_selection_text,
     _get_available_countries,
     _get_preselected_free_countries,
+    _should_show_countries_management,
+    apply_countries_changes,
+    countries_continue,
+    handle_add_countries,
+    handle_manage_country,
+    select_country,
 )
 from .devices import (
     confirm_add_devices,
@@ -151,6 +159,9 @@ from .happ import (
     handle_happ_download_close,
     handle_happ_download_platform_choice,
     handle_happ_download_request,
+    handle_happ_link_broken_crypt4,
+    handle_happ_link_broken_raw,
+    handle_happ_link_not_working,
 )
 from .links import handle_connect_subscription, handle_open_subscription_link
 from .pricing import _build_subscription_period_prompt, _prepare_subscription_summary
@@ -463,6 +474,7 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 📱 Информация о подписке
 🎭 Тип: {subscription_type}
 📈 Трафик: {traffic}
+� Серверы: {servers}
 📱 Устройства: {devices_used} / {device_limit}""",
         )
     else:
@@ -477,7 +489,7 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 📅 Действует до: {end_date}
 ⏰ Осталось: {time_left}
 📈 Трафик: {traffic}
-📱 Устройства: {devices_used} / {device_limit}""",
+ Устройства: {devices_used} / {device_limit}""",
         )
 
     if not show_devices:
@@ -513,14 +525,8 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             device_model = device.get('deviceModel', 'Unknown')
             device_info = f'{platform} - {device_model}'
 
-            updated_at_str = device.get('updatedAt')
-            if updated_at_str:
-                try:
-                    dt = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
-                    display_date = format_local_datetime(dt, '%d.%m %H:%M')
-                    device_info += f' ({display_date})'
-                except Exception:
-                    pass
+            if len(device_info) > 35:
+                device_info = device_info[:32] + '...'
 
             message += f'• {device_info}\n'
         message += texts.t('SUBSCRIPTION_CONNECTED_DEVICES_FOOTER', '</blockquote>')
@@ -926,6 +932,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
         trial_squads = None
         tariff_id_for_trial = None
         trial_duration = None  # None = использовать TRIAL_DURATION_DAYS
+        trial_tariff = None
 
         if settings.is_tariffs_mode():
             try:
@@ -965,6 +972,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
             traffic_limit_gb=trial_traffic_limit,
             connected_squads=trial_squads,
             tariff_id=tariff_id_for_trial,
+            wl_traffic_limit_gb=getattr(trial_tariff, 'wl_default_traffic_gb', None),
         )
 
         await db.refresh(db_user)
@@ -1581,6 +1589,13 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
 
     period_display = format_period_description(prepared_cart_data['period_days'], db_user.language)
 
+    countries = await _get_available_countries(db_user.promo_group_id)
+    selected_countries_names = []
+    cart_countries = prepared_cart_data.get('countries', [])
+    for country in countries:
+        if country['uuid'] in cart_countries:
+            selected_countries_names.append(country['name'])
+
     if settings.is_traffic_fixed():
         traffic_value = prepared_cart_data.get('traffic_gb')
         if traffic_value is None:
@@ -1595,6 +1610,7 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
         '',
         f'📅 Период: {period_display}',
         f'📊 Трафик: {traffic_display}',
+        f'🌍 Страны: {", ".join(selected_countries_names)}',
     ]
 
     if settings.is_devices_selection_enabled():
@@ -1650,7 +1666,7 @@ async def handle_extend_subscription(
             '🎯 <b>Пробный период заканчивается</b>\n\nЧтобы продолжить пользоваться VPN, выберите подходящий тариф.',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text=texts.MENU_BUY_SUBSCRIPTION, callback_data='menu_buy')],
+                    [types.InlineKeyboardButton(text=texts.MENU_BUY_SUBSCRIPTION, callback_data='nz!_menu_buy')],
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('WEBHOOK_CLOSE_BUTTON', '✖️ Закрыть'),
@@ -1810,7 +1826,8 @@ async def handle_extend_subscription(
         f'Осталось дней: {subscription.days_left}',
         '',
         '<b>Ваша текущая конфигурация:</b>',
-        f'📊 Трафик: {texts.format_traffic(subscription.traffic_limit_gb)}',
+        f'� Серверов: {len(subscription.connected_squads or [])}',
+        f'�📊 Трафик: {texts.format_traffic(subscription.traffic_limit_gb)}',
     ]
 
     if settings.is_devices_selection_enabled():
@@ -2044,7 +2061,7 @@ async def confirm_extend_subscription(
     await callback.answer()
 
 
-async def select_period(callback: types.CallbackQuery, state: FSMContext, db_user: User):
+async def select_period(callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession):
     period_days = int(callback.data.split('_')[2])
     texts = get_texts(db_user.language)
 
@@ -2087,10 +2104,26 @@ async def select_period(callback: types.CallbackQuery, state: FSMContext, db_use
         await callback.answer()
         return
 
+    if await _should_show_countries_management(db_user):
+        countries = await _get_available_countries(db_user.promo_group_id)
+        # Автоматически предвыбираем бесплатные серверы
+        preselected = _get_preselected_free_countries(countries)
+        data['countries'] = preselected
+        await state.set_data(data)
+        # Формируем текст с описаниями сквадов
+        selection_text = _build_countries_selection_text(countries, texts.SELECT_COUNTRIES)
+        await callback.message.edit_text(
+            selection_text,
+            reply_markup=get_countries_keyboard(countries, preselected, db_user.language),
+            parse_mode='HTML',
+        )
+        await state.set_state(SubscriptionStates.selecting_countries)
+        await callback.answer()
+        return
+
     countries = await _get_available_countries(db_user.promo_group_id)
-    preselected = _get_preselected_free_countries(countries)
     available_countries = [c for c in countries if c.get('is_available', True)]
-    data['countries'] = preselected if preselected else ([available_countries[0]['uuid']] if available_countries else [])
+    data['countries'] = [available_countries[0]['uuid']] if available_countries else []
     await state.set_data(data)
 
     if settings.is_devices_selection_enabled():
@@ -2937,6 +2970,7 @@ async def handle_subscription_settings(callback: types.CallbackQuery, db_user: U
         (
             '⚙️ <b>Настройки подписки</b>\n\n'
             '📊 <b>Текущие параметры:</b>\n'
+            '🌍 Стран: {countries_count}\n'
             '📈 Трафик: {traffic_used} / {traffic_limit}\n'
             '📱 Устройства: {devices_used} / {devices_limit}\n\n'
             'Выберите что хотите изменить:'
@@ -2952,16 +2986,19 @@ async def handle_subscription_settings(callback: types.CallbackQuery, db_user: U
     devices_limit_display = str(subscription.device_limit)
 
     settings_text = settings_template.format(
+        countries_count=len(subscription.connected_squads or []),
         traffic_used=texts.format_traffic(subscription.traffic_used_gb, is_limit=False),
         traffic_limit=texts.format_traffic(subscription.traffic_limit_gb, is_limit=True),
         devices_used=devices_used,
         devices_limit=devices_limit_display,
     )
 
+    show_countries = await _should_show_countries_management(db_user)
+
     await callback.message.edit_text(
         settings_text,
         reply_markup=get_updated_subscription_settings_keyboard(
-            db_user.language, show_countries_management=False, tariff=tariff, subscription=subscription
+            db_user.language, show_countries, tariff=tariff, subscription=subscription
         ),
         parse_mode='HTML',
     )
@@ -3266,6 +3303,7 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
         trial_squads = None
         tariff_id_for_trial = None
         trial_duration = None
+        trial_tariff = None
 
         if settings.is_tariffs_mode():
             try:
@@ -3300,6 +3338,7 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
             traffic_limit_gb=trial_traffic_limit,
             connected_squads=trial_squads,
             tariff_id=tariff_id_for_trial,
+            wl_traffic_limit_gb=getattr(trial_tariff, 'wl_default_traffic_gb', None),
         )
 
         await db.refresh(db_user)
@@ -4097,6 +4136,8 @@ def register_handlers(dp: Dispatcher):
         start_subscription_purchase, F.data.in_(['nz!_menu_buy', 'nz!_subscription_upgrade', 'nz!_subscription_purchase'])
     )
 
+    dp.callback_query.register(handle_add_countries, F.data == 'nz!_subscription_add_countries')
+
     dp.callback_query.register(handle_switch_traffic, F.data == 'nz!_subscription_switch_traffic')
 
     dp.callback_query.register(confirm_switch_traffic, F.data.startswith('nz!_switch_traffic_'))
@@ -4166,6 +4207,16 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(set_autopay_days, F.data.startswith('nz!_autopay_days_'))
 
+    dp.callback_query.register(select_country, F.data.startswith('nz!_country_'), SubscriptionStates.selecting_countries)
+
+    dp.callback_query.register(
+        countries_continue, F.data == 'nz!_countries_continue', SubscriptionStates.selecting_countries
+    )
+
+    dp.callback_query.register(handle_manage_country, F.data.startswith('nz!_country_manage_'))
+
+    dp.callback_query.register(apply_countries_changes, F.data == 'nz!_countries_apply')
+
     dp.callback_query.register(claim_discount_offer, F.data.startswith('nz!_claim_discount_'))
 
     dp.callback_query.register(
@@ -4201,6 +4252,10 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_specific_app_guide, F.data.startswith('nz!_app_') & ~F.data.startswith('nz!_app_list_'))
 
     dp.callback_query.register(handle_open_subscription_link, F.data.startswith('nz!_open_subscription_link'))
+
+    dp.callback_query.register(handle_happ_link_not_working, F.data == 'nz!_happ_link_not_working')
+    dp.callback_query.register(handle_happ_link_broken_crypt4, F.data == 'nz!_happ_link_broken_crypt4')
+    dp.callback_query.register(handle_happ_link_broken_raw, F.data == 'nz!_happ_link_broken_raw')
 
     dp.callback_query.register(handle_subscription_settings, F.data == 'nz!_subscription_settings')
 

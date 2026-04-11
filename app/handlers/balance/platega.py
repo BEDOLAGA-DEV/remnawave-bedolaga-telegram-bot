@@ -201,7 +201,7 @@ async def start_platega_direct_method(
     texts = get_texts(db_user.language)
 
     try:
-        method_code = int(callback.data.removeprefix('topup_platega_m'))
+        method_code = int(callback.data.removeprefix('nz!_topup_platega_m'))
     except (ValueError, IndexError):
         await callback.answer('❌ Некорректный способ оплаты', show_alert=True)
         return

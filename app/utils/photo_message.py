@@ -17,6 +17,7 @@ from .message_patch import (
     is_qr_message,
     prepare_privacy_safe_kwargs,
 )
+from .premium_emoji import apply_premium_emoji
 
 
 logger = structlog.get_logger(__name__)
@@ -85,6 +86,7 @@ async def edit_or_answer_photo(
     force_text: bool = False,
 ) -> None:
     resolved_parse_mode = parse_mode or 'HTML'
+    caption = apply_premium_emoji(caption)
 
     # Если сообщение недоступно, отправляем новое сообщение
     if isinstance(callback.message, InaccessibleMessage):

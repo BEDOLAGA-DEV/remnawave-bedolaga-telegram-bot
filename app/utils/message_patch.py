@@ -8,6 +8,7 @@ from aiogram.types import FSInputFile, InaccessibleMessage, InputMediaPhoto, Mes
 
 from app.config import settings
 from app.localization.texts import get_texts
+from app.utils.premium_emoji import apply_premium_emoji
 
 
 LOGO_PATH = Path(settings.LOGO_FILE)
@@ -64,17 +65,37 @@ def is_qr_message(message: Message) -> bool:
 
 _original_answer = Message.answer
 _original_edit_text = Message.edit_text
+_original_answer_photo = Message.answer_photo
+_original_edit_media = Message.edit_media
+
+
+async def _answer_photo_premium(self: Message, photo, caption: str = None, **kwargs):
+    """Обёртка над Message.answer_photo с заменой эмодзи в caption."""
+    if caption:
+        caption = apply_premium_emoji(caption)
+    return await _original_answer_photo(self, photo, caption=caption, **kwargs)
+
+
+async def _edit_media_premium(self: Message, media, **kwargs):
+    """Обёртка над Message.edit_media с заменой эмодзи в caption медиа-объекта."""
+    if hasattr(media, 'caption') and media.caption:
+        media = media.model_copy(update={'caption': apply_premium_emoji(media.caption)})
+    return await _original_edit_media(self, media, **kwargs)
 
 
 async def _text_answer(self: Message, text: str = None, **kwargs):
     """Обёртка над оригинальным Message.answer с подавлением web page preview."""
     kwargs.setdefault('disable_web_page_preview', True)
+    if text:
+        text = apply_premium_emoji(text)
     return await _original_answer(self, text, **kwargs)
 
 
 async def _text_edit(self: Message, text: str, **kwargs):
     """Обёртка над оригинальным Message.edit_text с подавлением web page preview."""
     kwargs.setdefault('disable_web_page_preview', True)
+    if text:
+        text = apply_premium_emoji(text)
     return await _original_edit_text(self, text, **kwargs)
 
 
@@ -149,11 +170,11 @@ def is_topic_required_error(error: Exception) -> bool:
 async def _answer_with_photo(self: Message, text: str = None, **kwargs):
     # Уважаем флаг в рантайме: если логотип выключен — не подменяем ответ
     if not settings.ENABLE_LOGO_MODE:
-        # Фото-сообщения не показывают web page preview, текстовые — показывают.
-        # Подавляем превью чтобы поведение не менялось при переключении режима логотипа.
-        kwargs.setdefault('disable_web_page_preview', True)
-        return await _original_answer(self, text, **kwargs)
+        # Маршрутизируем через _text_answer чтобы применить премиум-эмодзи и web preview suppression
+        return await _text_answer(self, text, **kwargs)
     # Если caption слишком длинный для фото — отправим как текст
+    if text:
+        text = apply_premium_emoji(text)
     try:
         if caption_exceeds_telegram_limit(text):
             return await _text_answer(self, text, **kwargs)
@@ -204,7 +225,6 @@ async def _answer_with_photo(self: Message, text: str = None, **kwargs):
 async def _edit_with_photo(self: Message, text: str, **kwargs):
     # Уважаем флаг в рантайме: если логотип выключен — не подменяем редактирование
     if not settings.ENABLE_LOGO_MODE:
-        kwargs.setdefault('disable_web_page_preview', True)
         # Медиа-сообщения (фото/видео из рассылки и т.д.) не имеют text — edit_text упадёт.
         # Удаляем старое сообщение и отправляем новое.
         if self.text is None:
@@ -213,13 +233,13 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
             except TelegramBadRequest:
                 pass
             try:
-                return await _original_answer(self, text, **kwargs)
+                return await _text_answer(self, text, **kwargs)
             except TelegramBadRequest as error:
                 if is_topic_required_error(error):
                     return None
                 raise
         try:
-            return await _original_edit_text(self, text, **kwargs)
+            return await _text_edit(self, text, **kwargs)
         except TelegramBadRequest as error:
             if is_topic_required_error(error):
                 return None
@@ -230,6 +250,8 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
             raise
     if self.photo:
         language = _get_language(self)
+        if text:
+            text = apply_premium_emoji(text)
         # Если caption потенциально слишком длинный — отправим как текст вместо caption
         try:
             if caption_exceeds_telegram_limit(text):
@@ -311,3 +333,5 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
 def patch_message_methods():
     Message.answer = _answer_with_photo
     Message.edit_text = _edit_with_photo
+    Message.answer_photo = _answer_photo_premium
+    Message.edit_media = _edit_media_premium

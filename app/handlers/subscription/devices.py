@@ -33,8 +33,6 @@ from app.utils.pricing_utils import (
 from app.utils.subscription_utils import (
     get_display_subscription_link,
 )
-from app.utils.timezone import format_local_datetime
-
 from .common import (
     _get_period_hint_from_subscription,
     get_apps_for_platform_async,
@@ -865,14 +863,8 @@ async def show_devices_page(
             device_model = device.get('deviceModel', 'Unknown')
             device_info = f'{platform} - {device_model}'
 
-            updated_at_str = device.get('updatedAt')
-            if updated_at_str:
-                try:
-                    dt = datetime.fromisoformat(updated_at_str.replace('Z', '+00:00'))
-                    display_date = format_local_datetime(dt, '%d.%m %H:%M')
-                    device_info += f' (upd: {display_date})'
-                except Exception:
-                    pass
+            if len(device_info) > 35:
+                device_info = device_info[:32] + '...'
 
             devices_text += texts.t(
                 'DEVICE_MANAGEMENT_LIST_ITEM',

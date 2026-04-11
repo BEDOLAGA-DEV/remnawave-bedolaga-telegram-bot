@@ -334,32 +334,6 @@ def get_language_selection_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _get_balance_text(cached_styles: dict, language: str, texts, balance_kopeks: int) -> str:
-    """Build balance button text with formatting."""
-    bal_cfg = cached_styles.get('balance', {})
-    safe_balance = balance_kopeks or 0
-
-    # Custom label overrides the whole text including balance amount
-    custom_bal = bal_cfg.get('labels', {}).get(language, '')
-    if custom_bal:
-        return custom_bal
-    if hasattr(texts, 'BALANCE_BUTTON') and safe_balance > 0:
-        return texts.BALANCE_BUTTON.format(balance=texts.format_price(safe_balance))
-    return texts.t('BALANCE_BUTTON_DEFAULT', '💰 Баланс: {balance}').format(
-        balance=texts.format_price(safe_balance),
-    )
-
-
-def _is_support_enabled() -> bool:
-    """Check if support menu is enabled."""
-    try:
-        from app.services.support_settings_service import SupportSettingsService
-
-        return SupportSettingsService.is_support_menu_enabled()
-    except Exception:
-        return settings.SUPPORT_MENU_ENABLED
-
-
 def _build_cabinet_main_menu_keyboard(
     language: str,
     texts,
@@ -370,12 +344,10 @@ def _build_cabinet_main_menu_keyboard(
 ) -> InlineKeyboardMarkup:
     """Build the main-menu keyboard for Cabinet mode.
 
-    Row layout and button arrangement are driven by the cached menu layout
-    (``get_cached_menu_layout``).  Each row specifies which buttons it contains
-    and how many fit per keyboard row (``max_per_row``).
+    Each button opens the corresponding section of the cabinet frontend
+    via ``MINIAPP_CUSTOM_URL`` + path (e.g. ``/subscription``, ``/balance``).
     """
     from app.utils.button_styles_cache import CALLBACK_TO_SECTION, get_cached_button_styles
-    from app.utils.menu_layout_cache import get_cached_menu_layout
     from app.utils.miniapp_buttons import (
         CALLBACK_TO_CABINET_STYLE,
         _resolve_style,
@@ -384,8 +356,6 @@ def _build_cabinet_main_menu_keyboard(
 
     global_style = _resolve_style((settings.CABINET_BUTTON_STYLE or '').strip())
     cached_styles = get_cached_button_styles()
-    layout = get_cached_menu_layout()
-    custom_buttons_cfg: dict[str, dict] = layout.get('custom_buttons', {})
 
     def _cabinet_button(
         text: str,
@@ -417,133 +387,89 @@ def _build_cabinet_main_menu_keyboard(
             )
         return InlineKeyboardButton(text=text, callback_data=callback_fallback, style='primary')
 
-    # -- Collect row definitions sorted by row_N key --
-    row_keys = sorted(
-        (k for k in layout if k.startswith('row_')),
-        key=lambda k: int(k.split('_', 1)[1]) if k.split('_', 1)[1].isdigit() else 0,
-    )
+    # -- Primary action row: Cabinet home --
+    home_cfg = cached_styles.get('home', {})
+    if home_cfg.get('enabled', True):
+        profile_text = home_cfg.get('labels', {}).get(language, '') or texts.t('MENU_PROFILE', '👤 Личный кабинет')
+        keyboard_rows: list[list[InlineKeyboardButton]] = [
+            [_cabinet_button(profile_text, '/', 'menu_profile_unavailable')],
+        ]
+    else:
+        keyboard_rows: list[list[InlineKeyboardButton]] = []
 
-    keyboard_rows: list[list[InlineKeyboardButton]] = []
+    # -- Section buttons as paired rows --
+    paired: list[InlineKeyboardButton] = []
 
-    for row_key in row_keys:
-        row_def = layout[row_key]
-        btn_ids: list[str] = row_def.get('buttons', [])
-        max_per_row: int = row_def.get('max_per_row', 1)
-        row_buttons: list[InlineKeyboardButton] = []
+    # Subscription (green — main action)
+    sub_cfg = cached_styles.get('subscription', {})
+    if sub_cfg.get('enabled', True):
+        sub_text = sub_cfg.get('labels', {}).get(language, '') or texts.MENU_SUBSCRIPTION
+        paired.append(_cabinet_button(sub_text, '/subscription', 'menu_subscription'))
 
-        for btn_id in btn_ids:
-            # --- Custom URL buttons ---
-            if btn_id.startswith('custom_'):
-                custom_cfg = custom_buttons_cfg.get(btn_id)
-                if not custom_cfg or not custom_cfg.get('url') or not custom_cfg.get('enabled', True):
-                    continue
-                custom_text = (
-                    custom_cfg.get('labels', {}).get(language, '')
-                    or custom_cfg.get('labels', {}).get('ru', '')
-                    or 'Link'
-                )
-                resolved_style = _resolve_style(custom_cfg.get('style'))
-                resolved_emoji = custom_cfg.get('icon_custom_emoji_id') or None
-                open_in = custom_cfg.get('open_in', 'external')
-                link_kwarg = (
-                    {'web_app': types.WebAppInfo(url=custom_cfg['url'])}
-                    if open_in == 'webapp'
-                    else {'url': custom_cfg['url']}
-                )
-                row_buttons.append(
-                    InlineKeyboardButton(
-                        text=custom_text,
-                        **link_kwarg,
-                        style=resolved_style,
-                        icon_custom_emoji_id=resolved_emoji,
-                    ),
-                )
-                continue
+    # Balance
+    bal_cfg = cached_styles.get('balance', {})
+    if bal_cfg.get('enabled', True):
+        safe_balance = balance_kopeks or 0
+        # Custom label overrides the whole text including balance amount
+        custom_bal = bal_cfg.get('labels', {}).get(language, '')
+        if custom_bal:
+            balance_text = custom_bal
+        elif hasattr(texts, 'BALANCE_BUTTON') and safe_balance > 0:
+            balance_text = texts.BALANCE_BUTTON.format(balance=texts.format_price(safe_balance))
+        else:
+            balance_text = texts.t('BALANCE_BUTTON_DEFAULT', '💰 Баланс: {balance}').format(
+                balance=texts.format_price(safe_balance),
+            )
+        paired.append(_cabinet_button(balance_text, '/balance', 'menu_balance'))
 
-            # --- Built-in buttons ---
-            section_cfg = cached_styles.get(btn_id, {})
+    # Referrals (if enabled)
+    ref_cfg = cached_styles.get('referral', {})
+    if settings.is_referral_program_enabled() and ref_cfg.get('enabled', True):
+        ref_text = ref_cfg.get('labels', {}).get(language, '') or texts.MENU_REFERRALS
+        paired.append(_cabinet_button(ref_text, '/referral', 'menu_referrals'))
 
-            match btn_id:
-                case 'home':
-                    if not section_cfg.get('enabled', True):
-                        continue
-                    home_text = section_cfg.get('labels', {}).get(language, '') or texts.t(
-                        'MENU_PROFILE', '👤 Личный кабинет'
-                    )
-                    row_buttons.append(_cabinet_button(home_text, '/', 'menu_profile_unavailable'))
+    # Support
+    support_enabled = False
+    try:
+        from app.services.support_settings_service import SupportSettingsService
 
-                case 'subscription':
-                    if not section_cfg.get('enabled', True):
-                        continue
-                    default_sub_text = (
-                        texts.t('MY_SUBSCRIPTIONS_BUTTON', '📱 Мои подписки')
-                        if settings.is_multi_tariff_enabled()
-                        else texts.MENU_SUBSCRIPTION
-                    )
-                    sub_text = section_cfg.get('labels', {}).get(language, '') or default_sub_text
-                    row_buttons.append(_cabinet_button(sub_text, '/subscription', 'menu_subscription'))
+        support_enabled = SupportSettingsService.is_support_menu_enabled()
+    except Exception:
+        support_enabled = settings.SUPPORT_MENU_ENABLED
 
-                case 'balance':
-                    if not section_cfg.get('enabled', True):
-                        continue
-                    balance_text = _get_balance_text(cached_styles, language, texts, balance_kopeks)
-                    row_buttons.append(_cabinet_button(balance_text, '/balance', 'menu_balance'))
+    sup_cfg = cached_styles.get('support', {})
+    if support_enabled and sup_cfg.get('enabled', True):
+        sup_text = sup_cfg.get('labels', {}).get(language, '') or texts.MENU_SUPPORT
+        paired.append(_cabinet_button(sup_text, '/support', 'menu_support'))
 
-                case 'referral':
-                    if not settings.is_referral_program_enabled():
-                        continue
-                    if not section_cfg.get('enabled', True):
-                        continue
-                    ref_text = section_cfg.get('labels', {}).get(language, '') or texts.MENU_REFERRALS
-                    row_buttons.append(_cabinet_button(ref_text, '/referral', 'menu_referrals'))
+    # Info
+    info_cfg = cached_styles.get('info', {})
+    if info_cfg.get('enabled', True):
+        info_text = info_cfg.get('labels', {}).get(language, '') or texts.t('MENU_INFO', 'ℹ️ Инфо')
+        paired.append(_cabinet_button(info_text, '/info', 'menu_info'))
 
-                case 'support':
-                    if not _is_support_enabled():
-                        continue
-                    if not section_cfg.get('enabled', True):
-                        continue
-                    sup_text = section_cfg.get('labels', {}).get(language, '') or texts.MENU_SUPPORT
-                    row_buttons.append(_cabinet_button(sup_text, '/support', 'menu_support'))
+    proxy_url = settings.MTPROXY_URL or settings.TELEGRAM_PROXY_URL
+    if proxy_url:
+        paired.append(InlineKeyboardButton(text=texts.t('MENU_PROXY', '🛡️ Прокси Telegram'), url=proxy_url, style='primary'))
 
-                case 'info':
-                    if not section_cfg.get('enabled', True):
-                        continue
-                    info_text = section_cfg.get('labels', {}).get(language, '') or texts.t('MENU_INFO', 'ℹ️ Инфо')
-                    row_buttons.append(_cabinet_button(info_text, '/info', 'menu_info'))
+    # Language selection (stays as callback — not a cabinet section)
+    if settings.is_language_selection_enabled():
+        paired.append(InlineKeyboardButton(text=texts.MENU_LANGUAGE, callback_data='nz!_menu_language', style='primary'))
 
-                case 'language':
-                    if not section_cfg.get('enabled', True):
-                        continue
-                    if not settings.is_language_selection_enabled():
-                        continue
-                    lang_text = section_cfg.get('labels', {}).get(language, '') or texts.MENU_LANGUAGE
-                    resolved_lang_emoji = section_cfg.get('icon_custom_emoji_id') or None
-                    row_buttons.append(
-                        InlineKeyboardButton(
-                            text=lang_text,
-                            callback_data='nz!_menu_language',
-                            icon_custom_emoji_id=resolved_lang_emoji,
-                        )
-                    )
+    # Lay out in pairs
+    for i in range(0, len(paired), 2):
+        keyboard_rows.append(paired[i : i + 2])
 
-                case 'admin':
-                    if not is_admin:
-                        continue
-                    admin_row = [InlineKeyboardButton(text=texts.MENU_ADMIN, callback_data='admin_panel')]
-                    if section_cfg.get('enabled', True):
-                        admin_web_text = section_cfg.get('labels', {}).get(language, '') or '🖥 Веб-Админка'
-                        admin_row.append(_cabinet_button(admin_web_text, '/admin', 'admin_panel'))
-                    keyboard_rows.append(admin_row)
-                    continue  # bypass max_per_row chunking
-
-        # Split collected buttons into keyboard rows respecting max_per_row
-        if row_buttons:
-            for i in range(0, len(row_buttons), max_per_row):
-                keyboard_rows.append(row_buttons[i : i + max_per_row])
-
-    # -- Moderator panel (only when not admin — admin row handled above) --
-    if is_moderator and not is_admin:
-        keyboard_rows.append([InlineKeyboardButton(text='🧑‍⚖️ Модерация', callback_data='moderator_panel')])
+    # Admin / Moderator
+    admin_cfg = cached_styles.get('admin', {})
+    if is_admin:
+        admin_buttons = [InlineKeyboardButton(text=texts.MENU_ADMIN, callback_data='admin_panel', style='danger')]
+        if admin_cfg.get('enabled', True):
+            admin_web_text = admin_cfg.get('labels', {}).get(language, '') or '🖥 Веб-Админка'
+            admin_buttons.append(_cabinet_button(admin_web_text, '/admin', 'admin_panel'))
+        keyboard_rows.append(admin_buttons)
+    elif is_moderator:
+        keyboard_rows.append([InlineKeyboardButton(text='🧑‍⚖️ Модерация', callback_data='moderator_panel', style='primary')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
@@ -888,16 +814,16 @@ def get_info_menu_keyboard(
     if legal_row:
         buttons.append(legal_row)
 
-    if show_promo_groups:
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('MENU_PROMO_GROUPS_INFO', '🎯 Промогруппы'),
-                    callback_data='nz!_menu_info_promo_groups',
-                    style='primary',
-                )
-            ]
-        )
+    # if show_promo_groups:
+    #     buttons.append(
+    #         [
+    #             InlineKeyboardButton(
+    #                 text=texts.t('MENU_PROMO_GROUPS_INFO', '🎯 Промогруппы'),
+    #                 callback_data='nz!_menu_info_promo_groups',
+    #                 style='primary',
+    #             )
+    #         ]
+    #     )
 
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu', style='danger')])
 
@@ -1241,11 +1167,7 @@ def get_subscription_keyboard(
 
                 sub_status = getattr(subscription, 'status', None)
                 is_paused = getattr(subscription, 'is_daily_paused', False)
-                is_inactive = sub_status in (
-                    SubscriptionStatus.DISABLED.value,
-                    SubscriptionStatus.EXPIRED.value,
-                    SubscriptionStatus.LIMITED.value,
-                )
+                is_inactive = sub_status in (SubscriptionStatus.DISABLED.value, SubscriptionStatus.EXPIRED.value)
 
                 if is_inactive or is_paused:
                     # Подписка остановлена (системой или пользователем) — показываем «Возобновить»
@@ -1612,16 +1534,6 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
         ],
         [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu', style='danger')],
     ]
-    if settings.YOOKASSA_RECURRENT_ENABLED:
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('SAVED_CARDS_BUTTON', '💳 Привязанные карты'),
-                    callback_data='saved_cards_list',
-                )
-            ]
-        )
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -1815,7 +1727,7 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             [
                 InlineKeyboardButton(
                     text=texts.t('PAYMENT_KASSA_AI_SBP', f'📱 {sbp_name}'),
-                    callback_data=_build_callback('kassa_ai_sbp'),
+                    callback_data=_build_callback('kassa_ai_sbp'), style='success',
                 )
             ]
         )
@@ -1827,7 +1739,7 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             [
                 InlineKeyboardButton(
                     text=texts.t('PAYMENT_KASSA_AI_CARD', f'💳 {card_name}'),
-                    callback_data=_build_callback('kassa_ai_card'),
+                    callback_data=_build_callback('kassa_ai_card'), style='success',
                 )
             ]
         )
@@ -1839,7 +1751,7 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             [
                 InlineKeyboardButton(
                     text=texts.t('PAYMENT_KASSA_AI_SBERPAY', f'💳 {sberpay_name}'),
-                    callback_data=_build_callback('kassa_ai_sberpay'),
+                    callback_data=_build_callback('kassa_ai_sberpay'), style='success',
                 )
             ]
         )
@@ -1856,30 +1768,6 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             [
                 InlineKeyboardButton(
                     text=texts.t('PAYMENT_KASSA_AI', f'💳 {kassa_ai_name}'), callback_data=_build_callback('kassa_ai'), style='success'
-                )
-            ]
-        )
-        has_direct_payment_methods = True
-
-    if settings.is_riopay_enabled():
-        riopay_name = settings.get_riopay_display_name()
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('PAYMENT_RIOPAY', f'💳 Банковская карта ({riopay_name})'),
-                    callback_data=_build_callback('riopay'),
-                )
-            ]
-        )
-        has_direct_payment_methods = True
-
-    if settings.is_severpay_enabled():
-        severpay_name = settings.get_severpay_display_name()
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('PAYMENT_SEVERPAY', f'💳 Банковская карта ({severpay_name})'),
-                    callback_data=_build_callback('severpay'),
                 )
             ]
         )
@@ -2102,68 +1990,6 @@ def get_autopay_keyboard(language: str = DEFAULT_LANGUAGE, sub_id: int | None = 
     )
 
 
-_PAYMENT_METHOD_LOCALE_KEYS: dict[str, tuple[str, str]] = {
-    'bank_card': ('PAYMENT_METHOD_BANK_CARD', '💳 Банковская карта'),
-    'yoo_money': ('PAYMENT_METHOD_YOO_MONEY', '🟣 ЮMoney'),
-    'sberbank': ('PAYMENT_METHOD_SBERBANK', '🟢 СберPay'),
-    'tinkoff_bank': ('PAYMENT_METHOD_TINKOFF_BANK', '🟡 Т-Банк'),
-    'sbp': ('PAYMENT_METHOD_SBP', '🏦 СБП'),
-    'mir_pay': ('PAYMENT_METHOD_MIR_PAY', '🟦 Mir Pay'),
-}
-
-
-def _get_payment_method_display_name(card, language: str = DEFAULT_LANGUAGE) -> str:
-    """Локализованное название метода оплаты + реквизиты."""
-    texts = get_texts(language)
-
-    # Для банковских карт title уже содержит тип + маску (например "Visa *4444")
-    if card.method_type == 'bank_card' or (not card.method_type and card.card_last4):
-        if card.title:
-            return card.title
-        if card.card_last4:
-            return f'{card.card_type or "Card"} *{card.card_last4}'
-
-    # Для остальных методов: локализованное название + реквизиты из title
-    locale_entry = _PAYMENT_METHOD_LOCALE_KEYS.get(card.method_type)
-    if locale_entry:
-        key, default = locale_entry
-        method_name = texts.t(key, default)
-    else:
-        method_name = card.method_type or 'Card'
-
-    if card.title:
-        return f'{method_name} {card.title}'
-    return method_name
-
-
-def get_saved_cards_keyboard(cards: list, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
-    texts = get_texts(language)
-    keyboard = []
-    for card in cards:
-        card_label = f'🗑 {_get_payment_method_display_name(card, language)}'
-        keyboard.append([InlineKeyboardButton(text=card_label, callback_data=f'unlink_card_{card.id}')])
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_confirm_unlink_keyboard(card_id: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
-    texts = get_texts(language)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=texts.t('SAVED_CARDS_CONFIRM_YES', '✅ Да, отвязать'),
-                    callback_data=f'confirm_unlink_{card_id}',
-                ),
-                InlineKeyboardButton(
-                    text=texts.t('CANCEL', '❌ Отмена'),
-                    callback_data='saved_cards_list',
-                ),
-            ]
-        ]
-    )
-
-
 def get_autopay_days_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
     texts = get_texts(language)
     keyboard = []
@@ -2197,21 +2023,19 @@ def get_add_traffic_keyboard(
     sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     from app.config import settings
+    from app.utils.pricing_utils import get_remaining_months
 
     texts = get_texts(language)
     language_code = (language or DEFAULT_LANGUAGE).split('-')[0].lower()
     use_russian_fallback = language_code in {'ru', 'fa'}
     back_cb = f'nz!_sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'nz!_menu_subscription'
 
-    # Считаем по дням (как в кабинете и подтверждении)
+    months_multiplier = 1
+    period_text = ''
     if subscription_end_date:
-        now = datetime.now(UTC)
-        days_left = max(1, (subscription_end_date - now).days)
-        price_multiplier = days_left / 30
-        period_text = f' (за {days_left} дн.)' if days_left > 1 else ' (за 1 день)'
-    else:
-        price_multiplier = 1
-        period_text = ''
+        months_multiplier = get_remaining_months(subscription_end_date)
+        if months_multiplier > 1:
+            period_text = f' (за {months_multiplier} мес)'
 
     packages = settings.get_traffic_topup_packages()
     enabled_packages = [pkg for pkg in packages if pkg['enabled'] and pkg['price'] > 0]
@@ -2239,9 +2063,8 @@ def get_add_traffic_keyboard(
             price_per_month,
             discount_percent,
         )
-        total_price = int(discounted_per_month * price_multiplier)
-        total_price = max(100, total_price) if total_price > 0 else 0
-        total_discount = int(discount_per_month * price_multiplier)
+        total_price = discounted_per_month * months_multiplier
+        total_discount = discount_per_month * months_multiplier
 
         if gb == 0:
             if use_russian_fallback:
@@ -2344,18 +2167,30 @@ def get_change_devices_keyboard(
     back_callback: str = 'nz!_subscription_settings',
 ) -> InlineKeyboardMarkup:
     from app.config import settings
+    from app.utils.pricing_utils import get_remaining_months
 
     texts = get_texts(language)
 
-    # Считаем по дням (как в кабинете и подтверждении)
-    if subscription_end_date:
+    # Проверяем является ли тариф суточным
+    is_daily_tariff = tariff and getattr(tariff, 'is_daily', False)
+
+    # Для суточных тарифов считаем по дням, для обычных - по месяцам
+    if is_daily_tariff and subscription_end_date:
+        # Суточный тариф: цена за оставшиеся дни (обычно 1 день)
         now = datetime.now(UTC)
         days_left = max(1, (subscription_end_date - now).days)
+        # Множитель = days_left / 30 (как в кабинете)
         price_multiplier = days_left / 30
         period_text = f' (за {days_left} дн.)' if days_left > 1 else ' (за 1 день)'
     else:
-        price_multiplier = 1
+        # Обычный тариф: цена за оставшиеся месяцы
+        months_multiplier = 1
         period_text = ''
+        if subscription_end_date:
+            months_multiplier = get_remaining_months(subscription_end_date)
+            if months_multiplier > 1:
+                period_text = f' (за {months_multiplier} мес)'
+        price_multiplier = months_multiplier
 
     # Используем цену из тарифа если есть, иначе глобальную настройку
     tariff_device_price = getattr(tariff, 'device_price_kopeks', None) if tariff else None
@@ -2634,22 +2469,19 @@ def get_manage_countries_keyboard(
     discount_percent: int = 0,
     sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
+    from app.utils.pricing_utils import get_remaining_months
+
     texts = get_texts(language)
     back_cb = f'nz!_sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'nz!_menu_subscription'
 
-    # Считаем по дням (как в кабинете и подтверждении)
+    months_multiplier = 1
     if subscription_end_date:
-        now = datetime.now(UTC)
-        days_left = max(1, (subscription_end_date - now).days)
-        price_multiplier = days_left / 30
+        months_multiplier = get_remaining_months(subscription_end_date)
         logger.info(
-            '🔍 Расчет для управления странами: осталось дней до',
-            days_left=days_left,
+            '🔍 Расчет для управления странами: осталось месяцев до',
+            months_multiplier=months_multiplier,
             subscription_end_date=subscription_end_date,
         )
-    else:
-        price_multiplier = 1
-        days_left = 30
 
     buttons = []
     total_cost = 0
@@ -2674,28 +2506,26 @@ def get_manage_countries_keyboard(
                 icon = '➖'
         elif uuid in selected:
             icon = '➕'
-            total_cost += int(discounted_per_month * price_multiplier)
+            total_cost += discounted_per_month * months_multiplier
         else:
             icon = '⚪'
 
         if uuid not in current_subscription_countries and uuid in selected:
-            total_price = int(discounted_per_month * price_multiplier)
-            total_price = max(100, total_price) if total_price > 0 else 0
-            if days_left > 30:
-                price_text = f' ({discounted_per_month // 100}₽/мес × {days_left} дн. = {total_price // 100}₽)'
+            total_price = discounted_per_month * months_multiplier
+            if months_multiplier > 1:
+                price_text = f' ({discounted_per_month // 100}₽/мес × {months_multiplier} = {total_price // 100}₽)'
                 logger.info(
-                    '🔍 Сервер : ₽/мес × дн./30 = ₽ (скидка ₽)',
+                    '🔍 Сервер : ₽/мес × мес = ₽ (скидка ₽)',
                     name=name,
                     discounted_per_month=discounted_per_month / 100,
-                    days_left=days_left,
+                    months_multiplier=months_multiplier,
                     total_price=total_price / 100,
-                    discount_per_month=int(discount_per_month * price_multiplier) / 100,
+                    discount_per_month=(discount_per_month * months_multiplier) / 100,
                 )
             else:
                 price_text = f' ({total_price // 100}₽)'
-            total_discount_for_server = int(discount_per_month * price_multiplier)
-            if discount_percent > 0 and total_discount_for_server > 0:
-                price_text += f' (скидка {discount_percent}%: -{total_discount_for_server // 100}₽)'
+            if discount_percent > 0 and discount_per_month * months_multiplier > 0:
+                price_text += f' (скидка {discount_percent}%: -{(discount_per_month * months_multiplier) // 100}₽)'
             display_name = f'{icon} {name}{price_text}'
         else:
             display_name = f'{icon} {name}'
@@ -3138,6 +2968,15 @@ def get_updated_subscription_settings_keyboard(
                     text=texts.t('RESET_WL_TRAFFIC_BUTTON', '🔄 Сбросить БС-трафик'),
                     callback_data='nz!_subscription_reset_wl_traffic',
                     style='danger',
+                )
+            ]
+        )
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('SWITCH_WL_TRAFFIC_BUTTON', '🔀 Переключить БС-трафик'),
+                    callback_data='nz!_subscription_switch_wl_traffic',
+                    style='primary',
                 )
             ]
         )

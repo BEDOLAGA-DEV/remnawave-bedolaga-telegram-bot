@@ -65,6 +65,9 @@ from .happ import (
     handle_happ_download_close,
     handle_happ_download_platform_choice,
     handle_happ_download_request,
+    handle_happ_link_broken_crypt4,
+    handle_happ_link_broken_raw,
+    handle_happ_link_not_working,
 )
 from .links import (
     handle_connect_subscription,

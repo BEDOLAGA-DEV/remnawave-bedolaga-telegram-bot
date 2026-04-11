@@ -627,6 +627,8 @@ class Settings(BaseSettings):
     MINIAPP_SERVICE_DESCRIPTION_RU: str = 'Безопасное и быстрое подключение'
     CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED: bool = False
     HAPP_CRYPTOLINK_REDIRECT_TEMPLATE: str | None = None
+    HAPP_FALLBACK_REDIRECT_BASE_URL: str | None = None
+    HAPP_REDIRECT_HASH_SECRET: str | None = None
     HAPP_DOWNLOAD_LINK_IOS: str | None = None
     HAPP_DOWNLOAD_LINK_ANDROID: str | None = None
     HAPP_DOWNLOAD_LINK_MACOS: str | None = None
@@ -2107,6 +2109,22 @@ class Settings(BaseSettings):
     def get_happ_cryptolink_redirect_template(self) -> str | None:
         template = (self.HAPP_CRYPTOLINK_REDIRECT_TEMPLATE or '').strip()
         return template or None
+
+    def get_happ_fallback_redirect_base_url(self) -> str | None:
+        url = (self.HAPP_FALLBACK_REDIRECT_BASE_URL or '').strip()
+        return url or None
+
+    def get_happ_redirect_hash_secret(self) -> bytes | None:
+        raw = (self.HAPP_REDIRECT_HASH_SECRET or '').strip()
+        if not raw:
+            return None
+        try:
+            key = bytes.fromhex(raw)
+            if len(key) != 32:
+                return None
+            return key
+        except ValueError:
+            return None
 
     def get_happ_download_link(self, platform: str) -> str | None:
         platform_key = platform.lower()

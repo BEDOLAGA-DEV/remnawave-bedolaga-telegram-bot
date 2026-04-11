@@ -19,6 +19,13 @@ def calculate_months_from_days(days: int) -> int:
     return max(1, round(days / 30))
 
 
+def get_remaining_months(end_date: datetime) -> int:
+    """Return the number of remaining whole months until end_date (minimum 0)."""
+    now = datetime.now(UTC)
+    days_remaining = max(0, (end_date - now).days)
+    return calculate_months_from_days(days_remaining) if days_remaining > 0 else 0
+
+
 def calculate_prorated_price(monthly_price: int, end_date: datetime, min_charge_days: int = 30) -> tuple[int, int]:
     """Calculate prorated price based on remaining days.
 

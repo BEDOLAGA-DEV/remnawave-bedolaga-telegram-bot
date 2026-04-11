@@ -192,7 +192,7 @@ class SubscriptionService:
             user_tag = self._resolve_user_tag(subscription)
 
             # Определяем внешний сквад из тарифа
-            ext_squad_uuid = subscription.tariff.external_squad_uuid if subscription.tariff else None
+            ext_squad_uuid = getattr(subscription.tariff, 'external_squad_uuid', None) if subscription.tariff else None
 
             async with self.get_api_client() as api:
                 hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
@@ -489,7 +489,7 @@ class SubscriptionService:
             user_tag = self._resolve_user_tag(subscription)
 
             # Определяем внешний сквад из тарифа
-            ext_squad_uuid = subscription.tariff.external_squad_uuid if subscription.tariff else None
+            ext_squad_uuid = getattr(subscription.tariff, 'external_squad_uuid', None) if subscription.tariff else None
 
             async with self.get_api_client() as api:
                 hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
@@ -1190,7 +1190,7 @@ class SubscriptionService:
                         )
 
                         user_tag = self._resolve_user_tag(sub)
-                        ext_squad_uuid = sub.tariff.external_squad_uuid if sub.tariff else None
+                        ext_squad_uuid = getattr(sub.tariff, 'external_squad_uuid', None) if sub.tariff else None
                         hwid_limit = resolve_hwid_device_limit_for_payload(sub)
 
                         update_kwargs = dict(

@@ -129,6 +129,7 @@ async def create_trial_subscription(
     squad_uuid: str = None,
     connected_squads: list[str] = None,
     tariff_id: int | None = None,
+    wl_traffic_limit_gb: int | None = None,
 ) -> Subscription:
     """Создает триальную подписку.
 
@@ -194,7 +195,7 @@ async def create_trial_subscription(
 
     short_id = await generate_unique_short_id(db)
 
-    subscription = Subscription(
+    trial_kwargs = dict(
         user_id=user_id,
         status=SubscriptionStatus.ACTIVE.value,
         is_trial=True,
@@ -208,6 +209,10 @@ async def create_trial_subscription(
         tariff_id=tariff_id,
         remnawave_short_id=short_id,
     )
+    if wl_traffic_limit_gb is not None:
+        trial_kwargs['wl_traffic_limit_gb'] = wl_traffic_limit_gb
+
+    subscription = Subscription(**trial_kwargs)
 
     db.add(subscription)
     await db.commit()

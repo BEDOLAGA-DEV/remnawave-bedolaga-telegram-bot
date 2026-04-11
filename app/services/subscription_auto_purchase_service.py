@@ -645,42 +645,25 @@ async def _auto_extend_subscription(
                     [
                         InlineKeyboardButton(
                             text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 My subscription'),
-                            callback_data='menu_subscription',
+                            callback_data='nz!_menu_subscription',
                         )
                     ],
                     [
                         InlineKeyboardButton(
                             text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Main menu'),
-                            callback_data='back_to_menu',
+                            callback_data='nz!_back_to_menu',
                         )
                     ],
                 ]
             )
 
-                keyboard = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 My subscription'),
-                                callback_data='nz!_menu_subscription',
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Main menu'),
-                                callback_data='nz!_back_to_menu',
-                            )
-                        ],
-                    ]
-                )
-
-                await bot.send_message(
-                    chat_id=user.telegram_id,
-                    text=full_message,
-                    reply_markup=keyboard,
-                    parse_mode='HTML',
-                )
-            except Exception as error:  # pragma: no cover - defensive logging
+            await bot.send_message(
+                chat_id=user.telegram_id,
+                text=full_message,
+                reply_markup=keyboard,
+                parse_mode='HTML',
+            )
+        except Exception as error:  # pragma: no cover - defensive logging
                 logger.error(
                     '⚠️ Автопокупка: не удалось уведомить пользователя о продлении',
                     telegram_id=user.telegram_id or user.id,
@@ -2173,6 +2156,237 @@ async def _auto_add_traffic(
     return True
 
 
+async def _auto_add_wl_traffic(
+    db: AsyncSession,
+    user: User,
+    cart_data: dict,
+    *,
+    bot: Bot | None = None,
+) -> bool:
+    """Auto-purchase WL (_wl) traffic from saved cart after balance topup."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from app.database.crud.subscription import add_subscription_wl_traffic, get_subscription_by_user_id
+    from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
+    from app.database.models import PaymentMethod
+    from app.utils.pricing_utils import calculate_prorated_price
+
+    traffic_gb = _safe_int(cart_data.get('traffic_gb'))
+    cart_price_kopeks = _safe_int(cart_data.get('price_kopeks'))
+
+    if traffic_gb <= 0 or cart_price_kopeks <= 0:
+        logger.warning(
+            '🔁 Автопокупка WL-трафика: некорректные данные корзины пользователя',
+            format_user_id=_format_user_id(user),
+            traffic_gb=traffic_gb,
+            cart_price_kopeks=cart_price_kopeks,
+        )
+        return False
+
+    subscription = await get_subscription_by_user_id(db, user.id)
+    if not subscription:
+        logger.warning('🔁 Автопокупка WL-трафика: у пользователя нет подписки', format_user_id=_format_user_id(user))
+        await user_cart_service.delete_user_cart(user.id)
+        return False
+
+    if subscription.status not in ('active', 'trial', 'disabled', 'limited', 'ACTIVE', 'TRIAL', 'DISABLED', 'LIMITED'):
+        logger.warning(
+            '🔁 Автопокупка WL-трафика: подписка пользователя не активна',
+            format_user_id=_format_user_id(user),
+            subscription_status=subscription.status,
+        )
+        await user_cart_service.delete_user_cart(user.id)
+        return False
+
+    if subscription.is_trial:
+        logger.warning('🔁 Автопокупка WL-трафика: у пользователя пробная подписка', format_user_id=_format_user_id(user))
+        await user_cart_service.delete_user_cart(user.id)
+        return False
+
+    if subscription.wl_traffic_limit_gb == 0:
+        logger.warning(
+            '🔁 Автопокупка WL-трафика: у пользователя уже безлимитный WL-трафик',
+            format_user_id=_format_user_id(user),
+        )
+        await user_cart_service.delete_user_cart(user.id)
+        return False
+
+    user = await lock_user_for_pricing(db, user.id)
+
+    tariff = None
+    if settings.is_tariffs_mode() and subscription.tariff_id:
+        from app.database.crud.tariff import get_tariff_by_id
+
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+
+    if tariff and hasattr(tariff, 'can_topup_wl_traffic') and tariff.can_topup_wl_traffic():
+        base_price = tariff.get_wl_traffic_topup_price(traffic_gb) or 0
+    else:
+        base_price = settings.get_wl_traffic_topup_price(traffic_gb)
+
+    if base_price <= 0 and traffic_gb != 0:
+        logger.warning(
+            '🔁 Автопокупка WL-трафика: цена пакета не настроена, корзина удалена',
+            format_user_id=_format_user_id(user),
+            traffic_gb=traffic_gb,
+        )
+        await user_cart_service.delete_user_cart(user.id)
+        return False
+
+    period_hint_days: int | None = None
+    if subscription.end_date:
+        days_remaining = (subscription.end_date - datetime.now(UTC)).days
+        period_hint_days = days_remaining if days_remaining > 0 else None
+
+    discounted_per_month, _, _ = PricingEngine.calculate_traffic_discount(
+        base_price,
+        user,
+        period_hint_days,
+    )
+
+    is_tariff_mode = settings.is_tariffs_mode() and subscription.tariff_id
+    if is_tariff_mode:
+        price_kopeks = discounted_per_month
+    elif subscription and subscription.end_date:
+        price_kopeks, _ = calculate_prorated_price(discounted_per_month, subscription.end_date)
+    else:
+        price_kopeks = discounted_per_month
+
+    if user.balance_kopeks < price_kopeks:
+        logger.info(
+            '🔁 Автопокупка WL-трафика: у пользователя недостаточно средств',
+            format_user_id=_format_user_id(user),
+            balance_kopeks=user.balance_kopeks,
+            price_kopeks=price_kopeks,
+        )
+        return False
+
+    description = f'Докупка {traffic_gb} ГБ WL-трафика'
+    try:
+        success = await subtract_user_balance(
+            db,
+            user,
+            price_kopeks,
+            description,
+            create_transaction=True,
+            payment_method=PaymentMethod.BALANCE,
+            transaction_type=TransactionType.SUBSCRIPTION_PAYMENT,
+        )
+        if not success:
+            logger.warning(
+                '❌ Автопокупка WL-трафика: не удалось списать баланс пользователя',
+                format_user_id=_format_user_id(user),
+            )
+            return False
+    except Exception as error:
+        logger.error(
+            '❌ Автопокупка WL-трафика: ошибка списания баланса',
+            format_user_id=_format_user_id(user),
+            error=error,
+            exc_info=True,
+        )
+        return False
+
+    old_wl_limit = subscription.wl_traffic_limit_gb or 0
+    try:
+        await add_subscription_wl_traffic(db, subscription, traffic_gb)
+        await db.commit()
+        await db.refresh(subscription)
+    except Exception as error:
+        logger.error(
+            '❌ Автопокупка WL-трафика: ошибка добавления трафика',
+            format_user_id=_format_user_id(user),
+            error=error,
+            exc_info=True,
+        )
+        await db.rollback()
+        try:
+            from app.database.crud.user import add_user_balance
+
+            await add_user_balance(
+                db,
+                user,
+                price_kopeks,
+                'Возврат: ошибка автопокупки WL-трафика',
+                create_transaction=True,
+                transaction_type=TransactionType.REFUND,
+            )
+        except Exception as refund_error:
+            logger.critical(
+                'CRITICAL: Автопокупка WL-трафика: не удалось вернуть средства',
+                format_user_id=_format_user_id(user),
+                price_kopeks=price_kopeks,
+                refund_error=refund_error,
+            )
+        return False
+
+    try:
+        subscription_service = SubscriptionService()
+        await subscription_service.update_remnawave_user(db, subscription)
+    except Exception as error:
+        logger.warning(
+            '⚠️ Автопокупка WL-трафика: не удалось обновить RemnaWave',
+            format_user_id=_format_user_id(user),
+            error=error,
+        )
+
+    await user_cart_service.delete_user_cart(user.id)
+
+    logger.info(
+        '✅ Автопокупка WL-трафика: добавлено ГБ (было→стало) за коп.',
+        format_user_id=_format_user_id(user),
+        traffic_gb=traffic_gb,
+        old_wl_limit=old_wl_limit,
+        new_wl_limit=subscription.wl_traffic_limit_gb,
+        price_kopeks=price_kopeks,
+    )
+
+    if bot and user.telegram_id:
+        texts = get_texts(getattr(user, 'language', 'ru'))
+        try:
+            message = texts.t(
+                'AUTO_PURCHASE_WL_TRAFFIC_SUCCESS',
+                (
+                    '✅ <b>БС-трафик добавлен автоматически!</b>\n\n'
+                    '📈 Добавлено: {traffic_gb} ГБ\n'
+                    '📊 Новый лимит: {new_limit} ГБ\n'
+                    '💰 Списано: {price}'
+                ),
+            ).format(
+                traffic_gb=traffic_gb,
+                new_limit=subscription.wl_traffic_limit_gb,
+                price=texts.format_price(price_kopeks),
+            )
+            await bot.send_message(
+                chat_id=user.telegram_id,
+                text=message,
+                parse_mode='HTML',
+            )
+        except Exception as error:
+            logger.warning(
+                '⚠️ Автопокупка WL-трафика: не удалось уведомить пользователя',
+                telegram_id=user.telegram_id,
+                error=error,
+            )
+
+    if bot:
+        try:
+            notification_service = AdminNotificationService(bot)
+            await notification_service.send_subscription_update_notification(
+                db,
+                user,
+                subscription,
+                'traffic',
+                old_wl_limit,
+                subscription.wl_traffic_limit_gb,
+                price_kopeks,
+            )
+        except Exception as error:
+            logger.warning('⚠️ Автопокупка WL-трафика: не удалось уведомить админов', error=error)
+
+    return True
+
+
 async def try_auto_extend_expired_after_topup(
     db: AsyncSession,
     user: User,
@@ -3116,6 +3330,10 @@ async def _process_legacy_generic_cart(
         notify_user_subscription_activated,
         notify_user_subscription_renewed,
     )
+
+    # Обработка докупки WL (_wl) трафика
+    if cart_mode == 'add_wl_traffic':
+        return await _auto_add_wl_traffic(db, user, cart_data, bot=bot)
 
     try:
         prepared = await _prepare_auto_purchase(db, user, cart_data)

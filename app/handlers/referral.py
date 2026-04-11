@@ -125,20 +125,20 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
     )
 
     # Show cabinet link if configured
-    if cabinet_referral_link:
-        referral_text += (
-            '\n'
-            + texts.t('REFERRAL_CABINET_LINK_TITLE', '🌐 <b>Ссылка на кабинет:</b>')
-            + f'\n<code>{html_escape(cabinet_referral_link)}</code>\n'
-        )
+    #if cabinet_referral_link:
+    #    referral_text += (
+    #        '\n'
+    #        + texts.t('REFERRAL_CABINET_LINK_TITLE', '🌐 <b>Ссылка на кабинет:</b>')
+    #        + f'\n<code>{html_escape(cabinet_referral_link)}</code>\n'
+    #    )
 
-    referral_text += (
-        '\n'
-        + texts.t('REFERRAL_CODE_TITLE', '🆔 <b>Ваш код:</b> <code>{code}</code>').format(
-            code=html_escape(str(db_user.referral_code or ''))
-        )
-        + '\n\n'
-    )
+    # referral_text += (
+    #     '\n'
+    #     + texts.t('REFERRAL_CODE_TITLE', '🆔 <b>Ваш код:</b> <code>{code}</code>').format(
+    #         code=html_escape(str(db_user.referral_code or ''))
+    #     )
+    #     + '\n\n'
+    # )
 
     if summary['recent_earnings']:
         meaningful_earnings = [earning for earning in summary['recent_earnings'][:5] if earning['amount_kopeks'] > 0]
@@ -280,12 +280,7 @@ async def show_referral_qr(
         '🤖 Ссылка на бота:\n{link}',
     ).format(link=bot_referral_link)
 
-    cabinet_referral_link = settings.get_cabinet_referral_link(db_user.referral_code)
-    if cabinet_referral_link:
-        caption += '\n\n' + texts.t(
-            'REFERRAL_QR_CABINET_LINK',
-            '🌐 Ссылка на кабинет:\n{link}',
-        ).format(link=cabinet_referral_link)
+    # cabinet_referral_link removed
 
     try:
         await callback.message.edit_media(

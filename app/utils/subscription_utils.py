@@ -1,3 +1,6 @@
+import base64
+import os
+from datetime import UTC, datetime
 from urllib.parse import quote, urlparse, urlunparse
 
 import structlog
@@ -102,6 +105,44 @@ def convert_subscription_link_to_happ_scheme(subscription_link: str | None) -> s
         return subscription_link
 
     return urlunparse(parsed_link._replace(scheme='happ'))
+
+
+def generate_redhash(url: str) -> str | None:
+    """Encrypt a URL with AES-256-GCM and return a base64url-encoded token.
+
+    Token layout: 12-byte nonce || GCM ciphertext+tag (16-byte tag appended by AESGCM).
+    Returns None when HAPP_REDIRECT_HASH_SECRET is not configured or invalid.
+    """
+    key = settings.get_happ_redirect_hash_secret()
+    if not key:
+        return None
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        nonce = os.urandom(12)
+        aesgcm = AESGCM(key)
+        ciphertext = aesgcm.encrypt(nonce, url.encode('utf-8'), None)
+        token_bytes = nonce + ciphertext
+        token = base64.urlsafe_b64encode(token_bytes).rstrip(b'=').decode('ascii')
+        return token
+    except Exception:
+        logger.warning('generate_redhash: encryption failed')
+        return None
+
+
+def build_redhash_url(url: str) -> str | None:
+    """Generate a full redirect URL with an encrypted redhash parameter.
+
+    Returns None when the base URL or hash secret is not configured.
+    """
+    base = settings.get_happ_fallback_redirect_base_url()
+    if not base:
+        return None
+    token = generate_redhash(url)
+    if not token:
+        return None
+    separator = '&' if '?' in base else '?'
+    return f'{base.rstrip("/")}/{separator}redhash={token}'
 
 
 def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:

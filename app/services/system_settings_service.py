@@ -882,6 +882,7 @@ class BotConfigurationService:
                 'Остальные инфраструктурные уведомления продолжают отправляться.'
             ),
             'dependencies': 'REMNAWAVE_WEBHOOK_ENABLED, ADMIN_NOTIFICATIONS_ENABLED',
+        },
         'TELEGRAM_PROXY_URL': {
             'description': (
                 'Ссылка на публичный MTProto-прокси Telegram. '
