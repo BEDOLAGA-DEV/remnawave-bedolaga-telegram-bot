@@ -19,6 +19,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    if 'web_push_subscriptions' in inspector.get_table_names():
+        return
+
     op.create_table(
         'web_push_subscriptions',
         sa.Column('id', sa.Integer(), nullable=False),

@@ -21,40 +21,46 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add new columns to tickets table
-    op.add_column(
-        'tickets',
-        sa.Column('category', sa.String(50), nullable=True),
-    )
-    op.add_column(
-        'tickets',
-        sa.Column(
-            'assigned_to',
-            sa.Integer(),
-            sa.ForeignKey('users.id', ondelete='SET NULL'),
-            nullable=True,
-        ),
-    )
-    op.add_column(
-        'tickets',
-        sa.Column('first_response_at', sa.DateTime(timezone=True), nullable=True),
-    )
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    ticket_cols = {c['name'] for c in inspector.get_columns('tickets')}
 
-    # Create ticket_quick_replies table
-    op.create_table(
-        'ticket_quick_replies',
-        sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('title', sa.String(255), nullable=False),
-        sa.Column('text', sa.Text(), nullable=False),
-        sa.Column('category', sa.String(50), nullable=True),
-        sa.Column(
-            'created_by',
-            sa.Integer(),
-            sa.ForeignKey('users.id', ondelete='SET NULL'),
-            nullable=True,
-        ),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
-    )
+    if 'category' not in ticket_cols:
+        op.add_column(
+            'tickets',
+            sa.Column('category', sa.String(50), nullable=True),
+        )
+    if 'assigned_to' not in ticket_cols:
+        op.add_column(
+            'tickets',
+            sa.Column(
+                'assigned_to',
+                sa.Integer(),
+                sa.ForeignKey('users.id', ondelete='SET NULL'),
+                nullable=True,
+            ),
+        )
+    if 'first_response_at' not in ticket_cols:
+        op.add_column(
+            'tickets',
+            sa.Column('first_response_at', sa.DateTime(timezone=True), nullable=True),
+        )
+
+    if 'ticket_quick_replies' not in inspector.get_table_names():
+        op.create_table(
+            'ticket_quick_replies',
+            sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column('title', sa.String(255), nullable=False),
+            sa.Column('text', sa.Text(), nullable=False),
+            sa.Column('category', sa.String(50), nullable=True),
+            sa.Column(
+                'created_by',
+                sa.Integer(),
+                sa.ForeignKey('users.id', ondelete='SET NULL'),
+                nullable=True,
+            ),
+            sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        )
 
 
 def downgrade() -> None:

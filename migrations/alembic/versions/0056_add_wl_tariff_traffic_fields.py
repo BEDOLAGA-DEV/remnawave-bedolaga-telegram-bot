@@ -22,15 +22,21 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add WL traffic config columns to tariffs table
-    op.add_column(
-        'tariffs',
-        sa.Column('wl_default_traffic_gb', sa.Integer(), nullable=True, server_default=None),
-    )
-    op.add_column(
-        'tariffs',
-        sa.Column('wl_traffic_topup_packages', sa.JSON(), nullable=True, server_default='{}'),
-    )
+    # Idempotent: skip columns that already exist from a custom branch.
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing = {c['name'] for c in inspector.get_columns('tariffs')}
+
+    if 'wl_default_traffic_gb' not in existing:
+        op.add_column(
+            'tariffs',
+            sa.Column('wl_default_traffic_gb', sa.Integer(), nullable=True, server_default=None),
+        )
+    if 'wl_traffic_topup_packages' not in existing:
+        op.add_column(
+            'tariffs',
+            sa.Column('wl_traffic_topup_packages', sa.JSON(), nullable=True, server_default='{}'),
+        )
 
     # Initialize existing rows: NULL means "use global default"
     op.execute("UPDATE tariffs SET wl_traffic_topup_packages = '{}' WHERE wl_traffic_topup_packages IS NULL")
