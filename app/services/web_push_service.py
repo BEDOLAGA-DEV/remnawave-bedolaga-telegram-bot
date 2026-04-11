@@ -44,7 +44,7 @@ class WebPushService:
 
     def __init__(self) -> None:
         self._enabled = settings.WEB_PUSH_ENABLED
-        self._private_key = settings.WEB_PUSH_VAPID_PRIVATE_KEY
+        self._private_key = self._load_private_key(settings.WEB_PUSH_VAPID_PRIVATE_KEY)
         self._public_key = settings.WEB_PUSH_VAPID_PUBLIC_KEY
         self._email = settings.WEB_PUSH_VAPID_EMAIL
         self._vapid_claims = {'sub': f'mailto:{self._email}'}
@@ -52,6 +52,52 @@ class WebPushService:
         self._webpush_fn = None
         self._webpush_exception_cls: type[Exception] = Exception
         self._load_pywebpush()
+
+    @staticmethod
+    def _load_private_key(value: str) -> str:
+        """Resolve the private key config value.
+
+        Supported formats:
+        - Full PEM string starting with '-----BEGIN'
+        - Relative or absolute path to a .pem file
+
+        If the value looks like a path and the file exists, read its contents.
+        Otherwise pass the value through verbatim (pywebpush will interpret).
+        Resolution is done from the project root AND from the current working dir,
+        so the bot works regardless of how it's launched.
+        """
+        if not value:
+            return ''
+
+        # Already a PEM string — pass through
+        if value.lstrip().startswith('-----BEGIN'):
+            return value
+
+        # Candidate paths: raw value, project root, /data, cwd
+        import os
+        from pathlib import Path
+
+        project_root = Path(__file__).resolve().parent.parent.parent
+        candidates = [
+            Path(value),  # relative to cwd or absolute
+            project_root / value,  # relative to project root
+        ]
+
+        for candidate in candidates:
+            try:
+                if candidate.is_file():
+                    content = candidate.read_text(encoding='ascii')
+                    logger.info('VAPID private key loaded from file', path=str(candidate))
+                    return content
+            except OSError:
+                continue
+
+        # Fallback: return as-is and let pywebpush try
+        logger.warning(
+            'VAPID private key config value is not a recognizable PEM or existing file',
+            value_preview=value[:32] + '...' if len(value) > 32 else value,
+        )
+        return value
 
     def _load_pywebpush(self) -> None:
         """Lazily import pywebpush so absence doesn't break app startup."""
