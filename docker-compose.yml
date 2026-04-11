@@ -85,6 +85,39 @@ services:
       retries: 3
       start_period: 30s
 
+  cabinet-frontend:
+    # Web cabinet (React SPA) served by nginx.
+    # Built from the sibling bedolaga-cabinet repo. The nginx config is
+    # overridden via volume mount so /api/ proxies to the internal bot
+    # service instead of an external backend.
+    build:
+      context: ./bedolaga-cabinet
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+        VITE_TELEGRAM_BOT_USERNAME: ${VITE_TELEGRAM_BOT_USERNAME:-}
+        VITE_APP_NAME: ${VITE_APP_NAME:-Cabinet}
+        VITE_APP_LOGO: ${VITE_APP_LOGO:-V}
+    container_name: remnawave_bot_cabinet
+    restart: unless-stopped
+    depends_on:
+      bot:
+        condition: service_started
+    volumes:
+      # Override the image's default nginx config so /api/ proxies
+      # to the bot service on the internal docker network.
+      - ./docker/cabinet-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - '${CABINET_PORT:-3020}:80'
+    networks:
+      - bot_network
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:80/']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
 volumes:
   postgres_data:
     driver: local
