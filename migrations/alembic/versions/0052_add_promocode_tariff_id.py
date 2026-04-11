@@ -18,16 +18,27 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('promocodes', sa.Column('tariff_id', sa.Integer(), nullable=True))
-    op.create_index('ix_promocodes_tariff_id', 'promocodes', ['tariff_id'])
-    op.create_foreign_key(
-        'fk_promocodes_tariff_id',
-        'promocodes',
-        'tariffs',
-        ['tariff_id'],
-        ['id'],
-        ondelete='SET NULL',
-    )
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing_cols = {c['name'] for c in inspector.get_columns('promocodes')}
+    existing_indexes = {ix['name'] for ix in inspector.get_indexes('promocodes')}
+    existing_fks = {fk['name'] for fk in inspector.get_foreign_keys('promocodes')}
+
+    if 'tariff_id' not in existing_cols:
+        op.add_column('promocodes', sa.Column('tariff_id', sa.Integer(), nullable=True))
+
+    if 'ix_promocodes_tariff_id' not in existing_indexes:
+        op.create_index('ix_promocodes_tariff_id', 'promocodes', ['tariff_id'])
+
+    if 'fk_promocodes_tariff_id' not in existing_fks:
+        op.create_foreign_key(
+            'fk_promocodes_tariff_id',
+            'promocodes',
+            'tariffs',
+            ['tariff_id'],
+            ['id'],
+            ondelete='SET NULL',
+        )
 
 
 def downgrade() -> None:

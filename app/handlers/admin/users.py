@@ -6275,10 +6275,6 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(show_users_list_by_campaign, F.data == 'admin_users_campaign_filter')
 
-    dp.callback_query.register(sync_remnawave_user, F.data.startswith('admin_user_sync_remnawave_'))
-    dp.callback_query.register(admin_mass_delete_start, F.data == 'admin_mass_delete_start')
-    dp.message.register(process_mass_delete_ids, AdminStates.waiting_for_mass_delete_ids)
-
     # Устройства
     dp.callback_query.register(show_user_devicelist, F.data.startswith('admin_user_devicelist_'))
     dp.callback_query.register(delete_user_device_endpoint, F.data.startswith('admin_user_deldev_'))

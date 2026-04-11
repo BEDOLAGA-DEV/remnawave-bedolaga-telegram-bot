@@ -3241,7 +3241,6 @@ def register_handlers(dp: Dispatcher):
     # Удаление
     dp.callback_query.register(confirm_delete_tariff, F.data.startswith('admin_tariff_delete:'))
     dp.callback_query.register(delete_tariff_confirmed, F.data.startswith('admin_tariff_delete_confirm:'))
-    dp.callback_query.register(confirm_delete_tariff, F.data.startswith('admin_tariff_delete:'))
 
     # Редактирование серверов
     dp.callback_query.register(start_edit_tariff_squads, F.data.startswith('admin_tariff_edit_squads:'))

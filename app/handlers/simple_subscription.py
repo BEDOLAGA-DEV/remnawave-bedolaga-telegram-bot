@@ -2437,5 +2437,3 @@ def register_simple_subscription_handlers(dp):
     dp.callback_query.register(check_simple_heleket_payment_status, F.data.startswith('nz!_check_simple_heleket_'))
 
     dp.callback_query.register(check_simple_wata_payment_status, F.data.startswith('nz!_check_simple_wata_'))
-
-    dp.callback_query.register(check_simple_pal24_payment_status, F.data.startswith('nz!_check_simple_pal24_'))

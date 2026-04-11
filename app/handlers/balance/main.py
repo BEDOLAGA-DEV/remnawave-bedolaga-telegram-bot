@@ -771,10 +771,6 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.callback_query.register(request_support_topup, F.data == 'nz!_topup_support')
 
-    from .yookassa import check_yookassa_payment_status
-
-    dp.callback_query.register(check_yookassa_payment_status, F.data.startswith('nz!_check_yookassa_'))
-
     dp.message.register(process_topup_amount, BalanceStates.waiting_for_amount)
 
     from .cryptobot import start_cryptobot_payment

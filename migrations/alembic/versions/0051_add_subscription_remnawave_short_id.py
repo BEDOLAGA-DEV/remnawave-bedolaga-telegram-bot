@@ -23,11 +23,15 @@ def _generate_short_id() -> str:
 
 
 def upgrade() -> None:
-    # 1. Add column as nullable first
-    op.add_column('subscriptions', sa.Column('remnawave_short_id', sa.String(16), nullable=True))
-
-    # 2. Backfill existing rows with unique short IDs
     conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing_cols = {c['name'] for c in inspector.get_columns('subscriptions')}
+
+    # 1. Add column as nullable first (if missing)
+    if 'remnawave_short_id' not in existing_cols:
+        op.add_column('subscriptions', sa.Column('remnawave_short_id', sa.String(16), nullable=True))
+
+    # 2. Backfill any rows that still have NULL remnawave_short_id
     rows = conn.execute(sa.text('SELECT id FROM subscriptions WHERE remnawave_short_id IS NULL')).fetchall()
     used_ids: set[str] = set()
     for (row_id,) in rows:
@@ -40,9 +44,20 @@ def upgrade() -> None:
             {'sid': short_id, 'rid': row_id},
         )
 
-    # 3. Set NOT NULL + UNIQUE
-    op.alter_column('subscriptions', 'remnawave_short_id', nullable=False, server_default='')
-    op.create_unique_constraint('uq_subscriptions_remnawave_short_id', 'subscriptions', ['remnawave_short_id'])
+    # 3. Set NOT NULL (safe to call repeatedly — re-inspect first to avoid no-op thrash)
+    cols_info = {c['name']: c for c in inspector.get_columns('subscriptions')}
+    short_id_col = cols_info.get('remnawave_short_id')
+    if short_id_col and short_id_col.get('nullable', True):
+        op.alter_column('subscriptions', 'remnawave_short_id', nullable=False, server_default='')
+
+    # 4. Add UNIQUE constraint (if missing)
+    unique_names = {uc['name'] for uc in inspector.get_unique_constraints('subscriptions')}
+    if 'uq_subscriptions_remnawave_short_id' not in unique_names:
+        op.create_unique_constraint(
+            'uq_subscriptions_remnawave_short_id',
+            'subscriptions',
+            ['remnawave_short_id'],
+        )
 
 
 def downgrade() -> None:
