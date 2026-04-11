@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from .account_linking import merge_router as merge_router, router as account_linking_router
+from .admin_achievements import router as admin_achievements_router
 from .admin_apps import router as admin_apps_router
 from .admin_audit_log import router as admin_audit_log_router
 from .admin_ban_system import router as admin_ban_system_router
@@ -24,10 +25,13 @@ from .admin_pinned_messages import router as admin_pinned_messages_router
 from .admin_policies import router as admin_policies_router
 from .admin_promo_offers import router as admin_promo_offers_router
 from .admin_promocodes import promo_groups_router as admin_promo_groups_router, router as admin_promocodes_router
+from .admin_quick_replies import router as admin_quick_replies_router
 from .admin_referral_network import router as admin_referral_network_router
 from .admin_remnawave import router as admin_remnawave_router
+from .admin_reviews import router as admin_reviews_router
 from .admin_roles import router as admin_roles_router
 from .admin_sales_stats import router as admin_sales_stats_router
+from .admin_scheduled_promos import router as admin_scheduled_promos_router
 from .admin_servers import router as admin_servers_router
 from .admin_settings import router as admin_settings_router
 from .admin_stats import router as admin_stats_router
@@ -35,6 +39,7 @@ from .admin_tariffs import router as admin_tariffs_router
 from .admin_tickets import router as admin_tickets_router
 from .admin_traffic import router as admin_traffic_router
 from .admin_updates import router as admin_updates_router
+from .admin_user_notifications import router as admin_user_notifications_router
 from .admin_users import router as admin_users_router
 from .admin_wheel import router as admin_wheel_router
 from .admin_withdrawals import router as admin_withdrawals_router
@@ -61,7 +66,9 @@ from .ticket_notifications import (
     router as ticket_notifications_router,
 )
 from .tickets import router as tickets_router
+from .user_notifications import router as user_notifications_router
 from .utils import router as utils_router
+from .web_push import router as web_push_router
 from .websocket import router as websocket_router
 from .wheel import router as wheel_router
 from .withdrawal import router as withdrawal_router
@@ -89,6 +96,8 @@ router.include_router(contests_router)
 router.include_router(polls_router)
 router.include_router(promo_router)
 router.include_router(notifications_router)
+router.include_router(user_notifications_router)
+router.include_router(web_push_router)
 router.include_router(info_router)
 router.include_router(branding_router)
 router.include_router(landing_router)
@@ -124,6 +133,11 @@ router.include_router(admin_payment_methods_router)
 router.include_router(admin_landings_router)
 router.include_router(admin_payments_router)
 router.include_router(admin_promo_offers_router)
+router.include_router(admin_reviews_router)
+router.include_router(admin_achievements_router)
+router.include_router(admin_scheduled_promos_router)
+router.include_router(admin_quick_replies_router)
+router.include_router(admin_user_notifications_router)
 router.include_router(admin_remnawave_router)
 router.include_router(admin_email_templates_router)
 router.include_router(admin_updates_router)

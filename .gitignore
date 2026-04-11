@@ -28,6 +28,8 @@
 # Скрипты
 !install_bot.sh
 !main.py
+!scripts/
+!scripts/**
 
 # Статические файлы
 !vpn_logo.png

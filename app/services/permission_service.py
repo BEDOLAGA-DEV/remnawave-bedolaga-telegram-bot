@@ -77,6 +77,11 @@ PERMISSION_REGISTRY: dict[str, list[str]] = {
     'pinned_messages': ['read', 'create', 'edit', 'delete'],
     'landings': ['read', 'create', 'edit', 'delete'],
     'updates': ['read', 'manage'],
+    'scheduled_promos': ['read', 'create', 'edit', 'delete'],
+    'quick_replies': ['read', 'create', 'edit', 'delete'],
+    'reviews': ['read', 'approve', 'reject'],
+    'achievements': ['read', 'create', 'edit', 'delete'],
+    'user_notifications': ['read', 'broadcast', 'delete'],
 }
 
 

@@ -3603,3 +3603,72 @@ class UserAchievement(Base):
     reward_claimed = Column(Boolean, default=False)
     template = relationship('AchievementTemplate')
     user = relationship('User')
+
+
+class UserNotification(Base):
+    """Persistent in-app notification for users (cabinet inbox)."""
+
+    __tablename__ = 'user_notifications'
+    __table_args__ = (
+        Index('ix_user_notifications_user_created', 'user_id', 'created_at'),
+        Index('ix_user_notifications_user_unread', 'user_id', 'read_at'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+
+    # Category determines icon, color, and default behavior
+    # Examples: 'admin_broadcast' | 'traffic_warning' | 'subscription_expiring'
+    #           | 'subscription_expired' | 'payment_received' | 'system'
+    category = Column(String(50), nullable=False)
+
+    # UI level: info | success | warning | error
+    level = Column(String(20), default='info', nullable=False)
+
+    title = Column(String(255), nullable=True)
+    message = Column(Text, nullable=False)
+
+    # URL (absolute or relative) to open on click
+    action_url = Column(String(500), nullable=True)
+
+    # Additional payload (amount, days_left, percent, subscription_id, etc.)
+    data = Column(JSON, default=dict)
+
+    # Null = unread; timestamp = when user marked as read
+    read_at = Column(AwareDateTime(), nullable=True)
+
+    created_at = Column(AwareDateTime(), default=func.now())
+
+    user = relationship('User')
+
+
+class WebPushSubscription(Base):
+    """Browser Web Push API subscription (VAPID protocol)."""
+
+    __tablename__ = 'web_push_subscriptions'
+    __table_args__ = (
+        UniqueConstraint('user_id', 'endpoint', name='uq_webpush_user_endpoint'),
+        Index('ix_webpush_user_active', 'user_id', 'is_active'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+
+    # Browser push service URL
+    endpoint = Column(Text, nullable=False)
+
+    # Client public key (base64-url encoded P-256 ECDH public key)
+    p256dh = Column(String(255), nullable=False)
+    # Client authentication secret (base64-url encoded random 16-byte value)
+    auth = Column(String(255), nullable=False)
+
+    # Device info for admin visibility
+    user_agent = Column(String(500), nullable=True)
+
+    # False after endpoint returns 404/410 (invalid/expired)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    last_used_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+
+    user = relationship('User')

@@ -117,6 +117,48 @@ class CabinetConnectionManager:
                     for ws in ws_set:
                         self._admin_connections.get(user_id, set()).discard(ws)
 
+    async def send_to_all_users(self, message: dict) -> int:
+        """Broadcast a message to ALL connected users (for admin web broadcasts).
+
+        Returns the number of websocket deliveries attempted (not recipients —
+        a single user with multiple tabs counts as multiple).
+        """
+        async with self._lock:
+            if not self._user_connections:
+                return 0
+            snapshot = [
+                (user_id, list(connections))
+                for user_id, connections in self._user_connections.items()
+            ]
+
+        data = json.dumps(message, default=str, ensure_ascii=False)
+        delivered = 0
+        disconnected_by_user: dict[int, set[WebSocket]] = {}
+
+        for user_id, connections in snapshot:
+            for ws in connections:
+                try:
+                    await ws.send_text(data)
+                    delivered += 1
+                except Exception as e:
+                    logger.warning('Failed to broadcast to user', user_id=user_id, e=e)
+                    if user_id not in disconnected_by_user:
+                        disconnected_by_user[user_id] = set()
+                    disconnected_by_user[user_id].add(ws)
+
+        # Cleanup disconnected
+        if disconnected_by_user:
+            async with self._lock:
+                for user_id, ws_set in disconnected_by_user.items():
+                    for ws in ws_set:
+                        self._user_connections.get(user_id, set()).discard(ws)
+
+        return delivered
+
+    def count_connected_users(self) -> int:
+        """Total distinct users with at least one active WS connection."""
+        return len(self._user_connections)
+
 
 # Глобальный менеджер подключений
 cabinet_ws_manager = CabinetConnectionManager()
@@ -590,4 +632,76 @@ async def notify_user_payment_received(
             'amount_rubles': amount_kopeks / 100,
             'payment_method': payment_method,
         },
+    )
+
+
+async def notify_user_traffic_warning(
+    user_id: int,
+    *,
+    subscription_id: int,
+    percent_used: int,
+    used_gb: float,
+    limit_gb: float,
+    notification_id: int | None = None,
+) -> None:
+    """Notify user that their traffic usage has reached a warning threshold."""
+    await cabinet_ws_manager.send_to_user(
+        user_id,
+        {
+            'type': 'subscription.traffic_warning',
+            'subscription_id': subscription_id,
+            'percent_used': percent_used,
+            'used_gb': used_gb,
+            'limit_gb': limit_gb,
+            'notification_id': notification_id,
+        },
+    )
+
+
+async def notify_user_generic_notification(
+    user_id: int,
+    *,
+    notification_id: int,
+    category: str,
+    level: str,
+    title: str | None,
+    message: str,
+    action_url: str | None = None,
+) -> None:
+    """Notify user about a new persistent notification (for inbox badge update)."""
+    await cabinet_ws_manager.send_to_user(
+        user_id,
+        {
+            'type': 'user_notification.new',
+            'notification_id': notification_id,
+            'category': category,
+            'level': level,
+            'title': title,
+            'message': message,
+            'action_url': action_url,
+        },
+    )
+
+
+async def broadcast_admin_message_to_all(
+    *,
+    notification_id: int | None,
+    title: str,
+    message: str,
+    level: str = 'info',
+    action_url: str | None = None,
+) -> int:
+    """Broadcast an admin-composed message to all connected user cabinets.
+
+    Returns the number of websocket deliveries attempted.
+    """
+    return await cabinet_ws_manager.send_to_all_users(
+        {
+            'type': 'admin.broadcast',
+            'notification_id': notification_id,
+            'title': title,
+            'message': message,
+            'level': level,
+            'action_url': action_url,
+        }
     )
