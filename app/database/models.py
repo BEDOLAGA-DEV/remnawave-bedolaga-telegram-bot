@@ -2644,7 +2644,18 @@ class Ticket(Base):
     last_sla_reminder_at = Column(AwareDateTime(), nullable=True)
 
     # Связи
-    user = relationship('User', backref='tickets')
+    # Два FK на users: user_id (автор, обязательный) и assigned_to (админ, опциональный).
+    # SQLAlchemy требует явно указать foreign_keys, иначе не знает какую колонку использовать.
+    user = relationship(
+        'User',
+        foreign_keys=[user_id],
+        backref='tickets',
+    )
+    assignee = relationship(
+        'User',
+        foreign_keys=[assigned_to],
+        backref='assigned_tickets',
+    )
     messages = relationship('TicketMessage', back_populates='ticket', cascade='all, delete-orphan')
 
     @property

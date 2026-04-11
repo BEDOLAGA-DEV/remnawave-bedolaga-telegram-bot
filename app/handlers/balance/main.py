@@ -812,7 +812,6 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(process_freekassa_card_quick_amount, F.data.startswith('nz!_topup_amount|freekassa_card|'))
 
     from .kassa_ai import (
-        process_kassa_ai_quick_amount,
         start_kassa_ai_card_topup,
         start_kassa_ai_sberpay_topup,
         start_kassa_ai_sbp_topup,
