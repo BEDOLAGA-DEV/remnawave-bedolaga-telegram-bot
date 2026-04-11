@@ -39,6 +39,7 @@ from .admin_tariffs import router as admin_tariffs_router
 from .admin_tickets import router as admin_tickets_router
 from .admin_traffic import router as admin_traffic_router
 from .admin_updates import router as admin_updates_router
+from .admin_user_notifications import router as admin_user_notifications_router
 from .admin_users import router as admin_users_router
 from .admin_wheel import router as admin_wheel_router
 from .admin_withdrawals import router as admin_withdrawals_router
@@ -65,7 +66,9 @@ from .ticket_notifications import (
     router as ticket_notifications_router,
 )
 from .tickets import router as tickets_router
+from .user_notifications import router as user_notifications_router
 from .utils import router as utils_router
+from .web_push import router as web_push_router
 from .websocket import router as websocket_router
 from .wheel import router as wheel_router
 from .withdrawal import router as withdrawal_router
@@ -93,6 +96,8 @@ router.include_router(contests_router)
 router.include_router(polls_router)
 router.include_router(promo_router)
 router.include_router(notifications_router)
+router.include_router(user_notifications_router)
+router.include_router(web_push_router)
 router.include_router(info_router)
 router.include_router(branding_router)
 router.include_router(landing_router)
@@ -132,6 +137,7 @@ router.include_router(admin_reviews_router)
 router.include_router(admin_achievements_router)
 router.include_router(admin_scheduled_promos_router)
 router.include_router(admin_quick_replies_router)
+router.include_router(admin_user_notifications_router)
 router.include_router(admin_remnawave_router)
 router.include_router(admin_email_templates_router)
 router.include_router(admin_updates_router)

@@ -20,6 +20,7 @@ from app.database.crud.notification import (
     notification_sent,
     record_notification,
 )
+from app.database.crud.user_notification import create_notification as create_user_notification
 from app.database.crud.subscription import (
     deactivate_subscription,
     extend_subscription,
@@ -242,6 +243,7 @@ class MonitoringService:
                         )
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
+                await self._check_traffic_usage_warnings(db)
                 await self._check_trial_expiring_soon(db)
                 await self._check_trial_channel_subscriptions(db)
                 await self._check_expired_subscription_followups(db)
@@ -499,6 +501,188 @@ class MonitoringService:
             logger.error('Ошибка обновления RemnaWave пользователя', error=e)
             return None
 
+    async def _deliver_web_notification(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        *,
+        category: str,
+        level: str,
+        title: str,
+        message: str,
+        action_url: str | None = None,
+        data: dict | None = None,
+    ) -> None:
+        """Deliver a user-facing notification through 3 web channels:
+        1. Persistent UserNotification record (inbox)
+        2. WebSocket to open cabinet tabs
+        3. Web Push (VAPID) to subscribed browsers
+
+        Fails silently on individual channel errors to avoid blocking Telegram delivery.
+        """
+        try:
+            notification = await create_user_notification(
+                db,
+                user_id=user_id,
+                category=category,
+                level=level,
+                title=title,
+                message=message,
+                action_url=action_url,
+                data=data or {},
+            )
+        except Exception as e:
+            logger.debug('Failed to create UserNotification record', user_id=user_id, error=e)
+            return
+
+        try:
+            from app.cabinet.routes.websocket import notify_user_generic_notification
+
+            await notify_user_generic_notification(
+                user_id,
+                notification_id=notification.id,
+                category=category,
+                level=level,
+                title=title,
+                message=message,
+                action_url=action_url,
+            )
+        except Exception as e:
+            logger.debug('Failed to send WS notification', user_id=user_id, error=e)
+
+        try:
+            from app.services.web_push_service import web_push_service
+
+            if web_push_service.is_enabled:
+                await web_push_service.send_to_user(
+                    db,
+                    user_id,
+                    title=title,
+                    body=message,
+                    url=action_url or '/notifications',
+                    level=level,
+                    tag=f'{category}_{notification.id}',
+                    extra_data={
+                        'notification_id': notification.id,
+                        'category': category,
+                    },
+                )
+        except Exception as e:
+            logger.debug('Failed to send Web Push', user_id=user_id, error=e)
+
+    def _parse_traffic_warning_thresholds(self) -> list[int]:
+        """Parse TRAFFIC_WARNING_THRESHOLDS from config (comma-separated percentages)."""
+        raw = getattr(settings, 'TRAFFIC_WARNING_THRESHOLDS', '80,95') or '80,95'
+        result: list[int] = []
+        for item in raw.split(','):
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                value = int(item)
+                if 1 <= value <= 100:
+                    result.append(value)
+            except ValueError:
+                continue
+        return sorted(set(result))
+
+    async def _check_traffic_usage_warnings(self, db: AsyncSession) -> None:
+        """Check active subscriptions and send traffic warnings at configured thresholds.
+
+        Sends a web notification (inbox + WS + Web Push) when user's subscription
+        traffic usage crosses 80% or 95% (configurable). Deduplicates via recent
+        UserNotification records — no duplicate warning for same threshold within 7 days.
+        """
+        from app.database.crud.user_notification import check_recent_traffic_warning
+
+        thresholds = self._parse_traffic_warning_thresholds()
+        if not thresholds:
+            return
+
+        try:
+            # Fetch active subscriptions with a non-zero traffic limit
+            result = await db.execute(
+                select(Subscription)
+                .where(
+                    and_(
+                        Subscription.status == SubscriptionStatus.ACTIVE.value,
+                        Subscription.traffic_limit_gb > 0,
+                    )
+                )
+                .options(selectinload(Subscription.user))
+            )
+            subscriptions = result.scalars().all()
+
+            for subscription in subscriptions:
+                try:
+                    user = subscription.user
+                    if not user:
+                        continue
+
+                    limit_gb = subscription.traffic_limit_gb or 0
+                    if limit_gb <= 0:
+                        continue  # unlimited
+
+                    used_gb = float(subscription.traffic_used_gb or 0.0)
+                    percent = int((used_gb / limit_gb) * 100) if limit_gb > 0 else 0
+
+                    # Find the highest threshold that the user has crossed
+                    crossed_thresholds = [t for t in thresholds if percent >= t]
+                    if not crossed_thresholds:
+                        continue
+
+                    highest_threshold = max(crossed_thresholds)
+
+                    # Dedupe: skip if we already sent a notification for this threshold recently
+                    already_sent = await check_recent_traffic_warning(
+                        db,
+                        user.id,
+                        subscription.id,
+                        highest_threshold,
+                    )
+                    if already_sent:
+                        continue
+
+                    level = 'error' if highest_threshold >= 95 else 'warning'
+                    emoji = '🚨' if highest_threshold >= 95 else '⚠️'
+                    message = (
+                        f'{emoji} Использовано {highest_threshold}% трафика '
+                        f'({used_gb:.1f} / {limit_gb} ГБ). Рассмотрите докупку или апгрейд тарифа.'
+                    )
+
+                    await self._deliver_web_notification(
+                        db,
+                        user.id,
+                        category='traffic_warning',
+                        level=level,
+                        title=f'Трафик заканчивается ({highest_threshold}%)',
+                        message=message,
+                        action_url='/subscriptions',
+                        data={
+                            'subscription_id': subscription.id,
+                            'threshold_percent': highest_threshold,
+                            'percent_used': percent,
+                            'used_gb': used_gb,
+                            'limit_gb': limit_gb,
+                        },
+                    )
+
+                    logger.info(
+                        '🚦 Отправлено предупреждение о трафике',
+                        user_id=user.id,
+                        subscription_id=subscription.id,
+                        percent=percent,
+                        threshold=highest_threshold,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        'Failed to process traffic warning for subscription',
+                        subscription_id=subscription.id,
+                        error=e,
+                    )
+        except Exception as e:
+            logger.error('Ошибка проверки предупреждений о трафике', error=e)
+
     async def _check_expiring_subscriptions(self, db: AsyncSession):
         try:
             warning_days = settings.get_autopay_warning_days()
@@ -572,6 +756,21 @@ class MonitoringService:
                                 user_id=user.id,
                                 days=days,
                             )
+                        # Also deliver via cabinet channels (inbox + WS + Web Push)
+                        await self._deliver_web_notification(
+                            db,
+                            user.id,
+                            category='subscription_expiring',
+                            level='warning',
+                            title='Подписка скоро истекает',
+                            message=f'Ваша подписка истекает через {days} дн.',
+                            action_url='/subscriptions',
+                            data={
+                                'subscription_id': subscription.id,
+                                'days_left': days,
+                                'expires_at': subscription.end_date.isoformat() if subscription.end_date else None,
+                            },
+                        )
                         continue
 
                     if self.bot:
@@ -591,6 +790,24 @@ class MonitoringService:
                             logger.warning(
                                 '❌ Не удалось отправить уведомление пользователю', telegram_id=user.telegram_id
                             )
+
+                    # Also deliver via cabinet channels (inbox + WS + Web Push)
+                    # Runs for both successful and failed Telegram deliveries, to ensure
+                    # the user gets notified even if Telegram is blocked or the bot is blocked.
+                    await self._deliver_web_notification(
+                        db,
+                        user.id,
+                        category='subscription_expiring',
+                        level='warning',
+                        title='Подписка скоро истекает',
+                        message=f'Ваша подписка истекает через {days} дн.',
+                        action_url='/subscriptions',
+                        data={
+                            'subscription_id': subscription.id,
+                            'days_left': days,
+                            'expires_at': subscription.end_date.isoformat() if subscription.end_date else None,
+                        },
+                    )
 
                 if sent_count > 0:
                     await self._log_monitoring_event(

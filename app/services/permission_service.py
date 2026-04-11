@@ -81,6 +81,7 @@ PERMISSION_REGISTRY: dict[str, list[str]] = {
     'quick_replies': ['read', 'create', 'edit', 'delete'],
     'reviews': ['read', 'approve', 'reject'],
     'achievements': ['read', 'create', 'edit', 'delete'],
+    'user_notifications': ['read', 'broadcast', 'delete'],
 }
 
 

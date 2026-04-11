@@ -337,6 +337,17 @@ class Settings(BaseSettings):
 
     AUTOPAY_WARNING_DAYS: str = '3,1'
 
+    # Пороги предупреждений о трафике для веб-уведомлений (% использованного)
+    # Отправляется УФ-уведомление + Web Push при пересечении каждого порога
+    TRAFFIC_WARNING_THRESHOLDS: str = '80,95'
+
+    # Web Push (VAPID) — независимый канал доставки push-уведомлений в браузер
+    # Генерация ключей: `py-vapid generate_keys`
+    WEB_PUSH_ENABLED: bool = False
+    WEB_PUSH_VAPID_PRIVATE_KEY: str = ''  # base64url-encoded private key или путь к PEM
+    WEB_PUSH_VAPID_PUBLIC_KEY: str = ''  # base64url-encoded public key
+    WEB_PUSH_VAPID_EMAIL: str = 'admin@example.com'  # mailto для VAPID claims
+
     ENABLE_AUTOPAY: bool = False
 
     DEFAULT_AUTOPAY_ENABLED: bool = False
