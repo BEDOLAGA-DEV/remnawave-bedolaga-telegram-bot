@@ -8,10 +8,41 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.models import Subscription
+from app.database.models import Subscription, SubscriptionStatus
 
 
 logger = structlog.get_logger(__name__)
+
+
+async def ensure_single_subscription(db: AsyncSession, user_id: int) -> Subscription | None:
+    """
+    Return the primary subscription for a user.
+
+    Multi-tariff compatibility shim: in single-tariff setups a user has at
+    most one subscription row; in multi-tariff there may be several, in
+    which case we prefer an ACTIVE/TRIAL one, falling back to the most
+    recent. Returns None if the user has no subscriptions at all.
+
+    Used by happ recovery handlers that operate on "the" subscription
+    without caring about which tariff it belongs to.
+    """
+    result = await db.execute(
+        select(Subscription)
+        .where(Subscription.user_id == user_id)
+        .order_by(Subscription.created_at.desc())
+    )
+    subs = result.scalars().all()
+    if not subs:
+        return None
+
+    active_statuses = (
+        SubscriptionStatus.ACTIVE.value,
+        SubscriptionStatus.TRIAL.value,
+    )
+    for sub in subs:
+        if sub.status in active_statuses:
+            return sub
+    return subs[0]
 
 
 async def cleanup_duplicate_subscriptions(db: AsyncSession) -> int:

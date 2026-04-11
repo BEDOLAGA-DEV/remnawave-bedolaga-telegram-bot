@@ -936,6 +936,108 @@ def get_happ_download_link_keyboard(language: str, link: str) -> InlineKeyboardM
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def get_happ_link_not_working_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    """
+    Step 2 of the Happ "link is broken" recovery flow.
+    One action button escalates to the crypt4 fallback, plus a close button.
+    """
+    texts = get_texts(language)
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text=texts.t('HAPP_LINK_DID_NOT_HELP', '❌ Всё равно не работает'),
+                callback_data='nz!_happ_link_broken_crypt4',
+                style='primary',
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=texts.t('COMMON_CLOSE', '✖️ Закрыть'),
+                callback_data='nz!_happ_download_close',
+                style='danger',
+            )
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_happ_fallback_crypt4_keyboard(
+    language: str = DEFAULT_LANGUAGE,
+    redhash_url: str | None = None,
+) -> InlineKeyboardMarkup:
+    """
+    Step 3 fallback: shows a URL button with the redhash-wrapped crypt4 link
+    plus an escalation button to the raw-URL fallback.
+    """
+    texts = get_texts(language)
+    buttons: list[list[InlineKeyboardButton]] = []
+
+    if redhash_url:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('HAPP_OPEN_IN_BROWSER', '🌐 Открыть в браузере'),
+                    url=redhash_url,
+                    style='success',
+                )
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text=texts.t('HAPP_LINK_TRY_RAW', '🔁 Это тоже не работает'),
+                callback_data='nz!_happ_link_broken_raw',
+                style='primary',
+            )
+        ]
+    )
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text=texts.t('COMMON_CLOSE', '✖️ Закрыть'),
+                callback_data='nz!_happ_download_close',
+                style='danger',
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_happ_fallback_raw_keyboard(
+    language: str = DEFAULT_LANGUAGE,
+    redhash_url: str | None = None,
+) -> InlineKeyboardMarkup:
+    """
+    Step 4 fallback: terminal step in the Happ link recovery flow.
+    Offers the raw happ://add/{url} link wrapped in redhash, and a close button.
+    """
+    texts = get_texts(language)
+    buttons: list[list[InlineKeyboardButton]] = []
+
+    if redhash_url:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('HAPP_OPEN_IN_BROWSER', '🌐 Открыть в браузере'),
+                    url=redhash_url,
+                    style='success',
+                )
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text=texts.t('COMMON_CLOSE', '✖️ Закрыть'),
+                callback_data='nz!_happ_download_close',
+                style='danger',
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def get_back_keyboard(language: str = DEFAULT_LANGUAGE, callback_data: str = 'nz!_back_to_menu') -> InlineKeyboardMarkup:
     texts = get_texts(language)
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data=callback_data, style='danger')]])
@@ -2010,6 +2112,105 @@ def _get_days_word(days: int) -> str:
     if 2 <= days % 10 <= 4 and not (12 <= days % 100 <= 14):
         return 'дня'
     return 'дней'
+
+
+_PAYMENT_METHOD_TYPE_LABELS: dict[str, str] = {
+    'bank_card': '💳',
+    'yoo_money': '💰',
+    'sberbank': '💳',
+    'tinkoff_bank': '💳',
+    'sbp': '🏦',
+    'mir_pay': '💳',
+}
+
+
+def _get_payment_method_display_name(card, language: str = DEFAULT_LANGUAGE) -> str:
+    """
+    Build a human-readable label for a SavedPaymentMethod row.
+
+    Prefers the card.title stored by the payment provider (e.g.
+    "Bank card *4444"); otherwise composes emoji + brand + masked digits.
+    Safe against missing fields — yields a generic fallback if nothing
+    meaningful is available.
+    """
+    if card is None:
+        return '—'
+
+    title = (getattr(card, 'title', None) or '').strip()
+    if title:
+        return title
+
+    method_type = (getattr(card, 'method_type', None) or 'bank_card').lower()
+    icon = _PAYMENT_METHOD_TYPE_LABELS.get(method_type, '💳')
+    brand = (getattr(card, 'card_type', None) or '').strip()
+    last4 = (getattr(card, 'card_last4', None) or '').strip()
+
+    parts: list[str] = [icon]
+    if brand:
+        parts.append(brand)
+    if last4:
+        parts.append(f'•••• {last4}')
+
+    if len(parts) == 1:
+        texts = get_texts(language)
+        return texts.t('SAVED_CARDS_UNKNOWN_CARD', '💳 Карта')
+
+    return ' '.join(parts)
+
+
+def get_saved_cards_keyboard(cards, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    """
+    Keyboard for the 'saved cards' screen: one row per card with an unlink
+    action, plus a back button to the balance menu.
+
+    `cards` is an iterable of SavedPaymentMethod rows (may be empty).
+    """
+    texts = get_texts(language)
+    keyboard: list[list[InlineKeyboardButton]] = []
+
+    for card in cards or []:
+        label = _get_payment_method_display_name(card, language)
+        unlink_prefix = texts.t('SAVED_CARDS_UNLINK_PREFIX', '🗑')
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=f'{unlink_prefix} {label}',
+                    callback_data=f'unlink_card_{card.id}',
+                    style='danger',
+                )
+            ]
+        )
+
+    keyboard.append(
+        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance', style='danger')]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_confirm_unlink_keyboard(card_id: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    """
+    Confirmation keyboard for unlinking a saved card — destructive action.
+    """
+    texts = get_texts(language)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=texts.t('SAVED_CARDS_CONFIRM_YES', '✅ Да, отвязать'),
+                    callback_data=f'confirm_unlink_{card_id}',
+                    style='danger',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.BACK,
+                    callback_data='saved_cards_list',
+                    style='primary',
+                )
+            ],
+        ]
+    )
 
 
 # Deprecated: get_extend_subscription_keyboard() was removed.
