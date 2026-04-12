@@ -586,6 +586,17 @@ class Settings(BaseSettings):
     SEVERPAY_RETURN_URL: str | None = None
     SEVERPAY_LIFETIME: int = 1440  # minutes, 30-4320
 
+    # Apple In-App Purchase
+    APPLE_IAP_ENABLED: bool = False
+    APPLE_IAP_KEY_ID: str | None = None
+    APPLE_IAP_ISSUER_ID: str | None = None
+    APPLE_IAP_BUNDLE_ID: str = 'com.bitnet.vpnclient'
+    APPLE_IAP_PRIVATE_KEY: str | None = None  # .p8 key contents (PEM)
+    APPLE_IAP_PRIVATE_KEY_PATH: str | None = None  # Alternative: path to .p8 file
+    APPLE_IAP_ENVIRONMENT: str = 'Production'  # 'Sandbox' or 'Production'
+    APPLE_IAP_WEBHOOK_PATH: str = '/apple-iap-webhook'
+    APPLE_IAP_PRODUCTS: str = '{"com.bitnet.vpnclient.topup.100":10000,"com.bitnet.vpnclient.topup.300":30000,"com.bitnet.vpnclient.topup.500":50000,"com.bitnet.vpnclient.topup.1000":100000,"com.bitnet.vpnclient.topup.3000":300000}'
+
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
     CABINET_BUTTON_STYLE: str = ''
@@ -1962,6 +1973,34 @@ class Settings(BaseSettings):
 
     def get_severpay_display_name_html(self) -> str:
         return html.escape(self.get_severpay_display_name())
+
+    def is_apple_iap_enabled(self) -> bool:
+        return (
+            self.APPLE_IAP_ENABLED
+            and self.APPLE_IAP_KEY_ID is not None
+            and self.APPLE_IAP_ISSUER_ID is not None
+            and (self.APPLE_IAP_PRIVATE_KEY is not None or self.APPLE_IAP_PRIVATE_KEY_PATH is not None)
+        )
+
+    def get_apple_iap_products(self) -> dict[str, int]:
+        """Return mapping of Apple product ID -> kopeks amount."""
+        import json as _json
+
+        try:
+            return _json.loads(self.APPLE_IAP_PRODUCTS)
+        except Exception:
+            return {}
+
+    def get_apple_iap_private_key(self) -> str | None:
+        """Return the .p8 private key contents."""
+        if self.APPLE_IAP_PRIVATE_KEY:
+            return self.APPLE_IAP_PRIVATE_KEY
+        if self.APPLE_IAP_PRIVATE_KEY_PATH:
+            try:
+                return Path(self.APPLE_IAP_PRIVATE_KEY_PATH).read_text().strip()
+            except Exception:
+                return None
+        return None
 
     def is_kassa_ai_sbp_enabled(self) -> bool:
         return self.KASSA_AI_SBP_ENABLED and self.is_kassa_ai_enabled()

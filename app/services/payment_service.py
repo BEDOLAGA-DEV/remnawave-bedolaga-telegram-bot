@@ -19,6 +19,7 @@ from app.services.mulenpay_service import MulenPayService
 from app.services.nalogo_service import NaloGoService
 from app.services.pal24_service import Pal24Service
 from app.services.payment import (
+    AppleIAPPaymentMixin,
     CryptoBotPaymentMixin,
     HeleketPaymentMixin,
     MulenPayPaymentMixin,
@@ -355,6 +356,7 @@ class PaymentService(
     KassaAiPaymentMixin,
     RioPayPaymentMixin,
     SeverPayPaymentMixin,
+    AppleIAPPaymentMixin,
 ):
     """Основной интерфейс платежей, делегирующий работу специализированным mixin-ам."""
 
@@ -372,6 +374,11 @@ class PaymentService(
         self.wata_service = WataService() if settings.is_wata_enabled() else None
         self.cloudpayments_service = CloudPaymentsService() if settings.is_cloudpayments_enabled() else None
         self.nalogo_service = NaloGoService() if settings.is_nalogo_enabled() else None
+        self.apple_iap_service = None
+        if settings.is_apple_iap_enabled():
+            from app.external.apple_iap import AppleIAPService
+
+            self.apple_iap_service = AppleIAPService()
 
         mulenpay_name = settings.get_mulenpay_display_name()
         logger.debug(

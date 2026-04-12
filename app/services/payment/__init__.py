@@ -4,6 +4,7 @@
 оставался компактным и импортировал только нужные компоненты.
 """
 
+from .apple_iap import AppleIAPPaymentMixin
 from .cloudpayments import CloudPaymentsPaymentMixin
 from .common import PaymentCommonMixin
 from .cryptobot import CryptoBotPaymentMixin
@@ -22,6 +23,7 @@ from .yookassa import YooKassaPaymentMixin
 
 
 __all__ = [
+    'AppleIAPPaymentMixin',
     'CloudPaymentsPaymentMixin',
     'CryptoBotPaymentMixin',
     'FreekassaPaymentMixin',
