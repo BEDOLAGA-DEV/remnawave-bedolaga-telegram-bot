@@ -65,15 +65,29 @@ async def _check_eligibility(
 
     now = datetime.now(UTC)
     min_days = settings.REVIEW_MIN_DAYS
-    has_old_enough = any(
-        sub.start_date and (now - sub.start_date).days >= min_days
-        for sub in subscriptions
-    )
-    if not has_old_enough:
+
+    # Проверяем по дате регистрации пользователя (а не sub.start_date,
+    # т.к. start_date сбрасывается при каждом продлении/переключении).
+    user_created = getattr(db_user, 'created_at', None)
+    if user_created:
+        # Ensure timezone-aware comparison
+        if user_created.tzinfo is None:
+            user_created = user_created.replace(tzinfo=UTC)
+        member_days = (now - user_created).days
+    else:
+        # Fallback: oldest subscription start_date
+        member_days = max(
+            ((now - sub.start_date).days if sub.start_date else 0)
+            for sub in subscriptions
+        )
+
+    if member_days < min_days:
+        remaining = min_days - member_days
         return False, texts.t(
             'REVIEW_SUB_TOO_NEW',
-            'Для написания отзыва необходимо пользоваться подпиской не менее {days} дней.',
-        ).format(days=min_days)
+            'Для написания отзыва необходимо пользоваться сервисом не менее {days} дней.\n'
+            'Осталось: {remaining} дн.',
+        ).format(days=min_days, remaining=remaining)
 
     return True, None
 

@@ -2357,6 +2357,17 @@ async def get_main_menu_text(user, texts, db: AsyncSession):
         user_name=html.escape(user.full_name or ''), subscription_status=_get_subscription_status(user, texts)
     )
 
+    # Member-since line
+    if user and getattr(user, 'created_at', None):
+        from datetime import UTC, datetime
+
+        member_days = (datetime.now(UTC) - user.created_at).days
+        if member_days >= 0:
+            base_text += '\n' + texts.t(
+                'MEMBER_SINCE_DAYS',
+                '\U0001f4c5 \u0421 \u043d\u0430\u043c\u0438: {days} \u0434\u043d.',
+            ).format(days=member_days)
+
     action_prompt = texts.t('MAIN_MENU_ACTION_PROMPT', 'Выберите действие:')
 
     info_sections: list[str] = []
