@@ -3,6 +3,7 @@ from __future__ import annotations
 import structlog
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database.models import BotAdminRole
 
@@ -31,7 +32,9 @@ class BotRoleCRUD:
     @staticmethod
     async def get_bot_role(db: AsyncSession, user_id: int) -> BotAdminRole | None:
         result = await db.execute(
-            select(BotAdminRole).where(BotAdminRole.user_id == user_id)
+            select(BotAdminRole)
+            .options(selectinload(BotAdminRole.user))
+            .where(BotAdminRole.user_id == user_id)
         )
         return result.scalar_one_or_none()
 
@@ -44,7 +47,9 @@ class BotRoleCRUD:
     ) -> BotAdminRole:
         """Create or update a bot admin role for a user."""
         result = await db.execute(
-            select(BotAdminRole).where(BotAdminRole.user_id == user_id)
+            select(BotAdminRole)
+            .options(selectinload(BotAdminRole.user))
+            .where(BotAdminRole.user_id == user_id)
         )
         existing = result.scalar_one_or_none()
 
@@ -83,6 +88,8 @@ class BotRoleCRUD:
     @staticmethod
     async def list_bot_roles(db: AsyncSession) -> list[BotAdminRole]:
         result = await db.execute(
-            select(BotAdminRole).order_by(BotAdminRole.id)
+            select(BotAdminRole)
+            .options(selectinload(BotAdminRole.user))
+            .order_by(BotAdminRole.id)
         )
         return list(result.scalars().all())
