@@ -314,40 +314,83 @@ async def show_review_menu(
     await callback.answer()
 
 
+def _format_review_card(review, texts) -> str:
+    """Format a single review as a beautiful HTML card."""
+    name = '\u2014'
+    if review.user:
+        name = review.user.first_name or review.user.username or f'#{review.user.telegram_id}'
+        name = html.escape(name)
+
+    stars = _stars(review.rating)
+    review_text = html.escape(review.text or '')
+    date_str = review.created_at.strftime('%d.%m.%Y') if review.created_at else ''
+
+    return (
+        f'\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n'
+        f'\U0001f464 <b>{name}</b>\n'
+        f'{stars} ({review.rating}/5)\n\n'
+        f'\u00ab{review_text}\u00bb\n\n'
+        f'\U0001f4c5 {date_str}\n'
+        f'\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500'
+    )
+
+
 @error_handler
 async def show_all_reviews(
     callback: types.CallbackQuery,
     db_user: User,
     db: AsyncSession,
 ):
-    """Show last 10 approved reviews from other users."""
+    """Show approved reviews one at a time with pagination."""
     texts = get_texts(db_user.language)
-    reviews = await get_approved_reviews(db, limit=10)
 
-    if not reviews:
+    # Extract page from callback data
+    data = callback.data
+    if data.startswith('nz!_review_page_'):
+        page = int(data.split('_')[-1])
+    else:
+        page = 1
+
+    reviews = await get_approved_reviews(db, limit=50)
+    total = len(reviews)
+
+    if total == 0:
         msg = texts.t(
             'REVIEW_ALL_EMPTY',
-            '📋 <b>Отзывы</b>\n\nПока нет опубликованных отзывов.',
+            '\U0001f4cb <b>\u041e\u0442\u0437\u044b\u0432\u044b</b>\n\n\u041f\u043e\u043a\u0430 \u043d\u0435\u0442 \u043e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432\u0430\u043d\u043d\u044b\u0445 \u043e\u0442\u0437\u044b\u0432\u043e\u0432.',
+        )
+        keyboard = types.InlineKeyboardMarkup(
+            inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_review_menu')]]
         )
     else:
-        lines = [texts.t('REVIEW_ALL_HEADER', '📋 <b>Последние отзывы</b>\n')]
-        for r in reviews:
-            name = '—'
-            if r.user:
-                name = r.user.first_name or r.user.username or f'#{r.user.telegram_id}'
-                name = html.escape(name)
-            stars = _stars(r.rating)
-            short_text = html.escape(r.text[:120])
-            if len(r.text) > 120:
-                short_text += '...'
-            lines.append(f'{stars} <b>{name}</b>\n{short_text}\n')
-        msg = '\n'.join(lines)
+        page = max(1, min(page, total))
+        review = reviews[page - 1]
 
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_review_menu')],
-        ]
-    )
+        msg = _format_review_card(review, texts)
+
+        buttons: list[list[types.InlineKeyboardButton]] = []
+
+        # Channel link if available
+        channel_url = (settings.REVIEWS_CHANNEL_URL or '').strip()
+        if channel_url and review.channel_message_id:
+            buttons.append([
+                types.InlineKeyboardButton(
+                    text='\U0001f4fa \u0412 \u043a\u0430\u043d\u0430\u043b\u0435',
+                    url=f'{channel_url}/{review.channel_message_id}',
+                )
+            ])
+
+        # Navigation
+        nav_row: list[types.InlineKeyboardButton] = []
+        if page > 1:
+            nav_row.append(types.InlineKeyboardButton(text='\u2b05', callback_data=f'nz!_review_page_{page - 1}'))
+        nav_row.append(types.InlineKeyboardButton(text=f'{page}/{total}', callback_data='nz!_noop'))
+        if page < total:
+            nav_row.append(types.InlineKeyboardButton(text='\u27a1', callback_data=f'nz!_review_page_{page + 1}'))
+        buttons.append(nav_row)
+
+        buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_review_menu')])
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
     await callback.message.edit_text(msg, parse_mode='HTML', reply_markup=keyboard)
     await callback.answer()
@@ -356,6 +399,7 @@ async def show_all_reviews(
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_review_menu, F.data == 'nz!_review_menu')
     dp.callback_query.register(show_all_reviews, F.data == 'nz!_review_all')
+    dp.callback_query.register(show_all_reviews, F.data.startswith('nz!_review_page_'))
     dp.callback_query.register(start_review, F.data == 'nz!_review')
     dp.message.register(start_review_command, F.text == '/review')
     dp.callback_query.register(
