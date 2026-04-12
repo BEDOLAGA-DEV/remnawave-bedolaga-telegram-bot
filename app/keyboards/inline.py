@@ -677,6 +677,16 @@ def get_main_menu_keyboard(
             InlineKeyboardButton(text=texts.t('CONTESTS_BUTTON', '🎲 Конкурсы'), callback_data='nz!_contests_menu', style='primary')
         )
 
+    # Reviews
+    if settings.REVIEW_ENABLED:
+        paired_buttons.append(
+            InlineKeyboardButton(
+                text=texts.t('MENU_REVIEWS', '⭐ Отзывы'),
+                callback_data='nz!_review_menu',
+                style='primary',
+            )
+        )
+
     # Troubleshoot / Help
     paired_buttons.append(
         InlineKeyboardButton(

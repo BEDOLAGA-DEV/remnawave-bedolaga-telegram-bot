@@ -227,7 +227,83 @@ async def on_review_text(
     )
 
 
+@error_handler
+async def show_review_menu(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+):
+    """Show review entry screen: eligibility info, leave-review button, channel link."""
+    texts = get_texts(db_user.language)
+
+    existing = await get_review_by_user(db, db_user.id)
+    buttons: list[list[types.InlineKeyboardButton]] = []
+
+    if existing:
+        status_label = (
+            texts.t('REVIEW_STATUS_APPROVED', '✅ Опубликован')
+            if existing.is_approved
+            else texts.t('REVIEW_STATUS_PENDING', '⏳ На модерации')
+        )
+        msg = texts.t(
+            'REVIEW_ALREADY_LEFT_DETAILS',
+            '⭐ <b>Ваш отзыв</b>\n\n'
+            'Оценка: {stars} ({rating}/5)\n'
+            'Статус: {status}\n\n'
+            '«{text}»\n\n'
+            'Бонус: {bonus}',
+        ).format(
+            stars=_stars(existing.rating),
+            rating=existing.rating,
+            status=status_label,
+            text=html.escape(existing.text[:200]),
+            bonus=texts.format_price(existing.bonus_kopeks) if existing.bonus_kopeks else '—',
+        )
+    else:
+        eligible, error_msg = await _check_eligibility(db, db_user)
+        if eligible:
+            msg = texts.t(
+                'REVIEW_MENU_ELIGIBLE',
+                '⭐ <b>Отзывы</b>\n\n'
+                'Оставьте отзыв о нашем сервисе и получите бонус {bonus} на баланс!\n\n'
+                'Ваш отзыв будет проверен модератором.',
+            ).format(bonus=texts.format_price(settings.REVIEW_BONUS_KOPEKS))
+            buttons.append([
+                types.InlineKeyboardButton(
+                    text=texts.t('REVIEW_WRITE_BUTTON', '✍️ Оставить отзыв'),
+                    callback_data='nz!_review',
+                )
+            ])
+        else:
+            msg = texts.t(
+                'REVIEW_MENU_INELIGIBLE',
+                '⭐ <b>Отзывы</b>\n\n{reason}\n\n'
+                'Бонус за отзыв: {bonus}',
+            ).format(reason=error_msg, bonus=texts.format_price(settings.REVIEW_BONUS_KOPEKS))
+
+    channel_url = (settings.REVIEWS_CHANNEL_URL or '').strip()
+    if channel_url:
+        buttons.append([
+            types.InlineKeyboardButton(
+                text=texts.t('REVIEW_VIEW_ALL_BUTTON', '📺 Посмотреть отзывы'),
+                url=channel_url,
+            )
+        ])
+
+    buttons.append([
+        types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')
+    ])
+
+    await callback.message.edit_text(
+        msg,
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
 def register_handlers(dp: Dispatcher):
+    dp.callback_query.register(show_review_menu, F.data == 'nz!_review_menu')
     dp.callback_query.register(start_review, F.data == 'nz!_review')
     dp.message.register(start_review_command, F.text == '/review')
     dp.callback_query.register(

@@ -283,9 +283,11 @@ class Settings(BaseSettings):
     REFERRAL_CONTESTS_ENABLED: bool = False
 
     # Отзывы за бонус
+    REVIEW_ENABLED: bool = True
     REVIEW_BONUS_KOPEKS: int = 5000
     REVIEW_MIN_DAYS: int = 7
     REVIEW_CHANNEL_ID: int = 0
+    REVIEWS_CHANNEL_URL: str = ''  # URL публичного канала с отзывами (Telegram ссылка)
 
     BLACKLIST_CHECK_ENABLED: bool = False
     BLACKLIST_GITHUB_URL: str | None = None
