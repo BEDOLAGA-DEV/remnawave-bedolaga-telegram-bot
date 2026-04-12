@@ -68,6 +68,19 @@ from app.utils.user_utils import generate_unique_referral_code
 logger = structlog.get_logger(__name__)
 
 
+async def _is_user_admin(db, user) -> bool:
+    """Check admin status: ADMIN_IDS env OR BotAdminRole in DB."""
+    if settings.is_admin(user.telegram_id):
+        return True
+    try:
+        from app.database.crud.bot_role import BotRoleCRUD
+
+        role = await BotRoleCRUD.get_bot_role(db, user.id)
+        return role is not None
+    except Exception:
+        return False
+
+
 async def _activate_pending_gift_after_registration(
     db: AsyncSession,
     state: FSMContext,
@@ -940,7 +953,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
 
         menu_text = await get_main_menu_text(user, texts, db)
 
-        is_admin = settings.is_admin(user.telegram_id)
+        is_admin = await _is_user_admin(db, user)
         is_moderator = (not is_admin) and SupportSettingsService.is_moderator(user.telegram_id)
 
         custom_buttons = []
@@ -1600,7 +1613,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
 
         menu_text = await get_main_menu_text(existing_user, texts, db)
 
-        is_admin = settings.is_admin(existing_user.telegram_id)
+        is_admin = await _is_user_admin(db, existing_user)
         is_moderator = (not is_admin) and SupportSettingsService.is_moderator(existing_user.telegram_id)
 
         custom_buttons = []
@@ -1848,7 +1861,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
 
         menu_text = await get_main_menu_text(user, texts, db)
 
-        is_admin = settings.is_admin(user.telegram_id)
+        is_admin = await _is_user_admin(db, user)
         is_moderator = (not is_admin) and SupportSettingsService.is_moderator(user.telegram_id)
 
         custom_buttons = []
@@ -1920,7 +1933,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
         menu_text = await get_main_menu_text(existing_user, texts, db)
 
-        is_admin = settings.is_admin(existing_user.telegram_id)
+        is_admin = await _is_user_admin(db, existing_user)
         is_moderator = (not is_admin) and SupportSettingsService.is_moderator(existing_user.telegram_id)
 
         custom_buttons = []
@@ -2203,7 +2216,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
         menu_text = await get_main_menu_text(user, texts, db)
 
-        is_admin = settings.is_admin(user.telegram_id)
+        is_admin = await _is_user_admin(db, user)
         is_moderator = (not is_admin) and SupportSettingsService.is_moderator(user.telegram_id)
 
         custom_buttons = []
@@ -2577,7 +2590,7 @@ async def required_sub_channel_check(
 
             menu_text = await get_main_menu_text(user, texts, db)
 
-            is_admin = settings.is_admin(user.telegram_id)
+            is_admin = await _is_user_admin(db, user)
             is_moderator = (not is_admin) and SupportSettingsService.is_moderator(user.telegram_id)
 
             custom_buttons = await MainMenuButtonService.get_buttons_for_user(
@@ -2745,7 +2758,7 @@ async def required_sub_channel_check(
 
                     menu_text = await get_main_menu_text(user, texts, db)
 
-                    is_admin = settings.is_admin(user.telegram_id)
+                    is_admin = await _is_user_admin(db, user)
                     is_moderator = (not is_admin) and SupportSettingsService.is_moderator(user.telegram_id)
 
                     custom_buttons = await MainMenuButtonService.get_buttons_for_user(
