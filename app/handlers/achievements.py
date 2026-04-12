@@ -1,3 +1,5 @@
+import html as html_module
+
 import structlog
 from aiogram import Dispatcher, F, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -33,29 +35,100 @@ REWARD_LABELS = {
 }
 
 
-def _format_achievement_card(template, user_achievement, current_value: int, texts) -> str:
-    """Format a single achievement as an HTML card."""
-    is_unlocked = user_achievement is not None
+@error_handler
+async def show_achievements_list(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Show list of achievements as buttons."""
+    if not settings.ACHIEVEMENTS_ENABLED:
+        await callback.answer('Достижения отключены', show_alert=True)
+        return
+
+    texts = get_texts(db_user.language)
+    templates = await get_active_templates(db)
+    user_achievements = await get_user_achievements(db, db_user.id)
+    unlocked_ids = {ua.template_id for ua in user_achievements}
+
+    total = len(templates)
+    unlocked_count = sum(1 for t in templates if t.id in unlocked_ids)
+
+    if total == 0:
+        msg = '\U0001f3c6 <b>Достижения</b>\n\nПока достижений нет.'
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')]]
+        )
+    else:
+        msg = f'\U0001f3c6 <b>Достижения ({unlocked_count}/{total})</b>\n\nВыберите достижение:'
+
+        buttons: list[list[InlineKeyboardButton]] = []
+        for t in templates:
+            is_hidden = getattr(t, 'is_hidden', False)
+            is_unlocked = t.id in unlocked_ids
+
+            if is_hidden and not is_unlocked:
+                label = '\U0001f512 ??? Скрытое'
+            elif is_unlocked:
+                label = f'\u2705 {t.emoji} {t.name}'
+            else:
+                label = f'\U0001f512 {t.emoji} {t.name}'
+
+            buttons.append([InlineKeyboardButton(
+                text=label,
+                callback_data=f'nz!_ach_view_{t.id}',
+            )])
+
+        buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(msg, parse_mode='HTML', reply_markup=keyboard)
+    await callback.answer()
+
+
+@error_handler
+async def show_achievement_detail(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Show detailed card for a single achievement."""
+    texts = get_texts(db_user.language)
+    template_id = int(callback.data.split('_')[-1])
+
+    templates = await get_active_templates(db)
+    template = next((t for t in templates if t.id == template_id), None)
+    if not template:
+        await callback.answer('Достижение не найдено', show_alert=True)
+        return
+
+    user_achievements = await get_user_achievements(db, db_user.id)
+    unlocked_ids = {ua.template_id: ua for ua in user_achievements}
+    ua = unlocked_ids.get(template.id)
+    is_unlocked = ua is not None
     is_hidden = getattr(template, 'is_hidden', False)
 
     if is_hidden and not is_unlocked:
-        return (
+        msg = (
             '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n'
-            '\U0001f512 <b>??? \u0421\u043a\u0440\u044b\u0442\u043e\u0435 \u0434\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u0435</b>\n\n'
-            '\U0001f4a1 <i>\u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0430\u0439\u0442\u0435 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c\u0441\u044f \u0441\u0435\u0440\u0432\u0438\u0441\u043e\u043c, \u0447\u0442\u043e\u0431\u044b \u043e\u0442\u043a\u0440\u044b\u0442\u044c!</i>\n'
+            '\U0001f512 <b>??? Скрытое достижение</b>\n\n'
+            '\U0001f4a1 <i>Продолжайте пользоваться сервисом, чтобы открыть!</i>\n'
             '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500'
         )
+    else:
+        current = await _get_user_stat(db, db_user, template.condition_type)
+        msg = _format_detail_card(template, ua, current, is_unlocked)
 
-    status = '\u2705' if is_unlocked else '\U0001f512'
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text='\u2b05 К списку', callback_data='nz!_achievements')]]
+    )
+    await callback.message.edit_text(msg, parse_mode='HTML', reply_markup=keyboard)
+    await callback.answer()
+
+
+def _format_detail_card(template, user_achievement, current_value: int, is_unlocked: bool) -> str:
+    """Format detailed achievement card."""
+    status = '\u2705 Получено' if is_unlocked else '\U0001f512 Не получено'
     emoji = template.emoji or '\U0001f3c6'
-    name = template.name
-    description = template.description or ''
+    name = html_module.escape(template.name)
+    description = html_module.escape(template.description or '')
 
-    # Condition info
+    # Condition
     condition_label = CONDITION_LABELS.get(template.condition_type, template.condition_type)
     target = template.condition_value
 
-    # Format condition value for kopeks
     if template.condition_type == 'total_spent_kopeks':
         target_display = settings.format_price(target)
         current_display = settings.format_price(current_value)
@@ -68,38 +141,37 @@ def _format_achievement_card(template, user_achievement, current_value: int, tex
     filled = pct // 10
     bar = '\u2588' * filled + '\u2591' * (10 - filled)
 
-    # Reward info
-    reward_label = REWARD_LABELS.get(template.reward_type, template.reward_type)
+    # Reward
     reward_text = ''
     if template.reward_type == 'balance_kopeks' and template.reward_value:
-        reward_text = f'\U0001f381 {reward_label}: {settings.format_price(template.reward_value)}'
+        reward_text = f'\U0001f381 <b>Награда:</b> {settings.format_price(template.reward_value)} на баланс'
     elif template.reward_type == 'traffic_gb' and template.reward_value:
-        reward_text = f'\U0001f381 {reward_label}: {template.reward_value} \u0413\u0411'
+        reward_text = f'\U0001f381 <b>Награда:</b> +{template.reward_value} ГБ трафика'
     elif template.reward_type == 'subscription_days' and template.reward_value:
-        reward_text = f'\U0001f381 {reward_label}: {template.reward_value} \u0434\u043d.'
-    elif template.reward_type != 'none':
-        reward_text = f'\U0001f381 {reward_label}'
+        reward_text = f'\U0001f381 <b>Награда:</b> +{template.reward_value} дн. подписки'
 
-    # How to get (hint)
+    # Hint
     hint = getattr(template, 'hint', '') or ''
-    hint_text = f'\n\U0001f4a1 <i>{hint}</i>' if hint else ''
+    hint_text = f'\n\U0001f4a1 <b>Как получить:</b> <i>{html_module.escape(hint)}</i>' if hint else ''
 
     # Unlocked date
     date_text = ''
-    if is_unlocked and user_achievement.unlocked_at:
-        date_text = f'\n\U0001f4c5 \u041f\u043e\u043b\u0443\u0447\u0435\u043d\u043e: {user_achievement.unlocked_at.strftime("%d.%m.%Y")}'
+    if is_unlocked and user_achievement and user_achievement.unlocked_at:
+        date_text = f'\n\U0001f4c5 Получено: {user_achievement.unlocked_at.strftime("%d.%m.%Y")}'
 
     lines = [
         '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
-        f'{status} {emoji} <b>{name}</b>',
+        f'{emoji} <b>{name}</b>',
+        f'{status}',
     ]
     if description:
-        lines.append(f'{description}')
+        lines.append(f'\n{description}')
     lines.append('')
-    lines.append(f'\U0001f3af {condition_label}: {current_display}/{target_display}')
+    lines.append(f'\U0001f3af <b>Условие:</b> {condition_label}')
+    lines.append(f'\U0001f4ca <b>Прогресс:</b> {current_display} / {target_display}')
     lines.append(f'[{bar}] {pct}%')
     if reward_text:
-        lines.append(reward_text)
+        lines.append(f'\n{reward_text}')
     if hint_text:
         lines.append(hint_text)
     if date_text:
@@ -109,60 +181,6 @@ def _format_achievement_card(template, user_achievement, current_value: int, tex
     return '\n'.join(lines)
 
 
-@error_handler
-async def show_achievements(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    if not settings.ACHIEVEMENTS_ENABLED:
-        await callback.answer('\u0414\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u044f \u043e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u044b', show_alert=True)
-        return
-
-    texts = get_texts(db_user.language)
-
-    # Page from callback
-    data = callback.data
-    if data.startswith('nz!_ach_page_'):
-        page = int(data.split('_')[-1])
-    else:
-        page = 1
-
-    templates = await get_active_templates(db)
-    user_achievements = await get_user_achievements(db, db_user.id)
-    unlocked_ids = {ua.template_id: ua for ua in user_achievements}
-
-    total = len(templates)
-
-    if total == 0:
-        msg = '\U0001f3c6 <b>\u0414\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u044f</b>\n\n\u041f\u043e\u043a\u0430 \u0434\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u0439 \u043d\u0435\u0442.'
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')]]
-        )
-    else:
-        page = max(1, min(page, total))
-        template = templates[page - 1]
-        ua = unlocked_ids.get(template.id)
-        current = await _get_user_stat(db, db_user, template.condition_type)
-
-        # Stats header
-        unlocked_count = sum(1 for t in templates if t.id in unlocked_ids)
-        header = f'\U0001f3c6 <b>\u0414\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u044f ({unlocked_count}/{total})</b>\n'
-
-        msg = header + '\n' + _format_achievement_card(template, ua, current, texts)
-
-        # Navigation
-        buttons: list[list[InlineKeyboardButton]] = []
-        nav_row: list[InlineKeyboardButton] = []
-        if page > 1:
-            nav_row.append(InlineKeyboardButton(text='\u2b05', callback_data=f'nz!_ach_page_{page - 1}'))
-        nav_row.append(InlineKeyboardButton(text=f'{page}/{total}', callback_data='nz!_noop'))
-        if page < total:
-            nav_row.append(InlineKeyboardButton(text='\u27a1', callback_data=f'nz!_ach_page_{page + 1}'))
-        buttons.append(nav_row)
-        buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')])
-        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    await callback.message.edit_text(msg, parse_mode='HTML', reply_markup=keyboard)
-    await callback.answer()
-
-
 def register_handlers(dp: Dispatcher):
-    dp.callback_query.register(show_achievements, F.data == 'nz!_achievements')
-    dp.callback_query.register(show_achievements, F.data.startswith('nz!_ach_page_'))
+    dp.callback_query.register(show_achievements_list, F.data == 'nz!_achievements')
+    dp.callback_query.register(show_achievement_detail, F.data.startswith('nz!_ach_view_'))
