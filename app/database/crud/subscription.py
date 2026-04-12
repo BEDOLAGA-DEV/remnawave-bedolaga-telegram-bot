@@ -477,6 +477,7 @@ async def extend_subscription(
     traffic_limit_gb: int | None = None,
     device_limit: int | None = None,
     connected_squads: list[str] | None = None,
+    wl_traffic_limit_gb: int | None = None,
     commit: bool = True,
 ) -> Subscription:
     """Продлевает подписку на указанное количество дней.
@@ -489,6 +490,10 @@ async def extend_subscription(
         traffic_limit_gb: Лимит трафика ГБ (опционально, для режима тарифов)
         device_limit: Лимит устройств (опционально, для режима тарифов)
         connected_squads: Список UUID сквадов (опционально, для режима тарифов)
+        wl_traffic_limit_gb: Лимит WL-трафика ГБ (опционально). Применяется
+            при СМЕНЕ тарифа или ИСТЁКШЕЙ подписке — сбрасывает счётчики
+            wl_traffic_used_gb / wl_purchased_traffic_gb / wl_traffic_reset_at
+            чтобы новый тариф получил чистые WL-лимиты.
     """
     from app.database.models import TrafficPurchase
 
@@ -638,6 +643,22 @@ async def extend_subscription(
         else:
             # Активная подписка в режиме тарифов — сохраняем purchased_traffic_gb и traffic_reset_at
             logger.info('🔄 Сбрасываем использованный трафик, докупленный сохранен (режим тарифов)')
+
+    # WL-трафик: при смене тарифа или продлении истёкшей подписки сбрасываем
+    # лимит и счётчики из нового тарифа. Для активной подписки того же тарифа
+    # оставляем счётчики как есть (пользователь ничего не терял).
+    if wl_traffic_limit_gb is not None and (is_tariff_change or was_expired):
+        old_wl = subscription.wl_traffic_limit_gb
+        subscription.wl_traffic_limit_gb = wl_traffic_limit_gb
+        subscription.wl_traffic_used_gb = 0.0
+        subscription.wl_purchased_traffic_gb = 0
+        subscription.wl_traffic_reset_at = None
+        logger.info(
+            '📊 Обновлен WL-лимит трафика: ГБ → ГБ (счётчики сброшены)',
+            old_wl=old_wl,
+            wl_traffic_limit_gb=wl_traffic_limit_gb,
+            reason='смена тарифа' if is_tariff_change else 'подписка была истёкшей',
+        )
 
     if device_limit is not None:
         old_devices = subscription.device_limit

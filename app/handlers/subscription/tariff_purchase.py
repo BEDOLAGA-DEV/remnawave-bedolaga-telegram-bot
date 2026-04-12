@@ -1001,6 +1001,7 @@ async def handle_custom_confirm(
                 traffic_limit_gb=traffic_limit,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
+                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
             )
         else:
             # Создаем новую подписку
@@ -1409,6 +1410,7 @@ async def confirm_tariff_purchase(
                     traffic_limit_gb=tariff.traffic_limit_gb,
                     device_limit=effective_device_limit,
                     connected_squads=squads,
+                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
                 )
             else:
                 # Guard: enforce MAX_ACTIVE_SUBSCRIPTIONS limit
@@ -1469,6 +1471,7 @@ async def confirm_tariff_purchase(
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
+                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
             )
         else:
             # Создаем новую подписку
@@ -1810,13 +1813,24 @@ async def confirm_daily_tariff_purchase(
             # Сбрасываем докупленный трафик при смене тарифа
             from sqlalchemy import delete as sql_delete
 
-            from app.database.models import TrafficPurchase
+            from app.database.models import TrafficPurchase, WlTrafficPurchase
 
             await db.execute(
                 sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == existing_subscription.id)
             )
             existing_subscription.purchased_traffic_gb = 0
             existing_subscription.traffic_reset_at = None
+
+            # Сброс WL-трафика из нового тарифа (fallback к глобальному дефолту)
+            existing_subscription.wl_traffic_limit_gb = getattr(tariff, 'wl_default_traffic_gb', None)
+            existing_subscription.wl_traffic_used_gb = 0.0
+            existing_subscription.wl_purchased_traffic_gb = 0
+            existing_subscription.wl_traffic_reset_at = None
+            await db.execute(
+                sql_delete(WlTrafficPurchase).where(
+                    WlTrafficPurchase.subscription_id == existing_subscription.id
+                )
+            )
 
             await db.commit()
             await db.refresh(existing_subscription)
@@ -2351,6 +2365,9 @@ async def confirm_tariff_extend(
             tariff_id=tariff.id if was_trial else None,
             traffic_limit_gb=tariff.traffic_limit_gb if was_trial else None,
             device_limit=actual_device_limit if was_trial else None,
+            wl_traffic_limit_gb=(
+                getattr(tariff, 'wl_default_traffic_gb', None) if was_trial else None
+            ),
         )
 
         # Обновляем пользователя в Remnawave

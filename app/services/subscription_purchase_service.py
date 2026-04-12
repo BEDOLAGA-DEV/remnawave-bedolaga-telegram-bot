@@ -1107,6 +1107,24 @@ class MiniAppSubscriptionPurchaseService:
             subscription.updated_at = now
             subscription.traffic_used_gb = 0.0
 
+            # WL-трафик: при конвертации триала в платную подписку в classic-flow
+            # (без привязки к tariff) сбрасываем лимит и счётчики на глобальный
+            # дефолт. В tariff-flow этим занимается extend_subscription().
+            if was_trial_conversion:
+                from sqlalchemy import delete as sql_delete
+
+                from app.database.models import WlTrafficPurchase
+
+                subscription.wl_traffic_limit_gb = settings.WL_DEFAULT_TRAFFIC_LIMIT_GB
+                subscription.wl_traffic_used_gb = 0.0
+                subscription.wl_purchased_traffic_gb = 0
+                subscription.wl_traffic_reset_at = None
+                await db.execute(
+                    sql_delete(WlTrafficPurchase).where(
+                        WlTrafficPurchase.subscription_id == subscription.id
+                    )
+                )
+
             await db.commit()
             await db.refresh(subscription)
         else:
@@ -1117,6 +1135,7 @@ class MiniAppSubscriptionPurchaseService:
                 traffic_limit_gb=pricing.selection.traffic_value,
                 device_limit=pricing.selection.devices,
                 connected_squads=pricing.selection.servers,
+                wl_traffic_limit_gb=settings.WL_DEFAULT_TRAFFIC_LIMIT_GB,
                 update_server_counters=False,
             )
 
