@@ -687,6 +687,16 @@ def get_main_menu_keyboard(
             )
         )
 
+    # Achievements
+    if settings.ACHIEVEMENTS_ENABLED:
+        paired_buttons.append(
+            InlineKeyboardButton(
+                text=texts.t('MENU_ACHIEVEMENTS', '🏆 Достижения'),
+                callback_data='nz!_achievements',
+                style='primary',
+            )
+        )
+
     # Troubleshoot / Help
     paired_buttons.append(
         InlineKeyboardButton(
