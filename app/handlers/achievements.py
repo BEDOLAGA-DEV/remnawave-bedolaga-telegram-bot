@@ -37,6 +37,34 @@ REWARD_LABELS = {
 }
 
 
+def _filter_visible_templates(templates, unlocked_ids: set) -> list:
+    """For multi-level groups, show only unlocked levels + the next one.
+
+    Non-grouped achievements always show.
+    Grouped: show all unlocked + the first non-unlocked (current goal).
+    """
+    # Build group → sorted templates
+    groups: dict[str, list] = {}
+    standalone = []
+    for t in templates:
+        group = getattr(t, 'group_name', None)
+        if group:
+            groups.setdefault(group, []).append(t)
+        else:
+            standalone.append(t)
+
+    visible = list(standalone)
+
+    for group_name, group_templates in groups.items():
+        sorted_group = sorted(group_templates, key=lambda x: getattr(x, 'level', 1))
+        for t in sorted_group:
+            visible.append(t)
+            if t.id not in unlocked_ids:
+                break  # Show up to the first non-unlocked (current goal)
+
+    return visible
+
+
 @error_handler
 async def show_achievements_list(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     """Show list of achievements as buttons."""
@@ -57,8 +85,12 @@ async def show_achievements_list(callback: types.CallbackQuery, db_user: User, d
     user_achievements = await get_user_achievements(db, db_user.id)
     unlocked_ids = {ua.template_id for ua in user_achievements}
 
-    total = len(templates)
-    unlocked_count = sum(1 for t in templates if t.id in unlocked_ids)
+    # For multi-level: only show the CURRENT level per group
+    # (highest unlocked + next one, hide future levels)
+    visible_templates = _filter_visible_templates(templates, unlocked_ids)
+
+    total = len(visible_templates)
+    unlocked_count = sum(1 for t in visible_templates if t.id in unlocked_ids)
 
     if total == 0:
         msg = '\U0001f3c6 <b>Достижения</b>\n\nПока достижений нет.'
@@ -69,16 +101,20 @@ async def show_achievements_list(callback: types.CallbackQuery, db_user: User, d
         msg = f'\U0001f3c6 <b>Достижения ({unlocked_count}/{total})</b>\n\nВыберите достижение:'
 
         buttons: list[list[InlineKeyboardButton]] = []
-        for t in templates:
+        for t in visible_templates:
             is_hidden = getattr(t, 'is_hidden', False)
             is_unlocked = t.id in unlocked_ids
+            group = getattr(t, 'group_name', None)
+            level = getattr(t, 'level', 1)
+
+            level_tag = f' Ур.{level}' if group and level > 1 else ''
 
             if is_hidden and not is_unlocked:
                 label = '\U0001f512 ??? Скрытое'
             elif is_unlocked:
-                label = f'\u2705 {t.emoji} {t.name}'
+                label = f'\u2705 {t.emoji} {t.name}{level_tag}'
             else:
-                label = f'\U0001f512 {t.emoji} {t.name}'
+                label = f'\U0001f512 {t.emoji} {t.name}{level_tag}'
 
             buttons.append([InlineKeyboardButton(
                 text=label,
@@ -133,6 +169,10 @@ def _format_detail_card(template, user_achievement, current_value: int, is_unloc
     status = '\u2705 Получено' if is_unlocked else '\U0001f512 Не получено'
     emoji = template.emoji or '\U0001f3c6'
     name = html_module.escape(template.name)
+    group = getattr(template, 'group_name', None)
+    level = getattr(template, 'level', 1)
+    if group:
+        name += f' (Ур. {level})'
     description = html_module.escape(template.description or '')
 
     # Condition

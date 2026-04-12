@@ -3601,6 +3601,8 @@ class AchievementTemplate(Base):
     is_active = Column(Boolean, default=True)
     is_hidden = Column(Boolean, default=False)  # Hidden until unlocked (show as "🔒 ???")
     hint = Column(String(500), nullable=True)  # "Как получить" — shown for non-hidden achievements
+    group_name = Column(String(100), nullable=True)  # Multi-level: same group = achievement chain
+    level = Column(Integer, default=1)  # Level within group (1, 2, 3...)
     display_order = Column(Integer, default=0)
     created_at = Column(AwareDateTime(), default=func.now())
 

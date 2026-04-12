@@ -59,6 +59,8 @@ async def create_template(
     description: str | None = None,
     is_active: bool = True,
     display_order: int = 0,
+    group_name: str | None = None,
+    level: int = 1,
 ) -> AchievementTemplate:
     template = AchievementTemplate(
         name=name,
@@ -71,6 +73,8 @@ async def create_template(
         reward_duration_days=reward_duration_days,
         is_active=is_active,
         display_order=display_order,
+        group_name=group_name,
+        level=level,
     )
     db.add(template)
     await db.flush()
@@ -269,15 +273,47 @@ async def check_and_unlock_all(
     )
     unlocked_ids = set(existing_result.scalars().all())
 
+    # Build group → unlocked-levels map for multi-level check
+    _group_unlocked: dict[str, set[int]] = {}
+    for t in templates:
+        group = getattr(t, 'group_name', None)
+        if group and t.id in unlocked_ids:
+            _group_unlocked.setdefault(group, set()).add(getattr(t, 'level', 1))
+
     newly_unlocked: list[AchievementTemplate] = []
 
     for template in templates:
         if template.id in unlocked_ids:
             continue
 
+        # Multi-level gate: require previous level unlocked
+        group = getattr(template, 'group_name', None)
+        level = getattr(template, 'level', 1)
+        if group and level > 1:
+            prev_levels = _group_unlocked.get(group, set())
+            if (level - 1) not in prev_levels:
+                continue  # Previous level not unlocked yet
+
         current_value = await _get_user_stat(db, user, template.condition_type)
         if current_value < template.condition_value:
             continue
+
+        # For rewards requiring subscription (traffic/days), defer if no active sub
+        if template.reward_type in ('traffic_gb', 'wl_traffic_gb', 'subscription_days') and template.reward_value > 0:
+            _sub_check = await db.execute(
+                select(Subscription).where(
+                    and_(
+                        Subscription.user_id == user_id,
+                        Subscription.status.in_([
+                            SubscriptionStatus.ACTIVE.value,
+                            SubscriptionStatus.TRIAL.value,
+                        ]),
+                    )
+                ).limit(1)
+            )
+            if _sub_check.scalar_one_or_none() is None:
+                # No active subscription — skip, will unlock when user has one
+                continue
 
         # Unlock
         await unlock_achievement(db, user_id, template.id)
