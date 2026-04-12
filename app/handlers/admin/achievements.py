@@ -32,6 +32,7 @@ CONDITION_TYPES = {
 REWARD_TYPES = {
     'balance_kopeks': '\U0001f4b0 \u0411\u0430\u043b\u0430\u043d\u0441 (\u043a\u043e\u043f.)',
     'traffic_gb': '\U0001f4c8 \u0422\u0440\u0430\u0444\u0438\u043a (\u0413\u0411)',
+    'wl_traffic_gb': '\U0001f4ca WL-\u0442\u0440\u0430\u0444\u0438\u043a (\u0413\u0411)',
     'subscription_days': '\U0001f4c5 \u0414\u043d\u0438 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u0438',
     'none': '\u2796 \u0411\u0435\u0437 \u043d\u0430\u0433\u0440\u0430\u0434\u044b',
 }

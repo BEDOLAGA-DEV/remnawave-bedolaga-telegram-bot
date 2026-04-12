@@ -21,7 +21,26 @@ def admin_required(func: Callable) -> Callable:
         if isinstance(event, (types.Message, types.CallbackQuery)):
             user = event.from_user
 
-        if not user or not settings.is_admin(user.id):
+        is_admin = False
+        if user:
+            # Check ADMIN_IDS env
+            is_admin = settings.is_admin(user.id)
+
+            # Check BotAdminRole in DB (same as role_required but without section filter)
+            if not is_admin:
+                db = kwargs.get('db')
+                db_user = kwargs.get('db_user')
+                if db is not None and db_user is not None:
+                    try:
+                        from app.database.crud.bot_role import BotRoleCRUD
+
+                        role = await BotRoleCRUD.get_bot_role(db, db_user.id)
+                        if role is not None:
+                            is_admin = True
+                    except Exception:
+                        pass
+
+        if not is_admin:
             texts = get_texts()
 
             try:

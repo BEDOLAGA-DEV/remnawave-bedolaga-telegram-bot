@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.achievement import (
     _get_user_stat,
+    check_and_unlock_all,
     get_active_templates,
     get_user_achievements,
 )
@@ -30,6 +31,7 @@ CONDITION_LABELS = {
 REWARD_LABELS = {
     'balance_kopeks': 'Бонус на баланс',
     'traffic_gb': 'Бонус трафика',
+    'wl_traffic_gb': 'Бонус WL-трафика',
     'subscription_days': 'Дни подписки',
     'none': 'Без награды',
 }
@@ -43,6 +45,14 @@ async def show_achievements_list(callback: types.CallbackQuery, db_user: User, d
         return
 
     texts = get_texts(db_user.language)
+
+    # Auto-check and unlock any earned achievements
+    try:
+        await check_and_unlock_all(db, db_user.id, bot=callback.bot)
+        await db.commit()
+    except Exception as e:
+        logger.error('Failed to check achievements', error=e)
+
     templates = await get_active_templates(db)
     user_achievements = await get_user_achievements(db, db_user.id)
     unlocked_ids = {ua.template_id for ua in user_achievements}
@@ -147,6 +157,8 @@ def _format_detail_card(template, user_achievement, current_value: int, is_unloc
         reward_text = f'\U0001f381 <b>Награда:</b> {settings.format_price(template.reward_value)} на баланс'
     elif template.reward_type == 'traffic_gb' and template.reward_value:
         reward_text = f'\U0001f381 <b>Награда:</b> +{template.reward_value} ГБ трафика'
+    elif template.reward_type == 'wl_traffic_gb' and template.reward_value:
+        reward_text = f'\U0001f381 <b>Награда:</b> +{template.reward_value} ГБ WL-трафика'
     elif template.reward_type == 'subscription_days' and template.reward_value:
         reward_text = f'\U0001f381 <b>Награда:</b> +{template.reward_value} дн. подписки'
 

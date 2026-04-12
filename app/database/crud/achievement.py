@@ -323,6 +323,21 @@ async def check_and_unlock_all(
             sub = sub_result.scalar_one_or_none()
             if sub:
                 sub.traffic_limit_gb = (sub.traffic_limit_gb or 0) + template.reward_value
+        elif template.reward_type == 'wl_traffic_gb' and template.reward_value > 0:
+            sub_result = await db.execute(
+                select(Subscription).where(
+                    and_(
+                        Subscription.user_id == user_id,
+                        Subscription.status.in_([
+                            SubscriptionStatus.ACTIVE.value,
+                            SubscriptionStatus.TRIAL.value,
+                        ]),
+                    )
+                ).order_by(Subscription.created_at.desc()).limit(1)
+            )
+            sub = sub_result.scalar_one_or_none()
+            if sub:
+                sub.wl_traffic_limit_gb = (sub.wl_traffic_limit_gb or 0) + template.reward_value
 
         newly_unlocked.append(template)
 
@@ -336,6 +351,8 @@ async def check_and_unlock_all(
                     reward_text = f'\n\U0001f381 \u041d\u0430\u0433\u0440\u0430\u0434\u0430: +{template.reward_value} \u0434\u043d\u0435\u0439 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u0438'
                 elif template.reward_type == 'traffic_gb' and template.reward_value > 0:
                     reward_text = f'\n\U0001f381 \u041d\u0430\u0433\u0440\u0430\u0434\u0430: +{template.reward_value} \u0413\u0411 \u0442\u0440\u0430\u0444\u0438\u043a\u0430'
+                elif template.reward_type == 'wl_traffic_gb' and template.reward_value > 0:
+                    reward_text = f'\n\U0001f381 \u041d\u0430\u0433\u0440\u0430\u0434\u0430: +{template.reward_value} \u0413\u0411 WL-\u0442\u0440\u0430\u0444\u0438\u043a\u0430'
 
                 await bot.send_message(
                     chat_id=user.telegram_id,
