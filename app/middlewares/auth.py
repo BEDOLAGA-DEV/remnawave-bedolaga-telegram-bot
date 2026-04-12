@@ -231,7 +231,20 @@ class AuthMiddleware(BaseMiddleware):
 
                 data['db'] = db
                 data['db_user'] = db_user
-                data['is_admin'] = settings.is_admin(user.id)
+
+                # Admin flag: either from ADMIN_IDS env or from BotAdminRole in DB
+                is_env_admin = settings.is_admin(user.id)
+                is_role_admin = False
+                if not is_env_admin:
+                    try:
+                        from app.database.crud.bot_role import BotRoleCRUD
+
+                        role = await BotRoleCRUD.get_bot_role(db, db_user.id)
+                        if role is not None:
+                            is_role_admin = True
+                    except Exception:
+                        pass
+                data['is_admin'] = is_env_admin or is_role_admin
 
                 result = await handler(event, data)
                 try:
