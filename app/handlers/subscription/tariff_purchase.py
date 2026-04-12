@@ -83,12 +83,27 @@ async def _resolve_subscription(callback, db_user, db, state=None):
     return await resolve_subscription_from_context(callback, db_user, db, state)
 
 
-def _apply_promo_discount(price: int, group_pct: int, offer_pct: int = 0) -> int:
-    """Применяет стекинг скидок к цене (sequential floor division, как PricingEngine)."""
+def _apply_promo_discount(price: int, group_pct: int, offer_pct: int = 0, scheduled_pct: int = 0) -> int:
+    """Применяет стекинг скидок к цене (sequential floor division, как PricingEngine).
+
+    Порядок: scheduled_promo → group → offer.
+    """
     from app.services.pricing_engine import PricingEngine
 
+    if scheduled_pct > 0:
+        price = PricingEngine.apply_discount(price, scheduled_pct)
     final, _, _ = PricingEngine.apply_stacked_discounts(price, group_pct, offer_pct)
     return final
+
+
+async def _get_scheduled_promo_discount(db, tariff_id: int) -> int:
+    """Возвращает активную скидку по акции для тарифа (или 0)."""
+    try:
+        from app.database.crud.scheduled_promo import ScheduledPromoCRUD
+
+        return await ScheduledPromoCRUD.get_active_discount_for_tariff(db, tariff_id) or 0
+    except Exception:
+        return 0
 
 
 def _get_user_period_discount(db_user: User, period_days: int) -> tuple[int, int, int]:
@@ -202,6 +217,7 @@ def get_tariff_periods_keyboard(
     tariff: Tariff,
     language: str,
     db_user: User | None = None,
+    scheduled_pct: int = 0,
 ) -> InlineKeyboardMarkup:
     """Создает клавиатуру выбора периода для тарифа с учетом скидок по периодам."""
     texts = get_texts(language)
@@ -217,9 +233,14 @@ def get_tariff_periods_keyboard(
         if db_user:
             group_pct, offer_pct, discount_percent = _get_user_period_discount(db_user, period)
 
-        if discount_percent > 0:
-            price = _apply_promo_discount(price, group_pct, offer_pct)
-            price_text = f'{format_price_kopeks(price)} 🔥−{discount_percent}%'
+        total_discount = discount_percent
+        if scheduled_pct > 0:
+            remaining = (100 - scheduled_pct) * (100 - discount_percent)
+            total_discount = 100 - remaining // 100
+
+        if total_discount > 0 or scheduled_pct > 0:
+            price = _apply_promo_discount(price, group_pct, offer_pct, scheduled_pct=scheduled_pct)
+            price_text = f'{format_price_kopeks(price)} 🔥−{total_discount}%'
         else:
             price_text = format_price_kopeks(price)
 
@@ -760,9 +781,10 @@ async def select_tariff(
             )
         else:
             # Для обычного тарифа показываем выбор периода
+            _scheduled = await _get_scheduled_promo_discount(db, tariff_id)
             await callback.message.edit_text(
                 format_tariff_info_for_user(tariff, db_user.language),
-                reply_markup=get_tariff_periods_keyboard(tariff, db_user.language, db_user=db_user),
+                reply_markup=get_tariff_periods_keyboard(tariff, db_user.language, db_user=db_user, scheduled_pct=_scheduled),
                 parse_mode='HTML',
             )
 
@@ -1224,10 +1246,16 @@ async def select_tariff_period(
     # Получаем скидку для выбранного периода
     group_pct, offer_pct, discount_percent = _get_user_period_discount(db_user, period)
 
-    # Получаем цену
+    # Получаем цену с учётом акции
     prices = tariff.period_prices or {}
     base_price = prices.get(str(period), 0)
-    final_price = _apply_promo_discount(base_price, group_pct, offer_pct)
+    scheduled_pct = await _get_scheduled_promo_discount(db, tariff_id)
+    final_price = _apply_promo_discount(base_price, group_pct, offer_pct, scheduled_pct=scheduled_pct)
+
+    # Учитываем скидку акции в отображении
+    if scheduled_pct > 0:
+        remaining = (100 - scheduled_pct) * (100 - discount_percent)
+        discount_percent = 100 - remaining // 100
 
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
