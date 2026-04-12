@@ -666,6 +666,7 @@ async def purchase_tariff(
             device_limit=device_limit,
             custom_traffic_gb=custom_traffic_gb,
             user=user,
+            db=db,
         )
         price_kopeks = result.final_total
         original_price = result.original_total

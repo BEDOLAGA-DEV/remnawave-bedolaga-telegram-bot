@@ -6557,6 +6557,7 @@ async def purchase_tariff_endpoint(
         payload.period_days,
         device_limit=device_limit,
         user=user,
+        db=db,
     )
     price_kopeks = result.final_total
     consume_promo_offer = result.promo_offer_discount > 0

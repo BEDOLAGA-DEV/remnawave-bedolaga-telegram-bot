@@ -5540,6 +5540,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
             period,
             device_limit=device_limit,
             user=target_user,
+            db=db,
         )
         price_kopeks = result.final_total
     except Exception as e:

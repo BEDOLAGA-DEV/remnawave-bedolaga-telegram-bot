@@ -493,6 +493,7 @@ async def format_custom_tariff_preview(
             device_limit=tariff.device_limit,
             custom_traffic_gb=traffic_gb if tariff.can_purchase_custom_traffic() else None,
             user=db_user,
+            db=db,
         )
         period_price = result.base_price
         traffic_price = result.traffic_price
@@ -925,6 +926,7 @@ async def handle_custom_confirm(
         device_limit=tariff.device_limit,
         custom_traffic_gb=custom_traffic if tariff.can_purchase_custom_traffic() else None,
         user=db_user,
+        db=db,
     )
     total_price = result.final_total
 
@@ -1350,6 +1352,7 @@ async def confirm_tariff_purchase(
         period,
         device_limit=device_limit,
         user=db_user,
+        db=db,
     )
     final_price = result.final_total
 
@@ -1738,6 +1741,7 @@ async def confirm_daily_tariff_purchase(
         period_days=1,
         device_limit=tariff.device_limit,
         user=db_user,
+        db=db,
     )
     final_daily_price = pricing_result.final_total
     consume_promo = pricing_result.breakdown.get('offer_discount_pct', 0) > 0
@@ -2208,6 +2212,7 @@ async def select_tariff_extend_period(
         period,
         device_limit=actual_device_limit,
         user=db_user,
+        db=db,
     )
     final_price = result.final_total
     original_price = result.original_total
@@ -2328,6 +2333,7 @@ async def confirm_tariff_extend(
         period,
         device_limit=actual_device_limit,
         user=db_user,
+        db=db,
     )
     final_price = result.final_total
     consume_promo = result.promo_offer_discount > 0
@@ -2817,6 +2823,7 @@ async def select_tariff_switch_period(
         period,
         device_limit=tariff.device_limit or 0,
         user=db_user,
+        db=db,
     )
     final_price = result.final_total
     original_price = result.original_total
@@ -2927,6 +2934,7 @@ async def confirm_tariff_switch(
         period,
         device_limit=effective_device_limit,
         user=db_user,
+        db=db,
     )
     final_price = result.final_total
     consume_promo = result.promo_offer_discount > 0
@@ -3133,6 +3141,7 @@ async def confirm_daily_tariff_switch(
         period_days=1,
         device_limit=tariff.device_limit,
         user=db_user,
+        db=db,
     )
     final_daily_price = pricing_result.final_total
     consume_promo = pricing_result.breakdown.get('offer_discount_pct', 0) > 0
@@ -3835,6 +3844,7 @@ async def confirm_instant_switch(
                 period_days=1,
                 device_limit=new_tariff.device_limit,
                 user=db_user,
+                db=db,
             )
             daily_price = daily_pricing.final_total
             consume_promo_for_daily = daily_pricing.breakdown.get('offer_discount_pct', 0) > 0

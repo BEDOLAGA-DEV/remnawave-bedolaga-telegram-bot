@@ -269,6 +269,7 @@ async def create_gift_purchase(
         body.period_days,
         device_limit=tariff.device_limit,
         user=user,
+        db=db,
     )
     price_kopeks = max(1, pricing_result.final_total)
     consume_promo = pricing_result.promo_offer_discount > 0

@@ -797,6 +797,7 @@ async def _auto_purchase_tariff(
         period_days,
         device_limit=device_limit,
         user=user,
+        db=db,
     )
     final_price = result.final_total
     consume_promo = result.promo_offer_discount > 0

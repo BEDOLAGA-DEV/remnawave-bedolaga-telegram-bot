@@ -543,6 +543,7 @@ class PricingEngine:
             period_days,
             device_limit,
             user=user,
+            db=db,
         )
 
     async def _calculate_tariff_core(
@@ -553,6 +554,7 @@ class PricingEngine:
         *,
         custom_traffic_gb: int | None = None,
         user: User | None = None,
+        db: AsyncSession | None = None,
     ) -> RenewalPricing:
         """Core tariff pricing logic (raw params, no Subscription needed).
 
@@ -619,8 +621,21 @@ class PricingEngine:
         total_group_discount = base_group_disc + devices_group_disc + traffic_group_disc
 
         subtotal = discounted_base + discounted_devices + discounted_traffic
-        after_offer = self.apply_discount(subtotal, offer_pct)
-        offer_discount = subtotal - after_offer
+
+        # --- Scheduled promo discount (time-limited admin-created promotions) ---
+        scheduled_pct = 0
+        if db is not None:
+            from app.database.crud.scheduled_promo import ScheduledPromoCRUD
+
+            raw_pct = await ScheduledPromoCRUD.get_active_discount_for_tariff(db, tariff.id)
+            if raw_pct:
+                scheduled_pct = raw_pct
+
+        after_scheduled = self.apply_discount(subtotal, scheduled_pct)
+        scheduled_discount = subtotal - after_scheduled
+
+        after_offer = self.apply_discount(after_scheduled, offer_pct)
+        offer_discount = after_scheduled - after_offer
         final_total = after_offer
 
         breakdown = dataclasses.asdict(
@@ -664,6 +679,7 @@ class PricingEngine:
         device_limit: int | None = None,
         custom_traffic_gb: int | None = None,
         user: User | None = None,
+        db: AsyncSession | None = None,
     ) -> RenewalPricing:
         """Calculate price for a tariff purchase (new or renewal).
 
@@ -677,6 +693,7 @@ class PricingEngine:
             effective_device_limit,
             custom_traffic_gb=custom_traffic_gb,
             user=user,
+            db=db,
         )
 
     # ------------------------------------------------------------------
