@@ -193,7 +193,7 @@ async def on_review_text(
 
     bonus = settings.REVIEW_BONUS_KOPEKS
 
-    # Create review
+    # Create review (is_approved=False by default — awaits moderation)
     await create_review(
         db=db,
         user_id=db_user.id,
@@ -202,28 +202,17 @@ async def on_review_text(
         bonus_kopeks=bonus,
     )
 
-    # Credit balance
-    if bonus > 0:
-        await add_user_balance(
-            db=db,
-            user=db_user,
-            amount_kopeks=bonus,
-            description='Бонус за отзыв',
-            transaction_type=TransactionType.DEPOSIT,
-        )
+    # Бонус НЕ начисляется здесь — только после одобрения админом
+    # (app/handlers/admin/reviews.py:on_approve_review)
 
     texts = get_texts(db_user.language)
     bonus_str = settings.format_price(bonus) if bonus > 0 else ''
-    if bonus > 0:
-        msg = texts.t(
-            'REVIEW_CREATED_WITH_BONUS',
-            'Спасибо за отзыв! {stars} ({rating}/5)\n\nВам начислен бонус: {bonus}',
-        ).format(stars=_stars(rating), rating=rating, bonus=bonus_str)
-    else:
-        msg = texts.t(
-            'REVIEW_CREATED',
-            'Спасибо за отзыв! {stars} ({rating}/5)\n\nОтзыв отправлен на модерацию.',
-        ).format(stars=_stars(rating), rating=rating)
+    msg = texts.t(
+        'REVIEW_CREATED',
+        'Спасибо за отзыв! {stars} ({rating}/5)\n\n'
+        'Отзыв отправлен на модерацию.\n'
+        'После одобрения вам будет начислен бонус: {bonus}',
+    ).format(stars=_stars(rating), rating=rating, bonus=bonus_str)
 
     back_kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(

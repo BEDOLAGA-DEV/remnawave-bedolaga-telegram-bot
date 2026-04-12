@@ -122,7 +122,35 @@ async def on_approve_review(
         await callback.answer('Отзыв не найден', show_alert=True)
         return
 
+    # Credit bonus to user
+    bonus = review.bonus_kopeks or 0
+    if bonus > 0:
+        try:
+            from app.database.crud.user import add_user_balance, get_user_by_id
+            from app.database.models import TransactionType
+
+            review_user = await get_user_by_id(db, review.user_id)
+            if review_user:
+                await add_user_balance(
+                    db=db,
+                    user=review_user,
+                    amount_kopeks=bonus,
+                    description='Бонус за одобренный отзыв',
+                    transaction_type=TransactionType.DEPOSIT,
+                )
+                # Notify user
+                try:
+                    await bot.send_message(
+                        chat_id=review_user.telegram_id,
+                        text=f'Ваш отзыв одобрен! Бонус {settings.format_price(bonus)} начислен на баланс.',
+                    )
+                except Exception:
+                    pass  # User might have blocked the bot
+        except Exception as bonus_err:
+            logger.error('Не удалось начислить бонус за отзыв', error=bonus_err, review_id=review.id)
+
     # Post to channel
+    channel_published = False
     channel_id = settings.REVIEW_CHANNEL_ID
     if channel_id:
         try:
@@ -133,6 +161,7 @@ async def on_approve_review(
                 parse_mode='HTML',
             )
             await set_channel_message_id(db, review.id, sent_msg.message_id)
+            channel_published = True
             logger.info(
                 'Отзыв опубликован в канале',
                 review_id=review.id,
@@ -141,7 +170,16 @@ async def on_approve_review(
         except Exception as e:
             logger.error('Не удалось опубликовать отзыв в канале', error=e, review_id=review.id)
 
-    await callback.answer('Отзыв одобрен!', show_alert=True)
+    if channel_published:
+        await callback.answer('Отзыв одобрен и опубликован!', show_alert=True)
+    elif channel_id:
+        await callback.answer(
+            'Отзыв одобрен, но не удалось опубликовать в канале.\n'
+            'Проверьте: бот добавлен в канал как админ?',
+            show_alert=True,
+        )
+    else:
+        await callback.answer('Отзыв одобрен!', show_alert=True)
 
     # Refresh pending list
     await show_pending_reviews(callback, db_user=db_user, db=db)
