@@ -292,19 +292,21 @@ async def restore_backup_start(callback: types.CallbackQuery, db_user: User, db:
         text = '📥 <b>Восстановление из бекапа</b>\n\n'
         text += f'📄 <b>Файл:</b> <code>{filename}</code>\n\n'
         text += '⚠️ <b>ВНИМАНИЕ!</b>\n'
+        text += '• Существующие данные будут <b>УДАЛЕНЫ</b> и заменены данными из бекапа\n'
         text += '• Процесс может занять несколько минут\n'
-        text += '• Рекомендуется создать бекап перед восстановлением\n'
-        text += '• Существующие данные будут дополнены\n\n'
+        text += '• Рекомендуется создать бекап перед восстановлением\n\n'
         text += 'Продолжить восстановление?'
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text='✅ Да, восстановить', callback_data=f'backup_restore_execute_{filename}'
+                        text='✅ Да, восстановить', callback_data=f'backup_restore_clear_{filename}'
                     ),
+                ],
+                [
                     InlineKeyboardButton(
-                        text='🗑️ Очистить и восстановить', callback_data=f'backup_restore_clear_{filename}'
+                        text='📎 Дополнить (без очистки)', callback_data=f'backup_restore_execute_{filename}'
                     ),
                 ],
                 [InlineKeyboardButton(text='❌ Отмена', callback_data=f'backup_manage_{filename}')],
