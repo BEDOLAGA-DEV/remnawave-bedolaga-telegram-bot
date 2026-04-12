@@ -130,6 +130,7 @@ class AdminStates(StatesGroup):
     editing_device_price = State()
     editing_user_devices = State()
     editing_user_traffic = State()
+    editing_user_wl_traffic = State()
     editing_user_referrals = State()
     editing_user_referral_percent = State()
 

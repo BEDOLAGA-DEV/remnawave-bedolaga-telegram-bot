@@ -967,6 +967,14 @@ async def _render_user_subscription_overview(
                     text='🔄 Сбросить устройства', callback_data=f'admin_user_reset_devices_{user_id}{_sid}'
                 ),
             ],
+            [
+                types.InlineKeyboardButton(
+                    text='📊 Добавить WL', callback_data=f'admin_sub_wl_traffic_{user_id}{_sid}'
+                ),
+                types.InlineKeyboardButton(
+                    text='🛠️ Лимит WL', callback_data=f'admin_user_wl_traffic_{user_id}{_sid}'
+                ),
+            ],
         ]
 
         # Кнопки тарифов в режиме тарифов
@@ -4010,6 +4018,185 @@ async def process_traffic_edit_text(message: types.Message, db_user: User, state
     await state.clear()
 
 
+# ======================= WL Traffic Admin Handlers =======================
+
+
+@admin_required
+@error_handler
+async def add_wl_subscription_traffic(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    """Show WL traffic addition menu."""
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+    _sid = f'_s{subscription_id}' if subscription_id else ''
+    back_cb = (
+        f'admin_user_sub_select_{user_id}_{subscription_id}'
+        if subscription_id
+        else f'admin_user_subscription_{user_id}'
+    )
+
+    await callback.message.edit_text(
+        '📊 <b>Добавление WL-трафика (БС)</b>\n\n'
+        'Выберите количество ГБ или введите вручную:\n'
+        '• 0 = безлимитный WL-трафик',
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(text='5 ГБ', callback_data=f'admin_sub_wl_add_{user_id}{_sid}_5'),
+                    types.InlineKeyboardButton(text='10 ГБ', callback_data=f'admin_sub_wl_add_{user_id}{_sid}_10'),
+                ],
+                [
+                    types.InlineKeyboardButton(text='25 ГБ', callback_data=f'admin_sub_wl_add_{user_id}{_sid}_25'),
+                    types.InlineKeyboardButton(text='50 ГБ', callback_data=f'admin_sub_wl_add_{user_id}{_sid}_50'),
+                ],
+                [
+                    types.InlineKeyboardButton(text='100 ГБ', callback_data=f'admin_sub_wl_add_{user_id}{_sid}_100'),
+                    types.InlineKeyboardButton(text='♾️ Безлимит', callback_data=f'admin_sub_wl_add_{user_id}{_sid}_0'),
+                ],
+                [types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb)],
+            ]
+        ),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def process_wl_traffic_addition_button(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Handle WL traffic addition quick button."""
+    parts = callback.data.split('_')
+    gb = int(parts[-1])
+    if parts[-2].startswith('s') and parts[-2][1:].isdigit():
+        subscription_id = int(parts[-2][1:])
+        user_id = int(parts[-3])
+    else:
+        subscription_id = None
+        user_id = int(parts[-2])
+
+    back_cb = (
+        f'admin_user_sub_select_{user_id}_{subscription_id}'
+        if subscription_id
+        else f'admin_user_subscription_{user_id}'
+    )
+
+    success = await _add_wl_subscription_traffic(db, user_id, gb, db_user.id, subscription_id=subscription_id)
+
+    traffic_text = '♾️ безлимитный' if gb == 0 else f'{gb} ГБ'
+    msg = f'✅ WL-трафик добавлен: {traffic_text}' if success else '❌ Ошибка добавления WL-трафика'
+    await callback.message.edit_text(
+        msg,
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[[types.InlineKeyboardButton(text='📱 Подписка', callback_data=back_cb)]]
+        ),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def start_wl_traffic_edit(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    """Show WL traffic limit edit menu."""
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+    await state.update_data(editing_wl_traffic_user_id=user_id, admin_subscription_id=subscription_id)
+
+    _sid = f'_s{subscription_id}' if subscription_id else ''
+    back_cb = (
+        f'admin_user_sub_select_{user_id}_{subscription_id}'
+        if subscription_id and settings.is_multi_tariff_enabled()
+        else f'admin_user_subscription_{user_id}'
+    )
+
+    await callback.message.edit_text(
+        '🛠️ <b>Изменение лимита WL-трафика (БС)</b>\n\n'
+        'Выберите новый лимит или введите вручную:\n'
+        '• 0 = безлимитный WL-трафик\n'
+        '• Сбросит использованный WL-трафик',
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(text='5 ГБ', callback_data=f'admin_user_wl_set_{user_id}{_sid}_5'),
+                    types.InlineKeyboardButton(text='10 ГБ', callback_data=f'admin_user_wl_set_{user_id}{_sid}_10'),
+                ],
+                [
+                    types.InlineKeyboardButton(text='25 ГБ', callback_data=f'admin_user_wl_set_{user_id}{_sid}_25'),
+                    types.InlineKeyboardButton(text='50 ГБ', callback_data=f'admin_user_wl_set_{user_id}{_sid}_50'),
+                ],
+                [
+                    types.InlineKeyboardButton(text='100 ГБ', callback_data=f'admin_user_wl_set_{user_id}{_sid}_100'),
+                    types.InlineKeyboardButton(text='♾️ Безлимит', callback_data=f'admin_user_wl_set_{user_id}{_sid}_0'),
+                ],
+                [types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb)],
+            ]
+        ),
+    )
+    await state.set_state(AdminStates.editing_user_wl_traffic)
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def set_user_wl_traffic_button(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Handle WL traffic limit set quick button."""
+    parts = callback.data.split('_')
+    traffic_gb = int(parts[-1])
+    if parts[-2].startswith('s') and parts[-2][1:].isdigit():
+        subscription_id = int(parts[-2][1:])
+        user_id = int(parts[-3])
+    else:
+        subscription_id = None
+        user_id = int(parts[-2])
+
+    back_cb = (
+        f'admin_user_sub_select_{user_id}_{subscription_id}'
+        if subscription_id and settings.is_multi_tariff_enabled()
+        else f'admin_user_subscription_{user_id}'
+    )
+
+    success = await _update_user_wl_traffic(db, user_id, traffic_gb, db_user.id, subscription_id=subscription_id)
+
+    traffic_text = '♾️ безлимитный' if traffic_gb == 0 else f'{traffic_gb} ГБ'
+    msg = f'✅ WL-лимит трафика изменен на: {traffic_text}' if success else '❌ Ошибка изменения WL-лимита'
+    await callback.message.edit_text(
+        msg,
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[[types.InlineKeyboardButton(text='📱 Подписка', callback_data=back_cb)]]
+        ),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def process_wl_traffic_edit_text(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
+    """Handle manual WL traffic limit input."""
+    data = await state.get_data()
+    user_id = data.get('editing_wl_traffic_user_id')
+    subscription_id = data.get('admin_subscription_id')
+
+    if not user_id:
+        await message.answer('❌ Ошибка: пользователь не найден')
+        await state.clear()
+        return
+
+    try:
+        traffic_gb = int(message.text.strip())
+        if traffic_gb < 0 or traffic_gb > 10000:
+            await message.answer('❌ Лимит WL-трафика должен быть от 0 до 10000 ГБ (0 = безлимит)')
+            return
+
+        success = await _update_user_wl_traffic(db, user_id, traffic_gb, db_user.id, subscription_id=subscription_id)
+
+        traffic_text = '♾️ безлимитный' if traffic_gb == 0 else f'{traffic_gb} ГБ'
+        if success:
+            await message.answer(f'✅ WL-лимит трафика установлен: {traffic_text}')
+        else:
+            await message.answer('❌ Ошибка установки WL-лимита трафика')
+
+    except ValueError:
+        await message.answer('❌ Введите корректное число ГБ')
+        return
+
+    await state.clear()
+
+
 @admin_required
 @error_handler
 async def confirm_reset_devices(callback: types.CallbackQuery, db_user: User):
@@ -4328,6 +4515,67 @@ async def _add_subscription_traffic(
 
     except Exception as e:
         logger.error('Ошибка добавления трафика', error=e)
+        return False
+
+
+async def _add_wl_subscription_traffic(
+    db: AsyncSession, user_id: int, gb: int, admin_id: int, subscription_id: int | None = None
+) -> bool:
+    """Admin helper: add or set WL traffic for a user's subscription."""
+    try:
+        from app.database.crud.subscription import add_subscription_wl_traffic, reactivate_subscription
+        from app.services.subscription_service import SubscriptionService
+
+        subscription = await _resolve_admin_subscription(db, user_id, subscription_id)
+        if not subscription:
+            logger.error('Подписка не найдена для пользователя (WL)', user_id=user_id)
+            return False
+
+        if gb == 0:
+            subscription.wl_traffic_limit_gb = 0
+            await db.commit()
+        else:
+            await add_subscription_wl_traffic(db, subscription, gb)
+
+        await reactivate_subscription(db, subscription)
+
+        subscription_service = SubscriptionService()
+        await subscription_service.update_remnawave_user(db, subscription)
+
+        traffic_text = 'безлимитный' if gb == 0 else f'{gb} ГБ'
+        logger.info('Админ добавил WL-трафик пользователю', admin_id=admin_id, traffic_text=traffic_text, user_id=user_id)
+        return True
+
+    except Exception as e:
+        logger.error('Ошибка добавления WL-трафика', error=e)
+        return False
+
+
+async def _update_user_wl_traffic(
+    db: AsyncSession, user_id: int, traffic_gb: int, admin_id: int, subscription_id: int | None = None
+) -> bool:
+    """Admin helper: set absolute WL traffic limit for a user's subscription."""
+    try:
+        from app.services.subscription_service import SubscriptionService
+
+        subscription = await _resolve_admin_subscription(db, user_id, subscription_id)
+        if not subscription:
+            logger.error('Подписка не найдена для пользователя (WL set)', user_id=user_id)
+            return False
+
+        subscription.wl_traffic_limit_gb = traffic_gb
+        subscription.wl_traffic_used_gb = 0.0
+        await db.commit()
+
+        subscription_service = SubscriptionService()
+        await subscription_service.update_remnawave_user(db, subscription)
+
+        traffic_text = 'безлимитный' if traffic_gb == 0 else f'{traffic_gb} ГБ'
+        logger.info('Админ установил WL-лимит трафика', admin_id=admin_id, traffic_text=traffic_text, user_id=user_id)
+        return True
+
+    except Exception as e:
+        logger.error('Ошибка изменения WL-лимита трафика', error=e)
         return False
 
 
@@ -6232,6 +6480,17 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(set_user_traffic_button, F.data.startswith('admin_user_traffic_set_'))
 
     dp.message.register(process_traffic_edit_text, AdminStates.editing_user_traffic)
+
+    # WL traffic admin handlers
+    dp.callback_query.register(
+        add_wl_subscription_traffic, F.data.startswith('admin_sub_wl_traffic_') & ~F.data.contains('add')
+    )
+    dp.callback_query.register(process_wl_traffic_addition_button, F.data.startswith('admin_sub_wl_add_'))
+    dp.callback_query.register(
+        start_wl_traffic_edit, F.data.startswith('admin_user_wl_traffic_') & ~F.data.contains('set')
+    )
+    dp.callback_query.register(set_user_wl_traffic_button, F.data.startswith('admin_user_wl_set_'))
+    dp.message.register(process_wl_traffic_edit_text, AdminStates.editing_user_wl_traffic)
 
     dp.callback_query.register(
         confirm_reset_devices, F.data.startswith('admin_user_reset_devices_') & ~F.data.contains('confirm')
