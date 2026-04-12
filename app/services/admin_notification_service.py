@@ -40,6 +40,7 @@ class NotificationCategory(StrEnum):
     PROMO = 'promo'  # Промокоды, кампании, промогруппы
     PARTNERS = 'partners'  # Партнёрки, выводы, админ-действия
     TICKETS = 'tickets'  # Тикеты (уже существует)
+    ACHIEVEMENTS = 'achievements'  # Достижения пользователей
 
 
 logger = structlog.get_logger(__name__)
@@ -65,6 +66,7 @@ class AdminNotificationService:
             NotificationCategory.PROMO: getattr(settings, 'ADMIN_NOTIFICATIONS_PROMO_TOPIC_ID', None),
             NotificationCategory.PARTNERS: getattr(settings, 'ADMIN_NOTIFICATIONS_PARTNERS_TOPIC_ID', None),
             NotificationCategory.TICKETS: self.ticket_topic_id,
+            NotificationCategory.ACHIEVEMENTS: getattr(settings, 'ADMIN_NOTIFICATIONS_ACHIEVEMENTS_TOPIC_ID', None),
         }
 
     async def _get_referrer_info(self, db: AsyncSession, referred_by_id: int | None) -> str:

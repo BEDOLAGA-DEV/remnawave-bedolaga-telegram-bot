@@ -354,17 +354,40 @@ async def check_and_unlock_all(
                 elif template.reward_type == 'wl_traffic_gb' and template.reward_value > 0:
                     reward_text = f'\n\U0001f381 \u041d\u0430\u0433\u0440\u0430\u0434\u0430: +{template.reward_value} \u0413\u0411 WL-\u0442\u0440\u0430\u0444\u0438\u043a\u0430'
 
+                desc = template.description or ''
+                desc_line = f'\n{desc}\n' if desc else '\n'
+
                 await bot.send_message(
                     chat_id=user.telegram_id,
                     text=(
-                        f'{template.emoji} <b>\u0414\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u0435 \u0440\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d\u043e!</b>\n\n'
+                        f'\U0001f389 <b>\u0414\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u0435 \u0440\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d\u043e!</b>\n\n'
                         f'{template.emoji} <b>{template.name}</b>'
-                        f'{reward_text}'
+                        f'{desc_line}'
+                        f'{reward_text}\n\n'
+                        f'\u041e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \U0001f3c6 \u0414\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u044f \u0432 \u043c\u0435\u043d\u044e, \u0447\u0442\u043e\u0431\u044b \u043f\u043e\u0441\u043c\u043e\u0442\u0440\u0435\u0442\u044c.'
                     ),
                     parse_mode='HTML',
                 )
             except Exception as e:
                 logger.warning('Failed to notify user about achievement', user_id=user.id, error=str(e))
+
+            # Notify admin chat
+            try:
+                from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
+
+                admin_service = AdminNotificationService(bot)
+                user_link = f'@{user.username}' if user.username else f'#{user.telegram_id}'
+                await admin_service.send_admin_notification(
+                    text=(
+                        f'\U0001f3c6 <b>\u0414\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u0435</b>\n\n'
+                        f'\U0001f464 \u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c: {user_link}\n'
+                        f'{template.emoji} {template.name}\n'
+                        f'{reward_text if reward_text else "Без награды"}'
+                    ),
+                    category=NotificationCategory.ACHIEVEMENTS,
+                )
+            except Exception as admin_err:
+                logger.warning('Failed to send admin achievement notification', error=str(admin_err))
 
     if newly_unlocked:
         await db.commit()
