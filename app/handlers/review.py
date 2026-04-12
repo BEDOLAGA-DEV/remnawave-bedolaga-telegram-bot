@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.subscription import get_active_subscriptions_by_user_id
 from app.database.crud.user import add_user_balance
-from app.database.crud.user_review import create_review, get_review_by_user
+from app.database.crud.user_review import create_review, get_approved_reviews, get_review_by_user
 from app.database.models import TransactionType, User
 from app.localization.texts import get_texts
 from app.states import ReviewStates
@@ -281,11 +281,20 @@ async def show_review_menu(
                 'Бонус за отзыв: {bonus}',
             ).format(reason=error_msg, bonus=texts.format_price(settings.REVIEW_BONUS_KOPEKS))
 
+    # Кнопка просмотра всех одобренных отзывов (всегда видна)
+    buttons.append([
+        types.InlineKeyboardButton(
+            text=texts.t('REVIEW_VIEW_ALL_BUTTON', '📋 Все отзывы'),
+            callback_data='nz!_review_all',
+        )
+    ])
+
+    # Дополнительная URL-кнопка на публичный канал (если настроен)
     channel_url = (settings.REVIEWS_CHANNEL_URL or '').strip()
     if channel_url:
         buttons.append([
             types.InlineKeyboardButton(
-                text=texts.t('REVIEW_VIEW_ALL_BUTTON', '📺 Посмотреть отзывы'),
+                text=texts.t('REVIEW_CHANNEL_BUTTON', '📺 Канал отзывов'),
                 url=channel_url,
             )
         ])
@@ -302,8 +311,48 @@ async def show_review_menu(
     await callback.answer()
 
 
+@error_handler
+async def show_all_reviews(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+):
+    """Show last 10 approved reviews from other users."""
+    texts = get_texts(db_user.language)
+    reviews = await get_approved_reviews(db, limit=10)
+
+    if not reviews:
+        msg = texts.t(
+            'REVIEW_ALL_EMPTY',
+            '📋 <b>Отзывы</b>\n\nПока нет опубликованных отзывов.',
+        )
+    else:
+        lines = [texts.t('REVIEW_ALL_HEADER', '📋 <b>Последние отзывы</b>\n')]
+        for r in reviews:
+            name = '—'
+            if r.user:
+                name = r.user.first_name or r.user.username or f'#{r.user.telegram_id}'
+                name = html.escape(name)
+            stars = _stars(r.rating)
+            short_text = html.escape(r.text[:120])
+            if len(r.text) > 120:
+                short_text += '...'
+            lines.append(f'{stars} <b>{name}</b>\n{short_text}\n')
+        msg = '\n'.join(lines)
+
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_review_menu')],
+        ]
+    )
+
+    await callback.message.edit_text(msg, parse_mode='HTML', reply_markup=keyboard)
+    await callback.answer()
+
+
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_review_menu, F.data == 'nz!_review_menu')
+    dp.callback_query.register(show_all_reviews, F.data == 'nz!_review_all')
     dp.callback_query.register(start_review, F.data == 'nz!_review')
     dp.message.register(start_review_command, F.text == '/review')
     dp.callback_query.register(
