@@ -66,6 +66,10 @@ from app.handlers.admin import (
     wl_analytics as admin_wl_analytics,
     referral_stats as admin_referral_stats,
     achievements as admin_achievements,
+    bot_roles as admin_bot_roles,
+    quick_replies as admin_quick_replies,
+    scheduled_promos as admin_scheduled_promos,
+    support_settings as admin_support_settings,
 )
 from app.handlers.channel_member import register_handlers as register_channel_member_handlers
 from app.handlers.gift_activation import register_handlers as register_gift_activation_handlers
@@ -241,6 +245,10 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_blocked_users.register_handlers(dp)
     admin_required_channels.register_handlers(dp)
     admin_achievements.register_handlers(dp)
+    admin_bot_roles.register_handlers(dp)
+    admin_quick_replies.register_handlers(dp)
+    admin_scheduled_promos.register_handlers(dp)
+    admin_support_settings.register_handlers(dp)
     register_channel_member_handlers(dp)
     register_gift_activation_handlers(dp)
     digest.register_handlers(dp)
