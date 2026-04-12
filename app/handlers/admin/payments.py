@@ -895,7 +895,7 @@ def _build_successful_list_keyboard(
             nav.append(InlineKeyboardButton(text='➡️', callback_data=f'admin_stopups_p_{page + 1}'))
         buttons.append(nav)
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='admin_panel')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='admin_statistics')])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

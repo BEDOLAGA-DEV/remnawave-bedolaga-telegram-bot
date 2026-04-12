@@ -75,7 +75,7 @@ async def show_wl_analytics(
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BACK, callback_data='admin_panel')],
+            [InlineKeyboardButton(text=texts.BACK, callback_data='admin_statistics')],
         ]
     )
 

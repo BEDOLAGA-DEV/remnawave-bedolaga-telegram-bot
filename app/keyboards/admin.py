@@ -73,16 +73,6 @@ def get_admin_main_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_MAIN_SUCCESSFUL_TOPUPS', '✅ Успешные пополнения'),
-                    callback_data='admin_successful_topups',
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=_t(texts, 'ADMIN_MAIN_WL_ANALYTICS', '📊 WL-аналитика'),
-                    callback_data='admin_wl_analytics',
-                ),
-                InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_MAIN_REFERRAL_STATS', '👥 Реф. статистика'),
                     callback_data='admin_referral_stats',
                 ),
@@ -1123,6 +1113,18 @@ def get_admin_statistics_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_STATS_SUMMARY', '📊 Общая сводка'), callback_data='admin_stats_summary'
                 )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_STATS_SUCCESSFUL_TOPUPS', '✅ Успешные пополнения'),
+                    callback_data='admin_successful_topups',
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_STATS_WL_ANALYTICS', '📊 WL-аналитика'),
+                    callback_data='admin_wl_analytics',
+                ),
             ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_submenu_promo')],
         ]
