@@ -245,6 +245,10 @@ async def check_and_unlock_all(
     user_id: int,
     bot=None,
 ) -> list[AchievementTemplate]:
+    from app.config import settings
+
+    if not settings.ACHIEVEMENTS_ENABLED:
+        return []
     """Check all active templates against user's stats. Unlock and claim rewards for new achievements.
     Returns list of newly unlocked templates (for notification)."""
     from app.database.crud.transaction import create_transaction

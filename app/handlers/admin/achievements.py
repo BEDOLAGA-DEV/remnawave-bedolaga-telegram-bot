@@ -48,8 +48,18 @@ def _templates_list_keyboard(templates: list[AchievementTemplate], language: str
                 callback_data=f'admin_ach_view:{t.id}',
             )
         ])
-    rows.append([InlineKeyboardButton(text='\u2795 \u0421\u043e\u0437\u0434\u0430\u0442\u044c', callback_data='admin_ach_create')])
-    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='admin_panel')])
+    rows.append([InlineKeyboardButton(text='\u2795 Создать', callback_data='admin_ach_create')])
+
+    # Bulk toggle: show opposite action of majority state
+    active_count = sum(1 for t in templates if t.is_active)
+    if templates:
+        if active_count > 0:
+            rows.append([InlineKeyboardButton(text='\u23f8 Выключить все', callback_data='admin_ach_toggle_all_off')])
+        if active_count < len(templates):
+            rows.append([InlineKeyboardButton(text='\u25b6\ufe0f Включить все', callback_data='admin_ach_toggle_all_on')])
+
+    rows.append([InlineKeyboardButton(text='\U0001f4ca Статистика', callback_data='admin_ach_stats')])
+    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='admin_submenu_promo')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -100,13 +110,18 @@ async def admin_ach_view(callback: types.CallbackQuery, db_user: User, db: Async
     )
 
     texts = get_texts(db_user.language)
+    toggle_text = '\U0001f534 Выключить' if template.is_active else '\U0001f7e2 Включить'
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text='\U0001f5d1 \u0423\u0434\u0430\u043b\u0438\u0442\u044c',
+                    text=toggle_text,
+                    callback_data=f'admin_ach_toggle:{template.id}',
+                ),
+                InlineKeyboardButton(
+                    text='\U0001f5d1 Удалить',
                     callback_data=f'admin_ach_delete:{template.id}',
-                )
+                ),
             ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_achievements')],
         ]
@@ -290,8 +305,96 @@ async def ach_reward_value_received(message: types.Message, db_user: User, db: A
     )
 
 
+@admin_required
+@error_handler
+async def admin_ach_toggle(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Toggle is_active for a single achievement template."""
+    template_id = int(callback.data.split(':')[1])
+    result = await db.execute(
+        select(AchievementTemplate).where(AchievementTemplate.id == template_id)
+    )
+    template = result.scalar_one_or_none()
+    if not template:
+        await callback.answer('Шаблон не найден', show_alert=True)
+        return
+    template.is_active = not template.is_active
+    await db.commit()
+    status = 'включено' if template.is_active else 'выключено'
+    await callback.answer(f'{template.emoji} {template.name} — {status}')
+    # Re-render the view
+    await admin_ach_view(callback, db_user, db)
+
+
+@admin_required
+@error_handler
+async def admin_ach_toggle_all(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Bulk enable or disable all achievement templates."""
+    new_state = callback.data == 'admin_ach_toggle_all_on'
+    from sqlalchemy import update
+
+    await db.execute(
+        update(AchievementTemplate).values(is_active=new_state)
+    )
+    await db.commit()
+    label = 'Все включены' if new_state else 'Все выключены'
+    await callback.answer(label)
+    await admin_achievements(callback, db_user, db)
+
+
+@admin_required
+@error_handler
+async def admin_ach_stats(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Show achievement statistics."""
+    texts = get_texts(db_user.language)
+
+    # Total templates / active
+    all_templates = await get_all_templates(db)
+    total = len(all_templates)
+    active = sum(1 for t in all_templates if t.is_active)
+
+    # Total unlocked
+    total_unlocked_result = await db.execute(select(func.count(UserAchievement.id)))
+    total_unlocked = total_unlocked_result.scalar() or 0
+
+    # Top 5 popular
+    top_query = (
+        select(AchievementTemplate.name, AchievementTemplate.emoji, func.count(UserAchievement.id).label('cnt'))
+        .outerjoin(UserAchievement, UserAchievement.template_id == AchievementTemplate.id)
+        .group_by(AchievementTemplate.id)
+        .order_by(func.count(UserAchievement.id).desc())
+        .limit(5)
+    )
+    top_result = await db.execute(top_query)
+    top_rows = top_result.all()
+
+    lines = [
+        '\U0001f3c6 <b>Статистика достижений</b>\n',
+        f'Шаблонов: {total} (активных: {active})',
+        f'Всего выдано: {total_unlocked}\n',
+    ]
+    if top_rows:
+        lines.append('<b>Топ-5 популярных:</b>')
+        for i, (name, emoji, cnt) in enumerate(top_rows, 1):
+            lines.append(f'  {i}. {emoji} {name} — {cnt} польз.')
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=texts.BACK, callback_data='admin_achievements')],
+        ]
+    )
+    await callback.message.edit_text(
+        '\n'.join(lines),
+        parse_mode='HTML',
+        reply_markup=keyboard,
+    )
+    await callback.answer()
+
+
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(admin_achievements, F.data == 'admin_achievements')
+    dp.callback_query.register(admin_ach_stats, F.data == 'admin_ach_stats')
+    dp.callback_query.register(admin_ach_toggle, F.data.startswith('admin_ach_toggle:'))
+    dp.callback_query.register(admin_ach_toggle_all, F.data.startswith('admin_ach_toggle_all_'))
     dp.callback_query.register(admin_ach_view, F.data.startswith('admin_ach_view:'))
     dp.callback_query.register(admin_ach_create, F.data == 'admin_ach_create')
     dp.callback_query.register(
