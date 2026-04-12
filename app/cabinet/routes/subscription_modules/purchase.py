@@ -823,6 +823,7 @@ async def purchase_tariff(
                 traffic_limit_gb=traffic_limit_gb,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
+                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
             )
         else:
             # Create new subscription
@@ -835,6 +836,7 @@ async def purchase_tariff(
                     device_limit=tariff.device_limit,
                     connected_squads=squads,
                     tariff_id=tariff.id,
+                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
                 )
             except IntegrityError:
                 # Partial unique index violation: user already has active subscription for this tariff
@@ -1235,6 +1237,7 @@ async def activate_trial(
         device_limit=trial_device_limit,
         connected_squads=trial_squads or None,
         tariff_id=tariff_id_for_trial,
+        wl_traffic_limit_gb=getattr(trial_tariff, 'wl_default_traffic_gb', None) if trial_tariff else None,
     )
 
     logger.info('Trial subscription activated for user', user_id=user.id)

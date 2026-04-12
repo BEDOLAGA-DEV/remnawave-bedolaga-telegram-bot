@@ -407,6 +407,7 @@ async def fulfill_purchase(
                 connected_squads=squads,
                 is_trial=False,
                 update_server_counters=True,
+                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
             )
         else:
             # No subscription at all — create new
@@ -419,6 +420,7 @@ async def fulfill_purchase(
                 connected_squads=squads,
                 tariff_id=tariff.id,
                 update_server_counters=True,
+                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
             )
 
         subscription_service = SubscriptionService()
@@ -1050,6 +1052,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     is_trial=False,
                     update_server_counters=True,
                     commit=False,
+                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
                 )
                 subscription.tariff_id = tariff.id
             else:
@@ -1063,6 +1066,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     tariff_id=tariff.id,
                     update_server_counters=True,
                     commit=False,
+                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
                 )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
@@ -1077,6 +1081,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     is_trial=False,
                     update_server_counters=True,
                     commit=False,
+                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
                 )
                 subscription.tariff_id = tariff.id
             else:
@@ -1090,6 +1095,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     tariff_id=tariff.id,
                     update_server_counters=True,
                     commit=False,
+                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
                 )
 
         await subscription_service.create_remnawave_user(db, subscription)

@@ -192,6 +192,7 @@ async def create_subscription(
                     connected_squads=connected_squads,
                     is_trial=True,
                     update_server_counters=True,
+                    wl_traffic_limit_gb=settings.WL_DEFAULT_TRAFFIC_LIMIT_GB,
                 )
             else:
                 subscription = await create_trial_subscription(
@@ -201,6 +202,7 @@ async def create_subscription(
                     traffic_limit_gb=traffic_limit_gb,
                     device_limit=trial_device_limit,
                     squad_uuid=payload.squad_uuid,
+                    wl_traffic_limit_gb=settings.WL_DEFAULT_TRAFFIC_LIMIT_GB,
                 )
         else:
             if payload.duration_days is None:
@@ -221,6 +223,7 @@ async def create_subscription(
                     connected_squads=payload.connected_squads or [],
                     is_trial=False,
                     update_server_counters=True,
+                    wl_traffic_limit_gb=settings.WL_DEFAULT_TRAFFIC_LIMIT_GB,
                 )
             else:
                 subscription = await create_paid_subscription(
@@ -231,6 +234,7 @@ async def create_subscription(
                     device_limit=device_limit,
                     connected_squads=payload.connected_squads or [],
                     update_server_counters=True,
+                    wl_traffic_limit_gb=settings.WL_DEFAULT_TRAFFIC_LIMIT_GB,
                 )
 
         subscription_service = SubscriptionService()

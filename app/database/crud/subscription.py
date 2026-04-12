@@ -370,6 +370,7 @@ async def replace_subscription(
     is_trial: bool,
     autopay_enabled: bool | None = None,
     autopay_days_before: int | None = None,
+    wl_traffic_limit_gb: int | None = None,
     update_server_counters: bool = False,
     commit: bool = True,
 ) -> Subscription:
@@ -408,11 +409,20 @@ async def replace_subscription(
     subscription.traffic_used_gb = 0.0
 
     # Удаляем записи TrafficPurchase перед сбросом purchased_traffic_gb
-    from app.database.models import TrafficPurchase
+    from app.database.models import TrafficPurchase, WlTrafficPurchase
 
     await db.execute(delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
-    subscription.purchased_traffic_gb = 0  # Сбрасываем докупленный трафик при замене подписки
-    subscription.traffic_reset_at = None  # Сбрасываем дату сброса трафика
+    subscription.purchased_traffic_gb = 0
+    subscription.traffic_reset_at = None
+
+    # WL-трафик: сброс при замене подписки (аналогично обычному трафику)
+    if wl_traffic_limit_gb is not None:
+        subscription.wl_traffic_limit_gb = wl_traffic_limit_gb
+    subscription.wl_traffic_used_gb = 0.0
+    subscription.wl_purchased_traffic_gb = 0
+    subscription.wl_traffic_reset_at = None
+    await db.execute(delete(WlTrafficPurchase).where(WlTrafficPurchase.subscription_id == subscription.id))
+
     subscription.device_limit = device_limit
     subscription.connected_squads = list(new_squads)
     subscription.subscription_url = None

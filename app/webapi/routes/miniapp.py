@@ -3854,6 +3854,7 @@ async def activate_subscription_trial_endpoint(
             traffic_limit_gb=trial_traffic_limit,
             connected_squads=trial_squads,
             tariff_id=tariff_id_for_trial,
+            wl_traffic_limit_gb=getattr(trial_tariff, 'wl_default_traffic_gb', None) if trial_tariff else None,
         )
     except Exception as error:  # pragma: no cover - defensive logging
         logger.error('Failed to activate trial subscription for user', user_id=user.id, error=error)
@@ -6633,6 +6634,7 @@ async def purchase_tariff_endpoint(
             traffic_limit_gb=tariff.traffic_limit_gb,
             device_limit=effective_device_limit,
             connected_squads=squads,
+            wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
         )
     else:
         # Создание новой подписки
@@ -6646,6 +6648,7 @@ async def purchase_tariff_endpoint(
             device_limit=tariff.device_limit,
             connected_squads=squads,
             tariff_id=tariff.id,
+            wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
         )
 
     # Инициализация daily полей при покупке суточного тарифа
