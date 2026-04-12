@@ -4413,6 +4413,7 @@ async def _grant_trial_subscription(
             db,
             user_id,
             device_limit=forced_devices,
+            wl_traffic_limit_gb=settings.WL_DEFAULT_TRAFFIC_LIMIT_GB,
         )
 
         subscription_service = SubscriptionService()
@@ -4466,6 +4467,7 @@ async def _grant_paid_subscription(
             device_limit=device_limit,
             connected_squads=trial_squads,
             update_server_counters=True,
+            wl_traffic_limit_gb=settings.WL_DEFAULT_TRAFFIC_LIMIT_GB,
         )
 
         subscription_service = SubscriptionService()
