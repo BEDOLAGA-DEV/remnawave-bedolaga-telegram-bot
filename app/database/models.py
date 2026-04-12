@@ -3599,6 +3599,8 @@ class AchievementTemplate(Base):
     reward_value = Column(Integer, default=0)
     reward_duration_days = Column(Integer, nullable=True)  # for traffic_gb rewards
     is_active = Column(Boolean, default=True)
+    is_hidden = Column(Boolean, default=False)  # Hidden until unlocked (show as "🔒 ???")
+    hint = Column(String(500), nullable=True)  # "Как получить" — shown for non-hidden achievements
     display_order = Column(Integer, default=0)
     created_at = Column(AwareDateTime(), default=func.now())
 
