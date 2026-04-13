@@ -329,7 +329,7 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
     # Форматируем WL-трафик (БС)
     wl_default_gb = getattr(tariff, 'wl_default_traffic_gb', None)
     if wl_default_gb is None:
-        wl_default_display = 'По умолчанию (глобальный)'
+        wl_default_display = '\u274c \u041e\u0442\u043a\u043b\u044e\u0447\u0451\u043d'
     elif wl_default_gb == 0:
         wl_default_display = 'Безлимит'
     else:
@@ -2198,11 +2198,11 @@ async def start_edit_tariff_wl_traffic(
 
     wl_default_gb = getattr(tariff, 'wl_default_traffic_gb', None)
     if wl_default_gb is None:
-        wl_default_display = 'По умолчанию (глобальный)'
+        wl_default_display = '\u274c \u041e\u0442\u043a\u043b\u044e\u0447\u0451\u043d'
     elif wl_default_gb == 0:
-        wl_default_display = 'Безлимит'
+        wl_default_display = '\u221e \u0411\u0435\u0437\u043b\u0438\u043c\u0438\u0442'
     else:
-        wl_default_display = f'{wl_default_gb} ГБ'
+        wl_default_display = f'{wl_default_gb} \u0413\u0411'
 
     packages = tariff.get_wl_traffic_topup_packages() if hasattr(tariff, 'get_wl_traffic_topup_packages') else {}
     if packages:
@@ -2254,7 +2254,12 @@ async def start_edit_tariff_wl_default(
         return
 
     current = getattr(tariff, 'wl_default_traffic_gb', None)
-    current_display = 'не задан (глобальный)' if current is None else ('∞ безлимит' if current == 0 else f'{current} ГБ')
+    if current is None:
+        current_display = '❌ Отключён (нет WL-трафика)'
+    elif current == 0:
+        current_display = '∞ безлимит'
+    else:
+        current_display = f'{current} ГБ'
 
     await state.set_state(AdminStates.editing_tariff_wl_default_traffic)
     await state.update_data(tariff_id=tariff_id, language=db_user.language)
@@ -2264,7 +2269,7 @@ async def start_edit_tariff_wl_default(
         f'Текущее значение: <b>{current_display}</b>\n\n'
         'Отправьте число ГБ (например: <code>10</code>).\n'
         '• <code>0</code> — безлимитный WL-трафик\n'
-        '• <code>-1</code> или <code>пусто</code> — сбросить (использовать глобальный)',
+        '• <code>-1</code> или <code>выкл</code> — <b>отключить</b> WL-трафик для этого тарифа',
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text=texts.CANCEL, callback_data=f'admin_tariff_edit_wl_traffic:{tariff_id}')]
@@ -2296,23 +2301,32 @@ async def process_edit_tariff_wl_default(
     text = (message.text or '').strip()
     new_value = None
 
-    if text in ('-1', ''):
-        new_value = None  # сбросить до глобального
+    if text.lower() in ('-1', 'выкл', 'off', ''):
+        new_value = None  # Отключить WL-трафик для этого тарифа
     else:
         try:
             val = int(text)
             if val < 0:
-                await message.answer('Число должно быть ≥ 0. Введите снова:')
+                await message.answer('Число должно быть ≥ 0, или <code>-1</code> / <code>выкл</code> для отключения.', parse_mode='HTML')
                 return
             new_value = val
         except ValueError:
-            await message.answer('Неверный формат. Введите число (например: <code>10</code>) или <code>-1</code> для сброса.', parse_mode='HTML')
+            await message.answer(
+                'Неверный формат. Введите число (например: <code>10</code>) '
+                'или <code>-1</code> / <code>выкл</code> для отключения WL.',
+                parse_mode='HTML',
+            )
             return
 
     tariff = await update_tariff(db, tariff, wl_default_traffic_gb=new_value)
     await state.clear()
 
-    display = 'По умолчанию (глобальный)' if new_value is None else ('Безлимит' if new_value == 0 else f'{new_value} ГБ')
+    if new_value is None:
+        display = '❌ Отключён'
+    elif new_value == 0:
+        display = 'Безлимит'
+    else:
+        display = f'{new_value} ГБ'
 
     subs_count = await get_tariff_subscriptions_count(db, tariff_id)
     await message.answer(
