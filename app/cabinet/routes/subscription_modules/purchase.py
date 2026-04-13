@@ -26,6 +26,7 @@ from app.database.crud.subscription import (
     decrement_subscription_server_counts,
     extend_subscription,
     get_subscription_by_user_id,
+    resolve_wl_traffic_for_tariff,
 )
 from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
 from app.database.crud.transaction import create_transaction
@@ -824,7 +825,7 @@ async def purchase_tariff(
                 traffic_limit_gb=traffic_limit_gb,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
-                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
             )
         else:
             # Create new subscription
@@ -837,7 +838,7 @@ async def purchase_tariff(
                     device_limit=tariff.device_limit,
                     connected_squads=squads,
                     tariff_id=tariff.id,
-                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                    wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
                 )
             except IntegrityError:
                 # Partial unique index violation: user already has active subscription for this tariff

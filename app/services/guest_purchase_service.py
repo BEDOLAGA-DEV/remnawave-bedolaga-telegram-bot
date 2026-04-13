@@ -15,7 +15,7 @@ from app.cabinet.auth.jwt_handler import create_auto_login_token
 from app.cabinet.auth.password_utils import hash_password
 from app.config import settings
 from app.database.crud.landing import create_guest_purchase
-from app.database.crud.subscription import create_paid_subscription, get_subscription_by_user_id, replace_subscription
+from app.database.crud.subscription import create_paid_subscription, get_subscription_by_user_id, replace_subscription, resolve_wl_traffic_for_tariff
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import _get_or_create_default_promo_group
@@ -407,7 +407,7 @@ async def fulfill_purchase(
                 connected_squads=squads,
                 is_trial=False,
                 update_server_counters=True,
-                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
             )
         else:
             # No subscription at all — create new
@@ -420,7 +420,7 @@ async def fulfill_purchase(
                 connected_squads=squads,
                 tariff_id=tariff.id,
                 update_server_counters=True,
-                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
             )
 
         subscription_service = SubscriptionService()
@@ -1052,7 +1052,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     is_trial=False,
                     update_server_counters=True,
                     commit=False,
-                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                    wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
                 )
                 subscription.tariff_id = tariff.id
             else:
@@ -1066,7 +1066,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     tariff_id=tariff.id,
                     update_server_counters=True,
                     commit=False,
-                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                    wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
                 )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
@@ -1081,7 +1081,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     is_trial=False,
                     update_server_counters=True,
                     commit=False,
-                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                    wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
                 )
                 subscription.tariff_id = tariff.id
             else:
@@ -1095,7 +1095,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     tariff_id=tariff.id,
                     update_server_counters=True,
                     commit=False,
-                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                    wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
                 )
 
         await subscription_service.create_remnawave_user(db, subscription)

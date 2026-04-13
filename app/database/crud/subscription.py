@@ -10,6 +10,23 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.config import settings
 from app.database.crud.notification import clear_notifications
+
+
+def resolve_wl_traffic_for_tariff(tariff) -> int | None:
+    """Resolve WL traffic limit from tariff settings.
+
+    Returns:
+        int > 0: specific WL limit in GB
+        0: unlimited WL
+        -1: WL disabled for this tariff (tariff.wl_default_traffic_gb is None)
+        None: no tariff context, caller should use settings.WL_DEFAULT_TRAFFIC_LIMIT_GB
+    """
+    if tariff is None:
+        return None
+    wl = getattr(tariff, 'wl_default_traffic_gb', None)
+    if wl is None:
+        return -1  # Tariff doesn't include WL traffic
+    return wl  # 0 = unlimited, >0 = specific limit
 from app.database.models import (
     Subscription,
     SubscriptionServer,
@@ -209,8 +226,12 @@ async def create_trial_subscription(
         tariff_id=tariff_id,
         remnawave_short_id=short_id,
     )
+    # WL traffic: -1 = disabled (NULL in DB), None = use model default, >0 = specific limit
     if wl_traffic_limit_gb is not None:
-        trial_kwargs['wl_traffic_limit_gb'] = wl_traffic_limit_gb
+        if wl_traffic_limit_gb == -1:
+            trial_kwargs['wl_traffic_limit_gb'] = None  # Explicitly disable WL
+        else:
+            trial_kwargs['wl_traffic_limit_gb'] = wl_traffic_limit_gb
 
     subscription = Subscription(**trial_kwargs)
 
@@ -296,8 +317,12 @@ async def create_paid_subscription(
         tariff_id=tariff_id,
         remnawave_short_id=short_id,
     )
+    # WL traffic: -1 = disabled (NULL in DB), None = use model default, >0 = specific limit
     if wl_traffic_limit_gb is not None:
-        subscription.wl_traffic_limit_gb = wl_traffic_limit_gb
+        if wl_traffic_limit_gb == -1:
+            subscription.wl_traffic_limit_gb = None
+        else:
+            subscription.wl_traffic_limit_gb = wl_traffic_limit_gb
 
     db.add(subscription)
     if commit:
@@ -416,8 +441,12 @@ async def replace_subscription(
     subscription.traffic_reset_at = None
 
     # WL-трафик: сброс при замене подписки (аналогично обычному трафику)
+    # -1 = disable WL, None = keep current, >0 = set limit
     if wl_traffic_limit_gb is not None:
-        subscription.wl_traffic_limit_gb = wl_traffic_limit_gb
+        if wl_traffic_limit_gb == -1:
+            subscription.wl_traffic_limit_gb = None
+        else:
+            subscription.wl_traffic_limit_gb = wl_traffic_limit_gb
     subscription.wl_traffic_used_gb = 0.0
     subscription.wl_purchased_traffic_gb = 0
     subscription.wl_traffic_reset_at = None

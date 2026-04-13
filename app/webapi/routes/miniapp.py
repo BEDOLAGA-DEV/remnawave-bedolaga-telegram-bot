@@ -37,6 +37,7 @@ from app.database.crud.subscription import (
     create_trial_subscription,
     extend_subscription,
     remove_subscription_servers,
+    resolve_wl_traffic_for_tariff,
     update_subscription_autopay,
 )
 from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
@@ -6635,7 +6636,7 @@ async def purchase_tariff_endpoint(
             traffic_limit_gb=tariff.traffic_limit_gb,
             device_limit=effective_device_limit,
             connected_squads=squads,
-            wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+            wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
         )
     else:
         # Создание новой подписки
@@ -6649,7 +6650,7 @@ async def purchase_tariff_endpoint(
             device_limit=tariff.device_limit,
             connected_squads=squads,
             tariff_id=tariff.id,
-            wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+            wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
         )
 
     # Инициализация daily полей при покупке суточного тарифа

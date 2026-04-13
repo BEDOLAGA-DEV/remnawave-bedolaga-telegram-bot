@@ -17,6 +17,7 @@ from app.database.crud.subscription import (
     get_active_subscriptions_by_user_id,
     get_subscription_by_id_for_user,
     get_subscription_by_user_id,
+    resolve_wl_traffic_for_tariff,
 )
 from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
 from app.database.crud.transaction import create_transaction
@@ -1025,7 +1026,7 @@ async def handle_custom_confirm(
                 traffic_limit_gb=traffic_limit,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
-                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
             )
         else:
             # Создаем новую подписку
@@ -1037,7 +1038,7 @@ async def handle_custom_confirm(
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
-                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
             )
     except Exception as e:
         logger.error('Ошибка создания/продления подписки при покупке кастомного тарифа', error=e, exc_info=True)
@@ -1441,7 +1442,7 @@ async def confirm_tariff_purchase(
                     traffic_limit_gb=tariff.traffic_limit_gb,
                     device_limit=effective_device_limit,
                     connected_squads=squads,
-                    wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                    wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
                 )
             else:
                 # Guard: enforce MAX_ACTIVE_SUBSCRIPTIONS limit
@@ -1502,7 +1503,7 @@ async def confirm_tariff_purchase(
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
-                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
             )
         else:
             # Создаем новую подписку
@@ -1514,7 +1515,7 @@ async def confirm_tariff_purchase(
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
-                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
             )
     except IntegrityError as e:
         # Partial unique index violation: user already has active subscription for this tariff
@@ -1854,7 +1855,8 @@ async def confirm_daily_tariff_purchase(
             existing_subscription.traffic_reset_at = None
 
             # Сброс WL-трафика из нового тарифа (fallback к глобальному дефолту)
-            existing_subscription.wl_traffic_limit_gb = getattr(tariff, 'wl_default_traffic_gb', None)
+            _wl_limit = resolve_wl_traffic_for_tariff(tariff)
+            existing_subscription.wl_traffic_limit_gb = None if _wl_limit == -1 else _wl_limit
             existing_subscription.wl_traffic_used_gb = 0.0
             existing_subscription.wl_purchased_traffic_gb = 0
             existing_subscription.wl_traffic_reset_at = None
@@ -1877,7 +1879,7 @@ async def confirm_daily_tariff_purchase(
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
-                wl_traffic_limit_gb=getattr(tariff, 'wl_default_traffic_gb', None),
+                wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
             )
             # Устанавливаем время последнего списания
             subscription.last_daily_charge_at = datetime.now(UTC)
@@ -2400,7 +2402,7 @@ async def confirm_tariff_extend(
             traffic_limit_gb=tariff.traffic_limit_gb if was_trial else None,
             device_limit=actual_device_limit if was_trial else None,
             wl_traffic_limit_gb=(
-                getattr(tariff, 'wl_default_traffic_gb', None) if was_trial else None
+                resolve_wl_traffic_for_tariff(tariff) if was_trial else None
             ),
         )
 
