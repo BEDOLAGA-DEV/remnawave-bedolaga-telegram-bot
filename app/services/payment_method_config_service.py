@@ -144,6 +144,8 @@ def _get_method_defaults() -> dict:
             'is_configured': settings.is_severpay_enabled(),
             'default_min': settings.SEVERPAY_MIN_AMOUNT_KOPEKS,
             'default_max': settings.SEVERPAY_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': None,
+        },
         'external_gateway': {
             'default_display_name': settings.get_external_gateway_display_name(),
             'is_configured': settings.is_external_gateway_enabled(),
