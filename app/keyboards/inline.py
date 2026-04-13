@@ -1805,6 +1805,35 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
                 )
             ]
         )
+    if settings.is_external_gateway_enabled():
+        ext_gw_methods = settings.get_external_gateway_methods()
+        if ext_gw_methods:
+            # Мульти-метод: отдельная кнопка для каждого метода
+            for m in ext_gw_methods:
+                if amount_kopeks > 0:
+                    cb = f'topup_amount|ext_gw|{m["value"]}|{amount_kopeks}'
+                else:
+                    cb = f'topup_ext_gw|{m["value"]}'
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            text=f'{m["emoji"]} {m["name"]}',
+                            callback_data=cb,
+                        )
+                    ]
+                )
+        else:
+            # Одна кнопка (обратная совместимость)
+            ext_gw_name = settings.get_external_gateway_display_name()
+            ext_gw_emoji = settings.EXTERNAL_GATEWAY_DISPLAY_EMOJI
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=f'{ext_gw_emoji} {ext_gw_name}',
+                        callback_data=_build_callback('external_gateway'),
+                    )
+                ]
+            )
         has_direct_payment_methods = True
 
     if settings.is_support_topup_enabled():

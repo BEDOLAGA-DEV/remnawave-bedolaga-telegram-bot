@@ -162,6 +162,7 @@ class PaymentMethod(Enum):
     KASSA_AI = 'kassa_ai'
     RIOPAY = 'riopay'
     SEVERPAY = 'severpay'
+    EXTERNAL_GATEWAY = 'external_gateway'
     MANUAL = 'manual'
     BALANCE = 'balance'
 
@@ -876,6 +877,50 @@ class SeverPayPayment(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f'<SeverPayPayment(id={self.id}, order_id={self.order_id}, amount={self.amount_rubles}₽, status={self.status})>'
+class ExternalGatewayPayment(Base):
+    __tablename__ = 'external_gateway_payments'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
+    order_id = Column(String(128), unique=True, nullable=False, index=True)
+    gateway_order_id = Column(String(128), nullable=True)
+    gateway_payment_id = Column(String(255), nullable=True)
+    amount_kopeks = Column(Integer, nullable=False)
+    currency = Column(String(10), default='RUB')
+    amount_converted = Column(Float, nullable=True)
+    payment_method_name = Column(String(64), nullable=True)
+    description = Column(Text, nullable=True)
+    status = Column(String(32), default='pending')
+    is_paid = Column(Boolean, default=False)
+    redirect_url = Column(Text, nullable=True)
+    metadata_json = Column(JSON, nullable=True)
+    callback_payload = Column(JSON, nullable=True)
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+
+    user = relationship('User', backref='external_gateway_payments')
+    transaction = relationship('Transaction', foreign_keys=[transaction_id])
+
+    @property
+    def amount_rubles(self) -> float:
+        return self.amount_kopeks / 100 if self.amount_kopeks else 0
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == 'pending' and not self.is_paid
+
+    @property
+    def is_completed(self) -> bool:
+        return self.status == 'completed' and self.is_paid
+
+    @property
+    def is_failed(self) -> bool:
+        return self.status in ['failed', 'expired']
+
+    def __repr__(self) -> str:
+        return f'<ExternalGatewayPayment(id={self.id}, order_id={self.order_id}, amount={self.amount_rubles}₽, status={self.status})>'
 
 
 class PromoGroup(Base):

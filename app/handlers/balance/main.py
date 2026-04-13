@@ -156,6 +156,24 @@ async def route_payment_by_method(
             await process_riopay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method == 'external_gateway':
+        from .external_gateway import process_external_gateway_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_external_gateway_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
+    # Мульти-метод External Gateway: ext_gw|stripe, ext_gw|paypal и т.д.
+    if payment_method.startswith('ext_gw|'):
+        method_value = payment_method.split('|', 1)[1]
+        from .external_gateway import process_external_gateway_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_external_gateway_payment_amount(
+                message, db_user, db, amount_kopeks, state, method=method_value,
+            )
+        return True
+
     return False
 
 
@@ -718,6 +736,22 @@ def register_balance_handlers(dp: Dispatcher):
     from .severpay import start_severpay_topup
 
     dp.callback_query.register(start_severpay_topup, F.data == 'topup_severpay')
+
+    from .external_gateway import (
+        check_external_gateway_status,
+        process_external_gateway_method_quick_amount,
+        process_external_gateway_quick_amount,
+        start_external_gateway_method_topup,
+        start_external_gateway_topup,
+    )
+
+    # Одиночный режим (обратная совместимость)
+    dp.callback_query.register(start_external_gateway_topup, F.data == 'topup_external_gateway')
+    dp.callback_query.register(process_external_gateway_quick_amount, F.data.startswith('topup_amount|external_gateway|'))
+    dp.callback_query.register(check_external_gateway_status, F.data.startswith('ext_gw_check|'))
+    # Мульти-метод: topup_ext_gw|stripe, topup_amount|ext_gw|stripe|50000
+    dp.callback_query.register(start_external_gateway_method_topup, F.data.startswith('topup_ext_gw|'))
+    dp.callback_query.register(process_external_gateway_method_quick_amount, F.data.startswith('topup_amount|ext_gw|'))
 
     from .mulenpay import check_mulenpay_payment_status
 
