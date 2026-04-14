@@ -9,6 +9,7 @@ from app.config import settings
 from app.database.crud.rules import get_current_rules_content, get_rules_by_language
 from app.database.models import User
 from app.services.faq_service import FaqService
+from app.services.personal_data_consent_service import PersonalDataConsentService
 from app.services.privacy_policy_service import PrivacyPolicyService
 from app.services.public_offer_service import PublicOfferService
 
@@ -72,6 +73,13 @@ class PrivacyPolicyResponse(BaseModel):
 
 class PublicOfferResponse(BaseModel):
     """Public offer."""
+
+    content: str
+    updated_at: str | None = None
+
+
+class PersonalDataConsentResponse(BaseModel):
+    """Personal data processing consent."""
 
     content: str
     updated_at: str | None = None
@@ -216,6 +224,28 @@ async def get_public_offer(
         content="""# Публичная оферта
 
 Условия использования сервиса.
+""",
+        updated_at=None,
+    )
+
+
+@router.get('/personal-data-consent', response_model=PersonalDataConsentResponse)
+async def get_personal_data_consent(
+    language: str = Query('ru', min_length=2, max_length=10),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get personal data processing consent."""
+    requested_lang = PersonalDataConsentService.normalize_language(language)
+    consent = await PersonalDataConsentService.get_consent(db, requested_lang, fallback=True)
+
+    if consent and consent.content:
+        updated_at = consent.updated_at.isoformat() if consent.updated_at else None
+        return PersonalDataConsentResponse(content=consent.content, updated_at=updated_at)
+
+    return PersonalDataConsentResponse(
+        content="""# Согласие на обработку персональных данных
+
+Настоящим я даю согласие на обработку моих персональных данных в соответствии с Федеральным законом № 152-ФЗ «О персональных данных».
 """,
         updated_at=None,
     )
