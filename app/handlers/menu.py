@@ -254,16 +254,66 @@ async def show_service_rules(callback: types.CallbackQuery, db_user: User, db: A
     from app.database.crud.rules import get_current_rules_content
 
     texts = get_texts(db_user.language)
+    raw_page = 1
+    if callback.data and ':' in callback.data:
+        try:
+            raw_page = int(callback.data.split(':', 1)[1])
+        except ValueError:
+            raw_page = 1
+
+    raw_page = max(raw_page, 1)
     rules_text = await get_current_rules_content(db, db_user.language)
 
     if not rules_text:
         rules_text = await get_rules(db_user.language)
 
+    pages = PublicOfferService.split_content_into_pages(rules_text)
+    if not pages:
+        pages = [rules_text]
+
+    total_pages = len(pages)
+    current_page = min(raw_page, total_pages)
+
+    header = texts.t('RULES_HEADER', '📋 <b>Правила сервиса</b>')
+    body = pages[current_page - 1]
+    message_text = f'{header}\n\n{body}'
+    if total_pages > 1:
+        message_text += f'\n\n<code>{current_page}/{total_pages}</code>'
+
+    keyboard_rows: list[list[types.InlineKeyboardButton]] = []
+    if total_pages > 1:
+        nav_row: list[types.InlineKeyboardButton] = []
+        if current_page > 1:
+            nav_row.append(
+                types.InlineKeyboardButton(
+                    text=texts.t('PAGINATION_PREV', '⬅️'),
+                    callback_data=f'menu_rules:{current_page - 1}',
+                )
+            )
+
+        nav_row.append(
+            types.InlineKeyboardButton(
+                text=f'{current_page}/{total_pages}',
+                callback_data='noop',
+            )
+        )
+
+        if current_page < total_pages:
+            nav_row.append(
+                types.InlineKeyboardButton(
+                    text=texts.t('PAGINATION_NEXT', '➡️'),
+                    callback_data=f'menu_rules:{current_page + 1}',
+                )
+            )
+
+        keyboard_rows.append(nav_row)
+
+    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+
     await callback.message.edit_text(
-        f'{texts.t("RULES_HEADER", "📋 <b>Правила сервиса</b>")}\n\n{rules_text}',
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')]]
-        ),
+        message_text,
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
+        disable_web_page_preview=settings.DISABLE_WEB_PAGE_PREVIEW,
     )
     await callback.answer()
 
@@ -1504,6 +1554,7 @@ def register_handlers(dp: Dispatcher):
     )
 
     dp.callback_query.register(show_service_rules, F.data == 'menu_rules')
+    dp.callback_query.register(show_service_rules, F.data.startswith('menu_rules:'))
 
     dp.callback_query.register(
         show_info_menu,
