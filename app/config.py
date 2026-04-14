@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     MINIAPP_TICKETS_ENABLED: bool = True  # Enable/disable tickets section in miniapp
     MINIAPP_SUPPORT_TYPE: str = 'tickets'  # one of: tickets, profile, url
     MINIAPP_SUPPORT_URL: str = ''  # Custom URL to redirect when tickets disabled (only for url type)
+    MINIAPP_SUPPORT_VK_URL: str = ''  # VK community/group URL for additional support contact
 
     ADMIN_NOTIFICATIONS_ENABLED: bool = False
     ADMIN_NOTIFICATIONS_CHAT_ID: str | None = None

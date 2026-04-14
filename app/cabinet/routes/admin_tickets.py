@@ -135,6 +135,7 @@ class TicketSettingsResponse(BaseModel):
     sla_check_interval_seconds: int
     sla_reminder_cooldown_minutes: int
     support_system_mode: str  # tickets, contact, both
+    support_vk_url: str | None = None
     # Cabinet notifications settings
     cabinet_user_notifications_enabled: bool = True
     cabinet_admin_notifications_enabled: bool = True
@@ -150,6 +151,7 @@ class TicketSettingsUpdateRequest(BaseModel):
         None, ge=1, le=120, description='Reminder cooldown (1-120 minutes)'
     )
     support_system_mode: str | None = Field(None, description='Support mode: tickets, contact, both')
+    support_vk_url: str | None = Field(None, description='VK community URL for support (empty string to clear)')
     # Cabinet notifications settings
     cabinet_user_notifications_enabled: bool | None = Field(None, description='Enable user notifications in cabinet')
     cabinet_admin_notifications_enabled: bool | None = Field(None, description='Enable admin notifications in cabinet')
@@ -247,6 +249,7 @@ async def get_ticket_settings(
         sla_check_interval_seconds=settings.SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS,
         sla_reminder_cooldown_minutes=settings.SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES,
         support_system_mode=settings.get_support_system_mode(),
+        support_vk_url=settings.MINIAPP_SUPPORT_VK_URL or None,
         cabinet_user_notifications_enabled=SupportSettingsService.get_cabinet_user_notifications_enabled(),
         cabinet_admin_notifications_enabled=SupportSettingsService.get_cabinet_admin_notifications_enabled(),
     )
@@ -291,6 +294,10 @@ async def update_ticket_settings(
     if request.cabinet_admin_notifications_enabled is not None:
         SupportSettingsService.set_cabinet_admin_notifications_enabled(request.cabinet_admin_notifications_enabled)
 
+    # Update VK URL
+    if request.support_vk_url is not None:
+        settings.MINIAPP_SUPPORT_VK_URL = request.support_vk_url.strip()
+
     # Try to persist to .env file
     try:
         env_file = Path('.env')
@@ -308,6 +315,8 @@ async def update_ticket_settings(
                 updates['SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES'] = str(request.sla_reminder_cooldown_minutes)
             if request.support_system_mode is not None:
                 updates['SUPPORT_SYSTEM_MODE'] = request.support_system_mode.strip().lower()
+            if request.support_vk_url is not None:
+                updates['MINIAPP_SUPPORT_VK_URL'] = request.support_vk_url.strip()
 
             new_lines = []
             updated_keys = set()
@@ -339,6 +348,7 @@ async def update_ticket_settings(
         sla_check_interval_seconds=settings.SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS,
         sla_reminder_cooldown_minutes=settings.SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES,
         support_system_mode=settings.get_support_system_mode(),
+        support_vk_url=settings.MINIAPP_SUPPORT_VK_URL or None,
         cabinet_user_notifications_enabled=SupportSettingsService.get_cabinet_user_notifications_enabled(),
         cabinet_admin_notifications_enabled=SupportSettingsService.get_cabinet_admin_notifications_enabled(),
     )

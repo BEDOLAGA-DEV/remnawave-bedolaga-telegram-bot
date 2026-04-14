@@ -94,6 +94,7 @@ class SupportConfigResponse(BaseModel):
     support_type: str  # "tickets", "profile", "url", "both"
     support_url: str | None = None
     support_username: str | None = None
+    support_vk_url: str | None = None
 
 
 # ============ Routes ============
@@ -306,4 +307,5 @@ async def get_support_config():
         support_type=support_type,
         support_url=None,  # Cabinet doesn't use custom URLs
         support_username=settings.SUPPORT_USERNAME,  # Always return for fallback
+        support_vk_url=settings.MINIAPP_SUPPORT_VK_URL or None,
     )
