@@ -2647,6 +2647,8 @@ class TicketMessage(Base):
     media_type = Column(String(20), nullable=True)  # photo, video, document, voice, etc.
     media_file_id = Column(String(255), nullable=True)
     media_caption = Column(Text, nullable=True)
+    # Multi-media gallery (photos/videos/documents bundled in one bubble)
+    media_items = Column(JSONB, nullable=True)
 
     created_at = Column(AwareDateTime(), default=func.now())
 

@@ -42,28 +42,25 @@ jobs:
       - name: Get version info
         id: version
         run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
-
-          # Read base version from release-please manifest (single source of truth)
-          BASE_VERSION=$(jq -r '."."' .release-please-manifest.json)
-
+          
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
             echo "🏷️ Building release version: $VERSION"
           elif [[ $GITHUB_REF == refs/heads/main ]]; then
-            VERSION="v${BASE_VERSION}-${SHORT_SHA}"
+            VERSION="v3.7.0-$(git rev-parse --short HEAD)" # x-release-please-version
             echo "🚀 Building main version: $VERSION"
           elif [[ $GITHUB_REF == refs/heads/dev ]]; then
-            VERSION="v${BASE_VERSION}-dev-${SHORT_SHA}"
+            VERSION="v3.7.0-dev-$(git rev-parse --short HEAD)" # x-release-please-version
             echo "🧪 Building dev version: $VERSION"
           else
-            VERSION="v${BASE_VERSION}-pr-${SHORT_SHA}"
+            VERSION="v3.7.0-pr-$(git rev-parse --short HEAD)" # x-release-please-version
             echo "🔀 Building PR version: $VERSION"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-
+          
+          # Определяем, нужно ли пушить образ
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             echo "should_push=false" >> $GITHUB_OUTPUT
             echo "⚠️ PR - only build without push"
