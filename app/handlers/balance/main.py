@@ -82,6 +82,13 @@ async def route_payment_by_method(
             await process_mulenpay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method == 'robokassa':
+        from .robokassa import process_robokassa_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_robokassa_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
     if payment_method == 'platega':
         from .platega import process_platega_payment_amount
 
@@ -722,6 +729,14 @@ def register_balance_handlers(dp: Dispatcher):
     from .mulenpay import check_mulenpay_payment_status
 
     dp.callback_query.register(check_mulenpay_payment_status, F.data.startswith('check_mulenpay_'))
+
+    from .robokassa import (
+        check_robokassa_payment_status,
+        start_robokassa_payment,
+    )
+
+    dp.callback_query.register(start_robokassa_payment, F.data == 'topup_robokassa')
+    dp.callback_query.register(check_robokassa_payment_status, F.data.startswith('check_robokassa_'))
 
     from .wata import check_wata_payment_status
 

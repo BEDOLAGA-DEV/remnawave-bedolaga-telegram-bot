@@ -14,6 +14,7 @@ from .mulenpay import MulenPayPaymentMixin
 from .pal24 import Pal24PaymentMixin
 from .platega import PlategaPaymentMixin
 from .riopay import RioPayPaymentMixin
+from .robokassa import RobokassaPaymentMixin
 from .severpay import SeverPayPaymentMixin
 from .stars import TelegramStarsMixin
 from .tribute import TributePaymentMixin
@@ -32,6 +33,7 @@ __all__ = [
     'PaymentCommonMixin',
     'PlategaPaymentMixin',
     'RioPayPaymentMixin',
+    'RobokassaPaymentMixin',
     'SeverPayPaymentMixin',
     'TelegramStarsMixin',
     'TributePaymentMixin',

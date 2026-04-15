@@ -295,6 +295,83 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
+    if settings.is_robokassa_enabled():
+
+        async def _parse_robokassa_payload(request: Request) -> dict[str, str]:
+            payload: dict[str, str] = {}
+            try:
+                form = await request.form()
+                for key, value in form.multi_items():
+                    payload[str(key)] = str(value)
+            except Exception:
+                payload = {}
+            if not payload:
+                try:
+                    query_params = dict(request.query_params)
+                    payload.update({str(k): str(v) for k, v in query_params.items()})
+                except Exception:
+                    pass
+            return payload
+
+        @router.options(settings.ROBOKASSA_WEBHOOK_PATH)
+        async def robokassa_options() -> Response:
+            return _create_cors_response()
+
+        @router.post(settings.ROBOKASSA_WEBHOOK_PATH)
+        async def robokassa_webhook(request: Request) -> Response:
+            payload = await _parse_robokassa_payload(request)
+            if not payload:
+                return Response('error: empty payload', status_code=status.HTTP_400_BAD_REQUEST)
+
+            inv_id_raw = payload.get('InvId') or payload.get('inv_id')
+            try:
+                success = await _process_payment_service_callback(
+                    payment_service,
+                    payload,
+                    'process_robokassa_callback',
+                )
+            except Exception as e:
+                logger.exception('Robokassa webhook processing error', e=e)
+                return Response('error: processing', status_code=status.HTTP_400_BAD_REQUEST)
+
+            if success and inv_id_raw is not None:
+                # Robokassa ждёт ответ вида: OK{InvId}
+                return Response(f'OK{inv_id_raw}', media_type='text/plain')
+
+            return Response('error', status_code=status.HTTP_400_BAD_REQUEST)
+
+        @router.get(settings.ROBOKASSA_WEBHOOK_PATH)
+        async def robokassa_webhook_get(request: Request) -> Response:
+            return await robokassa_webhook(request)
+
+        @router.get(settings.ROBOKASSA_SUCCESS_PATH)
+        async def robokassa_success(request: Request) -> Response:
+            redirect_url = settings.ROBOKASSA_SUCCESS_URL
+            if redirect_url:
+                return Response(
+                    status_code=status.HTTP_302_FOUND,
+                    headers={'Location': redirect_url},
+                )
+            return Response(
+                '<html><body><h2>Оплата успешно завершена. Можно вернуться в Telegram.</h2></body></html>',
+                media_type='text/html',
+            )
+
+        @router.get(settings.ROBOKASSA_FAIL_PATH)
+        async def robokassa_fail(request: Request) -> Response:
+            redirect_url = settings.ROBOKASSA_FAIL_URL
+            if redirect_url:
+                return Response(
+                    status_code=status.HTTP_302_FOUND,
+                    headers={'Location': redirect_url},
+                )
+            return Response(
+                '<html><body><h2>Оплата не завершена. Вернитесь в Telegram и попробуйте снова.</h2></body></html>',
+                media_type='text/html',
+            )
+
+        routes_registered = True
+
     if settings.is_cryptobot_enabled():
 
         @router.options(settings.CRYPTOBOT_WEBHOOK_PATH)

@@ -95,6 +95,7 @@ class BotConfigurationService:
         'PLATEGA': '💳 {platega_name}',
         'TRIBUTE': '🎁 Tribute',
         'MULENPAY': '💰 {mulenpay_name}',
+        'ROBOKASSA': '💳 {robokassa_name}',
         'PAL24': '🏦 PAL24 / PayPalych',
         'WATA': '💠 Wata',
         'EXTERNAL_ADMIN': '🛡️ Внешняя админка',
@@ -154,6 +155,7 @@ class BotConfigurationService:
         'RIOPAY': 'RioPay: платёжная система api.riopay.online с поддержкой карт и СБП.',
         'PLATEGA': '{platega_name}: merchant ID, секрет, ссылки возврата и методы оплаты.',
         'MULENPAY': 'Платежи {mulenpay_name} и параметры магазина.',
+        'ROBOKASSA': 'Платежи {robokassa_name}: MerchantLogin, пароли, тестовый режим и фискализация.',
         'PAL24': 'PAL24 / PayPalych подключения и лимиты.',
         'TRIBUTE': 'Tribute и донат-сервисы.',
         'TELEGRAM': 'Telegram Stars и их стоимость.',
@@ -206,6 +208,8 @@ class BotConfigurationService:
             return value
         if category_key == 'MULENPAY':
             return value.format(mulenpay_name=settings.get_mulenpay_display_name())
+        if category_key == 'ROBOKASSA':
+            return value.format(robokassa_name=settings.get_robokassa_display_name())
         if category_key == 'PLATEGA':
             return value.format(platega_name=settings.get_platega_display_name())
         return value
@@ -366,6 +370,7 @@ class BotConfigurationService:
         'SEVERPAY_': 'SEVERPAY',
         'PLATEGA_': 'PLATEGA',
         'MULENPAY_': 'MULENPAY',
+        'ROBOKASSA_': 'ROBOKASSA',
         'PAL24_': 'PAL24',
         'PAYMENT_': 'PAYMENT',
         'PAYMENT_VERIFICATION_': 'PAYMENT_VERIFICATION',

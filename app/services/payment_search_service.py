@@ -25,6 +25,7 @@ from app.database.models import (
     PaymentMethod,
     PlategaPayment,
     RioPayPayment,
+    RobokassaPayment,
     SeverPayPayment,
     Transaction,
     TransactionType,
@@ -372,6 +373,43 @@ async def _search_mulenpay(db: AsyncSession, params: SearchParams) -> list[Pendi
     return records
 
 
+async def _search_robokassa(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = (
+        select(RobokassaPayment)
+        .options(selectinload(RobokassaPayment.user))
+        .order_by(desc(RobokassaPayment.created_at))
+    )
+    stmt = _apply_date_filter(stmt, RobokassaPayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            conditions = [
+                cast(RobokassaPayment.inv_id, SAString).ilike(f'%{_escape_like(params.search)}%'),
+            ]
+            if params.search.isdigit():
+                conditions.append(RobokassaPayment.inv_id == int(params.search))
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, RobokassaPayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.ROBOKASSA,
+            payment,
+            identifier=str(payment.inv_id),
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 async def _search_pal24(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
     stmt = select(Pal24Payment).options(selectinload(Pal24Payment.user)).order_by(desc(Pal24Payment.created_at))
     stmt = _apply_date_filter(stmt, Pal24Payment.created_at, params.cutoff, params.upper_bound)
@@ -694,6 +732,7 @@ _PROVIDER_SEARCH_MAP: dict[PaymentMethod, Any] = {
     PaymentMethod.CRYPTOBOT: _search_cryptobot,
     PaymentMethod.HELEKET: _search_heleket,
     PaymentMethod.MULENPAY: _search_mulenpay,
+    PaymentMethod.ROBOKASSA: _search_robokassa,
     PaymentMethod.PAL24: _search_pal24,
     PaymentMethod.WATA: _search_wata,
     PaymentMethod.PLATEGA: _search_platega,

@@ -34,7 +34,9 @@ from app.services.payment.cloudpayments import CloudPaymentsPaymentMixin
 from app.services.payment.freekassa import FreekassaPaymentMixin
 from app.services.payment.kassa_ai import KassaAiPaymentMixin
 from app.services.payment.riopay import RioPayPaymentMixin
+from app.services.payment.robokassa import RobokassaPaymentMixin
 from app.services.payment.severpay import SeverPayPaymentMixin
+from app.services.robokassa_service import RobokassaService
 from app.services.platega_service import PlategaService
 from app.services.wata_service import WataService
 from app.services.yookassa_service import YooKassaService
@@ -130,6 +132,36 @@ async def update_mulenpay_payment_metadata(*args, **kwargs):
 async def link_mulenpay_payment_to_transaction(*args, **kwargs):
     mulenpay_crud = import_module('app.database.crud.mulenpay')
     return await mulenpay_crud.link_mulenpay_payment_to_transaction(*args, **kwargs)
+
+
+async def create_robokassa_payment(*args, **kwargs):
+    robokassa_crud = import_module('app.database.crud.robokassa')
+    return await robokassa_crud.create_robokassa_payment(*args, **kwargs)
+
+
+async def get_robokassa_payment_by_inv_id(*args, **kwargs):
+    robokassa_crud = import_module('app.database.crud.robokassa')
+    return await robokassa_crud.get_robokassa_payment_by_inv_id(*args, **kwargs)
+
+
+async def get_robokassa_payment_by_local_id(*args, **kwargs):
+    robokassa_crud = import_module('app.database.crud.robokassa')
+    return await robokassa_crud.get_robokassa_payment_by_local_id(*args, **kwargs)
+
+
+async def update_robokassa_payment_status(*args, **kwargs):
+    robokassa_crud = import_module('app.database.crud.robokassa')
+    return await robokassa_crud.update_robokassa_payment_status(*args, **kwargs)
+
+
+async def update_robokassa_payment_metadata(*args, **kwargs):
+    robokassa_crud = import_module('app.database.crud.robokassa')
+    return await robokassa_crud.update_robokassa_payment_metadata(*args, **kwargs)
+
+
+async def link_robokassa_payment_to_transaction(*args, **kwargs):
+    robokassa_crud = import_module('app.database.crud.robokassa')
+    return await robokassa_crud.link_robokassa_payment_to_transaction(*args, **kwargs)
 
 
 async def create_pal24_payment(*args, **kwargs):
@@ -354,6 +386,7 @@ class PaymentService(
     FreekassaPaymentMixin,
     KassaAiPaymentMixin,
     RioPayPaymentMixin,
+    RobokassaPaymentMixin,
     SeverPayPaymentMixin,
 ):
     """Основной интерфейс платежей, делегирующий работу специализированным mixin-ам."""
@@ -367,6 +400,7 @@ class PaymentService(
         self.cryptobot_service = CryptoBotService() if settings.is_cryptobot_enabled() else None
         self.heleket_service = HeleketService() if settings.is_heleket_enabled() else None
         self.mulenpay_service = MulenPayService() if settings.is_mulenpay_enabled() else None
+        self.robokassa_service = RobokassaService() if settings.is_robokassa_enabled() else None
         self.pal24_service = Pal24Service() if settings.is_pal24_enabled() else None
         self.platega_service = PlategaService() if settings.is_platega_enabled() else None
         self.wata_service = WataService() if settings.is_wata_enabled() else None

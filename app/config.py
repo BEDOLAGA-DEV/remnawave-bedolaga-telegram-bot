@@ -446,6 +446,32 @@ class Settings(BaseSettings):
     MULENPAY_IFRAME_EXPECTED_ORIGIN: str | None = None
     MULENPAY_WEBSITE_URL: str | None = None
 
+    ROBOKASSA_ENABLED: bool = False
+    ROBOKASSA_MERCHANT_LOGIN: str | None = None
+    ROBOKASSA_PASSWORD_1: str | None = None
+    ROBOKASSA_PASSWORD_2: str | None = None
+    ROBOKASSA_IS_TEST: bool = False
+    ROBOKASSA_TEST_PASSWORD_1: str | None = None
+    ROBOKASSA_TEST_PASSWORD_2: str | None = None
+    ROBOKASSA_BASE_URL: str = 'https://auth.robokassa.ru/Merchant/Index.aspx'
+    ROBOKASSA_WEBHOOK_PATH: str = '/robokassa-webhook'
+    ROBOKASSA_SUCCESS_PATH: str = '/robokassa-success'
+    ROBOKASSA_FAIL_PATH: str = '/robokassa-fail'
+    ROBOKASSA_DISPLAY_NAME: str = 'Robokassa'
+    ROBOKASSA_DESCRIPTION: str = 'Пополнение баланса'
+    ROBOKASSA_CULTURE: str = 'ru'
+    ROBOKASSA_HASH_ALGO: str = 'md5'
+    ROBOKASSA_MIN_AMOUNT_KOPEKS: int = 10000
+    ROBOKASSA_MAX_AMOUNT_KOPEKS: int = 10000000
+    ROBOKASSA_INCLUDE_RECEIPT: bool = True
+    ROBOKASSA_RECEIPT_SNO: str = 'npd'
+    ROBOKASSA_RECEIPT_VAT: str = 'none'
+    ROBOKASSA_RECEIPT_PAYMENT_METHOD: str = 'full_payment'
+    ROBOKASSA_RECEIPT_PAYMENT_OBJECT: str = 'service'
+    ROBOKASSA_INC_CURR_LABEL: str | None = None
+    ROBOKASSA_SUCCESS_URL: str | None = None
+    ROBOKASSA_FAIL_URL: str | None = None
+
     PAL24_ENABLED: bool = False
     PAL24_DISPLAY_NAME: str = 'PAL24'
     PAL24_API_TOKEN: str | None = None
@@ -1804,6 +1830,32 @@ class Settings(BaseSettings):
         if parsed.scheme and parsed.netloc:
             return f'{parsed.scheme}://{parsed.netloc}'
         return None
+
+    def is_robokassa_enabled(self) -> bool:
+        if not self.ROBOKASSA_ENABLED:
+            return False
+        if not self.ROBOKASSA_MERCHANT_LOGIN:
+            return False
+        if self.ROBOKASSA_IS_TEST:
+            return bool(self.ROBOKASSA_TEST_PASSWORD_1 and self.ROBOKASSA_TEST_PASSWORD_2)
+        return bool(self.ROBOKASSA_PASSWORD_1 and self.ROBOKASSA_PASSWORD_2)
+
+    def get_robokassa_display_name(self) -> str:
+        name = (self.ROBOKASSA_DISPLAY_NAME or '').strip()
+        return name or 'Robokassa'
+
+    def get_robokassa_display_name_html(self) -> str:
+        return html.escape(self.get_robokassa_display_name())
+
+    def get_robokassa_password_1(self) -> str | None:
+        if self.ROBOKASSA_IS_TEST:
+            return self.ROBOKASSA_TEST_PASSWORD_1
+        return self.ROBOKASSA_PASSWORD_1
+
+    def get_robokassa_password_2(self) -> str | None:
+        if self.ROBOKASSA_IS_TEST:
+            return self.ROBOKASSA_TEST_PASSWORD_2
+        return self.ROBOKASSA_PASSWORD_2
 
     def is_pal24_enabled(self) -> bool:
         return self.PAL24_ENABLED and self.PAL24_API_TOKEN is not None and self.PAL24_SHOP_ID is not None

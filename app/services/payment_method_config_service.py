@@ -64,6 +64,13 @@ def _get_method_defaults() -> dict:
             'default_max': settings.MULENPAY_MAX_AMOUNT_KOPEKS,
             'available_sub_options': None,
         },
+        'robokassa': {
+            'default_display_name': settings.get_robokassa_display_name(),
+            'is_configured': settings.is_robokassa_enabled(),
+            'default_min': settings.ROBOKASSA_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.ROBOKASSA_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': None,
+        },
         'pal24': {
             'default_display_name': settings.get_pal24_display_name(),
             'is_configured': settings.is_pal24_enabled(),
@@ -178,6 +185,7 @@ DEFAULT_METHOD_ORDER = [
     'heleket',
     'yookassa',
     'mulenpay',
+    'robokassa',
     'pal24',
     'platega',
     'wata',

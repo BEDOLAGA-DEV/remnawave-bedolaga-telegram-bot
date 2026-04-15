@@ -28,6 +28,7 @@ from app.database.models import (
     PaymentMethod,
     PlategaPayment,
     RioPayPayment,
+    RobokassaPayment,
     SeverPayPayment,
     Transaction,
     TransactionType,
@@ -76,6 +77,7 @@ SUPPORTED_MANUAL_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.KASSA_AI,
         PaymentMethod.RIOPAY,
         PaymentMethod.SEVERPAY,
+        PaymentMethod.ROBOKASSA,
     }
 )
 
@@ -103,6 +105,8 @@ SUPPORTED_AUTO_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
 def method_display_name(method: PaymentMethod) -> str:
     if method == PaymentMethod.MULENPAY:
         return settings.get_mulenpay_display_name()
+    if method == PaymentMethod.ROBOKASSA:
+        return settings.get_robokassa_display_name()
     if method == PaymentMethod.PAL24:
         return 'PayPalych'
     if method == PaymentMethod.YOOKASSA:
@@ -135,6 +139,8 @@ def _method_is_enabled(method: PaymentMethod) -> bool:
         return settings.is_yookassa_enabled()
     if method == PaymentMethod.MULENPAY:
         return settings.is_mulenpay_enabled()
+    if method == PaymentMethod.ROBOKASSA:
+        return settings.is_robokassa_enabled()
     if method == PaymentMethod.PAL24:
         return settings.is_pal24_enabled()
     if method == PaymentMethod.WATA:
@@ -329,6 +335,13 @@ def _is_mulenpay_pending(payment: MulenPayPayment) -> bool:
     return status in {'created', 'processing', 'hold'}
 
 
+def _is_robokassa_pending(payment: RobokassaPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'created', 'processing'}
+
+
 def _is_wata_pending(payment: WataPayment) -> bool:
     if payment.is_paid:
         return False
@@ -502,6 +515,31 @@ async def _fetch_mulenpay_payments(db: AsyncSession, cutoff: datetime) -> list[P
             PaymentMethod.MULENPAY,
             payment,
             identifier=payment.uuid,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _fetch_robokassa_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(RobokassaPayment)
+        .options(selectinload(RobokassaPayment.user))
+        .where(RobokassaPayment.created_at >= cutoff)
+        .order_by(desc(RobokassaPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_robokassa_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.ROBOKASSA,
+            payment,
+            identifier=str(payment.inv_id),
             amount_kopeks=payment.amount_kopeks,
             status=payment.status or '',
             is_paid=bool(payment.is_paid),
@@ -813,6 +851,7 @@ async def list_recent_pending_payments(
         await _fetch_yookassa_payments(db, cutoff),
         await _fetch_pal24_payments(db, cutoff),
         await _fetch_mulenpay_payments(db, cutoff),
+        await _fetch_robokassa_payments(db, cutoff),
         await _fetch_wata_payments(db, cutoff),
         await _fetch_platega_payments(db, cutoff),
         await _fetch_heleket_payments(db, cutoff),
@@ -866,6 +905,20 @@ async def get_payment_record(
             method,
             payment,
             identifier=payment.uuid,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+        )
+
+    if method == PaymentMethod.ROBOKASSA:
+        payment = await db.get(RobokassaPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=str(payment.inv_id),
             amount_kopeks=payment.amount_kopeks,
             status=payment.status or '',
             is_paid=bool(payment.is_paid),
@@ -1054,6 +1107,9 @@ async def run_manual_check(
             payment = result.get('payment') if result else None
         elif method == PaymentMethod.MULENPAY:
             result = await payment_service.get_mulenpay_payment_status(db, local_payment_id)
+            payment = result.get('payment') if result else None
+        elif method == PaymentMethod.ROBOKASSA:
+            result = await payment_service.get_robokassa_payment_status(db, local_payment_id)
             payment = result.get('payment') if result else None
         elif method == PaymentMethod.WATA:
             result = await payment_service.get_wata_payment_status(db, local_payment_id)

@@ -73,6 +73,18 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    if settings.is_robokassa_enabled():
+        robokassa_name = settings.get_robokassa_display_name()
+        methods.append(
+            {
+                'id': 'robokassa',
+                'name': 'Банковская карта',
+                'icon': '💳',
+                'description': f'через {robokassa_name}',
+                'callback': 'topup_robokassa',
+            }
+        )
+
     if settings.is_wata_enabled():
         methods.append(
             {
@@ -285,6 +297,8 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.TRIBUTE_ENABLED
     if method_id == 'mulenpay':
         return settings.is_mulenpay_enabled()
+    if method_id == 'robokassa':
+        return settings.is_robokassa_enabled()
     if method_id == 'wata':
         return settings.is_wata_enabled()
     if method_id == 'pal24':
@@ -325,6 +339,7 @@ def get_payment_method_status() -> dict[str, bool]:
         'yookassa': settings.is_yookassa_enabled(),
         'tribute': settings.TRIBUTE_ENABLED,
         'mulenpay': settings.is_mulenpay_enabled(),
+        'robokassa': settings.is_robokassa_enabled(),
         'wata': settings.is_wata_enabled(),
         'pal24': settings.is_pal24_enabled(),
         'cryptobot': settings.is_cryptobot_enabled(),
@@ -349,6 +364,8 @@ def get_enabled_payment_methods_count() -> int:
     if settings.TRIBUTE_ENABLED:
         count += 1
     if settings.is_mulenpay_enabled():
+        count += 1
+    if settings.is_robokassa_enabled():
         count += 1
     if settings.is_wata_enabled():
         count += 1
