@@ -6,7 +6,7 @@ import hashlib
 import json
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import structlog
 
@@ -155,11 +155,12 @@ class RobokassaService:
         amount_str = self._format_amount(amount_kopeks)
         receipt = self.build_receipt(description, amount_kopeks)
         receipt_str = self._serialize_receipt(receipt) if receipt else None
+        receipt_encoded = quote(receipt_str, safe='') if receipt_str else None
 
         signature = self.build_signature(
             amount_str=amount_str,
             inv_id=inv_id,
-            receipt_str=receipt_str,
+            receipt_str=receipt_encoded,
             user_params=user_params,
         )
 
@@ -173,8 +174,6 @@ class RobokassaService:
         }
         if self.hash_algo and self.hash_algo != 'md5':
             params['SignatureAlgorithm'] = self.hash_algo
-        if receipt_str is not None:
-            params['Receipt'] = receipt_str
         if self.is_test:
             params['IsTest'] = '1'
         if inc_curr_label:
@@ -183,7 +182,10 @@ class RobokassaService:
             for key, value in user_params.items():
                 params[key] = value
 
-        return f'{self.base_url}?{urlencode(params, doseq=False)}'
+        url = f'{self.base_url}?{urlencode(params, doseq=False)}'
+        if receipt_encoded is not None:
+            url += f'&Receipt={receipt_encoded}'
+        return url
 
 
 robokassa_service = RobokassaService()

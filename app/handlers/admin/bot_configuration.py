@@ -2066,7 +2066,7 @@ async def test_payment_provider(
             )
             return
 
-        amount_kopeks = 10 * 100
+        amount_kopeks = max(settings.ROBOKASSA_MIN_AMOUNT_KOPEKS, 10000)
         payment_result = await payment_service.create_robokassa_payment(
             db=db,
             user_id=db_user.id,
