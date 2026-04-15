@@ -17,7 +17,7 @@ from app.config import settings
 from app.database.crud.system_setting import get_setting_value
 from app.database.models import SystemSetting, User
 
-from ..dependencies import get_cabinet_db, require_permission
+from ..dependencies import get_cabinet_db, get_current_cabinet_user, require_permission
 
 
 logger = structlog.get_logger(__name__)
@@ -291,12 +291,24 @@ class GiftEnabledUpdate(BaseModel):
     enabled: bool
 
 
+class OfflineConvGoal(BaseModel):
+    """Yandex Metrika offline conversion goal descriptor."""
+
+    name: str
+    event_id: str
+    dedup: str
+
+
 class AnalyticsCountersResponse(BaseModel):
     """Analytics counter settings."""
 
     yandex_metrika_id: str = ''
     google_ads_id: str = ''
     google_ads_label: str = ''
+    offline_conv_enabled: bool = False
+    offline_conv_counter_id: str = ''
+    offline_conv_measurement_secret_masked: str = ''
+    offline_conv_goals: list[OfflineConvGoal] = []
 
 
 class AnalyticsCountersUpdate(BaseModel):
@@ -924,10 +936,27 @@ async def get_analytics_counters(
     google_id = await get_setting_value(db, GOOGLE_ADS_ID_KEY) or ''
     google_label = await get_setting_value(db, GOOGLE_ADS_LABEL_KEY) or ''
 
+    # Yandex Metrika offline conversions snapshot from Settings
+    oc_enabled = bool(getattr(settings, 'YANDEX_OFFLINE_CONV_ENABLED', False))
+    oc_counter = str(getattr(settings, 'YANDEX_OFFLINE_CONV_COUNTER_ID', '') or '')
+    oc_secret = str(getattr(settings, 'YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET', '') or '')
+    oc_secret_masked = (oc_secret[:8] + '...' + oc_secret[-4:]) if len(oc_secret) > 12 else ('***' if oc_secret else '')
+    oc_goals: list[OfflineConvGoal] = []
+    if oc_enabled:
+        oc_goals = [
+            OfflineConvGoal(name='Registration', event_id='registration', dedup='user_id'),
+            OfflineConvGoal(name='Trial', event_id='trial-add', dedup='user_id'),
+            OfflineConvGoal(name='Purchase', event_id='purchase', dedup='order_id'),
+        ]
+
     return AnalyticsCountersResponse(
         yandex_metrika_id=yandex_id,
         google_ads_id=google_id,
         google_ads_label=google_label,
+        offline_conv_enabled=oc_enabled,
+        offline_conv_counter_id=oc_counter,
+        offline_conv_measurement_secret_masked=oc_secret_masked,
+        offline_conv_goals=oc_goals,
     )
 
 
@@ -966,11 +995,54 @@ async def update_analytics_counters(
     google_id = await get_setting_value(db, GOOGLE_ADS_ID_KEY) or ''
     google_label = await get_setting_value(db, GOOGLE_ADS_LABEL_KEY) or ''
 
+    oc_enabled = bool(getattr(settings, 'YANDEX_OFFLINE_CONV_ENABLED', False))
+    oc_counter = str(getattr(settings, 'YANDEX_OFFLINE_CONV_COUNTER_ID', '') or '')
+    oc_secret = str(getattr(settings, 'YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET', '') or '')
+    oc_secret_masked = (oc_secret[:8] + '...' + oc_secret[-4:]) if len(oc_secret) > 12 else ('***' if oc_secret else '')
+    oc_goals: list[OfflineConvGoal] = []
+    if oc_enabled:
+        oc_goals = [
+            OfflineConvGoal(name='Registration', event_id='registration', dedup='user_id'),
+            OfflineConvGoal(name='Trial', event_id='trial-add', dedup='user_id'),
+            OfflineConvGoal(name='Purchase', event_id='purchase', dedup='order_id'),
+        ]
+
     return AnalyticsCountersResponse(
         yandex_metrika_id=yandex_id,
         google_ads_id=google_id,
         google_ads_label=google_label,
+        offline_conv_enabled=oc_enabled,
+        offline_conv_counter_id=oc_counter,
+        offline_conv_measurement_secret_masked=oc_secret_masked,
+        offline_conv_goals=oc_goals,
     )
+
+
+# ============ Yandex CID Sync ============
+
+
+class YandexCidRequest(BaseModel):
+    cid: str = Field(max_length=128, pattern=r'^[A-Za-z0-9._:-]{4,128}$')
+
+
+@router.post('/analytics/yandex-cid', status_code=204)
+async def store_yandex_cid(
+    body: YandexCidRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Store Yandex Metrika ClientID for the authenticated cabinet user."""
+    try:
+        from app.services import yandex_offline_conv_service as yandex_conv
+
+        await yandex_conv.store_cid(db, user.id, body.cid, source='cabinet')
+        await db.commit()
+    except Exception as exc:
+        logger.warning('Failed to store yandex_cid', user_id=user.id, exc=str(exc))
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
 
 # ============ Lite Mode Routes ============
