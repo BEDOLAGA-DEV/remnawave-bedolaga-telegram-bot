@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.48.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.48.0...v3.48.1) (2026-04-16)
+
+
+### Documentation
+
+* add PayPear and RollyPay to README with partner blocks ([1c696c6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1c696c69e34e668ff90c915249b7c3dc37bfd89b))
+* add PayPear and RollyPay to README with partner blocks ([b531959](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b53195998231d34b6e1c7165193e87fee6e5c293))
+
 ## [3.48.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.47.0...v3.48.0) (2026-04-16)
 
 
