@@ -283,6 +283,8 @@ async def on_registration(db: AsyncSession, user_id: int) -> None:
         row = await get_cid(db, user_id)
         if not row or row.registration_sent:
             return
+        if not row.yandex_cid or row.yandex_cid.startswith('_'):
+            return  # placeholder row — real CID not yet received
 
         success = await _send_event(row.yandex_cid, 'registration')
         if success:
@@ -302,6 +304,8 @@ async def on_trial(db: AsyncSession, user_id: int) -> None:
         row = await get_cid(db, user_id)
         if not row or row.trial_sent:
             return
+        if not row.yandex_cid or row.yandex_cid.startswith('_'):
+            return  # placeholder row — real CID not yet received
 
         success = await _send_event(row.yandex_cid, 'trial-add')
         if success:
@@ -321,6 +325,8 @@ async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> Non
         row = await get_cid(db, user_id)
         if not row:
             return
+        if not row.yandex_cid or row.yandex_cid.startswith('_'):
+            return  # placeholder row — real CID not yet received
 
         amount_rubles = amount_kopeks / 100
         payload = _ecommerce_purchase_payload(row.yandex_cid, amount_rubles)
