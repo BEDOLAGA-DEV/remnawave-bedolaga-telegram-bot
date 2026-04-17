@@ -57,6 +57,9 @@ class WebhookServer:
 
         self.app.router.add_get('/health', self._health_check)
 
+        if settings.is_apple_iap_enabled():
+            self.app.router.add_post(settings.APPLE_IAP_WEBHOOK_PATH, self._apple_iap_webhook_handler)
+
         self.app.router.add_options(settings.TRIBUTE_WEBHOOK_PATH, self._options_handler)
         if settings.is_mulenpay_enabled():
             self.app.router.add_options(settings.MULENPAY_WEBHOOK_PATH, self._options_handler)
@@ -64,6 +67,8 @@ class WebhookServer:
             self.app.router.add_options(settings.CRYPTOBOT_WEBHOOK_PATH, self._options_handler)
         if settings.is_freekassa_enabled():
             self.app.router.add_options(settings.FREEKASSA_WEBHOOK_PATH, self._options_handler)
+        if settings.is_apple_iap_enabled():
+            self.app.router.add_options(settings.APPLE_IAP_WEBHOOK_PATH, self._options_handler)
 
         logger.info('Webhook сервер настроен:')
         logger.info('Tribute webhook: POST', TRIBUTE_WEBHOOK_PATH=settings.TRIBUTE_WEBHOOK_PATH)
@@ -76,6 +81,8 @@ class WebhookServer:
             logger.info('CryptoBot webhook: POST', CRYPTOBOT_WEBHOOK_PATH=settings.CRYPTOBOT_WEBHOOK_PATH)
         if settings.is_freekassa_enabled():
             logger.info('Freekassa webhook: POST', FREEKASSA_WEBHOOK_PATH=settings.FREEKASSA_WEBHOOK_PATH)
+        if settings.is_apple_iap_enabled():
+            logger.info('Apple IAP webhook: POST', APPLE_IAP_WEBHOOK_PATH=settings.APPLE_IAP_WEBHOOK_PATH)
         logger.info('  - Health check: GET /health')
 
         return self.app
@@ -491,3 +498,327 @@ class WebhookServer:
         except Exception as e:
             logger.error('Критическая ошибка обработки Freekassa webhook', error=e, exc_info=True)
             return web.Response(text='NO', status=500)
+
+    async def _apple_iap_webhook_handler(self, request: web.Request) -> web.Response:
+        """Handle Apple App Store Server Notifications V2."""
+        try:
+            logger.info('Получен Apple IAP webhook', method=request.method, path=request.path)
+
+            raw_body = await request.read()
+            if not raw_body:
+                logger.warning('Пустой Apple IAP webhook')
+                return web.Response(status=400)
+
+            try:
+                body = json.loads(raw_body.decode('utf-8'))
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logger.error('Ошибка парсинга Apple IAP webhook', error=e)
+                return web.Response(status=400)
+
+            signed_payload = body.get('signedPayload')
+            if not signed_payload:
+                logger.warning('No signedPayload in Apple webhook')
+                return web.Response(status=400)
+
+            # Verify and decode the notification
+            from app.external.apple_iap import AppleIAPService
+
+            apple_service = AppleIAPService()
+            notification = apple_service.verify_notification(signed_payload)
+            if not notification:
+                logger.warning('Apple webhook signature verification failed')
+                return web.Response(status=403)
+
+            notification_type = notification.get('notificationType', '')
+            subtype = notification.get('subtype', '')
+
+            # Verify notification environment matches our config
+            notif_env = notification.get('data', {}).get('environment', '')
+            expected_envs = {'Production', 'Sandbox'}  # accept both during review
+            if settings.APPLE_IAP_ENVIRONMENT == 'Production':
+                expected_envs = {'Production', 'Sandbox'}  # Sandbox for App Review
+            else:
+                expected_envs = {'Sandbox'}
+            if notif_env and notif_env not in expected_envs:
+                logger.warning(
+                    'Apple webhook environment mismatch',
+                    expected=settings.APPLE_IAP_ENVIRONMENT,
+                    received=notif_env,
+                )
+                return web.Response(status=200)  # ACK but ignore
+
+            logger.info(
+                'Apple notification received',
+                notification_type=notification_type,
+                subtype=subtype,
+                environment=notif_env,
+            )
+
+            # Handle notification types
+            if notification_type == 'TEST':
+                logger.info('Apple TEST notification received — OK')
+                return web.Response(status=200)
+
+            if notification_type == 'REFUND':
+                await self._handle_apple_refund(notification, apple_service)
+                return web.Response(status=200)
+
+            if notification_type == 'REFUND_REVERSED':
+                await self._handle_apple_refund_reversed(notification)
+                return web.Response(status=200)
+
+            if notification_type == 'CONSUMPTION_REQUEST':
+                await self._handle_apple_consumption_request(notification, apple_service)
+                return web.Response(status=200)
+
+            if notification_type in ('ONE_TIME_CHARGE', 'REFUND_DECLINED'):
+                logger.info('Apple notification logged', notification_type=notification_type)
+                return web.Response(status=200)
+
+            logger.info('Unhandled Apple notification type', notification_type=notification_type)
+            return web.Response(status=200)
+
+        except Exception as e:
+            logger.error('Критическая ошибка обработки Apple IAP webhook', error=e, exc_info=True)
+            return web.Response(status=500)
+
+    async def _handle_apple_refund(self, notification: dict, apple_service) -> None:
+        """Handle REFUND notification — deduct credited balance."""
+        try:
+            data = notification.get('data', {})
+            signed_txn_info = data.get('signedTransactionInfo')
+            if not signed_txn_info:
+                logger.warning('No signedTransactionInfo in REFUND notification')
+                return
+
+            txn_info = apple_service._verify_and_decode_jws(signed_txn_info)
+            if not txn_info:
+                logger.warning('Failed to verify REFUND transaction info')
+                return
+
+            apple_txn_id = str(txn_info.get('transactionId', ''))
+            original_txn_id = str(txn_info.get('originalTransactionId', ''))
+            product_id = txn_info.get('productId', '')
+
+            from app.database.crud.apple_iap import (
+                get_apple_transaction_by_transaction_id,
+                mark_apple_transaction_refunded,
+            )
+            from app.database.crud.transaction import create_transaction
+            from app.database.crud.user import get_user_by_id, subtract_user_balance
+            from app.database.database import AsyncSessionLocal
+            from app.database.models import PaymentMethod, TransactionType
+
+            lookup_id = original_txn_id or apple_txn_id
+
+            async with AsyncSessionLocal() as db:
+                apple_txn = await get_apple_transaction_by_transaction_id(db, lookup_id)
+                if not apple_txn:
+                    # Try the other ID
+                    apple_txn = await get_apple_transaction_by_transaction_id(db, apple_txn_id)
+
+                if not apple_txn:
+                    logger.warning(
+                        'Apple REFUND: transaction not found',
+                        transaction_id=apple_txn_id,
+                        original_transaction_id=original_txn_id,
+                    )
+                    return
+
+                if apple_txn.status == 'refunded':
+                    logger.info('Apple REFUND: already refunded', transaction_id=lookup_id)
+                    return
+
+                if apple_txn.environment == 'Sandbox' and settings.APPLE_IAP_ENVIRONMENT == 'Production':
+                    logger.info(
+                        'Apple REFUND: ignoring sandbox refund on production',
+                        transaction_id=lookup_id,
+                        user_id=apple_txn.user_id,
+                    )
+                    return
+
+                user = await get_user_by_id(db, apple_txn.user_id)
+                if not user:
+                    logger.error('Apple REFUND: user not found', user_id=apple_txn.user_id)
+                    return
+
+                # Cap deduction to current balance to prevent negative balance
+                refund_amount = min(apple_txn.amount_kopeks, user.balance_kopeks)
+                if refund_amount < apple_txn.amount_kopeks:
+                    logger.warning(
+                        'Apple REFUND: partial balance deduction (user already spent funds)',
+                        full_amount=apple_txn.amount_kopeks,
+                        deducted=refund_amount,
+                        user_balance=user.balance_kopeks,
+                        user_id=user.id,
+                    )
+
+                    # Disable active subscriptions — funds were spent and refunded
+                    from app.database.crud.subscription import (
+                        deactivate_subscription,
+                        get_active_subscriptions_by_user_id,
+                    )
+
+                    active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+                    for sub in active_subs:
+                        await deactivate_subscription(db, sub, commit=False)
+                        logger.warning(
+                            'Apple REFUND: disabled subscription due to insufficient balance',
+                            subscription_id=sub.id,
+                            user_id=user.id,
+                        )
+
+                if refund_amount > 0:
+                    await subtract_user_balance(
+                        db=db,
+                        user=user,
+                        amount_kopeks=refund_amount,
+                        description=f'Возврат Apple IAP: {product_id}',
+                        create_transaction=True,
+                        payment_method=PaymentMethod.APPLE_IAP,
+                        transaction_type=TransactionType.REFUND,
+                        commit=False,
+                    )
+
+                await mark_apple_transaction_refunded(db, apple_txn.transaction_id)
+                await db.commit()
+
+                logger.info(
+                    '✅ Apple REFUND processed',
+                    transaction_id=apple_txn.transaction_id,
+                    amount_kopeks=apple_txn.amount_kopeks,
+                    user_id=user.id,
+                )
+
+        except Exception as e:
+            logger.error('Error handling Apple REFUND', error=e, exc_info=True)
+
+    async def _handle_apple_refund_reversed(self, notification: dict) -> None:
+        """Handle REFUND_REVERSED — re-credit balance that was previously deducted."""
+        try:
+            data = notification.get('data', {})
+            signed_txn_info = data.get('signedTransactionInfo')
+            if not signed_txn_info:
+                logger.warning('No signedTransactionInfo in REFUND_REVERSED notification')
+                return
+
+            from app.external.apple_iap import AppleIAPService
+
+            apple_service = AppleIAPService()
+            txn_info = apple_service._verify_and_decode_jws(signed_txn_info)
+            if not txn_info:
+                logger.warning('Failed to verify REFUND_REVERSED transaction info')
+                return
+
+            apple_txn_id = str(txn_info.get('transactionId', ''))
+            original_txn_id = str(txn_info.get('originalTransactionId', ''))
+            product_id = txn_info.get('productId', '')
+
+            from app.database.crud.apple_iap import get_apple_transaction_by_transaction_id
+            from app.database.crud.user import add_user_balance, get_user_by_id
+            from app.database.database import AsyncSessionLocal
+            from app.database.models import PaymentMethod
+
+            lookup_id = original_txn_id or apple_txn_id
+
+            async with AsyncSessionLocal() as db:
+                apple_txn = await get_apple_transaction_by_transaction_id(db, lookup_id)
+                if not apple_txn:
+                    apple_txn = await get_apple_transaction_by_transaction_id(db, apple_txn_id)
+
+                if not apple_txn:
+                    logger.warning(
+                        'Apple REFUND_REVERSED: transaction not found',
+                        transaction_id=apple_txn_id,
+                    )
+                    return
+
+                if apple_txn.status != 'refunded':
+                    logger.info(
+                        'Apple REFUND_REVERSED: transaction not in refunded state',
+                        transaction_id=lookup_id,
+                        status=apple_txn.status,
+                    )
+                    return
+
+                if apple_txn.environment == 'Sandbox' and settings.APPLE_IAP_ENVIRONMENT == 'Production':
+                    logger.info(
+                        'Apple REFUND_REVERSED: ignoring sandbox on production',
+                        transaction_id=lookup_id,
+                    )
+                    return
+
+                user = await get_user_by_id(db, apple_txn.user_id)
+                if not user:
+                    logger.error('Apple REFUND_REVERSED: user not found', user_id=apple_txn.user_id)
+                    return
+
+                # Re-credit the balance
+                await add_user_balance(
+                    db=db,
+                    user=user,
+                    amount_kopeks=apple_txn.amount_kopeks,
+                    description=f'Отмена возврата Apple IAP: {product_id}',
+                    payment_method=PaymentMethod.APPLE_IAP,
+                    commit=False,
+                )
+
+                apple_txn.status = 'verified'
+                apple_txn.refunded_at = None
+                await db.commit()
+
+                logger.info(
+                    '✅ Apple REFUND_REVERSED processed — balance re-credited',
+                    transaction_id=lookup_id,
+                    amount_kopeks=apple_txn.amount_kopeks,
+                    user_id=user.id,
+                )
+
+        except Exception as e:
+            logger.error('Error handling Apple REFUND_REVERSED', error=e, exc_info=True)
+
+    async def _handle_apple_consumption_request(self, notification: dict, apple_service) -> None:
+        """Handle CONSUMPTION_REQUEST — send consumption info to Apple."""
+        try:
+            data = notification.get('data', {})
+            signed_txn_info = data.get('signedTransactionInfo')
+            if not signed_txn_info:
+                logger.warning('No signedTransactionInfo in CONSUMPTION_REQUEST')
+                return
+
+            txn_info = apple_service._verify_and_decode_jws(signed_txn_info)
+            if not txn_info:
+                logger.warning('Failed to verify CONSUMPTION_REQUEST transaction info')
+                return
+
+            apple_txn_id = str(txn_info.get('transactionId', ''))
+            environment = txn_info.get('environment', settings.APPLE_IAP_ENVIRONMENT)
+
+            from app.database.crud.apple_iap import get_apple_transaction_by_transaction_id
+            from app.database.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as db:
+                apple_txn = await get_apple_transaction_by_transaction_id(db, apple_txn_id)
+
+            # Determine if balance was consumed (spent on subscriptions)
+            # consumptionStatus: 0 = undeclared, 1 = not consumed, 2 = partially consumed, 3 = fully consumed
+            consumption_status = 0
+            if apple_txn and apple_txn.status == 'verified':
+                consumption_status = 3  # Balance was credited and likely spent
+
+            # customerConsented must be false — we cannot prompt the user
+            # in a server-to-server webhook.  Apple accepts the response
+            # regardless, but the consumption data weight may be lower.
+            await apple_service.send_consumption_info(
+                transaction_id=apple_txn_id,
+                customer_consented=False,
+                consumption_status=consumption_status,
+                delivery_status=0,  # 0 = delivered
+                platform=1,  # 1 = Apple
+                environment=environment,
+            )
+
+            logger.info('Apple CONSUMPTION_REQUEST handled', transaction_id=apple_txn_id)
+
+        except Exception as e:
+            logger.error('Error handling Apple CONSUMPTION_REQUEST', error=e, exc_info=True)
