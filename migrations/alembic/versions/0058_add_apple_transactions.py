@@ -1,7 +1,7 @@
 """add apple_transactions table
 
-Revision ID: 0054
-Revises: 0053
+Revision ID: 0058
+Revises: 0057
 Create Date: 2026-04-11
 
 """
@@ -11,8 +11,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0054'
-down_revision: Union[str, None] = '0053'
+revision: str = '0058'
+down_revision: Union[str, None] = '0057'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -33,6 +33,7 @@ def upgrade() -> None:
         sa.Column('paid_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('refunded_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('transaction_id_fk', sa.Integer(), sa.ForeignKey('transactions.id'), nullable=True),
+        sa.Column('metadata_json', sa.JSON(), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
     )

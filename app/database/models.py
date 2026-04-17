@@ -345,6 +345,7 @@ class AppleTransaction(Base):
     refunded_at = Column(AwareDateTime(), nullable=True)
 
     transaction_id_fk = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+    metadata_json = Column(JSON, nullable=True)
 
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())

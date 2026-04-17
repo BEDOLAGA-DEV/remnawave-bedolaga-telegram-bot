@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import datetime
 import json
 import time
 from typing import Any
@@ -20,8 +21,11 @@ from app.config import settings
 
 logger = structlog.get_logger(__name__)
 
-# Apple Root CA certificates (G3) fingerprint for chain validation
-APPLE_ROOT_CA_G3_SUBJECT_CN = 'Apple Root CA - G3'
+# Apple Root CA - G3 SHA-256 fingerprint for chain pinning
+# https://www.apple.com/certificateauthority/
+APPLE_ROOT_CA_G3_SHA256 = bytes.fromhex(
+    'b0b1730ecbc7ff4505142c49f1295e6eda6bcaed7e2c68c5be91b5a11001f024'
+)
 
 PRODUCTION_BASE_URL = 'https://api.storekit.itunes.apple.com'
 SANDBOX_BASE_URL = 'https://api.storekit-sandbox.itunes.apple.com'
@@ -61,20 +65,16 @@ class AppleIAPService:
 
         return pyjwt.encode(payload, private_key, algorithm='ES256', headers=headers)
 
-    async def verify_transaction(
-        self, transaction_id: str, environment: str | None = None
-    ) -> dict[str, Any] | None:
-        """Verify a transaction with Apple's App Store Server API.
-
-        Returns the decoded transaction info or None on failure.
-        """
-        base_url = self._get_base_url(environment)
+    async def _fetch_transaction(
+        self, transaction_id: str, base_url: str,
+    ) -> httpx.Response | None:
+        """Send a GET request to Apple's transaction lookup endpoint."""
         url = f'{base_url}/inApps/v1/transactions/{transaction_id}'
         token = self._generate_jwt()
 
         async with httpx.AsyncClient(timeout=30) as client:
             try:
-                response = await client.get(
+                return await client.get(
                     url,
                     headers={'Authorization': f'Bearer {token}'},
                 )
@@ -82,18 +82,64 @@ class AppleIAPService:
                 logger.error('Apple API request failed', error=str(e), transaction_id=transaction_id)
                 return None
 
-        if response.status_code == 200:
-            data = response.json()
-            signed_transaction_info = data.get('signedTransactionInfo')
-            if signed_transaction_info:
-                decoded = self._decode_jws_payload(signed_transaction_info)
-                if decoded:
-                    return decoded
-                logger.warning('Failed to decode signedTransactionInfo', transaction_id=transaction_id)
-                return None
-            logger.warning('No signedTransactionInfo in response', transaction_id=transaction_id)
+    async def verify_transaction(
+        self, transaction_id: str, environment: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Verify a transaction with Apple's App Store Server API.
+
+        Follows Apple's recommendation: if the configured environment returns
+        a 4xx error, retries against the opposite environment.  This ensures
+        Sandbox purchases made during App Review still verify when the server
+        is configured for Production.
+        """
+        primary_url = self._get_base_url(environment)
+        # Determine fallback URL (opposite environment)
+        fallback_url = (
+            SANDBOX_BASE_URL if primary_url == PRODUCTION_BASE_URL else PRODUCTION_BASE_URL
+        )
+
+        for attempt_url in (primary_url, fallback_url):
+            response = await self._fetch_transaction(transaction_id, attempt_url)
+            if response is None:
+                return None  # network error — don't retry
+
+            if response.status_code == 200:
+                return self._parse_transaction_response(response, transaction_id)
+
+            # 4xx on primary → retry on fallback per Apple docs
+            if 400 <= response.status_code < 500 and attempt_url == primary_url:
+                logger.info(
+                    'Apple API returned 4xx on primary env, retrying fallback',
+                    status=response.status_code,
+                    primary=attempt_url,
+                    fallback=fallback_url,
+                    transaction_id=transaction_id,
+                )
+                continue
+
+            # Log the final failure
+            self._log_api_error(response, transaction_id)
             return None
 
+        return None
+
+    def _parse_transaction_response(
+        self, response: httpx.Response, transaction_id: str,
+    ) -> dict[str, Any] | None:
+        """Extract and verify signedTransactionInfo from a 200 response."""
+        data = response.json()
+        signed_transaction_info = data.get('signedTransactionInfo')
+        if signed_transaction_info:
+            decoded = self._verify_and_decode_jws(signed_transaction_info)
+            if decoded:
+                return decoded
+            logger.warning('Failed to verify signedTransactionInfo', transaction_id=transaction_id)
+            return None
+        logger.warning('No signedTransactionInfo in response', transaction_id=transaction_id)
+        return None
+
+    @staticmethod
+    def _log_api_error(response: httpx.Response, transaction_id: str) -> None:
         if response.status_code == 404:
             logger.warning('Apple transaction not found', transaction_id=transaction_id)
         elif response.status_code == 401:
@@ -107,8 +153,6 @@ class AppleIAPService:
                 body=response.text[:500],
                 transaction_id=transaction_id,
             )
-
-        return None
 
     def validate_transaction_info(self, txn_info: dict[str, Any], expected_product_id: str) -> str | None:
         """Validate decoded transaction info fields.
@@ -127,24 +171,26 @@ class AppleIAPService:
         if txn_type != 'Consumable':
             return f'Unexpected transaction type: {txn_type}'
 
+        if txn_info.get('revocationDate'):
+            return f'Transaction was revoked at {txn_info["revocationDate"]}'
+
         return None
 
-    def verify_notification(self, signed_payload: str) -> dict[str, Any] | None:
-        """Verify and decode an App Store Server Notification V2 payload.
+    def _verify_and_decode_jws(self, jws_token: str) -> dict[str, Any] | None:
+        """Verify x5c certificate chain and ES256 signature, then decode the JWS payload.
 
-        Verifies the JWS x5c certificate chain, then returns the decoded payload.
-        Returns None if verification fails.
+        Returns the decoded payload dict, or None if verification fails.
+        Used for both outer notification payloads and inner signed data
+        (signedTransactionInfo, signedRenewalInfo).
         """
         try:
-            # Split JWS into parts
-            parts = signed_payload.split('.')
+            parts = jws_token.split('.')
             if len(parts) != 3:
                 logger.warning('Invalid JWS format: expected 3 parts')
                 return None
 
             # Decode header to get x5c chain
             header_b64 = parts[0]
-            # Add padding if necessary
             padding = 4 - len(header_b64) % 4
             if padding != 4:
                 header_b64 += '=' * padding
@@ -166,7 +212,6 @@ class AppleIAPService:
             leaf_cert = load_der_x509_certificate(leaf_cert_der)
             public_key = leaf_cert.public_key()
 
-            # Verify JWS signature
             signing_input = f'{parts[0]}.{parts[1]}'.encode('ascii')
             signature_b64 = parts[2]
             sig_padding = 4 - len(signature_b64) % 4
@@ -182,12 +227,20 @@ class AppleIAPService:
 
             public_key.verify(signature, signing_input, ec.ECDSA(SHA256()))
 
-            # Decode payload
-            return self._decode_jws_payload(signed_payload)
+            # Signature valid — decode payload
+            return self._decode_jws_payload(jws_token)
 
         except Exception as e:
-            logger.error('Failed to verify Apple notification', error=str(e), exc_info=True)
+            logger.error('JWS verification failed', error=str(e), exc_info=True)
             return None
+
+    def verify_notification(self, signed_payload: str) -> dict[str, Any] | None:
+        """Verify and decode an App Store Server Notification V2 payload.
+
+        Verifies the JWS x5c certificate chain, then returns the decoded payload.
+        Returns None if verification fails.
+        """
+        return self._verify_and_decode_jws(signed_payload)
 
     def _verify_x5c_chain(self, x5c_chain: list[str]) -> bool:
         """Verify the x5c certificate chain ends with an Apple Root CA."""
@@ -202,16 +255,24 @@ class AppleIAPService:
                 cert = load_der_x509_certificate(cert_der)
                 certs.append(cert)
 
-            # Check the root (last) certificate is Apple's
-            root_cert = certs[-1]
-            root_cn = None
-            for attr in root_cert.subject:
-                if attr.oid == x509.oid.NameOID.COMMON_NAME:
-                    root_cn = attr.value
-                    break
+            # Check certificate validity periods
+            now = datetime.datetime.now(datetime.timezone.utc)
+            for i, cert in enumerate(certs):
+                if now < cert.not_valid_before_utc:
+                    logger.warning('x5c cert not yet valid', index=i, not_before=str(cert.not_valid_before_utc))
+                    return False
+                if now > cert.not_valid_after_utc:
+                    logger.warning('x5c cert expired', index=i, not_after=str(cert.not_valid_after_utc))
+                    return False
 
-            if root_cn != APPLE_ROOT_CA_G3_SUBJECT_CN:
-                logger.warning('Root CA is not Apple Root CA - G3', root_cn=root_cn)
+            # Pin the root (last) certificate by SHA-256 fingerprint
+            root_cert = certs[-1]
+            root_fingerprint = root_cert.fingerprint(SHA256())
+            if root_fingerprint != APPLE_ROOT_CA_G3_SHA256:
+                logger.warning(
+                    'Root CA fingerprint mismatch — not genuine Apple Root CA - G3',
+                    got=root_fingerprint.hex(),
+                )
                 return False
 
             # Verify each certificate is signed by the next one in the chain

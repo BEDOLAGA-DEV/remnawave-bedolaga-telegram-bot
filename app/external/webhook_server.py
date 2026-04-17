@@ -531,10 +531,27 @@ class WebhookServer:
 
             notification_type = notification.get('notificationType', '')
             subtype = notification.get('subtype', '')
+
+            # Verify notification environment matches our config
+            notif_env = notification.get('data', {}).get('environment', '')
+            expected_envs = {'Production', 'Sandbox'}  # accept both during review
+            if settings.APPLE_IAP_ENVIRONMENT == 'Production':
+                expected_envs = {'Production', 'Sandbox'}  # Sandbox for App Review
+            else:
+                expected_envs = {'Sandbox'}
+            if notif_env and notif_env not in expected_envs:
+                logger.warning(
+                    'Apple webhook environment mismatch',
+                    expected=settings.APPLE_IAP_ENVIRONMENT,
+                    received=notif_env,
+                )
+                return web.Response(status=200)  # ACK but ignore
+
             logger.info(
                 'Apple notification received',
                 notification_type=notification_type,
                 subtype=subtype,
+                environment=notif_env,
             )
 
             # Handle notification types
@@ -574,9 +591,9 @@ class WebhookServer:
                 logger.warning('No signedTransactionInfo in REFUND notification')
                 return
 
-            txn_info = apple_service._decode_jws_payload(signed_txn_info)
+            txn_info = apple_service._verify_and_decode_jws(signed_txn_info)
             if not txn_info:
-                logger.warning('Failed to decode REFUND transaction info')
+                logger.warning('Failed to verify REFUND transaction info')
                 return
 
             apple_txn_id = str(txn_info.get('transactionId', ''))
@@ -612,29 +629,63 @@ class WebhookServer:
                     logger.info('Apple REFUND: already refunded', transaction_id=lookup_id)
                     return
 
+                if apple_txn.environment == 'Sandbox' and settings.APPLE_IAP_ENVIRONMENT == 'Production':
+                    logger.info(
+                        'Apple REFUND: ignoring sandbox refund on production',
+                        transaction_id=lookup_id,
+                        user_id=apple_txn.user_id,
+                    )
+                    return
+
                 user = await get_user_by_id(db, apple_txn.user_id)
                 if not user:
                     logger.error('Apple REFUND: user not found', user_id=apple_txn.user_id)
                     return
 
-                # Deduct balance
-                await subtract_user_balance(
-                    db=db,
-                    user=user,
-                    amount_kopeks=apple_txn.amount_kopeks,
-                    description=f'Возврат Apple IAP: {product_id}',
-                    create_transaction=True,
-                    payment_method=PaymentMethod.APPLE_IAP,
-                    transaction_type=TransactionType.REFUND,
-                    commit=False,
-                )
+                # Cap deduction to current balance to prevent negative balance
+                refund_amount = min(apple_txn.amount_kopeks, user.balance_kopeks)
+                if refund_amount < apple_txn.amount_kopeks:
+                    logger.warning(
+                        'Apple REFUND: partial balance deduction (user already spent funds)',
+                        full_amount=apple_txn.amount_kopeks,
+                        deducted=refund_amount,
+                        user_balance=user.balance_kopeks,
+                        user_id=user.id,
+                    )
 
-                await mark_apple_transaction_refunded(db, lookup_id)
+                    # Disable active subscriptions — funds were spent and refunded
+                    from app.database.crud.subscription import (
+                        deactivate_subscription,
+                        get_active_subscriptions_by_user_id,
+                    )
+
+                    active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+                    for sub in active_subs:
+                        await deactivate_subscription(db, sub, commit=False)
+                        logger.warning(
+                            'Apple REFUND: disabled subscription due to insufficient balance',
+                            subscription_id=sub.id,
+                            user_id=user.id,
+                        )
+
+                if refund_amount > 0:
+                    await subtract_user_balance(
+                        db=db,
+                        user=user,
+                        amount_kopeks=refund_amount,
+                        description=f'Возврат Apple IAP: {product_id}',
+                        create_transaction=True,
+                        payment_method=PaymentMethod.APPLE_IAP,
+                        transaction_type=TransactionType.REFUND,
+                        commit=False,
+                    )
+
+                await mark_apple_transaction_refunded(db, apple_txn.transaction_id)
                 await db.commit()
 
                 logger.info(
                     '✅ Apple REFUND processed',
-                    transaction_id=lookup_id,
+                    transaction_id=apple_txn.transaction_id,
                     amount_kopeks=apple_txn.amount_kopeks,
                     user_id=user.id,
                 )
@@ -654,9 +705,9 @@ class WebhookServer:
             from app.external.apple_iap import AppleIAPService
 
             apple_service = AppleIAPService()
-            txn_info = apple_service._decode_jws_payload(signed_txn_info)
+            txn_info = apple_service._verify_and_decode_jws(signed_txn_info)
             if not txn_info:
-                logger.warning('Failed to decode REFUND_REVERSED transaction info')
+                logger.warning('Failed to verify REFUND_REVERSED transaction info')
                 return
 
             apple_txn_id = str(txn_info.get('transactionId', ''))
@@ -687,6 +738,13 @@ class WebhookServer:
                         'Apple REFUND_REVERSED: transaction not in refunded state',
                         transaction_id=lookup_id,
                         status=apple_txn.status,
+                    )
+                    return
+
+                if apple_txn.environment == 'Sandbox' and settings.APPLE_IAP_ENVIRONMENT == 'Production':
+                    logger.info(
+                        'Apple REFUND_REVERSED: ignoring sandbox on production',
+                        transaction_id=lookup_id,
                     )
                     return
 
@@ -728,9 +786,9 @@ class WebhookServer:
                 logger.warning('No signedTransactionInfo in CONSUMPTION_REQUEST')
                 return
 
-            txn_info = apple_service._decode_jws_payload(signed_txn_info)
+            txn_info = apple_service._verify_and_decode_jws(signed_txn_info)
             if not txn_info:
-                logger.warning('Failed to decode CONSUMPTION_REQUEST transaction info')
+                logger.warning('Failed to verify CONSUMPTION_REQUEST transaction info')
                 return
 
             apple_txn_id = str(txn_info.get('transactionId', ''))
@@ -748,9 +806,12 @@ class WebhookServer:
             if apple_txn and apple_txn.status == 'verified':
                 consumption_status = 3  # Balance was credited and likely spent
 
+            # customerConsented must be false — we cannot prompt the user
+            # in a server-to-server webhook.  Apple accepts the response
+            # regardless, but the consumption data weight may be lower.
             await apple_service.send_consumption_info(
                 transaction_id=apple_txn_id,
-                customer_consented=True,
+                customer_consented=False,
                 consumption_status=consumption_status,
                 delivery_status=0,  # 0 = delivered
                 platform=1,  # 1 = Apple
