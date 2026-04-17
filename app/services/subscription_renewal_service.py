@@ -491,20 +491,20 @@ class SubscriptionRenewalService:
         subscription_service = SubscriptionService()
         try:
             await db.refresh(user)
-            _renew_uuid = (
-                subscription_after.remnawave_uuid
-                if settings.is_multi_tariff_enabled() and subscription_after.remnawave_uuid
-                else getattr(user, 'remnawave_uuid', None)
-            )
-            if _renew_uuid:
-                await subscription_service.update_remnawave_user(
+            if settings.is_multi_tariff_enabled():
+                _should_create = not subscription_after.remnawave_uuid
+            else:
+                _should_create = not getattr(user, 'remnawave_uuid', None)
+
+            if _should_create:
+                await subscription_service.create_remnawave_user(
                     db,
                     subscription_after,
                     reset_traffic=reset_traffic,
                     reset_reason='subscription renewal',
                 )
             else:
-                await subscription_service.create_remnawave_user(
+                await subscription_service.update_remnawave_user(
                     db,
                     subscription_after,
                     reset_traffic=reset_traffic,
@@ -517,6 +517,13 @@ class SubscriptionRenewalService:
                 'Failed to sync RemnaWave user for subscription',
                 subscription_after_id=subscription_after.id,
                 error=error,
+            )
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription_after.id,
+                user_id=subscription_after.user_id,
+                action='create' if not getattr(subscription_after, 'remnawave_uuid', None) else 'update',
             )
 
         transaction: Transaction | None = None

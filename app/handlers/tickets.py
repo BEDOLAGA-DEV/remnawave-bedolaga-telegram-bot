@@ -983,7 +983,14 @@ async def close_ticket_notification(callback: types.CallbackQuery, db_user: User
         await callback.answer()
         return
 
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        # Message is too old to delete (>48h) — edit it instead
+        try:
+            await callback.message.edit_text(texts.t('NOTIFICATION_CLOSED', 'Уведомление закрыто.'))
+        except TelegramBadRequest:
+            pass
     await callback.answer(texts.t('NOTIFICATION_CLOSED', 'Уведомление закрыто.'))
 
 

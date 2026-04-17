@@ -1241,6 +1241,154 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
+    # PayPear webhook
+    if settings.is_paypear_enabled():
+
+        @router.get(settings.PAYPEAR_WEBHOOK_PATH)
+        async def paypear_health() -> JSONResponse:
+            return JSONResponse(
+                {
+                    'status': 'ok',
+                    'service': 'paypear_webhook',
+                    'enabled': settings.is_paypear_enabled(),
+                }
+            )
+
+        @router.post(settings.PAYPEAR_WEBHOOK_PATH)
+        async def paypear_webhook(request: Request) -> JSONResponse:
+            try:
+                raw_body = await request.body()
+                payload = json.loads(raw_body)
+            except Exception as parse_error:
+                logger.error('PayPear webhook: failed to parse JSON', parse_error=parse_error)
+                return JSONResponse({'status': False}, status_code=status.HTTP_400_BAD_REQUEST)
+
+            # Извлекаем подпись из тела webhook
+            received_signature = payload.get('signature', '')
+
+            from app.services.paypear_service import paypear_service
+
+            if not paypear_service.verify_webhook_signature(raw_body, received_signature):
+                logger.warning('PayPear webhook: invalid signature')
+                return JSONResponse({'status': False}, status_code=status.HTTP_403_FORBIDDEN)
+
+            try:
+                success = await _process_payment_service_callback(
+                    payment_service,
+                    payload,
+                    'process_paypear_webhook',
+                )
+                if not success:
+                    logger.error(
+                        'PayPear webhook processing failed',
+                        data=payload.get('object'),
+                    )
+            except Exception as e:
+                logger.exception('PayPear webhook processing error', error=e)
+            # Always return 200 — PayPear may retry on non-200
+            return JSONResponse({'status': True}, status_code=status.HTTP_200_OK)
+
+        routes_registered = True
+
+    # RollyPay webhook
+    if settings.is_rollypay_enabled():
+
+        @router.get(settings.ROLLYPAY_WEBHOOK_PATH)
+        async def rollypay_health() -> JSONResponse:
+            return JSONResponse(
+                {
+                    'status': 'ok',
+                    'service': 'rollypay_webhook',
+                    'enabled': settings.is_rollypay_enabled(),
+                }
+            )
+
+        @router.post(settings.ROLLYPAY_WEBHOOK_PATH)
+        async def rollypay_webhook(request: Request) -> JSONResponse:
+            try:
+                raw_body = await request.body()
+                payload = json.loads(raw_body)
+            except Exception as parse_error:
+                logger.error('RollyPay webhook: failed to parse JSON', parse_error=parse_error)
+                return JSONResponse({'status': False}, status_code=status.HTTP_400_BAD_REQUEST)
+
+            # Подпись через заголовки X-Signature и X-Timestamp
+            received_signature = request.headers.get('X-Signature', '')
+            timestamp = request.headers.get('X-Timestamp', '')
+
+            from app.services.rollypay_service import rollypay_service
+
+            if not rollypay_service.verify_webhook_signature(raw_body, received_signature, timestamp):
+                logger.warning('RollyPay webhook: invalid signature')
+                return JSONResponse({'status': False}, status_code=status.HTTP_403_FORBIDDEN)
+
+            try:
+                success = await _process_payment_service_callback(
+                    payment_service,
+                    payload,
+                    'process_rollypay_webhook',
+                )
+                if not success:
+                    logger.error(
+                        'RollyPay webhook processing failed',
+                        data=payload.get('payment_id'),
+                    )
+            except Exception as e:
+                logger.exception('RollyPay webhook processing error', error=e)
+            # Always return 200 — RollyPay retries on non-200 with exponential backoff
+            return JSONResponse({'status': True}, status_code=status.HTTP_200_OK)
+
+        routes_registered = True
+
+    # AuraPay webhook
+    if settings.is_aurapay_enabled():
+
+        @router.get(settings.AURAPAY_WEBHOOK_PATH)
+        async def aurapay_health() -> JSONResponse:
+            return JSONResponse(
+                {
+                    'status': 'ok',
+                    'service': 'aurapay_webhook',
+                    'enabled': settings.is_aurapay_enabled(),
+                }
+            )
+
+        @router.post(settings.AURAPAY_WEBHOOK_PATH)
+        async def aurapay_webhook(request: Request) -> JSONResponse:
+            try:
+                raw_body = await request.body()
+                payload = json.loads(raw_body)
+            except Exception as parse_error:
+                logger.error('AuraPay webhook: failed to parse JSON', parse_error=parse_error)
+                return JSONResponse({'status': False}, status_code=status.HTTP_400_BAD_REQUEST)
+
+            # Подпись через заголовок X-SIGNATURE
+            received_signature = request.headers.get('X-SIGNATURE', '')
+
+            from app.services.aurapay_service import aurapay_service
+
+            if not aurapay_service.verify_webhook_signature(payload, received_signature):
+                logger.warning('AuraPay webhook: invalid signature')
+                return JSONResponse({'status': False}, status_code=status.HTTP_403_FORBIDDEN)
+
+            try:
+                success = await _process_payment_service_callback(
+                    payment_service,
+                    payload,
+                    'process_aurapay_webhook',
+                )
+                if not success:
+                    logger.error(
+                        'AuraPay webhook processing failed',
+                        data=payload.get('id'),
+                    )
+            except Exception as e:
+                logger.exception('AuraPay webhook processing error', error=e)
+            # Always return 200 — AuraPay retries on non-200 (5 attempts)
+            return JSONResponse({'status': True}, status_code=status.HTTP_200_OK)
+
+        routes_registered = True
+
     if routes_registered:
 
         @router.get('/health/payment-webhooks')
@@ -1261,6 +1409,9 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     'kassa_ai_enabled': settings.is_kassa_ai_enabled(),
                     'riopay_enabled': settings.is_riopay_enabled(),
                     'severpay_enabled': settings.is_severpay_enabled(),
+                    'paypear_enabled': settings.is_paypear_enabled(),
+                    'rollypay_enabled': settings.is_rollypay_enabled(),
+                    'aurapay_enabled': settings.is_aurapay_enabled(),
                 }
             )
 

@@ -245,7 +245,10 @@ class MonitoringService:
                 await self._check_trial_expiring_soon(db)
                 await self._check_trial_channel_subscriptions(db)
                 await self._check_expired_subscription_followups(db)
+                await self._check_traffic_warnings(db)
+                await self._check_low_balance_alerts(db)
                 await self._retry_stuck_guest_purchases(db)
+                await self._cleanup_expired_refresh_tokens(db)
                 await self._cleanup_inactive_users(db)
                 await self._sync_with_remnawave(db)
 
@@ -517,9 +520,23 @@ class MonitoringService:
 
                         users_with_cards = await get_user_ids_with_active_payment_methods(db, autopay_user_ids)
 
+                from app.utils.notification_prefs import (
+                    get_subscription_expiry_days,
+                    is_subscription_expiry_enabled,
+                )
+
                 for subscription in expiring_subscriptions:
                     user = await get_user_by_id(db, subscription.user_id)
                     if not user:
+                        continue
+
+                    # Respect user notification preferences
+                    if not is_subscription_expiry_enabled(user):
+                        continue
+
+                    # Check if user's preferred days threshold matches this check
+                    user_expiry_days = get_subscription_expiry_days(user)
+                    if days > user_expiry_days:
                         continue
 
                     # Use user.id + subscription.id for key to support multiple subscriptions per user
@@ -884,18 +901,24 @@ class MonitoringService:
                             )
 
                             try:
-                                panel_uuid_restore = (
-                                    subscription.remnawave_uuid
-                                    if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-                                    else user.remnawave_uuid
-                                )
-                                if panel_uuid_restore:
-                                    await self.subscription_service.enable_remnawave_user(panel_uuid_restore)
+                                if settings.is_multi_tariff_enabled():
+                                    _should_create = not subscription.remnawave_uuid
                                 else:
+                                    _should_create = not getattr(user, 'remnawave_uuid', None)
+
+                                if _should_create:
                                     # create_remnawave_user calls db.commit() internally --
                                     # flush accumulated batch state first to preserve atomicity.
                                     await batch_db.commit()
                                     await self.subscription_service.create_remnawave_user(batch_db, subscription)
+                                else:
+                                    _enable_uuid = (
+                                        subscription.remnawave_uuid
+                                        if settings.is_multi_tariff_enabled()
+                                        else user.remnawave_uuid
+                                    )
+                                    if _enable_uuid:
+                                        await self.subscription_service.enable_remnawave_user(_enable_uuid)
                             except Exception as api_error:
                                 logger.error(
                                     'Failed to update RemnaWave user',
@@ -1959,6 +1982,239 @@ class MonitoringService:
                 logger.info('Retried stuck pending_activation purchases', retried=retried_pa)
         except Exception:
             logger.error('Error retrying stuck PENDING_ACTIVATION guest purchases', exc_info=True)
+
+    async def _check_traffic_warnings(self, db: AsyncSession):
+        """Check subscriptions approaching traffic limit and notify users."""
+        if not self.bot:
+            return
+
+        try:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            from app.database.models import Subscription
+            from app.utils.notification_prefs import get_traffic_warning_percent, is_traffic_warning_enabled
+
+            # Get active subscriptions with traffic limits (not unlimited)
+            result = await db.execute(
+                select(Subscription)
+                .options(selectinload(Subscription.user))
+                .where(
+                    Subscription.status.in_(['active', 'trial']),
+                    Subscription.traffic_limit_gb > 0,
+                )
+            )
+            subscriptions = result.scalars().all()
+
+            sent_count = 0
+            for subscription in subscriptions:
+                user = subscription.user
+                if not user or not user.telegram_id:
+                    continue
+
+                if not is_traffic_warning_enabled(user):
+                    continue
+
+                traffic_limit = subscription.traffic_limit_gb or 0
+                traffic_used = subscription.traffic_used_gb or 0.0
+
+                if traffic_limit <= 0:
+                    continue
+
+                current_percent = (traffic_used / traffic_limit) * 100
+                user_threshold = get_traffic_warning_percent(user)
+
+                if current_percent < user_threshold:
+                    continue
+
+                # Rate-limit: 1 notification per subscription per 24 hours
+                cache_key_str = f'traffic_warn:{subscription.id}'
+                try:
+                    already_sent = await cache.get(cache_key_str)
+                    if already_sent:
+                        continue
+                except Exception:
+                    pass
+
+                try:
+                    language = getattr(user, 'language', 'ru') or 'ru'
+                    texts = get_texts(language)
+                    message = texts.get(
+                        'TRAFFIC_WARNING_ALERT',
+                        '⚠️ <b>Предупреждение о трафике</b>\n\n'
+                        'Использовано: {used:.1f} / {limit} ГБ ({percent:.0f}%)\n\n'
+                        'Ваш лимит трафика почти исчерпан.',
+                    )
+                    message = message.format(
+                        used=traffic_used,
+                        limit=traffic_limit,
+                        percent=current_percent,
+                    )
+                    await self.bot.send_message(
+                        user.telegram_id,
+                        message,
+                        parse_mode='HTML',
+                    )
+                    try:
+                        await cache.set(cache_key_str, '1', expire=86400)
+                    except Exception:
+                        pass
+                    sent_count += 1
+                except Exception as send_error:
+                    logger.debug(
+                        'Failed to send traffic warning',
+                        user_id=user.id,
+                        subscription_id=subscription.id,
+                        error=send_error,
+                    )
+
+            if sent_count > 0:
+                logger.info('Traffic warnings sent', sent_count=sent_count)
+
+        except Exception as error:
+            logger.error('Error checking traffic warnings', error=error)
+
+    async def _check_low_balance_alerts(self, db: AsyncSession):
+        """Check users with autopay enabled who have low balance and notify them.
+
+        Guards:
+        - Disabled by default; users opt-in via cabinet notification settings
+        - Only alerts when subscription expires within LOW_BALANCE_ALERT_EXPIRY_DAYS (default 3)
+        - Quiet hours: skips sending between 22:00 and 09:00 server time
+        - Rate-limited: max 1 alert per 24 hours per user
+        """
+        if not self.bot:
+            return
+
+        try:
+            from datetime import UTC, datetime, timedelta
+
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+            from sqlalchemy import select
+
+            from app.database.models import Subscription, User
+            from app.utils.notification_prefs import get_balance_low_threshold, is_balance_low_enabled
+
+            # Quiet hours: don't disturb users at night (22:00-09:00 UTC)
+            current_hour = datetime.now(UTC).hour
+            if current_hour >= 22 or current_hour < 9:
+                return
+
+            # Only alert for subscriptions expiring soon (default 3 days)
+            expiry_days = getattr(settings, 'LOW_BALANCE_ALERT_EXPIRY_DAYS', 3)
+            expiry_threshold = datetime.now(UTC) + timedelta(days=expiry_days)
+
+            result = await db.execute(
+                select(User)
+                .join(Subscription, Subscription.user_id == User.id)
+                .where(
+                    Subscription.status.in_(['active', 'trial']),
+                    Subscription.autopay_enabled.is_(True),
+                    Subscription.end_date.isnot(None),
+                    Subscription.end_date <= expiry_threshold,
+                    User.telegram_id.isnot(None),
+                )
+                .distinct()
+            )
+            users = result.scalars().all()
+
+            sent_count = 0
+            for user in users:
+                if not is_balance_low_enabled(user):
+                    continue
+
+                threshold = get_balance_low_threshold(user)
+                balance = int(getattr(user, 'balance_kopeks', 0) or 0)
+
+                if balance >= threshold:
+                    continue
+
+                # Rate-limit via Redis: max 1 notification per 24 hours per user
+                cache_key_str = f'low_balance_alert:{user.id}'
+                try:
+                    already_sent = await cache.get(cache_key_str)
+                    if already_sent:
+                        continue
+                except Exception:
+                    pass
+
+                try:
+                    language = getattr(user, 'language', 'ru') or 'ru'
+                    texts = get_texts(language)
+                    threshold_rub = threshold / 100
+                    balance_rub = balance / 100
+                    message = texts.get(
+                        'LOW_BALANCE_ALERT',
+                        '⚠️ <b>Низкий баланс</b>\n\n'
+                        'Ваш баланс: {balance} ₽\n'
+                        'Порог уведомления: {threshold} ₽\n\n'
+                        'Пополните баланс, чтобы автопродление подписки прошло успешно.',
+                    )
+                    message = message.format(
+                        balance=f'{balance_rub:.0f}',
+                        threshold=f'{threshold_rub:.0f}',
+                    )
+
+                    # Build inline keyboard with cabinet top-up button
+                    keyboard = None
+                    miniapp_url = settings.get_main_menu_miniapp_url()
+                    if miniapp_url:
+                        topup_label = texts.get('LOW_BALANCE_TOPUP_BUTTON', '💳 Пополнить баланс')
+                        keyboard = InlineKeyboardMarkup(
+                            inline_keyboard=[
+                                [
+                                    InlineKeyboardButton(
+                                        text=topup_label,
+                                        web_app=WebAppInfo(url=miniapp_url),
+                                    )
+                                ]
+                            ]
+                        )
+
+                    await self.bot.send_message(
+                        user.telegram_id,
+                        message,
+                        parse_mode='HTML',
+                        reply_markup=keyboard,
+                    )
+                    # Mark as sent for 24 hours
+                    try:
+                        await cache.set(cache_key_str, '1', expire=86400)
+                    except Exception:
+                        pass
+                    sent_count += 1
+                except Exception as send_error:
+                    logger.debug('Failed to send low balance alert', user_id=user.id, error=send_error)
+
+            if sent_count > 0:
+                logger.info('Low balance alerts sent', sent_count=sent_count)
+
+        except Exception as error:
+            logger.error('Error checking low balance alerts', error=error)
+
+    async def _cleanup_expired_refresh_tokens(self, db: AsyncSession):
+        """Delete expired and revoked refresh tokens to prevent table bloat."""
+        try:
+            from sqlalchemy import delete
+
+            from app.database.models import CabinetRefreshToken
+
+            now = datetime.now(UTC)
+            # Delete tokens that are either expired or revoked more than 24h ago
+            stmt = delete(CabinetRefreshToken).where(
+                (CabinetRefreshToken.expires_at < now) | (CabinetRefreshToken.revoked_at < now - timedelta(hours=24))
+            )
+            result = await db.execute(stmt)
+            deleted = result.rowcount
+            if deleted > 0:
+                await db.commit()
+                logger.info('Cleaned up expired/revoked refresh tokens', deleted_count=deleted)
+        except Exception as error:
+            logger.error('Error cleaning up refresh tokens', error=error)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
     async def _cleanup_inactive_users(self, db: AsyncSession):
         try:

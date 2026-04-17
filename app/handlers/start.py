@@ -234,6 +234,14 @@ async def _claim_phantom_user(
                 subscription_id=phantom_sub.id,
                 error=str(exc),
             )
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            if hasattr(phantom_sub, 'id') and hasattr(phantom_sub, 'user_id'):
+                remnawave_retry_queue.enqueue(
+                    subscription_id=phantom_sub.id,
+                    user_id=phantom_sub.user_id,
+                    action='update',
+                )
 
     return True, phantom
 
@@ -336,8 +344,9 @@ def _calculate_subscription_flags(subscription):
         return False, False
 
     actual_status = getattr(subscription, 'actual_status', None)
-    has_active_subscription = actual_status in {'active', 'trial'}
-    subscription_is_active = bool(getattr(subscription, 'is_active', False))
+    # 'limited' subscriptions are still active (traffic exhausted, but subscription not expired)
+    has_active_subscription = actual_status in {'active', 'trial', 'limited'}
+    subscription_is_active = bool(getattr(subscription, 'is_active', False)) or actual_status == 'limited'
 
     return has_active_subscription, subscription_is_active
 
@@ -2443,6 +2452,18 @@ async def required_sub_channel_check(
                     telegram_id=user.telegram_id if user else query.from_user.id,
                     api_error=api_error,
                 )
+                from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                for sub in _subs:
+                    if sub.is_trial and sub.status == SubscriptionStatus.ACTIVE.value:
+                        if hasattr(sub, 'id') and hasattr(sub, 'user_id'):
+                            remnawave_retry_queue.enqueue(
+                                subscription_id=sub.id,
+                                user_id=sub.user_id,
+                                action='update'
+                                if (getattr(sub, 'remnawave_uuid', None) or user.remnawave_uuid)
+                                else 'create',
+                            )
 
         await query.answer(
             texts.t('CHANNEL_SUBSCRIBE_THANKS', '✅ Спасибо за подписку'),

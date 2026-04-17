@@ -1304,6 +1304,13 @@ class RemnaWaveWebhookService:
     async def _handle_bandwidth_threshold(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
     ) -> None:
+        # Respect user notification preferences
+        from app.utils.notification_prefs import is_traffic_warning_enabled
+
+        if not is_traffic_warning_enabled(user):
+            logger.debug('Traffic warning disabled by user prefs', user_id=user.id)
+            return
+
         # Extract threshold percentage from meta or data
         percent = data.get('thresholdPercent') or data.get('threshold', '')
         if not percent:

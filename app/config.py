@@ -68,9 +68,9 @@ class Settings(BaseSettings):
     ADMIN_NOTIFICATIONS_PARTNERS_TOPIC_ID: int | None = None  # Партнёрки, выводы, админ-действия
 
     # Настройки очереди чеков NaloGO
-    NALOGO_QUEUE_CHECK_INTERVAL: int = 300  # Интервал проверки очереди (секунды)
+    NALOGO_QUEUE_CHECK_INTERVAL: int = 600  # Интервал проверки очереди (секунды, 10 мин)
     NALOGO_QUEUE_RECEIPT_DELAY: int = 3  # Задержка между отправкой чеков (секунды)
-    NALOGO_QUEUE_MAX_ATTEMPTS: int = 10  # Максимум попыток отправки чека
+    NALOGO_QUEUE_MAX_ATTEMPTS: int = 72  # Максимум попыток отправки чека (72 × 10мин = 12 часов)
 
     ADMIN_REPORTS_ENABLED: bool = False
     ADMIN_REPORTS_CHAT_ID: str | None = None
@@ -324,6 +324,7 @@ class Settings(BaseSettings):
     SUBSCRIPTION_RENEWAL_BALANCE_THRESHOLD_KOPEKS: int = 20000
 
     MONITORING_INTERVAL: int = 60
+    LOW_BALANCE_ALERT_EXPIRY_DAYS: int = 3  # Only alert when subscription expires within N days
     INACTIVE_USER_DELETE_MONTHS: int = 3
 
     MAINTENANCE_MODE: bool = False
@@ -436,6 +437,7 @@ class Settings(BaseSettings):
     MULENPAY_LANGUAGE: str = 'ru'
     MULENPAY_VAT_CODE: int = 0
 
+    DISPLAY_NAME_RESTRICTION_ENABLED: bool = True
     DISPLAY_NAME_BANNED_KEYWORDS: str = '\n'.join(DEFAULT_DISPLAY_NAME_BANNED_KEYWORDS)
     MULENPAY_PAYMENT_SUBJECT: int = 4
     MULENPAY_PAYMENT_MODE: int = 4
@@ -590,12 +592,48 @@ class Settings(BaseSettings):
     APPLE_IAP_ENABLED: bool = False
     APPLE_IAP_KEY_ID: str | None = None
     APPLE_IAP_ISSUER_ID: str | None = None
-    APPLE_IAP_BUNDLE_ID: str = 'com.bitnet.vpnclient'
+    APPLE_IAP_BUNDLE_ID: str = 'com.app.client'
     APPLE_IAP_PRIVATE_KEY: str | None = None  # .p8 key contents (PEM)
     APPLE_IAP_PRIVATE_KEY_PATH: str | None = None  # Alternative: path to .p8 file
     APPLE_IAP_ENVIRONMENT: str = 'Production'  # 'Sandbox' or 'Production'
     APPLE_IAP_WEBHOOK_PATH: str = '/apple-iap-webhook'
-    APPLE_IAP_PRODUCTS: str = '{"com.bitnet.vpnclient.topup.100":10000,"com.bitnet.vpnclient.topup.300":30000,"com.bitnet.vpnclient.topup.500":50000,"com.bitnet.vpnclient.topup.1000":100000,"com.bitnet.vpnclient.topup.3000":300000}'
+    APPLE_IAP_PRODUCTS: str = '{"com.app.client.topup.100":10000,"com.app.client.topup.300":30000,"com.app.client.topup.500":50000}'
+
+    # PayPear (paypear.ru)
+    PAYPEAR_ENABLED: bool = False
+    PAYPEAR_SHOP_ID: str | None = None
+    PAYPEAR_SECRET_KEY: str | None = None
+    PAYPEAR_DISPLAY_NAME: str = 'PayPear'
+    PAYPEAR_CURRENCY: str = 'RUB'
+    PAYPEAR_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
+    PAYPEAR_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    PAYPEAR_WEBHOOK_PATH: str = '/paypear-webhook'
+    PAYPEAR_RETURN_URL: str | None = None
+    PAYPEAR_PAYMENT_METHOD: str = 'sbp'  # bank_card, sbp, sberpay, tpay
+
+    # RollyPay (rollypay.io)
+    ROLLYPAY_ENABLED: bool = False
+    ROLLYPAY_API_KEY: str | None = None  # X-API-Key header
+    ROLLYPAY_SIGNING_SECRET: str | None = None  # HMAC webhook verification
+    ROLLYPAY_DISPLAY_NAME: str = 'RollyPay'
+    ROLLYPAY_CURRENCY: str = 'RUB'
+    ROLLYPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
+    ROLLYPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    ROLLYPAY_WEBHOOK_PATH: str = '/rollypay-webhook'
+    ROLLYPAY_RETURN_URL: str | None = None
+
+    # AuraPay (aurapay.tech)
+    AURAPAY_ENABLED: bool = False
+    AURAPAY_API_KEY: str | None = None  # X-ApiKey header
+    AURAPAY_SHOP_ID: str | None = None  # X-ShopId header (UUID)
+    AURAPAY_SECRET_KEY: str | None = None  # Secret key #2 for webhook HMAC
+    AURAPAY_DISPLAY_NAME: str = 'AuraPay'
+    AURAPAY_CURRENCY: str = 'RUB'
+    AURAPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
+    AURAPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    AURAPAY_WEBHOOK_PATH: str = '/aurapay-webhook'
+    AURAPAY_RETURN_URL: str | None = None
+    AURAPAY_PAYMENT_LIFETIME_MINUTES: int = 60
 
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
@@ -836,6 +874,10 @@ class Settings(BaseSettings):
     # Format: socks5://user:password@host:port or socks5://host:port
     PROXY_URL: str | None = None
 
+    # Custom Telegram Bot API server URL (for regions where api.telegram.org is blocked)
+    # Examples: Cloudflare Worker proxy, self-hosted telegram-bot-api (tdlib), nginx reverse proxy
+    TELEGRAM_API_URL: str | None = None
+
     @field_validator('PROXY_URL', 'NALOGO_PROXY_URL', mode='before')
     @classmethod
     def validate_proxy_url(cls, value: str | None) -> str | None:
@@ -982,6 +1024,10 @@ class Settings(BaseSettings):
     def get_proxy_url(self) -> str | None:
         """Return SOCKS5 proxy URL or None."""
         return self.PROXY_URL if self.PROXY_URL else None
+
+    def get_telegram_api_url(self) -> str | None:
+        """Return custom Telegram Bot API server URL or None."""
+        return self.TELEGRAM_API_URL if self.TELEGRAM_API_URL else None
 
     def get_nalogo_proxy_url(self) -> str | None:
         """Return SOCKS proxy URL for nalogo or None.
@@ -2001,6 +2047,41 @@ class Settings(BaseSettings):
             except Exception:
                 return None
         return None
+      
+    def is_paypear_enabled(self) -> bool:
+        return self.PAYPEAR_ENABLED and self.PAYPEAR_SHOP_ID is not None and self.PAYPEAR_SECRET_KEY is not None
+
+    def get_paypear_display_name(self) -> str:
+        name = (self.PAYPEAR_DISPLAY_NAME or '').strip()
+        return name if name else 'PayPear'
+
+    def get_paypear_display_name_html(self) -> str:
+        return html.escape(self.get_paypear_display_name())
+
+    def is_rollypay_enabled(self) -> bool:
+        return self.ROLLYPAY_ENABLED and self.ROLLYPAY_API_KEY is not None and self.ROLLYPAY_SIGNING_SECRET is not None
+
+    def get_rollypay_display_name(self) -> str:
+        name = (self.ROLLYPAY_DISPLAY_NAME or '').strip()
+        return name if name else 'RollyPay'
+
+    def get_rollypay_display_name_html(self) -> str:
+        return html.escape(self.get_rollypay_display_name())
+
+    def is_aurapay_enabled(self) -> bool:
+        return (
+            self.AURAPAY_ENABLED
+            and self.AURAPAY_API_KEY is not None
+            and self.AURAPAY_SHOP_ID is not None
+            and self.AURAPAY_SECRET_KEY is not None
+        )
+
+    def get_aurapay_display_name(self) -> str:
+        name = (self.AURAPAY_DISPLAY_NAME or '').strip()
+        return name if name else 'AuraPay'
+
+    def get_aurapay_display_name_html(self) -> str:
+        return html.escape(self.get_aurapay_display_name())
 
     def is_kassa_ai_sbp_enabled(self) -> bool:
         return self.KASSA_AI_SBP_ENABLED and self.is_kassa_ai_enabled()

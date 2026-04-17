@@ -1749,19 +1749,16 @@
   "MODEM_PRICE_WITH_DISCOUNT": "Стоимость: <s>{base_price}</s> <b>{final_price}</b> (за {months} мес)\n🎁 Скидка {discount}%: -{discount_amount}",
   "MODEM_PRICE_NO_DISCOUNT": "Стоимость: {price} (за {months} мес)",
   "MODEM_CONFIRM_ENABLE_BASE": "📡 <b>Подтверждение подключения модема</b>\n\n{price_text}\n\nПри подключении модема:\n• К подписке добавится дополнительное устройство\n• Ежемесячная плата увеличится на {monthly_price}\n\nПодтвердить подключение?",
-
   "ADMIN_USER_RESTRICTIONS": "⚠️ Ограничить",
   "USER_RESTRICTION_TOPUP_BLOCKED": "🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.",
   "USER_RESTRICTION_SUBSCRIPTION_BLOCKED": "🚫 <b>Покупка/продление подписки ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.",
   "USER_RESTRICTION_APPEAL_BUTTON": "🆘 Обжаловать",
-
   "PAUSE_DAILY_BUTTON": "⏸️ Приостановить подписку",
   "RESUME_DAILY_BUTTON": "▶️ Возобновить подписку",
   "DAILY_SWITCH_WARNING": "⚠️ <b>Внимание!</b> У вас осталось {days} дн. подписки.\nПри смене на суточный тариф они будут утеряны!",
   "DAILY_SUBSCRIPTION_PAUSED": "⏸️ Подписка приостановлена",
   "DAILY_SUBSCRIPTION_RESUMED": "▶️ Подписка возобновлена!",
   "DAILY_SUBSCRIPTION_RESUMED_AFTER_TOPUP": "✅ <b>Подписка возобновлена!</b>\n\nВаш суточный тариф «{tariff_name}» возобновлён после пополнения баланса.\n\n💳 Списано: {amount}\n💰 Остаток: {balance}",
-
   "WEBHOOK_SUB_EXPIRED": "❌ <b>Подписка{tariff_label} истекла</b>\n\nВаша подписка завершена. Продлите подписку, чтобы восстановить доступ к VPN.",
   "WEBHOOK_SUB_DISABLED": "🚫 <b>Подписка{tariff_label} отключена</b>\n\nВаша подписка была отключена администратором.",
   "WEBHOOK_SUB_ENABLED": "✅ <b>Подписка{tariff_label} активирована</b>\n\nВаша подписка снова активна. Приятного использования!",
@@ -1780,5 +1777,7 @@
   "WEBHOOK_DEVICE_ADDED": "📱 <b>Новое устройство</b>\n\nК подписке{tariff_label} подключено новое устройство: <code>{device}</code>",
   "WEBHOOK_DEVICE_DELETED": "📱 <b>Устройство удалено</b>\n\nУстройство отключено от подписки{tariff_label}: <code>{device}</code>",
   "WEBHOOK_TORRENT_DETECTED": "🚫 <b>Обнаружен торрент</b>\n\nВ вашем подключении{tariff_label} обнаружен торрент-трафик. Использование торрентов может привести к ограничению подписки.",
-  "WEBHOOK_CLOSE_BUTTON": "✖️ Закрыть"
+  "WEBHOOK_CLOSE_BUTTON": "✖️ Закрыть",
+  "TRAFFIC_WARNING_ALERT": "⚠️ <b>Предупреждение о трафике</b>\n\nИспользовано: {used:.1f} / {limit} ГБ ({percent:.0f}%)\n\nВаш лимит трафика почти исчерпан.",
+  "LOW_BALANCE_ALERT": "⚠️ <b>Низкий баланс</b>\n\nВаш баланс: {balance} ₽\nПорог уведомления: {threshold} ₽\n\nПополните баланс, чтобы автопродление подписки прошло успешно."
 }

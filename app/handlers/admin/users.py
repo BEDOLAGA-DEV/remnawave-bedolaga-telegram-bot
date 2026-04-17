@@ -3821,26 +3821,38 @@ async def start_devices_edit(callback: types.CallbackQuery, db_user: User, state
         else f'admin_user_subscription_{user_id}'
     )
 
-    await callback.message.edit_text(
-        '📱 <b>Изменение количества устройств</b>\n\n'
-        'Введите новое количество устройств (от 1 до 10):\n'
-        '• Текущее значение будет заменено\n'
-        '• Примеры: 1, 2, 5, 10\n\n'
-        'Или нажмите /cancel для отмены',
-        reply_markup=types.InlineKeyboardMarkup(
+    max_dev = settings.MAX_DEVICES_LIMIT
+    # Build device buttons dynamically: rows of 4, respect Telegram 100 button limit (99 + cancel)
+    if max_dev <= 99:
+        device_buttons: list[list[types.InlineKeyboardButton]] = []
+        row: list[types.InlineKeyboardButton] = []
+        for i in range(1, max_dev + 1):
+            row.append(
+                types.InlineKeyboardButton(
+                    text=str(i),
+                    callback_data=f'admin_user_devices_set_{user_id}{_sid}_{i}',
+                )
+            )
+            if len(row) == 4:
+                device_buttons.append(row)
+                row = []
+        if row:
+            device_buttons.append(row)
+        device_buttons.append([types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb)])
+        markup = types.InlineKeyboardMarkup(inline_keyboard=device_buttons)
+    else:
+        markup = types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(text='1', callback_data=f'admin_user_devices_set_{user_id}{_sid}_1'),
-                    types.InlineKeyboardButton(text='2', callback_data=f'admin_user_devices_set_{user_id}{_sid}_2'),
-                    types.InlineKeyboardButton(text='3', callback_data=f'admin_user_devices_set_{user_id}{_sid}_3'),
-                ],
-                [
-                    types.InlineKeyboardButton(text='5', callback_data=f'admin_user_devices_set_{user_id}{_sid}_5'),
-                    types.InlineKeyboardButton(text='10', callback_data=f'admin_user_devices_set_{user_id}{_sid}_10'),
-                ],
                 [types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb)],
             ]
-        ),
+        )
+
+    await callback.message.edit_text(
+        '📱 <b>Изменение количества устройств</b>\n\n'
+        f'Введите новое количество устройств (от 1 до {max_dev}):\n'
+        '• Текущее значение будет заменено\n\n'
+        'Или нажмите /cancel для отмены',
+        reply_markup=markup,
     )
 
     await state.set_state(AdminStates.editing_user_devices)
@@ -3910,8 +3922,8 @@ async def process_devices_edit_text(message: types.Message, db_user: User, state
     try:
         devices = int(message.text.strip())
 
-        if devices <= 0 or devices > 10:
-            await message.answer('❌ Количество устройств должно быть от 1 до 10')
+        if devices <= 0 or devices > settings.MAX_DEVICES_LIMIT:
+            await message.answer(f'❌ Количество устройств должно быть от 1 до {settings.MAX_DEVICES_LIMIT}')
             return
 
         success = await _update_user_devices(db, user_id, devices, db_user.id, subscription_id=subscription_id)

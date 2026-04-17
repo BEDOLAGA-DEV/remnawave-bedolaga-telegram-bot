@@ -937,6 +937,13 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
             except Exception as e:
                 logger.error('Ошибка получения триального тарифа', error=e)
 
+        # BUG-12 fix: If no squads from tariff, fallback to trial-eligible servers
+        if not trial_squads:
+            from app.database.crud.server_squad import get_random_trial_squad_uuid
+
+            trial_squad_uuid = await get_random_trial_squad_uuid(db)
+            trial_squads = [trial_squad_uuid] if trial_squad_uuid else []
+
         subscription = await create_trial_subscription(
             db,
             db_user.id,
@@ -2579,17 +2586,19 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
 
         subscription_service = SubscriptionService()
         # При покупке подписки ВСЕГДА сбрасываем трафик в панели
-        _purchase_uuid = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else db_user.remnawave_uuid
-        )
-        if settings.is_multi_tariff_enabled() and not getattr(subscription, 'remnawave_uuid', None):
-            logger.warning(
-                'Multi-tariff: subscription missing remnawave_uuid, using user fallback',
-                subscription_id=getattr(subscription, 'id', None),
+        if settings.is_multi_tariff_enabled():
+            _should_create = not subscription.remnawave_uuid
+        else:
+            _should_create = not getattr(db_user, 'remnawave_uuid', None)
+
+        if _should_create:
+            remnawave_user = await subscription_service.create_remnawave_user(
+                db,
+                subscription,
+                reset_traffic=True,
+                reset_reason='покупка подписки',
             )
-        if _purchase_uuid:
+        else:
             remnawave_user = await subscription_service.update_remnawave_user(
                 db,
                 subscription,
@@ -2597,22 +2606,25 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 reset_reason='покупка подписки',
                 sync_squads=True,
             )
-        else:
-            remnawave_user = await subscription_service.create_remnawave_user(
-                db,
-                subscription,
-                reset_traffic=True,
-                reset_reason='покупка подписки',
-            )
 
         if not remnawave_user:
-            logger.error('Не удалось создать/обновить RemnaWave пользователя для', telegram_id=db_user.telegram_id)
-            remnawave_user = await subscription_service.create_remnawave_user(
-                db,
-                subscription,
-                reset_traffic=True,
-                reset_reason='покупка подписки (повторная попытка)',
-            )
+            logger.error('Не удалось создать/обновить RemnaWave пользователя', telegram_id=db_user.telegram_id)
+            try:
+                remnawave_user = await subscription_service.create_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=True,
+                    reset_reason='покупка подписки (повторная попытка)',
+                )
+            except Exception as retry_error:
+                logger.error('Повторная попытка создания RemnaWave пользователя не удалась', error=retry_error)
+                from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                remnawave_retry_queue.enqueue(
+                    subscription_id=subscription.id,
+                    user_id=db_user.id,
+                    action='create',
+                )
 
         transaction = await create_transaction(
             db=db,
@@ -3162,6 +3174,13 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
             )
         except Exception as e:
             logger.error('Ошибка синхронизации с Remnawave при возобновлении', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=db_user.id,
+                action='update',
+            )
 
         # Отправляем уведомление администраторам о возобновлении суточной подписки
         if resume_transaction is not None:
@@ -3302,6 +3321,13 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
                     )
             except Exception as e:
                 logger.error('Ошибка получения триального тарифа для платного триала', error=e)
+
+        # BUG-12 fix: If no squads from tariff, fallback to trial-eligible servers
+        if not trial_squads:
+            from app.database.crud.server_squad import get_random_trial_squad_uuid
+
+            trial_squad_uuid = await get_random_trial_squad_uuid(db)
+            trial_squads = [trial_squad_uuid] if trial_squad_uuid else []
 
         subscription = await create_trial_subscription(
             db,
@@ -4594,6 +4620,13 @@ async def _extend_existing_subscription(
             logger.error('⚠ ОШИБКА ОБНОВЛЕНИЯ REMNAWAVE')
     except Exception as e:
         logger.error('⚠ ИСКЛЮЧЕНИЕ ПРИ ОБНОВЛЕНИИ REMNAWAVE', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        remnawave_retry_queue.enqueue(
+            subscription_id=current_subscription.id,
+            user_id=db_user.id,
+            action='update',
+        )
 
     # Создаём транзакцию
     transaction = await create_transaction(

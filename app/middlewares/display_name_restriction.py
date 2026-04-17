@@ -85,6 +85,9 @@ class DisplayNameRestrictionMiddleware(BaseMiddleware):
         if not user or user.is_bot:
             return await handler(event, data)
 
+        if not settings.DISPLAY_NAME_RESTRICTION_ENABLED:
+            return await handler(event, data)
+
         display_name = self._build_display_name(user)
         username = user.username or ''
 

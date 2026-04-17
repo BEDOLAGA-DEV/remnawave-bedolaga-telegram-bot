@@ -55,7 +55,7 @@ Bedolaga — полнофункциональная платформа для п
 
 ### 💳 Платежи
 
-- 🏦 **15 платёжных провайдеров** одновременно
+- 🏦 **17 платёжных провайдеров** одновременно
 - 💰 Единый баланс: пополнение любым способом → покупка с баланса
 - ⚡ Автопокупка подписки после пополнения
 - 💾 Рекуррентные платежи (сохранённые карты)
@@ -123,6 +123,8 @@ Bedolaga — полнофункциональная платформа для п
 | 💳 | **MulenPay** | Карты | RUB |
 | 💳 | **RioPay** | Карты | RUB |
 | 💳 | **SeverPay** | СБП, карты | RUB |
+| 🤝 | **[PayPear](https://t.me/Paymen1_Manager)** 🔸 | Карты, СБП, SberPay, T-Pay | RUB |
+| 🤝 | **[RollyPay](https://rollypay.io/?utm_source=bedolaga&utm_medium=community&utm_campaign=integration)** 🔸 | СБП, карты, крипто | RUB → USDT |
 | 📲 | **Tribute** | Telegram-платежи | RUB |
 
 </div>
@@ -156,6 +158,31 @@ Bedolaga — официальный партнёр платёжной систе
 Пользователи бота получают **бесплатное подключение** по кодовому слову **`bedolaga`**
 
 📩 По вопросам: [@wyrz_wata](https://t.me/wyrz_wata)
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+**🤝 Официальный партнёр PayPear**
+
+Bedolaga — официальный партнёр платёжной системы **[PayPear](https://paypear.ru)**.<br>
+Банковские карты, СБП, SberPay и T-Pay — всё через единый API.<br>
+Подключение по **спец. условиям** через кодовое слово **`БЕДОЛАГА`**
+
+📩 Менеджер: [@Paymen1_Manager](https://t.me/Paymen1_Manager)
+
+</td>
+<td align="center">
+
+**🤝 Официальный партнёр RollyPay**
+
+Bedolaga — официальный партнёр платёжного шлюза **[RollyPay](https://rollypay.io/?utm_source=bedolaga&utm_medium=community&utm_campaign=integration)**.<br>
+СБП (от 5%), банковские карты РФ, крипто, вывод в USDT.<br>
+Универсальная форма оплаты, высокая проходимость, стабильная работа в каскаде.<br>
+Подключение по кодовому слову **`БЕДОЛАГА`** — **спец. условия**
+
+📩 Менеджер: [@rollypay_manager](https://t.me/rollypay_manager) | 🌐 [rollypay.io](https://rollypay.io/?utm_source=bedolaga&utm_medium=community&utm_campaign=integration)
 
 </td>
 </tr>
@@ -222,7 +249,7 @@ docker compose up -d
 | | Раздел | Описание |
 |:---:|:---|:---|
 | 🚀 | [Быстрый старт](https://docs.bedolagam.ru/getting-started/quickstart) | Развёртывание за 5 минут |
-| 💳 | [Настройка платежей](https://docs.bedolagam.ru/bot/payments) | 14 провайдеров, webhook, фискализация |
+| 💳 | [Настройка платежей](https://docs.bedolagam.ru/bot/payments) | 17 провайдеров, webhook, фискализация |
 | 📦 | [Подписки и тарифы](https://docs.bedolagam.ru/bot/subscriptions) | Конфигурация планов и трафика |
 | 👥 | [Реферальная программа](https://docs.bedolagam.ru/bot/referral-program) | Партнёрка и вывод средств |
 | 🖥 | [Cabinet](https://docs.bedolagam.ru/cabinet/overview) | Настройка веб-кабинета |

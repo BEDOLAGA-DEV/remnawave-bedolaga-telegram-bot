@@ -768,6 +768,14 @@ class UserService:
                             subscription_id=sub.id,
                             error=e,
                         )
+                        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                        if hasattr(sub, 'id') and hasattr(sub, 'user_id'):
+                            remnawave_retry_queue.enqueue(
+                                subscription_id=sub.id,
+                                user_id=sub.user_id,
+                                action='update',
+                            )
             await db.commit()
 
             logger.info('Админ разблокировал пользователя', admin_id=admin_id, user_id=user_id)

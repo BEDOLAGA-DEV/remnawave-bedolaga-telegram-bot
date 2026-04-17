@@ -77,7 +77,7 @@ def _build_server_edit_view(server):
         ],
         [
             types.InlineKeyboardButton(
-                text='🎁 Выдавать сквад' if not server.is_trial_eligible else '🚫 Не выдавать сквад',
+                text='🎁 Выдавать в триал' if not server.is_trial_eligible else '🚫 Не выдавать в триал',
                 callback_data=f'admin_server_trial_{server.id}',
             ),
         ],

@@ -1756,5 +1756,7 @@
   "WEBHOOK_DEVICE_ADDED": "📱 <b>New device</b>\n\nA new device has been added to your subscription{tariff_label}: <code>{device}</code>",
   "WEBHOOK_DEVICE_DELETED": "📱 <b>Device removed</b>\n\nA device has been removed from your subscription{tariff_label}: <code>{device}</code>",
   "WEBHOOK_TORRENT_DETECTED": "🚫 <b>Torrent detected</b>\n\nTorrent traffic was detected on your connection{tariff_label}. Using torrents may result in subscription restrictions.",
-  "WEBHOOK_CLOSE_BUTTON": "✖️ Close"
+  "WEBHOOK_CLOSE_BUTTON": "✖️ Close",
+  "TRAFFIC_WARNING_ALERT": "⚠️ <b>Traffic Warning</b>\n\nUsed: {used:.1f} / {limit} GB ({percent:.0f}%)\n\nYour traffic limit is almost reached.",
+  "LOW_BALANCE_ALERT": "⚠️ <b>Low Balance</b>\n\nYour balance: {balance} ₽\nNotification threshold: {threshold} ₽\n\nTop up your balance to ensure automatic subscription renewal."
 }

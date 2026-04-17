@@ -446,7 +446,7 @@ class RemnaWaveAPI:
             'trafficLimitStrategy': traffic_limit_strategy.value,
         }
 
-        if telegram_id:
+        if telegram_id is not None:
             data['telegramId'] = telegram_id
         if email:
             data['email'] = email

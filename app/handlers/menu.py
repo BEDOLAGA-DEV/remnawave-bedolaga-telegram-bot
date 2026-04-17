@@ -169,7 +169,9 @@ async def show_main_menu(
     await db.commit()
 
     # Multi-tariff aware: check if user has ANY active subscription
-    has_active_subscription = any(sub.is_active for sub in (getattr(db_user, 'subscriptions', None) or []))
+    # 'limited' (traffic exhausted) subscriptions are still active for UI purposes
+    _subs = getattr(db_user, 'subscriptions', None) or []
+    has_active_subscription = any(sub.is_active or getattr(sub, 'actual_status', None) == 'limited' for sub in _subs)
     subscription_is_active = has_active_subscription
 
     menu_text = await get_main_menu_text(db_user, texts, db)
@@ -1013,7 +1015,9 @@ async def handle_back_to_menu(callback: types.CallbackQuery, state: FSMContext, 
     texts = get_texts(db_user.language)
 
     # Multi-tariff aware: check if user has ANY active subscription
-    has_active_subscription = any(sub.is_active for sub in (getattr(db_user, 'subscriptions', None) or []))
+    # 'limited' (traffic exhausted) subscriptions are still active for UI purposes
+    _subs = getattr(db_user, 'subscriptions', None) or []
+    has_active_subscription = any(sub.is_active or getattr(sub, 'actual_status', None) == 'limited' for sub in _subs)
     subscription_is_active = has_active_subscription
 
     menu_text = await get_main_menu_text(db_user, texts, db)

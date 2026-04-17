@@ -622,6 +622,24 @@ async def link_telegram(
         telegram_id=telegram_id,
         user_id=user.id,
     )
+    # BUG-1 fix: Sync all subscriptions with RemnaWave panel so it knows the new telegram_id
+    try:
+        from app.services.remnawave_resync_service import resync_user_subscriptions_with_panel
+
+        resync_result = await resync_user_subscriptions_with_panel(db, user)
+        logger.info(
+            'Post-TG-link resync completed',
+            user_id=user.id,
+            telegram_id=telegram_id,
+            synced=resync_result['synced'],
+            failed=resync_result['failed'],
+        )
+    except Exception as resync_error:
+        logger.error(
+            'Post-TG-link resync failed (non-fatal)',
+            user_id=user.id,
+            error=resync_error,
+        )
     return LinkCallbackResponse(success=True, message='linked')
 
 
@@ -865,6 +883,25 @@ async def execute_merge_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to load merged user',
+        )
+
+    # BUG-7 fix: Resync merged user's subscriptions with RemnaWave panel
+    try:
+        from app.services.remnawave_resync_service import resync_user_subscriptions_with_panel
+
+        resync_result = await resync_user_subscriptions_with_panel(db, merged_user)
+        logger.info(
+            'Post-merge resync completed',
+            primary_user_id=primary_user_id,
+            secondary_user_id=secondary_user_id,
+            synced=resync_result['synced'],
+            failed=resync_result['failed'],
+        )
+    except Exception as resync_error:
+        logger.error(
+            'Post-merge resync failed (non-fatal)',
+            primary_user_id=primary_user_id,
+            error=resync_error,
         )
 
     # 5. Create auth tokens for the merged user

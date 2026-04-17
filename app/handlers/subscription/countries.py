@@ -412,7 +412,18 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
         await db.commit()
 
         subscription_service = SubscriptionService()
-        await subscription_service.update_remnawave_user(db, subscription, sync_squads=True)
+        try:
+            await subscription_service.update_remnawave_user(db, subscription, sync_squads=True)
+        except Exception as rw_err:
+            logger.error('Ошибка синхронизации с RemnaWave при смене стран', error=rw_err)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+                remnawave_retry_queue.enqueue(
+                    subscription_id=subscription.id,
+                    user_id=subscription.user_id,
+                    action='update',
+                )
 
         await db.refresh(subscription)
 

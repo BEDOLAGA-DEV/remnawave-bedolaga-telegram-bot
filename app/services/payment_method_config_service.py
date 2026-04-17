@@ -146,6 +146,39 @@ def _get_method_defaults() -> dict:
             'default_max': settings.SEVERPAY_MAX_AMOUNT_KOPEKS,
             'available_sub_options': None,
         },
+        'paypear': {
+            'default_display_name': settings.get_paypear_display_name(),
+            'is_configured': settings.is_paypear_enabled(),
+            'default_min': settings.PAYPEAR_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.PAYPEAR_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'bank_card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+                {'id': 'sberpay', 'name': 'SberPay'},
+                {'id': 'tpay', 'name': 'T-Pay'},
+            ],
+        },
+        'rollypay': {
+            'default_display_name': settings.get_rollypay_display_name(),
+            'is_configured': settings.is_rollypay_enabled(),
+            'default_min': settings.ROLLYPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.ROLLYPAY_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'sbp', 'name': 'СБП'},
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'crypto', 'name': 'Криптовалюта'},
+            ],
+        },
+        'aurapay': {
+            'default_display_name': settings.get_aurapay_display_name(),
+            'is_configured': settings.is_aurapay_enabled(),
+            'default_min': settings.AURAPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.AURAPAY_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+            ],
+        },
     }
 
 
@@ -188,6 +221,9 @@ DEFAULT_METHOD_ORDER = [
     'kassa_ai',
     'riopay',
     'severpay',
+    'paypear',
+    'rollypay',
+    'aurapay',
 ]
 
 

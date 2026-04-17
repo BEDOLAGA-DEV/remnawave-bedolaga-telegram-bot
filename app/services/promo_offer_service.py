@@ -216,6 +216,14 @@ class PromoOfferService:
                         subscription_id=subscription.id,
                         exc=exc,
                     )
+                    from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                    if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+                        remnawave_retry_queue.enqueue(
+                            subscription_id=subscription.id,
+                            user_id=subscription.user_id,
+                            action='update',
+                        )
 
         await db.commit()
         for payload in log_payloads:

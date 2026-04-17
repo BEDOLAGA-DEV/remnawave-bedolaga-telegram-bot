@@ -7055,6 +7055,14 @@ async def switch_tariff_endpoint(
         )
     except Exception as e:
         logger.error('Ошибка синхронизации с RemnaWave при смене тарифа', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                action='update',
+            )
 
     lang = getattr(user, 'language', settings.DEFAULT_LANGUAGE)
     if upgrade_cost > 0:
@@ -7245,6 +7253,14 @@ async def purchase_traffic_topup_endpoint(
             await service.enable_remnawave_user(_en_uuid)
     except Exception as e:
         logger.error('Ошибка синхронизации с RemnaWave при докупке трафика', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                action='update',
+            )
 
     # Создаем транзакцию
     await create_transaction(
@@ -7484,6 +7500,14 @@ async def toggle_daily_subscription_pause_endpoint(
                         logger.warning('Failed to sync squads after user creation (miniapp)', error=squad_err)
         except Exception as e:
             logger.error('Ошибка синхронизации с RemnaWave при возобновлении', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+                remnawave_retry_queue.enqueue(
+                    subscription_id=subscription.id,
+                    user_id=subscription.user_id,
+                    action='update',
+                )
 
         # Send admin notification about daily subscription resume
         if resume_transaction is not None:

@@ -228,12 +228,24 @@ async def purchase_devices_legacy(
     # Sync with RemnaWave
     try:
         service = SubscriptionService()
-        if _resolve_panel_uuid(subscription, user):
-            await service.update_remnawave_user(db, subscription)
+        if settings.is_multi_tariff_enabled():
+            _should_create = not subscription.remnawave_uuid
         else:
+            _should_create = not getattr(user, 'remnawave_uuid', None)
+
+        if _should_create:
             await service.create_remnawave_user(db, subscription)
+        else:
+            await service.update_remnawave_user(db, subscription)
     except Exception as e:
         logger.error('Failed to sync devices with RemnaWave (legacy endpoint)', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        remnawave_retry_queue.enqueue(
+            subscription_id=subscription.id,
+            user_id=user.id,
+            action='create' if _should_create else 'update',
+        )
 
     # Отправляем уведомление админам
     try:
@@ -469,12 +481,24 @@ async def purchase_devices(
         # Sync with RemnaWave
         service = SubscriptionService()
         try:
-            if _resolve_panel_uuid(subscription, user):
-                await service.update_remnawave_user(db, subscription)
+            if settings.is_multi_tariff_enabled():
+                _should_create = not subscription.remnawave_uuid
             else:
+                _should_create = not getattr(user, 'remnawave_uuid', None)
+
+            if _should_create:
                 await service.create_remnawave_user(db, subscription)
+            else:
+                await service.update_remnawave_user(db, subscription)
         except Exception as e:
             logger.error('Failed to sync devices with RemnaWave', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=user.id,
+                action='create' if _should_create else 'update',
+            )
 
         await db.refresh(user)
 

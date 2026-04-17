@@ -28,7 +28,7 @@ class NotificationSettingsResponse(BaseModel):
     subscription_expiry_days: int = 3
     traffic_warning_enabled: bool = True
     traffic_warning_percent: int = 80
-    balance_low_enabled: bool = True
+    balance_low_enabled: bool = False
     balance_low_threshold: int = 100  # kopeks
     news_enabled: bool = True
     promo_offers_enabled: bool = True
@@ -60,7 +60,7 @@ def _get_notification_settings(user: User) -> dict[str, Any]:
         'subscription_expiry_days': settings_data.get('subscription_expiry_days', 3),
         'traffic_warning_enabled': settings_data.get('traffic_warning_enabled', True),
         'traffic_warning_percent': settings_data.get('traffic_warning_percent', 80),
-        'balance_low_enabled': settings_data.get('balance_low_enabled', True),
+        'balance_low_enabled': settings_data.get('balance_low_enabled', False),
         'balance_low_threshold': settings_data.get('balance_low_threshold', 100),
         'news_enabled': settings_data.get('news_enabled', True),
         'promo_offers_enabled': settings_data.get('promo_offers_enabled', True),
