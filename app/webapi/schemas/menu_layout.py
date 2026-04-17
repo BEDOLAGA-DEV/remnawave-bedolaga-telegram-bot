@@ -54,6 +54,7 @@ class ButtonConditions(BaseModel):
     show_trial: bool | None = Field(default=None, description='Показать пробный период')
     show_buy: bool | None = Field(default=None, description='Показать кнопку покупки')
     has_saved_cart: bool | None = Field(default=None, description='Есть сохраненная корзина')
+    traffic_topup_enabled: bool | None = Field(default=None, description='Докупка трафика включена')
 
     # Расширенные условия
     min_balance_kopeks: int | None = Field(default=None, ge=0, description='Минимальный баланс в копейках')
@@ -84,7 +85,7 @@ class MenuButtonConfig(BaseModel):
     type: ButtonType = Field(..., description='Тип кнопки')
     builtin_id: str | None = Field(default=None, description='ID встроенной кнопки (для type=builtin)')
     text: dict[str, str] = Field(..., description='Локализованные тексты кнопки: {lang_code: text}')
-    icon: str | None = Field(default=None, max_length=10, description='Эмодзи/иконка кнопки (отдельно от текста)')
+    icon: str | None = Field(default=None, max_length=100, description='Эмодзи/иконка кнопки (отдельно от текста)')
     action: str = Field(..., description='callback_data или URL в зависимости от типа')
     enabled: bool = Field(default=True, description='Кнопка активна')
     visibility: ButtonVisibility = Field(default=ButtonVisibility.ALL, description='Видимость кнопки')
@@ -172,7 +173,7 @@ class ButtonUpdateRequest(BaseModel):
     """Запрос на обновление отдельной кнопки."""
 
     text: dict[str, str] | None = Field(default=None, description='Новые локализованные тексты')
-    icon: str | None = Field(default=None, max_length=10, description='Эмодзи/иконка кнопки')
+    icon: str | None = Field(default=None, max_length=100, description='Эмодзи/иконка кнопки')
     enabled: bool | None = Field(default=None, description='Включить/выключить')
     visibility: ButtonVisibility | None = Field(default=None, description='Новая видимость')
     conditions: ButtonConditions | None = Field(default=None, description='Новые условия показа')
