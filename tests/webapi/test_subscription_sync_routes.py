@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 
+from app.database.models import User
 from app.webapi.routes import subscriptions, users
 from app.webapi.schemas.subscriptions import SubscriptionExtendRequest
 from app.webapi.schemas.users import UserSubscriptionCreateRequest
@@ -66,6 +68,49 @@ async def test_users_subscription_trial_calls_remnawave_sync(monkeypatch: pytest
 
 
 @pytest.mark.anyio('asyncio')
+async def test_users_subscription_paid_calls_remnawave_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_user = SimpleNamespace(id=1)
+    created_subscription = _build_subscription()
+    created_subscription.is_trial = False
+    service_instance = SimpleNamespace(
+        update_remnawave_user=AsyncMock(return_value=None),
+        create_remnawave_user=AsyncMock(return_value=SimpleNamespace(uuid='new')),
+    )
+
+    monkeypatch.setattr(users, '_get_user_by_id_or_telegram_id', AsyncMock(return_value=fake_user))
+    monkeypatch.setattr(users, 'get_subscription_by_user_id', AsyncMock(return_value=None))
+    monkeypatch.setattr(users, 'create_paid_subscription', AsyncMock(return_value=created_subscription))
+    monkeypatch.setattr(users, 'SubscriptionService', lambda: service_instance)
+    monkeypatch.setattr(users, 'get_user_by_id', AsyncMock(return_value=fake_user))
+    monkeypatch.setattr(users, '_serialize_user', lambda user: {'id': user.id})
+
+    payload = UserSubscriptionCreateRequest(
+        is_trial=False,
+        duration_days=30,
+        replace_existing=False,
+    )
+    result = await users.create_user_subscription(user_id=1, payload=payload, _=None, db=SimpleNamespace())
+
+    assert result == {'id': 1}
+    service_instance.update_remnawave_user.assert_awaited_once()
+    service_instance.create_remnawave_user.assert_awaited_once()
+
+
+def test_users_search_filter_adds_internal_id_for_int32() -> None:
+    query = users._apply_search_filter(select(User), '123')
+    where_expr = query._where_criteria[0]
+
+    assert len(list(where_expr.clauses)) == 6
+
+
+def test_users_search_filter_skips_internal_id_for_out_of_int32() -> None:
+    query = users._apply_search_filter(select(User), str(2**40))
+    where_expr = query._where_criteria[0]
+
+    assert len(list(where_expr.clauses)) == 5
+
+
+@pytest.mark.anyio('asyncio')
 async def test_subscriptions_extend_calls_remnawave_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     subscription = _build_subscription()
     service_instance = SimpleNamespace(
@@ -103,6 +148,33 @@ async def test_subscriptions_extend_rolls_back_when_sync_fails(monkeypatch: pyte
     monkeypatch.setattr(subscriptions, '_get_subscription', AsyncMock(return_value=subscription))
     monkeypatch.setattr(subscriptions, 'extend_subscription', AsyncMock(return_value=subscription))
     restore_mock = AsyncMock()
+    monkeypatch.setattr(subscriptions, '_restore_subscription_state', restore_mock)
+    monkeypatch.setattr(subscriptions, 'SubscriptionService', lambda: service_instance)
+
+    payload = SubscriptionExtendRequest(days=30)
+    with pytest.raises(HTTPException) as error:
+        await subscriptions.extend_subscription_endpoint(
+            subscription_id=subscription.id,
+            payload=payload,
+            _=None,
+            db=SimpleNamespace(),
+        )
+
+    assert error.value.status_code == 500
+    restore_mock.assert_awaited_once()
+
+
+@pytest.mark.anyio('asyncio')
+async def test_subscriptions_extend_returns_500_when_rollback_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    subscription = _build_subscription()
+    service_instance = SimpleNamespace(
+        update_remnawave_user=AsyncMock(return_value=None),
+        create_remnawave_user=AsyncMock(return_value=None),
+    )
+
+    monkeypatch.setattr(subscriptions, '_get_subscription', AsyncMock(return_value=subscription))
+    monkeypatch.setattr(subscriptions, 'extend_subscription', AsyncMock(return_value=subscription))
+    restore_mock = AsyncMock(side_effect=RuntimeError('rollback failed'))
     monkeypatch.setattr(subscriptions, '_restore_subscription_state', restore_mock)
     monkeypatch.setattr(subscriptions, 'SubscriptionService', lambda: service_instance)
 

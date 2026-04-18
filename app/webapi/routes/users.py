@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.database.constants import POSTGRES_INT4_MAX, POSTGRES_INT4_MIN
 from app.database.crud.promo_group import get_promo_group_by_id
 from app.database.crud.subscription import (
     create_paid_subscription,
@@ -40,12 +41,14 @@ from ..schemas.users import (
     UserSubscriptionCreateRequest,
     UserUpdateRequest,
 )
+from ._subscription_state import (
+    restore_subscription_state as _restore_subscription_state,
+    snapshot_subscription_state as _snapshot_subscription_state,
+)
 
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
-POSTGRES_INT4_MIN = -(2**31)
-POSTGRES_INT4_MAX = 2**31 - 1
+logger = structlog.get_logger(__name__)
 
 
 def _serialize_promo_group(group: PromoGroup | None) -> PromoGroupSummary | None:
@@ -367,50 +370,6 @@ async def _get_user_by_id_or_telegram_id(db: AsyncSession, user_id: int) -> User
     return user
 
 
-def _snapshot_subscription_state(subscription: Subscription) -> dict[str, Any]:
-    return {
-        'status': subscription.status,
-        'is_trial': subscription.is_trial,
-        'start_date': subscription.start_date,
-        'end_date': subscription.end_date,
-        'traffic_limit_gb': subscription.traffic_limit_gb,
-        'traffic_used_gb': subscription.traffic_used_gb,
-        'purchased_traffic_gb': subscription.purchased_traffic_gb,
-        'traffic_reset_at': subscription.traffic_reset_at,
-        'device_limit': subscription.device_limit,
-        'connected_squads': list(subscription.connected_squads or []),
-        'subscription_url': subscription.subscription_url,
-        'subscription_crypto_link': subscription.subscription_crypto_link,
-        'remnawave_short_uuid': subscription.remnawave_short_uuid,
-        'tariff_id': subscription.tariff_id,
-        'autopay_enabled': subscription.autopay_enabled,
-        'autopay_days_before': subscription.autopay_days_before,
-        'is_daily_paused': getattr(subscription, 'is_daily_paused', False),
-        'last_daily_charge_at': getattr(subscription, 'last_daily_charge_at', None),
-        'updated_at': subscription.updated_at,
-    }
-
-
-async def _restore_subscription_state(
-    db: AsyncSession,
-    subscription_id: int,
-    snapshot: dict[str, Any],
-) -> None:
-    result = await db.execute(select(Subscription).where(Subscription.id == subscription_id))
-    subscription = result.scalar_one_or_none()
-    if not subscription:
-        return
-
-    for field, value in snapshot.items():
-        if field == 'connected_squads':
-            setattr(subscription, field, list(value or []))
-        else:
-            setattr(subscription, field, value)
-
-    await db.commit()
-    await db.refresh(subscription)
-
-
 async def _delete_subscription_if_exists(db: AsyncSession, subscription_id: int) -> None:
     result = await db.execute(select(Subscription).where(Subscription.id == subscription_id))
     subscription = result.scalar_one_or_none()
@@ -548,17 +507,18 @@ async def create_user_subscription(
             raise ValueError('Failed to create/update user in Remnawave')
     except HTTPException:
         raise
-    except Exception as error:
+    except Exception:
+        logger.exception('Failed to sync user subscription with Remnawave', user_id=user.id)
         try:
             if existing and previous_state is not None:
                 await _restore_subscription_state(db, existing.id, previous_state)
             elif subscription is not None:
                 await _delete_subscription_if_exists(db, subscription.id)
         except Exception:
-            logger.exception('Failed to rollback user subscription mutation for user %s', user.id)
+            logger.exception('Failed to rollback user subscription mutation', user_id=user.id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f'Failed to sync with Remnawave: {error!s}',
+            detail='Failed to sync with Remnawave',
         )
 
     # Перезагружаем пользователя с подпиской
@@ -566,7 +526,7 @@ async def create_user_subscription(
     return _serialize_user(user)
 
 
-@router.patch('/{user_id}/subscription', response_model=UserResponse)
+@router.patch('/{user_id}/subscription', response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def patch_user_subscription(
     user_id: int,
     payload: UserSubscriptionCreateRequest,
