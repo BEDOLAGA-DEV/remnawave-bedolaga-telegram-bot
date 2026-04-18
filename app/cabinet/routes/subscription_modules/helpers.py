@@ -202,6 +202,7 @@ def _subscription_to_response(
 
     return SubscriptionResponse(
         id=subscription.id,
+        name=getattr(subscription, 'name', None),
         status=actual_status,  # Use actual_status instead of raw status
         is_trial=subscription.is_trial or actual_status == 'trial',
         start_date=subscription.start_date,

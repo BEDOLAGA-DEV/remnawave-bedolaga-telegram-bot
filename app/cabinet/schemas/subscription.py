@@ -28,6 +28,7 @@ class SubscriptionData(BaseModel):
     """User subscription data."""
 
     id: int
+    name: str | None = None
     status: str
     is_trial: bool
     start_date: datetime
@@ -152,6 +153,7 @@ class PurchasePreviewRequest(BaseModel):
     """Request to preview purchase pricing."""
 
     selection: PurchaseSelectionRequest
+    name: str | None = Field(None, max_length=255, description='Optional custom subscription name')
 
 
 # ============ Tariff Purchase Schemas ============
@@ -165,3 +167,10 @@ class TariffPurchaseRequest(BaseModel):
     traffic_gb: int | None = Field(
         None, ge=0, le=100_000, description='Custom traffic in GB (for custom_traffic_enabled tariffs)'
     )
+    name: str | None = Field(None, max_length=255, description='Optional custom subscription name')
+
+
+class SubscriptionRenameRequest(BaseModel):
+    """Request to rename a subscription."""
+
+    name: str | None = Field(None, max_length=255, description='Custom subscription name (null to clear)')

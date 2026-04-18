@@ -59,6 +59,15 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
+def _normalize_subscription_name(name: str | None) -> str | None:
+    if name is None:
+        return None
+    cleaned = name.strip()
+    if not cleaned:
+        return None
+    return cleaned[:255]
+
+
 # ============ Full Purchase Flow (like MiniApp) ============
 
 purchase_service = MiniAppSubscriptionPurchaseService()
@@ -459,6 +468,13 @@ async def submit_purchase(
 
         subscription = result['subscription']
 
+        # Apply optional custom name (user-set on purchase)
+        normalized_name = _normalize_subscription_name(request.name)
+        if normalized_name is not None:
+            subscription.name = normalized_name
+            await db.commit()
+            await db.refresh(subscription)
+
         # Send email notification for email-only users
         if not user.telegram_id and user.email and user.email_verified:
             try:
@@ -851,6 +867,13 @@ async def purchase_tariff(
         if is_daily_tariff:
             subscription.last_daily_charge_at = datetime.now(UTC)
             subscription.is_daily_paused = False
+            await db.commit()
+            await db.refresh(subscription)
+
+        # Apply optional custom name (user-set on purchase)
+        normalized_name = _normalize_subscription_name(request.name)
+        if normalized_name is not None:
+            subscription.name = normalized_name
             await db.commit()
             await db.refresh(subscription)
 

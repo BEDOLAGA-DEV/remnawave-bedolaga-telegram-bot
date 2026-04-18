@@ -27,6 +27,8 @@ from app.services.system_settings_service import bot_configuration_service
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import (
     ServerInfo,
+    SubscriptionRenameRequest,
+    SubscriptionResponse,
     SubscriptionStatusResponse,
 )
 from .helpers import _subscription_to_response, resolve_subscription
@@ -115,6 +117,38 @@ async def get_subscription(
         subscription, servers, tariff_name, traffic_purchases_data, user=fresh_user
     )
     return SubscriptionStatusResponse(has_subscription=True, subscription=subscription_data)
+
+
+# ============ Rename ============
+
+
+@router.patch('/name', response_model=SubscriptionResponse)
+async def rename_subscription(
+    request: SubscriptionRenameRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+    subscription_id: int | None = Query(None, description='Subscription ID for multi-tariff'),
+) -> SubscriptionResponse:
+    """Set or clear a custom name for the subscription."""
+    subscription = await resolve_subscription(db, user, subscription_id)
+
+    if not subscription:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='No subscription found',
+        )
+
+    new_name: str | None = None
+    if request.name is not None:
+        cleaned = request.name.strip()
+        if cleaned:
+            new_name = cleaned[:255]
+
+    subscription.name = new_name
+    await db.commit()
+    await db.refresh(subscription)
+
+    return _subscription_to_response(subscription, user=user)
 
 
 # ============ Connection Link ============

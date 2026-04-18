@@ -29,6 +29,7 @@ router = APIRouter(prefix='/subscriptions', tags=['Cabinet Multi-Tariff'], redir
 
 class SubscriptionListItem(BaseModel):
     id: int
+    name: str | None = None
     status: str
     tariff_id: int | None = None
     tariff_name: str | None = None
@@ -57,6 +58,7 @@ def _subscription_to_list_item(sub) -> SubscriptionListItem:
 
     return SubscriptionListItem(
         id=sub.id,
+        name=getattr(sub, 'name', None),
         status=sub.actual_status,
         tariff_id=sub.tariff_id,
         tariff_name=tariff_name,
