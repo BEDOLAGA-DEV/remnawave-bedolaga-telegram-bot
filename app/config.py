@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     # Настройки очереди чеков NaloGO
     NALOGO_QUEUE_CHECK_INTERVAL: int = 300  # Интервал проверки очереди (секунды)
     NALOGO_QUEUE_RECEIPT_DELAY: int = 3  # Задержка между отправкой чеков (секунды)
-    NALOGO_QUEUE_MAX_ATTEMPTS: int = 10  # Максимум попыток отправки чека
+    NALOGO_QUEUE_MAX_ATTEMPTS: int = 10  # Максимум попыток отправки чека; <= 0 отключает лимит
 
     ADMIN_REPORTS_ENABLED: bool = False
     ADMIN_REPORTS_CHAT_ID: str | None = None

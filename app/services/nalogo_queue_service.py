@@ -55,7 +55,11 @@ class NalogoQueueService:
 
     @property
     def _max_attempts(self) -> int:
-        """Максимальное количество попыток отправки чека."""
+        """Максимальное количество попыток отправки чека.
+
+        Значение <= 0 отключает лимит и оставляет чек в очереди
+        до успешной отправки.
+        """
         return getattr(settings, 'NALOGO_QUEUE_MAX_ATTEMPTS', 10)
 
     async def start(self) -> None:
@@ -156,8 +160,8 @@ class NalogoQueueService:
             payment_id = receipt_data.get('payment_id', 'unknown')
             amount = receipt_data.get('amount', 0)
 
-            # Проверяем лимит попыток
-            if attempts >= self._max_attempts:
+            # Значение <= 0 отключает лимит попыток.
+            if self._max_attempts > 0 and attempts >= self._max_attempts:
                 logger.error(
                     'Чек превысил максимальное количество попыток, удалён из очереди',
                     payment_id=payment_id,
