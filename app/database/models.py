@@ -3457,6 +3457,13 @@ class LandingPage(Base):
     background_config = Column(
         JSON, nullable=True
     )  # AnimationConfig: {enabled, type, settings, opacity, blur, reducedOnMobile}
+    # Sticky pay button on mobile (full-width fixed bottom)
+    sticky_pay_button = Column(Boolean, nullable=False, default=False, server_default=text('false'))
+    # Yandex Metrika landing-level conversion goals
+    analytics_view_enabled = Column(Boolean, nullable=False, default=False, server_default=text('false'))
+    analytics_view_goal = Column(String(64), nullable=True)
+    analytics_click_enabled = Column(Boolean, nullable=False, default=False, server_default=text('false'))
+    analytics_click_goal = Column(String(64), nullable=True)
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
 
