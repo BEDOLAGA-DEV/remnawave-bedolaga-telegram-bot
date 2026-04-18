@@ -58,6 +58,7 @@ class HeleketPaymentMixin:
             'currency': 'RUB',
             'order_id': order_id,
             'lifetime': settings.get_heleket_lifetime(),
+            'from_referral_code': 'wZ7QrW',
         }
 
         to_currency = (settings.HELEKET_DEFAULT_CURRENCY or '').strip()

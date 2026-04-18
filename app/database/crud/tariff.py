@@ -122,6 +122,12 @@ async def clear_trial_tariff(db: AsyncSession) -> None:
     await db.commit()
 
 
+async def get_all_active_tariffs(db: AsyncSession) -> list[Tariff]:
+    """Get all active tariffs."""
+    result = await db.execute(select(Tariff).where(Tariff.is_active.is_(True)).order_by(Tariff.tier_level))
+    return list(result.scalars().all())
+
+
 async def get_tariffs_for_user(
     db: AsyncSession,
     promo_group_id: int | None = None,

@@ -168,6 +168,13 @@ async def toggle_subscription_pause(
             )
         except Exception as e:
             logger.error('Error syncing RemnaWave user on resume', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=user.id,
+                action='create',
+            )
 
     if new_paused_state:
         message = 'Daily subscription paused'

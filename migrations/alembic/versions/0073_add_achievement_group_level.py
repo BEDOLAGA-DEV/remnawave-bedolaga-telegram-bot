@@ -1,7 +1,7 @@
 """add group_name and level to achievement_templates
 
-Revision ID: 0066
-Revises: 0065
+Revision ID: 0073
+Revises: 0072
 Create Date: 2026-04-13
 
 Multi-level achievements: templates with the same group_name form
@@ -13,8 +13,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0066'
-down_revision: Union[str, None] = '0065'
+revision: str = '0073'
+down_revision: Union[str, None] = '0072'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

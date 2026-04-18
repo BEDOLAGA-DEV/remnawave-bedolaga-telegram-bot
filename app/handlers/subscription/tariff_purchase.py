@@ -953,8 +953,8 @@ async def handle_custom_confirm(
     )
     total_price = result.final_total
 
-    # Проверяем, что цена за период валидна
-    if result.base_price == 0 and not tariff.can_purchase_custom_days():
+    # Проверяем, что цена за период валидна (original_total — цена до скидок)
+    if result.original_total == 0 and not tariff.can_purchase_custom_days():
         await callback.answer('Выбранный период недоступен для этого тарифа', show_alert=True)
         return
 
@@ -1084,14 +1084,34 @@ async def handle_custom_confirm(
         # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
         try:
             subscription_service = SubscriptionService()
-            await subscription_service.create_remnawave_user(
-                db,
-                subscription,
-                reset_traffic=True,
-                reset_reason='покупка тарифа',
-            )
+            if settings.is_multi_tariff_enabled():
+                _should_create = not subscription.remnawave_uuid
+            else:
+                _should_create = not getattr(db_user, 'remnawave_uuid', None)
+
+            if _should_create:
+                await subscription_service.create_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=True,
+                    reset_reason='покупка тарифа',
+                )
+            else:
+                await subscription_service.update_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=True,
+                    reset_reason='покупка тарифа',
+                )
         except Exception as e:
             logger.error('Ошибка обновления Remnawave', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=db_user.id,
+                action='create',
+            )
 
         # Создаем транзакцию
         await create_transaction(
@@ -1605,14 +1625,37 @@ async def confirm_tariff_purchase(
     # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
     try:
         subscription_service = SubscriptionService()
-        await subscription_service.create_remnawave_user(
-            db,
-            subscription,
-            reset_traffic=True,
-            reset_reason='покупка тарифа',
-        )
+        # In multi-tariff mode, each subscription has its own panel user.
+        # A new subscription has no remnawave_uuid yet, so always CREATE.
+        # In single-tariff mode, reuse the user-level UUID if available.
+        if settings.is_multi_tariff_enabled():
+            _should_create = not subscription.remnawave_uuid
+        else:
+            _should_create = not getattr(db_user, 'remnawave_uuid', None)
+
+        if _should_create:
+            await subscription_service.create_remnawave_user(
+                db,
+                subscription,
+                reset_traffic=True,
+                reset_reason='покупка тарифа',
+            )
+        else:
+            await subscription_service.update_remnawave_user(
+                db,
+                subscription,
+                reset_traffic=True,
+                reset_reason='покупка тарифа',
+            )
     except Exception as e:
         logger.error('Ошибка обновления Remnawave', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        remnawave_retry_queue.enqueue(
+            subscription_id=subscription.id,
+            user_id=db_user.id,
+            action='create',
+        )
 
     # Создаем транзакцию
     try:
@@ -1952,14 +1995,34 @@ async def confirm_daily_tariff_purchase(
     # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
     try:
         subscription_service = SubscriptionService()
-        await subscription_service.create_remnawave_user(
-            db,
-            subscription,
-            reset_traffic=True,
-            reset_reason='покупка суточного тарифа',
-        )
+        if settings.is_multi_tariff_enabled():
+            _should_create = not subscription.remnawave_uuid
+        else:
+            _should_create = not getattr(db_user, 'remnawave_uuid', None)
+
+        if _should_create:
+            await subscription_service.create_remnawave_user(
+                db,
+                subscription,
+                reset_traffic=True,
+                reset_reason='покупка суточного тарифа',
+            )
+        else:
+            await subscription_service.update_remnawave_user(
+                db,
+                subscription,
+                reset_traffic=True,
+                reset_reason='покупка суточного тарифа',
+            )
     except Exception as e:
         logger.error('Ошибка обновления Remnawave', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        remnawave_retry_queue.enqueue(
+            subscription_id=subscription.id,
+            user_id=db_user.id,
+            action='create',
+        )
 
     # Создаем транзакцию
     await create_transaction(
@@ -2166,8 +2229,36 @@ async def show_tariff_extend(
                 subscription = None
     else:
         subscription = await get_subscription_by_user_id(db, db_user.id)
-    if not subscription or not subscription.tariff_id:
-        await callback.answer('Тариф не найден', show_alert=True)
+    if not subscription:
+        await callback.answer('Подписка не найдена', show_alert=True)
+        return
+
+    if not subscription.tariff_id:
+        # Legacy user without tariff — show tariff selection for upgrade
+        promo_group_id = getattr(db_user, 'promo_group_id', None)
+        tariffs = await get_tariffs_for_user(db, promo_group_id)
+        if not tariffs:
+            await callback.answer('Нет доступных тарифов', show_alert=True)
+            return
+
+        keyboard = []
+        for t in tariffs:
+            if t.is_daily:
+                continue
+            keyboard.append([InlineKeyboardButton(text=f'📦 {t.name}', callback_data=f'tariff_select:{t.id}')])
+        if not keyboard:
+            await callback.answer('Нет доступных тарифов для продления', show_alert=True)
+            return
+        keyboard.append([InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+
+        await callback.message.edit_text(
+            '🔄 <b>Выберите тариф для продления</b>\n\n'
+            'Для продления подписки необходимо выбрать тариф.\n'
+            'Подписка будет обновлена с параметрами выбранного тарифа.',
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+            parse_mode='HTML',
+        )
+        await callback.answer()
         return
 
     tariff = await get_tariff_by_id(db, subscription.tariff_id)
@@ -2409,14 +2500,34 @@ async def confirm_tariff_extend(
         # Обновляем пользователя в Remnawave
         try:
             subscription_service = SubscriptionService()
-            await subscription_service.create_remnawave_user(
-                db,
-                subscription,
-                reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT or was_trial,
-                reset_reason='конвертация триала' if was_trial else 'продление тарифа',
-            )
+            if settings.is_multi_tariff_enabled():
+                _should_create = not subscription.remnawave_uuid
+            else:
+                _should_create = not getattr(db_user, 'remnawave_uuid', None)
+
+            if _should_create:
+                await subscription_service.create_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT or was_trial,
+                    reset_reason='конвертация триала' if was_trial else 'продление тарифа',
+                )
+            else:
+                await subscription_service.update_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT or was_trial,
+                    reset_reason='конвертация триала' if was_trial else 'продление тарифа',
+                )
         except Exception as e:
             logger.error('Ошибка обновления Remnawave', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=db_user.id,
+                action='create',
+            )
 
         # Создаем транзакцию
         await create_transaction(
@@ -3024,14 +3135,34 @@ async def confirm_tariff_switch(
         # Обновляем пользователя в Remnawave
         try:
             subscription_service = SubscriptionService()
-            await subscription_service.create_remnawave_user(
-                db,
-                subscription,
-                reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
-                reset_reason='переключение тарифа',
-            )
+            if settings.is_multi_tariff_enabled():
+                _should_create = not subscription.remnawave_uuid
+            else:
+                _should_create = not getattr(db_user, 'remnawave_uuid', None)
+
+            if _should_create:
+                await subscription_service.create_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+                    reset_reason='переключение тарифа',
+                )
+            else:
+                await subscription_service.update_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+                    reset_reason='переключение тарифа',
+                )
         except Exception as e:
             logger.error('Ошибка обновления Remnawave при переключении тарифа', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=db_user.id,
+                action='create',
+            )
 
         # Гарантированный сброс устройств при смене тарифа
         await db.refresh(db_user)
@@ -3253,14 +3384,34 @@ async def confirm_daily_tariff_switch(
         # Обновляем пользователя в Remnawave (сброс трафика по админ-настройке)
         try:
             subscription_service = SubscriptionService()
-            await subscription_service.create_remnawave_user(
-                db,
-                subscription,
-                reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
-                reset_reason='смена на суточный тариф',
-            )
+            if settings.is_multi_tariff_enabled():
+                _should_create = not subscription.remnawave_uuid
+            else:
+                _should_create = not getattr(db_user, 'remnawave_uuid', None)
+
+            if _should_create:
+                await subscription_service.create_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+                    reset_reason='смена на суточный тариф',
+                )
+            else:
+                await subscription_service.update_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+                    reset_reason='смена на суточный тариф',
+                )
         except Exception as e:
             logger.error('Ошибка обновления Remnawave', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=db_user.id,
+                action='create',
+            )
 
         # Гарантированный сброс устройств при смене тарифа
         await db.refresh(db_user)
@@ -3928,14 +4079,34 @@ async def confirm_instant_switch(
         # Обновляем пользователя в Remnawave (сброс трафика по админ-настройке)
         try:
             subscription_service = SubscriptionService()
-            await subscription_service.create_remnawave_user(
-                db,
-                subscription,
-                reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
-                reset_reason='мгновенное переключение тарифа',
-            )
+            if settings.is_multi_tariff_enabled():
+                _should_create = not subscription.remnawave_uuid
+            else:
+                _should_create = not getattr(db_user, 'remnawave_uuid', None)
+
+            if _should_create:
+                await subscription_service.create_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+                    reset_reason='мгновенное переключение тарифа',
+                )
+            else:
+                await subscription_service.update_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+                    reset_reason='мгновенное переключение тарифа',
+                )
         except Exception as e:
             logger.error('Ошибка обновления Remnawave при мгновенном переключении', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=db_user.id,
+                action='create',
+            )
 
         # Гарантированный сброс устройств при смене тарифа
         await db.refresh(db_user)

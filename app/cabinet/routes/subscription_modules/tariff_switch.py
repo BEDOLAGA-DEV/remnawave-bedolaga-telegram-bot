@@ -428,6 +428,13 @@ async def switch_tariff(
             )
     except Exception as e:
         logger.error('Failed to sync tariff switch with RemnaWave', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        remnawave_retry_queue.enqueue(
+            subscription_id=subscription.id,
+            user_id=user.id,
+            action='update' if _has_panel else 'create',
+        )
 
     # Reset all devices on tariff switch
     devices_reset = False

@@ -62,6 +62,7 @@ class BroadcastConfig:
     media: BroadcastMediaConfig | None = None
     initiator_name: str | None = None
     custom_buttons: list[dict] | None = None
+    category: str = 'system'  # system|news|promo
 
 
 @dataclass
@@ -160,7 +161,7 @@ class BroadcastService:
                 await session.commit()
 
             # _fetch_recipients теперь возвращает list[int] (telegram_id), а не ORM-объекты
-            recipient_ids: list[int] = await self._fetch_recipients(config.target)
+            recipient_ids: list[int] = await self._fetch_recipients(config.target, config.category)
 
             async with AsyncSessionLocal() as session:
                 broadcast = await session.get(BroadcastHistory, broadcast_id)
@@ -226,14 +227,30 @@ class BroadcastService:
             logger.exception('Критическая ошибка при выполнении рассылки', broadcast_id=broadcast_id, exc=exc)
             await self._mark_failed(broadcast_id, sent_count, failed_count, blocked_count)
 
-    async def _fetch_recipients(self, target: str) -> list[int]:
-        """Загружает получателей и возвращает список telegram_id (скаляры, не ORM-объекты)."""
+    async def _fetch_recipients(self, target: str, category: str = 'system') -> list[int]:
+        """Загружает получателей и возвращает список telegram_id (скаляры, не ORM-объекты).
+
+        Filters out users who disabled the given broadcast category in their
+        notification preferences (news_enabled, promo_offers_enabled).
+        Category 'system' is never filtered — system notifications reach everyone.
+        """
         async with AsyncSessionLocal() as session:
             if target.startswith('custom_'):
                 criteria = target[len('custom_') :]
                 users_orm = await get_custom_users(session, criteria)
             else:
                 users_orm = await get_target_users(session, target)
+
+            # Filter by user notification preferences based on broadcast category
+            if category == 'news':
+                from app.utils.notification_prefs import is_news_enabled
+
+                users_orm = [u for u in users_orm if is_news_enabled(u)]
+            elif category == 'promo':
+                from app.utils.notification_prefs import is_promo_offers_enabled
+
+                users_orm = [u for u in users_orm if is_promo_offers_enabled(u)]
+            # category == 'system' → no filtering, sent to everyone
 
             # Извлекаем telegram_id сразу, пока сессия жива.
             # После выхода из блока ORM-объекты станут detached.

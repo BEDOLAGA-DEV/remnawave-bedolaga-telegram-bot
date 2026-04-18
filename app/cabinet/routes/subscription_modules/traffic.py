@@ -316,19 +316,32 @@ async def purchase_traffic(
     # Синхронизируем с RemnaWave
     try:
         subscription_service = SubscriptionService()
-        _panel_uuid = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else getattr(user, 'remnawave_uuid', None)
-        )
-        if _panel_uuid:
+        if settings.is_multi_tariff_enabled():
+            _should_create = not subscription.remnawave_uuid
+        else:
+            _should_create = not getattr(user, 'remnawave_uuid', None)
+
+        if _should_create:
+            await subscription_service.create_remnawave_user(db, subscription)
+        else:
             await subscription_service.update_remnawave_user(db, subscription)
             if subscription.status == 'active':
-                await subscription_service.enable_remnawave_user(_panel_uuid)
-        else:
-            await subscription_service.create_remnawave_user(db, subscription)
+                _enable_uuid = (
+                    subscription.remnawave_uuid
+                    if settings.is_multi_tariff_enabled()
+                    else getattr(user, 'remnawave_uuid', None)
+                )
+                if _enable_uuid:
+                    await subscription_service.enable_remnawave_user(_enable_uuid)
     except Exception as e:
         logger.error('Failed to sync traffic with RemnaWave', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        remnawave_retry_queue.enqueue(
+            subscription_id=subscription.id,
+            user_id=user.id,
+            action='create' if _should_create else 'update',
+        )
 
     # Создаём транзакцию
     await create_transaction(
@@ -604,17 +617,25 @@ async def switch_traffic_package(
     # Sync with RemnaWave
     try:
         subscription_service = SubscriptionService()
-        _panel_uuid2 = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else getattr(user, 'remnawave_uuid', None)
-        )
-        if _panel_uuid2:
-            await subscription_service.update_remnawave_user(db, subscription)
+        if settings.is_multi_tariff_enabled():
+            _should_create = not subscription.remnawave_uuid
         else:
+            _should_create = not getattr(user, 'remnawave_uuid', None)
+
+        if _should_create:
             await subscription_service.create_remnawave_user(db, subscription)
+        else:
+            await subscription_service.update_remnawave_user(db, subscription)
     except Exception as e:
         logger.error('Failed to sync traffic switch with RemnaWave', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                action='create' if _should_create else 'update',
+            )
 
     await db.refresh(user)
     await db.refresh(subscription)

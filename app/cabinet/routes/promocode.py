@@ -79,6 +79,8 @@ async def activate_promocode(
     error_messages = {
         'not_found': 'Promo code not found',
         'expired': 'Promo code has expired',
+        'inactive': 'Promo code is deactivated',
+        'not_yet_valid': 'Promo code is not yet active',
         'used': 'Promo code has been fully used',
         'already_used_by_user': 'You have already used this promo code',
         'active_discount_exists': 'You already have an active discount. Deactivate it first via /deactivate-discount',

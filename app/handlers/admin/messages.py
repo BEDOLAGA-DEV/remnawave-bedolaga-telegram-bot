@@ -1599,42 +1599,28 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
         result = await db.execute(query)
         return result.scalar() or 0
 
-    if target == 'expired':
-        # Истекшие подписки
+    if target in ('expired', 'expired_subscribers'):
+        # Истекшие подписки — исключаем юзеров с хотя бы одной активной
         now = datetime.now(UTC)
         expired_statuses = [
             SubscriptionStatus.EXPIRED.value,
             SubscriptionStatus.DISABLED.value,
             SubscriptionStatus.LIMITED.value,
         ]
-        query = (
-            select(sql_func.count(distinct(User.id)))
-            .outerjoin(Subscription, User.id == Subscription.user_id)
+        has_active_sub = (
+            select(Subscription.id)
             .where(
-                base_filter,
-                or_(
-                    Subscription.status.in_(expired_statuses),
-                    and_(Subscription.end_date <= now, Subscription.status != SubscriptionStatus.ACTIVE.value),
-                    and_(Subscription.id == None, User.has_had_paid_subscription == True),
-                ),
+                Subscription.user_id == User.id,
+                Subscription.status == SubscriptionStatus.ACTIVE.value,
             )
+            .exists()
         )
-        result = await db.execute(query)
-        return result.scalar() or 0
-
-    if target == 'expired_subscribers':
-        # То же что и expired
-        now = datetime.now(UTC)
-        expired_statuses = [
-            SubscriptionStatus.EXPIRED.value,
-            SubscriptionStatus.DISABLED.value,
-            SubscriptionStatus.LIMITED.value,
-        ]
         query = (
             select(sql_func.count(distinct(User.id)))
             .outerjoin(Subscription, User.id == Subscription.user_id)
             .where(
                 base_filter,
+                ~has_active_sub,
                 or_(
                     Subscription.status.in_(expired_statuses),
                     and_(Subscription.end_date <= now, Subscription.status != SubscriptionStatus.ACTIVE.value),
@@ -1785,6 +1771,9 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         for user in users:
             subs = getattr(user, 'subscriptions', None) or []
             if subs:
+                has_active = any(s.is_active for s in subs)
+                if has_active:
+                    continue  # Skip users who have at least one active subscription
                 has_expired = any(s.status in expired_statuses or (s.end_date <= now and not s.is_active) for s in subs)
                 if has_expired:
                     expired_users.append(user)
@@ -1833,6 +1822,9 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         for user in users:
             subs = getattr(user, 'subscriptions', None) or []
             if subs:
+                has_active = any(s.is_active for s in subs)
+                if has_active:
+                    continue  # Skip users who have at least one active subscription
                 has_expired = any(s.status in expired_statuses or (s.end_date <= now and not s.is_active) for s in subs)
                 if has_expired:
                     expired_users.append(user)

@@ -1121,10 +1121,6 @@ class PartnerStatsService:
                                 ),
                                 Transaction.amount_kopeks,
                             ),
-                            (
-                                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-                                func.abs(Transaction.amount_kopeks),
-                            ),
                             else_=0,
                         )
                     ),
@@ -1137,12 +1133,8 @@ class PartnerStatsService:
                 and_(
                     Transaction.user_id == User.id,
                     Transaction.is_completed.is_(True),
-                    Transaction.type.in_(
-                        [
-                            TransactionType.DEPOSIT.value,
-                            TransactionType.SUBSCRIPTION_PAYMENT.value,
-                        ]
-                    ),
+                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
                 ),
             )
             .where(AdvertisingCampaignRegistration.campaign_id == campaign_id)
@@ -1158,10 +1150,6 @@ class PartnerStatsService:
                                         Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
                                     ),
                                     Transaction.amount_kopeks,
-                                ),
-                                (
-                                    Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-                                    func.abs(Transaction.amount_kopeks),
                                 ),
                                 else_=0,
                             )

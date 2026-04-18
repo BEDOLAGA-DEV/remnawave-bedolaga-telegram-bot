@@ -4,8 +4,8 @@ Adds per-tariff WL (БС) traffic configuration:
   - wl_default_traffic_gb: starting WL traffic limit for this tariff (NULL = use global WL_DEFAULT_TRAFFIC_LIMIT_GB)
   - wl_traffic_topup_packages: JSON {"5": 1000, "10": 2000, ...} (gb: price_kopeks). Empty = use global prices.
 
-Revision ID: 0056
-Revises: 0055
+Revision ID: 0063
+Revises: 0062
 Create Date: 2026-03-24
 
 """
@@ -15,8 +15,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0056'
-down_revision: Union[str, None] = '0055'
+revision: str = '0063'
+down_revision: Union[str, None] = '0062'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

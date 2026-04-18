@@ -2,8 +2,8 @@
 
 Time-limited promotional discounts for tariffs.
 
-Revision ID: 0059
-Revises: 0058
+Revision ID: 0066
+Revises: 0065
 Create Date: 2026-04-08
 
 """
@@ -13,8 +13,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0059'
-down_revision: Union[str, None] = '0058'
+revision: str = '0066'
+down_revision: Union[str, None] = '0065'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

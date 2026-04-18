@@ -141,6 +141,7 @@ def _serialize_broadcast(broadcast: BroadcastHistory) -> BroadcastResponse:
         created_at=broadcast.created_at,
         completed_at=broadcast.completed_at,
         progress_percent=progress,
+        category=getattr(broadcast, 'category', 'system') or 'system',
         channel=getattr(broadcast, 'channel', 'telegram') or 'telegram',
         email_subject=getattr(broadcast, 'email_subject', None),
         email_html_content=getattr(broadcast, 'email_html_content', None),
@@ -432,6 +433,7 @@ async def create_broadcast(
         status='queued',
         admin_id=admin.id,
         admin_name=admin.username or f'Admin #{admin.id}',
+        category=request.category,
     )
     db.add(broadcast)
     await db.commit()
@@ -454,6 +456,7 @@ async def create_broadcast(
         media=media_config,
         initiator_name=admin.username or f'Admin #{admin.id}',
         custom_buttons=[btn.model_dump() for btn in request.custom_buttons] if request.custom_buttons else None,
+        category=request.category,
     )
 
     # Start broadcast
@@ -626,6 +629,7 @@ async def create_combined_broadcast(
         status='queued',
         admin_id=admin.id,
         admin_name=admin_name,
+        category=request.category,
         channel=request.channel,
         email_subject=request.email_subject.strip() if request.email_subject else None,
         email_html_content=request.email_html_content.strip() if request.email_html_content else None,
@@ -653,6 +657,7 @@ async def create_combined_broadcast(
             media=media_config,
             initiator_name=admin_name,
             custom_buttons=[btn.model_dump() for btn in request.custom_buttons] if request.custom_buttons else None,
+            category=request.category,
         )
 
         await broadcast_service.start_broadcast(broadcast.id, telegram_config)

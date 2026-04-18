@@ -61,6 +61,14 @@ class PromoCodeService:
             if not promocode.is_valid:
                 if promocode.current_uses >= promocode.max_uses:
                     return {'success': False, 'error': 'used'}
+                if not promocode.is_active:
+                    return {'success': False, 'error': 'inactive'}
+                from app.database.models import _aware
+
+                now = datetime.now(UTC)
+                aware_from = _aware(promocode.valid_from)
+                if aware_from is not None and aware_from > now:
+                    return {'success': False, 'error': 'not_yet_valid'}
                 return {'success': False, 'error': 'expired'}
 
             existing_use = await check_user_promocode_usage(db, user_id, promocode.id)

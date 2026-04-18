@@ -1,7 +1,7 @@
 """add web_push_subscriptions table
 
-Revision ID: 0064
-Revises: 0063
+Revision ID: 0071
+Revises: 0070
 Create Date: 2026-04-11
 
 Adds Web Push (VAPID) subscription storage for browser push notifications.
@@ -12,8 +12,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0064'
-down_revision: Union[str, None] = '0063'
+revision: str = '0071'
+down_revision: Union[str, None] = '0070'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

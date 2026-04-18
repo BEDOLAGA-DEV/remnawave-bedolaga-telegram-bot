@@ -63,7 +63,7 @@ CATEGORY_GROUP_METADATA: dict[str, dict[str, object]] = {
     },
     'payments': {
         'title': '💳 Платежные системы',
-        'description': 'YooKassa, CryptoBot, Heleket, CloudPayments, Freekassa, MulenPay, PAL24, Wata, Platega, Tribute, Kassa AI, RioPay, SeverPay и Telegram Stars.',
+        'description': 'YooKassa, CryptoBot, Heleket, CloudPayments, Freekassa, MulenPay, PAL24, Wata, Platega, Tribute, Kassa AI, RioPay, SeverPay, PayPear, RollyPay и Telegram Stars.',
         'icon': '💳',
         'categories': (
             'PAYMENT',
@@ -76,6 +76,9 @@ CATEGORY_GROUP_METADATA: dict[str, dict[str, object]] = {
             'KASSA_AI',
             'RIOPAY',
             'SEVERPAY',
+            'PAYPEAR',
+            'ROLLYPAY',
+            'AURAPAY',
             'MULENPAY',
             'PAL24',
             'WATA',
@@ -1260,6 +1263,15 @@ def _build_settings_keyboard(
     elif category_key == 'SEVERPAY':
         label = texts.t('PAYMENT_SEVERPAY', f'💳 {settings.get_severpay_display_name()}')
         test_payment_buttons.append([_test_button(f'{label} · тест', 'severpay')])
+    elif category_key == 'PAYPEAR':
+        label = texts.t('PAYMENT_PAYPEAR', f'💳 {settings.get_paypear_display_name()}')
+        test_payment_buttons.append([_test_button(f'{label} · тест', 'paypear')])
+    elif category_key == 'ROLLYPAY':
+        label = texts.t('PAYMENT_ROLLYPAY', f'💳 {settings.get_rollypay_display_name()}')
+        test_payment_buttons.append([_test_button(f'{label} · тест', 'rollypay')])
+    elif category_key == 'AURAPAY':
+        label = texts.t('PAYMENT_AURAPAY', f'💳 {settings.get_aurapay_display_name()}')
+        test_payment_buttons.append([_test_button(f'{label} · тест', 'aurapay')])
 
     if test_payment_buttons:
         rows.extend(test_payment_buttons)

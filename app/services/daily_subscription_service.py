@@ -146,9 +146,22 @@ class DailySubscriptionService:
             # Недостаточно средств - приостанавливаем подписку
             await suspend_daily_subscription_insufficient_balance(db, subscription)
 
-            # Уведомляем пользователя
+            # Уведомляем пользователя (rate-limit: 1 раз в 6 часов)
             if self._bot:
-                await self._notify_insufficient_balance(user, subscription, daily_price)
+                from app.utils.cache import cache
+
+                cache_key = f'daily_insuf_notify:{subscription.id}'
+                try:
+                    already_notified = await cache.get(cache_key)
+                except Exception:
+                    already_notified = None
+
+                if not already_notified:
+                    await self._notify_insufficient_balance(user, subscription, daily_price)
+                    try:
+                        await cache.set(cache_key, '1', expire=21600)  # 6 hours
+                    except Exception:
+                        pass
 
             logger.info(
                 'Подписка приостановлена: недостаточно средств (баланс: требуется: )',
@@ -264,6 +277,14 @@ class DailySubscriptionService:
                             logger.warning('Не удалось синхронизировать сквады после создания', error=patch_err)
             except Exception as e:
                 logger.warning('Не удалось обновить Remnawave', error=e)
+                from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+                    remnawave_retry_queue.enqueue(
+                        subscription_id=subscription.id,
+                        user_id=subscription.user_id,
+                        action='update' if _has_panel_user else 'create',
+                    )
 
             # Отправляем уведомление администраторам
             try:
@@ -539,6 +560,14 @@ class DailySubscriptionService:
             await subscription_service.update_remnawave_user(db, subscription)
         except Exception as e:
             logger.warning('Не удалось синхронизировать с RemnaWave после сброса трафика', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+                remnawave_retry_queue.enqueue(
+                    subscription_id=subscription.id,
+                    user_id=subscription.user_id,
+                    action='update',
+                )
 
         # Уведомляем пользователя
         if self._bot and subscription.user_id:

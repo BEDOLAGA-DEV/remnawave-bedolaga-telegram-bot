@@ -1,7 +1,7 @@
 """add is_hidden and hint to achievement_templates
 
-Revision ID: 0065
-Revises: 0064
+Revision ID: 0072
+Revises: 0071
 Create Date: 2026-04-12
 
 """
@@ -11,8 +11,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0065'
-down_revision: Union[str, None] = '0064'
+revision: str = '0072'
+down_revision: Union[str, None] = '0071'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

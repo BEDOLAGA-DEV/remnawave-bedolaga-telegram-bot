@@ -999,13 +999,14 @@ async def _render_user_subscription_overview(
                 ]
             )
         else:
-            keyboard.append(
-                [
-                    types.InlineKeyboardButton(
-                        text='✅ Активировать', callback_data=f'admin_sub_activate_{user_id}{_sid}'
-                    )
-                ]
-            )
+            row = [
+                types.InlineKeyboardButton(text='✅ Активировать', callback_data=f'admin_sub_activate_{user_id}{_sid}'),
+            ]
+            if settings.is_multi_tariff_enabled() and subscription_id:
+                row.append(
+                    types.InlineKeyboardButton(text='🗑 Удалить', callback_data=f'admin_sub_delete_{user_id}{_sid}')
+                )
+            keyboard.append(row)
     else:
         text += '❌ <b>Подписка отсутствует</b>\n\n'
         text += 'Пользователь еще не активировал подписку.'
@@ -3319,6 +3320,76 @@ async def confirm_subscription_deactivation(callback: types.CallbackQuery, db_us
 
 @admin_required
 @error_handler
+async def delete_user_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Show confirmation for deleting a subscription (multi-tariff only)."""
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+
+    if not subscription_id or not settings.is_multi_tariff_enabled():
+        await callback.answer('Удаление доступно только в мультитарифном режиме', show_alert=True)
+        return
+
+    back_cb = f'admin_user_sub_select_{user_id}_{subscription_id}'
+    _sid = f'_s{subscription_id}'
+
+    await callback.message.edit_text(
+        '🗑 <b>Удаление подписки</b>\n\n⚠️ Подписка будет полностью удалена из системы.\nЭто действие необратимо!',
+        reply_markup=get_confirmation_keyboard(f'admin_sub_delete_confirm_{user_id}{_sid}', back_cb, db_user.language),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def confirm_subscription_deletion(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Delete a subscription permanently (multi-tariff only)."""
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+
+    if not subscription_id or not settings.is_multi_tariff_enabled():
+        await callback.answer('Удаление доступно только в мультитарифном режиме', show_alert=True)
+        return
+
+    from app.database.crud.subscription import get_subscription_by_id_for_user
+
+    subscription = await get_subscription_by_id_for_user(db, subscription_id, user_id)
+    if not subscription:
+        await callback.answer('Подписка не найдена', show_alert=True)
+        return
+
+    # Disable on Remnawave side first
+    _uuid = getattr(subscription, 'remnawave_uuid', None)
+    if _uuid:
+        subscription_service = SubscriptionService()
+        await subscription_service.disable_remnawave_user(_uuid)
+
+    # Delete traffic purchases
+    from sqlalchemy import delete as sql_delete
+
+    from app.database.models import TrafficPurchase
+
+    await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
+
+    await db.delete(subscription)
+    await db.commit()
+
+    logger.info(
+        'Админ удалил подписку пользователя',
+        admin_id=db_user.id,
+        user_id=user_id,
+        subscription_id=subscription_id,
+    )
+
+    back_cb = f'admin_user_subscription_{user_id}'
+    await callback.message.edit_text(
+        '✅ Подписка удалена',
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[[types.InlineKeyboardButton(text='📱 К подпискам', callback_data=back_cb)]]
+        ),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
 async def activate_user_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     user_id, subscription_id = _extract_admin_sub_context(callback.data)
 
@@ -3765,26 +3836,38 @@ async def start_devices_edit(callback: types.CallbackQuery, db_user: User, state
         else f'admin_user_subscription_{user_id}'
     )
 
-    await callback.message.edit_text(
-        '📱 <b>Изменение количества устройств</b>\n\n'
-        'Введите новое количество устройств (от 1 до 10):\n'
-        '• Текущее значение будет заменено\n'
-        '• Примеры: 1, 2, 5, 10\n\n'
-        'Или нажмите /cancel для отмены',
-        reply_markup=types.InlineKeyboardMarkup(
+    max_dev = settings.MAX_DEVICES_LIMIT
+    # Build device buttons dynamically: rows of 4, respect Telegram 100 button limit (99 + cancel)
+    if max_dev <= 99:
+        device_buttons: list[list[types.InlineKeyboardButton]] = []
+        row: list[types.InlineKeyboardButton] = []
+        for i in range(1, max_dev + 1):
+            row.append(
+                types.InlineKeyboardButton(
+                    text=str(i),
+                    callback_data=f'admin_user_devices_set_{user_id}{_sid}_{i}',
+                )
+            )
+            if len(row) == 4:
+                device_buttons.append(row)
+                row = []
+        if row:
+            device_buttons.append(row)
+        device_buttons.append([types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb)])
+        markup = types.InlineKeyboardMarkup(inline_keyboard=device_buttons)
+    else:
+        markup = types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(text='1', callback_data=f'admin_user_devices_set_{user_id}{_sid}_1'),
-                    types.InlineKeyboardButton(text='2', callback_data=f'admin_user_devices_set_{user_id}{_sid}_2'),
-                    types.InlineKeyboardButton(text='3', callback_data=f'admin_user_devices_set_{user_id}{_sid}_3'),
-                ],
-                [
-                    types.InlineKeyboardButton(text='5', callback_data=f'admin_user_devices_set_{user_id}{_sid}_5'),
-                    types.InlineKeyboardButton(text='10', callback_data=f'admin_user_devices_set_{user_id}{_sid}_10'),
-                ],
                 [types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb)],
             ]
-        ),
+        )
+
+    await callback.message.edit_text(
+        '📱 <b>Изменение количества устройств</b>\n\n'
+        f'Введите новое количество устройств (от 1 до {max_dev}):\n'
+        '• Текущее значение будет заменено\n\n'
+        'Или нажмите /cancel для отмены',
+        reply_markup=markup,
     )
 
     await state.set_state(AdminStates.editing_user_devices)
@@ -3854,8 +3937,8 @@ async def process_devices_edit_text(message: types.Message, db_user: User, state
     try:
         devices = int(message.text.strip())
 
-        if devices <= 0 or devices > 10:
-            await message.answer('❌ Количество устройств должно быть от 1 до 10')
+        if devices <= 0 or devices > settings.MAX_DEVICES_LIMIT:
+            await message.answer(f'❌ Количество устройств должно быть от 1 до {settings.MAX_DEVICES_LIMIT}')
             return
 
         success = await _update_user_devices(db, user_id, devices, db_user.id, subscription_id=subscription_id)
@@ -6442,6 +6525,11 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(confirm_subscription_deactivation, F.data.startswith('admin_sub_deactivate_confirm_'))
 
     dp.callback_query.register(activate_user_subscription, F.data.startswith('admin_sub_activate_'))
+
+    dp.callback_query.register(
+        delete_user_subscription, F.data.startswith('admin_sub_delete_') & ~F.data.contains('confirm')
+    )
+    dp.callback_query.register(confirm_subscription_deletion, F.data.startswith('admin_sub_delete_confirm_'))
 
     dp.callback_query.register(grant_trial_subscription, F.data.startswith('admin_sub_grant_trial_'))
 

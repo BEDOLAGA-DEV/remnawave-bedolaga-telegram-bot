@@ -2,8 +2,8 @@
 
 Adds bot-level RBAC: per-user permission sections for Telegram bot admin handlers.
 
-Revision ID: 0057
-Revises: 0056
+Revision ID: 0064
+Revises: 0063
 Create Date: 2026-04-08
 
 """
@@ -13,8 +13,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0057'
-down_revision: Union[str, None] = '0056'
+revision: str = '0064'
+down_revision: Union[str, None] = '0063'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
