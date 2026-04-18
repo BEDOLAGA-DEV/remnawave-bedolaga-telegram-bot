@@ -815,10 +815,9 @@ async def auth_telegram_oidc(
     # Update user info from OIDC claims
     if username and username != user.username:
         user.username = username
-    if first_name and first_name != user.first_name:
-        user.first_name = first_name
-    if last_name is not None and last_name != user.last_name:
-        user.last_name = last_name
+    # NOTE: не обновляем first_name/last_name из OIDC
+    # Telegram OIDC возвращает только поле name как полное имя без разделения на first/last
+    # Имя правильно заполняется через middleware при обычном использовании бота
 
     user.cabinet_last_login = datetime.now(UTC)
     await db.commit()
