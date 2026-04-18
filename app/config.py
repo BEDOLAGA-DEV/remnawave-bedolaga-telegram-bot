@@ -564,6 +564,21 @@ class Settings(BaseSettings):
     KASSA_AI_SBERPAY_ENABLED: bool = False  # SberPay — payment_system_id=43
     KASSA_AI_SBERPAY_DISPLAY_NAME: str = 'SberPay (KassaAI)'
 
+    # ── Yandex Metrika offline conversions (server → mc.yandex.ru/collect) ──
+    YANDEX_OFFLINE_CONV_ENABLED: bool = False
+    YANDEX_OFFLINE_CONV_COUNTER_ID: str = ''
+    YANDEX_OFFLINE_CONV_MEASUREMENT_SECRET: str = ''
+    YANDEX_OFFLINE_CONV_START_PREFIX: str = 'utm_ya_'
+    YANDEX_OFFLINE_CONV_DL: str = ''
+    YANDEX_OFFLINE_CONV_DT: str = ''
+    YANDEX_OFFLINE_CONV_CURRENCY: str = 'RUB'
+
+    # ── S2S Postback (server-to-server affiliate notifications) ──
+    S2S_POSTBACK_ENABLED: bool = False
+    S2S_POSTBACK_REGISTRATION_URL: str = ''
+    S2S_POSTBACK_TRIAL_URL: str = ''
+    S2S_POSTBACK_PURCHASE_URL: str = ''
+
     # RioPay (api.riopay.online) v2.0.1
     RIOPAY_ENABLED: bool = False
     RIOPAY_API_TOKEN: str | None = None  # x-api-token header
