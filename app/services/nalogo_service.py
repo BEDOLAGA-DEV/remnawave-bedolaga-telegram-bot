@@ -95,6 +95,8 @@ class NaloGoService:
         payment_id: str | None = None,
         telegram_user_id: int | None = None,
         amount_kopeks: int | None = None,
+        receipt_delivery_email: str | None = None,
+        receipt_delivery_language: str | None = None,
     ) -> bool:
         """Добавить чек в очередь для отложенной отправки."""
         if payment_id:
@@ -125,6 +127,8 @@ class NaloGoService:
             'payment_id': payment_id,
             'telegram_user_id': telegram_user_id,
             'amount_kopeks': amount_kopeks,
+            'receipt_delivery_email': receipt_delivery_email,
+            'receipt_delivery_language': receipt_delivery_language,
             'created_at': datetime.now(UTC).isoformat(),
             'attempts': 0,
         }
@@ -152,6 +156,8 @@ class NaloGoService:
         payment_id: str | None,
         telegram_user_id: int | None,
         amount_kopeks: int | None,
+        receipt_delivery_email: str | None,
+        receipt_delivery_language: str | None,
         error_message: str,
     ) -> bool:
         """Сохранить чек в очередь ожидающих проверки.
@@ -167,6 +173,8 @@ class NaloGoService:
             'payment_id': payment_id,
             'telegram_user_id': telegram_user_id,
             'amount_kopeks': amount_kopeks,
+            'receipt_delivery_email': receipt_delivery_email,
+            'receipt_delivery_language': receipt_delivery_language,
             'created_at': datetime.now(UTC).isoformat(),
             'error': error_message,
             'status': 'pending_verification',
@@ -260,12 +268,26 @@ class NaloGoService:
             queue_on_failure=False,  # Не добавлять обратно в очередь
             telegram_user_id=target_receipt.get('telegram_user_id'),
             amount_kopeks=target_receipt.get('amount_kopeks'),
+            receipt_delivery_email=target_receipt.get('receipt_delivery_email'),
+            receipt_delivery_language=target_receipt.get('receipt_delivery_language'),
         )
 
         if receipt_uuid:
             # Удаляем из очереди проверки
             await self.mark_pending_as_verified(payment_id, receipt_uuid, was_created=True)
             logger.info('Чек успешно создан после ручной проверки', payment_id=payment_id, receipt_uuid=receipt_uuid)
+
+            receipt_url = self.get_receipt_print_url(receipt_uuid)
+            if receipt_url:
+                from app.services.nalogo_receipt_delivery import deliver_nalogo_receipt
+
+                await deliver_nalogo_receipt(
+                    receipt_url=receipt_url,
+                    receipt_uuid=receipt_uuid,
+                    telegram_id=target_receipt.get('telegram_user_id'),
+                    email=target_receipt.get('receipt_delivery_email'),
+                    language=target_receipt.get('receipt_delivery_language'),
+                )
 
         return receipt_uuid
 
@@ -294,6 +316,17 @@ class NaloGoService:
                 logger.error('Ошибка аутентификации в NaloGO', error=sanitize_proxy_error(error))
             return False
 
+    def get_receipt_print_url(self, receipt_uuid: str) -> str | None:
+        """Вернуть URL печатной формы чека."""
+        if not self.configured:
+            return None
+
+        try:
+            return self.client.receipt().print_url(receipt_uuid)
+        except Exception as error:
+            logger.warning('Не удалось сформировать print URL чека', receipt_uuid=receipt_uuid, error=error)
+            return None
+
     async def create_receipt(
         self,
         name: str,
@@ -305,6 +338,8 @@ class NaloGoService:
         telegram_user_id: int | None = None,
         amount_kopeks: int | None = None,
         operation_time: datetime | None = None,
+        receipt_delivery_email: str | None = None,
+        receipt_delivery_language: str | None = None,
     ) -> str | None:
         """Создание чека о доходе.
 
@@ -318,6 +353,8 @@ class NaloGoService:
             telegram_user_id: Telegram ID пользователя для формирования описания
             amount_kopeks: Сумма в копейках для формирования описания
             operation_time: Время операции (по умолчанию текущее)
+            receipt_delivery_email: Email покупателя для последующей доставки чека
+            receipt_delivery_language: Язык покупателя для уведомления о чеке
 
         Returns:
             UUID чека или None при ошибке
@@ -347,7 +384,15 @@ class NaloGoService:
                     # Аутентификация не прошла — чек не создавался, безопасно в очередь
                     if queue_on_failure:
                         await self._queue_receipt(
-                            name, amount, quantity, client_info, payment_id, telegram_user_id, amount_kopeks
+                            name,
+                            amount,
+                            quantity,
+                            client_info,
+                            payment_id,
+                            telegram_user_id,
+                            amount_kopeks,
+                            receipt_delivery_email,
+                            receipt_delivery_language,
                         )
                     return None
         except Exception as auth_error:
@@ -360,7 +405,15 @@ class NaloGoService:
                 )
                 if queue_on_failure:
                     await self._queue_receipt(
-                        name, amount, quantity, client_info, payment_id, telegram_user_id, amount_kopeks
+                        name,
+                        amount,
+                        quantity,
+                        client_info,
+                        payment_id,
+                        telegram_user_id,
+                        amount_kopeks,
+                        receipt_delivery_email,
+                        receipt_delivery_language,
                     )
             else:
                 logger.error('Ошибка аутентификации NaloGO', auth_error=sanitize_proxy_error(auth_error))
@@ -423,6 +476,8 @@ class NaloGoService:
                     payment_id=payment_id,
                     telegram_user_id=telegram_user_id,
                     amount_kopeks=amount_kopeks,
+                    receipt_delivery_email=receipt_delivery_email,
+                    receipt_delivery_language=receipt_delivery_language,
                     error_message=error_msg,
                 )
             else:

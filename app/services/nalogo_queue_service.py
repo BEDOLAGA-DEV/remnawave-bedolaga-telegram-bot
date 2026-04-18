@@ -12,6 +12,7 @@ from aiogram import Bot
 from dateutil.parser import isoparse
 
 from app.config import settings
+from app.services.nalogo_receipt_delivery import deliver_nalogo_receipt
 from app.services.nalogo_service import NaloGoService
 from app.utils.cache import cache
 
@@ -180,6 +181,8 @@ class NalogoQueueService:
                 # Восстанавливаем описание из сохранённых данных
                 telegram_user_id = receipt_data.get('telegram_user_id')
                 amount_kopeks = receipt_data.get('amount_kopeks')
+                receipt_delivery_email = receipt_data.get('receipt_delivery_email')
+                receipt_delivery_language = receipt_data.get('receipt_delivery_language')
 
                 # Извлекаем время оплаты из очереди (чтобы чек был с правильным временем)
                 operation_time = None
@@ -194,17 +197,17 @@ class NalogoQueueService:
                             'Не удалось распарсить created_at', created_at_str=created_at_str, parse_error=parse_error
                         )
 
-                # Формируем описание заново из настроек (если есть данные)
-                if amount_kopeks is not None:
-                    receipt_name = settings.get_balance_payment_description(
-                        amount_kopeks, telegram_user_id=telegram_user_id
-                    )
-                else:
-                    # Fallback на сохранённое имя
-                    receipt_name = receipt_data.get(
-                        'name',
-                        settings.get_balance_payment_description(int(amount * 100), telegram_user_id=telegram_user_id),
-                    )
+                # Используем исходное описание чека, чтобы ретраи не меняли его содержание.
+                receipt_name = receipt_data.get('name')
+                if not receipt_name:
+                    if amount_kopeks is not None:
+                        receipt_name = settings.get_balance_payment_description(
+                            amount_kopeks, telegram_user_id=telegram_user_id
+                        )
+                    else:
+                        receipt_name = settings.get_balance_payment_description(
+                            int(amount * 100), telegram_user_id=telegram_user_id
+                        )
 
                 receipt_uuid = await self._nalogo_service.create_receipt(
                     name=receipt_name,
@@ -216,6 +219,8 @@ class NalogoQueueService:
                     telegram_user_id=telegram_user_id,
                     amount_kopeks=amount_kopeks,
                     operation_time=operation_time,  # Время оплаты, а не отправки
+                    receipt_delivery_email=receipt_delivery_email,
+                    receipt_delivery_language=receipt_delivery_language,
                 )
 
                 if receipt_uuid:
@@ -233,6 +238,17 @@ class NalogoQueueService:
                         payment_id=payment_id,
                         attempts=attempts + 1,
                     )
+
+                    receipt_url = self._nalogo_service.get_receipt_print_url(receipt_uuid)
+                    if receipt_url:
+                        await deliver_nalogo_receipt(
+                            receipt_url=receipt_url,
+                            receipt_uuid=receipt_uuid,
+                            telegram_id=telegram_user_id,
+                            email=receipt_delivery_email,
+                            language=receipt_delivery_language,
+                            bot=self._bot,
+                        )
                 else:
                     # Вернуть в очередь с увеличенным счетчиком попыток
                     await self._nalogo_service.requeue_receipt(receipt_data)

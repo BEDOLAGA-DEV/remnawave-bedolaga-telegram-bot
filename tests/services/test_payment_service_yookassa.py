@@ -3,6 +3,7 @@
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -174,6 +175,59 @@ async def test_create_yookassa_payment_handles_error_response(monkeypatch: pytes
     )
     assert result is None
     assert called is False
+
+
+@pytest.mark.anyio('asyncio')
+async def test_create_yookassa_payment_uses_user_email_for_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Если email не передали явно, он должен подтягиваться из профиля пользователя."""
+
+    response = {
+        'id': 'yk_321',
+        'status': 'pending',
+        'confirmation_url': 'https://yookassa.ru/confirm',
+        'created_at': '2024-01-01T12:00:00Z',
+        'test_mode': False,
+    }
+    service = _make_service(StubYooKassaService(response))
+    db = DummySession()
+
+    async def fake_create_yookassa_payment(**kwargs: Any) -> DummyLocalPayment:
+        return DummyLocalPayment(payment_id=777)
+
+    async def fake_get_user_by_id(_db: Any, user_id: int) -> SimpleNamespace:
+        assert user_id == 42
+        return SimpleNamespace(
+            telegram_id=330349049,
+            username='Brobchik',
+            email='user@example.com',
+            phone='+70000000000',
+        )
+
+    monkeypatch.setattr(
+        payment_service_module,
+        'create_yookassa_payment',
+        fake_create_yookassa_payment,
+        raising=False,
+    )
+
+    from app.database.crud import user as user_crud_module
+
+    monkeypatch.setattr(user_crud_module, 'get_user_by_id', fake_get_user_by_id, raising=False)
+
+    result = await service.create_yookassa_payment(
+        db=db,
+        user_id=42,
+        amount_kopeks=5000,
+        description='Пополнение',
+    )
+
+    assert result is not None
+    assert service.yookassa_service.calls[0]['receipt_email'] == 'user@example.com'
+    assert service.yookassa_service.calls[0]['receipt_phone'] == '+70000000000'
+    assert service.yookassa_service.calls[0]['metadata']['user_telegram_id'] == '330349049'
+    assert service.yookassa_service.calls[0]['metadata']['user_username'] == 'Brobchik'
 
 
 @pytest.mark.anyio('asyncio')

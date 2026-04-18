@@ -43,9 +43,13 @@ class ReceiptAPI:
         if not receipt_uuid.strip():
             raise ValueError('Receipt UUID cannot be empty')
 
-        # Compose URL like PHP: sprintf('/receipt/%s/%s/print', $this->profile->getInn(), $receiptUuid)
+        # Public print URLs on lknpd.nalog.ru are served under /api/v1/receipt/...
+        # rather than /api/receipt/..., so normalize to the versioned base endpoint.
         path = f'/receipt/{self.user_inn}/{receipt_uuid.strip()}/print'
-        return f'{self.base_endpoint}{path}'
+        base_endpoint = self.base_endpoint.rstrip('/')
+        if not base_endpoint.endswith('/v1'):
+            base_endpoint = f'{base_endpoint}/v1'
+        return f'{base_endpoint}{path}'
 
     async def json(self, receipt_uuid: str) -> dict[str, Any]:
         """

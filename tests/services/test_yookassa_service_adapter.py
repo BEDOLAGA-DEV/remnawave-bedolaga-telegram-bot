@@ -126,6 +126,26 @@ async def test_create_payment_without_contacts(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.anyio('asyncio')
+async def test_create_payment_with_phone_only_requires_email(monkeypatch: pytest.MonkeyPatch) -> None:
+    _prepare_config(monkeypatch)
+    monkeypatch.setattr(settings, 'YOOKASSA_DEFAULT_RECEIPT_EMAIL', None, raising=False)
+    monkeypatch.setattr(Configuration, 'configure', lambda *args, **kwargs: None, raising=False)
+    monkeypatch.setattr(asyncio, 'get_running_loop', DummyLoop, raising=False)
+
+    service = YooKassaService()
+    result = await service.create_payment(
+        amount=10,
+        currency='RUB',
+        description='desc',
+        metadata={},
+        receipt_phone='+70000000000',
+    )
+
+    assert result is not None
+    assert result.get('error') is True
+
+
+@pytest.mark.anyio('asyncio')
 async def test_create_payment_returns_none_when_not_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'YOOKASSA_SHOP_ID', '', raising=False)
     monkeypatch.setattr(settings, 'YOOKASSA_SECRET_KEY', '', raising=False)

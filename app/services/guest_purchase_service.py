@@ -247,6 +247,8 @@ async def _create_nalogo_receipt_for_purchase(
             payment_id=purchase.payment_id,
             telegram_user_id=user.telegram_id,
             amount_kopeks=purchase.amount_kopeks,
+            receipt_delivery_email=user.email,
+            receipt_delivery_language=user.language,
         )
 
         if receipt_uuid:
@@ -270,6 +272,18 @@ async def _create_nalogo_receipt_for_purchase(
                     'Failed to save receipt_uuid to purchase/transaction',
                     purchase_id=purchase.id,
                     receipt_uuid=receipt_uuid,
+                )
+
+            receipt_url = nalogo_service.get_receipt_print_url(receipt_uuid)
+            if receipt_url:
+                from app.services.nalogo_receipt_delivery import deliver_nalogo_receipt
+
+                await deliver_nalogo_receipt(
+                    receipt_url=receipt_url,
+                    receipt_uuid=receipt_uuid,
+                    telegram_id=user.telegram_id,
+                    email=user.email,
+                    language=user.language,
                 )
     except Exception as exc:
         from app.utils.proxy import sanitize_proxy_error

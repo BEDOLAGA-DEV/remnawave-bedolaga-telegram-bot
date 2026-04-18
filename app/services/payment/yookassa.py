@@ -88,6 +88,50 @@ class YooKassaPaymentMixin:
 
         return merged
 
+    async def _hydrate_yookassa_receipt_contacts(
+        self,
+        db: AsyncSession,
+        user_id: int | None,
+        receipt_email: str | None,
+        receipt_phone: str | None,
+        payment_metadata: dict[str, Any],
+    ) -> tuple[str | None, str | None]:
+        """Подтягивает email/phone пользователя для чеков YooKassa.
+
+        Для чеков YooKassa критичен email: сервис доставляет ссылку на чек
+        только на электронную почту. Если вызывающий код не передал контакты,
+        пробуем взять их из профиля пользователя.
+        """
+
+        if user_id is None:
+            return receipt_email, receipt_phone
+
+        needs_metadata = 'user_telegram_id' not in payment_metadata
+        needs_receipt_contacts = not receipt_email or not receipt_phone
+        if not needs_metadata and not needs_receipt_contacts:
+            return receipt_email, receipt_phone
+
+        try:
+            from app.database.crud.user import get_user_by_id
+
+            user = await get_user_by_id(db, user_id)
+            if not user:
+                return receipt_email, receipt_phone
+
+            if needs_metadata and user.telegram_id:
+                payment_metadata['user_telegram_id'] = str(user.telegram_id)
+                payment_metadata['user_username'] = user.username or ''
+
+            if not receipt_email and getattr(user, 'email', None):
+                receipt_email = user.email
+
+            if not receipt_phone and getattr(user, 'phone', None):
+                receipt_phone = user.phone
+        except Exception as error:
+            logger.warning('Не удалось получить контакты пользователя для чека YooKassa', user_id=user_id, error=error)
+
+        return receipt_email, receipt_phone
+
     async def create_yookassa_payment(
         self,
         db: AsyncSession,
@@ -110,18 +154,13 @@ class YooKassaPaymentMixin:
             amount_rubles = amount_kopeks / 100
 
             payment_metadata = metadata.copy() if metadata else {}
-
-            # Всегда добавляем telegram_id в метаданные для возможности возврата платежа
-            if user_id is not None and 'user_telegram_id' not in payment_metadata:
-                try:
-                    from app.database.crud.user import get_user_by_id
-
-                    user = await get_user_by_id(db, user_id)
-                    if user and user.telegram_id:
-                        payment_metadata['user_telegram_id'] = str(user.telegram_id)
-                        payment_metadata['user_username'] = user.username or ''
-                except Exception as e:
-                    logger.warning('Не удалось получить telegram_id для user_id', user_id=user_id, error=e)
+            receipt_email, receipt_phone = await self._hydrate_yookassa_receipt_contacts(
+                db=db,
+                user_id=user_id,
+                receipt_email=receipt_email,
+                receipt_phone=receipt_phone,
+                payment_metadata=payment_metadata,
+            )
 
             # Preserve existing type from metadata if passed (e.g., "trial")
             existing_type = payment_metadata.get('type')
@@ -214,18 +253,13 @@ class YooKassaPaymentMixin:
             amount_rubles = amount_kopeks / 100
 
             payment_metadata = metadata.copy() if metadata else {}
-
-            # Всегда добавляем telegram_id в метаданные для возможности возврата платежа
-            if user_id is not None and 'user_telegram_id' not in payment_metadata:
-                try:
-                    from app.database.crud.user import get_user_by_id
-
-                    user = await get_user_by_id(db, user_id)
-                    if user and user.telegram_id:
-                        payment_metadata['user_telegram_id'] = str(user.telegram_id)
-                        payment_metadata['user_username'] = user.username or ''
-                except Exception as e:
-                    logger.warning('Не удалось получить telegram_id для user_id', user_id=user_id, error=e)
+            receipt_email, receipt_phone = await self._hydrate_yookassa_receipt_contacts(
+                db=db,
+                user_id=user_id,
+                receipt_email=receipt_email,
+                receipt_phone=receipt_phone,
+                payment_metadata=payment_metadata,
+            )
 
             # Preserve existing type from metadata if passed (e.g., "trial")
             existing_type = payment_metadata.get('type')
@@ -1155,7 +1189,7 @@ class YooKassaPaymentMixin:
                     db=db,
                     payment=payment,
                     transaction=transaction,
-                    telegram_user_id=user.telegram_id if user else None,
+                    user=user,
                 )
 
             return True
@@ -1300,7 +1334,7 @@ class YooKassaPaymentMixin:
         db: AsyncSession,
         payment: YooKassaPayment,
         transaction: Transaction | None = None,
-        telegram_user_id: int | None = None,
+        user: User | None = None,
     ) -> None:
         """Создание чека через NaloGO для успешного платежа."""
         if not hasattr(self, 'nalogo_service') or not self.nalogo_service:
@@ -1318,6 +1352,7 @@ class YooKassaPaymentMixin:
 
         try:
             amount_rubles = payment.amount_kopeks / 100
+            telegram_user_id = user.telegram_id if user else None
             # Формируем описание из настроек (включает сумму и ID пользователя)
             receipt_name = settings.get_balance_payment_description(
                 payment.amount_kopeks, telegram_user_id=telegram_user_id
@@ -1330,6 +1365,8 @@ class YooKassaPaymentMixin:
                 payment_id=payment.yookassa_payment_id,
                 telegram_user_id=telegram_user_id,
                 amount_kopeks=payment.amount_kopeks,
+                receipt_delivery_email=user.email if user else None,
+                receipt_delivery_language=user.language if user else None,
             )
 
             if receipt_uuid:
@@ -1350,6 +1387,19 @@ class YooKassaPaymentMixin:
                         )
                     except Exception as save_error:
                         logger.warning('Не удалось сохранить receipt_uuid в транзакцию', save_error=save_error)
+
+                receipt_url = self.nalogo_service.get_receipt_print_url(receipt_uuid)
+                if receipt_url:
+                    from app.services.nalogo_receipt_delivery import deliver_nalogo_receipt
+
+                    await deliver_nalogo_receipt(
+                        receipt_url=receipt_url,
+                        receipt_uuid=receipt_uuid,
+                        telegram_id=user.telegram_id if user else None,
+                        email=user.email if user else None,
+                        language=user.language if user else None,
+                        bot=getattr(self, 'bot', None),
+                    )
             # При временной недоступности чек добавляется в очередь автоматически
 
         except Exception as error:
