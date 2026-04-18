@@ -977,10 +977,8 @@ class RemnaWaveWebhookService:
             if subscription.subscription_crypto_link != subscription_crypto_link:
                 subscription.subscription_crypto_link = subscription_crypto_link
                 changed = True
-        elif subscription_url and subscription.subscription_crypto_link:
-            # URL обновился, а крипто-ссылка не пришла — сбрасываем старую
-            subscription.subscription_crypto_link = None
-            changed = True
+        # NOTE: панель не включает cryptoLink в каждый webhook user.modified
+        # Отсутствие поля не означает что его нужно сбрасывать
 
         # Always stamp to protect from sync overwrite, even if no fields changed
         self._stamp_webhook_update(subscription)
