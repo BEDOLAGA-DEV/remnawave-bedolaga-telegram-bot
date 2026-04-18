@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.database.constants import POSTGRES_INT4_MAX, POSTGRES_INT4_MIN
 from app.database.crud.discount_offer import get_latest_claimed_offer_for_user
 from app.database.crud.promo_group import get_default_promo_group
 from app.database.crud.promo_offer_log import log_promo_offer_action
@@ -27,9 +28,6 @@ from app.utils.validators import sanitize_telegram_name
 
 
 logger = structlog.get_logger(__name__)
-
-POSTGRES_INT4_MIN = -(2**31)
-POSTGRES_INT4_MAX = 2**31 - 1
 
 
 def _normalize_language_code(language: str | None, fallback: str = 'ru') -> str:
