@@ -607,6 +607,7 @@ async def main():
                         secret_token=settings.WEBHOOK_SECRET_TOKEN,
                         drop_pending_updates=False,  # Обрабатываем накопившиеся обновления
                         allowed_updates=allowed_updates,
+                        **({"ip_address": settings.WEBHOOK_IP} if settings.WEBHOOK_IP else {}),
                     )
                     stage.log(f'Webhook установлен: {webhook_url}')
                     stage.log(f'Allowed updates: {", ".join(sorted(allowed_updates)) if allowed_updates else "all"}')

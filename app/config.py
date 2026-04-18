@@ -768,6 +768,7 @@ class Settings(BaseSettings):
     WEBHOOK_URL: str | None = None
     WEBHOOK_PATH: str = '/webhook'
     WEBHOOK_SECRET_TOKEN: str | None = None
+    WEBHOOK_IP: str | None = None  # IP адрес для setWebhook, чтобы Telegram не резолвил домен
     WEBHOOK_DROP_PENDING_UPDATES: bool = True
     WEBHOOK_MAX_QUEUE_SIZE: int = 1024
     WEBHOOK_WORKERS: int = 4
