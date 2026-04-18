@@ -844,6 +844,10 @@ class Settings(BaseSettings):
     OAUTH_VK_CLIENT_SECRET: str = ''
     OAUTH_VK_ENABLED: bool = False
 
+    # Email backend: smtp (default) | custom
+    EMAIL_BACKEND: str = 'smtp'
+    EMAIL_BACKEND_CLASS: str = ''  # for custom: package.module:ClassName
+
     # SMTP settings for cabinet email
     SMTP_HOST: str | None = None
     SMTP_PORT: int = 587
