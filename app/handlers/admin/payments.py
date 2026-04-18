@@ -32,8 +32,6 @@ PAGE_SIZE = 6
 def _method_display(method: PaymentMethod) -> str:
     if method == PaymentMethod.MULENPAY:
         return settings.get_mulenpay_display_name()
-    if method == PaymentMethod.ROBOKASSA:
-        return settings.get_robokassa_display_name()
     if method == PaymentMethod.PAL24:
         return 'PayPalych'
     if method == PaymentMethod.WATA:
@@ -86,16 +84,6 @@ def _status_info(
             'success': ('✅', texts.t('ADMIN_PAYMENT_STATUS_PAID', '✅ Paid')),
             'canceled': ('❌', texts.t('ADMIN_PAYMENT_STATUS_CANCELED', '❌ Cancelled')),
             'cancel': ('❌', texts.t('ADMIN_PAYMENT_STATUS_CANCELED', '❌ Cancelled')),
-            'error': ('⚠️', texts.t('ADMIN_PAYMENT_STATUS_FAILED', '❌ Failed')),
-        }
-        return mapping.get(status, ('❓', texts.t('ADMIN_PAYMENT_STATUS_UNKNOWN', '❓ Unknown')))
-
-    if record.method == PaymentMethod.ROBOKASSA:
-        mapping = {
-            'created': ('⏳', texts.t('ADMIN_PAYMENT_STATUS_PENDING', '⏳ Pending')),
-            'processing': ('⌛', texts.t('ADMIN_PAYMENT_STATUS_PROCESSING', '⌛ Processing')),
-            'success': ('✅', texts.t('ADMIN_PAYMENT_STATUS_PAID', '✅ Paid')),
-            'canceled': ('❌', texts.t('ADMIN_PAYMENT_STATUS_CANCELED', '❌ Cancelled')),
             'error': ('⚠️', texts.t('ADMIN_PAYMENT_STATUS_FAILED', '❌ Failed')),
         }
         return mapping.get(status, ('❓', texts.t('ADMIN_PAYMENT_STATUS_UNKNOWN', '❓ Unknown')))
@@ -191,8 +179,6 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status in {'new', 'process'}
     if record.method == PaymentMethod.MULENPAY:
         return status in {'created', 'processing', 'hold'}
-    if record.method == PaymentMethod.ROBOKASSA:
-        return status in {'created', 'processing'}
     if record.method == PaymentMethod.WATA:
         return status in {'opened', 'pending', 'processing', 'inprogress', 'in_progress'}
     if record.method == PaymentMethod.PLATEGA:
@@ -439,16 +425,6 @@ def _build_payment_details_text(record: PendingPayment, *, texts, language: str)
         if getattr(payment, 'mulen_payment_id', None):
             lines.append(
                 f'🧾 {texts.t("ADMIN_PAYMENT_GATEWAY_ID", "Gateway ID")}: {html.escape(str(payment.mulen_payment_id))}'
-            )
-
-    if record.method == PaymentMethod.ROBOKASSA:
-        if getattr(payment, 'inv_id', None):
-            lines.append(
-                f'🧾 {texts.t("ADMIN_PAYMENT_GATEWAY_ID", "Gateway ID")}: {html.escape(str(payment.inv_id))}'
-            )
-        if getattr(payment, 'robokassa_op_id', None):
-            lines.append(
-                f'🆔 OpId: {html.escape(str(payment.robokassa_op_id))}'
             )
 
     if record.method == PaymentMethod.WATA:

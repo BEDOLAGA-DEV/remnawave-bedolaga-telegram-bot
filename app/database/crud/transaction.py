@@ -27,7 +27,6 @@ REAL_PAYMENT_METHODS = [
     PaymentMethod.KASSA_AI.value,
     PaymentMethod.RIOPAY.value,
     PaymentMethod.SEVERPAY.value,
-    PaymentMethod.ROBOKASSA.value,
 ]
 
 

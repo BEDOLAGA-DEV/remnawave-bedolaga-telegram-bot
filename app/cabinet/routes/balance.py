@@ -557,32 +557,6 @@ async def create_topup(
                     detail='Failed to create MulenPay payment',
                 )
 
-        elif request.payment_method == 'robokassa':
-            if not settings.is_robokassa_enabled():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Robokassa payment method is unavailable',
-                )
-
-            payment_service = PaymentService()
-            result = await payment_service.create_robokassa_payment(
-                db=db,
-                user_id=user.id,
-                amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
-            )
-
-            if result and result.get('payment_url'):
-                payment_url = result.get('payment_url')
-                payment_id = str(result.get('local_payment_id') or result.get('inv_id') or 'pending')
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail='Failed to create Robokassa payment',
-                )
-
         elif request.payment_method == 'pal24':
             if not settings.is_pal24_enabled():
                 raise HTTPException(
@@ -880,16 +854,6 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
         }
         return mapping.get(status, ('❓', 'Неизвестно'))
 
-    if record.method == PaymentMethod.ROBOKASSA:
-        mapping = {
-            'created': ('⏳', 'Ожидает оплаты'),
-            'processing': ('⌛', 'Обрабатывается'),
-            'success': ('✅', 'Оплачено'),
-            'canceled': ('❌', 'Отменено'),
-            'error': ('❌', 'Ошибка'),
-        }
-        return mapping.get(status, ('❓', 'Неизвестно'))
-
     if record.method == PaymentMethod.WATA:
         mapping = {
             'opened': ('⏳', 'Ожидает оплаты'),
@@ -995,8 +959,6 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status in {'new', 'process'}
     if record.method == PaymentMethod.MULENPAY:
         return status in {'created', 'processing', 'hold'}
-    if record.method == PaymentMethod.ROBOKASSA:
-        return status in {'created', 'processing'}
     if record.method == PaymentMethod.WATA:
         return status in {'opened', 'pending', 'processing', 'inprogress', 'in_progress'}
     if record.method == PaymentMethod.PLATEGA:
@@ -1133,7 +1095,6 @@ async def get_latest_payment_by_method(
         Pal24Payment,
         PlategaPayment,
         RioPayPayment,
-        RobokassaPayment,
         WataPayment,
         YooKassaPayment,
     )
@@ -1143,7 +1104,6 @@ async def get_latest_payment_by_method(
         PaymentMethod.CRYPTOBOT: CryptoBotPayment,
         PaymentMethod.HELEKET: HeleketPayment,
         PaymentMethod.MULENPAY: MulenPayPayment,
-        PaymentMethod.ROBOKASSA: RobokassaPayment,
         PaymentMethod.PAL24: Pal24Payment,
         PaymentMethod.WATA: WataPayment,
         PaymentMethod.PLATEGA: PlategaPayment,

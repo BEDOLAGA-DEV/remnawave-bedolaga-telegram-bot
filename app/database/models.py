@@ -162,7 +162,6 @@ class PaymentMethod(Enum):
     KASSA_AI = 'kassa_ai'
     RIOPAY = 'riopay'
     SEVERPAY = 'severpay'
-    ROBOKASSA = 'robokassa'
     MANUAL = 'manual'
     BALANCE = 'balance'
 
@@ -419,43 +418,6 @@ class MulenPayPayment(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f'<MulenPayPayment(id={self.id}, mulen_id={self.mulen_payment_id}, amount={self.amount_rubles}₽, status={self.status})>'
-
-
-class RobokassaPayment(Base):
-    __tablename__ = 'robokassa_payments'
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
-
-    inv_id = Column(Integer, nullable=False, unique=True, index=True)
-    amount_kopeks = Column(Integer, nullable=False)
-    currency = Column(String(10), nullable=False, default='RUB')
-    description = Column(Text, nullable=True)
-
-    status = Column(String(50), nullable=False, default='created')
-    is_paid = Column(Boolean, default=False)
-    paid_at = Column(AwareDateTime(), nullable=True)
-
-    payment_url = Column(Text, nullable=True)
-    inc_curr_label = Column(String(64), nullable=True)
-    robokassa_op_id = Column(String(128), nullable=True, index=True)
-    metadata_json = Column(JSON, nullable=True)
-    callback_payload = Column(JSON, nullable=True)
-
-    transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
-
-    created_at = Column(AwareDateTime(), default=func.now())
-    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
-
-    user = relationship('User', backref='robokassa_payments')
-    transaction = relationship('Transaction', backref='robokassa_payment')
-
-    @property
-    def amount_rubles(self) -> float:
-        return self.amount_kopeks / 100
-
-    def __repr__(self) -> str:  # pragma: no cover - debug helper
-        return f'<RobokassaPayment(id={self.id}, inv_id={self.inv_id}, amount={self.amount_rubles}₽, status={self.status})>'
 
 
 class Pal24Payment(Base):

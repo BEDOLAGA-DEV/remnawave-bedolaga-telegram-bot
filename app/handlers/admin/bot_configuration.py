@@ -77,7 +77,6 @@ CATEGORY_GROUP_METADATA: dict[str, dict[str, object]] = {
             'RIOPAY',
             'SEVERPAY',
             'MULENPAY',
-            'ROBOKASSA',
             'PAL24',
             'WATA',
             'PLATEGA',
@@ -268,7 +267,6 @@ def _get_group_status(group_key: str) -> tuple[str, str]:
             'Kassa AI': settings.is_kassa_ai_enabled(),
             'RioPay': settings.is_riopay_enabled(),
             'MulenPay': settings.is_mulenpay_enabled(),
-            'Robokassa': settings.is_robokassa_enabled(),
             'PAL24': settings.is_pal24_enabled(),
             'Tribute': settings.TRIBUTE_ENABLED,
             'Stars': settings.TELEGRAM_STARS_ENABLED,
@@ -1238,12 +1236,6 @@ def _build_settings_keyboard(
             '💳 Банковская карта ({mulenpay_name})',
         ).format(mulenpay_name=settings.get_mulenpay_display_name())
         test_payment_buttons.append([_test_button(f'{label} · тест', 'mulenpay')])
-    elif category_key == 'ROBOKASSA':
-        label = texts.t(
-            'PAYMENT_CARD_ROBOKASSA',
-            '💳 Банковская карта ({robokassa_name})',
-        ).format(robokassa_name=settings.get_robokassa_display_name())
-        test_payment_buttons.append([_test_button(f'{label} · тест', 'robokassa')])
     elif category_key == 'WATA':
         label = texts.t('PAYMENT_CARD_WATA', '💳 Банковская карта (WATA)')
         test_payment_buttons.append([_test_button(f'{label} · тест', 'wata')])
@@ -2051,62 +2043,6 @@ async def test_payment_provider(
         await callback.message.answer(message_text, reply_markup=reply_markup, parse_mode='HTML')
         await callback.answer(
             f'✅ Ссылка на платеж {mulenpay_name} отправлена',
-            show_alert=True,
-        )
-        await _refresh_markup()
-        return
-
-    if method == 'robokassa':
-        robokassa_name = settings.get_robokassa_display_name()
-        robokassa_name_html = settings.get_robokassa_display_name_html()
-        if not settings.is_robokassa_enabled():
-            await callback.answer(
-                f'❌ {robokassa_name} отключен',
-                show_alert=True,
-            )
-            return
-
-        amount_kopeks = 10 * 100
-        payment_result = await payment_service.create_robokassa_payment(
-            db=db,
-            user_id=db_user.id,
-            amount_kopeks=amount_kopeks,
-            description=f'Тестовый платеж {robokassa_name} (админ)',
-        )
-
-        if not payment_result or not payment_result.get('payment_url'):
-            await callback.answer(
-                f'❌ Не удалось создать платеж {robokassa_name}',
-                show_alert=True,
-            )
-            await _refresh_markup()
-            return
-
-        payment_url = payment_result['payment_url']
-        message_text = (
-            f'🧪 <b>Тестовый платеж {robokassa_name_html}</b>\n\n'
-            f'💰 Сумма: {texts.format_price(amount_kopeks)}\n'
-            f'🆔 InvId: {payment_result["inv_id"]}'
-        )
-        reply_markup = types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(
-                        text='💳 Перейти к оплате',
-                        url=payment_url,
-                    )
-                ],
-                [
-                    types.InlineKeyboardButton(
-                        text='📊 Проверить статус',
-                        callback_data=f'check_robokassa_{payment_result["local_payment_id"]}',
-                    )
-                ],
-            ]
-        )
-        await callback.message.answer(message_text, reply_markup=reply_markup, parse_mode='HTML')
-        await callback.answer(
-            f'✅ Ссылка на платеж {robokassa_name} отправлена',
             show_alert=True,
         )
         await _refresh_markup()
