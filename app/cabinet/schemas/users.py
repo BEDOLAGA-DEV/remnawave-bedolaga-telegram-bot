@@ -430,6 +430,7 @@ class DeviceInfo(BaseModel):
     hwid: str
     platform: str = ''
     device_model: str = ''
+    user_agent: str = ''
     created_at: str | None = None
 
 
