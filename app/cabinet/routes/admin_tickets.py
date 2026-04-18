@@ -17,7 +17,7 @@ from app.database.crud.ticket_notification import TicketNotificationCRUD
 from app.database.models import Ticket, TicketMessage, User
 
 from ..dependencies import get_cabinet_db, require_permission
-from ..schemas.tickets import TicketMessageResponse
+from ..schemas.tickets import TicketMediaItem, TicketMessageResponse, _validate_media_bundle
 
 
 logger = structlog.get_logger(__name__)
@@ -89,19 +89,19 @@ class AdminTicketListResponse(BaseModel):
 class AdminReplyRequest(BaseModel):
     """Admin reply to ticket."""
 
-    message: str = Field(..., min_length=1, max_length=4000, description='Reply message')
+    message: str = Field(default='', max_length=4000, description='Reply message')
     media_type: str | None = Field(None, description='Media type: photo, video, or document')
     media_file_id: str | None = Field(None, max_length=255, description='Telegram file_id from media upload')
     media_caption: str | None = Field(None, max_length=1000, description='Caption for media')
+    media_items: list[TicketMediaItem] | None = Field(None, description='Multi-media gallery attachments')
 
     @model_validator(mode='after')
     def validate_media_fields(self) -> 'AdminReplyRequest':
-        if self.media_file_id and not self.media_type:
-            raise ValueError('media_type is required when media_file_id is provided')
-        if self.media_type and not self.media_file_id:
-            raise ValueError('media_file_id is required when media_type is provided')
-        if self.media_type and self.media_type not in {'photo', 'video', 'document'}:
-            raise ValueError('media_type must be one of: photo, video, document')
+        _validate_media_bundle(self.media_type, self.media_file_id, self.media_items)
+        has_text = bool(self.message.strip())
+        has_media = bool(self.media_file_id) or bool(self.media_items)
+        if not has_text and not has_media:
+            raise ValueError('message or media is required')
         return self
 
 
@@ -157,14 +157,22 @@ class TicketSettingsUpdateRequest(BaseModel):
 
 def _message_to_response(message: TicketMessage) -> TicketMessageResponse:
     """Convert TicketMessage to response."""
+    raw_items = getattr(message, 'media_items', None) or None
+    items = None
+    if raw_items:
+        try:
+            items = [TicketMediaItem(**it) for it in raw_items]
+        except Exception:
+            items = None
     return TicketMessageResponse(
         id=message.id,
         message_text=message.message_text or '',
         is_from_admin=message.is_from_admin,
-        has_media=bool(message.media_file_id),
+        has_media=bool(message.media_file_id) or bool(items),
         media_type=message.media_type,
         media_file_id=message.media_file_id,
         media_caption=message.media_caption,
+        media_items=items,
         created_at=message.created_at,
     )
 
@@ -455,17 +463,29 @@ async def reply_to_ticket(
             detail='Ticket not found',
         )
 
-    # Create admin message
-    has_media = bool(request.media_file_id)
+    # Resolve media payload: prefer explicit media_items list, fall back to legacy single-media fields
+    items_payload = None
+    primary_type = request.media_type
+    primary_file_id = request.media_file_id
+    primary_caption = request.media_caption
+    if request.media_items:
+        items_payload = [it.model_dump() for it in request.media_items]
+        first = request.media_items[0]
+        primary_type = first.type
+        primary_file_id = first.file_id
+        primary_caption = primary_caption or first.caption
+    has_media = bool(primary_file_id)
+
     message = TicketMessage(
         ticket_id=ticket.id,
         user_id=ticket.user_id,
         message_text=request.message,
         is_from_admin=True,
         has_media=has_media,
-        media_type=request.media_type if has_media else None,
-        media_file_id=request.media_file_id if has_media else None,
-        media_caption=request.media_caption if has_media else None,
+        media_type=primary_type if has_media else None,
+        media_file_id=primary_file_id if has_media else None,
+        media_caption=primary_caption if has_media else None,
+        media_items=items_payload,
         created_at=datetime.now(UTC),
     )
     db.add(message)
