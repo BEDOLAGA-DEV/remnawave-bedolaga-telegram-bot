@@ -2,8 +2,11 @@
 Tests for PromoCodeService - focus on promo group integration
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from app.config import settings
+from app.database.models import PromoCodeType
 from app.services.promocode_service import PromoCodeService
 
 
@@ -77,6 +80,53 @@ async def test_activate_promo_group_promocode_success(
     # Verify counter incremented
     assert sample_promocode_promo_group.current_uses == 21
     mock_db_session.commit.assert_awaited()
+
+
+async def test_trial_promocode_creates_new_subscription_for_same_tariff_in_multi_mode(monkeypatch, mock_db_session):
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True, raising=False)
+
+    user = SimpleNamespace(id=7, telegram_id=77, email=None, language='ru')
+    promocode = SimpleNamespace(
+        type=PromoCodeType.TRIAL_SUBSCRIPTION.value,
+        subscription_days=14,
+        tariff_id=5,
+        code='TRIAL14',
+    )
+    trial_tariff = SimpleNamespace(
+        id=5,
+        name='Trial Pro',
+        traffic_limit_gb=100,
+        device_limit=3,
+        allowed_squads=['sq-1'],
+        trial_duration_days=None,
+    )
+    existing_same_tariff_sub = SimpleNamespace(id=99, tariff_id=5, is_trial=False)
+    created_trial_sub = SimpleNamespace(id=123, tariff_id=5)
+
+    service = PromoCodeService()
+    service.subscription_service = SimpleNamespace(
+        create_remnawave_user=AsyncMock(),
+        update_remnawave_user=AsyncMock(),
+    )
+
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_active_subscriptions_by_user_id',
+        AsyncMock(return_value=[existing_same_tariff_sub]),
+    )
+    monkeypatch.setattr('app.database.crud.tariff.get_tariff_by_id', AsyncMock(return_value=trial_tariff))
+    monkeypatch.setattr('app.database.crud.tariff.get_trial_tariff', AsyncMock(return_value=None))
+
+    create_trial_mock = AsyncMock(return_value=created_trial_sub)
+    extend_mock = AsyncMock()
+    monkeypatch.setattr('app.database.crud.subscription.create_trial_subscription', create_trial_mock)
+    monkeypatch.setattr('app.services.promocode_service.extend_subscription', extend_mock)
+
+    result = await service._apply_promocode_effects(mock_db_session, user, promocode)
+
+    create_trial_mock.assert_awaited_once()
+    extend_mock.assert_not_awaited()
+    service.subscription_service.create_remnawave_user.assert_awaited_once_with(mock_db_session, created_trial_sub)
+    assert 'Активирована тестовая подписка' in result
 
 
 async def test_activate_promo_group_user_already_has_group(

@@ -786,10 +786,7 @@ async def _auto_purchase_tariff(
                 None,
             )
         else:
-            existing_subscription = next(
-                (s for s in active_subs if s.tariff_id == tariff_id),
-                None,
-            )
+            existing_subscription = None
     else:
         existing_subscription = await get_subscription_by_user_id(db, user.id)
 
@@ -1200,10 +1197,7 @@ async def _auto_purchase_daily_tariff(
                 None,
             )
         else:
-            existing_subscription = next(
-                (s for s in active_subs if s.tariff_id == tariff_id),
-                None,
-            )
+            existing_subscription = None
     else:
         existing_subscription = await get_subscription_by_user_id(db, user.id)
 

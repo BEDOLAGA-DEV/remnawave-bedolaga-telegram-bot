@@ -1366,13 +1366,6 @@ class Subscription(Base):
         Index('ix_subscriptions_user_id', 'user_id'),
         Index('ix_subscriptions_user_status', 'user_id', 'status'),
         Index('ix_subscriptions_user_tariff_status', 'user_id', 'tariff_id', 'status'),
-        Index(
-            'uq_subscriptions_user_tariff_active',
-            'user_id',
-            'tariff_id',
-            unique=True,
-            postgresql_where=text("tariff_id IS NOT NULL AND status IN ('active', 'trial', 'limited')"),
-        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)

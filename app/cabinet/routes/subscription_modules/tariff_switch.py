@@ -175,17 +175,6 @@ async def switch_tariff(
             detail='No active subscription with tariff',
         )
 
-    # Guard: prevent switching to a tariff the user already owns (multi-tariff)
-    if settings.is_multi_tariff_enabled() and request.tariff_id:
-        from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-        existing_target = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
-        if existing_target and existing_target.id != resolved.id:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail='You already have an active subscription for the target tariff',
-            )
-
     # Lock subscription row to prevent concurrent tariff switches
     locked_result = await db.execute(
         select(Subscription)

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
+import app.services.subscription_auto_purchase_service as auto_purchase_module
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -748,3 +749,105 @@ async def test_auto_purchase_trial_remaining_days_transferred(monkeypatch):
     assert actual_total_days == 32, (
         f'Expected 32 days from now (30 purchased + 2 remaining trial), got {actual_total_days}'
     )
+
+
+async def test_auto_purchase_daily_tariff_creates_new_subscription_for_same_tariff_in_multi_mode(monkeypatch):
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True, raising=False)
+
+    existing_subscription = MagicMock()
+    existing_subscription.id = 41
+    existing_subscription.tariff_id = 7
+    existing_subscription.is_trial = False
+    existing_subscription.device_limit = 9
+
+    user = MagicMock(spec=User)
+    user.id = 15
+    user.telegram_id = None
+    user.balance_kopeks = 50_000
+    user.language = 'ru'
+    user.get_primary_promo_group = MagicMock(return_value=None)
+
+    cart_data = {
+        'cart_mode': 'daily_tariff_purchase',
+        'tariff_id': 7,
+        'daily_price_kopeks': 10_000,
+        'total_price': 10_000,
+    }
+
+    tariff = MagicMock()
+    tariff.id = 7
+    tariff.name = 'Daily Pro'
+    tariff.is_active = True
+    tariff.is_daily = True
+    tariff.daily_price_kopeks = 10_000
+    tariff.allowed_squads = ['squad-a']
+    tariff.traffic_limit_gb = 100
+    tariff.device_limit = 3
+
+    new_subscription = MagicMock()
+    new_subscription.id = 77
+    new_subscription.user_id = user.id
+    new_subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+    new_subscription.remnawave_uuid = None
+
+    async def fake_lock_user(db, user_id):
+        return user
+
+    create_paid_mock = AsyncMock(return_value=new_subscription)
+    subtract_mock = AsyncMock(return_value=True)
+    get_active_mock = AsyncMock(return_value=[existing_subscription])
+    delete_cart_mock = AsyncMock()
+    clear_draft_mock = AsyncMock()
+    ws_activated_mock = AsyncMock()
+    ws_renewed_mock = AsyncMock()
+    admin_notify_mock = AsyncMock()
+
+    service_mock = MagicMock()
+    service_mock.create_remnawave_user = AsyncMock()
+
+    monkeypatch.setattr('app.database.crud.tariff.get_tariff_by_id', AsyncMock(return_value=tariff))
+    monkeypatch.setattr('app.database.crud.user.lock_user_for_pricing', fake_lock_user)
+    monkeypatch.setattr('app.database.crud.user.subtract_user_balance', subtract_mock)
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_active_subscriptions_by_user_id',
+        get_active_mock,
+    )
+    monkeypatch.setattr('app.database.crud.subscription.create_paid_subscription', create_paid_mock)
+    monkeypatch.setattr('app.database.crud.transaction.create_transaction', AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_user_cart',
+        delete_cart_mock,
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.clear_subscription_checkout_draft',
+        clear_draft_mock,
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.SubscriptionService',
+        lambda: service_mock,
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_renewal_service.with_admin_notification_service',
+        admin_notify_mock,
+    )
+    monkeypatch.setattr(
+        'app.cabinet.routes.websocket.notify_user_subscription_activated',
+        ws_activated_mock,
+    )
+    monkeypatch.setattr(
+        'app.cabinet.routes.websocket.notify_user_subscription_renewed',
+        ws_renewed_mock,
+    )
+
+    db_session = AsyncMock(spec=AsyncSession)
+
+    result = await auto_purchase_module._auto_purchase_daily_tariff(db_session, user, cart_data, bot=None)
+
+    assert result is True
+    create_paid_mock.assert_awaited_once()
+    ws_activated_mock.assert_awaited_once()
+    ws_renewed_mock.assert_not_awaited()
+    service_mock.create_remnawave_user.assert_awaited_once()
+    delete_cart_mock.assert_awaited_once_with(user.id)
+    clear_draft_mock.assert_awaited_once_with(user.id)
+    assert existing_subscription.tariff_id == 7

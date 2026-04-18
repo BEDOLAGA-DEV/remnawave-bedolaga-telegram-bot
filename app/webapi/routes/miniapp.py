@@ -6547,11 +6547,14 @@ async def purchase_tariff_endpoint(
     if is_daily_tariff:
         payload.period_days = 1
 
-    # Calculate price via PricingEngine (single source of truth)
-    subs = getattr(user, 'subscriptions', None) or []
-    # Find subscription with same tariff for device limit inheritance
-    matching_sub = next((s for s in subs if s.tariff_id == tariff.id and s.is_active), None)
-    device_limit = matching_sub.device_limit if matching_sub else None
+    # Multi-tariff purchase creates a new subscription by default.
+    # Renewal uses explicit subscription_id flows.
+    if settings.is_multi_tariff_enabled():
+        subscription = None
+        device_limit = None
+    else:
+        subscription = getattr(user, 'subscription', None)
+        device_limit = subscription.device_limit if subscription else None
 
     result = await pricing_engine.calculate_tariff_purchase_price(
         tariff,

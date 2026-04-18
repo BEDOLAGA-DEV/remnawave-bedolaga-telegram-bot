@@ -386,18 +386,15 @@ class PromoCodeService:
             except Exception as e:
                 logger.error('Ошибка получения тарифа для триального промокода', error=e)
 
-            # Check if user already has a subscription with the same tariff
+            # In multi-tariff mode a targeted trial promo may create a separate
+            # subscription even if the user already owns this tariff.
             existing_same_tariff_sub = None
             can_create_new = True
             if settings.is_multi_tariff_enabled():
                 from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
                 active_subs = await get_active_subscriptions_by_user_id(db, user.id)
-                if tariff_id_for_trial:
-                    existing_same_tariff_sub = next(
-                        (s for s in active_subs if s.tariff_id == tariff_id_for_trial), None
-                    )
-                else:
+                if not tariff_id_for_trial:
                     # No tariff configured — block if any subscription exists
                     can_create_new = len(active_subs) == 0
             else:

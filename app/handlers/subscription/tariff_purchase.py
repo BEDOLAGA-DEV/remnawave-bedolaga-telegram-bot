@@ -7,7 +7,6 @@ import structlog
 from aiogram import Dispatcher, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -614,20 +613,6 @@ async def select_tariff(
         await callback.answer('Тариф недоступен', show_alert=True)
         return
 
-    # В мульти-тарифе проверяем не куплен ли уже этот тариф
-    if settings.is_multi_tariff_enabled():
-        from app.database.crud.subscription import get_active_subscriptions_by_user_id
-
-        _active = await get_active_subscriptions_by_user_id(db, db_user.id)
-        _existing = next((s for s in _active if s.tariff_id == tariff_id and not s.is_trial), None)
-        if _existing:
-            days_left = max(0, (_existing.end_date - datetime.now(UTC)).days) if _existing.end_date else 0
-            await callback.answer(
-                f'Тариф «{tariff.name}» уже активен ({days_left} дн.). Продлите через "Мои подписки".',
-                show_alert=True,
-            )
-            return
-
     # Проверяем, суточный ли это тариф
     is_daily = getattr(tariff, 'is_daily', False)
 
@@ -660,12 +645,10 @@ async def select_tariff(
         else:
             missing = daily_price - user_balance
 
-            # Ищем существующую подписку для передачи subscription_id в корзину
-            if settings.is_multi_tariff_enabled():
-                from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-                _daily_existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
-            else:
+            # В multi-tariff не привязываем корзину к подписке по tariff_id:
+            # одинаковый тариф должен создавать новую подписку.
+            _daily_existing_sub = None
+            if not settings.is_multi_tariff_enabled():
                 _daily_existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
             # Сохраняем данные корзины для автопокупки суточного тарифа
@@ -978,11 +961,9 @@ async def handle_custom_confirm(
     # Определяем трафик
     traffic_limit = custom_traffic if tariff.can_purchase_custom_traffic() else tariff.traffic_limit_gb
 
-    # Проверяем есть ли уже подписка
-    if settings.is_multi_tariff_enabled():
-        active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)
-        existing_subscription = next((s for s in active_subs if s.tariff_id == tariff.id), None)
-    else:
+    # В multi-tariff покупка кастомного тарифа должна создавать новую подписку.
+    existing_subscription = None
+    if not settings.is_multi_tariff_enabled():
         existing_subscription = await get_subscription_by_user_id(db, db_user.id)
 
     try:
@@ -1273,12 +1254,10 @@ async def select_tariff_period(
         # Недостаточно средств - сохраняем корзину для автопокупки
         missing = final_price - user_balance
 
-        # Ищем существующую подписку для передачи subscription_id в корзину
-        if settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-            _existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
-        else:
+        # В multi-tariff не привязываем корзину к подписке по tariff_id:
+        # одинаковый тариф должен создавать новую подписку.
+        _existing_sub = None
+        if not settings.is_multi_tariff_enabled():
             _existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
         # Сохраняем данные корзины для автопокупки после пополнения
@@ -1351,11 +1330,10 @@ async def confirm_tariff_purchase(
     # Calculate price via PricingEngine (single source of truth)
     from app.services.pricing_engine import pricing_engine
 
-    # In multi-tariff mode, look for existing subscription for this specific tariff
+    # In multi-tariff mode, buying a tariff creates a new subscription.
+    # Renewal uses explicit subscription selection flows.
     if settings.is_multi_tariff_enabled():
-        from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-        existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
+        existing_sub = None
     else:
         existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
@@ -1500,45 +1478,6 @@ async def confirm_tariff_purchase(
                 connected_squads=squads,
                 tariff_id=tariff.id,
             )
-    except IntegrityError as e:
-        # Partial unique index violation: user already has active subscription for this tariff
-        logger.warning('Тариф уже активен у пользователя', tariff_id=tariff_id, user_id=db_user.id, error=e)
-        await db.rollback()
-        try:
-            from app.database.crud.user import add_user_balance
-
-            refund_success = await add_user_balance(
-                db,
-                db_user,
-                final_price,
-                'Возврат: тариф уже активен',
-                create_transaction=True,
-                transaction_type=TransactionType.REFUND,
-                commit=False,
-            )
-            if not refund_success:
-                await _persist_failed_refund(
-                    user_id=db_user.id,
-                    amount_kopeks=final_price,
-                    reason='Возврат: тариф уже активен (add_user_balance returned False)',
-                    error=Exception('add_user_balance returned False'),
-                )
-            # Restore promo offer if consumed (atomic with refund)
-            if consume_promo and saved_promo_percent > 0:
-                db_user.promo_offer_discount_percent = saved_promo_percent
-                db_user.promo_offer_discount_source = saved_promo_source
-                db_user.promo_offer_discount_expires_at = saved_promo_expires
-            await db.commit()
-        except Exception as refund_error:
-            logger.critical('CRITICAL: не удалось вернуть средства', user_id=db_user.id, refund_error=refund_error)
-            await _persist_failed_refund(
-                user_id=db_user.id,
-                amount_kopeks=final_price,
-                reason='Возврат: тариф уже активен',
-                error=refund_error,
-            )
-        await callback.answer('У вас уже есть активная подписка на этот тариф', show_alert=True)
-        return
     except Exception as e:
         logger.error('Ошибка создания/продления подписки при покупке тарифа', error=e, exc_info=True)
         await db.rollback()
@@ -1771,11 +1710,9 @@ async def confirm_daily_tariff_purchase(
         all_servers, _ = await get_all_server_squads(db, available_only=True)
         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
-    # Проверяем есть ли уже подписка
-    if settings.is_multi_tariff_enabled():
-        active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)
-        existing_subscription = next((s for s in active_subs if s.tariff_id == tariff.id), None)
-    else:
+    # В multi-tariff покупка суточного тарифа должна создавать новую подписку.
+    existing_subscription = None
+    if not settings.is_multi_tariff_enabled():
         existing_subscription = await get_subscription_by_user_id(db, db_user.id)
 
     try:

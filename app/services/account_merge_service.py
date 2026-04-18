@@ -319,75 +319,17 @@ async def _handle_subscription_merge(
         secondary: Вторичный пользователь.
         keep_subscription_from: 'primary' или 'secondary' — чью подписку оставить.
     """
-    # Multi-tariff mode: transfer ALL subscriptions from secondary to primary
-    # Handles uq_subscriptions_user_tariff_active: (user_id, tariff_id) WHERE status IN ('active','trial')
+    # Multi-tariff mode: transfer ALL subscriptions from secondary to primary.
+    # Duplicate tariff_ids are allowed, so do not collapse or expire conflicts here.
     if settings.is_multi_tariff_enabled():
         secondary_subs = list(getattr(secondary, 'subscriptions', None) or [])
-        primary_subs = list(getattr(primary, 'subscriptions', None) or [])
         secondary_legacy_uuid = secondary.remnawave_uuid
-
-        # Build set of primary's active tariff_ids for conflict detection
-        primary_active_tariff_ids: set[int] = set()
-        for ps in primary_subs:
-            if ps.tariff_id is not None and ps.status in ('active', 'trial'):
-                primary_active_tariff_ids.add(ps.tariff_id)
 
         transferred: list[Subscription] = []
         if secondary_subs:
             for sub in secondary_subs:
                 sub_tariff_id = getattr(sub, 'tariff_id', None)
                 sub_remnawave_uuid = getattr(sub, 'remnawave_uuid', None)
-
-                # Check for tariff conflict: primary already has active sub for the same tariff
-                if (
-                    sub_tariff_id is not None
-                    and sub.status in ('active', 'trial')
-                    and sub_tariff_id in primary_active_tariff_ids
-                ):
-                    # Resolve conflict: keep the subscription with the later end_date
-                    primary_conflict = next(
-                        (
-                            ps
-                            for ps in primary_subs
-                            if ps.tariff_id == sub_tariff_id and ps.status in ('active', 'trial')
-                        ),
-                        None,
-                    )
-                    if primary_conflict:
-                        primary_end = getattr(primary_conflict, 'end_date', None)
-                        secondary_end = getattr(sub, 'end_date', None)
-                        # None end_date = lifetime/unlimited → always wins over a finite date
-                        secondary_wins = (secondary_end is None and primary_end is not None) or (
-                            secondary_end is not None and primary_end is not None and secondary_end > primary_end
-                        )
-                        if secondary_wins:
-                            # Secondary sub is better — expire primary's, transfer secondary's
-                            logger.info(
-                                'Tariff conflict resolved: secondary sub wins, expiring primary sub',
-                                tariff_id=sub_tariff_id,
-                                primary_sub_id=primary_conflict.id,
-                                primary_end=str(primary_end),
-                                secondary_sub_id=sub.id,
-                                secondary_end=str(secondary_end),
-                            )
-                            primary_conflict.status = 'expired'
-                            primary_conflict.autopay_enabled = False
-                            await db.flush()
-                            sub.user_id = primary.id
-                            transferred.append(sub)
-                        else:
-                            # Primary sub is equal or better — expire secondary's, then transfer it as expired
-                            logger.info(
-                                'Tariff conflict resolved: primary sub kept, expiring secondary sub before transfer',
-                                tariff_id=sub_tariff_id,
-                                primary_sub_id=primary_conflict.id,
-                                secondary_sub_id=sub.id,
-                            )
-                            sub.status = 'expired'
-                            sub.autopay_enabled = False
-                            sub.user_id = primary.id
-                            transferred.append(sub)
-                        continue
 
                 sub.user_id = primary.id
                 transferred.append(sub)

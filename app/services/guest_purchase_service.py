@@ -353,13 +353,16 @@ async def fulfill_purchase(
             await db.commit()
             return purchase
 
-        # Check if user already has a subscription
+        # In multi-tariff mode, self-purchases may create another subscription for
+        # the same tariff. Gifts should still require explicit activation when the
+        # recipient already has any live subscription.
         if settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+            existing_subscription = None
+            if purchase.is_gift:
+                from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
-            # In multi-tariff mode, only block if user already has THIS SPECIFIC tariff active.
-            # Different tariffs can be purchased simultaneously — that's the whole point.
-            existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
+                active_subscriptions = await get_active_subscriptions_by_user_id(db, user.id)
+                existing_subscription = active_subscriptions[0] if active_subscriptions else None
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
         if existing_subscription is not None and (existing_subscription.is_active or purchase.is_gift):
@@ -1049,51 +1052,17 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
 
         # In multi-tariff mode, always create a new subscription (new Remnawave user)
         if settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-            existing_for_tariff = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
-            _has_time = (
-                existing_for_tariff is not None
-                and existing_for_tariff.end_date is not None
-                and _aware(existing_for_tariff.end_date) > datetime.now(UTC)
+            subscription = await create_paid_subscription(
+                db=db,
+                user_id=user.id,
+                duration_days=purchase.period_days,
+                traffic_limit_gb=tariff.traffic_limit_gb,
+                device_limit=tariff.device_limit,
+                connected_squads=squads,
+                tariff_id=tariff.id,
+                update_server_counters=True,
+                commit=False,
             )
-            if existing_for_tariff and _has_time:
-                # Extend existing active/trial subscription instead of replacing (preserve remaining days)
-                subscription = await extend_subscription(
-                    db,
-                    existing_for_tariff,
-                    purchase.period_days,
-                    traffic_limit_gb=tariff.traffic_limit_gb,
-                    device_limit=tariff.device_limit,
-                    connected_squads=squads,
-                    commit=False,
-                )
-            elif existing_for_tariff:
-                # Expired subscription — replace with fresh dates
-                subscription = await replace_subscription(
-                    db,
-                    existing_for_tariff,
-                    duration_days=purchase.period_days,
-                    traffic_limit_gb=tariff.traffic_limit_gb,
-                    device_limit=tariff.device_limit,
-                    connected_squads=squads,
-                    is_trial=False,
-                    update_server_counters=True,
-                    commit=False,
-                )
-                subscription.tariff_id = tariff.id
-            else:
-                subscription = await create_paid_subscription(
-                    db=db,
-                    user_id=user.id,
-                    duration_days=purchase.period_days,
-                    traffic_limit_gb=tariff.traffic_limit_gb,
-                    device_limit=tariff.device_limit,
-                    connected_squads=squads,
-                    tariff_id=tariff.id,
-                    update_server_counters=True,
-                    commit=False,
-                )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
             _sub_has_time = (

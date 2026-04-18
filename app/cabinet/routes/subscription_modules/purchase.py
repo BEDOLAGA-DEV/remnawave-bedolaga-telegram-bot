@@ -15,7 +15,6 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -29,7 +28,7 @@ from app.database.crud.subscription import (
 )
 from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
 from app.database.crud.transaction import create_transaction
-from app.database.crud.user import add_user_balance, subtract_user_balance
+from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, Subscription, Tariff, TransactionType, User
 from app.services.notification_delivery_service import (
     NotificationType,
@@ -645,11 +644,10 @@ async def purchase_tariff(
             custom_traffic_gb = request.traffic_gb
             traffic_limit_gb = request.traffic_gb
 
-        # Determine device_limit for renewal pricing
+        # In multi-tariff mode, tariff purchase creates a new subscription by default.
+        # Renewal uses explicit subscription_id endpoints.
         if settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-            existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
+            existing_subscription = None
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
         device_limit = None
@@ -828,36 +826,15 @@ async def purchase_tariff(
             )
         else:
             # Create new subscription
-            try:
-                subscription = await create_paid_subscription(
-                    db=db,
-                    user_id=user.id,
-                    duration_days=period_days,
-                    traffic_limit_gb=traffic_limit_gb,
-                    device_limit=tariff.device_limit,
-                    connected_squads=squads,
-                    tariff_id=tariff.id,
-                )
-            except IntegrityError:
-                # Partial unique index violation: user already has active subscription for this tariff
-                logger.warning(
-                    'Cabinet purchase: tariff already active (IntegrityError), refunding',
-                    tariff_id=tariff.id,
-                    user_id=user.id,
-                )
-                await db.rollback()
-                await add_user_balance(
-                    db,
-                    user,
-                    price_kopeks,
-                    f"Возврат: тариф '{tariff.name}' уже активен",
-                    create_transaction=True,
-                    transaction_type=TransactionType.REFUND,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail='You already have an active subscription for this tariff',
-                )
+            subscription = await create_paid_subscription(
+                db=db,
+                user_id=user.id,
+                duration_days=period_days,
+                traffic_limit_gb=traffic_limit_gb,
+                device_limit=tariff.device_limit,
+                connected_squads=squads,
+                tariff_id=tariff.id,
+            )
 
         # Add remaining trial time to paid subscription
         if _bonus_seconds > 0 and subscription:

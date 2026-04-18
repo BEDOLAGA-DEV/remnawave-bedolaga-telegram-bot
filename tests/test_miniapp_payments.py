@@ -35,6 +35,7 @@ from app.webapi.schemas.miniapp import (
     MiniAppPaymentMethodsRequest,
     MiniAppPaymentStatusQuery,
     MiniAppSubscriptionRenewalRequest,
+    MiniAppTariffPurchaseRequest,
 )
 
 
@@ -258,6 +259,92 @@ async def test_submit_subscription_renewal_returns_cryptobot_invoice(monkeypatch
     assert response.payment_payload and response.payment_payload.startswith('subscription_renewal')
     assert created_calls.get('amount_usd') == pytest.approx(1.5)
     assert created_calls.get('description') == 'Продление подписки на 30 дней'
+
+
+@pytest.mark.anyio('asyncio')
+async def test_purchase_tariff_creates_new_subscription_for_same_tariff_in_multi_mode(monkeypatch):
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True, raising=False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: True, raising=False)
+
+    existing_sub = types.SimpleNamespace(id=41, tariff_id=7, is_active=True, device_limit=9)
+    user = types.SimpleNamespace(
+        id=10,
+        telegram_id=10,
+        balance_kopeks=50000,
+        language='ru',
+        subscriptions=[existing_sub],
+        subscription=existing_sub,
+        restriction_subscription=False,
+    )
+    tariff = types.SimpleNamespace(
+        id=7,
+        name='Pro',
+        is_active=True,
+        is_daily=False,
+        traffic_limit_gb=100,
+        device_limit=3,
+        allowed_squads=['squad-1'],
+        is_available_for_promo_group=lambda promo_group_id: True,
+    )
+    pricing_result = types.SimpleNamespace(
+        final_total=10000,
+        promo_offer_discount=0,
+        breakdown={'group_discount_pct': {'period': 0}},
+    )
+
+    async def fake_authorize(init_data, db):
+        return user
+
+    async def fake_lock_user(db, user_id):
+        return user
+
+    created: dict[str, Any] = {}
+
+    async def fake_create_paid_subscription(**kwargs):
+        created.update(kwargs)
+        return types.SimpleNamespace(id=77, end_date=datetime.now(UTC) + timedelta(days=30))
+
+    async def fail_extend(*args, **kwargs):
+        raise AssertionError('extend_subscription should not be used for same-tariff purchase in multi mode')
+
+    class DummySubscriptionService:
+        async def update_remnawave_user(self, db, subscription, **kwargs):
+            return None
+
+    class DummyDB:
+        async def refresh(self, obj):
+            return None
+
+    async def fake_get_tariff(db, tariff_id):
+        return tariff
+
+    async def fake_calculate(*args, **kwargs):
+        return pricing_result
+
+    async def fake_subtract(*args, **kwargs):
+        return True
+
+    async def fake_create_transaction(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(miniapp, '_authorize_miniapp_user', fake_authorize)
+    monkeypatch.setattr('app.database.crud.user.lock_user_for_pricing', fake_lock_user)
+    monkeypatch.setattr(miniapp, 'get_tariff_by_id', fake_get_tariff)
+    monkeypatch.setattr(miniapp.pricing_engine, 'calculate_tariff_purchase_price', fake_calculate)
+    monkeypatch.setattr(miniapp, 'subtract_user_balance', fake_subtract)
+    monkeypatch.setattr(miniapp, 'create_transaction', fake_create_transaction)
+    monkeypatch.setattr('app.database.crud.subscription.create_paid_subscription', fake_create_paid_subscription)
+    monkeypatch.setattr(miniapp, 'extend_subscription', fail_extend)
+    monkeypatch.setattr(miniapp, 'SubscriptionService', lambda: DummySubscriptionService())
+
+    payload = MiniAppTariffPurchaseRequest(initData='init', tariffId=7, periodDays=30)
+    response = await miniapp.purchase_tariff_endpoint(payload, db=DummyDB())
+
+    assert response.success is True
+    assert response.subscription_id == 77
+    assert created['user_id'] == user.id
+    assert created['tariff_id'] == tariff.id
+    assert created['device_limit'] == tariff.device_limit
 
 
 @pytest.mark.anyio('asyncio')
