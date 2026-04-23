@@ -550,6 +550,7 @@ class LandingPurchaseItem(BaseModel):
     currency: str
     payment_method: str | None = None
     status: str
+    referrer: str | None = None
     created_at: datetime | None = None
     paid_at: datetime | None = None
 
@@ -1007,6 +1008,7 @@ async def get_landing_purchases(
             GuestPurchase.currency,
             GuestPurchase.payment_method,
             GuestPurchase.status,
+            GuestPurchase.referrer,
             GuestPurchase.created_at,
             GuestPurchase.paid_at,
         )
@@ -1032,6 +1034,7 @@ async def get_landing_purchases(
             currency=row.currency,
             payment_method=row.payment_method,
             status=row.status,
+            referrer=row.referrer,
             created_at=row.created_at,
             paid_at=row.paid_at,
         )
