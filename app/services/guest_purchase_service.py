@@ -145,6 +145,8 @@ async def create_purchase(
     gift_recipient_value: str | None = None,
     gift_message: str | None = None,
     source: str = 'landing',
+    subid: str | None = None,
+    referrer: str | None = None,
     buyer_user_id: int | None = None,
     commit: bool = True,
 ) -> GuestPurchase:
@@ -152,6 +154,8 @@ async def create_purchase(
     purchase = await create_guest_purchase(
         db,
         commit=commit,
+        subid=subid,
+        referrer=referrer,
         landing_id=landing.id if landing else None,
         tariff_id=tariff.id,
         period_days=period_days,
@@ -438,6 +442,21 @@ async def fulfill_purchase(
         purchase.status = GuestPurchaseStatus.DELIVERED.value
         purchase.user_id = user.id
         purchase.delivered_at = datetime.now(UTC)
+
+        # === Yandex Metrika offline conv + S2S postback integration (our patch) ===
+        # Extract subid from Redis cache (saved at purchase creation)
+        try:
+            from app.utils.cache import cache
+
+            _cached_subid = await cache.get(f'subid:purchase:{purchase.token}')
+            if _cached_subid:
+                purchase.subid = _cached_subid if isinstance(_cached_subid, str) else _cached_subid.decode()
+                from app.database.crud.yandex_client_id import upsert_subid
+
+                await upsert_subid(db, user.id, purchase.subid, source='landing')
+        except Exception:
+            pass
+
         if recipient_type == 'email' and not purchase.is_gift and is_new_account:
             purchase.auto_login_token = create_auto_login_token(user.id)
 
@@ -460,6 +479,56 @@ async def fulfill_purchase(
             )
         except Exception:
             logger.exception('Failed to create transaction for guest purchase', purchase_id=purchase.id)
+
+        # Save Yandex CID from Redis → DB (enables on_registration/on_purchase to use it)
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+            from app.utils.cache import cache
+
+            _cached_cid = await cache.get(f'yacid:purchase:{purchase.token}')
+            if _cached_cid:
+                await yandex_conv.store_cid(db, user.id, _cached_cid, source='landing')
+                await db.commit()
+                logger.debug('Saved CID from Redis to DB', user_id=user.id)
+        except Exception:
+            logger.debug('Failed to save CID from Redis')
+
+        # Registration event (new accounts only) + S2S postback
+        if is_new_account:
+            try:
+                from app.services import yandex_offline_conv_service as yandex_conv
+
+                await yandex_conv.on_registration(db, user.id)
+            except Exception:
+                logger.debug('Yandex on_registration hook error')
+
+            try:
+                from app.database.crud.yandex_client_id import get_subid
+                from app.services.s2s_postback_service import send_postback
+
+                _subid = purchase.subid or await get_subid(db, user.id)
+                if _subid:
+                    await send_postback('registration', _subid, user_id=user.id)
+            except Exception:
+                logger.debug('S2S postback registration hook error')
+
+        # Purchase event + S2S postback (always for paid purchases)
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            await yandex_conv.on_purchase(db, user.id, purchase.amount_kopeks)
+        except Exception:
+            logger.debug('Yandex on_purchase hook error')
+
+        try:
+            from app.database.crud.yandex_client_id import get_subid
+            from app.services.s2s_postback_service import send_postback
+
+            _subid = purchase.subid or await get_subid(db, user.id)
+            if _subid:
+                await send_postback('purchase', _subid, amount=purchase.amount_kopeks / 100, user_id=user.id)
+        except Exception:
+            logger.debug('S2S postback purchase hook error')
 
         try:
             await send_guest_notification(
