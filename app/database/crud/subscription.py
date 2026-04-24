@@ -391,7 +391,13 @@ async def replace_subscription(
 
     new_squads = set(final_connected)
 
-    new_autopay_enabled = subscription.autopay_enabled if autopay_enabled is None else autopay_enabled
+    if autopay_enabled is not None:
+        new_autopay_enabled = autopay_enabled
+    elif subscription.is_trial:
+        new_autopay_enabled = settings.is_autopay_enabled_by_default()
+    else:
+        new_autopay_enabled = subscription.autopay_enabled
+
     new_autopay_days_before = subscription.autopay_days_before if autopay_days_before is None else autopay_days_before
 
     subscription.status = SubscriptionStatus.ACTIVE.value
@@ -583,6 +589,7 @@ async def extend_subscription(
         # При покупке тарифа сбрасываем триальный статус
         if subscription.is_trial:
             subscription.is_trial = False
+            subscription.autopay_enabled = settings.is_autopay_enabled_by_default()
             logger.info('🎓 Подписка конвертирована из триала в платную', subscription_id=subscription.id)
 
     if traffic_limit_gb is not None:
