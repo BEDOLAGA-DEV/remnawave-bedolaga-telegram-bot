@@ -1559,6 +1559,7 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
                 Subscription.user_id == User.id,
                 Subscription.status == SubscriptionStatus.ACTIVE.value,
             )
+            .correlate(User)
             .exists()
         )
         query = select(sql_func.count(User.id)).where(base_filter, ~subquery)
@@ -1613,6 +1614,7 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
                 Subscription.user_id == User.id,
                 Subscription.status == SubscriptionStatus.ACTIVE.value,
             )
+            .correlate(User)
             .exists()
         )
         query = (
