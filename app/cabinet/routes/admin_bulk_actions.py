@@ -177,6 +177,19 @@ async def _do_activate_subscription(
     if not sub:
         return BulkUserResult(user_id=user.id, success=False, message='No subscription found', username=user.username)
 
+    # Проверка дубликата в мультитарифном режиме
+    if settings.is_multi_tariff_enabled() and sub.tariff_id:
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+        existing = await get_subscription_by_user_and_tariff(db, user.id, sub.tariff_id)
+        if existing and existing.id != sub.id:
+            return BulkUserResult(
+                user_id=user.id,
+                success=False,
+                message='Cannot activate: user already has an active subscription for this tariff',
+                username=user.username,
+            )
+
     if dry_run:
         return BulkUserResult(
             user_id=user.id,
@@ -211,6 +224,19 @@ async def _do_change_tariff(
     sub = _resolve_subscription(user)
     if not sub:
         return BulkUserResult(user_id=user.id, success=False, message='No subscription found', username=user.username)
+
+    # Проверка дубликата в мультитарифном режиме
+    if settings.is_multi_tariff_enabled() and tariff.id != sub.tariff_id:
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+        existing = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
+        if existing and existing.id != sub.id:
+            return BulkUserResult(
+                user_id=user.id,
+                success=False,
+                message='User already has an active subscription for the target tariff',
+                username=user.username,
+            )
 
     if dry_run:
         return BulkUserResult(
@@ -494,6 +520,10 @@ async def bulk_execute(
 
         except Exception as exc:
             logger.error('Bulk action failed for user', user_id=uid, action=action, error=str(exc))
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             results.append(BulkUserResult(user_id=uid, success=False, message=str(exc)))
             error_count += 1
 
