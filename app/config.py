@@ -1,5 +1,3 @@
-import hashlib
-import hmac
 import html
 import os
 import re
@@ -844,9 +842,6 @@ class Settings(BaseSettings):
     BACKUP_SEND_TOPIC_ID: int | None = None
     BACKUP_ARCHIVE_PASSWORD: str | None = None
 
-    EXTERNAL_ADMIN_TOKEN: str | None = None
-    EXTERNAL_ADMIN_TOKEN_BOT_ID: int | None = None
-
     # Cabinet (Personal Account) settings
     CABINET_ENABLED: bool = False
     CABINET_JWT_SECRET: str | None = None
@@ -1652,37 +1647,6 @@ class Settings(BaseSettings):
 
     def get_app_config_cache_ttl(self) -> int:
         return self.APP_CONFIG_CACHE_TTL
-
-    def build_external_admin_token(self, bot_username: str) -> str:
-        """Генерирует детерминированный и криптографически стойкий токен внешней админки."""
-        normalized = (bot_username or '').strip().lstrip('@').lower()
-        if not normalized:
-            raise ValueError('Bot username is required to build external admin token')
-
-        secret = (self.BOT_TOKEN or '').strip()
-        if not secret:
-            raise ValueError('Bot token is required to build external admin token')
-
-        digest = hmac.new(
-            key=secret.encode('utf-8'),
-            msg=f'remnawave.external_admin::{normalized}'.encode(),
-            digestmod=hashlib.sha256,
-        ).hexdigest()
-        return digest[:48]
-
-    def get_external_admin_token(self) -> str | None:
-        token = (self.EXTERNAL_ADMIN_TOKEN or '').strip()
-        return token or None
-
-    def get_external_admin_bot_id(self) -> int | None:
-        try:
-            return int(self.EXTERNAL_ADMIN_TOKEN_BOT_ID) if self.EXTERNAL_ADMIN_TOKEN_BOT_ID else None
-        except (TypeError, ValueError):  # pragma: no cover - защитная ветка для некорректных значений
-            logger.warning(
-                'Некорректный идентификатор бота для внешней админки',
-                EXTERNAL_ADMIN_TOKEN_BOT_ID=self.EXTERNAL_ADMIN_TOKEN_BOT_ID,
-            )
-            return None
 
     def is_traffic_selectable(self) -> bool:
         return self.TRAFFIC_SELECTION_MODE.lower() == 'selectable'

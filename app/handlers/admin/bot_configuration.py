@@ -158,7 +158,6 @@ CATEGORY_GROUP_METADATA: dict[str, dict[str, object]] = {
             'LOG',
             'MODERATION',
             'DEBUG',
-            'EXTERNAL_ADMIN',
         ),
     },
 }

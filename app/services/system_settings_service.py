@@ -70,8 +70,8 @@ class ReadOnlySettingError(RuntimeError):
 class BotConfigurationService:
     EXCLUDED_KEYS: set[str] = {'BOT_TOKEN', 'ADMIN_IDS'}
 
-    READ_ONLY_KEYS: set[str] = {'EXTERNAL_ADMIN_TOKEN', 'EXTERNAL_ADMIN_TOKEN_BOT_ID'}
-    PLAIN_TEXT_KEYS: set[str] = {'EXTERNAL_ADMIN_TOKEN', 'EXTERNAL_ADMIN_TOKEN_BOT_ID'}
+    READ_ONLY_KEYS: set[str] = set()
+    PLAIN_TEXT_KEYS: set[str] = set()
 
     CATEGORY_TITLES: dict[str, str] = {
         'CORE': '🤖 Основные настройки',
@@ -101,7 +101,6 @@ class BotConfigurationService:
         'MULENPAY': '💰 {mulenpay_name}',
         'PAL24': '🏦 PAL24 / PayPalych',
         'WATA': '💠 Wata',
-        'EXTERNAL_ADMIN': '🛡️ Внешняя админка',
         'SUBSCRIPTIONS_CORE': '📅 Подписки и лимиты',
         'SIMPLE_SUBSCRIPTION': '⚡ Простая покупка',
         'PERIODS': '📆 Периоды подписок',
@@ -168,7 +167,6 @@ class BotConfigurationService:
         'TELEGRAM_WIDGET': 'Внешний вид виджета авторизации Telegram на странице входа в кабинет.',
         'TELEGRAM_OIDC': 'OpenID Connect авторизация через Telegram (новая система). Требует настройки в BotFather > Bot Settings > Web Login.',
         'WATA': 'Wata: токен доступа, тип платежа и пределы сумм.',
-        'EXTERNAL_ADMIN': 'Токен внешней админки для проверки запросов.',
         'SUBSCRIPTIONS_CORE': 'Лимиты устройств, трафика и базовые цены подписок.',
         'SIMPLE_SUBSCRIPTION': 'Параметры упрощённой покупки: период, трафик, устройства и сквады.',
         'PERIODS': 'Доступные периоды подписок и продлений.',
@@ -381,7 +379,6 @@ class BotConfigurationService:
         'PAYMENT_': 'PAYMENT',
         'PAYMENT_VERIFICATION_': 'PAYMENT_VERIFICATION',
         'WATA_': 'WATA',
-        'EXTERNAL_ADMIN_': 'EXTERNAL_ADMIN',
         'SIMPLE_SUBSCRIPTION_': 'SIMPLE_SUBSCRIPTION',
         'CONNECT_BUTTON_HAPP': 'HAPP',
         'HAPP_': 'HAPP',
@@ -737,20 +734,6 @@ class BotConfigurationService:
                 'Недопустимые символы автоматически заменяются на подчёркивания. '
                 'Если результат пустой, используется user_{telegram_id}.'
             ),
-        },
-        'EXTERNAL_ADMIN_TOKEN': {
-            'description': 'Приватный токен, который использует внешняя админка для проверки запросов.',
-            'format': 'Значение генерируется автоматически из username бота и его токена и доступно только для чтения.',
-            'example': 'Генерируется автоматически',
-            'warning': 'Токен обновится при смене username или токена бота.',
-            'dependencies': 'Username телеграм-бота, токен бота',
-        },
-        'EXTERNAL_ADMIN_TOKEN_BOT_ID': {
-            'description': 'Идентификатор телеграм-бота, с которым связан токен внешней админки.',
-            'format': 'Проставляется автоматически после первого запуска и не редактируется вручную.',
-            'example': '123456789',
-            'warning': 'Несовпадение ID блокирует обновление токена, предотвращая его подмену на другом боте.',
-            'dependencies': 'Результат вызова getMe() в Telegram Bot API',
         },
         'TRIAL_USER_TAG': {
             'description': (

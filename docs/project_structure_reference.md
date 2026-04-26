@@ -402,9 +402,6 @@
 - `app/services/campaign_service.py` — Python-модуль
   Классы: `CampaignBonusResult`, `AdvertisingCampaignService` (1 методов)
   Функции: нет
-- `app/services/external_admin_service.py` — Утилиты для синхронизации токена внешней админки.
-  Классы: нет
-  Функции: нет
 - `app/services/faq_service.py` — Python-модуль
   Классы: `FaqService` (3 методов)
   Функции: нет
