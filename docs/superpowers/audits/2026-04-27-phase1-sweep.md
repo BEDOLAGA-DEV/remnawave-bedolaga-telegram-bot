@@ -103,9 +103,9 @@ Scope: cross-cutting bug-class grep across `app/`, `bedolaga-cabinet/src/`, `mig
 (filled at end of Phase 1)
 - Total hits: 73
 - Real bugs (quick-fixed): 6
-- Real bugs (queued for Phase 2): 13
+- Real bugs (queued for Phase 2): 32
 - False positives: 0
-- Accepted with rationale: 57
+- Accepted with rationale: 35
 
 ### Highlights
 
