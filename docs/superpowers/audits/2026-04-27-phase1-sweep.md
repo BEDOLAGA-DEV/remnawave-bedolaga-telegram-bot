@@ -65,6 +65,16 @@ Scope: cross-cutting bug-class grep across `app/`, `bedolaga-cabinet/src/`, `mig
 | 57 | P9 | bedolaga-cabinet/src/ | - | No hits — `eval(` and `new Function(` patterns clean across `src/**/*.{ts,tsx}` | info | accept-with-rationale | accept |
 | 58 | P9 | bedolaga-cabinet/src/utils/token.ts | 66 | `localStorage.setItem(TOKEN_KEYS.REFRESH, refreshToken)` — long-lived refresh JWT in localStorage (XSS-readable). Access token uses sessionStorage; refresh stays in localStorage to survive tab close. Recommend httpOnly+Secure cookie or short-lived in-memory rotation | high | real-bug | queue-phase2 |
 | 59 | P9 | bedolaga-cabinet/src/utils/token.ts | 100 | `localStorage.setItem(TOKEN_KEYS.REFRESH, refreshInSession)` — `migrateFromLocalStorage` re-persists refresh token from sessionStorage into localStorage; same XSS exposure as #58 | high | real-bug | queue-phase2 |
+| 60 | P10 | bedolaga-cabinet/src/ | - | All 17 `<a target="_blank">` hits across `*.tsx` carry `rel="noopener noreferrer"` (verified by Grep -B/-A 2 sweep). Pattern clean for `<a>` elements | info | accept-with-rationale | accept |
+| 61 | P10 | bedolaga-cabinet/src/platform/adapters/WebAdapter.ts | 199 | `window.open(_url, '_blank')` (no features) — `openInvoice` web fallback. Quick-fixed to `'noopener,noreferrer'` | medium | real-bug | quick-fix-applied |
+| 62 | P10 | bedolaga-cabinet/src/platform/adapters/TelegramAdapter.ts | 284 | `window.open(url, '_blank')` (no features) — `openInvoice` SDK-fail fallback. Quick-fixed to `'noopener,noreferrer'` | medium | real-bug | quick-fix-applied |
+| 63 | P10 | bedolaga-cabinet/src/platform/adapters/TelegramAdapter.ts | 293 | `window.open(url, '_blank')` (no features) — `openLink` SDK-fail fallback. Quick-fixed to `'noopener,noreferrer'` | medium | real-bug | quick-fix-applied |
+| 64 | P10 | bedolaga-cabinet/src/platform/adapters/TelegramAdapter.ts | 301 | `window.open(url, '_blank')` (no features) — `openTelegramLink` SDK-fail fallback. Quick-fixed to `'noopener,noreferrer'` | medium | real-bug | quick-fix-applied |
+| 65 | P10 | bedolaga-cabinet/src/components/dashboard/TrialOfferCard.tsx | 400 | `window.open(telegramProxyUrl, '_blank')` (no features) — proxy-link button onClick. Quick-fixed to `'noopener,noreferrer'` | medium | real-bug | quick-fix-applied |
+| 66 | P10 | bedolaga-cabinet/src/pages/Info.tsx | 537 | `window.open(proxyData.url!, '_blank')` (no features) — telegram-proxy Card onClick. Quick-fixed to `'noopener,noreferrer'` | medium | real-bug | quick-fix-applied |
+| 67 | P10 | bedolaga-cabinet/src/pages/Wheel.tsx | 372 | `window.open('about:blank', '_blank')` — pre-opens window during user-gesture for popup-blocker workaround; `preOpenedWindowRef.current.location.href = data.invoice_url` later sets URL. Adding `noopener` would set the return to `null` and break the ref. Same-origin `about:blank` is low-risk | low | accept-with-rationale | accept |
+
+(Severity: critical / high / medium / low / info.
  Decision: real-bug / false-positive / accept-with-rationale.
  Action: quick-fix-applied / queue-phase2 / accept.)
 
