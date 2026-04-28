@@ -71,6 +71,14 @@ _PRESET_ROLES: list[dict] = [
             'landings:create',
             'landings:edit',
             'landings:delete',
+            # Features added after the Admin preset was last authored.
+            # _ensure_preset_roles (below) does an idempotent diff-merge on
+            # system roles, so these backfill into existing DB rows on the
+            # next startup without clobbering custom tweaks.
+            'achievements:*',
+            'user_notifications:*',
+            'news:*',
+            'referrals:*',
         ],
         'color': '#F59E0B',
         'icon': 'crown',
@@ -99,6 +107,13 @@ _PRESET_ROLES: list[dict] = [
             'sales_stats:read',
             'pinned_messages:*',
             'wheel:*',
+            # Marketing features added later — merged into existing DB rows
+            # by _ensure_preset_roles on startup (idempotent).
+            'achievements:read',
+            'user_notifications:read',
+            'user_notifications:broadcast',
+            'news:read',
+            'news:write',
         ],
         'color': '#8B5CF6',
         'icon': 'megaphone',

@@ -64,6 +64,8 @@ services:
     volumes:
       # Логи
       - ./logs:/app/logs:rw
+      # - ./.env:/app/.env:rw
+      # - ./.env.new:/app/.env.new:rw
       # Данные приложения (для SQLite в случае переключения)
       - ./data:/app/data:rw
       - ./locales:/app/locales:rw
@@ -75,11 +77,11 @@ services:
       # Логотип для сообщений
       # - ./vpn_logo.png:/app/vpn_logo.png:ro
     ports:
-      - '${WEB_API_PORT:-8080}:8181'
+      - '${WEB_API_PORT:-8080}:${WEB_API_PORT:-8080}'
     networks:
       - bot_network
     healthcheck:
-      test: [ 'CMD-SHELL', 'python -c "import requests, os; requests.get(''http://localhost:8080/health'', headers={''X-API-Key'': os.environ.get(''WEB_API_DEFAULT_TOKEN'')}, timeout=5) or exit(1)"' ]
+      test: [ 'CMD-SHELL', 'python -c "import requests, os; requests.get(f\"http://localhost:{os.environ.get(''WEB_API_PORT'', ''8080'')}/health\", headers={''X-API-Key'': os.environ.get(''WEB_API_DEFAULT_TOKEN'')}, timeout=5) or exit(1)"' ]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -100,6 +102,8 @@ services:
         VITE_APP_LOGO: ${VITE_APP_LOGO:-V}
     container_name: remnawave_bot_cabinet
     restart: unless-stopped
+    env_file:
+      - .env
     depends_on:
       bot:
         condition: service_started
@@ -112,7 +116,7 @@ services:
     networks:
       - bot_network
     healthcheck:
-      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:80/']
+      test: [ 'CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:80/' ]
       interval: 30s
       timeout: 5s
       retries: 3

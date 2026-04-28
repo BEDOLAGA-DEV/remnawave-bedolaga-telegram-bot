@@ -18,6 +18,7 @@ logger = structlog.get_logger(__name__)
 MENU_LAYOUT_KEY = 'CABINET_MENU_LAYOUT'
 
 BUILTIN_SECTIONS: tuple[str, ...] = (
+    # Cabinet web UI sections
     'home',
     'subscription',
     'balance',
@@ -26,6 +27,21 @@ BUILTIN_SECTIONS: tuple[str, ...] = (
     'info',
     'admin',
     'language',
+    # Additional bot menu buttons (mirror of BUILTIN_BUTTONS_INFO in
+    # app/services/menu_layout/constants.py). Exposed here so admins can
+    # style/rename them from the cabinet settings UI.
+    'connect',
+    'happ_download',
+    'buy_traffic',
+    'trial',
+    'buy_subscription',
+    'simple_subscription',
+    'resume_checkout',
+    'promocode',
+    'referrals',
+    'contests',
+    'admin_panel',
+    'moderator_panel',
 )
 
 VALID_MAX_PER_ROW = frozenset({1, 2, 3})

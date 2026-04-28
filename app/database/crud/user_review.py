@@ -15,12 +15,16 @@ async def create_review(
     rating: int,
     text: str,
     bonus_kopeks: int,
+    source_chat_id: int | None = None,
+    source_message_id: int | None = None,
 ) -> UserReview:
     review = UserReview(
         user_id=user_id,
         rating=rating,
         text=text,
         bonus_kopeks=bonus_kopeks,
+        source_chat_id=source_chat_id,
+        source_message_id=source_message_id,
     )
     db.add(review)
     await db.commit()

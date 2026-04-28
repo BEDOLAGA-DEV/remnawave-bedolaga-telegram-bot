@@ -325,8 +325,18 @@ class AdminNotificationService:
                 occurred_at=datetime.now(UTC),
                 extra={
                     'charged_amount_kopeks': charged_amount_kopeks,
-                    'trial_duration_days': settings.TRIAL_DURATION_DAYS,
-                    'traffic_limit_gb': settings.TRIAL_TRAFFIC_LIMIT_GB,
+                    # Audit log gets actual sub fields, not stale globals —
+                    # see the message-builder block below for the same fix.
+                    'trial_duration_days': (
+                        (subscription.end_date - subscription.start_date).days
+                        if subscription.start_date and subscription.end_date
+                        else settings.TRIAL_DURATION_DAYS
+                    ),
+                    'traffic_limit_gb': (
+                        subscription.traffic_limit_gb
+                        if subscription.traffic_limit_gb is not None
+                        else settings.TRIAL_TRAFFIC_LIMIT_GB
+                    ),
                     'device_limit': subscription.device_limit,
                 },
             )
@@ -378,11 +388,26 @@ class AdminNotificationService:
 
             message_lines.append('')
 
+            # Берём реальные параметры из подписки, а не из global settings.
+            # Раньше тут дёргались settings.TRIAL_DURATION_DAYS /
+            # TRIAL_TRAFFIC_LIMIT_GB, и при включённом TRIAL_TARIFF_ID
+            # сообщение админу показывало глобальные дефолты вместо тарифных
+            # значений, которые юзер реально получил.
+            actual_period_days = settings.TRIAL_DURATION_DAYS
+            if subscription.start_date and subscription.end_date:
+                delta = subscription.end_date - subscription.start_date
+                if delta.days > 0:
+                    actual_period_days = delta.days
+
+            actual_traffic_gb = subscription.traffic_limit_gb
+            if actual_traffic_gb is None:
+                actual_traffic_gb = settings.TRIAL_TRAFFIC_LIMIT_GB
+
             message_lines.extend(
                 [
                     '⏰ <b>Параметры триала:</b>',
-                    f'📅 Период: {settings.TRIAL_DURATION_DAYS} дней',
-                    f'📊 Трафик: {self._format_traffic(settings.TRIAL_TRAFFIC_LIMIT_GB)}',
+                    f'📅 Период: {actual_period_days} дней',
+                    f'📊 Трафик: {self._format_traffic(actual_traffic_gb)}',
                     f'📱 Устройства: {trial_device_limit}',
                     f'🌐 Сервер: {subscription.connected_squads[0] if subscription.connected_squads else "По умолчанию"}',
                 ]

@@ -91,9 +91,6 @@ class BotConfigurationService:
         'KASSA_AI': '💳 KassaAI',
         'RIOPAY': '💳 RioPay',
         'SEVERPAY': '💳 SeverPay',
-        'PAYPEAR': '💳 PayPear',
-        'ROLLYPAY': '💳 RollyPay',
-        'AURAPAY': '💳 AuraPay',
         'YOOKASSA': '🟣 YooKassa',
         'PLATEGA': '💳 {platega_name}',
         'TRIBUTE': '🎁 Tribute',
@@ -155,9 +152,6 @@ class BotConfigurationService:
         'FREEKASSA': 'Freekassa: ID магазина, API ключ, секретные слова и вебхуки.',
         'KASSA_AI': 'KassaAI: отдельная платёжка api.fk.life с СБП, картами и SberPay.',
         'RIOPAY': 'RioPay: платёжная система api.riopay.online с поддержкой карт и СБП.',
-        'PAYPEAR': 'PayPear: платёжная система api.paypear.ru с поддержкой карт, СБП, SberPay и T-Pay.',
-        'ROLLYPAY': 'RollyPay: платёжный шлюз rollypay.io с СБП, картами и криптовалютой.',
-        'AURAPAY': 'AuraPay: платёжный шлюз aurapay.tech с поддержкой карт и СБП.',
         'PLATEGA': '{platega_name}: merchant ID, секрет, ссылки возврата и методы оплаты.',
         'MULENPAY': 'Платежи {mulenpay_name} и параметры магазина.',
         'PAL24': 'PAL24 / PayPalych подключения и лимиты.',
@@ -258,6 +252,8 @@ class BotConfigurationService:
         'MIN_BALANCE_FOR_AUTOPAY_KOPEKS': 'AUTOPAY',
         'TRIAL_WARNING_HOURS': 'TRIAL',
         'TRIAL_USER_TAG': 'TRIAL',
+        'CABINET_TRIAL_PAYMENT_ENABLED': 'TRIAL',
+        'CABINET_TRIAL_ACTIVATION_PRICE': 'TRIAL',
         'SUPPORT_USERNAME': 'SUPPORT',
         'SUPPORT_MENU_ENABLED': 'SUPPORT',
         'SUPPORT_SYSTEM_MODE': 'SUPPORT',
@@ -371,9 +367,6 @@ class BotConfigurationService:
         'KASSA_AI_': 'KASSA_AI',
         'RIOPAY_': 'RIOPAY',
         'SEVERPAY_': 'SEVERPAY',
-        'PAYPEAR_': 'PAYPEAR',
-        'ROLLYPAY_': 'ROLLYPAY',
-        'AURAPAY_': 'AURAPAY',
         'PLATEGA_': 'PLATEGA',
         'MULENPAY_': 'MULENPAY',
         'PAL24_': 'PAL24',
@@ -759,6 +752,35 @@ class BotConfigurationService:
             'example': 'TRIAL_USER',
             'warning': 'Неверный формат будет проигнорирован при создании пользователя.',
             'dependencies': 'Активация триала и включенная интеграция с RemnaWave',
+        },
+        'CABINET_TRIAL_PAYMENT_ENABLED': {
+            'description': (
+                'Включает платную активацию триала в веб-кабинете. '
+                'Если включено — триал доступен только для пользователей, '
+                'зарегистрированных по email/OAuth, и стоит '
+                'CABINET_TRIAL_ACTIVATION_PRICE копеек. Telegram-пользователи '
+                'получают свой бесплатный триал через бота и не видят платный вариант.'
+            ),
+            'format': 'true / false. Если не задано — наследует глобальный TRIAL_PAYMENT_ENABLED.',
+            'example': 'true',
+            'warning': (
+                'При включении обязательно задайте CABINET_TRIAL_ACTIVATION_PRICE > 0, '
+                'иначе платная активация не применится.'
+            ),
+            'dependencies': 'CABINET_TRIAL_ACTIVATION_PRICE, TRIAL_DISABLED_FOR',
+        },
+        'CABINET_TRIAL_ACTIVATION_PRICE': {
+            'description': (
+                'Цена активации триала в кабинете (в копейках). Списывается с баланса '
+                'пользователя при активации триала через веб-кабинет.'
+            ),
+            'format': 'Целое число копеек (100 = 1 ₽).',
+            'example': '1000',
+            'warning': (
+                'Работает только при CABINET_TRIAL_PAYMENT_ENABLED=true. '
+                'Если не задано — используется глобальный TRIAL_ACTIVATION_PRICE.'
+            ),
+            'dependencies': 'CABINET_TRIAL_PAYMENT_ENABLED',
         },
         'PAID_SUBSCRIPTION_USER_TAG': {
             'description': ('Тег, который бот ставит пользователю при покупке платной подписки в панели RemnaWave.'),

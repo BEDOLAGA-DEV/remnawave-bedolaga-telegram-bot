@@ -23,6 +23,7 @@ from app.database.crud.user_review import (
     set_channel_message_id,
 )
 from app.database.models import User, UserReview
+from app.utils.user_utils import format_user_public_display
 
 from ..dependencies import get_cabinet_db, require_permission
 
@@ -116,23 +117,22 @@ def _build_channel_preview(review: UserReview) -> str:
 def _format_review_for_channel(review: UserReview) -> str:
     """Format a review for posting to the public channel (HTML escaped)."""
     stars = '\u2b50' * review.rating
-    username = review.user.username if review.user and review.user.username else None
-    user_display = f'@{username}' if username else (
-        (review.user.first_name if review.user else None) or 'Пользователь'
-    )
+    # Shared helper handles site-only users (anonymized email / Пользователь #N).
+    user_display = format_user_public_display(getattr(review, 'user', None))
 
     days = 0
     if review.user and review.user.created_at:
         days = (datetime.now(UTC) - review.user.created_at).days
 
     escaped_text = html.escape(review.text)
+    escaped_user = html.escape(user_display)
 
     return (
         f'{stars} ({review.rating}/5)\n'
         f'\n'
         f'"{escaped_text}"\n'
         f'\n'
-        f'— {user_display}, пользователь {days} дней'
+        f'— {escaped_user}, пользователь {days} дней'
     )
 
 

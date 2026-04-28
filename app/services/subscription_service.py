@@ -425,7 +425,7 @@ class SubscriptionService:
         *,
         reset_traffic: bool = False,
         reset_reason: str | None = None,
-        sync_squads: bool = True,
+        sync_squads: bool = False,
     ) -> RemnaWaveUser | None:
         try:
             user = await get_user_by_id(db, subscription.user_id)

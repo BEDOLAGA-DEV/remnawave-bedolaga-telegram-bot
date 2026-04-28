@@ -444,13 +444,18 @@ async def create_new_campaign(
                 detail='Tariff not found',
             )
 
-    # Validate partner exists and is approved
+    # Validate partner user exists. We intentionally DO NOT require
+    # partner_status == APPROVED: admins often want to attribute a campaign
+    # to a regular user (manual assignment) without going through the
+    # partner-application approval flow. The `partner_user_id` on a campaign
+    # is a lightweight attribution label, not an authorization grant, so
+    # any existing user is acceptable.
     if request.partner_user_id is not None:
         partner_user = await db.get(User, request.partner_user_id)
-        if not partner_user or partner_user.partner_status != PartnerStatus.APPROVED.value:
+        if not partner_user:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Partner not found or not approved',
+                detail='Partner user not found',
             )
 
     campaign = await create_campaign(
@@ -536,16 +541,19 @@ async def update_existing_campaign(
     if 'tariff_duration_days' in request.model_fields_set:
         updates['tariff_duration_days'] = request.tariff_duration_days
 
-    # Handle partner_user_id separately (allows explicit None to unassign)
+    # Handle partner_user_id separately (allows explicit None to unassign).
+    # See the create handler for rationale — we validate existence only,
+    # not partner_status, so admins can manually attribute a campaign to
+    # any user without the partner-application flow.
     partner_changed = False
     if 'partner_user_id' in request.model_fields_set:
         new_partner_id = request.partner_user_id
         if new_partner_id is not None:
             partner_user = await db.get(User, new_partner_id)
-            if not partner_user or partner_user.partner_status != PartnerStatus.APPROVED.value:
+            if not partner_user:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='Partner not found or not approved',
+                    detail='Partner user not found',
                 )
         campaign.partner_user_id = new_partner_id
         campaign.updated_at = datetime.now(UTC)

@@ -200,6 +200,8 @@ async def on_review_text(
         rating=rating,
         text=review_text,
         bonus_kopeks=bonus,
+        source_chat_id=message.chat.id,
+        source_message_id=message.message_id,
     )
 
     # Бонус НЕ начисляется здесь — только после одобрения админом

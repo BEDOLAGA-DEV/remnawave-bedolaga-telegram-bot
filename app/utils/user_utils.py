@@ -14,6 +14,65 @@ from app.database.models import ReferralEarning, Subscription, SubscriptionStatu
 logger = structlog.get_logger(__name__)
 
 
+def _anonymize_email(email: str) -> str:
+    """Mask email local-part for public display.
+
+    Keeps first 1-2 characters and the domain, replaces middle with `***`.
+    Returns empty string for invalid input — callers fall back to a generic
+    label.
+
+    Examples:
+        'mama05693@gmail.com'  → 'ma***@gmail.com'
+        'a@b.co'               → 'a*@b.co'
+    """
+    if not email or '@' not in email:
+        return ''
+    local, _, domain = email.partition('@')
+    if not local or not domain:
+        return ''
+    prefix = local[:2] if len(local) >= 2 else local[:1]
+    return f'{prefix}***@{domain}'
+
+
+def format_user_public_display(user: User | None) -> str:
+    """Public-facing identifier for a user (review channels, feed cards…).
+
+    Priority:
+        1. `@username`         — Telegram-linked accounts (most readable).
+        2. `first_name`        — Telegram-linked without public username.
+        3. anonymized email    — cabinet-only accounts (so the post still
+                                 carries *some* identifier without leaking
+                                 the full address).
+        4. `Пользователь #ID`  — last-resort fallback.
+
+    Centralizing this keeps cabinet feed cards, the bot's review channel
+    post, and the cabinet-admin review post in sync — previously each site
+    rolled its own logic and cabinet-only users showed up as a generic
+    "Пользователь" with nothing else.
+    """
+    if user is None:
+        return 'Пользователь'
+
+    username = getattr(user, 'username', None)
+    if username:
+        return f'@{username}'
+
+    first_name = (getattr(user, 'first_name', None) or '').strip()
+    if first_name:
+        return first_name
+
+    email = getattr(user, 'email', None)
+    if email:
+        masked = _anonymize_email(email)
+        if masked:
+            return masked
+
+    user_id = getattr(user, 'id', None)
+    if user_id is not None:
+        return f'Пользователь #{user_id}'
+    return 'Пользователь'
+
+
 def format_referrer_info(user: User) -> str:
     """Return formatted referrer info for admin notifications."""
 

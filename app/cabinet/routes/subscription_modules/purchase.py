@@ -1052,23 +1052,57 @@ async def get_trial_info(
     await db.refresh(user, ['subscriptions'])
 
     # Проверяем, отключён ли триал для этого типа пользователя
+    # Cabinet has its own paid-trial toggle (CABINET_TRIAL_PAYMENT_ENABLED /
+    # CABINET_TRIAL_ACTIVATION_PRICE). Falls back to the global TRIAL_* when
+    # unset so behaviour is unchanged for deployments that don't opt in.
+    cabinet_requires_payment = settings.is_cabinet_trial_paid_activation_enabled()
+    cabinet_trial_price = (
+        settings.get_cabinet_trial_activation_price() if cabinet_requires_payment else 0
+    )
+
     if settings.is_trial_disabled_for_user(getattr(user, 'auth_type', 'telegram')):
         return TrialInfoResponse(
             is_available=False,
             duration_days=settings.TRIAL_DURATION_DAYS,
             traffic_limit_gb=settings.TRIAL_TRAFFIC_LIMIT_GB,
             device_limit=settings.TRIAL_DEVICE_LIMIT,
-            requires_payment=bool(settings.TRIAL_PAYMENT_ENABLED),
+            requires_payment=cabinet_requires_payment,
             price_kopeks=0,
             price_rubles=0,
             reason_unavailable='Trial is not available for your account type',
         )
 
+    # Business rule: the *paid* web trial is a monetization path for users
+    # who registered via the cabinet (email / OAuth). Telegram users already
+    # have the bot's own trial flow and should not pay for a second one.
+    # Gate applies only when paid activation is enabled — free trials stay
+    # universal. `telegram_id is not None` also covers hybrid accounts
+    # (Telegram user who later linked an email), matching the intent
+    # "not a pure web user".
+    if cabinet_requires_payment and user.telegram_id is not None:
+        return TrialInfoResponse(
+            is_available=False,
+            duration_days=settings.TRIAL_DURATION_DAYS,
+            traffic_limit_gb=settings.TRIAL_TRAFFIC_LIMIT_GB,
+            device_limit=settings.TRIAL_DEVICE_LIMIT,
+            requires_payment=True,
+            price_kopeks=cabinet_trial_price,
+            price_rubles=cabinet_trial_price / 100,
+            reason_unavailable='Paid trial is only available for email-registered accounts',
+            ineligible_reason='trial_requires_web_account',
+        )
+
     duration_days = settings.TRIAL_DURATION_DAYS
     traffic_limit_gb = settings.TRIAL_TRAFFIC_LIMIT_GB
     device_limit = settings.TRIAL_DEVICE_LIMIT
-    requires_payment = bool(settings.TRIAL_PAYMENT_ENABLED)
-    price_kopeks = settings.TRIAL_ACTIVATION_PRICE if requires_payment else 0
+    requires_payment = cabinet_requires_payment
+    price_kopeks = cabinet_trial_price
+
+    # Balance-threshold gate for email-only users. Applies BEFORE checking
+    # trial usage / active sub so the UI can always show "top up X to unlock"
+    # while the user hasn't yet reached the threshold. No deduction.
+    balance_gate_kopeks = settings.get_cabinet_trial_min_balance_kopeks()
+    balance_gate_active = balance_gate_kopeks > 0 and user.telegram_id is None
 
     # Get trial parameters from tariff if configured (same logic as activate_trial)
     try:
@@ -1097,6 +1131,10 @@ async def get_trial_info(
     has_active = any(s.status == 'active' and s.end_date and s.end_date > datetime.now(UTC) for s in subs)
     has_used_trial = any(s.is_trial for s in subs) or user.has_had_paid_subscription
 
+    # Precompute balance fields — always populated so UI can render progress.
+    required_balance_kopeks = balance_gate_kopeks if balance_gate_active else 0
+    current_balance_kopeks = int(user.balance_kopeks or 0)
+
     if has_active:
         return TrialInfoResponse(
             is_available=False,
@@ -1107,6 +1145,10 @@ async def get_trial_info(
             price_kopeks=price_kopeks,
             price_rubles=price_kopeks / 100,
             reason_unavailable='You already have an active subscription',
+            required_balance_kopeks=required_balance_kopeks,
+            required_balance_rubles=required_balance_kopeks / 100,
+            current_balance_kopeks=current_balance_kopeks,
+            current_balance_rubles=current_balance_kopeks / 100,
         )
 
     if has_used_trial:
@@ -1119,6 +1161,32 @@ async def get_trial_info(
             price_kopeks=price_kopeks,
             price_rubles=price_kopeks / 100,
             reason_unavailable='Trial already used',
+            required_balance_kopeks=required_balance_kopeks,
+            required_balance_rubles=required_balance_kopeks / 100,
+            current_balance_kopeks=current_balance_kopeks,
+            current_balance_rubles=current_balance_kopeks / 100,
+        )
+
+    # Balance-threshold gate — runs last so "active sub" / "trial used" win
+    # as reasons (they're terminal, threshold is only a soft lock).
+    if balance_gate_active and current_balance_kopeks < balance_gate_kopeks:
+        return TrialInfoResponse(
+            is_available=False,
+            duration_days=duration_days,
+            traffic_limit_gb=traffic_limit_gb,
+            device_limit=device_limit,
+            requires_payment=requires_payment,
+            price_kopeks=price_kopeks,
+            price_rubles=price_kopeks / 100,
+            reason_unavailable=(
+                f'Пополните баланс минимум до {balance_gate_kopeks / 100:.2f} ₽ '
+                f'чтобы активировать триал'
+            ),
+            ineligible_reason='trial_balance_below_threshold',
+            required_balance_kopeks=required_balance_kopeks,
+            required_balance_rubles=required_balance_kopeks / 100,
+            current_balance_kopeks=current_balance_kopeks,
+            current_balance_rubles=current_balance_kopeks / 100,
         )
 
     return TrialInfoResponse(
@@ -1129,6 +1197,10 @@ async def get_trial_info(
         requires_payment=requires_payment,
         price_kopeks=price_kopeks,
         price_rubles=price_kopeks / 100,
+        required_balance_kopeks=required_balance_kopeks,
+        required_balance_rubles=required_balance_kopeks / 100,
+        current_balance_kopeks=current_balance_kopeks,
+        current_balance_rubles=current_balance_kopeks / 100,
     )
 
 
@@ -1163,12 +1235,47 @@ async def activate_trial(
             detail='Trial already used',
         )
 
-    # Check if trial requires payment
-    requires_payment = bool(settings.TRIAL_PAYMENT_ENABLED)
+    # Balance-threshold gate — email-only users must reach the configured
+    # balance before the trial unlocks. No deduction happens here; this is
+    # purely a gate. Telegram users skip this check entirely.
+    balance_gate_kopeks = settings.get_cabinet_trial_min_balance_kopeks()
+    if balance_gate_kopeks > 0 and user.telegram_id is None:
+        if (user.balance_kopeks or 0) < balance_gate_kopeks:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    'code': 'trial_balance_below_threshold',
+                    'message': (
+                        f'Пополните баланс минимум до {balance_gate_kopeks / 100:.2f} ₽ '
+                        f'чтобы активировать триал'
+                    ),
+                    'required_balance_kopeks': balance_gate_kopeks,
+                    'current_balance_kopeks': int(user.balance_kopeks or 0),
+                },
+            )
+
+    # Check if trial requires payment — cabinet-scoped decision.
+    requires_payment = settings.is_cabinet_trial_paid_activation_enabled()
+
+    # Business rule: the paid web trial is for users who registered via the
+    # cabinet (email / OAuth). Telegram users have the bot's own trial and
+    # must not be charged for a second one. Only enforced when paid activation
+    # is on — free trials stay universal. Mirrors the GET /trial guard so the
+    # UI reflects the block BEFORE the user taps, and this is the authoritative
+    # enforcement for anyone who bypasses the UI (direct curl, etc.).
+    if requires_payment and user.telegram_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                'code': 'trial_requires_web_account',
+                'message': 'Платный триал доступен только для пользователей, зарегистрированных по почте',
+            },
+        )
+
     if requires_payment:
         from app.database.crud.user import subtract_user_balance
 
-        price_kopeks = settings.TRIAL_ACTIVATION_PRICE
+        price_kopeks = settings.get_cabinet_trial_activation_price()
         if price_kopeks > 0 and user.balance_kopeks < price_kopeks:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1286,7 +1393,9 @@ async def activate_trial(
             bot = Bot(token=settings.BOT_TOKEN)
             try:
                 notification_service = AdminNotificationService(bot)
-                charged_amount = settings.TRIAL_ACTIVATION_PRICE if requires_payment else None
+                charged_amount = (
+                    settings.get_cabinet_trial_activation_price() if requires_payment else None
+                )
                 await notification_service.send_trial_activation_notification(
                     db, user, subscription, charged_amount_kopeks=charged_amount
                 )
