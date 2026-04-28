@@ -1004,7 +1004,7 @@ async def _auto_purchase_tariff(
                     [
                         InlineKeyboardButton(
                             text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'),
-                            callback_data='menu_subscription',
+                            callback_data='nz!_menu_subscription',
                         )
                     ],
                     [
@@ -1391,7 +1391,7 @@ async def _auto_purchase_daily_tariff(
                     [
                         InlineKeyboardButton(
                             text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'),
-                            callback_data='menu_subscription',
+                            callback_data='nz!_menu_subscription',
                         )
                     ],
                     [
@@ -2704,7 +2704,7 @@ async def try_auto_extend_expired_after_topup(
                     [
                         InlineKeyboardButton(
                             text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 My subscription'),
-                            callback_data='menu_subscription',
+                            callback_data='nz!_menu_subscription',
                         )
                     ],
                     [
@@ -3074,7 +3074,7 @@ async def try_resume_disabled_daily_after_topup(
                     [
                         InlineKeyboardButton(
                             text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 My subscription'),
-                            callback_data='menu_subscription',
+                            callback_data='nz!_menu_subscription',
                         )
                     ],
                     [

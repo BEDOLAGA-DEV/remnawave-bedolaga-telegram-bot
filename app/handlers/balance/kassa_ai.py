@@ -57,7 +57,7 @@ async def _check_topup_restriction(callback: types.CallbackQuery, db_user: User)
     keyboard = []
     if support_url:
         keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance')])
     await callback.message.edit_text(
         f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
         parse_mode='HTML',

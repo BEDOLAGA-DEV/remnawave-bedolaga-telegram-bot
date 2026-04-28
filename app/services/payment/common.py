@@ -405,13 +405,13 @@ async def send_cart_notification_after_topup(
                     [
                         types.InlineKeyboardButton(
                             text=texts.get('RETURN_TO_SUBSCRIPTION_CHECKOUT', '⬅️ Checkout'),
-                            callback_data='return_to_saved_cart',
+                            callback_data='nz!_return_to_saved_cart',
                         )
                     ],
                     [
                         types.InlineKeyboardButton(
                             text=texts.get('MY_BALANCE_BUTTON', '💰 Balance'),
-                            callback_data='menu_balance',
+                            callback_data='nz!_menu_balance',
                         )
                     ],
                     [

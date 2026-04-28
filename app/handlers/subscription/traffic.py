@@ -77,7 +77,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                     [
                         types.InlineKeyboardButton(
                             text=f'📊 {tariff_name} ({days_left}д.)',
-                            callback_data=f'st:{sub.id}',
+                            callback_data=f'nz!_st:{sub.id}',
                         )
                     ]
                 )

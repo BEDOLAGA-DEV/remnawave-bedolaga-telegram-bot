@@ -121,18 +121,18 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
     buttons = []
 
     if not is_inactive:
-        buttons.append([types.InlineKeyboardButton(text='🔗 Ссылка подключения', callback_data=f'sl:{sub_id}')])
+        buttons.append([types.InlineKeyboardButton(text='🔗 Ссылка подключения', callback_data=f'nz!_sl:{sub_id}')])
 
-    buttons.append([types.InlineKeyboardButton(text='🔄 Продлить', callback_data=f'se:{sub_id}')])
+    buttons.append([types.InlineKeyboardButton(text='🔄 Продлить', callback_data=f'nz!_se:{sub_id}')])
 
     if not is_inactive:
-        buttons.append([types.InlineKeyboardButton(text='📊 Трафик', callback_data=f'st:{sub_id}')])
-        buttons.append([types.InlineKeyboardButton(text='📱 Устройства', callback_data=f'sd:{sub_id}')])
+        buttons.append([types.InlineKeyboardButton(text='📊 Трафик', callback_data=f'nz!_st:{sub_id}')])
+        buttons.append([types.InlineKeyboardButton(text='📱 Устройства', callback_data=f'nz!_sd:{sub_id}')])
 
     if is_inactive:
-        buttons.append([types.InlineKeyboardButton(text='🗑 Удалить подписку', callback_data=f'sub_del:{sub_id}')])
+        buttons.append([types.InlineKeyboardButton(text='🗑 Удалить подписку', callback_data=f'nz!_sub_del:{sub_id}')])
 
-    buttons.append([types.InlineKeyboardButton(text='◀️ К списку подписок', callback_data='my_subscriptions')])
+    buttons.append([types.InlineKeyboardButton(text='◀️ К списку подписок', callback_data='nz!_my_subscriptions')])
 
     return types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -320,10 +320,10 @@ async def handle_subscription_devices(
     keyboard = []
     if can_buy_devices:
         keyboard.append(
-            [types.InlineKeyboardButton(text='➕ Докупить устройства', callback_data=f'change_devices_menu:{sub_id}')]
+            [types.InlineKeyboardButton(text='➕ Докупить устройства', callback_data=f'nz!_change_devices_menu:{sub_id}')]
         )
     keyboard.append(
-        [types.InlineKeyboardButton(text='📱 Управление устройствами', callback_data=f'device_management:{sub_id}')]
+        [types.InlineKeyboardButton(text='📱 Управление устройствами', callback_data=f'nz!_device_management:{sub_id}')]
     )
     keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data=f'nz!_sm:{sub_id}')])
 
@@ -398,7 +398,7 @@ async def handle_subscription_delete_confirm(
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [types.InlineKeyboardButton(text='🗑 Да, удалить', callback_data=f'sub_del_yes:{sub_id}')],
+            [types.InlineKeyboardButton(text='🗑 Да, удалить', callback_data=f'nz!_sub_del_yes:{sub_id}')],
             [types.InlineKeyboardButton(text='◀️ Отмена', callback_data=f'nz!_sm:{sub_id}')],
         ]
     )

@@ -2148,7 +2148,7 @@ async def show_tariff_extend(
                         [
                             InlineKeyboardButton(
                                 text=f'🔄 {tariff_name} ({days_left}д.)',
-                                callback_data=f'se:{sub.id}',
+                                callback_data=f'nz!_se:{sub.id}',
                             )
                         ]
                     )

@@ -1670,7 +1670,7 @@ async def handle_extend_subscription(
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('WEBHOOK_CLOSE_BUTTON', '✖️ Закрыть'),
-                            callback_data='webhook:close',
+                            callback_data='nz!_webhook:close',
                         )
                     ],
                 ]
@@ -1696,7 +1696,7 @@ async def handle_extend_subscription(
                     [
                         types.InlineKeyboardButton(
                             text=texts.t('WEBHOOK_CLOSE_BUTTON', '✖️ Закрыть'),
-                            callback_data='webhook:close',
+                            callback_data='nz!_webhook:close',
                         )
                     ],
                 ]
