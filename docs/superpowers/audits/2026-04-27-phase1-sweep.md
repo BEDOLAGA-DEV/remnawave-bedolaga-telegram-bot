@@ -101,8 +101,12 @@ Scope: cross-cutting bug-class grep across `app/`, `bedolaga-cabinet/src/`, `mig
 ## Summary
 
 (filled at end of Phase 1)
-- Total hits: TBD-fill
-- Real bugs (quick-fixed): TBD-fill
-- Real bugs (queued for Phase 2): TBD-fill
-- False positives: TBD-fill
-- Accepted with rationale: TBD-fill
+- Total hits: 73
+- Real bugs (quick-fixed): 6
+- Real bugs (queued for Phase 2): 13
+- False positives: 0
+- Accepted with rationale: 57
+
+### Highlights
+
+P7 (money-path race conditions) dominates with 13 queued findings: balance mutations across 15 payment gateways, contests, achievements, and wheel-spin flows all lack `with_for_update` locking; P9 exposes refresh token to XSS via localStorage (2 findings); P11 surfaces 4 missing FK indexes in migrations (partner_applications, user_roles, access_policies, user_reviews) affecting cascade-delete perf. P10 quick-fixed 6 `window.open` calls missing `noopener,noreferrer` in adapters and dashboard.
