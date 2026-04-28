@@ -127,6 +127,8 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
 
     if not is_inactive:
         buttons.append([types.InlineKeyboardButton(text='📊 Трафик', callback_data=f'nz!_st:{sub_id}')])
+        if settings.WL_TRAFFIC_TOPUP_ENABLED:
+            buttons.append([types.InlineKeyboardButton(text='🌍 БС-Трафик', callback_data=f'nz!_swl:{sub_id}')])
         buttons.append([types.InlineKeyboardButton(text='📱 Устройства', callback_data=f'nz!_sd:{sub_id}')])
 
     if is_inactive:
@@ -288,6 +290,24 @@ async def handle_subscription_traffic(
     from .traffic import handle_add_traffic
 
     await handle_add_traffic(callback, db_user, db, state)
+
+
+async def handle_subscription_wl_traffic(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+) -> None:
+    """Delegation: swl:{sub_id} → WL (БС) traffic top-up handler."""
+    subscription = await _resolve_and_store_sub(callback, db_user, db, state)
+    if not subscription:
+        return
+
+    db_user.subscription = subscription
+
+    from .wl_traffic import handle_add_wl_traffic
+
+    await handle_add_wl_traffic(callback, db_user, db)
 
 
 async def handle_subscription_devices(

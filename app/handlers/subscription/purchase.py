@@ -4112,11 +4112,13 @@ def register_handlers(dp: Dispatcher):
         handle_subscription_extend,
         handle_subscription_link,
         handle_subscription_traffic,
+        handle_subscription_wl_traffic,
     )
 
     dp.callback_query.register(handle_subscription_link, F.data.startswith('nz!_sl:'))
     dp.callback_query.register(handle_subscription_extend, F.data.startswith('nz!_se:'))
     dp.callback_query.register(handle_subscription_traffic, F.data.startswith('nz!_st:'))
+    dp.callback_query.register(handle_subscription_wl_traffic, F.data.startswith('nz!_swl:'))
     dp.callback_query.register(handle_subscription_devices, F.data.startswith('nz!_sd:'))
     dp.callback_query.register(handle_subscription_delete_confirm, F.data.startswith('nz!_sub_del:'))
     dp.callback_query.register(handle_subscription_delete_execute, F.data.startswith('nz!_sub_del_yes:'))
