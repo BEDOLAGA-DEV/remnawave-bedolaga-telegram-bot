@@ -1648,12 +1648,17 @@ async def confirm_tariff_purchase(
 
         await state.clear()
 
-        traffic = _format_traffic(tariff.traffic_limit_gb)
+        traffic = format_traffic(tariff.traffic_limit_gb)
+        wl_traffic_line = ''
+        wl_default = getattr(tariff, 'wl_default_traffic_gb', None)
+        if wl_default is not None:
+            wl_traffic_line = f'🌍 БС-Трафик: {format_traffic(wl_default)}\n'
 
         await callback.message.edit_text(
             f'🎉 <b>Подписка успешно оформлена!</b>\n\n'
             f'📦 Тариф: <b>{tariff.name}</b>\n'
             f'📊 Трафик: {traffic}\n'
+            f'{wl_traffic_line}'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'📅 Период: {format_period(period)}\n'
             f'💰 Списано: {format_price_kopeks(final_price)}\n\n'
@@ -1701,11 +1706,16 @@ async def confirm_tariff_purchase(
     await state.clear()
 
     traffic = format_traffic(tariff.traffic_limit_gb)
+    wl_traffic_line = ''
+    wl_default = getattr(tariff, 'wl_default_traffic_gb', None)
+    if wl_default is not None:
+        wl_traffic_line = f'🌍 БС-Трафик: {format_traffic(wl_default)}\n'
 
     await callback.message.edit_text(
         f'🎉 <b>Подписка успешно оформлена!</b>\n\n'
         f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
         f'📊 Трафик: {traffic}\n'
+        f'{wl_traffic_line}'
         f'📱 Устройств: {tariff.device_limit}\n'
         f'📅 Период: {format_period(period)}\n'
         f'💰 Списано: {format_price_kopeks(final_price)}\n\n'

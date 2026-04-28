@@ -755,7 +755,7 @@ async def handle_switch_traffic(
             subscription.end_date,
             traffic_discount_percent,
             base_traffic_gb=base_traffic,
-            back_callback=f'sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'subscription_settings',
+            back_callback=f'nz!_sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'nz!_subscription_settings',
         ),
     )
 
@@ -860,7 +860,7 @@ async def confirm_switch_traffic(
             new_traffic_gb,
             total_price_difference,
             db_user.language,
-            back_callback=f'sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'subscription_settings',
+            back_callback=f'nz!_sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'nz!_subscription_settings',
         ),
         parse_mode='HTML',
     )
