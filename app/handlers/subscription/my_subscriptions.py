@@ -303,11 +303,9 @@ async def handle_subscription_wl_traffic(
     if not subscription:
         return
 
-    db_user.subscription = subscription
-
     from .wl_traffic import handle_add_wl_traffic
 
-    await handle_add_wl_traffic(callback, db_user, db)
+    await handle_add_wl_traffic(callback, db_user, db, state)
 
 
 async def handle_subscription_devices(

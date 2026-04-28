@@ -42,12 +42,16 @@ from .countries import (
 from .summary import present_subscription_summary
 
 
-async def handle_add_wl_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+async def handle_add_wl_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state=None):
     from app.config import settings
     from app.database.crud.tariff import get_tariff_by_id
 
+    from .common import resolve_subscription_from_context
+
     texts = get_texts(db_user.language)
-    subscription = db_user.subscription
+    subscription, _sub_id = await resolve_subscription_from_context(callback, db_user, db, state)
+    if subscription is None:
+        subscription = db_user.subscription
 
     if not subscription or subscription.is_trial:
         await callback.answer(
