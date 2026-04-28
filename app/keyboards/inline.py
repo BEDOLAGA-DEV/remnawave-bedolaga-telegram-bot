@@ -530,7 +530,11 @@ def _build_cabinet_main_menu_keyboard(
                     if not is_admin:
                         continue
                     admin_callback_style = _resolve_style(section_cfg.get('style'))
-                    admin_row = [InlineKeyboardButton(text=texts.MENU_ADMIN, callback_data='admin_panel', style=admin_callback_style)]
+                    admin_row = [
+                        InlineKeyboardButton(
+                            text=texts.MENU_ADMIN, callback_data='admin_panel', style=admin_callback_style
+                        )
+                    ]
                     if section_cfg.get('enabled', True):
                         admin_web_text = section_cfg.get('labels', {}).get(language, '') or '🖥 Веб-Админка'
                         admin_row.append(_cabinet_button(admin_web_text, '/admin', 'admin_panel'))
