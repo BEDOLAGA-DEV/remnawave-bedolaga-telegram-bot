@@ -652,33 +652,56 @@ async def handle_refunded_payment(message: types.Message, **kwargs):
             else:
                 logger.error('Пользователь не найден при обработке возврата Stars', user_id=user_id)
                 return
-            
+
+            # Idempotency: skip if a refund Transaction already exists for this charge_id.
+            # Telegram may resend the refunded_payment update on transient delivery failure.
+            from app.database.crud.transaction import get_transaction_by_external_id
+
+            existing_refund = await get_transaction_by_external_id(
+                db,
+                f'refund_{refund.telegram_payment_charge_id}',
+                PaymentMethod.TELEGRAM_STARS,
+            )
+            if existing_refund is not None:
+                logger.info(
+                    'Stars refund already processed, skipping',
+                    user_id=user_id,
+                    telegram_payment_charge_id=refund.telegram_payment_charge_id,
+                    existing_transaction_id=existing_refund.id,
+                )
+                return
+
             # 1. Списываем полную сумму возврата с баланса
             rubles_amount = TelegramStarsService.calculate_rubles_from_stars(refund.total_amount)
             amount_kopeks = int((rubles_amount * Decimal(100)).to_integral_value(rounding=ROUND_HALF_UP))
-            
+
+            # Lock user row before mutating balance to prevent concurrent race
+            from app.database.crud.user import lock_user_for_update
+
+            user = await lock_user_for_update(db, user)
+
             user.balance_kopeks -= amount_kopeks
-            
+
             # 2. Ищем активную подписку
             subscription = await get_subscription_by_user_id(db, user.id)
             unused_kopeks = 0
-            
+
             if subscription and subscription.is_active:
                 start = subscription.start_date or datetime.now(UTC)
                 end = subscription.end_date or start
-                
+
                 total_days = max(1, (end - start).days)
                 used_days = max(1, (datetime.now(UTC) - start).days)
-                
+
                 if used_days < total_days:
                     # Сколько стоила подписка в день (в рамках этой транзакции)
                     daily_cost = amount_kopeks / total_days
                     unused_days = total_days - used_days
                     unused_kopeks = int(unused_days * daily_cost)
-                    
+
                     # Добавляем неизрасходованное обратно
                     user.balance_kopeks += unused_kopeks
-                    
+
                 # Деактивируем подписку
                 await deactivate_subscription(db, subscription)
             await db.commit()

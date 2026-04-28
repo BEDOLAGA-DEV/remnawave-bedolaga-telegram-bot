@@ -427,12 +427,21 @@ async def check_and_unlock_all(
     from app.database.crud.transaction import create_transaction
     from app.database.models import PaymentMethod
 
+    # Lock the user row up-front: any reward path mutates user.balance_kopeks
+    # without going through the locked add_user_balance wrapper, so concurrent
+    # invocations (e.g. webhook + cabinet page load) could double-credit.
+    # The unique constraint on (user_id, template_id) caps the blast radius
+    # but the in-flight balance increment is still a race window.
+    from app.database.crud.user import lock_user_for_update
+
     user_result = await db.execute(
         select(User).where(User.id == user_id)
     )
     user = user_result.scalar_one_or_none()
     if not user:
         return []
+
+    user = await lock_user_for_update(db, user)
 
     templates = await get_active_templates(db)
 
