@@ -62,8 +62,9 @@ Scope: cross-cutting bug-class grep across `app/`, `bedolaga-cabinet/src/`, `mig
 | 54 | P8 | bedolaga-cabinet/src/pages/Info.tsx | 330 | `dangerouslySetInnerHTML={{ __html: formatContent(offer.content) }}` — same `formatContent` -> `sanitizeHtml` (DOMPurify) path | info | accept-with-rationale | accept |
 | 55 | P8 | bedolaga-cabinet/src/pages/HelpArticle.tsx | 233 | `dangerouslySetInnerHTML={{ __html: sanitizedContent }}` — `sanitizedContent` from `sanitizeHelpHtml(...)` (DOMPurify) with explicit allowlist + ALLOWED_URI_REGEXP | info | accept-with-rationale | accept |
 | 56 | P8 | bedolaga-cabinet/src/pages/QuickPurchase.tsx | 493 | `dangerouslySetInnerHTML={{ __html: sanitized }}` — `SanitizedHtml` wrapper: DOMPurify with strict allowlist + post-sanitise hook to set `rel="noopener noreferrer"` + `target="_blank"` on links | info | accept-with-rationale | accept |
-
-(Severity: critical / high / medium / low / info.
+| 57 | P9 | bedolaga-cabinet/src/ | - | No hits — `eval(` and `new Function(` patterns clean across `src/**/*.{ts,tsx}` | info | accept-with-rationale | accept |
+| 58 | P9 | bedolaga-cabinet/src/utils/token.ts | 66 | `localStorage.setItem(TOKEN_KEYS.REFRESH, refreshToken)` — long-lived refresh JWT in localStorage (XSS-readable). Access token uses sessionStorage; refresh stays in localStorage to survive tab close. Recommend httpOnly+Secure cookie or short-lived in-memory rotation | high | real-bug | queue-phase2 |
+| 59 | P9 | bedolaga-cabinet/src/utils/token.ts | 100 | `localStorage.setItem(TOKEN_KEYS.REFRESH, refreshInSession)` — `migrateFromLocalStorage` re-persists refresh token from sessionStorage into localStorage; same XSS exposure as #58 | high | real-bug | queue-phase2 |
  Decision: real-bug / false-positive / accept-with-rationale.
  Action: quick-fix-applied / queue-phase2 / accept.)
 
