@@ -6,6 +6,11 @@ Scope: cross-cutting bug-class grep across `app/`, `bedolaga-cabinet/src/`, `mig
 
 | # | Pattern | File | Line | Snippet | Severity | Decision | Action |
 |---|---------|------|------|---------|----------|----------|--------|
+| 1 | P1 | app/database/database.py | 474 | `text(f'SELECT COALESCE(MAX({q_col}), 0) FROM {q_schema}.{q_table}')` — identifiers from information_schema, quoted via `_quote_ident` | info | accept-with-rationale | accept |
+| 2 | P1 | app/database/database.py | 492 | `text(f'SELECT last_value, is_called FROM {q_seq_schema}.{q_seq_name}')` — sequence name parsed from `pg_get_serial_sequence`, quoted via `_quote_ident` | info | accept-with-rationale | accept |
+| 3 | P1 | app/services/backup_service.py | 455 | `text(f'SELECT COUNT(*) FROM {table_name}')` — table_name from SQLAlchemy `inspect().get_table_names()` (schema reflection, not user input) | info | accept-with-rationale | accept |
+| 4 | P1 | app/services/backup_service.py | 1569 | `text(f'TRUNCATE {tables_str} RESTART IDENTITY CASCADE')` — tables_str joined from hardcoded `all_tables` literal list (line 1435) | info | accept-with-rationale | accept |
+| 5 | P1 | app/services/backup_service.py | 1579 | `text(f'TRUNCATE {table_name} CASCADE')` — table_name iterated over the same hardcoded `all_tables` list | info | accept-with-rationale | accept |
 
 (Severity: critical / high / medium / low / info.
  Decision: real-bug / false-positive / accept-with-rationale.
