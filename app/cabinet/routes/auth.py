@@ -1516,9 +1516,26 @@ async def refresh_token(
     )
     expires_in = settings.get_cabinet_access_token_expire_minutes() * 60
 
+    # Rotate refresh token: revoke the presented token and mint a fresh one.
+    # Same DB transaction commits both updates atomically — a crash before commit
+    # leaves the original token still valid (caller can retry); a crash after
+    # commit means the new token is the only valid one (caller must use it).
+    new_refresh_token = create_refresh_token(user.id)
+    new_token_hash = hashlib.sha256(new_refresh_token.encode()).hexdigest()
+    token_record.revoked_at = datetime.now(UTC)
+    db.add(
+        CabinetRefreshToken(
+            user_id=user.id,
+            token_hash=new_token_hash,
+            device_info=token_record.device_info,
+            expires_at=get_refresh_token_expires_at(),
+        )
+    )
+    await db.commit()
+
     return TokenResponse(
         access_token=access_token,
-        refresh_token=request.refresh_token,
+        refresh_token=new_refresh_token,
         token_type='bearer',
         expires_in=expires_in,
     )

@@ -11,6 +11,8 @@ from app.database.crud.achievement import (
     create_template,
     delete_template,
     get_all_templates,
+    get_template_by_id,
+    update_template,
 )
 from app.database.models import AchievementTemplate, User, UserAchievement
 from app.localization.texts import get_texts
@@ -21,12 +23,26 @@ from app.utils.decorators import admin_required, error_handler
 logger = structlog.get_logger(__name__)
 
 CONDITION_TYPES = {
+    # Emojis MUST use \U-style 8-hex codepoint escapes, not UTF-16 surrogate
+    # pairs (\udXXX\udYYY). Surrogate pairs survive Python parsing but blow up
+    # in `urllib.parse.quote(..., encoding='utf-8')` with
+    # `UnicodeEncodeError: surrogates not allowed`, which crashes
+    # `callback.message.edit_text` when these labels reach Telegram's HTTP
+    # form-urlencoded body (aiohttp.formdata._gen_form_urlencoded).
     'total_spent_kopeks': '\U0001f4b0 \u0421\u0443\u043c\u043c\u0430 \u043f\u043e\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0439 (\u043a\u043e\u043f.)',
     'days_active': '\U0001f4c5 \u0414\u043d\u0435\u0439 \u0430\u043a\u0442\u0438\u0432\u043d\u043e\u0441\u0442\u0438',
-    'referral_count': '\U0001f465 \u041a\u043e\u043b-\u0432\u043e \u0440\u0435\u0444\u0435\u0440\u0430\u043b\u043e\u0432',
+    'referral_count': '\U0001f465 \u041a\u043e\u043b-\u0432\u043e \u0440\u0435\u0444\u0435\u0440\u0430\u043b\u043e\u0432 (\u043f\u043b\u0430\u0442\u044f\u0449\u0438\u0445)',
     'traffic_gb': '\U0001f4c8 \u0422\u0440\u0430\u0444\u0438\u043a (\u0413\u0411)',
     'topup_count': '\U0001f4b3 \u041a\u043e\u043b-\u0432\u043e \u043f\u043e\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0439',
-    'review_left': '\u2b50 \u041e\u0441\u0442\u0430\u0432\u0438\u043b \u043e\u0442\u0437\u044b\u0432',
+    'review_left': '\u2b50 \u041e\u0441\u0442\u0430\u0432\u0438\u043b \u043e\u0442\u0437\u044b\u0432 (\u043e\u0434\u043e\u0431\u0440\u0435\u043d)',
+    'first_paid_subscription': '\U0001f39f\ufe0f \u041f\u0435\u0440\u0432\u0430\u044f \u043f\u043b\u0430\u0442\u043d\u0430\u044f \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u0430',
+    'autopay_enabled': '\U0001f504 \u0412\u043a\u043b\u044e\u0447\u0438\u043b \u0430\u0432\u0442\u043e\u043f\u043b\u0430\u0442\u0451\u0436',
+    'single_topup_max_kopeks': '\U0001f48e \u041c\u0430\u043a\u0441. \u043e\u0434\u0438\u043d\u043e\u0447\u043d\u044b\u0439 \u043f\u043b\u0430\u0442\u0451\u0436 (\u043a\u043e\u043f.)',
+    'promocode_used_count': '\U0001f381 \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u043b \u043f\u0440\u043e\u043c\u043e\u043a\u043e\u0434\u043e\u0432',
+    'poll_completed_count': '\U0001f4dd \u041f\u0440\u043e\u0448\u0451\u043b \u043e\u043f\u0440\u043e\u0441\u043e\u0432',
+    'referral_revenue_kopeks': '\U0001f31f \u0414\u043e\u0445\u043e\u0434 \u0441 \u0440\u0435\u0444\u0435\u0440\u0430\u043b\u043e\u0432 (\u043a\u043e\u043f.)',
+    'tickets_resolved_count': '\U0001f3ab \u0420\u0435\u0448\u0451\u043d\u043d\u044b\u0445 \u0442\u0438\u043a\u0435\u0442\u043e\u0432',
+    'subscription_period_days': '\U0001f4c6 \u041c\u0430\u043a\u0441. \u043f\u0435\u0440\u0438\u043e\u0434 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u0438 (\u0434\u043d\u0438)',
 }
 
 REWARD_TYPES = {
@@ -114,6 +130,18 @@ async def admin_ach_view(callback: types.CallbackQuery, db_user: User, db: Async
     toggle_text = '\U0001f534 Выключить' if template.is_active else '\U0001f7e2 Включить'
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(text='✏️ Название', callback_data=f'admin_ach_edit_name:{template.id}'),
+                InlineKeyboardButton(text='🎨 Эмодзи', callback_data=f'admin_ach_edit_emoji:{template.id}'),
+            ],
+            [
+                InlineKeyboardButton(text='🎯 Тип условия', callback_data=f'admin_ach_edit_ctype:{template.id}'),
+                InlineKeyboardButton(text='🔢 Значение условия', callback_data=f'admin_ach_edit_cvalue:{template.id}'),
+            ],
+            [
+                InlineKeyboardButton(text='🎁 Тип награды', callback_data=f'admin_ach_edit_rtype:{template.id}'),
+                InlineKeyboardButton(text='💵 Значение награды', callback_data=f'admin_ach_edit_rvalue:{template.id}'),
+            ],
             [
                 InlineKeyboardButton(
                     text=toggle_text,
@@ -391,6 +419,186 @@ async def admin_ach_stats(callback: types.CallbackQuery, db_user: User, db: Asyn
     await callback.answer()
 
 
+# ---- FSM: edit achievement ----
+
+@admin_required
+@error_handler
+async def admin_ach_edit_name(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    template_id = int(callback.data.split(':')[1])
+    await state.update_data(edit_template_id=template_id)
+    await state.set_state(AchievementAdminStates.edit_waiting_for_name)
+    await callback.message.edit_text('✏️ Введите новое название достижения:')
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def ach_edit_name_received(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
+    data = await state.get_data()
+    template_id = data.get('edit_template_id')
+    new_name = message.text.strip()
+    if not new_name:
+        await message.answer('Название не может быть пустым.')
+        return
+    await update_template(db, template_id, name=new_name)
+    await db.commit()
+    await state.clear()
+    await message.answer(f'✅ Название обновлено: <b>{new_name}</b>', parse_mode='HTML')
+
+
+@admin_required
+@error_handler
+async def admin_ach_edit_emoji(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    template_id = int(callback.data.split(':')[1])
+    await state.update_data(edit_template_id=template_id)
+    await state.set_state(AchievementAdminStates.edit_waiting_for_emoji)
+    await callback.message.edit_text('🎨 Введите новый эмодзи (например 🏆):')
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def ach_edit_emoji_received(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
+    data = await state.get_data()
+    template_id = data.get('edit_template_id')
+    new_emoji = message.text.strip()[:10]
+    if not new_emoji:
+        await message.answer('Эмодзи не может быть пустым.')
+        return
+    await update_template(db, template_id, emoji=new_emoji)
+    await db.commit()
+    await state.clear()
+    await message.answer(f'✅ Эмодзи обновлён: {new_emoji}')
+
+
+@admin_required
+@error_handler
+async def admin_ach_edit_ctype(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    template_id = int(callback.data.split(':')[1])
+    rows = []
+    for ct, label in CONDITION_TYPES.items():
+        rows.append([InlineKeyboardButton(text=label, callback_data=f'admin_ach_set_ctype:{template_id}:{ct}')])
+    rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data=f'admin_ach_view:{template_id}')])
+    await callback.message.edit_text(
+        '🎯 Выберите новый тип условия:',
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def admin_ach_set_ctype(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    _, template_id_str, ctype = callback.data.split(':')
+    template_id = int(template_id_str)
+    await update_template(db, template_id, condition_type=ctype)
+    await db.commit()
+    await callback.answer(f'Тип условия обновлён: {CONDITION_TYPES.get(ctype, ctype)}')
+    callback.data = f'admin_ach_view:{template_id}'
+    await admin_ach_view(callback, db_user, db)
+
+
+@admin_required
+@error_handler
+async def admin_ach_edit_cvalue(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    template_id = int(callback.data.split(':')[1])
+    template = await get_template_by_id(db, template_id)
+    if not template:
+        await callback.answer('Шаблон не найден', show_alert=True)
+        return
+    await state.update_data(edit_template_id=template_id)
+    await state.set_state(AchievementAdminStates.edit_waiting_for_condition_value)
+    label = CONDITION_TYPES.get(template.condition_type, template.condition_type)
+    await callback.message.edit_text(
+        f'🔢 Введите новое значение условия (целое число).\n'
+        f'Тип: {label}\nТекущее: {template.condition_value}'
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def ach_edit_cvalue_received(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
+    data = await state.get_data()
+    template_id = data.get('edit_template_id')
+    try:
+        value = int(message.text.strip())
+    except ValueError:
+        await message.answer('Введите целое число.')
+        return
+    await update_template(db, template_id, condition_value=value)
+    await db.commit()
+    await state.clear()
+    await message.answer(f'✅ Значение условия обновлено: {value}')
+
+
+@admin_required
+@error_handler
+async def admin_ach_edit_rtype(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    template_id = int(callback.data.split(':')[1])
+    rows = []
+    for rt, label in REWARD_TYPES.items():
+        rows.append([InlineKeyboardButton(text=label, callback_data=f'admin_ach_set_rtype:{template_id}:{rt}')])
+    rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data=f'admin_ach_view:{template_id}')])
+    await callback.message.edit_text(
+        '🎁 Выберите новый тип награды:',
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def admin_ach_set_rtype(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    _, template_id_str, rtype = callback.data.split(':')
+    template_id = int(template_id_str)
+    if rtype == 'none':
+        await update_template(db, template_id, reward_type='none', reward_value=0)
+    else:
+        await update_template(db, template_id, reward_type=rtype)
+    await db.commit()
+    await callback.answer(f'Тип награды обновлён: {REWARD_TYPES.get(rtype, rtype)}')
+    callback.data = f'admin_ach_view:{template_id}'
+    await admin_ach_view(callback, db_user, db)
+
+
+@admin_required
+@error_handler
+async def admin_ach_edit_rvalue(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    template_id = int(callback.data.split(':')[1])
+    template = await get_template_by_id(db, template_id)
+    if not template:
+        await callback.answer('Шаблон не найден', show_alert=True)
+        return
+    if template.reward_type == 'none':
+        await callback.answer('У этой ачивки нет награды. Сначала выберите тип награды.', show_alert=True)
+        return
+    await state.update_data(edit_template_id=template_id)
+    await state.set_state(AchievementAdminStates.edit_waiting_for_reward_value)
+    label = REWARD_TYPES.get(template.reward_type, template.reward_type)
+    await callback.message.edit_text(
+        f'💵 Введите новое значение награды (целое число).\n'
+        f'Тип: {label}\nТекущее: {template.reward_value}'
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def ach_edit_rvalue_received(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
+    data = await state.get_data()
+    template_id = data.get('edit_template_id')
+    try:
+        value = int(message.text.strip())
+    except ValueError:
+        await message.answer('Введите целое число.')
+        return
+    await update_template(db, template_id, reward_value=value)
+    await db.commit()
+    await state.clear()
+    await message.answer(f'✅ Значение награды обновлено: {value}')
+
+
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(admin_achievements, F.data == 'admin_achievements')
     dp.callback_query.register(admin_ach_stats, F.data == 'admin_ach_stats')
@@ -409,3 +617,17 @@ def register_handlers(dp: Dispatcher):
     dp.message.register(ach_emoji_received, AchievementAdminStates.waiting_for_emoji)
     dp.message.register(ach_condition_value_received, AchievementAdminStates.waiting_for_condition_value)
     dp.message.register(ach_reward_value_received, AchievementAdminStates.waiting_for_reward_value)
+
+    # Edit handlers
+    dp.callback_query.register(admin_ach_edit_name, F.data.startswith('admin_ach_edit_name:'))
+    dp.callback_query.register(admin_ach_edit_emoji, F.data.startswith('admin_ach_edit_emoji:'))
+    dp.callback_query.register(admin_ach_edit_ctype, F.data.startswith('admin_ach_edit_ctype:'))
+    dp.callback_query.register(admin_ach_set_ctype, F.data.startswith('admin_ach_set_ctype:'))
+    dp.callback_query.register(admin_ach_edit_cvalue, F.data.startswith('admin_ach_edit_cvalue:'))
+    dp.callback_query.register(admin_ach_edit_rtype, F.data.startswith('admin_ach_edit_rtype:'))
+    dp.callback_query.register(admin_ach_set_rtype, F.data.startswith('admin_ach_set_rtype:'))
+    dp.callback_query.register(admin_ach_edit_rvalue, F.data.startswith('admin_ach_edit_rvalue:'))
+    dp.message.register(ach_edit_name_received, AchievementAdminStates.edit_waiting_for_name)
+    dp.message.register(ach_edit_emoji_received, AchievementAdminStates.edit_waiting_for_emoji)
+    dp.message.register(ach_edit_cvalue_received, AchievementAdminStates.edit_waiting_for_condition_value)
+    dp.message.register(ach_edit_rvalue_received, AchievementAdminStates.edit_waiting_for_reward_value)

@@ -113,13 +113,12 @@ async def get_subscription_by_user_id(db: AsyncSession, user_id: int) -> Subscri
         )
         .where(Subscription.user_id == user_id)
         .order_by(
-            # Active/trial subscriptions first, then by end_date (most remaining time)
+            # Active/trial subscriptions first, then by creation date
             case(
                 (Subscription.status == SubscriptionStatus.ACTIVE.value, 0),
                 (Subscription.status == SubscriptionStatus.TRIAL.value, 1),
                 else_=2,
             ),
-            Subscription.end_date.desc().nulls_last(),
             Subscription.created_at.desc(),
         )
         .limit(1)
@@ -684,21 +683,35 @@ async def extend_subscription(
             # Активная подписка в режиме тарифов — сохраняем purchased_traffic_gb и traffic_reset_at
             logger.info('🔄 Сбрасываем использованный трафик, докупленный сохранен (режим тарифов)')
 
-    # WL-трафик: при смене тарифа или продлении истёкшей подписки сбрасываем
-    # лимит и счётчики из нового тарифа. Для активной подписки того же тарифа
-    # оставляем счётчики как есть (пользователь ничего не терял).
-    if wl_traffic_limit_gb is not None and (is_tariff_change or was_expired):
+    # WL-трафик:
+    # 1) Лимит ВСЕГДА синхронизируем с тарифом, если значение передано —
+    #    иначе trial→paid конверсия с тем же tariff_id и продление того же
+    #    активного тарифа после изменения admin'ом `wl_default_traffic_gb`
+    #    оставляли подписку с устаревшим WL (например, default=5 вместо
+    #    тарифных 15). См. resolve_wl_traffic_for_tariff().
+    # 2) Счётчики (used / purchased / reset_at) сбрасываем только при смене
+    #    тарифа или продлении истёкшей подписки, чтобы не обнулять
+    #    докупленный WL у активного пользователя того же тарифа.
+    if wl_traffic_limit_gb is not None:
         old_wl = subscription.wl_traffic_limit_gb
-        subscription.wl_traffic_limit_gb = wl_traffic_limit_gb
-        subscription.wl_traffic_used_gb = 0.0
-        subscription.wl_purchased_traffic_gb = 0
-        subscription.wl_traffic_reset_at = None
-        logger.info(
-            '📊 Обновлен WL-лимит трафика: ГБ → ГБ (счётчики сброшены)',
-            old_wl=old_wl,
-            wl_traffic_limit_gb=wl_traffic_limit_gb,
-            reason='смена тарифа' if is_tariff_change else 'подписка была истёкшей',
-        )
+        if old_wl != wl_traffic_limit_gb:
+            subscription.wl_traffic_limit_gb = wl_traffic_limit_gb
+            logger.info(
+                '📊 Синхронизирован WL-лимит трафика с тарифом: ГБ → ГБ',
+                old_wl=old_wl,
+                wl_traffic_limit_gb=wl_traffic_limit_gb,
+                is_tariff_change=is_tariff_change,
+                was_expired=was_expired,
+            )
+
+        if is_tariff_change or was_expired:
+            subscription.wl_traffic_used_gb = 0.0
+            subscription.wl_purchased_traffic_gb = 0
+            subscription.wl_traffic_reset_at = None
+            logger.info(
+                '🔄 WL-счётчики сброшены',
+                reason='смена тарифа' if is_tariff_change else 'подписка была истёкшей',
+            )
 
     if device_limit is not None:
         old_devices = subscription.device_limit

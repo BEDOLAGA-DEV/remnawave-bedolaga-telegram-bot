@@ -16,6 +16,7 @@ from app.database.crud.server_squad import (
 from app.database.crud.subscription import (
     add_subscription_servers,
     create_paid_subscription,
+    resolve_wl_traffic_for_tariff,
 )
 from app.database.crud.subscription_conversion import (
     create_subscription_conversion,
@@ -1107,15 +1108,24 @@ class MiniAppSubscriptionPurchaseService:
             subscription.updated_at = now
             subscription.traffic_used_gb = 0.0
 
-            # WL-трафик: при конвертации триала в платную подписку в classic-flow
-            # (без привязки к tariff) сбрасываем лимит и счётчики на глобальный
-            # дефолт. В tariff-flow этим занимается extend_subscription().
+            # WL-трафик: при конвертации триала в платную подписку сбрасываем
+            # лимит и счётчики. Если у подписки есть tariff_id — берём
+            # `wl_default_traffic_gb` тарифа (resolve_wl_traffic_for_tariff
+            # вернёт -1 для тарифов без WL — тогда сохраним legacy-поведение
+            # global default). Иначе classic-flow → глобальный дефолт.
             if was_trial_conversion:
                 from sqlalchemy import delete as sql_delete
 
                 from app.database.models import WlTrafficPurchase
 
-                subscription.wl_traffic_limit_gb = settings.WL_DEFAULT_TRAFFIC_LIMIT_GB
+                tariff_for_wl = getattr(subscription, 'tariff', None)
+                resolved_wl = resolve_wl_traffic_for_tariff(tariff_for_wl)
+                if resolved_wl is None or resolved_wl == -1:
+                    new_wl = settings.WL_DEFAULT_TRAFFIC_LIMIT_GB
+                else:
+                    new_wl = resolved_wl
+
+                subscription.wl_traffic_limit_gb = new_wl
                 subscription.wl_traffic_used_gb = 0.0
                 subscription.wl_purchased_traffic_gb = 0
                 subscription.wl_traffic_reset_at = None
@@ -1185,22 +1195,12 @@ class MiniAppSubscriptionPurchaseService:
                 logger.warning('Failed to disable trial on RemnaWave', error=trial_err, trial_id=trial_sub.id)
 
         try:
-            # In multi-tariff mode, each subscription has its own panel user.
-            # A new subscription has no remnawave_uuid yet, so always CREATE.
-            # In single-tariff mode, reuse the user-level UUID if available.
-            if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_uuid
-            else:
-                _should_create = not getattr(user, 'remnawave_uuid', None)
-
-            if _should_create:
-                await subscription_service.create_remnawave_user(
-                    db,
-                    subscription,
-                    reset_traffic=True,
-                    reset_reason='miniapp purchase',
-                )
-            else:
+            _purch_uuid = (
+                subscription.remnawave_uuid
+                if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
+                else getattr(user, 'remnawave_uuid', None)
+            )
+            if _purch_uuid:
                 await subscription_service.update_remnawave_user(
                     db,
                     subscription,
@@ -1208,15 +1208,15 @@ class MiniAppSubscriptionPurchaseService:
                     reset_reason='miniapp purchase',
                     sync_squads=True,
                 )
+            else:
+                await subscription_service.create_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=True,
+                    reset_reason='miniapp purchase',
+                )
         except Exception as remnawave_error:  # pragma: no cover - defensive logging
             logger.error('Failed to sync subscription with RemnaWave', remnawave_error=remnawave_error)
-            from app.services.remnawave_retry_queue import remnawave_retry_queue
-
-            remnawave_retry_queue.enqueue(
-                subscription_id=subscription.id,
-                user_id=user.id,
-                action='create' if not getattr(subscription, 'remnawave_uuid', None) else 'update',
-            )
 
         transaction = await create_transaction(
             db=db,

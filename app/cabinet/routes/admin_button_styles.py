@@ -4,7 +4,7 @@ import json
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, RootModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import User
@@ -37,16 +37,13 @@ class ButtonSectionConfig(BaseModel):
     labels: dict[str, str] = {}
 
 
-class ButtonStylesResponse(BaseModel):
-    """Full button styles configuration (all 7 sections)."""
+class ButtonStylesResponse(RootModel[dict[str, ButtonSectionConfig]]):
+    """Full button styles configuration keyed by section name.
 
-    home: ButtonSectionConfig = ButtonSectionConfig()
-    subscription: ButtonSectionConfig = ButtonSectionConfig()
-    balance: ButtonSectionConfig = ButtonSectionConfig()
-    referral: ButtonSectionConfig = ButtonSectionConfig()
-    support: ButtonSectionConfig = ButtonSectionConfig()
-    info: ButtonSectionConfig = ButtonSectionConfig()
-    admin: ButtonSectionConfig = ButtonSectionConfig()
+    Uses a RootModel so new sections can be added in
+    ``app.utils.button_styles_cache.DEFAULT_BUTTON_STYLES`` without touching
+    the API surface.
+    """
 
 
 MAX_LABEL_LENGTH = 100
@@ -61,16 +58,8 @@ class ButtonSectionUpdate(BaseModel):
     labels: dict[str, str] | None = None
 
 
-class ButtonStylesUpdate(BaseModel):
-    """Partial update — only include sections you want to change."""
-
-    home: ButtonSectionUpdate | None = None
-    subscription: ButtonSectionUpdate | None = None
-    balance: ButtonSectionUpdate | None = None
-    referral: ButtonSectionUpdate | None = None
-    support: ButtonSectionUpdate | None = None
-    info: ButtonSectionUpdate | None = None
-    admin: ButtonSectionUpdate | None = None
+class ButtonStylesUpdate(RootModel[dict[str, ButtonSectionUpdate]]):
+    """Partial update keyed by section name — only include sections you want to change."""
 
 
 # ---- Helpers ---------------------------------------------------------------
@@ -103,7 +92,7 @@ async def _set_setting_value(db: AsyncSession, key: str, value: str) -> None:
 
 def _build_response(styles: dict[str, dict]) -> ButtonStylesResponse:
     return ButtonStylesResponse(
-        **{section: ButtonSectionConfig(**cfg) for section, cfg in styles.items() if section in SECTIONS},
+        root={section: ButtonSectionConfig(**cfg) for section, cfg in styles.items() if section in SECTIONS},
     )
 
 
@@ -175,12 +164,15 @@ async def update_button_styles(
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Apply updates
-    update_data = payload.model_dump(exclude_none=True)
+    # Apply updates — RootModel exposes the dict under ``.root``.
+    update_root = payload.root or {}
     changed_sections: list[str] = []
 
-    for section, updates in update_data.items():
-        if section not in current or not isinstance(updates, dict):
+    for section, section_update in update_root.items():
+        if section not in current or section_update is None:
+            continue
+        updates = section_update.model_dump(exclude_none=True)
+        if not updates:
             continue
 
         if 'style' in updates:

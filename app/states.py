@@ -313,6 +313,11 @@ class AchievementAdminStates(StatesGroup):
     waiting_for_condition_value = State()
     waiting_for_reward_type = State()
     waiting_for_reward_value = State()
+    # Edit flows
+    edit_waiting_for_name = State()
+    edit_waiting_for_emoji = State()
+    edit_waiting_for_condition_value = State()
+    edit_waiting_for_reward_value = State()
 
 
 class ReviewStates(StatesGroup):

@@ -3,14 +3,19 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import and_, func, select
+from sqlalchemy import Date, Integer, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.models import (
     AchievementTemplate,
+    PollResponse,
+    PromoCodeUse,
     Subscription,
+    SubscriptionConversion,
     SubscriptionStatus,
+    Ticket,
+    TicketStatus,
     Transaction,
     TransactionType,
     User,
@@ -196,14 +201,46 @@ async def _get_user_stat(db: AsyncSession, user: User, condition_type: str) -> i
         return abs(int(result.scalar() or 0))
 
     elif condition_type == 'days_active':
-        if user.created_at:
-            delta = datetime.now(UTC) - user.created_at
-            return max(0, delta.days)
-        return 0
+        # Anti-farm: gate by first completed deposit. Idle never-paying account
+        # would otherwise unlock "Старожил" after 365 days for free.
+        if not user.created_at:
+            return 0
+        paid_check = await db.execute(
+            select(func.count(Transaction.id)).where(
+                and_(
+                    Transaction.user_id == user.id,
+                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.is_completed.is_(True),
+                )
+            )
+        )
+        if (paid_check.scalar() or 0) == 0:
+            return 0
+        delta = datetime.now(UTC) - user.created_at
+        return max(0, delta.days)
 
     elif condition_type == 'referral_count':
+        # Anti-farm: count only referrals who actually paid (have at least one
+        # completed DEPOSIT). 25 fake unfunded accounts no longer unlock the
+        # Ambassador chain.
+        paid_refs_subq = (
+            select(Transaction.user_id)
+            .where(
+                and_(
+                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.is_completed.is_(True),
+                )
+            )
+            .distinct()
+            .subquery()
+        )
         result = await db.execute(
-            select(func.count(User.id)).where(User.referred_by_id == user.id)
+            select(func.count(User.id)).where(
+                and_(
+                    User.referred_by_id == user.id,
+                    User.id.in_(select(paid_refs_subq.c.user_id)),
+                )
+            )
         )
         return int(result.scalar() or 0)
 
@@ -236,10 +273,142 @@ async def _get_user_stat(db: AsyncSession, user: User, condition_type: str) -> i
         return int(result.scalar() or 0)
 
     elif condition_type == 'review_left':
+        # Only count approved reviews. Otherwise spam/troll review (later
+        # rejected by admin) would still pay out — UserAchievement row stays
+        # forever once granted.
         result = await db.execute(
-            select(func.count(UserReview.id)).where(UserReview.user_id == user.id)
+            select(func.count(UserReview.id)).where(
+                and_(
+                    UserReview.user_id == user.id,
+                    UserReview.is_approved.is_(True),
+                )
+            )
         )
         return int(result.scalar() or 0)
+
+    elif condition_type == 'first_paid_subscription':
+        # 1 if user has any non-trial subscription, else 0. Triggered by first
+        # paid purchase (single-tier badge / starter reward).
+        result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                and_(
+                    Subscription.user_id == user.id,
+                    Subscription.is_trial.is_(False),
+                )
+            )
+        )
+        return 1 if (result.scalar() or 0) > 0 else 0
+
+    elif condition_type == 'autopay_enabled':
+        # 1 if any subscription has autopay on. Encourages retention setup.
+        result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                and_(
+                    Subscription.user_id == user.id,
+                    Subscription.autopay_enabled.is_(True),
+                )
+            )
+        )
+        return 1 if (result.scalar() or 0) > 0 else 0
+
+    elif condition_type == 'single_topup_max_kopeks':
+        # Max amount of any single completed deposit. Reward big single payments.
+        result = await db.execute(
+            select(func.coalesce(func.max(Transaction.amount_kopeks), 0)).where(
+                and_(
+                    Transaction.user_id == user.id,
+                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.is_completed.is_(True),
+                )
+            )
+        )
+        return abs(int(result.scalar() or 0))
+
+    elif condition_type == 'promocode_used_count':
+        result = await db.execute(
+            select(func.count(PromoCodeUse.id)).where(PromoCodeUse.user_id == user.id)
+        )
+        return int(result.scalar() or 0)
+
+    elif condition_type == 'poll_completed_count':
+        # Only fully completed polls (completed_at not null). Skips abandoned.
+        result = await db.execute(
+            select(func.count(PollResponse.id)).where(
+                and_(
+                    PollResponse.user_id == user.id,
+                    PollResponse.completed_at.isnot(None),
+                )
+            )
+        )
+        return int(result.scalar() or 0)
+
+    elif condition_type == 'referral_revenue_kopeks':
+        # Sum of completed deposits across all referrals invited by this user.
+        # Anti-farm: real revenue, not just signup count. The Ambassador chain
+        # already counts paid refs; this measures actual generated income.
+        ref_user_ids = (
+            select(User.id).where(User.referred_by_id == user.id).subquery()
+        )
+        result = await db.execute(
+            select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+                and_(
+                    Transaction.user_id.in_(select(ref_user_ids)),
+                    Transaction.type == TransactionType.DEPOSIT.value,
+                    Transaction.is_completed.is_(True),
+                )
+            )
+        )
+        return abs(int(result.scalar() or 0))
+
+    elif condition_type == 'tickets_resolved_count':
+        # User-side metric: how many of their own tickets reached CLOSED.
+        result = await db.execute(
+            select(func.count(Ticket.id)).where(
+                and_(
+                    Ticket.user_id == user.id,
+                    Ticket.status == TicketStatus.CLOSED.value,
+                )
+            )
+        )
+        return int(result.scalar() or 0)
+
+    elif condition_type == 'subscription_period_days':
+        # Longest paid period the user committed to. Rewards long-term planners
+        # (180d / 360d buys).
+        #
+        # Two sources, take the max:
+        #
+        # 1. SubscriptionConversion.first_paid_period_days — populated only on
+        #    trial → paid conversions (subscription_purchase_service.py:1083).
+        # 2. (end_date - start_date) on any non-trial subscription — covers
+        #    direct paid purchases that skip the trial step (no conversion row
+        #    is created in that path). Renewals grow end_date but keep
+        #    start_date, so this metric reflects accumulated commitment, which
+        #    matches the achievement's "long-term planner" intent.
+        conv_result = await db.execute(
+            select(func.coalesce(func.max(SubscriptionConversion.first_paid_period_days), 0)).where(
+                SubscriptionConversion.user_id == user.id
+            )
+        )
+        from_conversion = int(conv_result.scalar() or 0)
+
+        # Date subtraction returns Integer days directly. EXTRACT('epoch', ...)
+        # / 86400 overflowed int4 for fixed-far-future end_dates (e.g. 2100-01-01
+        # placeholders for "lifetime" subscriptions): 74y * 31.5M sec > 2.1B.
+        span_expr = func.cast(Subscription.end_date, Date) - func.cast(
+            Subscription.start_date, Date
+        )
+        span_result = await db.execute(
+            select(func.coalesce(func.max(span_expr), 0)).where(
+                and_(
+                    Subscription.user_id == user.id,
+                    Subscription.is_trial.is_(False),
+                )
+            )
+        )
+        from_span = int(span_result.scalar() or 0)
+
+        return max(from_conversion, from_span)
 
     return 0
 
@@ -258,12 +427,21 @@ async def check_and_unlock_all(
     from app.database.crud.transaction import create_transaction
     from app.database.models import PaymentMethod
 
+    # Lock the user row up-front: any reward path mutates user.balance_kopeks
+    # without going through the locked add_user_balance wrapper, so concurrent
+    # invocations (e.g. webhook + cabinet page load) could double-credit.
+    # The unique constraint on (user_id, template_id) caps the blast radius
+    # but the in-flight balance increment is still a race window.
+    from app.database.crud.user import lock_user_for_update
+
     user_result = await db.execute(
         select(User).where(User.id == user_id)
     )
     user = user_result.scalar_one_or_none()
     if not user:
         return []
+
+    user = await lock_user_for_update(db, user)
 
     templates = await get_active_templates(db)
 

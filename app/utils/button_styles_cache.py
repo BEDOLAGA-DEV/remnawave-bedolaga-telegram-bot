@@ -16,6 +16,7 @@ logger = structlog.get_logger(__name__)
 # ---- Defaults per section ------------------------------------------------
 
 DEFAULT_BUTTON_STYLES: dict[str, dict] = {
+    # Cabinet web UI sections
     'home': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
     'subscription': {'style': 'success', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
     'balance': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
@@ -24,6 +25,20 @@ DEFAULT_BUTTON_STYLES: dict[str, dict] = {
     'info': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
     'admin': {'style': 'danger', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
     'language': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    # Additional bot menu buttons (mirrors BUILTIN_BUTTONS_INFO in
+    # app/services/menu_layout/constants.py).
+    'connect': {'style': 'success', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'happ_download': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'buy_traffic': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'trial': {'style': 'success', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'buy_subscription': {'style': 'success', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'simple_subscription': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'resume_checkout': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'promocode': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'referrals': {'style': 'success', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'contests': {'style': 'primary', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'admin_panel': {'style': 'danger', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
+    'moderator_panel': {'style': 'danger', 'icon_custom_emoji_id': '', 'enabled': True, 'labels': {}},
 }
 
 BOT_LOCALES = ('ru', 'en', 'ua', 'zh', 'fa')
@@ -38,18 +53,25 @@ CALLBACK_TO_SECTION: dict[str, str] = {
     'subscription': 'subscription',
     'subscription_extend': 'subscription',
     'subscription_upgrade': 'subscription',
-    'subscription_connect': 'subscription',
-    'subscription_resume_checkout': 'subscription',
-    'return_to_saved_cart': 'subscription',
-    'menu_buy': 'subscription',
-    'buy_traffic': 'subscription',
+    'subscription_connect': 'connect',
+    'subscription_happ_download': 'happ_download',
+    'subscription_resume_checkout': 'resume_checkout',
+    'return_to_saved_cart': 'resume_checkout',
+    'menu_buy': 'buy_subscription',
+    'simple_subscription_purchase': 'simple_subscription',
+    'buy_traffic': 'buy_traffic',
     'menu_balance': 'balance',
     'balance_topup': 'balance',
-    'menu_referrals': 'referral',
+    'menu_referrals': 'referrals',
     'menu_referral': 'referral',
     'menu_support': 'support',
     'menu_info': 'info',
-    'admin_panel': 'admin',
+    'menu_language': 'language',
+    'menu_trial': 'trial',
+    'menu_promocode': 'promocode',
+    'contests_menu': 'contests',
+    'admin_panel': 'admin_panel',
+    'moderator_panel': 'moderator_panel',
 }
 
 # DB key used for storage.

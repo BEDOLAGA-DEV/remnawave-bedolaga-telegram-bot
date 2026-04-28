@@ -68,9 +68,9 @@ class Settings(BaseSettings):
     ADMIN_NOTIFICATIONS_PARTNERS_TOPIC_ID: int | None = None  # Партнёрки, выводы, админ-действия
 
     # Настройки очереди чеков NaloGO
-    NALOGO_QUEUE_CHECK_INTERVAL: int = 600  # Интервал проверки очереди (секунды, 10 мин)
+    NALOGO_QUEUE_CHECK_INTERVAL: int = 300  # Интервал проверки очереди (секунды)
     NALOGO_QUEUE_RECEIPT_DELAY: int = 3  # Задержка между отправкой чеков (секунды)
-    NALOGO_QUEUE_MAX_ATTEMPTS: int = 72  # Максимум попыток отправки чека (72 × 10мин = 12 часов)
+    NALOGO_QUEUE_MAX_ATTEMPTS: int = 10  # Максимум попыток отправки чека
 
     ADMIN_REPORTS_ENABLED: bool = False
     ADMIN_REPORTS_CHAT_ID: str | None = None
@@ -143,6 +143,18 @@ class Settings(BaseSettings):
     TRIAL_ACTIVATION_PRICE: int = 0
     TRIAL_USER_TAG: str | None = None
     TRIAL_DISABLED_FOR: str = 'none'  # none, email, telegram, all
+    # Cabinet-only overrides — if None, fall back to global TRIAL_PAYMENT_ENABLED /
+    # TRIAL_ACTIVATION_PRICE. Lets you keep the Telegram bot trial free while
+    # charging for trial activation via the web cabinet (or vice-versa).
+    CABINET_TRIAL_PAYMENT_ENABLED: bool | None = None
+    CABINET_TRIAL_ACTIVATION_PRICE: int | None = None
+    # Minimum balance (in kopeks) required for an email-only cabinet user to
+    # unlock the trial WITHOUT charging the balance. Example: set to 1000 to
+    # require 10₽ on balance before the trial becomes available. 0 = disabled
+    # (no gating). Only applies to users without a linked Telegram account;
+    # Telegram users use the bot flow. Independent of CABINET_TRIAL_PAYMENT_ENABLED
+    # (which DEDUCTS a price); this setting only GATES — no deduction.
+    CABINET_TRIAL_MIN_BALANCE_KOPEKS: int = 0
     DEFAULT_TRAFFIC_LIMIT_GB: int = 100
     WL_DEFAULT_TRAFFIC_LIMIT_GB: int = 5
     DEFAULT_DEVICE_LIMIT: int = 1
@@ -358,7 +370,6 @@ class Settings(BaseSettings):
     SUBSCRIPTION_RENEWAL_BALANCE_THRESHOLD_KOPEKS: int = 20000
 
     MONITORING_INTERVAL: int = 60
-    LOW_BALANCE_ALERT_EXPIRY_DAYS: int = 3  # Only alert when subscription expires within N days
     INACTIVE_USER_DELETE_MONTHS: int = 3
 
     MAINTENANCE_MODE: bool = False
@@ -471,7 +482,6 @@ class Settings(BaseSettings):
     MULENPAY_LANGUAGE: str = 'ru'
     MULENPAY_VAT_CODE: int = 0
 
-    DISPLAY_NAME_RESTRICTION_ENABLED: bool = True
     DISPLAY_NAME_BANNED_KEYWORDS: str = '\n'.join(DEFAULT_DISPLAY_NAME_BANNED_KEYWORDS)
     MULENPAY_PAYMENT_SUBJECT: int = 4
     MULENPAY_PAYMENT_MODE: int = 4
@@ -628,32 +638,33 @@ class Settings(BaseSettings):
     PAYPEAR_SECRET_KEY: str | None = None
     PAYPEAR_DISPLAY_NAME: str = 'PayPear'
     PAYPEAR_CURRENCY: str = 'RUB'
-    PAYPEAR_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    PAYPEAR_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    PAYPEAR_MIN_AMOUNT_KOPEKS: int = 10000
+    PAYPEAR_MAX_AMOUNT_KOPEKS: int = 10000000
     PAYPEAR_WEBHOOK_PATH: str = '/paypear-webhook'
     PAYPEAR_RETURN_URL: str | None = None
     PAYPEAR_PAYMENT_METHOD: str = 'sbp'  # bank_card, sbp, sberpay, tpay
+    PAYPEAR_PAYMENT_LIFETIME_MINUTES: int = 60
 
     # RollyPay (rollypay.io)
     ROLLYPAY_ENABLED: bool = False
-    ROLLYPAY_API_KEY: str | None = None  # X-API-Key header
-    ROLLYPAY_SIGNING_SECRET: str | None = None  # HMAC webhook verification
+    ROLLYPAY_API_KEY: str | None = None
+    ROLLYPAY_SIGNING_SECRET: str | None = None
     ROLLYPAY_DISPLAY_NAME: str = 'RollyPay'
     ROLLYPAY_CURRENCY: str = 'RUB'
-    ROLLYPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    ROLLYPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    ROLLYPAY_MIN_AMOUNT_KOPEKS: int = 10000
+    ROLLYPAY_MAX_AMOUNT_KOPEKS: int = 10000000
     ROLLYPAY_WEBHOOK_PATH: str = '/rollypay-webhook'
     ROLLYPAY_RETURN_URL: str | None = None
 
     # AuraPay (aurapay.tech)
     AURAPAY_ENABLED: bool = False
-    AURAPAY_API_KEY: str | None = None  # X-ApiKey header
-    AURAPAY_SHOP_ID: str | None = None  # X-ShopId header (UUID)
-    AURAPAY_SECRET_KEY: str | None = None  # Secret key #2 for webhook HMAC
+    AURAPAY_API_KEY: str | None = None
+    AURAPAY_SHOP_ID: str | None = None
+    AURAPAY_SECRET_KEY: str | None = None
     AURAPAY_DISPLAY_NAME: str = 'AuraPay'
     AURAPAY_CURRENCY: str = 'RUB'
-    AURAPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    AURAPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    AURAPAY_MIN_AMOUNT_KOPEKS: int = 10000
+    AURAPAY_MAX_AMOUNT_KOPEKS: int = 10000000
     AURAPAY_WEBHOOK_PATH: str = '/aurapay-webhook'
     AURAPAY_RETURN_URL: str | None = None
     AURAPAY_PAYMENT_LIFETIME_MINUTES: int = 60
@@ -858,6 +869,7 @@ class Settings(BaseSettings):
     CABINET_PASSWORD_RESET_EXPIRE_HOURS: int = 1
     CABINET_EMAIL_CHANGE_CODE_EXPIRE_MINUTES: int = 15  # Email change verification code expiration
     CABINET_EMAIL_AUTH_ENABLED: bool = True  # Enable email registration/login in cabinet
+    CABINET_EMAIL_REGISTRATION_ENABLED: bool = True  # Allow new email signups (DB override takes precedence)
     CABINET_URL: str = 'https://example.com/cabinet'  # Base URL for cabinet (used in verification emails)
     CABINET_TRUSTED_PROXIES: str = (
         ''  # Comma-separated IPs/CIDRs of trusted reverse proxies (e.g. '127.0.0.1,10.0.0.0/8')
@@ -910,8 +922,13 @@ class Settings(BaseSettings):
     PROXY_URL: str | None = None
 
     # Custom Telegram Bot API server URL (for regions where api.telegram.org is blocked)
-    # Examples: Cloudflare Worker proxy, self-hosted telegram-bot-api (tdlib), nginx reverse proxy
     TELEGRAM_API_URL: str | None = None
+
+    # Restrict username/display-name characters in Telegram-rendered messages
+    DISPLAY_NAME_RESTRICTION_ENABLED: bool = True
+
+    # Only alert about low balance when subscription expires within N days
+    LOW_BALANCE_ALERT_EXPIRY_DAYS: int = 3
 
     @field_validator('PROXY_URL', 'NALOGO_PROXY_URL', mode='before')
     @classmethod
@@ -1824,6 +1841,61 @@ class Settings(BaseSettings):
 
         return value
 
+    def get_cabinet_trial_activation_price(self) -> int:
+        """Цена активации триала, используемая веб-кабинетом.
+
+        Если CABINET_TRIAL_ACTIVATION_PRICE не задан (None) — возвращает глобальную
+        TRIAL_ACTIVATION_PRICE. Позволяет брать деньги за триал в кабинете даже
+        когда в боте он бесплатный.
+        """
+        override = self.CABINET_TRIAL_ACTIVATION_PRICE
+        if override is None:
+            return self.get_trial_activation_price()
+        try:
+            value = int(override)
+        except (TypeError, ValueError):
+            logger.warning(
+                'Некорректное значение CABINET_TRIAL_ACTIVATION_PRICE',
+                CABINET_TRIAL_ACTIVATION_PRICE=override,
+            )
+            return self.get_trial_activation_price()
+        return max(0, value)
+
+    def is_cabinet_trial_paid_activation_enabled(self) -> bool:
+        """Платная активация триала через веб-кабинет.
+
+        Если CABINET_TRIAL_PAYMENT_ENABLED не задан (None) — наследует поведение
+        глобального TRIAL_PAYMENT_ENABLED. Если задан — решение принимается
+        независимо от значения для бота.
+        """
+        flag = self.CABINET_TRIAL_PAYMENT_ENABLED
+        if flag is None:
+            return self.is_trial_paid_activation_enabled()
+        if not flag:
+            return False
+        return self.get_cabinet_trial_activation_price() > 0
+
+    def get_cabinet_trial_min_balance_kopeks(self) -> int:
+        """Минимальный баланс для активации триала в веб-кабинете (без списания).
+
+        Возвращает значение в копейках. 0 = гейт отключён (триал доступен без
+        проверки баланса). Применяется только к email-only юзерам (без
+        telegram_id) — для юзеров из бота это поле игнорируется.
+        """
+        try:
+            value = int(self.CABINET_TRIAL_MIN_BALANCE_KOPEKS)
+        except (TypeError, ValueError):
+            logger.warning(
+                'Некорректное значение CABINET_TRIAL_MIN_BALANCE_KOPEKS',
+                CABINET_TRIAL_MIN_BALANCE_KOPEKS=self.CABINET_TRIAL_MIN_BALANCE_KOPEKS,
+            )
+            return 0
+        return max(0, value)
+
+    def is_cabinet_trial_balance_gated(self) -> bool:
+        """Включён ли баланс-гейт триала в веб-кабинете."""
+        return self.get_cabinet_trial_min_balance_kopeks() > 0
+
     def is_yookassa_enabled(self) -> bool:
         return self.YOOKASSA_ENABLED and self.YOOKASSA_SHOP_ID is not None and self.YOOKASSA_SECRET_KEY is not None
 
@@ -2068,7 +2140,11 @@ class Settings(BaseSettings):
         return html.escape(self.get_paypear_display_name())
 
     def is_rollypay_enabled(self) -> bool:
-        return self.ROLLYPAY_ENABLED and self.ROLLYPAY_API_KEY is not None and self.ROLLYPAY_SIGNING_SECRET is not None
+        return (
+            self.ROLLYPAY_ENABLED
+            and self.ROLLYPAY_API_KEY is not None
+            and self.ROLLYPAY_SIGNING_SECRET is not None
+        )
 
     def get_rollypay_display_name(self) -> str:
         name = (self.ROLLYPAY_DISPLAY_NAME or '').strip()

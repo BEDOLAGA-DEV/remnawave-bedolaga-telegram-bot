@@ -487,10 +487,18 @@ class PromoCodeService:
             if not user:
                 return {'success': False, 'error': 'user_not_found'}
 
+            # Lock the user row up-front to serialise concurrent deactivations
+            # and prevent stale reads of promo_offer_discount_* fields.
+            from app.database.crud.user import lock_user_for_update
+
+            user = await lock_user_for_update(db, user)
+
             current_discount = getattr(user, 'promo_offer_discount_percent', 0) or 0
             source = getattr(user, 'promo_offer_discount_source', None)
 
             if current_discount <= 0 or not source or not source.startswith('promocode:'):
+                # Release the FOR UPDATE lock acquired above; nothing was mutated.
+                await db.rollback()
                 return {'success': False, 'error': 'no_active_discount_promocode'}
 
             expires_at = getattr(user, 'promo_offer_discount_expires_at', None)
@@ -505,6 +513,19 @@ class PromoCodeService:
                 return {'success': False, 'error': 'discount_already_expired'}
 
             promocode, promo_use = await get_active_discount_promocode_for_user(db, user_id)
+
+            # Re-fetch promocode under FOR UPDATE so the current_uses decrement
+            # below is serialised against concurrent activations/deactivations.
+            if promocode is not None:
+                from sqlalchemy import select as _select
+
+                _locked_pc = await db.execute(
+                    _select(PromoCode)
+                    .where(PromoCode.id == promocode.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+                promocode = _locked_pc.scalar_one_or_none() or promocode
 
             deactivated_code = source.split(':', 1)[1]
 

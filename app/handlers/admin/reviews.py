@@ -16,37 +16,66 @@ from app.database.crud.user_review import (
 from app.database.models import User
 from app.localization.texts import get_texts
 from app.utils.decorators import admin_required, error_handler
+from app.utils.user_utils import format_user_public_display
 
 
 logger = structlog.get_logger(__name__)
 
 
-def _format_review_for_channel(review) -> str:
-    """Format a review for posting to the public channel."""
+def _format_review_text_for_channel(review) -> str:
+    """The user's review text as it should appear in the channel."""
+    return html.escape(review.text)
+
+
+async def _format_review_meta_for_channel(review, db: AsyncSession) -> str:
+    """Rating + short user info posted as a reply to the review text."""
     stars = '\u2b50' * review.rating
-    username = review.user.username if review.user and review.user.username else None
-    user_display = f'@{username}' if username else (review.user.first_name or 'Пользователь')
 
     days = 0
     if review.user and review.user.created_at:
         days = (datetime.now(UTC) - review.user.created_at).days
 
-    escaped_text = html.escape(review.text)
+    # Site-only users have no @username / first_name; helper falls back to
+    # anonymized email or `Пользователь #ID` so the channel post always
+    # carries some identifier.
+    user_display = format_user_public_display(getattr(review, 'user', None))
 
-    return (
-        f'{stars} ({review.rating}/5)\n'
-        f'\n'
-        f'"{escaped_text}"\n'
-        f'\n'
-        f'— {user_display}, пользователь {days} дней'
-    )
+    lines = [
+        f'{stars} ({review.rating}/5)',
+        f'<b>Автор:</b> {html.escape(user_display)}',
+        f'<b>С нами:</b> {days} дн.',
+    ]
+
+    try:
+        from app.database.crud.subscription import get_subscription_by_user_id
+        from app.database.models import SubscriptionStatus
+
+        sub = await get_subscription_by_user_id(db, review.user_id)
+        if sub:
+            tariff_name = (
+                sub.tariff.name if getattr(sub, 'tariff', None) and sub.tariff.name else None
+            )
+            if tariff_name:
+                lines.append(f'<b>Тариф:</b> {html.escape(tariff_name)}')
+
+            status_map = {
+                SubscriptionStatus.ACTIVE.value: '✅ активна',
+                SubscriptionStatus.TRIAL.value: '🎁 триал',
+                SubscriptionStatus.EXPIRED.value: '⌛ истекла',
+                SubscriptionStatus.DISABLED.value: '🚫 отключена',
+            }
+            status_label = status_map.get(sub.status, sub.status)
+            lines.append(f'<b>Подписка:</b> {status_label}')
+    except Exception as e:
+        logger.debug('Не удалось получить подписку для мета-отзыва', error=e, review_id=review.id)
+
+    return '\n'.join(lines)
 
 
 def _format_review_for_admin(review) -> str:
     """Format a review for admin moderation view."""
     stars = '\u2b50' * review.rating
-    username = review.user.username if review.user and review.user.username else None
-    user_display = f'@{username}' if username else (review.user.first_name or 'ID: ' + str(review.user_id))
+    user_display = format_user_public_display(getattr(review, 'user', None))
 
     escaped_text = html.escape(review.text)
     bonus_str = settings.format_price(review.bonus_kopeks) if review.bonus_kopeks else '0'
@@ -149,23 +178,51 @@ async def on_approve_review(
         except Exception as bonus_err:
             logger.error('Не удалось начислить бонус за отзыв', error=bonus_err, review_id=review.id)
 
-    # Post to channel
+    # Post to channel: forward user's original message, then rating+meta as reply
     channel_published = False
     channel_id = settings.REVIEW_CHANNEL_ID
     if channel_id:
         try:
-            channel_text = _format_review_for_channel(review)
-            sent_msg = await bot.send_message(
-                chat_id=channel_id,
-                text=channel_text,
-                parse_mode='HTML',
-            )
-            await set_channel_message_id(db, review.id, sent_msg.message_id)
+            text_msg = None
+            if review.source_chat_id and review.source_message_id:
+                try:
+                    text_msg = await bot.forward_message(
+                        chat_id=channel_id,
+                        from_chat_id=review.source_chat_id,
+                        message_id=review.source_message_id,
+                    )
+                except Exception as fwd_err:
+                    logger.warning(
+                        'Не удалось переслать оригинальное сообщение отзыва, отправляю текстом',
+                        error=fwd_err,
+                        review_id=review.id,
+                    )
+            if text_msg is None:
+                text_msg = await bot.send_message(
+                    chat_id=channel_id,
+                    text=_format_review_text_for_channel(review),
+                    parse_mode='HTML',
+                )
+            try:
+                meta_text = await _format_review_meta_for_channel(review, db)
+                await bot.send_message(
+                    chat_id=channel_id,
+                    text=meta_text,
+                    parse_mode='HTML',
+                    reply_to_message_id=text_msg.message_id,
+                )
+            except Exception as meta_err:
+                logger.error(
+                    'Не удалось отправить мета-сообщение к отзыву',
+                    error=meta_err,
+                    review_id=review.id,
+                )
+            await set_channel_message_id(db, review.id, text_msg.message_id)
             channel_published = True
             logger.info(
                 'Отзыв опубликован в канале',
                 review_id=review.id,
-                channel_message_id=sent_msg.message_id,
+                channel_message_id=text_msg.message_id,
             )
         except Exception as e:
             logger.error('Не удалось опубликовать отзыв в канале', error=e, review_id=review.id)

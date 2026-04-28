@@ -1224,7 +1224,7 @@ class MonitoringService:
                 # Day 1 reminder
                 if NotificationSettingsService.is_expired_1d_enabled() and 1 <= days_since < 2:
                     if not await notification_sent(db, user.id, subscription.id, 'expired_1d'):
-                        success = await self._send_expired_day1_notification(user, subscription)
+                        success = await self._send_expired_day1_notification(user, subscription, db)
                         if success:
                             await record_notification(db, user.id, subscription.id, 'expired_1d')
                             sent_day1 += 1
@@ -1915,7 +1915,12 @@ class MonitoringService:
             )
             return False
 
-    async def _send_expired_day1_notification(self, user: User, subscription: Subscription) -> bool:
+    async def _send_expired_day1_notification(
+        self,
+        user: User,
+        subscription: Subscription,
+        db: AsyncSession | None = None,
+    ) -> bool:
         try:
             texts = get_texts(user.language)
             tariff_label = ''
@@ -1928,9 +1933,32 @@ class MonitoringService:
                     'Доступ был отключён {end_date}. Продлите подписку, чтобы вернуться в сервис.'
                 ),
             )
+
+            # Real renewal price honoring tariff (period_prices), promo group,
+            # promo offers, scheduled promos. PRICE_30_DAYS is a legacy classic-
+            # mode env value and gives misleading numbers under SALES_MODE=tariffs
+            # (it ignores discounts and the actual cheapest tariff period).
+            price_kopeks = settings.PRICE_30_DAYS
+            if db is not None:
+                try:
+                    from app.services.pricing_engine import pricing_engine
+
+                    tariff = getattr(subscription, 'tariff', None)
+                    period_days = (tariff.get_shortest_period() if tariff else None) or 30
+                    pricing = await pricing_engine.calculate_renewal_price(
+                        db, subscription, period_days, user=user,
+                    )
+                    price_kopeks = pricing.final_total
+                except Exception as price_err:
+                    logger.warning(
+                        'Не удалось рассчитать цену продления для уведомления, fallback на PRICE_30_DAYS',
+                        subscription_id=subscription.id,
+                        error=price_err,
+                    )
+
             message = template.format(
                 end_date=format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M'),
-                price=settings.format_price(settings.PRICE_30_DAYS),
+                price=settings.format_price(price_kopeks),
                 tariff_label=tariff_label,
             )
 
@@ -2321,8 +2349,13 @@ class MonitoringService:
             expiry_days = getattr(settings, 'LOW_BALANCE_ALERT_EXPIRY_DAYS', 3)
             expiry_threshold = datetime.now(UTC) + timedelta(days=expiry_days)
 
-            result = await db.execute(
-                select(User)
+            # NOTE: Avoid SELECT DISTINCT on User rows — the users table has a
+            # json (not jsonb) column and Postgres has no equality operator for
+            # json, which makes DISTINCT raise UndefinedFunctionError and
+            # poisons the session for subsequent queries. Select distinct
+            # user_ids via the join, then fetch users by id.
+            id_result = await db.execute(
+                select(User.id)
                 .join(Subscription, Subscription.user_id == User.id)
                 .where(
                     Subscription.status.in_(['active', 'trial']),
@@ -2333,6 +2366,10 @@ class MonitoringService:
                 )
                 .distinct()
             )
+            user_ids = [row for row in id_result.scalars().all()]
+            if not user_ids:
+                return
+            result = await db.execute(select(User).where(User.id.in_(user_ids)))
             users = result.scalars().all()
 
             sent_count = 0
@@ -2408,6 +2445,12 @@ class MonitoringService:
 
         except Exception as error:
             logger.error('Error checking low balance alerts', error=error)
+            # Roll back the aborted transaction so the shared session can
+            # still be used by subsequent monitoring tasks in the same tick.
+            try:
+                await db.rollback()
+            except Exception as rb_error:
+                logger.debug('rollback after low-balance failure failed', error=rb_error)
 
     async def _cleanup_expired_refresh_tokens(self, db: AsyncSession):
         """Delete expired and revoked refresh tokens to prevent table bloat."""

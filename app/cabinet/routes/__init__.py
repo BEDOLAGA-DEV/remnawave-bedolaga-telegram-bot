@@ -12,6 +12,7 @@ from .admin_button_styles import router as admin_button_styles_router
 from .admin_campaigns import router as admin_campaigns_router
 from .admin_channels import router as admin_channels_router
 from .admin_email_templates import router as admin_email_templates_router
+from .admin_help import router as admin_help_router
 from .admin_landings import router as admin_landings_router
 from .admin_menu_layout import router as admin_menu_layout_router
 from .admin_news import router as admin_news_router
@@ -48,6 +49,7 @@ from .balance import router as balance_router
 from .branding import router as branding_router
 from .contests import router as contests_router
 from .gift import router as gift_router
+from .help import router as help_router
 from .info import router as info_router
 from .landing import router as landing_router
 from .media import router as media_router
@@ -59,6 +61,7 @@ from .polls import router as polls_router
 from .promo import router as promo_router
 from .promocode import router as promocode_router
 from .referral import router as referral_router
+from .review import router as review_router
 from .subscription import router as subscription_router
 from .subscription_modules.multi_tariff import router as multi_tariff_subscription_router
 from .ticket_notifications import (
@@ -94,6 +97,7 @@ router.include_router(tickets_router)
 router.include_router(promocode_router)
 router.include_router(contests_router)
 router.include_router(polls_router)
+router.include_router(review_router)
 router.include_router(promo_router)
 router.include_router(notifications_router)
 router.include_router(user_notifications_router)
@@ -103,6 +107,7 @@ router.include_router(branding_router)
 router.include_router(landing_router)
 router.include_router(media_router)
 router.include_router(news_router)
+router.include_router(help_router)
 router.include_router(utils_router)
 
 # Wheel routes
@@ -140,6 +145,7 @@ router.include_router(admin_quick_replies_router)
 router.include_router(admin_user_notifications_router)
 router.include_router(admin_remnawave_router)
 router.include_router(admin_email_templates_router)
+router.include_router(admin_help_router)
 router.include_router(admin_updates_router)
 router.include_router(admin_traffic_router)
 router.include_router(admin_pinned_messages_router)

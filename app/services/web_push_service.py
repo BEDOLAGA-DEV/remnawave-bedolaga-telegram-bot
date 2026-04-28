@@ -40,17 +40,26 @@ logger = structlog.get_logger(__name__)
 
 
 class WebPushService:
-    """Service for sending Web Push notifications via pywebpush."""
+    """Service for sending Web Push notifications via pywebpush.
+
+    All VAPID settings (enabled flag, public key, private key path/PEM, email)
+    are read dynamically from ``settings`` on every access. This is intentional:
+    after runtime migration of .env values into the ``system_settings`` table,
+    those values are pushed back into the ``settings`` object via
+    ``BotConfigurationService._apply_to_settings`` *after* this module is
+    imported. Caching them in __init__ would make the service read the empty
+    defaults forever. The only cached field is the PEM contents of the private
+    key file — re-resolved whenever the config path changes.
+    """
 
     def __init__(self) -> None:
-        self._enabled = settings.WEB_PUSH_ENABLED
-        self._private_key = self._load_private_key(settings.WEB_PUSH_VAPID_PRIVATE_KEY)
-        self._public_key = settings.WEB_PUSH_VAPID_PUBLIC_KEY
-        self._email = settings.WEB_PUSH_VAPID_EMAIL
-        self._vapid_claims = {'sub': f'mailto:{self._email}'}
         self._pywebpush_available = False
         self._webpush_fn = None
         self._webpush_exception_cls: type[Exception] = Exception
+        # Private-key cache: remember the last raw config value and its resolved
+        # PEM so we don't hit the filesystem on every send.
+        self._cached_private_key_raw: str = ''
+        self._cached_private_key_pem: str = ''
         self._load_pywebpush()
 
     @staticmethod
@@ -113,6 +122,35 @@ class WebPushService:
                 'Install with: pip install pywebpush'
             )
             self._pywebpush_available = False
+
+    # ------------------------------------------------------------------
+    # Dynamic config accessors — always read from live ``settings`` so that
+    # runtime edits via the admin panel or DB migrations take effect without
+    # a bot restart.
+    # ------------------------------------------------------------------
+    @property
+    def _enabled(self) -> bool:
+        return bool(settings.WEB_PUSH_ENABLED)
+
+    @property
+    def _public_key(self) -> str:
+        return settings.WEB_PUSH_VAPID_PUBLIC_KEY or ''
+
+    @property
+    def _email(self) -> str:
+        return settings.WEB_PUSH_VAPID_EMAIL or 'admin@example.com'
+
+    @property
+    def _vapid_claims(self) -> dict[str, str]:
+        return {'sub': f'mailto:{self._email}'}
+
+    @property
+    def _private_key(self) -> str:
+        raw = settings.WEB_PUSH_VAPID_PRIVATE_KEY or ''
+        if raw != self._cached_private_key_raw:
+            self._cached_private_key_pem = self._load_private_key(raw)
+            self._cached_private_key_raw = raw
+        return self._cached_private_key_pem
 
     @property
     def is_enabled(self) -> bool:

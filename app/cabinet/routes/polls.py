@@ -5,11 +5,10 @@ from datetime import UTC, datetime
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
 from app.database.crud.poll import (
     get_poll_response_by_id,
     record_poll_answer,
@@ -120,14 +119,18 @@ async def get_polls_count(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Get count of polls available for the user."""
+    """Total polls the user has been invited to (incomplete + completed).
+
+    The cabinet uses this only as a boolean (`> 0`) to decide whether to show
+    the 'Polls' menu item. We deliberately count completed polls too, so the
+    menu doesn't disappear after the user finishes their last poll — they
+    still need access to the page to review history.
+    """
     result = await db.execute(
-        select(PollResponse)
-        .where(PollResponse.user_id == user.id)
-        .where(PollResponse.completed_at.is_(None))  # Only incomplete polls
+        select(func.count(PollResponse.id)).where(PollResponse.user_id == user.id)
     )
-    responses = result.scalars().all()
-    return PollsCountResponse(count=len(responses))
+    count = result.scalar_one()
+    return PollsCountResponse(count=count)
 
 
 @router.get('', response_model=list[PollInfo])
@@ -144,7 +147,10 @@ async def get_available_polls(
             selectinload(PollResponse.poll).selectinload(Poll.questions),
             selectinload(PollResponse.answers),
         )
-        .order_by(PollResponse.created_at.desc())
+        # PollResponse has `sent_at` (when invitation was sent), not `created_at`.
+        # Ordering newest-first puts the most recently delivered poll on top,
+        # which matches the user's expectation in the cabinet UI.
+        .order_by(PollResponse.sent_at.desc())
     )
     responses = result.scalars().all()
 
@@ -349,17 +355,20 @@ async def answer_question(
     response.completed_at = datetime.now(UTC)
     await db.commit()
 
-    # Award reward if any
-    reward_amount = await reward_user_for_poll(db, response)
+    # Award reward if any. `reward_user_for_poll` returns kopeks; convert to
+    # rubles for the wire format so it matches `PollInfo.reward_amount` (which
+    # is also rubles). Otherwise the cabinet UI renders raw kopeks (e.g. shows
+    # "+1000" when only 10 ₽ was credited).
+    reward_amount_kopeks = await reward_user_for_poll(db, response)
+    reward_granted_rubles = reward_amount_kopeks // 100 if reward_amount_kopeks else None
 
-    message = 'Thank you for completing the poll!'
-    if reward_amount:
-        message += f' Reward of {settings.format_price(reward_amount)} has been added to your balance.'
-
+    # Intentionally leave `message` empty: the cabinet (which is the only
+    # caller) now renders a localized completion message via i18n. Sending an
+    # English string here just leaks through to non-English users.
     return AnswerResponse(
         success=True,
         is_completed=True,
         total_questions=total_questions,
-        reward_granted=reward_amount,
-        message=message,
+        reward_granted=reward_granted_rubles,
+        message=None,
     )

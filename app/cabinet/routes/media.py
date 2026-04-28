@@ -6,12 +6,15 @@ import structlog
 from aiogram.types import BufferedInputFile
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot_factory import create_bot
 from app.config import settings
-from app.database.models import User
+from app.database.models import Ticket, TicketMessage, User
+from app.services.support_settings_service import SupportSettingsService
 
-from ..dependencies import get_current_cabinet_user
+from ..dependencies import get_cabinet_db, get_current_cabinet_user
 
 
 logger = structlog.get_logger(__name__)
@@ -148,11 +151,45 @@ async def upload_media(
 @router.get('/{file_id}', name='cabinet_download_media')
 async def download_media(
     file_id: str,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
 ) -> Response:
     """
     Download media file by file_id.
     Used to display images/documents in ticket messages.
+
+    Authorization: requester must either
+      - be the owner of a ticket containing a TicketMessage with this file_id, OR
+      - be the author of a TicketMessage with this file_id (covers admin/moderator
+        replies that staff later view), OR
+      - be an admin or active moderator (full support staff access).
+    Otherwise the file_id is treated as not found to prevent enumeration oracles.
     """
+    is_staff = False
+    if user.telegram_id is not None:
+        is_staff = settings.is_admin(user.telegram_id) or SupportSettingsService.is_moderator(user.telegram_id)
+    elif user.email and user.email_verified:
+        is_staff = settings.is_admin(email=user.email)
+
+    if not is_staff:
+        # Verify file_id is referenced by a TicketMessage in a ticket the user owns,
+        # or that the user authored. This prevents arbitrary Telegram-file enumeration.
+        stmt = (
+            select(TicketMessage.id)
+            .join(Ticket, Ticket.id == TicketMessage.ticket_id)
+            .where(
+                TicketMessage.media_file_id == file_id,
+                (Ticket.user_id == user.id) | (TicketMessage.user_id == user.id),
+            )
+            .limit(1)
+        )
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='Media file not found',
+            )
+
     bot = create_bot()
 
     try:

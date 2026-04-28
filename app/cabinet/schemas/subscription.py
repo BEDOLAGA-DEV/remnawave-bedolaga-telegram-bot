@@ -134,6 +134,18 @@ class TrialInfoResponse(BaseModel):
     price_rubles: float = 0.0
     reason_unavailable: str | None = None
     requires_telegram: bool = False
+    # Machine-readable code the cabinet UI can switch on (e.g. to show a
+    # localized "email accounts only" disabled state). `reason_unavailable`
+    # stays as human-readable copy for logs / generic fallbacks.
+    ineligible_reason: str | None = None
+    # Balance-threshold gating for email-only accounts. When configured
+    # (required_balance_kopeks > 0), trial is locked until user's balance
+    # reaches the threshold — no deduction happens on activation. UI uses
+    # current_balance_* to render a progress bar / "top up N₽ more" prompt.
+    required_balance_kopeks: int = 0
+    required_balance_rubles: float = 0.0
+    current_balance_kopeks: int = 0
+    current_balance_rubles: float = 0.0
 
 
 # ============ Purchase Options Schemas ============
