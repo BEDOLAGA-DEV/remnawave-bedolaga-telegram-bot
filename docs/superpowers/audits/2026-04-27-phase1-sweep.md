@@ -21,6 +21,34 @@ Scope: cross-cutting bug-class grep across `app/`, `bedolaga-cabinet/src/`, `mig
 | 13 | P4 | app/handlers/stars_payments.py | 310 | `__import__('re').compile(r'^[A-Za-z0-9_\-]{10,100}$')` — constant string literal, no user input | info | accept-with-rationale | accept |
 | 14 | P5 | app/ | - | No hits — pattern clean (Telegram bot tokens, AWS keys, Stripe live keys, BOT_TOKEN literals) | info | accept-with-rationale | accept |
 | 15 | P6 | app/cabinet/routes/admin_*.py | - | AST scan of 41 admin route files: every `@router.<verb>` and `@admin_router.<verb>` carries `Depends(require_permission(...))` (or `admin_required` / `get_current_admin` equivalent) in the function signature; 0 unprotected admin routes | info | accept-with-rationale | accept |
+| 16 | P7 | app/cabinet/routes/contests.py | 142 | `user.balance_kopeks += int(round(amount * 100))` — no `lock_user_for_pricing` / `with_for_update` in surrounding ~80 lines (contest reward credit) | high | real-bug | queue-phase2 |
+| 17 | P7 | app/database/crud/achievement.py | 492 | `user.balance_kopeks += template.reward_value` — unlocked achievement payout credit | high | real-bug | queue-phase2 |
+| 18 | P7 | app/database/models.py | 1366 | `self.balance_kopeks += kopeks` — `User.add_balance` helper; locking is caller-side by design (see below) | info | accept-with-rationale | accept |
+| 19 | P7 | app/database/models.py | 1370 | `self.balance_kopeks -= kopeks` — `User.subtract_balance` helper; locking is caller-side by design | info | accept-with-rationale | accept |
+| 20 | P7 | app/handlers/admin/referrals.py | 636 | `target_user.balance_kopeks += amount_kopeks` — admin manual referral payout, no SELECT FOR UPDATE | medium | real-bug | queue-phase2 |
+| 21 | P7 | app/handlers/stars_payments.py | 660 | `user.balance_kopeks -= amount_kopeks` — Stars purchase debit unlocked | high | real-bug | queue-phase2 |
+| 22 | P7 | app/handlers/stars_payments.py | 680 | `user.balance_kopeks += unused_kopeks` — Stars refund unlocked | high | real-bug | queue-phase2 |
+| 23 | P7 | app/services/account_merge_service.py | 641 | `primary.balance_kopeks += transferred_kopeks` — account-merge balance transfer unlocked | high | real-bug | queue-phase2 |
+| 24 | P7 | app/services/payment/aurapay.py | 419 | `user.balance_kopeks += payment.amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 25 | P7 | app/services/payment/cloudpayments.py | 292 | `user.balance_kopeks += amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 26 | P7 | app/services/payment/cryptobot.py | 312 | `user.balance_kopeks += amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 27 | P7 | app/services/payment/freekassa.py | 319 | `user.balance_kopeks += payment.amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 28 | P7 | app/services/payment/heleket.py | 364 | `user.balance_kopeks += amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 29 | P7 | app/services/payment/kassa_ai.py | 315 | `user.balance_kopeks += payment.amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 30 | P7 | app/services/payment/mulenpay.py | 296 | `user.balance_kopeks += payment.amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 31 | P7 | app/services/payment/pal24.py | 430 | `user.balance_kopeks += payment.amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 32 | P7 | app/services/payment/paypear.py | 408 | `user.balance_kopeks += payment.amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 33 | P7 | app/services/payment/platega.py | 425 | `user.balance_kopeks += payment.amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 34 | P7 | app/services/payment/rollypay.py | 414 | `user.balance_kopeks += payment.amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 35 | P7 | app/services/payment/severpay.py | 410 | `user.balance_kopeks += payment.amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 36 | P7 | app/services/payment/stars.py | 424 | `user.balance_kopeks += amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 37 | P7 | app/services/payment/wata.py | 517 | `user.balance_kopeks += payment.amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 38 | P7 | app/services/payment/yookassa.py | 769 | `user.balance_kopeks += payment.amount_kopeks` — webhook credit, unlocked | high | real-bug | queue-phase2 |
+| 39 | P7 | app/services/promocode_service.py | 521 | `promocode.current_uses -= 1` — counter decrement (rollback on failed redemption) without `with_for_update` on the promocode row | medium | real-bug | queue-phase2 |
+| 40 | P7 | app/services/tribute_service.py | 154 | `user.balance_kopeks += amount_kopeks` — Tribute donation credit, unlocked | high | real-bug | queue-phase2 |
+| 41 | P7 | app/services/tribute_service.py | 273 | `user.balance_kopeks -= amount_kopeks` — Tribute subscription debit, unlocked | high | real-bug | queue-phase2 |
+| 42 | P7 | app/services/tribute_service.py | 426 | `user.balance_kopeks += amount_kopeks` — Tribute refund credit, unlocked | high | real-bug | queue-phase2 |
+| 43 | P7 | app/services/wheel_service.py | 321 | `user.balance_kopeks -= kopeks` — wheel-spin cost debit, unlocked | high | real-bug | queue-phase2 |
 
 (Severity: critical / high / medium / low / info.
  Decision: real-bug / false-positive / accept-with-rationale.
