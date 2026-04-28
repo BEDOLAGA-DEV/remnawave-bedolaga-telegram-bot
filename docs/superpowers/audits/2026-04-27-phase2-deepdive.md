@@ -117,4 +117,26 @@ No critical findings (no provider lacks signature verification entirely). No str
 
 ## Summary
 
-(filled at end of Phase 2)
+- **Total findings:** 22
+- **By risk class:**
+  - (a) Money-path race conditions: 3 (patches: 3; deferred: 0)
+  - (b) Auth bypass / IDOR / JWT: 3 (patches: 2; deferred: 1)
+  - (c) Webhook signature verification: 16 (patches: 14; deferred: 2)
+- **By severity:** critical=0, high=4, medium=3, low=1
+- **Patches landed in branch `claude/audit-2026-04-27`:**
+  - `app/handlers/stars_payments.py` — Stars refund TOCTOU + atomic idempotency marker
+  - `app/database/crud/achievement.py` — lock_user_for_update in check_and_unlock_all
+  - `app/services/promocode_service.py` — lock + rollback on early return (avoid lock leak)
+  - `app/cabinet/routes/media.py` — IDOR fix for download_media (auth + ownership check)
+  - `app/cabinet/routes/auth.py` — refresh-token rotation (revoke old, issue new, same txn)
+- **Deferred items requiring follow-up:**
+  - `app/config.py:2943` — JWT secret fallback should hard-fail at startup when `CABINET_JWT_SECRET` unset in production (currently warns per-request)
+  - `app/webserver/payments.py:766/801/836/871` — CloudPayments signature verify is skipped if `CLOUDPAYMENTS_API_SECRET` unset; needs startup-time hard-fail check
+  - `app/webserver/payments.py:689` — Platega header-based shared secret lacks body-binding HMAC (deferred pending provider coordination)
+
+### Highlights
+
+- Phase 1 over-counted webhook P7 hits by 13: all webhook mutations lock the user row before `+=` (via `lock_user_for_update(db, user)`); regex sweep missed these calls. Only 2 genuine unlocked mutations found: Stars refund (patched + hardened with atomic idempotency) and achievement unlock (patched).
+- Cabinet IDOR media leak plugged: `download_media` was unprotected and unauthenticated. Any caller with a leaked Telegram file_id could fetch ticket attachments and pinned media belonging to other users. Now gated by auth + ownership check.
+- Refresh-token rotation implemented: long-lived tokens were never revoked. Updated `/auth/refresh` to mark old token revoked and issue a fresh one in the same transaction, closing 30-day persistent-access window.
+- All 16 webhook providers verify signatures correctly; no unprotected providers. YooKassa compensates for missing HMAC with IP allow-list + outbound API confirmation. Platega uses documented header-based shared secret (deferred body-binding upgrade pending provider work). CloudPayments has a startup-config hardening gap (silent skip if secret is missing) that mirrors the JWT-secret fallback issue — both queued for config-validation batch.
