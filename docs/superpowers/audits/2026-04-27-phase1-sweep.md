@@ -12,6 +12,12 @@ Scope: cross-cutting bug-class grep across `app/`, `bedolaga-cabinet/src/`, `mig
 | 4 | P1 | app/services/backup_service.py | 1569 | `text(f'TRUNCATE {tables_str} RESTART IDENTITY CASCADE')` — tables_str joined from hardcoded `all_tables` literal list (line 1435) | info | accept-with-rationale | accept |
 | 5 | P1 | app/services/backup_service.py | 1579 | `text(f'TRUNCATE {table_name} CASCADE')` — table_name iterated over the same hardcoded `all_tables` list | info | accept-with-rationale | accept |
 | 6 | P2 | app/ | - | No hits — pattern clean (previous fix in `app/handlers/admin/achievements.py::CONDITION_TYPES` holds) | info | accept-with-rationale | accept |
+| 7 | P3 | app/handlers/admin/backup.py | 54 | `except: date_str = '?'` — bare except wrapping `datetime.fromisoformat` for backup-list display fallback (catches BaseException incl. KeyboardInterrupt) | low | accept-with-rationale | accept |
+| 8 | P3 | app/handlers/admin/backup.py | 171 | `except: page = 1` — bare except wrapping `int(callback.data.split('_')[-1])` for pagination fallback | low | accept-with-rationale | accept |
+| 9 | P3 | app/handlers/admin/backup.py | 216 | `except: date_str = 'Ошибка формата даты'` — bare except wrapping `datetime.fromisoformat` for backup-info display fallback | low | accept-with-rationale | accept |
+| 10 | P3 | app/handlers/admin/referrals.py | 143 | `except: pass` — bare except around Telegram `callback.message.edit_text` (blocked-user / stale-message swallow) | low | accept-with-rationale | accept |
+| 11 | P3 | app/handlers/admin/referrals.py | 1459 | `except: <fallback message>` — bare except wrapping diagnostic file parse error fallback | low | accept-with-rationale | accept |
+| 12 | P3 | app/services/remnawave_service.py | 1654 | `except: pass` — bare except around `await db.rollback()` in error-cleanup path (re-raise would mask original error) | low | accept-with-rationale | accept |
 
 (Severity: critical / high / medium / low / info.
  Decision: real-bug / false-positive / accept-with-rationale.
