@@ -20,6 +20,7 @@ Scope: cross-cutting bug-class grep across `app/`, `bedolaga-cabinet/src/`, `mig
 | 12 | P3 | app/services/remnawave_service.py | 1654 | `except: pass` — bare except around `await db.rollback()` in error-cleanup path (re-raise would mask original error) | low | accept-with-rationale | accept |
 | 13 | P4 | app/handlers/stars_payments.py | 310 | `__import__('re').compile(r'^[A-Za-z0-9_\-]{10,100}$')` — constant string literal, no user input | info | accept-with-rationale | accept |
 | 14 | P5 | app/ | - | No hits — pattern clean (Telegram bot tokens, AWS keys, Stripe live keys, BOT_TOKEN literals) | info | accept-with-rationale | accept |
+| 15 | P6 | app/cabinet/routes/admin_*.py | - | AST scan of 41 admin route files: every `@router.<verb>` and `@admin_router.<verb>` carries `Depends(require_permission(...))` (or `admin_required` / `get_current_admin` equivalent) in the function signature; 0 unprotected admin routes | info | accept-with-rationale | accept |
 
 (Severity: critical / high / medium / low / info.
  Decision: real-bug / false-positive / accept-with-rationale.
