@@ -497,6 +497,8 @@ class PromoCodeService:
             source = getattr(user, 'promo_offer_discount_source', None)
 
             if current_discount <= 0 or not source or not source.startswith('promocode:'):
+                # Release the FOR UPDATE lock acquired above; nothing was mutated.
+                await db.rollback()
                 return {'success': False, 'error': 'no_active_discount_promocode'}
 
             expires_at = getattr(user, 'promo_offer_discount_expires_at', None)

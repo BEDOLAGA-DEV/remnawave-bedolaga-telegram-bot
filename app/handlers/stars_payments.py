@@ -612,24 +612,24 @@ async def handle_refunded_payment(message: types.Message, **kwargs):
             refund = message.refunded_payment
             
             from sqlalchemy import select
-            from app.database.crud.transaction import create_transaction
+            from app.database.crud.transaction import create_transaction, emit_transaction_side_effects
             from app.database.models import TransactionType, PaymentMethod, Transaction
             from app.database.crud.subscription import get_subscription_by_user_id, deactivate_subscription
             from datetime import datetime, UTC
-            
+
             # Пытаемся найти оригинальную транзакцию по telegram_payment_charge_id
             result = await db.execute(
                 select(Transaction).where(Transaction.external_id == refund.telegram_payment_charge_id)
             )
             original_transaction = result.scalar_one_or_none()
-            
+
             if original_transaction:
                 user_id = original_transaction.user_id
             else:
                 user_id = message.from_user.id if message.from_user else None
-                
+
             if not user_id:
-                logger.error('Не удалось определить user_id для возврата Stars', 
+                logger.error('Не удалось определить user_id для возврата Stars',
                              telegram_payment_charge_id=refund.telegram_payment_charge_id)
                 return
 
@@ -646,17 +646,23 @@ async def handle_refunded_payment(message: types.Message, **kwargs):
             if not user:
                 # Если искали по telegram ID (фоллбэк) и не нашли, возможно user_id это локальный ID из Transaction
                 user = await get_user_by_id(db, user_id)
-                
+
             if user:
                 texts = get_texts(user.language if user.language else DEFAULT_LANGUAGE)
             else:
                 logger.error('Пользователь не найден при обработке возврата Stars', user_id=user_id)
                 return
 
+            from app.database.crud.transaction import get_transaction_by_external_id
+            from app.database.crud.user import lock_user_for_update
+
+            # Lock user row FIRST so the idempotency check + debit form a single
+            # serialised critical section (otherwise two concurrent webhooks can
+            # both pass the check before either acquires the lock and double-debit).
+            user = await lock_user_for_update(db, user)
+
             # Idempotency: skip if a refund Transaction already exists for this charge_id.
             # Telegram may resend the refunded_payment update on transient delivery failure.
-            from app.database.crud.transaction import get_transaction_by_external_id
-
             existing_refund = await get_transaction_by_external_id(
                 db,
                 f'refund_{refund.telegram_payment_charge_id}',
@@ -669,16 +675,13 @@ async def handle_refunded_payment(message: types.Message, **kwargs):
                     telegram_payment_charge_id=refund.telegram_payment_charge_id,
                     existing_transaction_id=existing_refund.id,
                 )
+                # Release the FOR UPDATE lock cleanly without committing — nothing was mutated.
+                await db.rollback()
                 return
 
             # 1. Списываем полную сумму возврата с баланса
             rubles_amount = TelegramStarsService.calculate_rubles_from_stars(refund.total_amount)
             amount_kopeks = int((rubles_amount * Decimal(100)).to_integral_value(rounding=ROUND_HALF_UP))
-
-            # Lock user row before mutating balance to prevent concurrent race
-            from app.database.crud.user import lock_user_for_update
-
-            user = await lock_user_for_update(db, user)
 
             user.balance_kopeks -= amount_kopeks
 
@@ -704,10 +707,13 @@ async def handle_refunded_payment(message: types.Message, **kwargs):
 
                 # Деактивируем подписку
                 await deactivate_subscription(db, subscription)
-            await db.commit()
 
-            # Создаем транзакцию возврата для истории
-            await create_transaction(
+            # Insert the refund-marker Transaction in the SAME transaction as the debit
+            # so a crash between debit and marker cannot double-debit on webhook redelivery.
+            # commit=False here: create_transaction will db.flush() (surfacing any
+            # uq_transaction_external_id_method violation synchronously), then we
+            # commit once below.
+            refund_transaction = await create_transaction(
                 db=db,
                 user_id=user.id,
                 type=TransactionType.REFUND,
@@ -716,6 +722,22 @@ async def handle_refunded_payment(message: types.Message, **kwargs):
                 payment_method=PaymentMethod.TELEGRAM_STARS,
                 external_id=f'refund_{refund.telegram_payment_charge_id}',
                 is_completed=True,
+                commit=False,
+            )
+            await db.commit()
+
+            # Side effects (events, promo group recheck) MUST fire after commit
+            # because create_transaction(commit=False) skips them by design.
+            await emit_transaction_side_effects(
+                db,
+                refund_transaction,
+                amount_kopeks=-(amount_kopeks - unused_kopeks),
+                user_id=user.id,
+                type=TransactionType.REFUND,
+                payment_method=PaymentMethod.TELEGRAM_STARS,
+                external_id=f'refund_{refund.telegram_payment_charge_id}',
+                is_completed=True,
+                description=f'Возврат Stars ({refund.total_amount} ⭐) с удержанием за использование',
             )
 
             amount_text = settings.format_price(amount_kopeks - unused_kopeks).replace(' ₽', '')
