@@ -417,7 +417,7 @@ async def send_cart_notification_after_topup(
                     [
                         types.InlineKeyboardButton(
                             text=texts.get('MAIN_MENU_BUTTON', '🏠 Menu'),
-                            callback_data='back_to_menu',
+                            callback_data='nz!_back_to_menu',
                         )
                     ],
                 ]

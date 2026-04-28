@@ -81,7 +81,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                         )
                     ]
                 )
-            keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+            keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data='nz!_back_to_menu')])
             await callback.message.edit_text(
                 '📊 <b>Докупить трафик</b>\n\nВыберите подписку:',
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),

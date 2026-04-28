@@ -87,7 +87,7 @@ def _build_subscriptions_keyboard(subscriptions: list, language: str) -> types.I
             [
                 types.InlineKeyboardButton(
                     text=f'⚙️ {tariff_name}',
-                    callback_data=f'sm:{sub.id}',
+                    callback_data=f'nz!_sm:{sub.id}',
                 )
             ]
         )
@@ -97,13 +97,13 @@ def _build_subscriptions_keyboard(subscriptions: list, language: str) -> types.I
     buy_text = getattr(texts, 'MENU_BUY_SUBSCRIPTION', 'Купить ещё тариф')
     buttons.append(
         [
-            types.InlineKeyboardButton(text=f'➕ {buy_text}', callback_data='menu_buy'),
+            types.InlineKeyboardButton(text=f'➕ {buy_text}', callback_data='nz!_menu_buy'),
         ]
     )
     # Back button
     buttons.append(
         [
-            types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu'),
+            types.InlineKeyboardButton(text='◀️ Назад', callback_data='nz!_back_to_menu'),
         ]
     )
 
@@ -154,8 +154,8 @@ async def show_my_subscriptions(
         text = '📋 <b>Мои подписки</b>\n\nУ вас нет подписок.'
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text='🛒 Купить подписку', callback_data='menu_buy')],
-                [types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')],
+                [types.InlineKeyboardButton(text='🛒 Купить подписку', callback_data='nz!_menu_buy')],
+                [types.InlineKeyboardButton(text='◀️ Назад', callback_data='nz!_back_to_menu')],
             ]
         )
     else:
@@ -325,7 +325,7 @@ async def handle_subscription_devices(
     keyboard.append(
         [types.InlineKeyboardButton(text='📱 Управление устройствами', callback_data=f'device_management:{sub_id}')]
     )
-    keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data=f'sm:{sub_id}')])
+    keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data=f'nz!_sm:{sub_id}')])
 
     await callback.message.edit_text(
         text,
@@ -399,7 +399,7 @@ async def handle_subscription_delete_confirm(
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
             [types.InlineKeyboardButton(text='🗑 Да, удалить', callback_data=f'sub_del_yes:{sub_id}')],
-            [types.InlineKeyboardButton(text='◀️ Отмена', callback_data=f'sm:{sub_id}')],
+            [types.InlineKeyboardButton(text='◀️ Отмена', callback_data=f'nz!_sm:{sub_id}')],
         ]
     )
 

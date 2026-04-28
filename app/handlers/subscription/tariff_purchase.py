@@ -1715,12 +1715,12 @@ async def confirm_tariff_purchase(
                 [
                     InlineKeyboardButton(
                         text='📱 Моя подписка',
-                        callback_data=f'sm:{subscription.id}'
+                        callback_data=f'nz!_sm:{subscription.id}'
                         if settings.is_multi_tariff_enabled() and subscription
                         else 'menu_subscription',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
             ]
         ),
         parse_mode='HTML',
@@ -2015,12 +2015,12 @@ async def confirm_daily_tariff_purchase(
                 [
                     InlineKeyboardButton(
                         text='📱 Моя подписка',
-                        callback_data=f'sm:{subscription.id}'
+                        callback_data=f'nz!_sm:{subscription.id}'
                         if settings.is_multi_tariff_enabled() and subscription
                         else 'menu_subscription',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
             ]
         ),
         parse_mode='HTML',
@@ -2152,7 +2152,7 @@ async def show_tariff_extend(
                             )
                         ]
                     )
-                keyboard.append([InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+                keyboard.append([InlineKeyboardButton(text='◀️ Назад', callback_data='nz!_back_to_menu')])
                 await callback.message.edit_text(
                     '🔄 <b>Продление подписки</b>\n\nВыберите подписку для продления:',
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),

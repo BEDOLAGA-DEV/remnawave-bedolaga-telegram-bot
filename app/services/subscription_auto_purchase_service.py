@@ -1010,7 +1010,7 @@ async def _auto_purchase_tariff(
                     [
                         InlineKeyboardButton(
                             text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'),
-                            callback_data='back_to_menu',
+                            callback_data='nz!_back_to_menu',
                         )
                     ],
                 ]
@@ -1397,7 +1397,7 @@ async def _auto_purchase_daily_tariff(
                     [
                         InlineKeyboardButton(
                             text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Главное меню'),
-                            callback_data='back_to_menu',
+                            callback_data='nz!_back_to_menu',
                         )
                     ],
                 ]
@@ -2710,7 +2710,7 @@ async def try_auto_extend_expired_after_topup(
                     [
                         InlineKeyboardButton(
                             text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Main menu'),
-                            callback_data='back_to_menu',
+                            callback_data='nz!_back_to_menu',
                         )
                     ],
                 ]
@@ -3080,7 +3080,7 @@ async def try_resume_disabled_daily_after_topup(
                     [
                         InlineKeyboardButton(
                             text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '🏠 Main menu'),
-                            callback_data='back_to_menu',
+                            callback_data='nz!_back_to_menu',
                         )
                     ],
                 ]
