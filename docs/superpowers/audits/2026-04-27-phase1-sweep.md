@@ -19,6 +19,7 @@ Scope: cross-cutting bug-class grep across `app/`, `bedolaga-cabinet/src/`, `mig
 | 11 | P3 | app/handlers/admin/referrals.py | 1459 | `except: <fallback message>` — bare except wrapping diagnostic file parse error fallback | low | accept-with-rationale | accept |
 | 12 | P3 | app/services/remnawave_service.py | 1654 | `except: pass` — bare except around `await db.rollback()` in error-cleanup path (re-raise would mask original error) | low | accept-with-rationale | accept |
 | 13 | P4 | app/handlers/stars_payments.py | 310 | `__import__('re').compile(r'^[A-Za-z0-9_\-]{10,100}$')` — constant string literal, no user input | info | accept-with-rationale | accept |
+| 14 | P5 | app/ | - | No hits — pattern clean (Telegram bot tokens, AWS keys, Stripe live keys, BOT_TOKEN literals) | info | accept-with-rationale | accept |
 
 (Severity: critical / high / medium / low / info.
  Decision: real-bug / false-positive / accept-with-rationale.
