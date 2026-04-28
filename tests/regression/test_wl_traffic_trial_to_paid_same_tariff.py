@@ -21,19 +21,28 @@ def test_extend_subscription_wl_update_not_gated_by_tariff_change():
     """
     src = inspect.getsource(sub_crud.extend_subscription)
 
-    # Post-fix: limit update happens whenever wl_traffic_limit_gb is provided.
+    # Anchor on the WL block — the function has multiple
+    # `is_tariff_change or was_expired` mentions for unrelated paths
+    # (traffic_limit_gb, etc.), so an index-by-string lookup against the
+    # full source picks up the wrong gate.
     assert 'if wl_traffic_limit_gb is not None:' in src, (
         'Expected unconditional WL limit sync block — pre-fix gate may be back.'
     )
 
-    # Post-fix: the counter reset is in a separate `is_tariff_change or was_expired`
-    # block, not the same one as the limit assignment.
-    limit_assign_idx = src.index('subscription.wl_traffic_limit_gb = wl_traffic_limit_gb')
-    counters_reset_idx = src.index('subscription.wl_traffic_used_gb = 0.0')
-    gate_idx = src.index('is_tariff_change or was_expired')
+    wl_block_start = src.index('if wl_traffic_limit_gb is not None:')
+    wl_block = src[wl_block_start:]
 
-    # The limit assignment should appear BEFORE the gated reset block.
+    # Inside the WL block, all three landmarks must appear, with the
+    # limit assignment FIRST, then the gate check for counter reset,
+    # then the counter reset itself. Pre-fix code had the assignment
+    # INSIDE the gate block, so the gate appeared first.
+    limit_assign_idx = wl_block.index(
+        'subscription.wl_traffic_limit_gb = wl_traffic_limit_gb'
+    )
+    counters_reset_idx = wl_block.index('subscription.wl_traffic_used_gb = 0.0')
+    gate_idx = wl_block.index('is_tariff_change or was_expired')
+
     assert limit_assign_idx < gate_idx < counters_reset_idx, (
-        'Expected order: assign limit → gate check → reset counters. '
-        'Pre-fix code had assignment INSIDE the gate.'
+        'Expected order inside WL block: assign limit → gate check → reset '
+        'counters. Pre-fix code had assignment INSIDE the gate.'
     )
