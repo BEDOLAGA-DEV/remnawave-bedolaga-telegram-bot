@@ -586,12 +586,16 @@ class SubscriptionService:
     def _build_wl_username(self, user: User, subscription: Subscription | None) -> tuple[str, str | None]:
         """Return (primary, legacy_fallback) WL username pair.
 
-        Multi-tariff: primary = user_<tg>_<sub.id>_wl (per-subscription, avoids
-        collision when user has multiple active subs).
-        Legacy single-tariff: user_<tg>_wl (one WL per user). Code falls back to
-        legacy on lookup so existing prod accounts keep working.
+        Primary = main_username + "_wl" (mirrors the per-sub Remnawave main
+        account: user_<tg>_<short_id> → user_<tg>_<short_id>_wl). The short_id
+        comes from Subscription.remnawave_short_id (same value the main user
+        is created with in _create_or_update_remnawave_user_multi).
+        Legacy fallback: user_<tg>_wl (pre-multi-tariff format, one WL per
+        user). Lookup tries primary first, falls back to legacy so existing
+        prod accounts created before this change keep working.
 
-        Remnawave caps usernames at 36 chars; we reserve 3 for the "_wl" suffix.
+        Remnawave caps usernames at 36 chars; we reserve 3 for the "_wl"
+        suffix.
         """
         base = settings.format_remnawave_username(
             full_name=user.full_name,
@@ -601,8 +605,9 @@ class SubscriptionService:
             user_id=user.id,
         )
         legacy = f'{base[:33]}_wl'
-        if subscription is not None and getattr(subscription, 'id', None):
-            new_stem = f'{base}_{subscription.id}'[:33]
+        short_id = getattr(subscription, 'remnawave_short_id', None) if subscription else None
+        if short_id:
+            new_stem = f'{base}_{short_id}'[:33]
             primary = f'{new_stem}_wl'
             return primary, legacy
         return legacy, None
