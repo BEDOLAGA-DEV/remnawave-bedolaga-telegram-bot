@@ -865,6 +865,7 @@ def get_happ_cryptolink_keyboard(
     subscription_link: str,
     language: str = DEFAULT_LANGUAGE,
     redirect_link: str | None = None,
+    show_not_working_button: bool = False,
 ) -> InlineKeyboardMarkup:
     texts = get_texts(language)
     final_redirect_link = redirect_link or get_happ_cryptolink_redirect_link(subscription_link)
@@ -912,13 +913,27 @@ def get_happ_cryptolink_keyboard(
                     style='primary',
                 )
             ],
+        ]
+    )
+
+    if show_not_working_button:
+        buttons.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                    callback_data='nz!_back_to_menu',
-                    style='danger',
+                    text=texts.t('HAPP_LINK_NOT_WORKING_BUTTON', '🔧 Ссылка не работает'),
+                    callback_data='nz!_happ_link_not_working',
+                    style='secondary',
                 )
-            ],
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
+                callback_data='nz!_back_to_menu',
+                style='danger',
+            )
         ]
     )
 
