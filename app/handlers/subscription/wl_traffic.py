@@ -272,16 +272,14 @@ async def confirm_reset_wl_traffic(callback: types.CallbackQuery, db_user: User,
             async with remnawave_service.get_api_client() as api:
                 # Получаем UUID _wl пользователя из панели для сброса его трафика
                 try:
-                    from app.config import settings as cfg
-                    username = cfg.format_remnawave_username(
-                        full_name=user.full_name,
-                        username=user.username,
-                        telegram_id=user.telegram_id,
-                        email=user.email,
-                        user_id=user.id,
-                    )
-                    username_wl = f"{username[:33]}_wl"
-                    wl_user = await api.get_user_by_username(username_wl)
+                    from app.services.subscription_service import SubscriptionService
+                    primary_wl, legacy_wl = SubscriptionService()._build_wl_username(user, subscription)
+                    wl_user = await api.get_user_by_username(primary_wl)
+                    username_wl = primary_wl
+                    if not wl_user and legacy_wl and legacy_wl != primary_wl:
+                        wl_user = await api.get_user_by_username(legacy_wl)
+                        if wl_user:
+                            username_wl = legacy_wl
                     if wl_user and wl_user.uuid:
                         await api.reset_user_traffic(wl_user.uuid)
                         logger.info('🔄 Сброшен трафик _wl пользователя', username_wl=username_wl)

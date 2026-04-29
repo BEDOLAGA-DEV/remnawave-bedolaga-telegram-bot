@@ -583,6 +583,30 @@ class SubscriptionService:
             logger.error('Ошибка обновления RemnaWave пользователя', error=e)
             return None
 
+    def _build_wl_username(self, user: User, subscription: Subscription | None) -> tuple[str, str | None]:
+        """Return (primary, legacy_fallback) WL username pair.
+
+        Multi-tariff: primary = user_<tg>_<sub.id>_wl (per-subscription, avoids
+        collision when user has multiple active subs).
+        Legacy single-tariff: user_<tg>_wl (one WL per user). Code falls back to
+        legacy on lookup so existing prod accounts keep working.
+
+        Remnawave caps usernames at 36 chars; we reserve 3 for the "_wl" suffix.
+        """
+        base = settings.format_remnawave_username(
+            full_name=user.full_name,
+            username=user.username,
+            telegram_id=user.telegram_id,
+            email=user.email,
+            user_id=user.id,
+        )
+        legacy = f'{base[:33]}_wl'
+        if subscription is not None and getattr(subscription, 'id', None):
+            new_stem = f'{base}_{subscription.id}'[:33]
+            primary = f'{new_stem}_wl'
+            return primary, legacy
+        return legacy, None
+
     async def _ensure_wl_user_synced(
         self,
         api: RemnaWaveAPI,
@@ -593,14 +617,8 @@ class SubscriptionService:
         reset_reason: str | None = None,
     ) -> None:
         try:
-            username = settings.format_remnawave_username(
-                full_name=user.full_name,
-                username=user.username,
-                telegram_id=user.telegram_id,
-                email=user.email,
-                user_id=user.id,
-            )
-            username_wl = f"{username[:33]}_wl"
+            primary_wl, legacy_wl = self._build_wl_username(user, subscription)
+            username_wl = primary_wl
 
             description = settings.format_remnawave_user_description(
                 full_name=user.full_name,
@@ -639,6 +657,26 @@ class SubscriptionService:
             except Exception as lookup_error:
                 logger.error('❌ Ошибка поиска _wl пользователя', username_wl=username_wl, error=lookup_error, exc_info=True)
                 return
+
+            # Legacy fallback: existing accounts created before per-sub WL
+            # naming used user_<tg>_wl (no sub.id). Try the legacy name once
+            # before deciding to create a new account.
+            if not wl_user and legacy_wl and legacy_wl != primary_wl:
+                try:
+                    wl_user = await api.get_user_by_username(legacy_wl)
+                    if wl_user:
+                        logger.info(
+                            '♻️ Found legacy WL user, will reuse',
+                            legacy=legacy_wl,
+                            primary=primary_wl,
+                            wl_uuid=wl_user.uuid,
+                        )
+                        # Keep updates pointing at the legacy account so we
+                        # don't create a duplicate. Future creations (when
+                        # legacy is gone) will use primary_wl.
+                        username_wl = legacy_wl
+                except Exception as legacy_err:
+                    logger.warning('Legacy WL fallback lookup failed', error=legacy_err)
 
             if wl_user:
                 logger.info('♻️ _wl пользователь найден, обновляем', username_wl=username_wl, wl_uuid=wl_user.uuid)
@@ -870,17 +908,12 @@ class SubscriptionService:
             if not user or not user.remnawave_uuid:
                 return False
 
-            username = settings.format_remnawave_username(
-                full_name=user.full_name,
-                username=user.username,
-                telegram_id=user.telegram_id,
-                email=user.email,
-                user_id=user.id,
-            )
-            username_wl = f"{username[:33]}_wl"
+            primary_wl, legacy_wl = self._build_wl_username(user, subscription)
 
             async with self.get_api_client() as api:
-                remnawave_user = await api.get_user_by_username(username_wl)
+                remnawave_user = await api.get_user_by_username(primary_wl)
+                if not remnawave_user and legacy_wl and legacy_wl != primary_wl:
+                    remnawave_user = await api.get_user_by_username(legacy_wl)
                 if not remnawave_user:
                     return False
 

@@ -713,6 +713,33 @@ class UserService:
                                     error=e,
                                     subscription_id=sub.id,
                                 )
+
+                        # Per-sub WL deactivation (multi-tariff path)
+                        try:
+                            primary_wl, legacy_wl = subscription_service._build_wl_username(user, sub)
+                            from app.services.remnawave_service import RemnaWaveService as _RemnaWaveService
+
+                            _rw_service = _RemnaWaveService()
+                            async with _rw_service.get_api_client() as _api:
+                                wl_user = await _api.get_user_by_username(primary_wl)
+                                tried_username = primary_wl
+                                if not wl_user and legacy_wl and legacy_wl != primary_wl:
+                                    wl_user = await _api.get_user_by_username(legacy_wl)
+                                    if wl_user:
+                                        tried_username = legacy_wl
+                                if wl_user:
+                                    await subscription_service.disable_remnawave_user(wl_user.uuid)
+                                    logger.info(
+                                        '✅ _wl аккаунт деактивирован при блокировке',
+                                        username=tried_username,
+                                        subscription_id=sub.id,
+                                    )
+                        except Exception as _wl_e:
+                            logger.warning(
+                                '⚠️ Не удалось деактивировать _wl аккаунт при блокировке',
+                                error=_wl_e,
+                                subscription_id=sub.id,
+                            )
                 elif user.remnawave_uuid:
                     try:
                         await subscription_service.disable_remnawave_user(user.remnawave_uuid)
@@ -721,14 +748,8 @@ class UserService:
                             remnawave_uuid=user.remnawave_uuid,
                         )
 
-                        # Деактивируем _wl аккаунт при блокировке
-                        _wl_username = settings.format_remnawave_username(
-                            full_name=user.full_name,
-                            username=user.username,
-                            telegram_id=user.telegram_id,
-                            email=user.email,
-                            user_id=user.id,
-                        ) + '_wl'
+                        # Single-tariff legacy WL deactivation
+                        _wl_username, _ = subscription_service._build_wl_username(user, None)
                         try:
                             from app.services.remnawave_service import RemnaWaveService as _RemnaWaveService
 

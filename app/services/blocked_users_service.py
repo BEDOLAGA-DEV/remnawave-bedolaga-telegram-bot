@@ -426,6 +426,37 @@ class BlockedUsersService:
                     uuids_to_delete = user_result.remnawave_uuids or (
                         [user_result.remnawave_uuid] if user_result.remnawave_uuid else []
                     )
+
+                    # Load DB user + subs once for WL username derivation.
+                    # The previous code used user_result.username which is the
+                    # Telegram @handle (e.g. "whorade"), not the Remnawave
+                    # account name — search never matched.
+                    db_user = None
+                    sub_by_uuid: dict[str, object] = {}
+                    try:
+                        from sqlalchemy import select as _select
+                        from app.database.models import Subscription as _Sub
+                        from app.database.models import User as _User
+
+                        _u_res = await db.execute(_select(_User).where(_User.id == user_result.user_id))
+                        db_user = _u_res.scalar_one_or_none()
+                        _s_res = await db.execute(
+                            _select(_Sub).where(_Sub.user_id == user_result.user_id)
+                        )
+                        for _s in _s_res.scalars().all():
+                            if _s.remnawave_uuid:
+                                sub_by_uuid[_s.remnawave_uuid] = _s
+                    except Exception as _db_err:
+                        logger.warning(
+                            '⚠️ Не удалось загрузить user/subs для WL deletion',
+                            user_id=user_result.user_id,
+                            error=_db_err,
+                        )
+
+                    from app.services.subscription_service import SubscriptionService as _SubService
+
+                    _sub_service = _SubService()
+
                     for rw_uuid in uuids_to_delete:
                         success = await self.delete_user_from_remnawave(rw_uuid)
                         if success:
@@ -435,14 +466,21 @@ class BlockedUsersService:
                                 f'Ошибка удаления {user_result.telegram_id} (uuid={rw_uuid}) из Remnawave'
                             )
 
-                        # Удаляем _wl аккаунт
+                        # Удаляем _wl аккаунт (per-sub primary + legacy fallback)
                         try:
-                            if self.remnawave_service.is_configured:
+                            if self.remnawave_service.is_configured and db_user is not None:
+                                matching_sub = sub_by_uuid.get(rw_uuid)
+                                primary_wl, legacy_wl = _sub_service._build_wl_username(db_user, matching_sub)
                                 async with self.remnawave_service.get_api_client() as _api:
-                                    wl_user = await _api.get_user_by_username(f'{user_result.username}_wl')
+                                    wl_user = await _api.get_user_by_username(primary_wl)
+                                    tried = primary_wl
+                                    if not wl_user and legacy_wl and legacy_wl != primary_wl:
+                                        wl_user = await _api.get_user_by_username(legacy_wl)
+                                        if wl_user:
+                                            tried = legacy_wl
                                     if wl_user:
                                         await _api.delete_user(wl_user.uuid)
-                                        logger.info('✅ _wl аккаунт удален при очистке', username=f'{user_result.username}_wl')
+                                        logger.info('✅ _wl аккаунт удален при очистке', username=tried)
                         except Exception as _wl_e:
                             logger.warning('⚠️ Не удалось удалить _wl аккаунт при очистке', error=_wl_e)
 
