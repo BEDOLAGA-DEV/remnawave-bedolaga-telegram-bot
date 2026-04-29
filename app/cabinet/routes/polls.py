@@ -144,7 +144,7 @@ async def get_available_polls(
             selectinload(PollResponse.poll).selectinload(Poll.questions),
             selectinload(PollResponse.answers),
         )
-        .order_by(PollResponse.created_at.desc())
+        .order_by(PollResponse.sent_at.desc())
     )
     responses = result.scalars().all()
 
