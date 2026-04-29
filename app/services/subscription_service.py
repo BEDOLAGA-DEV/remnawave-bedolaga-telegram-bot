@@ -322,8 +322,11 @@ class SubscriptionService:
             email=user.email,
             user_id=user.id,
         )
-        # Use permanent short_id from subscription (generated at creation time)
-        username = f'{base_username}_{subscription.remnawave_short_id}'
+        # Use subscription.id as suffix — short, readable, mirrors WL naming
+        # (user_<tg>_<sub.id> + _wl). Legacy accounts may still have the
+        # remnawave_short_id hex suffix; they're tracked via remnawave_uuid
+        # so existing panel records stay linked.
+        username = f'{base_username}_{subscription.id}'
 
         updated_user = await api.create_user(username=username, **common_kwargs)
         if reset_traffic:

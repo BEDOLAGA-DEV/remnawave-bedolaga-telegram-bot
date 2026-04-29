@@ -2277,9 +2277,9 @@ class RemnaWaveService:
                                     email=user.email,
                                     user_id=user.id,
                                 )
-                                # Append permanent short_id suffix in multi-tariff mode
-                                if settings.is_multi_tariff_enabled() and sub.remnawave_short_id:
-                                    username = f'{username}_{sub.remnawave_short_id}'
+                                # Append sub.id suffix in multi-tariff mode (mirrors WL naming)
+                                if settings.is_multi_tariff_enabled() and sub.id:
+                                    username = f'{username}_{sub.id}'
 
                                 create_kwargs = dict(
                                     username=username,
@@ -2318,8 +2318,15 @@ class RemnaWaveService:
                                     existing_users = await api.get_user_by_telegram_id(user.telegram_id)
                                     if existing_users:
                                         if settings.is_multi_tariff_enabled():
+                                            # Try primary suffix (sub.id) first; fall back to
+                                            # legacy hex remnawave_short_id for accounts created
+                                            # before the rename.
+                                            candidate_suffixes = []
+                                            if sub.id:
+                                                candidate_suffixes.append(f'_{sub.id}')
                                             if sub.remnawave_short_id:
-                                                _suffix = f'_{sub.remnawave_short_id}'
+                                                candidate_suffixes.append(f'_{sub.remnawave_short_id}')
+                                            for _suffix in candidate_suffixes:
                                                 _matched = next(
                                                     (
                                                         eu
@@ -2330,7 +2337,8 @@ class RemnaWaveService:
                                                 )
                                                 if _matched:
                                                     panel_uuid = _matched.uuid
-                                            # else: no short_id — can't match safely, skip
+                                                    break
+                                            # else: no candidates — can't match safely, skip
                                         else:
                                             panel_uuid = existing_users[0].uuid
                                         if panel_uuid:

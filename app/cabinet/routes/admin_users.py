@@ -370,9 +370,9 @@ async def _sync_subscription_to_panel(
                 if ext_squad_uuid is not None:
                     create_kwargs['external_squad_uuid'] = ext_squad_uuid
 
-                # Multi-tariff: use subscription-specific username
-                if settings.is_multi_tariff_enabled() and subscription.remnawave_short_id:
-                    create_kwargs['username'] = f'{username}_{subscription.remnawave_short_id}'
+                # Multi-tariff: use subscription-specific username (sub.id)
+                if settings.is_multi_tariff_enabled() and subscription.id:
+                    create_kwargs['username'] = f'{username}_{subscription.id}'
 
                 new_panel_user = await api.create_user(**create_kwargs)
                 subscription.remnawave_uuid = new_panel_user.uuid
@@ -3271,9 +3271,9 @@ async def sync_user_to_panel(
                 if ext_squad_uuid is not None:
                     create_kwargs['external_squad_uuid'] = ext_squad_uuid
 
-                # Multi-tariff: subscription-specific username
-                if settings.is_multi_tariff_enabled() and getattr(sub, 'remnawave_short_id', None):
-                    create_kwargs['username'] = f'{username}_{sub.remnawave_short_id}'
+                # Multi-tariff: subscription-specific username (sub.id)
+                if settings.is_multi_tariff_enabled() and getattr(sub, 'id', None):
+                    create_kwargs['username'] = f'{username}_{sub.id}'
 
                 new_panel_user = await api.create_user(**create_kwargs)
                 panel_uuid = new_panel_user.uuid
