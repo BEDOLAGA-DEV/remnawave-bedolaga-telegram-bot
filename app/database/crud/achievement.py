@@ -200,6 +200,12 @@ async def _get_user_stat(db: AsyncSession, user: User, condition_type: str) -> i
         )
         return abs(int(result.scalar() or 0))
 
+    elif condition_type == 'registered':
+        # 1 if user account exists. Pure registration achievement — no
+        # deposit gate, no time delay. Use sparingly; pairs well with
+        # tiny non-cash rewards.
+        return 1 if user.created_at else 0
+
     elif condition_type == 'days_active':
         # Anti-farm: gate by first completed deposit. Idle never-paying account
         # would otherwise unlock "Старожил" after 365 days for free.

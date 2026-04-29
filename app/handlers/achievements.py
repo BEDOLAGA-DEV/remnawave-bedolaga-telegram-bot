@@ -22,6 +22,7 @@ logger = structlog.get_logger(__name__)
 CONDITION_LABELS = {
     'total_spent_kopeks': 'Сумма пополнений',
     'days_active': 'Дней с подпиской',
+    'registered': 'Регистрация',
     'referral_count': 'Пригласить друзей',
     'traffic_gb': 'Использовать трафика (ГБ)',
     'topup_count': 'Пополнений баланса',
