@@ -261,12 +261,19 @@ async def _get_user_stat(db: AsyncSession, user: User, condition_type: str) -> i
         return int(total_used)
 
     elif condition_type == 'topup_count':
+        # Anti-abuse: only count deposits >= ACHIEVEMENT_MIN_TOPUP_KOPEKS.
+        # Without filter, user could spam 1₽ topups to farm "N deposits"
+        # milestones (each milestone triggers reward payout).
+        from app.config import settings as _settings
+
+        min_kopeks = _settings.ACHIEVEMENT_MIN_TOPUP_KOPEKS
         result = await db.execute(
             select(func.count(Transaction.id)).where(
                 and_(
                     Transaction.user_id == user.id,
                     Transaction.type == TransactionType.DEPOSIT.value,
                     Transaction.is_completed.is_(True),
+                    Transaction.amount_kopeks >= min_kopeks,
                 )
             )
         )

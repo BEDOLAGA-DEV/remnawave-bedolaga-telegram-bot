@@ -294,6 +294,11 @@ class Settings(BaseSettings):
     # Для обратной совместимости со старыми конфигами
     REFERRAL_CONTESTS_ENABLED: bool = False
 
+    # Anti-abuse: minimum topup amount counted toward achievement
+    # 'topup_count' condition. Prevents farming "X deposits made"
+    # achievements via 1-ruble micro-topups. Default 100₽.
+    ACHIEVEMENT_MIN_TOPUP_KOPEKS: int = 10000
+
     # Отзывы за бонус
     REVIEW_ENABLED: bool = True
     REVIEW_BONUS_KOPEKS: int = 5000
