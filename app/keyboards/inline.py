@@ -922,7 +922,7 @@ def get_happ_cryptolink_keyboard(
                 InlineKeyboardButton(
                     text=texts.t('HAPP_LINK_NOT_WORKING_BUTTON', '🔧 Ссылка не работает'),
                     callback_data='nz!_happ_link_not_working',
-                    style='secondary',
+                    style='primary',
                 )
             ]
         )
