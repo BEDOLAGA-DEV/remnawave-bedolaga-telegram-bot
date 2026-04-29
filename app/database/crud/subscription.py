@@ -179,7 +179,10 @@ async def create_trial_subscription(
         except Exception as error:
             logger.error('Не удалось получить сквад для триальной подписки пользователя', user_id=user_id, error=error)
 
-    end_date = datetime.now(UTC) + timedelta(days=duration_days)
+    # Single now() reference — start_date and end_date must share base
+    # to avoid ms skew that turns (end - start).days into duration_days - 1.
+    activation_time = datetime.now(UTC)
+    end_date = activation_time + timedelta(days=duration_days)
 
     # Check for existing PENDING trial subscription (retry after failed payment)
     # In multi-tariff mode, only reuse a subscription for the SAME tariff to avoid
@@ -195,7 +198,7 @@ async def create_trial_subscription(
 
     if existing and existing.is_trial and existing.status == SubscriptionStatus.PENDING.value:
         existing.status = SubscriptionStatus.ACTIVE.value
-        existing.start_date = datetime.now(UTC)
+        existing.start_date = activation_time
         existing.end_date = end_date
         existing.traffic_limit_gb = traffic_limit_gb
         existing.device_limit = device_limit
@@ -216,7 +219,7 @@ async def create_trial_subscription(
         user_id=user_id,
         status=SubscriptionStatus.ACTIVE.value,
         is_trial=True,
-        start_date=datetime.now(UTC),
+        start_date=activation_time,
         end_date=end_date,
         traffic_limit_gb=traffic_limit_gb,
         device_limit=device_limit,
@@ -279,7 +282,10 @@ async def create_paid_subscription(
     commit: bool = True,
     wl_traffic_limit_gb: int | None = None,
 ) -> Subscription:
-    end_date = datetime.now(UTC) + timedelta(days=duration_days)
+    # Single now() reference — start_date and end_date must share base
+    # to avoid ms skew that turns (end - start).days into duration_days - 1.
+    activation_time = datetime.now(UTC)
+    end_date = activation_time + timedelta(days=duration_days)
 
     if device_limit is None:
         device_limit = settings.DEFAULT_DEVICE_LIMIT
@@ -307,7 +313,7 @@ async def create_paid_subscription(
         user_id=user_id,
         status=SubscriptionStatus.ACTIVE.value,
         is_trial=is_trial,
-        start_date=datetime.now(UTC),
+        start_date=activation_time,
         end_date=end_date,
         traffic_limit_gb=traffic_limit_gb,
         device_limit=device_limit,

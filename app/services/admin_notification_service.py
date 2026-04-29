@@ -328,7 +328,7 @@ class AdminNotificationService:
                     # Audit log gets actual sub fields, not stale globals —
                     # see the message-builder block below for the same fix.
                     'trial_duration_days': (
-                        (subscription.end_date - subscription.start_date).days
+                        int(round((subscription.end_date - subscription.start_date).total_seconds() / 86400))
                         if subscription.start_date and subscription.end_date
                         else settings.TRIAL_DURATION_DAYS
                     ),
@@ -396,8 +396,12 @@ class AdminNotificationService:
             actual_period_days = settings.TRIAL_DURATION_DAYS
             if subscription.start_date and subscription.end_date:
                 delta = subscription.end_date - subscription.start_date
-                if delta.days > 0:
-                    actual_period_days = delta.days
+                # round, not floor: end_date and start_date may be set with
+                # separate now() calls a few ms apart, making delta = N days
+                # minus ~ms which floors to N-1.
+                rounded_days = int(round(delta.total_seconds() / 86400))
+                if rounded_days > 0:
+                    actual_period_days = rounded_days
 
             actual_traffic_gb = subscription.traffic_limit_gb
             if actual_traffic_gb is None:
