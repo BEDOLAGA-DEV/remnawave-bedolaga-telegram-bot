@@ -420,6 +420,51 @@ async def _get_user_stat(db: AsyncSession, user: User, condition_type: str) -> i
     return 0
 
 
+async def _compute_topup_window_payout(
+    db: AsyncSession,
+    user: User,
+    template: AchievementTemplate,
+    min_topup_kopeks: int,
+) -> int:
+    """Variant D: reward = (reward_value %) × sum(deposits ≥ min) in window
+    since previous level unlock (or user.created_at for level 1 / standalone)."""
+    window_start = user.created_at
+    group = getattr(template, 'group_name', None)
+    level = getattr(template, 'level', 1)
+    if group and level > 1:
+        prev_result = await db.execute(
+            select(UserAchievement.unlocked_at)
+            .join(AchievementTemplate, AchievementTemplate.id == UserAchievement.template_id)
+            .where(
+                and_(
+                    UserAchievement.user_id == user.id,
+                    AchievementTemplate.group_name == group,
+                    AchievementTemplate.level == level - 1,
+                )
+            )
+            .order_by(UserAchievement.unlocked_at.desc())
+            .limit(1)
+        )
+        prev_time = prev_result.scalar_one_or_none()
+        if prev_time:
+            window_start = prev_time
+
+    sum_result = await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount_kopeks), 0)).where(
+            and_(
+                Transaction.user_id == user.id,
+                Transaction.type == TransactionType.DEPOSIT.value,
+                Transaction.is_completed.is_(True),
+                Transaction.amount_kopeks >= min_topup_kopeks,
+                Transaction.created_at >= window_start,
+            )
+        )
+    )
+    sum_kopeks = int(sum_result.scalar() or 0)
+    percent = max(0, template.reward_value or 0)
+    return int(sum_kopeks * percent / 100)
+
+
 async def check_and_unlock_all(
     db: AsyncSession,
     user_id: int,
@@ -503,6 +548,9 @@ async def check_and_unlock_all(
         # Unlock
         await unlock_achievement(db, user_id, template.id)
 
+        # Per-template dynamic payout (variant D). 0 means no dynamic reward.
+        dynamic_payout_kopeks = 0
+
         # Apply reward
         if template.reward_type == 'balance_kopeks' and template.reward_value > 0:
             user.balance_kopeks += template.reward_value
@@ -514,6 +562,25 @@ async def check_and_unlock_all(
                 description=f'\U0001f3c6 \u041d\u0430\u0433\u0440\u0430\u0434\u0430: {template.name}',
                 commit=False,
             )
+        elif template.reward_type == 'topup_window_sum_percent' and template.reward_value > 0:
+            # Variant D: % of sum of qualifying deposits since prev level unlock
+            payout = await _compute_topup_window_payout(
+                db, user, template, settings.ACHIEVEMENT_MIN_TOPUP_KOPEKS
+            )
+            if payout > 0:
+                user.balance_kopeks += payout
+                await create_transaction(
+                    db,
+                    user_id=user_id,
+                    type=TransactionType.DEPOSIT,
+                    amount_kopeks=payout,
+                    description=(
+                        f'\U0001f3c6 \u041d\u0430\u0433\u0440\u0430\u0434\u0430: {template.name} '
+                        f'({template.reward_value}% \u043e\u0442 \u043f\u043e\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0439)'
+                    ),
+                    commit=False,
+                )
+                dynamic_payout_kopeks = payout
         elif template.reward_type == 'subscription_days' and template.reward_value > 0:
             sub_result = await db.execute(
                 select(Subscription).where(
@@ -574,6 +641,11 @@ async def check_and_unlock_all(
                     reward_text = f'\n\U0001f381 \u041d\u0430\u0433\u0440\u0430\u0434\u0430: +{template.reward_value} \u0413\u0411 \u0442\u0440\u0430\u0444\u0438\u043a\u0430'
                 elif template.reward_type == 'wl_traffic_gb' and template.reward_value > 0:
                     reward_text = f'\n\U0001f381 \u041d\u0430\u0433\u0440\u0430\u0434\u0430: +{template.reward_value} \u0413\u0411 WL-\u0442\u0440\u0430\u0444\u0438\u043a\u0430'
+                elif template.reward_type == 'topup_window_sum_percent' and dynamic_payout_kopeks > 0:
+                    reward_text = (
+                        f'\n\U0001f381 \u041d\u0430\u0433\u0440\u0430\u0434\u0430: {dynamic_payout_kopeks / 100:.0f} \u20bd '
+                        f'\u043d\u0430 \u0431\u0430\u043b\u0430\u043d\u0441 ({template.reward_value}% \u043e\u0442 \u043f\u043e\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0439)'
+                    )
 
                 desc = template.description or ''
                 desc_line = f'\n{desc}\n' if desc else '\n'

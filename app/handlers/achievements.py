@@ -20,12 +20,20 @@ from app.utils.decorators import error_handler
 logger = structlog.get_logger(__name__)
 
 CONDITION_LABELS = {
-    'total_spent_kopeks': 'Потратить на подписки',
+    'total_spent_kopeks': 'Сумма пополнений',
     'days_active': 'Дней с подпиской',
     'referral_count': 'Пригласить друзей',
     'traffic_gb': 'Использовать трафика (ГБ)',
     'topup_count': 'Пополнений баланса',
     'review_left': 'Оставить отзыв',
+    'first_paid_subscription': 'Первая платная подписка',
+    'autopay_enabled': 'Включить автоплатёж',
+    'single_topup_max_kopeks': 'Макс. одиночный платёж',
+    'promocode_used_count': 'Использовать промокодов',
+    'poll_completed_count': 'Пройти опросов',
+    'referral_revenue_kopeks': 'Доход с рефералов',
+    'tickets_resolved_count': 'Решённых тикетов',
+    'subscription_period_days': 'Макс. период подписки (дни)',
 }
 
 REWARD_LABELS = {
@@ -33,6 +41,7 @@ REWARD_LABELS = {
     'traffic_gb': 'Бонус трафика',
     'wl_traffic_gb': 'Бонус WL-трафика',
     'subscription_days': 'Дни подписки',
+    'topup_window_sum_percent': '% от пополнений с прошлого уровня',
     'none': 'Без награды',
 }
 
