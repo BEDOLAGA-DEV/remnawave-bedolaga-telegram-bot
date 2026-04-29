@@ -586,10 +586,12 @@ class SubscriptionService:
     def _build_wl_username(self, user: User, subscription: Subscription | None) -> tuple[str, str | None]:
         """Return (primary, legacy_fallback) WL username pair.
 
-        Primary = main_username + "_wl" (mirrors the per-sub Remnawave main
-        account: user_<tg>_<short_id> → user_<tg>_<short_id>_wl). The short_id
-        comes from Subscription.remnawave_short_id (same value the main user
-        is created with in _create_or_update_remnawave_user_multi).
+        Primary = user_<tg>_<sub.id>_wl. Uses Subscription.id (integer DB key)
+        for shortest readable WL identifier (e.g. user_543534800_42_wl ~ 22
+        chars). Note this differs from main user format which uses hex
+        remnawave_short_id; the trade-off is shorter WL names at the cost
+        of not directly mirroring main_username.
+
         Legacy fallback: user_<tg>_wl (pre-multi-tariff format, one WL per
         user). Lookup tries primary first, falls back to legacy so existing
         prod accounts created before this change keep working.
@@ -605,9 +607,9 @@ class SubscriptionService:
             user_id=user.id,
         )
         legacy = f'{base[:33]}_wl'
-        short_id = getattr(subscription, 'remnawave_short_id', None) if subscription else None
-        if short_id:
-            new_stem = f'{base}_{short_id}'[:33]
+        sub_id = getattr(subscription, 'id', None) if subscription else None
+        if sub_id:
+            new_stem = f'{base}_{sub_id}'[:33]
             primary = f'{new_stem}_wl'
             return primary, legacy
         return legacy, None
