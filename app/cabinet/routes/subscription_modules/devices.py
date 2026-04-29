@@ -871,6 +871,7 @@ async def get_devices(
                 hwid = device.get('hwid') or device.get('deviceId') or device.get('id')
                 platform = device.get('platform') or device.get('platformType') or 'Unknown'
                 model = device.get('deviceModel') or device.get('model') or device.get('name') or 'Unknown'
+                user_agent = device.get('userAgent') or ''
                 created_at = device.get('updatedAt') or device.get('lastSeen') or device.get('createdAt')
 
                 formatted_devices.append(
@@ -878,6 +879,7 @@ async def get_devices(
                         'hwid': hwid,
                         'platform': platform,
                         'device_model': model,
+                        'user_agent': user_agent,
                         'created_at': created_at,
                     }
                 )
