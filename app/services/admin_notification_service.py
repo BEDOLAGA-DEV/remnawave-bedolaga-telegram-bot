@@ -67,6 +67,12 @@ class AdminNotificationService:
             NotificationCategory.TICKETS: self.ticket_topic_id,
         }
 
+        # Per-category enabled flags (default True — backwards compatible)
+        self.category_enabled: dict[NotificationCategory, bool] = {}
+        for cat in NotificationCategory:
+            key = f'ADMIN_NOTIFICATIONS_{cat.value.upper()}_ENABLED'
+            self.category_enabled[cat] = getattr(settings, key, True)
+
     async def _get_referrer_info(self, db: AsyncSession, referred_by_id: int | None) -> str:
         if not referred_by_id:
             return 'Нет'
@@ -1264,6 +1270,11 @@ class AdminNotificationService:
     ) -> bool:
         if not self.chat_id:
             logger.warning('ADMIN_NOTIFICATIONS_CHAT_ID не настроен')
+            return False
+
+        # Per-category suppression
+        if category and not self.category_enabled.get(category, True):
+            logger.debug('Уведомление подавлено (категория отключена)', category=category.value)
             return False
 
         try:
