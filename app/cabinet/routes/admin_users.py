@@ -1792,21 +1792,22 @@ async def block_user(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Block a user — sets DB status AND disables panel user in RemnaWave."""
-    from app.database.crud.user import get_user_by_id
-
-    user = await get_user_by_id(db, user_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
-
     from app.services.user_service import UserService
 
     user_service = UserService()
-    await user_service.block_user(db, user, reason=reason)
+    success = await user_service.block_user(
+        db,
+        user_id,
+        admin.id,
+        reason=reason or 'Заблокирован администратором',
+    )
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found or block failed')
 
     return UpdateUserStatusResponse(
         success=True,
-        user_id=user_id,
-        status=UserStatusEnum.BLOCKED,
+        old_status='active',
+        new_status='blocked',
         message='User blocked',
     )
 
@@ -1817,9 +1818,20 @@ async def unblock_user(
     admin: User = Depends(require_permission('users:block')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Unblock a user (shortcut for status update)."""
-    request = UpdateUserStatusRequest(status=UserStatusEnum.ACTIVE)
-    return await update_user_status(user_id, request, admin, db)
+    """Unblock a user — sets DB status AND re-enables panel user in RemnaWave."""
+    from app.services.user_service import UserService
+
+    user_service = UserService()
+    success = await user_service.unblock_user(db, user_id, admin.id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found or unblock failed')
+
+    return UpdateUserStatusResponse(
+        success=True,
+        old_status='blocked',
+        new_status='active',
+        message='User unblocked',
+    )
 
 
 # === Restrictions Management ===
