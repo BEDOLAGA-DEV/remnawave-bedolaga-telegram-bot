@@ -1487,6 +1487,7 @@ async def confirm_tariff_purchase(
                     device_limit=tariff.device_limit,
                     connected_squads=squads,
                     tariff_id=tariff.id,
+                    wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
                 )
         elif existing_subscription:
             # Legacy single-subscription: extend or switch
