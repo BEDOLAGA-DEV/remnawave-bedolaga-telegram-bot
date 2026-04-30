@@ -250,9 +250,10 @@ async def confirm_change_devices(
 ):
     texts = get_texts(db_user.language)
     try:
-        new_devices_count = int(callback.data.split('_')[2])
+        # callback: nz!_change_devices_<n> → split('_') → 4 parts, num last
+        new_devices_count = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer(texts.t('INVALID_REQUEST', 'Invalid request'), show_alert=True)
+        await callback.answer(texts.t('DEVICES_INVALID_REQUEST', '❌ Некорректный запрос'), show_alert=True)
         return
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
@@ -495,9 +496,10 @@ async def execute_change_devices(
     callback_parts = callback.data.split('_')
     texts = get_texts(db_user.language)
     try:
-        new_devices_count = int(callback_parts[3])
+        # callback: nz!_confirm_change_devices_<n> → split('_') → 5 parts, num last
+        new_devices_count = int(callback_parts[-1])
     except (ValueError, IndexError):
-        await callback.answer(texts.t('INVALID_REQUEST', 'Invalid request'), show_alert=True)
+        await callback.answer(texts.t('DEVICES_INVALID_REQUEST', '❌ Некорректный запрос'), show_alert=True)
         return
 
     db_user = await lock_user_for_pricing(db, db_user.id)
