@@ -1846,14 +1846,27 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
 
     if settings.is_aurapay_enabled():
         aurapay_name = settings.get_aurapay_display_name()
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('PAYMENT_AURAPAY', f'💳 {aurapay_name}'),
-                    callback_data=_build_callback('aurapay'),
+        active_methods = settings.get_aurapay_active_methods()
+        if settings.AURAPAY_INLINE_METHODS:
+            for method in active_methods:
+                title = settings.get_aurapay_method_display_title(method)
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            text=f'{title} ({aurapay_name})',
+                            callback_data=_build_callback(f'aurapay_{method}'),
+                        )
+                    ]
                 )
-            ]
-        )
+        else:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('PAYMENT_AURAPAY', f'💳 {aurapay_name}'),
+                        callback_data=_build_callback('aurapay'),
+                    )
+                ]
+            )
         has_direct_payment_methods = True
 
     if settings.is_support_topup_enabled():

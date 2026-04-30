@@ -170,10 +170,12 @@ async def route_payment_by_method(
             await process_overpay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
-    if payment_method == 'aurapay':
+    if payment_method in ('aurapay', 'aurapay_card', 'aurapay_sbp'):
         from .aurapay import process_aurapay_payment_amount
 
         async with AsyncSessionLocal() as db:
+            if payment_method.startswith('aurapay_'):
+                await state.update_data(payment_method='aurapay', aurapay_method=payment_method.removeprefix('aurapay_'))
             await process_aurapay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
@@ -768,9 +770,11 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.callback_query.register(start_overpay_topup, F.data == 'topup_overpay')
 
-    from .aurapay import start_aurapay_topup
+    from .aurapay import handle_aurapay_method_selection, start_aurapay_topup
 
     dp.callback_query.register(start_aurapay_topup, F.data == 'topup_aurapay')
+    dp.callback_query.register(start_aurapay_topup, F.data.in_({'topup_aurapay_card', 'topup_aurapay_sbp'}))
+    dp.callback_query.register(handle_aurapay_method_selection, F.data.startswith('aurapay_method_'))
 
     from .mulenpay import check_mulenpay_payment_status
 

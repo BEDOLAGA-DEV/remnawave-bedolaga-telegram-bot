@@ -185,8 +185,8 @@ def _get_method_defaults() -> dict:
             'default_min': settings.AURAPAY_MIN_AMOUNT_KOPEKS,
             'default_max': settings.AURAPAY_MAX_AMOUNT_KOPEKS,
             'available_sub_options': [
-                {'id': 'card', 'name': 'Карта'},
-                {'id': 'sbp', 'name': 'СБП'},
+                {'id': method, 'name': settings.get_aurapay_method_display_name(method)}
+                for method in settings.get_aurapay_active_methods()
             ],
         },
     }

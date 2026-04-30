@@ -20,6 +20,10 @@ from app.utils.decorators import error_handler
 logger = structlog.get_logger(__name__)
 
 
+def _get_active_methods() -> list[str]:
+    return settings.get_aurapay_active_methods()
+
+
 def _check_topup_restriction(db_user: User, texts) -> InlineKeyboardMarkup | None:
     """Проверяет ограничение на пополнение. Возвращает клавиатуру если ограничен, иначе None."""
     if not getattr(db_user, 'restriction_topup', False):
@@ -38,6 +42,7 @@ async def _create_aurapay_payment_and_respond(
     db_user: User,
     db: AsyncSession,
     amount_kopeks: int,
+    payment_method_type: str | None = None,
     edit_message: bool = False,
 ):
     """
@@ -61,6 +66,7 @@ async def _create_aurapay_payment_and_respond(
         description=description,
         email=getattr(db_user, 'email', None),
         language=db_user.language,
+        payment_method_type=payment_method_type,
     )
 
     if not result:
@@ -83,6 +89,8 @@ async def _create_aurapay_payment_and_respond(
 
     payment_url = result.get('payment_url')
     display_name = settings.get_aurapay_display_name()
+    method_name = settings.get_aurapay_method_display_name(payment_method_type) if payment_method_type else ''
+    title = f'{display_name} ({method_name})' if method_name else display_name
 
     # Create keyboard with payment button
     keyboard = InlineKeyboardMarkup(
@@ -111,7 +119,7 @@ async def _create_aurapay_payment_and_respond(
         'Сумма: <b>{amount}\u20bd</b>\n\n'
         'Нажмите кнопку ниже для оплаты.\n'
         'После успешной оплаты баланс будет пополнен автоматически.',
-    ).format(name=display_name, amount=f'{amount_rub:.2f}')
+    ).format(name=title, amount=f'{amount_rub:.2f}')
 
     if edit_message:
         await message_or_callback.edit_text(
@@ -179,6 +187,8 @@ async def process_aurapay_payment_amount(
         )
         return
 
+    data = await state.get_data()
+    payment_method_type = str(data.get('aurapay_method') or '').lower() or None
     await state.clear()
 
     await _create_aurapay_payment_and_respond(
@@ -186,6 +196,7 @@ async def process_aurapay_payment_amount(
         db_user=db_user,
         db=db,
         amount_kopeks=amount_kopeks,
+        payment_method_type=payment_method_type,
         edit_message=False,
     )
 
@@ -212,12 +223,54 @@ async def start_aurapay_topup(
         )
         return
 
+    callback_data = callback.data or ''
+    active_methods = _get_active_methods()
+    selected_method = ''
+    if callback_data.startswith('topup_aurapay_'):
+        selected_method = callback_data.removeprefix('topup_aurapay_').lower()
+    if not selected_method:
+        data = await state.get_data()
+        selected_method = str(data.get('aurapay_method') or '').lower()
+
+    if selected_method and selected_method not in active_methods:
+        await callback.answer('⚠️ Этот способ сейчас недоступен', show_alert=True)
+        return
+
+    if not selected_method and len(active_methods) == 1:
+        selected_method = active_methods[0]
+
+    if not selected_method:
+        method_buttons: list[list[InlineKeyboardButton]] = []
+        for method in active_methods:
+            method_buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=settings.get_aurapay_method_display_title(method),
+                        callback_data=f'aurapay_method_{method}',
+                    )
+                ]
+            )
+        method_buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')])
+
+        await state.update_data(payment_method='aurapay')
+        await callback.message.edit_text(
+            texts.t(
+                'AURAPAY_SELECT_PAYMENT_METHOD',
+                'Выберите способ оплаты AuraPay:',
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=method_buttons),
+        )
+        await callback.answer()
+        return
+
     await state.set_state(BalanceStates.waiting_for_amount)
-    await state.update_data(payment_method='aurapay')
+    await state.update_data(payment_method='aurapay', aurapay_method=selected_method)
 
     min_amount = settings.AURAPAY_MIN_AMOUNT_KOPEKS // 100
     max_amount = settings.AURAPAY_MAX_AMOUNT_KOPEKS // 100
     display_name = settings.get_aurapay_display_name()
+    method_name = settings.get_aurapay_method_display_name(selected_method)
+    title = f'{display_name} ({method_name})'
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -238,10 +291,26 @@ async def start_aurapay_topup(
             'Минимум: {min_amount}\u20bd\n'
             'Максимум: {max_amount}\u20bd',
         ).format(
-            name=display_name,
+            name=title,
             min_amount=min_amount,
             max_amount=f'{max_amount:,}'.replace(',', ' '),
         ),
         parse_mode='HTML',
         reply_markup=keyboard,
     )
+
+
+@error_handler
+async def handle_aurapay_method_selection(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    selected_method = (callback.data or '').removeprefix('aurapay_method_').lower()
+    if selected_method not in _get_active_methods():
+        await callback.answer('⚠️ Этот способ сейчас недоступен', show_alert=True)
+        return
+
+    await state.update_data(payment_method='aurapay', aurapay_method=selected_method)
+    await start_aurapay_topup(callback, db_user, db, state)

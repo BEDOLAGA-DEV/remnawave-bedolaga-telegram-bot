@@ -668,6 +668,8 @@ class Settings(BaseSettings):
     AURAPAY_WEBHOOK_PATH: str = '/aurapay-webhook'
     AURAPAY_RETURN_URL: str | None = None
     AURAPAY_PAYMENT_LIFETIME_MINUTES: int = 60
+    AURAPAY_ACTIVE_METHODS: str = 'sbp,card'
+    AURAPAY_INLINE_METHODS: bool = True
 
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
@@ -2076,6 +2078,47 @@ class Settings(BaseSettings):
 
     def get_aurapay_display_name_html(self) -> str:
         return html.escape(self.get_aurapay_display_name())
+
+    def get_aurapay_active_methods(self) -> list[str]:
+        raw_value = str(self.AURAPAY_ACTIVE_METHODS or '')
+        normalized = raw_value.replace(';', ',')
+        methods: list[str] = []
+        seen: set[str] = set()
+        for part in normalized.split(','):
+            method = part.strip().lower()
+            if not method:
+                continue
+            if method in {'card', 'sbp'} and method not in seen:
+                methods.append(method)
+                seen.add(method)
+            else:
+                logger.warning('Некорректный метод AuraPay', method=method)
+
+        if not methods:
+            return ['sbp']
+
+        return methods
+
+    @staticmethod
+    def get_aurapay_method_definitions() -> dict[str, dict[str, str]]:
+        return {
+            'card': {'name': 'Карта', 'title': '💳 Карта'},
+            'sbp': {'name': 'СБП', 'title': '🏦 СБП'},
+        }
+
+    def get_aurapay_method_display_name(self, method: str) -> str:
+        definitions = self.get_aurapay_method_definitions()
+        info = definitions.get(str(method or '').lower())
+        if info and info.get('name'):
+            return info['name']
+        return str(method or '').upper()
+
+    def get_aurapay_method_display_title(self, method: str) -> str:
+        definitions = self.get_aurapay_method_definitions()
+        info = definitions.get(str(method or '').lower())
+        if not info:
+            return self.get_aurapay_method_display_name(method)
+        return info.get('title') or info.get('name') or str(method or '').upper()
 
     def is_kassa_ai_sbp_enabled(self) -> bool:
         return self.KASSA_AI_SBP_ENABLED and self.is_kassa_ai_enabled()

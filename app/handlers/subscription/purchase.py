@@ -773,6 +773,21 @@ def _get_trial_payment_keyboard(language: str, can_pay_from_balance: bool = Fals
         platega_name = settings.get_platega_display_name()
         keyboard.append([types.InlineKeyboardButton(text=f'💳 {platega_name}', callback_data='trial_payment_platega')])
 
+    if settings.is_aurapay_enabled():
+        aurapay_name = settings.get_aurapay_display_name()
+        if settings.AURAPAY_INLINE_METHODS:
+            for method in settings.get_aurapay_active_methods():
+                keyboard.append(
+                    [
+                        types.InlineKeyboardButton(
+                            text=f'{settings.get_aurapay_method_display_title(method)} ({aurapay_name})',
+                            callback_data=f'trial_payment_aurapay_{method}',
+                        )
+                    ]
+                )
+        else:
+            keyboard.append([types.InlineKeyboardButton(text=f'💳 {aurapay_name}', callback_data='trial_payment_aurapay')])
+
     # Кнопка назад
     keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_trial')])
 
@@ -4092,6 +4107,58 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                                 callback_data=f'check_trial_platega_{pending_subscription.id}',
                             )
                         ],
+                        [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
+                    ]
+                ),
+                parse_mode='HTML',
+            )
+
+        elif payment_method in ('aurapay', 'aurapay_sbp', 'aurapay_card'):
+            if not settings.is_aurapay_enabled():
+                await callback.answer('❌ AuraPay не настроен', show_alert=True)
+                return
+
+            payment_method_type = payment_method.removeprefix('aurapay_') if payment_method.startswith('aurapay_') else None
+            if payment_method_type and payment_method_type not in settings.get_aurapay_active_methods():
+                await callback.answer('⚠️ Этот способ AuraPay сейчас недоступен', show_alert=True)
+                return
+
+            payment_result = await payment_service.create_aurapay_payment(
+                db=db,
+                user_id=db_user.id,
+                amount_kopeks=trial_price_kopeks,
+                description=texts.t('PAID_TRIAL_PAYMENT_DESC', 'Пробная подписка на {days} дней').format(
+                    days=trial_duration
+                ),
+                language=db_user.language,
+                payment_method_type=payment_method_type,
+                metadata={
+                    'type': 'trial',
+                    'subscription_id': pending_subscription.id,
+                    'user_id': db_user.id,
+                },
+            )
+
+            if not payment_result or not payment_result.get('payment_url'):
+                await callback.answer('❌ Не удалось создать платёж. Попробуйте позже.', show_alert=True)
+                return
+
+            aurapay_name = settings.get_aurapay_display_name()
+            method_title = (
+                settings.get_aurapay_method_display_name(payment_method_type) if payment_method_type else ''
+            )
+            provider_label = f'{aurapay_name} ({method_title})' if method_title else aurapay_name
+
+            await callback.message.edit_text(
+                texts.t(
+                    'PAID_TRIAL_AURAPAY',
+                    '💳 <b>Оплата через {provider}</b>\n\n'
+                    'Нажмите кнопку ниже для перехода к оплате.\n\n'
+                    '💰 Сумма: {amount}',
+                ).format(provider=provider_label, amount=settings.format_price(trial_price_kopeks)),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text='💳 Оплатить', url=payment_result['payment_url'])],
                         [InlineKeyboardButton(text=texts.BACK, callback_data='trial_activate')],
                     ]
                 ),

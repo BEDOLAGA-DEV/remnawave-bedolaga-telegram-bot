@@ -305,6 +305,23 @@ def _get_simple_subscription_payment_keyboard(language: str) -> types.InlineKeyb
     if settings.is_wata_enabled():
         keyboard.append([types.InlineKeyboardButton(text='💳 WATA', callback_data='simple_subscription_wata')])
 
+    if settings.is_aurapay_enabled():
+        aurapay_name = settings.get_aurapay_display_name()
+        if settings.AURAPAY_INLINE_METHODS:
+            for method in settings.get_aurapay_active_methods():
+                keyboard.append(
+                    [
+                        types.InlineKeyboardButton(
+                            text=f'{settings.get_aurapay_method_display_title(method)} ({aurapay_name})',
+                            callback_data=f'simple_subscription_aurapay_{method}',
+                        )
+                    ]
+                )
+        else:
+            keyboard.append(
+                [types.InlineKeyboardButton(text=f'💳 {aurapay_name}', callback_data='simple_subscription_aurapay')]
+            )
+
     # Кнопка назад
     keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')])
 
@@ -1678,6 +1695,103 @@ async def handle_simple_subscription_payment_method(
                     amount=settings.format_price(price_kopeks),
                     payment_id=payment_link_id,
                     support=settings.get_support_contact_display_html(),
+                ),
+                reply_markup=keyboard,
+                parse_mode='HTML',
+            )
+
+            await state.clear()
+            await callback.answer()
+            return
+
+        elif payment_method in ('aurapay', 'aurapay_sbp', 'aurapay_card'):
+            if not settings.is_aurapay_enabled():
+                await callback.answer('❌ Оплата через AuraPay временно недоступна', show_alert=True)
+                return
+
+            payment_method_type = payment_method.removeprefix('aurapay_') if payment_method.startswith('aurapay_') else None
+            if payment_method_type and payment_method_type not in settings.get_aurapay_active_methods():
+                await callback.answer('⚠️ Этот способ AuraPay сейчас недоступен', show_alert=True)
+                return
+
+            order = await purchase_service.create_subscription_order(
+                db=db,
+                user_id=db_user.id,
+                period_days=subscription_params['period_days'],
+                device_limit=subscription_params['device_limit'],
+                traffic_limit_gb=subscription_params['traffic_limit_gb'],
+                squad_uuid=resolved_squad_uuid,
+                payment_method=payment_method,
+                total_price_kopeks=price_kopeks,
+            )
+            if not order:
+                await callback.answer('❌ Ошибка создания заказа', show_alert=True)
+                return
+
+            payment_service = PaymentService(callback.bot)
+            aurapay_result = await payment_service.create_aurapay_payment(
+                db=db,
+                user_id=db_user.id,
+                amount_kopeks=price_kopeks,
+                description=settings.get_subscription_payment_description(
+                    subscription_params['period_days'],
+                    price_kopeks,
+                ),
+                language=db_user.language,
+                payment_method_type=payment_method_type,
+                metadata={
+                    'user_telegram_id': str(db_user.telegram_id),
+                    'user_username': db_user.username or '',
+                    'order_id': str(order.id),
+                    'subscription_id': str(order.id),
+                    'subscription_period': str(subscription_params['period_days']),
+                    'payment_purpose': 'simple_subscription_purchase',
+                    'type': 'subscription_purchase',
+                },
+            )
+
+            if not aurapay_result or not aurapay_result.get('payment_url'):
+                await callback.answer(
+                    texts.t(
+                        'AURAPAY_PAYMENT_ERROR',
+                        '❌ Ошибка создания платежа AuraPay. Попробуйте позже или обратитесь в поддержку.',
+                    ),
+                    show_alert=True,
+                )
+                return
+
+            aurapay_name = settings.get_aurapay_display_name()
+            method_title = (
+                settings.get_aurapay_method_display_name(payment_method_type) if payment_method_type else ''
+            )
+            provider_label = f'{aurapay_name} ({method_title})' if method_title else aurapay_name
+            local_payment_id = aurapay_result.get('local_payment_id')
+
+            keyboard = types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('AURAPAY_PAY_BUTTON', '💳 Оплатить через {provider}').format(
+                                provider=provider_label
+                            ),
+                            url=aurapay_result['payment_url'],
+                        )
+                    ],
+                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                ]
+            )
+
+            await callback.message.edit_text(
+                texts.t(
+                    'AURAPAY_PAYMENT_INSTRUCTIONS',
+                    '💳 <b>Оплата через {provider}</b>\n\n'
+                    '💰 Сумма: {amount}\n'
+                    '🆔 ID платежа: {payment_id}\n\n'
+                    'Нажмите кнопку ниже для перехода к оплате.',
+                ).format(
+                    provider=provider_label,
+                    amount=settings.format_price(price_kopeks),
+                    payment_id=local_payment_id or aurapay_result.get('order_id') or 'pending',
                 ),
                 reply_markup=keyboard,
                 parse_mode='HTML',

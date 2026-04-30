@@ -38,6 +38,7 @@ class AuraPayPaymentMixin:
         language: str = 'ru',
         payment_method_type: str | None = None,
         return_url: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж AuraPay.
@@ -75,19 +76,21 @@ class AuraPayPaymentMixin:
             user = None
             tg_id = 'guest'
 
-        # Генерируем уникальный order_id с telegram_id для удобного поиска
-        order_id = f'ap{tg_id}_{uuid.uuid4().hex[:6]}'
+        # Генерируем уникальный order_id с telegram_id для удобного поиска в AuraPay.
+        order_id = f'ap{uuid.uuid4().hex[:6]}({tg_id})'
         amount_rubles = amount_kopeks / 100
         currency = settings.AURAPAY_CURRENCY
 
         # Метаданные
-        metadata = {
+        payment_metadata = {
             'user_id': user_id,
             'amount_kopeks': amount_kopeks,
             'description': description,
             'language': language,
             'type': 'balance_topup',
         }
+        if metadata:
+            payment_metadata.update(metadata)
 
         try:
             # Формируем webhook URL
@@ -150,7 +153,7 @@ class AuraPayPaymentMixin:
                 payment_method=payment_method_type,
                 aurapay_invoice_id=aurapay_invoice_id,
                 expires_at=expires_at,
-                metadata_json=metadata,
+                metadata_json=payment_metadata,
             )
 
             logger.info(
@@ -353,6 +356,10 @@ class AuraPayPaymentMixin:
             payment.updated_at = datetime.now(UTC)
 
         balance_already_credited = bool(metadata.get('balance_credited'))
+        payment_purpose = metadata.get('payment_purpose', '')
+        payment_type = metadata.get('type', '')
+        is_simple_subscription = payment_purpose == 'simple_subscription_purchase'
+        is_trial_payment = payment_type == 'trial'
 
         user = await payment_module.get_user_by_id(db, payment.user_id)
         if not user:
@@ -380,7 +387,18 @@ class AuraPayPaymentMixin:
             )
 
         display_name = settings.get_aurapay_display_name()
-        description = f'Пополнение через {display_name}'
+        transaction_type = (
+            TransactionType.SUBSCRIPTION_PAYMENT
+            if is_simple_subscription or is_trial_payment
+            else TransactionType.DEPOSIT
+        )
+        description = (
+            f'Оплата подписки через {display_name}'
+            if is_simple_subscription
+            else f'Оплата пробной подписки через {display_name}'
+            if is_trial_payment
+            else f'Пополнение через {display_name}'
+        )
 
         transaction = existing_transaction
         created_transaction = False
@@ -389,7 +407,7 @@ class AuraPayPaymentMixin:
             transaction = await payment_module.create_transaction(
                 db,
                 user_id=payment.user_id,
-                type=TransactionType.DEPOSIT,
+                type=transaction_type,
                 amount_kopeks=payment.amount_kopeks,
                 description=description,
                 payment_method=PaymentMethod.AURAPAY,
@@ -401,6 +419,163 @@ class AuraPayPaymentMixin:
             created_transaction = True
 
         await aurapay_crud.link_aurapay_payment_to_transaction(db, payment=payment, transaction_id=transaction.id)
+
+        if is_trial_payment:
+            subscription_id = metadata.get('subscription_id')
+            if subscription_id:
+                try:
+                    from app.database.crud.subscription import activate_pending_trial_subscription
+                    from app.services.admin_notification_service import AdminNotificationService
+                    from app.services.subscription_service import SubscriptionService
+
+                    subscription = await activate_pending_trial_subscription(
+                        db=db,
+                        subscription_id=int(subscription_id),
+                        user_id=user.id,
+                    )
+                    if subscription:
+                        subscription_service = SubscriptionService()
+                        try:
+                            await subscription_service.create_remnawave_user(db, subscription)
+                        except Exception as rw_error:
+                            logger.error('AuraPay: ошибка создания RemnaWave для trial', rw_error=rw_error)
+                            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                            remnawave_retry_queue.enqueue(
+                                subscription_id=subscription.id,
+                                user_id=subscription.user_id,
+                                action='create',
+                            )
+
+                        if getattr(self, 'bot', None):
+                            try:
+                                await AdminNotificationService(self.bot).send_trial_activation_notification(
+                                    user=user,
+                                    subscription=subscription,
+                                    paid_amount=payment.amount_kopeks,
+                                    payment_method=display_name,
+                                )
+                            except Exception as admin_error:
+                                logger.warning('AuraPay: ошибка уведомления админов о trial', admin_error=admin_error)
+
+                        if getattr(self, 'bot', None) and user.telegram_id:
+                            try:
+                                await self.bot.send_message(
+                                    chat_id=user.telegram_id,
+                                    text=(
+                                        '🎉 <b>Пробная подписка активирована!</b>\n\n'
+                                        f'💳 Оплачено: {settings.format_price(payment.amount_kopeks)}\n\n'
+                                        'Используйте меню для подключения к VPN.'
+                                    ),
+                                    parse_mode='HTML',
+                                )
+                            except Exception as notify_error:
+                                logger.warning('AuraPay: ошибка уведомления пользователя о trial', notify_error=notify_error)
+                    else:
+                        logger.error('AuraPay: не удалось активировать trial', subscription_id=subscription_id, user_id=user.id)
+                except Exception as trial_error:
+                    logger.error('AuraPay: ошибка обработки trial платежа', trial_error=trial_error, exc_info=True)
+            else:
+                logger.error('AuraPay: отсутствует subscription_id в metadata trial платежа')
+            await db.commit()
+            return True
+
+        if is_simple_subscription:
+            subscription_obj = None
+            try:
+                from app.database.crud.subscription import activate_pending_subscription
+                from app.services.subscription_service import SubscriptionService
+
+                subscription_period = int(metadata.get('subscription_period', 30))
+                order_id = metadata.get('order_id')
+                order_subscription_id = int(order_id) if order_id is not None else None
+                subscription_obj = await activate_pending_subscription(
+                    db=db,
+                    user_id=user.id,
+                    period_days=subscription_period,
+                    subscription_id=order_subscription_id,
+                )
+
+                if subscription_obj:
+                    subscription_service = SubscriptionService()
+                    try:
+                        remnawave_user = await subscription_service.create_remnawave_user(db, subscription_obj)
+                        if remnawave_user:
+                            await db.refresh(subscription_obj)
+                    except Exception as sync_error:
+                        logger.error('AuraPay: ошибка синхронизации подписки с RemnaWave', sync_error=sync_error)
+                        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                        remnawave_retry_queue.enqueue(
+                            subscription_id=subscription_obj.id,
+                            user_id=subscription_obj.user_id,
+                            action='create',
+                        )
+
+                    try:
+                        from app.utils.promo_offer import consume_user_promo_offer
+
+                        await consume_user_promo_offer(db, user.id)
+                    except Exception as promo_error:
+                        logger.warning('AuraPay: ошибка потребления промо-оффера', user_id=user.id, error=promo_error)
+
+                    if getattr(self, 'bot', None) and user.telegram_id:
+                        try:
+                            from aiogram import types
+
+                            keyboard = types.InlineKeyboardMarkup(
+                                inline_keyboard=[
+                                    [
+                                        types.InlineKeyboardButton(
+                                            text='📱 Моя подписка',
+                                            callback_data='menu_subscription',
+                                        )
+                                    ],
+                                    [types.InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')],
+                                ]
+                            )
+                            await self.bot.send_message(
+                                chat_id=user.telegram_id,
+                                text=(
+                                    '✅ <b>Подписка успешно активирована!</b>\n\n'
+                                    f'📅 Период: {subscription_period} дней\n'
+                                    f'💳 Оплата: {settings.format_price(payment.amount_kopeks)} ({display_name})\n\n'
+                                    "🔗 Для подключения перейдите в раздел 'Моя подписка'"
+                                ),
+                                reply_markup=keyboard,
+                                parse_mode='HTML',
+                            )
+                        except Exception as notify_error:
+                            logger.warning('AuraPay: ошибка уведомления пользователя о подписке', notify_error=notify_error)
+
+                    if getattr(self, 'bot', None):
+                        try:
+                            from app.services.admin_notification_service import AdminNotificationService
+
+                            await AdminNotificationService(self.bot).send_subscription_purchase_notification(
+                                db,
+                                user,
+                                subscription_obj,
+                                transaction,
+                                subscription_period,
+                                was_trial_conversion=False,
+                                purchase_type='renewal' if user.has_had_paid_subscription else 'first_purchase',
+                            )
+                        except Exception as admin_error:
+                            logger.error('AuraPay: ошибка уведомления админов о подписке', admin_error=admin_error)
+                else:
+                    logger.error('AuraPay: ошибка активации подписки', user_id=user.id)
+            except Exception as sub_error:
+                logger.error('AuraPay: ошибка обработки покупки подписки', user_id=user.id, error=sub_error, exc_info=True)
+
+            try:
+                from app.services.referral_service import process_referral_topup
+
+                await process_referral_topup(db, user.id, payment.amount_kopeks, getattr(self, 'bot', None))
+            except Exception as ref_error:
+                logger.error('AuraPay: ошибка реферального начисления при покупке подписки', ref_error=ref_error)
+            await db.commit()
+            return True
 
         should_credit_balance = created_transaction or not balance_already_credited
 

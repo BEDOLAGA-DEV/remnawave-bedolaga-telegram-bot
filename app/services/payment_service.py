@@ -995,16 +995,18 @@ class PaymentService(
             return None
 
         # --- AuraPay ----------------------------------------------------------
-        if payment_method == 'aurapay':
+        if payment_method in ('aurapay', 'aurapay_card', 'aurapay_sbp'):
             if not settings.is_aurapay_enabled():
                 logger.warning('AuraPay is not enabled, cannot create guest payment')
                 return None
+            payment_method_type = payment_method.removeprefix('aurapay_') if payment_method.startswith('aurapay_') else None
 
             result = await self.create_aurapay_payment(
                 db=db,
                 user_id=None,
                 amount_kopeks=amount_kopeks,
                 description=description,
+                payment_method_type=payment_method_type,
                 return_url=return_url,
             )
             if result:

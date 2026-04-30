@@ -184,6 +184,23 @@ class AuraPayService:
             logger.exception('AuraPay API connection error', error=e)
             raise
 
+    @staticmethod
+    def _stringify_webhook_value(value: Any, *, null_as_empty: bool = False) -> str:
+        if value is None and null_as_empty:
+            return ''
+        return str(value)
+
+    def _build_webhook_signature(self, payload: dict[str, Any], *, null_as_empty: bool = False) -> str:
+        sorted_keys = sorted(payload.keys())
+        concatenated_values = ''.join(
+            self._stringify_webhook_value(payload[key], null_as_empty=null_as_empty) for key in sorted_keys
+        )
+        return hmac.new(
+            self.secret_key.encode('utf-8'),
+            concatenated_values.encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()
+
     def verify_webhook_signature(self, payload: dict[str, Any], received_signature: str) -> bool:
         """Верификация подписи webhook AuraPay через HMAC-SHA256.
 
@@ -196,17 +213,20 @@ class AuraPayService:
                 logger.warning('AuraPay webhook: отсутствует X-SIGNATURE')
                 return False
 
-            # Сортируем ключи по алфавиту и конкатенируем значения
-            sorted_keys = sorted(payload.keys())
-            concatenated_values = ''.join(str(payload[key]) for key in sorted_keys)
+            normalized_signature = received_signature.strip().lower()
 
-            expected = hmac.new(
-                self.secret_key.encode('utf-8'),
-                concatenated_values.encode('utf-8'),
-                hashlib.sha256,
-            ).hexdigest()
+            expected = self._build_webhook_signature(payload)
+            if hmac.compare_digest(expected, normalized_signature):
+                return True
 
-            return hmac.compare_digest(expected, received_signature)
+            # AuraPay docs/examples are inconsistent for JSON null:
+            # Python's str(None) is "None", while PHP implode/JS join produce an empty string.
+            if any(value is None for value in payload.values()):
+                expected_null_empty = self._build_webhook_signature(payload, null_as_empty=True)
+                if hmac.compare_digest(expected_null_empty, normalized_signature):
+                    return True
+
+            return False
         except Exception as e:
             logger.error('AuraPay webhook verify error', error=e)
             return False

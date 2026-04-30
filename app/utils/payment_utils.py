@@ -234,15 +234,28 @@ def get_available_payment_methods() -> list[dict[str, str]]:
 
     if settings.is_aurapay_enabled():
         aurapay_name = settings.get_aurapay_display_name()
-        methods.append(
-            {
-                'id': 'aurapay',
-                'name': aurapay_name,
-                'icon': '💳',
-                'description': f'через {aurapay_name}',
-                'callback': 'topup_aurapay',
-            }
-        )
+        if settings.AURAPAY_INLINE_METHODS:
+            for method in settings.get_aurapay_active_methods():
+                method_title = settings.get_aurapay_method_display_name(method)
+                methods.append(
+                    {
+                        'id': f'aurapay_{method}',
+                        'name': f'{aurapay_name} ({method_title})',
+                        'icon': '💳' if method == 'card' else '🏦',
+                        'description': f'через {aurapay_name}',
+                        'callback': f'topup_aurapay_{method}',
+                    }
+                )
+        else:
+            methods.append(
+                {
+                    'id': 'aurapay',
+                    'name': aurapay_name,
+                    'icon': '💳',
+                    'description': f'через {aurapay_name}',
+                    'callback': 'topup_aurapay',
+                }
+            )
 
     if settings.is_support_topup_enabled():
         methods.append(
@@ -381,6 +394,9 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_overpay_enabled()
     if method_id == 'aurapay':
         return settings.is_aurapay_enabled()
+    if method_id.startswith('aurapay_'):
+        method = method_id.removeprefix('aurapay_')
+        return settings.is_aurapay_enabled() and method in settings.get_aurapay_active_methods()
     if method_id == 'support':
         return settings.is_support_topup_enabled()
     return False
