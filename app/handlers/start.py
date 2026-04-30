@@ -49,7 +49,11 @@ from app.services.pinned_message_service import (
     get_active_pinned_message,
 )
 from app.services.privacy_policy_service import PrivacyPolicyService
-from app.services.referral_service import process_referral_registration, save_pending_referral
+from app.services.referral_service import (
+    process_referral_registration,
+    save_pending_campaign,
+    save_pending_referral,
+)
 from app.services.subscription_service import SubscriptionService
 from app.services.support_settings_service import SupportSettingsService
 from app.services.web_auth_service import WEB_AUTH_TOKEN_MIN_LENGTH, link_web_auth_token
@@ -385,6 +389,17 @@ async def _apply_campaign_bonus_if_needed(
     result = await service.apply_campaign_bonus(db, user, campaign)
     if not result.success:
         return None
+
+    # Bot-flow successfully applied the campaign — clear the Redis pending entry
+    # (set in cmd_start as a fallback for the cabinet WebApp path) so it isn't
+    # re-evaluated on a subsequent cabinet login.
+    try:
+        from app.services.referral_service import clear_pending_campaign
+
+        if getattr(user, 'telegram_id', None):
+            await clear_pending_campaign(user.telegram_id)
+    except Exception:
+        pass
 
     if result.bonus_type == 'balance':
         amount_text = texts.format_price(result.balance_kopeks)
@@ -724,6 +739,23 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 start_parameter=campaign.start_parameter,
             )
             await state.update_data(campaign_id=campaign.id)
+            # Persist campaign to Redis immediately so it survives if user opens
+            # miniapp/cabinet (via Telegram menu button) before completing the
+            # bot registration flow. Mirrors the pending_referral mechanism.
+            # Only for new users — existing users already had attribution applied.
+            if not db_user:
+                try:
+                    await save_pending_campaign(
+                        message.from_user.id,
+                        campaign.start_parameter,
+                        campaign.id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        'Failed to persist pending campaign',
+                        campaign_id=campaign.id,
+                        error=exc,
+                    )
             if campaign.partner_user_id:
                 await state.update_data(referrer_id=campaign.partner_user_id)
                 logger.info(
@@ -2416,6 +2448,20 @@ async def required_sub_channel_check(
                         campaign_id=campaign.id,
                         partner_user_id=campaign.partner_user_id,
                     )
+                    # Mirror save in Redis so cabinet WebApp auth can pick it up
+                    # if user opens miniapp before completing registration.
+                    try:
+                        await save_pending_campaign(
+                            query.from_user.id,
+                            campaign.start_parameter,
+                            campaign.id,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            'Failed to persist pending campaign after channel check',
+                            campaign_id=campaign.id,
+                            error=exc,
+                        )
                 else:
                     state_data['referral_code'] = pending_start_payload
                     logger.info(
