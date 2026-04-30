@@ -517,10 +517,12 @@ def _build_cabinet_main_menu_keyboard(
                         continue
                     lang_text = section_cfg.get('labels', {}).get(language, '') or texts.MENU_LANGUAGE
                     resolved_lang_emoji = section_cfg.get('icon_custom_emoji_id') or None
+                    resolved_lang_style = _resolve_style(section_cfg.get('style'))
                     row_buttons.append(
                         InlineKeyboardButton(
                             text=lang_text,
                             callback_data='menu_language',
+                            style=resolved_lang_style,
                             icon_custom_emoji_id=resolved_lang_emoji,
                         )
                     )
@@ -528,7 +530,12 @@ def _build_cabinet_main_menu_keyboard(
                 case 'admin':
                     if not is_admin:
                         continue
-                    admin_row = [InlineKeyboardButton(text=texts.MENU_ADMIN, callback_data='admin_panel')]
+                    admin_callback_style = _resolve_style(section_cfg.get('style'))
+                    admin_row = [
+                        InlineKeyboardButton(
+                            text=texts.MENU_ADMIN, callback_data='admin_panel', style=admin_callback_style
+                        )
+                    ]
                     if section_cfg.get('enabled', True):
                         admin_web_text = section_cfg.get('labels', {}).get(language, '') or '🖥 Веб-Админка'
                         admin_row.append(_cabinet_button(admin_web_text, '/admin', 'admin_panel'))
