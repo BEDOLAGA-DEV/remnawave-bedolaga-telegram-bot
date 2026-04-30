@@ -496,8 +496,9 @@ async def execute_change_devices(
     callback_parts = callback.data.split('_')
     texts = get_texts(db_user.language)
     try:
-        # callback: nz!_confirm_change_devices_<n> → split('_') → 5 parts, num last
-        new_devices_count = int(callback_parts[-1])
+        # callback: nz!_confirm_change_devices_<count>_<price> → split('_') → 6 parts.
+        # Count is second-to-last, price is last (we recompute price under lock below).
+        new_devices_count = int(callback_parts[-2])
     except (ValueError, IndexError):
         await callback.answer(texts.t('DEVICES_INVALID_REQUEST', '❌ Некорректный запрос'), show_alert=True)
         return
