@@ -172,74 +172,112 @@ async def _process_campaign_bonus(
     db: AsyncSession,
     user: User,
     campaign_slug: str | None,
+    telegram_id: int | None = None,
 ) -> CampaignBonusInfo | None:
-    """Process campaign bonus for user during auth. Never raises."""
+    """Process campaign bonus for user during auth. Never raises.
+
+    If ``campaign_slug`` is not provided but ``telegram_id`` is given, the
+    function falls back to Redis ``pending_campaign:{telegram_id}`` — populated
+    by the bot's /start handler when a user opens an advertising campaign link
+    but then completes registration via the cabinet WebApp (Telegram menu
+    button) instead of the bot dialog. The Redis entry is cleared after a
+    successful consumption attempt.
+    """
+    pending_campaign_consumed = False
+    if not campaign_slug and telegram_id:
+        try:
+            from app.services.referral_service import get_pending_campaign
+
+            pending = await get_pending_campaign(telegram_id)
+            if pending and pending.get('campaign_slug'):
+                campaign_slug = pending['campaign_slug']
+                pending_campaign_consumed = True
+                logger.info(
+                    'Resolved campaign from Redis pending_campaign (cabinet)',
+                    telegram_id=telegram_id,
+                    campaign_slug=campaign_slug,
+                )
+        except Exception as e:
+            logger.warning('Failed to check pending campaign', error=e)
+
     if not campaign_slug:
         return None
     try:
-        campaign = await get_campaign_by_start_parameter(db, campaign_slug, only_active=True)
-        if not campaign:
-            return None
+        try:
+            campaign = await get_campaign_by_start_parameter(db, campaign_slug, only_active=True)
+            if not campaign:
+                return None
 
-        # Skip if user IS the campaign partner — prevent self-referral
-        if campaign.partner_user_id and campaign.partner_user_id == user.id:
-            logger.debug(
-                'Skipping campaign attribution: user is the campaign partner',
-                user_id=user.id,
-                campaign_id=campaign.id,
-            )
-            return None
-
-        # Lock user row to prevent concurrent bonus application (race condition)
-        await db.execute(select(User).where(User.id == user.id).with_for_update())
-
-        existing = await get_campaign_registration_by_user(db, user.id)
-        if existing:
-            logger.debug('User already has campaign registration', user_id=user.id)
-            return None
-
-        # Привязать реферала к партнёру кампании (если партнёр назначен и юзер ещё не привязан)
-        if campaign.partner_user_id and not user.referred_by_id:
-            user.referred_by_id = campaign.partner_user_id
-            await db.flush()
-            try:
-                from app.bot_factory import create_bot
-
-                async with create_bot() as bot:
-                    await process_referral_registration(db, user.id, campaign.partner_user_id, bot=bot)
-                logger.info(
-                    'Referral set from campaign partner',
+            # Skip if user IS the campaign partner — prevent self-referral
+            if campaign.partner_user_id and campaign.partner_user_id == user.id:
+                logger.debug(
+                    'Skipping campaign attribution: user is the campaign partner',
                     user_id=user.id,
-                    partner_user_id=campaign.partner_user_id,
                     campaign_id=campaign.id,
                 )
-            except Exception as e:
-                logger.error('Failed to process referral from campaign partner', error=e)
+                return None
 
-        service = AdvertisingCampaignService()
-        result = await service.apply_campaign_bonus(db, user, campaign)
-        if not result.success:
-            return None
+            # Lock user row to prevent concurrent bonus application (race condition)
+            await db.execute(select(User).where(User.id == user.id).with_for_update())
 
-        # Refresh user to get updated balance after bonus
-        await db.refresh(user)
+            existing = await get_campaign_registration_by_user(db, user.id)
+            if existing:
+                logger.debug('User already has campaign registration', user_id=user.id)
+                return None
 
-        return CampaignBonusInfo(
-            campaign_name=campaign.name,
-            bonus_type=result.bonus_type or campaign.bonus_type,
-            balance_kopeks=result.balance_kopeks,
-            subscription_days=result.subscription_days,
-            tariff_name=result.tariff_name,
-        )
-    except Exception:
-        logger.exception('Failed to process campaign bonus', user_id=user.id, campaign_slug=campaign_slug)
-        try:
-            await db.rollback()
-            # Re-fetch user so session stays usable for the caller
+            # Привязать реферала к партнёру кампании (если партнёр назначен и юзер ещё не привязан)
+            if campaign.partner_user_id and not user.referred_by_id:
+                user.referred_by_id = campaign.partner_user_id
+                await db.flush()
+                try:
+                    from app.bot_factory import create_bot
+
+                    async with create_bot() as bot:
+                        await process_referral_registration(db, user.id, campaign.partner_user_id, bot=bot)
+                    logger.info(
+                        'Referral set from campaign partner',
+                        user_id=user.id,
+                        partner_user_id=campaign.partner_user_id,
+                        campaign_id=campaign.id,
+                    )
+                except Exception as e:
+                    logger.error('Failed to process referral from campaign partner', error=e)
+
+            service = AdvertisingCampaignService()
+            result = await service.apply_campaign_bonus(db, user, campaign)
+            if not result.success:
+                return None
+
+            # Refresh user to get updated balance after bonus
             await db.refresh(user)
+
+            return CampaignBonusInfo(
+                campaign_name=campaign.name,
+                bonus_type=result.bonus_type or campaign.bonus_type,
+                balance_kopeks=result.balance_kopeks,
+                subscription_days=result.subscription_days,
+                tariff_name=result.tariff_name,
+            )
         except Exception:
-            logger.exception('Failed to rollback after campaign bonus error', user_id=user.id)
-        return None
+            logger.exception('Failed to process campaign bonus', user_id=user.id, campaign_slug=campaign_slug)
+            try:
+                await db.rollback()
+                # Re-fetch user so session stays usable for the caller
+                await db.refresh(user)
+            except Exception:
+                logger.exception('Failed to rollback after campaign bonus error', user_id=user.id)
+            return None
+    finally:
+        # Clear Redis pending_campaign whenever we consumed it. Done regardless
+        # of success — if processing failed (already applied, race, exception),
+        # we don't want to keep retrying on every subsequent login.
+        if pending_campaign_consumed and telegram_id:
+            try:
+                from app.services.referral_service import clear_pending_campaign
+
+                await clear_pending_campaign(telegram_id)
+            except Exception:
+                pass
 
 
 async def _process_referral_code(
@@ -584,8 +622,13 @@ async def auth_telegram(
         except Exception:
             pass
 
-    # Process campaign bonus
-    response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
+    # Process campaign bonus.
+    # Pass telegram_id so the function can fall back to Redis pending_campaign
+    # if the user came via /start <campaign> in the bot but completed
+    # registration in the WebApp without an explicit campaign_slug.
+    response.campaign_bonus = await _process_campaign_bonus(
+        db, user, request.campaign_slug, telegram_id=telegram_id
+    )
     if response.campaign_bonus:
         response.user = _user_to_response(user)
 
@@ -691,8 +734,10 @@ async def auth_telegram_widget(
         except Exception:
             pass
 
-    # Process campaign bonus
-    response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
+    # Process campaign bonus (pending_campaign Redis fallback for Telegram Login Widget)
+    response.campaign_bonus = await _process_campaign_bonus(
+        db, user, request.campaign_slug, telegram_id=request.id
+    )
     if response.campaign_bonus:
         response.user = _user_to_response(user)
 
@@ -837,7 +882,10 @@ async def auth_telegram_oidc(
         except Exception:
             pass
 
-    response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
+    # Process campaign bonus (pending_campaign Redis fallback for Telegram OIDC)
+    response.campaign_bonus = await _process_campaign_bonus(
+        db, user, request.campaign_slug, telegram_id=telegram_id
+    )
     if response.campaign_bonus:
         response.user = _user_to_response(user)
 
