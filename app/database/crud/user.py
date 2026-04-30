@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.database.constants import POSTGRES_INT4_MAX, POSTGRES_INT4_MIN
 from app.database.crud.discount_offer import get_latest_claimed_offer_for_user
 from app.database.crud.promo_group import get_default_promo_group
 from app.database.crud.promo_offer_log import log_promo_offer_action
@@ -86,6 +87,10 @@ def generate_referral_code() -> str:
 
 
 async def get_user_by_id(db: AsyncSession, user_id: int) -> User | None:
+    # users.id is INTEGER (int4) in PostgreSQL; guard large telegram IDs passed by mistake.
+    if user_id < POSTGRES_INT4_MIN or user_id > POSTGRES_INT4_MAX:
+        return None
+
     result = await db.execute(
         select(User)
         .options(
