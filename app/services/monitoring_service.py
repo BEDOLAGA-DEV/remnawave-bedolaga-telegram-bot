@@ -1044,7 +1044,7 @@ class MonitoringService:
                 # Day 1 reminder
                 if NotificationSettingsService.is_expired_1d_enabled() and 1 <= days_since < 2:
                     if not await notification_sent(db, user.id, subscription.id, 'expired_1d'):
-                        success = await self._send_expired_day1_notification(user, subscription)
+                        success = await self._send_expired_day1_notification(db, user, subscription)
                         if success:
                             await record_notification(db, user.id, subscription.id, 'expired_1d')
                             sent_day1 += 1
@@ -1811,12 +1811,33 @@ class MonitoringService:
             )
             return False
 
-    async def _send_expired_day1_notification(self, user: User, subscription: Subscription) -> bool:
+    async def _send_expired_day1_notification(
+        self, db: AsyncSession, user: User, subscription: Subscription
+    ) -> bool:
         try:
             texts = get_texts(user.language)
+            tariff = getattr(subscription, 'tariff', None)
             tariff_label = ''
-            if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
-                tariff_label = f' «{subscription.tariff.name}»'
+            if settings.is_multi_tariff_enabled() and tariff:
+                tariff_label = f' «{tariff.name}»'
+
+            renewal_period = (tariff.get_shortest_period() if tariff else None) or 30
+            try:
+                from app.services.pricing_engine import pricing_engine
+
+                pricing = await pricing_engine.calculate_renewal_price(
+                    db, subscription, renewal_period, user=user
+                )
+                renewal_price_kopeks = pricing.final_total
+            except Exception as price_error:
+                logger.warning(
+                    'Не удалось рассчитать цену продления для уведомления expired_1d, используем PRICE_30_DAYS',
+                    subscription_id=subscription.id,
+                    user_id=user.id,
+                    error=str(price_error),
+                )
+                renewal_price_kopeks = settings.PRICE_30_DAYS
+
             template = texts.get(
                 'SUBSCRIPTION_EXPIRED_1D',
                 (
@@ -1826,7 +1847,7 @@ class MonitoringService:
             )
             message = template.format(
                 end_date=format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M'),
-                price=settings.format_price(settings.PRICE_30_DAYS),
+                price=settings.format_price(renewal_price_kopeks),
                 tariff_label=tariff_label,
             )
 
