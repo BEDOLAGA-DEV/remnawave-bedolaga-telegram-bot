@@ -175,6 +175,7 @@ async def _build_notification_preview_message(language: str, notification_type: 
         message = template.format(
             end_date=(now - timedelta(days=1)).strftime('%d.%m.%Y %H:%M'),
             price=price_30_days,
+            tariff_label='',
         )
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -213,6 +214,7 @@ async def _build_notification_preview_message(language: str, notification_type: 
             percent=percent,
             expires_at=(now + timedelta(hours=valid_hours)).strftime('%d.%m.%Y %H:%M'),
             trigger_days=3,
+            tariff_label='',
         )
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -258,6 +260,7 @@ async def _build_notification_preview_message(language: str, notification_type: 
             percent=percent,
             trigger_days=trigger_days,
             expires_at=(now + timedelta(hours=valid_hours)).strftime('%d.%m.%Y %H:%M'),
+            tariff_label='',
         )
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
