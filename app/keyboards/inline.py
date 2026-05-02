@@ -2668,6 +2668,10 @@ def get_connection_guide_keyboard(
                         wrapped_url = build_redirect_link(final_url, template)
                         if wrapped_url:
                             final_url = wrapped_url
+                    else:
+                        # No redirect template - fallback to plain subscription URL
+                        # (Telegram doesn't support custom schemes without redirect)
+                        final_url = subscription_url
 
                 if final_url:
                     keyboard.append(
