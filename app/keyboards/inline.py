@@ -8,6 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import PERIOD_PRICES, settings
 from app.database.models import User
+from app.handlers.subscription.common import (
+    build_redirect_link,
+    create_deep_link,
+    get_localized_value,
+    resolve_button_url,
+)
 from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
@@ -2554,9 +2560,6 @@ def get_device_selection_keyboard(
     platforms: list[dict] | None = None,
     sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
-    from app.config import settings
-    from app.handlers.subscription.common import get_localized_value
-
     texts = get_texts(language)
     back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
 
@@ -2609,8 +2612,6 @@ def get_connection_guide_keyboard(
     has_other_apps: bool = False,
     sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
-    from app.handlers.subscription.common import create_deep_link, get_localized_value, resolve_button_url
-
     texts = get_texts(language)
     back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
 
@@ -2623,6 +2624,10 @@ def get_connection_guide_keyboard(
             if not isinstance(btn, dict):
                 continue
             btn_type = btn.get('type', '')
+            # Support both 'external' and 'externalLink' for backward compatibility
+            if btn_type == 'external':
+                btn_type = 'externalLink'
+
             btn_text = btn.get('text', {})
             if isinstance(btn_text, dict):
                 btn_text = get_localized_value(btn_text, language)
@@ -2644,9 +2649,30 @@ def get_connection_guide_keyboard(
                         ]
                     )
             elif btn_type == 'subscriptionLink':
+                # First try to resolve the button's URL template
                 url = resolved_url or resolve_button_url(btn_url, subscription_url)
-                deep_link = create_deep_link(app.get('_raw', app), subscription_url)
-                final_url = deep_link or url or subscription_url
+
+                # If button has no template (no {{SUBSCRIPTION_LINK}}), try deep link
+                if not btn_url or '{{SUBSCRIPTION_LINK}}' not in btn_url:
+                    deep_link = create_deep_link(app.get('_raw', app), subscription_url)
+                    final_url = deep_link or url or subscription_url
+                else:
+                    # Button has explicit template - use it
+                    final_url = url or subscription_url
+
+                # Check if URL uses custom scheme (not http/https)
+                # Telegram doesn't support custom schemes, so wrap with redirect template
+                if final_url and not final_url.startswith(('http://', 'https://')):
+                    template = settings.get_happ_cryptolink_redirect_template()
+                    if template:
+                        wrapped_url = build_redirect_link(final_url, template)
+                        if wrapped_url:
+                            final_url = wrapped_url
+                    else:
+                        # No redirect template - fallback to plain subscription URL
+                        # (Telegram doesn't support custom schemes without redirect)
+                        final_url = subscription_url
+
                 if final_url:
                     keyboard.append(
                         [
