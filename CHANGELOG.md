@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.54.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.54.0...v3.54.1) (2026-05-04)
+
+
+### Documentation
+
+* add Antilopay/Etoplatezhi/Jupiter/Donut/Lava + Apple IAP to pro… ([d6442b8](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d6442b87df327f31ecb0ec5bd5c16a5008ef8321))
+* add Antilopay/Etoplatezhi/Jupiter/Donut/Lava + Apple IAP to provider list ([31e3ccd](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/31e3ccd24c5319ed5a4090253ffdced008ba5c20))
+
 ## [3.54.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.53.0...v3.54.0) (2026-05-04)
 
 
