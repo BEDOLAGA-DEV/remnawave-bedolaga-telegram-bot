@@ -1,25 +1,7 @@
 """Schema and route tests for the Telegram OIDC rewrite."""
 
-import sys
-import types
-
 import pytest
 from pydantic import ValidationError
-
-
-# Extend the conftest redis stub: app.utils.cache imports `from redis.exceptions
-# import NoScriptError`, which the conftest stub doesn't provide. Add a minimal
-# `redis.exceptions` shim so tests that import route modules can load cache.py.
-if 'redis' in sys.modules and not hasattr(sys.modules['redis'], 'exceptions'):
-    _redis_mod = sys.modules['redis']
-    _redis_exc = types.ModuleType('redis.exceptions')
-
-    class _NoScriptError(Exception):
-        pass
-
-    _redis_exc.NoScriptError = _NoScriptError
-    _redis_mod.exceptions = _redis_exc
-    sys.modules['redis.exceptions'] = _redis_exc
 
 
 def test_init_request_login_mode_no_jwt():

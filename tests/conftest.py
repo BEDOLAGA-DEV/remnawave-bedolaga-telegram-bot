@@ -28,6 +28,7 @@ sys.modules.setdefault('aiosqlite', types.ModuleType('aiosqlite'))
 if 'redis.asyncio' not in sys.modules:
     redis_module = types.ModuleType('redis')
     redis_async_module = types.ModuleType('redis.asyncio')
+    redis_exceptions_module = types.ModuleType('redis.exceptions')
 
     class _FakeRedisClient:
         async def ping(self):
@@ -61,10 +62,16 @@ if 'redis.asyncio' not in sys.modules:
     def _from_url(url):
         return _FakeRedisClient()
 
+    class _NoScriptError(Exception):
+        """Заглушка для redis.exceptions.NoScriptError, используемой в app.utils.cache."""
+
     redis_async_module.from_url = _from_url
     redis_async_module.Redis = _FakeRedisClient
+    redis_exceptions_module.NoScriptError = _NoScriptError
+    redis_module.exceptions = redis_exceptions_module
     sys.modules['redis'] = redis_module
     sys.modules['redis.asyncio'] = redis_async_module
+    sys.modules['redis.exceptions'] = redis_exceptions_module
 
 # Минимальная реализация SDK YooKassa, чтобы импорт сервисов не падал.
 if 'yookassa' not in sys.modules:
