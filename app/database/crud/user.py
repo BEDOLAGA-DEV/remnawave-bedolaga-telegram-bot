@@ -511,6 +511,9 @@ async def add_user_balance(
         if create_transaction:
             from app.database.crud.transaction import create_transaction as create_trans
 
+            # Пропагируем commit=False вниз, иначе вложенный create_trans выпустит
+            # преждевременный db.commit() и сбросит FOR UPDATE-локи (включая progress lock
+            # из claim_reward).
             await create_trans(
                 db=db,
                 user_id=user.id,
@@ -518,6 +521,7 @@ async def add_user_balance(
                 amount_kopeks=amount_kopeks,
                 description=description,
                 payment_method=payment_method,
+                commit=commit,
             )
 
         if commit:

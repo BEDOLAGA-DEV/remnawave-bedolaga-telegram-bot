@@ -1935,8 +1935,24 @@ class RemnaWaveService:
                     # Update traffic
                     used_traffic_bytes = panel_user.get('usedTrafficBytes', 0) or 0
                     traffic_used_gb = used_traffic_bytes / (1024**3)
-                    if abs(subscription.traffic_used_gb - traffic_used_gb) > 0.01:
+                    traffic_changed = abs(subscription.traffic_used_gb - traffic_used_gb) > 0.01
+                    if traffic_changed:
                         subscription.traffic_used_gb = traffic_used_gb
+                        # Tasks: TRAFFIC_USED обновляем per-user аггрегат (sum по
+                        # всем платным подпискам). update_traffic_progress сам
+                        # подсчитает суммарный traffic_used_gb после обновления.
+                        try:
+                            from app.services.tasks_service import update_traffic_progress
+
+                            await update_traffic_progress(
+                                db, user_id=subscription.user_id
+                            )
+                        except Exception as task_err:
+                            logger.warning(
+                                'Tasks: ошибка TRAFFIC_USED триггера',
+                                user_id=subscription.user_id,
+                                error=task_err,
+                            )
 
                     # traffic_limit_gb: bot is source of truth, do not overwrite from panel
 
@@ -2173,6 +2189,17 @@ class RemnaWaveService:
             if abs(subscription.traffic_used_gb - traffic_used_gb) > 0.01:
                 subscription.traffic_used_gb = traffic_used_gb
                 logger.debug('Обновлен использованный трафик', traffic_used_gb=traffic_used_gb)
+                # Tasks: TRAFFIC_USED обновляем per-user аггрегат (sum по платным подпискам)
+                try:
+                    from app.services.tasks_service import update_traffic_progress
+
+                    await update_traffic_progress(db, user_id=subscription.user_id)
+                except Exception as task_err:
+                    logger.warning(
+                        'Tasks: ошибка TRAFFIC_USED триггера (single-tariff)',
+                        user_id=subscription.user_id,
+                        error=task_err,
+                    )
 
             # traffic_limit_gb, device_limit: bot is source of truth, do not overwrite from panel
 

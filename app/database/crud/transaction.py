@@ -132,6 +132,28 @@ async def create_transaction(
             except Exception as exc:
                 logger.debug('Не удалось записать событие конкурса для пользователя', user_id=user_id, exc=exc)
 
+            # Tasks: SPEND_AMOUNT — учитываем потраченное на подписку. Триггер также есть
+            # в emit_transaction_side_effects (для commit=False callers); тут — для commit=True.
+            try:
+                from app.database.models import TaskType
+                from app.services.tasks_service import record_event
+
+                await record_event(
+                    db,
+                    user_id=user_id,
+                    event_type=TaskType.SPEND_AMOUNT,
+                    payload={'amount_kopeks': abs(amount_kopeks), 'is_trial': False},
+                )
+                # commit=True путь: фиксируем task-прогресс в той же транзакции
+                await db.commit()
+            except Exception as exc:
+                # Откатываем poisoned state, чтобы caller не получил PendingRollbackError.
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                logger.warning('Tasks: SPEND_AMOUNT прогресс не обновлён', user_id=user_id, exc=exc)
+
     return transaction
 
 
@@ -192,6 +214,20 @@ async def emit_transaction_side_effects(
             )
         except Exception as exc:
             logger.debug('Не удалось записать событие конкурса для пользователя', user_id=user_id, exc=exc)
+
+        # Tasks: SPEND_AMOUNT — учитываем потраченное на подписку
+        try:
+            from app.database.models import TaskType
+            from app.services.tasks_service import record_event
+
+            await record_event(
+                db,
+                user_id=user_id,
+                event_type=TaskType.SPEND_AMOUNT,
+                payload={'amount_kopeks': abs(amount_kopeks), 'is_trial': False},
+            )
+        except Exception as exc:
+            logger.debug('Tasks: не удалось обновить SPEND_AMOUNT прогресс', user_id=user_id, exc=exc)
 
 
 async def get_transaction_by_id(db: AsyncSession, transaction_id: int) -> Transaction | None:

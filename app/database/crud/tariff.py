@@ -200,6 +200,8 @@ async def create_tariff(
     traffic_reset_mode: str | None = None,  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = None,
+    # Бонусные дни для Tasks (subscription_days reward)
+    bonus_days_per_purchase: int = 0,
 ) -> Tariff:
     """Создает новый тариф."""
     normalized_prices = _normalize_period_prices(period_prices)
@@ -240,6 +242,8 @@ async def create_tariff(
         traffic_reset_mode=traffic_reset_mode,
         # Внешний сквад
         external_squad_uuid=external_squad_uuid,
+        # Бонусные дни Tasks
+        bonus_days_per_purchase=max(0, bonus_days_per_purchase),
     )
 
     db.add(tariff)
@@ -309,6 +313,8 @@ async def update_tariff(
     traffic_reset_mode: str | None = ...,  # ... = не передан, None = сбросить к глобальной настройке
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = ...,  # ... = не передан, None = убрать внешний сквад
+    # Бонусные дни для Tasks
+    bonus_days_per_purchase: int | None = None,
 ) -> Tariff:
     """Обновляет существующий тариф."""
     if name is not None:
@@ -378,6 +384,9 @@ async def update_tariff(
     # Внешний сквад
     if external_squad_uuid is not ...:
         tariff.external_squad_uuid = external_squad_uuid
+    # Бонусные дни Tasks
+    if bonus_days_per_purchase is not None:
+        tariff.bonus_days_per_purchase = max(0, bonus_days_per_purchase)
 
     # Обновляем промогруппы если указаны
     if promo_group_ids is not None:

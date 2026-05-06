@@ -262,6 +262,11 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
         except Exception as exc:
             logger.debug('Не удалось записать конкурсную регистрацию', exc=exc)
 
+        # NB: REFERRALS_INVITED task progress больше НЕ триггерится здесь (registration).
+        # Триггер перенесён в process_referral_topup → блок first_topup, чтобы предотвратить
+        # multi-account farming (создал 100 пустых аккаунтов → claimed награду без покупок).
+        # Засчитываем реферала только когда он сделал первое qualifying пополнение.
+
         if bot:
             commission_percent = get_effective_referral_commission_percent(referrer)
             referral_notification = (
@@ -409,6 +414,30 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
 
             user.has_made_first_topup = True
             await db.commit()
+
+            # Tasks: засчитываем REFERRALS_INVITED у реферера только сейчас — реферал сделал
+            # первое qualifying пополнение, значит это «настоящий» приглашённый юзер.
+            # Триггер при регистрации удалён, чтобы предотвратить multi-account farming.
+            try:
+                from app.database.models import TaskType
+                from app.services.tasks_service import record_event
+
+                await record_event(
+                    db,
+                    user_id=referrer.id,
+                    event_type=TaskType.REFERRALS_INVITED,
+                    payload={'referred_user_id': user.id},
+                )
+                await db.commit()
+            except Exception as task_err:
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                logger.warning(
+                    'Tasks: ошибка REFERRALS_INVITED триггера в process_referral_topup',
+                    exc=task_err,
+                )
 
             try:
                 await db.execute(

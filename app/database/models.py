@@ -1649,6 +1649,10 @@ class Tariff(Base):
     # Видимость в разделе подарков
     show_in_gift = Column(Boolean, default=True, server_default='true', nullable=False)
 
+    # Бонусные дни — сколько дней начислять при выдаче награды subscription_days,
+    # если задание ссылается на этот тариф (используется системой Tasks)
+    bonus_days_per_purchase = Column(Integer, default=0, nullable=False, server_default='0')
+
     # Режим сброса трафика: DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET (по умолчанию берётся из конфига)
     traffic_reset_mode = Column(String(20), nullable=True, default=None)  # None = использовать глобальную настройку
 
@@ -4070,3 +4074,172 @@ class InfoPage(Base):
     replaces_tab = Column(String(20), nullable=True)  # 'faq', 'rules', 'privacy', 'offer', or null
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+
+class TaskType(Enum):
+    """Тип задания (что нужно выполнить пользователю)."""
+
+    PURCHASE_TARIFF = 'purchase_tariff'  # купить конкретный тариф
+    SUBSCRIBE_CHANNEL = 'subscribe_channel'  # подписаться на партнёрский канал
+    TRAFFIC_USED = 'traffic_used'  # использовать N ГБ трафика за месяц на подписке
+    REFERRALS_INVITED = 'referrals_invited'  # пригласить N рефералов
+    PURCHASE_PERIOD = 'purchase_period'  # купить любой тариф минимум на N дней
+    SPEND_AMOUNT = 'spend_amount'  # совокупно потратить N копеек
+    MULTI_TARIFF = 'multi_tariff'  # иметь N+ активных тарифов в multi-tariff режиме
+    GIFT_PURCHASED = 'gift_purchased'  # купить хотя бы 1 подписку в подарок
+    GIFTS_COUNT = 'gifts_count'  # купить N подписок в подарок (накопительно)
+
+
+class TaskRewardType(Enum):
+    """Тип награды за задание."""
+
+    BALANCE = 'balance'  # деньги на баланс (в копейках)
+    SUBSCRIPTION_DAYS = 'subscription_days'  # бонусные дни подписки
+
+
+class TaskUserAudience(Enum):
+    """Аудитория задания (фильтр по типу пользователя)."""
+
+    TELEGRAM = 'telegram'  # только Telegram-юзеры
+    EMAIL = 'email'  # только email-юзеры (cabinet)
+    BOTH = 'both'  # все
+
+
+class TaskPartnerChannel(Base):
+    """Партнёрский канал, на который можно требовать подписку в задании.
+
+    Отдельный список от ``RequiredChannel`` (обязательная подписка), чтобы каналы
+    для заданий не пересекались с системой обязательной подписки.
+    """
+
+    __tablename__ = 'task_partner_channels'
+
+    id = Column(Integer, primary_key=True, index=True)
+    channel_id = Column(String(100), unique=True, nullable=False, index=True)  # формат -100xxxxxxxx
+    title = Column(String(255), nullable=False)
+    channel_link = Column(String(500), nullable=True)  # https://t.me/...
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default='true')
+    sort_order = Column(Integer, nullable=False, default=0, server_default='0')
+    created_at = Column(AwareDateTime(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+
+class Task(Base):
+    """Шаблон задания с наградой.
+
+    Создаётся админом, выдаётся пользователям. Прогресс трекается в ``UserTaskProgress``.
+    """
+
+    __tablename__ = 'tasks'
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Идентификация и видимость
+    title = Column(JSONB, nullable=False, server_default='{}')  # i18n
+    description = Column(JSONB, nullable=False, server_default='{}')  # i18n
+    icon = Column(String(50), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default='true')
+    sort_order = Column(Integer, nullable=False, default=0, server_default='0')
+
+    # Тип задания и его параметры
+    task_type = Column(String(32), nullable=False, index=True)  # значение TaskType.value
+    target_value = Column(BigInteger, nullable=False, default=1)  # цель: 5 рефералов / 100 ГБ / N копеек
+    # Дополнительные параметры в зависимости от типа:
+    # - PURCHASE_TARIFF: {"tariff_id": 12}
+    # - SUBSCRIBE_CHANNEL: {"channel_id": "-1001234"}
+    # - PURCHASE_PERIOD: {"period_days": 30}
+    # - TRAFFIC_USED: {} (target_value = ГБ)
+    # - SPEND_AMOUNT: {} (target_value = копейки)
+    # - REFERRALS_INVITED / MULTI_TARIFF / GIFT_PURCHASED / GIFTS_COUNT: {} (target_value = шт.)
+    target_meta = Column(JSON, nullable=False, default=dict, server_default='{}')
+
+    # Награда
+    reward_type = Column(String(32), nullable=False)  # значение TaskRewardType.value
+    reward_value = Column(BigInteger, nullable=False, default=0)  # копейки или дни
+    # Для SUBSCRIPTION_DAYS: { "tariff_id": 12 } — если задано, дни начисляются на этот тариф
+    # (если у юзера в multi-tariff несколько подписок — он выберет какую продлевать).
+    reward_meta = Column(JSON, nullable=False, default=dict, server_default='{}')
+    # Может ли user сам выбрать тип награды (если админ задал альтернативу в reward_meta.alt)
+    allow_user_choice = Column(Boolean, nullable=False, default=False, server_default='false')
+
+    # Фильтры аудитории (значение TaskUserAudience.value: 'telegram' / 'email' / 'both')
+    user_audience = Column(String(16), nullable=False, default='both', server_default='both')
+    promo_group_id = Column(Integer, ForeignKey('promo_groups.id', ondelete='SET NULL'), nullable=True, index=True)
+
+    # Цепочка уровней (последовательное открытие)
+    parent_task_id = Column(Integer, ForeignKey('tasks.id', ondelete='SET NULL'), nullable=True, index=True)
+    level = Column(Integer, nullable=False, default=1, server_default='1')
+
+    # Период действия задания (опционально)
+    starts_at = Column(AwareDateTime(), nullable=True)
+    ends_at = Column(AwareDateTime(), nullable=True)
+
+    created_at = Column(AwareDateTime(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    promo_group = relationship('PromoGroup', backref='tasks')
+    parent_task = relationship('Task', remote_side=[id], backref='child_tasks')
+    progress_records = relationship('UserTaskProgress', back_populates='task', cascade='all, delete-orphan')
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f'<Task(id={self.id}, type={self.task_type}, level={self.level})>'
+
+
+class UserTaskProgress(Base):
+    """Прогресс пользователя по конкретному заданию."""
+
+    __tablename__ = 'user_task_progress'
+    __table_args__ = (UniqueConstraint('user_id', 'task_id', name='uq_user_task'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    task_id = Column(Integer, ForeignKey('tasks.id', ondelete='CASCADE'), nullable=False, index=True)
+
+    # Текущий прогресс к target_value (BigInteger чтобы поддерживать SPEND_AMOUNT в копейках за всё время)
+    current_value = Column(BigInteger, nullable=False, default=0, server_default='0')
+
+    # Снапшоты для типов с периодом (TRAFFIC_USED — за месяц на подписке)
+    # period_started_at — начало текущего окна (для traffic_used = первое число месяца)
+    # baseline_value — снапшот значения на начало периода (для traffic_used = traffic_used_gb на старте)
+    period_started_at = Column(AwareDateTime(), nullable=True)
+    baseline_value = Column(BigInteger, nullable=False, default=0, server_default='0')
+
+    # Статусы
+    completed_at = Column(AwareDateTime(), nullable=True)  # когда выполнено
+    claimed_at = Column(AwareDateTime(), nullable=True)  # когда награда получена
+
+    # Метаданные о выданной награде:
+    # { "type": "balance" | "subscription_days",
+    #   "value": 100000,
+    #   "subscription_id": 42,         # для multi-tariff: какой подписке начислили дни
+    #   "transaction_id": 1234,        # если создана транзакция
+    #   "old_end_date": "...",
+    #   "new_end_date": "..." }
+    reward_granted_meta = Column(JSON, nullable=True)
+
+    created_at = Column(AwareDateTime(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    user = relationship('User', backref='task_progress')
+    task = relationship('Task', back_populates='progress_records')
+
+    @property
+    def is_completed(self) -> bool:
+        return self.completed_at is not None
+
+    @property
+    def is_claimed(self) -> bool:
+        return self.claimed_at is not None
+
+    @property
+    def percent(self) -> int:
+        if not self.task or self.task.target_value <= 0:
+            return 0
+        ratio = max(0, min(self.current_value, self.task.target_value)) / self.task.target_value
+        return int(ratio * 100)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f'<UserTaskProgress(user={self.user_id}, task={self.task_id}, {self.current_value}/{self.task.target_value if self.task else "?"})>'

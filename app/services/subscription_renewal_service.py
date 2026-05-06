@@ -566,6 +566,23 @@ class SubscriptionRenewalService:
                 error=error,
             )
 
+        # Tasks: триггерим прогресс по платным purchase-tasks (renewal — это покупка
+        # того же тарифа на новый период, считается как platная покупка).
+        try:
+            from app.services.tasks_service import trigger_paid_purchase_tasks
+
+            await trigger_paid_purchase_tasks(
+                db,
+                user_id=user.id,
+                tariff_id=getattr(subscription_after, 'tariff_id', None),
+                period_days=period_days,
+                amount_kopeks=final_total,
+                subscription_id=getattr(subscription_after, 'id', None),
+                is_trial=False,
+            )
+        except Exception as task_err:
+            logger.warning('Tasks: ошибка триггеров renewal', error=task_err)
+
         await db.refresh(user)
         await db.refresh(subscription_after)
 

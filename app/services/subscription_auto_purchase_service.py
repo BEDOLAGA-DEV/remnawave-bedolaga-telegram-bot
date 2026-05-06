@@ -564,6 +564,22 @@ async def _auto_extend_subscription(
             exc_info=True,
         )
 
+    # Tasks: триггерим прогресс по платным purchase-tasks
+    try:
+        from app.services.tasks_service import trigger_paid_purchase_tasks
+
+        await trigger_paid_purchase_tasks(
+            db,
+            user_id=user.id,
+            tariff_id=getattr(prepared, 'tariff_id', None) or getattr(prepared.subscription, 'tariff_id', None),
+            period_days=prepared.period_days,
+            amount_kopeks=prepared.price_kopeks,
+            subscription_id=getattr(prepared.subscription, 'id', None),
+            is_trial=False,
+        )
+    except Exception as task_err:
+        logger.warning('Tasks: ошибка триггеров auto-purchase (renewal)', error=task_err)
+
     subscription_service = SubscriptionService()
     # Сброс трафика: при смене тарифа — по RESET_TRAFFIC_ON_TARIFF_SWITCH, при оплате — по RESET_TRAFFIC_ON_PAYMENT
     if is_tariff_change:
@@ -946,6 +962,22 @@ async def _auto_purchase_tariff(
         )
         transaction = None
 
+    # Tasks: триггерим прогресс по платным purchase-tasks
+    try:
+        from app.services.tasks_service import trigger_paid_purchase_tasks
+
+        await trigger_paid_purchase_tasks(
+            db,
+            user_id=user.id,
+            tariff_id=getattr(tariff, 'id', None),
+            period_days=period_days,
+            amount_kopeks=final_price,
+            subscription_id=getattr(subscription, 'id', None),
+            is_trial=False,
+        )
+    except Exception as task_err:
+        logger.warning('Tasks: ошибка триггеров auto-purchase (tariff)', error=task_err)
+
     # Обновляем Remnawave
     # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
     try:
@@ -1302,6 +1334,22 @@ async def _auto_purchase_daily_tariff(
             format_user_id=_format_user_id(user),
             error=error,
         )
+
+    # Tasks: триггерим прогресс по платным purchase-tasks (суточная подписка)
+    try:
+        from app.services.tasks_service import trigger_paid_purchase_tasks
+
+        await trigger_paid_purchase_tasks(
+            db,
+            user_id=user.id,
+            tariff_id=getattr(tariff, 'id', None),
+            period_days=1,
+            amount_kopeks=final_price,
+            subscription_id=getattr(subscription, 'id', None),
+            is_trial=False,
+        )
+    except Exception as task_err:
+        logger.warning('Tasks: ошибка триггеров auto-purchase (daily)', error=task_err)
         transaction = None
 
     # Обновляем Remnawave
@@ -2361,6 +2409,22 @@ async def try_auto_extend_expired_after_topup(
             exc_info=True,
         )
 
+    # Tasks: триггерим прогресс по платным purchase-tasks (renewal expired)
+    try:
+        from app.services.tasks_service import trigger_paid_purchase_tasks
+
+        await trigger_paid_purchase_tasks(
+            db,
+            user_id=user.id,
+            tariff_id=getattr(updated_subscription, 'tariff_id', None) or getattr(subscription, 'tariff_id', None),
+            period_days=period_days,
+            amount_kopeks=renewal_cost,
+            subscription_id=getattr(updated_subscription, 'id', None) or getattr(subscription, 'id', None),
+            is_trial=False,
+        )
+    except Exception as task_err:
+        logger.warning('Tasks: ошибка триггеров auto-purchase (expired-renewal)', error=task_err)
+
     # Update RemnaWave
     try:
         await subscription_service.update_remnawave_user(
@@ -2691,6 +2755,22 @@ async def try_resume_disabled_daily_after_topup(
             format_user_id=_format_user_id(user),
             error=error,
         )
+
+    # Tasks: триггерим прогресс по платным purchase-tasks (daily resume)
+    try:
+        from app.services.tasks_service import trigger_paid_purchase_tasks
+
+        await trigger_paid_purchase_tasks(
+            db,
+            user_id=user.id,
+            tariff_id=getattr(subscription, 'tariff_id', None),
+            period_days=1,
+            amount_kopeks=daily_price,
+            subscription_id=getattr(subscription, 'id', None),
+            is_trial=False,
+        )
+    except Exception as task_err:
+        logger.warning('Tasks: ошибка триггеров auto-purchase (daily-resume)', error=task_err)
 
     # Update charge time and end_date (+24h)
     old_end_date = subscription.end_date

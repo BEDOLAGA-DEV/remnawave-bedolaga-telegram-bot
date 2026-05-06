@@ -209,6 +209,39 @@ class DailySubscriptionService:
             await db.commit()
             await db.refresh(user)
 
+            # Tasks: триггерим прогресс по платным purchase-tasks (суточное списание).
+            # SPEND_AMOUNT не сработает через emit_transaction_side_effects (он не вызывается
+            # тут), поэтому делаем это вручную через trigger_paid_purchase_tasks +
+            # отдельный SPEND_AMOUNT.
+            try:
+                from app.database.models import TaskType
+                from app.services.tasks_service import record_event, trigger_paid_purchase_tasks
+
+                await trigger_paid_purchase_tasks(
+                    db,
+                    user_id=user.id,
+                    tariff_id=getattr(tariff, 'id', None),
+                    period_days=1,
+                    amount_kopeks=daily_price,
+                    subscription_id=getattr(subscription, 'id', None),
+                    is_trial=False,
+                )
+                # SPEND_AMOUNT отдельно — суточный путь не идёт через стандартный
+                # create_transaction(commit=True), значит SPEND_AMOUNT нужно явно.
+                await record_event(
+                    db,
+                    user_id=user.id,
+                    event_type=TaskType.SPEND_AMOUNT,
+                    payload={'amount_kopeks': daily_price, 'is_trial': False},
+                )
+                await db.commit()
+            except Exception as task_err:
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                logger.warning('Tasks: ошибка триггеров daily charge', error=task_err)
+
             user_id_display = user.telegram_id or user.email or f'#{user.id}'
             logger.info(
                 '✅ Суточное списание: подписка сумма коп., пользователь',

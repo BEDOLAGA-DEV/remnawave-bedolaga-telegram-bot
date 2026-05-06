@@ -1226,6 +1226,26 @@ class MiniAppSubscriptionPurchaseService:
             )
             message = f'{message}\n\n{note}'
 
+        # Tasks: триггерим прогресс по платным покупкам подписок (PURCHASE_TARIFF /
+        # PURCHASE_PERIOD / MULTI_TARIFF). Триал-конверсия тоже считается как платная.
+        try:
+            from app.services.tasks_service import trigger_paid_purchase_tasks
+
+            tariff_id = getattr(pricing.selection, 'tariff_id', None) or getattr(
+                subscription, 'tariff_id', None
+            )
+            await trigger_paid_purchase_tasks(
+                db,
+                user_id=user.id,
+                tariff_id=tariff_id,
+                period_days=pricing.selection.period.days,
+                amount_kopeks=pricing.final_total,
+                subscription_id=subscription.id,
+                is_trial=False,
+            )
+        except Exception as task_err:  # pragma: no cover - defensive
+            logger.warning('Tasks: ошибка триггеров submit_purchase', error=task_err)
+
         return {
             'subscription': subscription,
             'transaction': transaction,

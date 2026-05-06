@@ -1111,6 +1111,22 @@ async def handle_custom_confirm(
             description=f'Покупка тарифа {tariff.name} на {custom_days} дней',
         )
 
+        # Tasks: триггерим прогресс по платным покупкам подписок
+        try:
+            from app.services.tasks_service import trigger_paid_purchase_tasks
+
+            await trigger_paid_purchase_tasks(
+                db,
+                user_id=db_user.id,
+                tariff_id=getattr(tariff, 'id', None),
+                period_days=custom_days,
+                amount_kopeks=total_price,
+                subscription_id=getattr(subscription, 'id', None),
+                is_trial=False,
+            )
+        except Exception as task_err:
+            logger.warning('Tasks: ошибка триггеров tariff_purchase (custom)', error=task_err)
+
         # Отправляем уведомление админу
         try:
             admin_notification_service = AdminNotificationService(callback.bot)
@@ -1669,6 +1685,22 @@ async def confirm_tariff_purchase(
         )
     except Exception as e:
         logger.error('Ошибка создания транзакции', error=e)
+
+    # Tasks: триггерим прогресс по платным покупкам подписок
+    try:
+        from app.services.tasks_service import trigger_paid_purchase_tasks
+
+        await trigger_paid_purchase_tasks(
+            db,
+            user_id=db_user.id,
+            tariff_id=getattr(tariff, 'id', None),
+            period_days=period,
+            amount_kopeks=final_price,
+            subscription_id=getattr(subscription, 'id', None),
+            is_trial=False,
+        )
+    except Exception as task_err:
+        logger.warning('Tasks: ошибка триггеров tariff_purchase (preset)', error=task_err)
 
     # Отправляем уведомление админу
     try:

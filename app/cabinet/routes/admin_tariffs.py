@@ -273,6 +273,8 @@ async def get_tariff(
         external_squad_uuid=tariff.external_squad_uuid,
         # Показывать в подарках
         show_in_gift=tariff.show_in_gift,
+        # Бонусные дни Tasks
+        bonus_days_per_purchase=getattr(tariff, 'bonus_days_per_purchase', 0) or 0,
         created_at=tariff.created_at,
         updated_at=tariff.updated_at,
     )
@@ -331,6 +333,8 @@ async def create_new_tariff(
         external_squad_uuid=request.external_squad_uuid,
         # Показывать в подарках
         show_in_gift=request.show_in_gift,
+        # Бонусные дни Tasks
+        bonus_days_per_purchase=request.bonus_days_per_purchase,
     )
 
     logger.info('Admin created tariff', admin_id=admin.id, tariff_id=tariff.id, tariff_name=tariff.name)
@@ -430,6 +434,9 @@ async def update_existing_tariff(
     # Показывать в подарках
     if request.show_in_gift is not None:
         updates['show_in_gift'] = request.show_in_gift
+    # Бонусные дни Tasks
+    if request.bonus_days_per_purchase is not None:
+        updates['bonus_days_per_purchase'] = request.bonus_days_per_purchase
 
     if updates:
         await update_tariff(db, tariff, **updates)

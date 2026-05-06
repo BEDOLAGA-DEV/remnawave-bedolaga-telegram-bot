@@ -117,6 +117,8 @@ class TariffDetailResponse(BaseModel):
     external_squad_uuid: str | None = None
     # Показывать в подарках
     show_in_gift: bool = True
+    # Бонусные дни для системы Tasks (при награде subscription_days)
+    bonus_days_per_purchase: int = 0
     created_at: datetime
     updated_at: datetime | None = None
 
@@ -175,6 +177,8 @@ class TariffCreateRequest(BaseModel):
     external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
     # Показывать в подарках
     show_in_gift: bool = True
+    # Бонусные дни для Tasks (subscription_days reward)
+    bonus_days_per_purchase: int = Field(0, ge=0)
 
 
 class TariffUpdateRequest(BaseModel):
@@ -216,6 +220,8 @@ class TariffUpdateRequest(BaseModel):
     external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
     # Показывать в подарках
     show_in_gift: bool | None = None
+    # Бонусные дни для Tasks (subscription_days reward)
+    bonus_days_per_purchase: int | None = Field(None, ge=0)
 
 
 class TariffSortOrderRequest(BaseModel):

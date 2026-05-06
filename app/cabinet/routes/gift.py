@@ -517,6 +517,36 @@ async def create_gift_purchase(
         description=tx_description,
     )
 
+    # Tasks: триггерим прогресс по подаркам
+    try:
+        from app.database.models import TaskType as _TaskType
+        from app.services.tasks_service import record_event as _record_event
+
+        await _record_event(
+            db,
+            user_id=user.id,
+            event_type=_TaskType.GIFT_PURCHASED,
+            payload={'purchase_id': purchase.id},
+        )
+        await _record_event(
+            db,
+            user_id=user.id,
+            event_type=_TaskType.GIFTS_COUNT,
+            payload={'purchase_id': purchase.id},
+        )
+        # record_event делает только flush(); коммитим явно. Для has_recipient=True далее
+        # fulfill_purchase сделает свой commit, для has_recipient=False — это единственный
+        # шанс закоммитить task-прогресс перед return.
+        await db.commit()
+    except Exception as task_err:
+        # Сессия может быть в poisoned state — откатываем, чтобы fulfill_purchase ниже
+        # мог продолжить работу с сессией.
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.warning('Tasks: ошибка GIFT триггеров', user_id=user.id, error=task_err)
+
     # Capture token before fulfill_purchase — session state may change after rollback inside fulfill
     purchase_token = purchase.token
 

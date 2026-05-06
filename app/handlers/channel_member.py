@@ -17,14 +17,16 @@ from aiogram.types import ChatMemberUpdated
 
 from app.config import settings
 from app.database.crud.subscription import deactivate_subscription, reactivate_subscription
+from app.database.crud.tasks import get_partner_channel_by_channel_id
 from app.database.crud.user import get_user_by_telegram_id
 from app.database.database import AsyncSessionLocal
-from app.database.models import SubscriptionStatus, UserStatus
+from app.database.models import SubscriptionStatus, TaskType, UserStatus
 from app.keyboards.inline import get_channel_sub_keyboard
 from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
 from app.services.channel_subscription_service import channel_subscription_service
 from app.services.subscription_service import SubscriptionService
+from app.services.tasks_service import record_event
 
 
 logger = structlog.get_logger(__name__)
@@ -38,14 +40,58 @@ async def _is_required_channel(channel_id: str) -> bool:
     return channel_id in required_ids
 
 
+async def _is_task_partner_channel(channel_id: str) -> bool:
+    """Check if the channel_id is a partner channel used for SUBSCRIBE_CHANNEL tasks."""
+    async with AsyncSessionLocal() as db:
+        partner = await get_partner_channel_by_channel_id(db, channel_id)
+        return partner is not None and partner.is_active
+
+
+async def _trigger_subscribe_channel_task(telegram_id: int, channel_id: str) -> None:
+    """Записывает событие SUBSCRIBE_CHANNEL для системы заданий.
+
+    Вызывается, когда юзер подписался на канал, у которого есть TaskPartnerChannel.
+    Безопасно — не пробрасывает исключения, чтобы не сломать обработку события.
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            db_user = await get_user_by_telegram_id(db, telegram_id)
+            if db_user is None:
+                return
+            await record_event(
+                db,
+                user_id=db_user.id,
+                event_type=TaskType.SUBSCRIBE_CHANNEL,
+                payload={'channel_id': channel_id},
+            )
+            await db.commit()
+    except Exception as exc:
+        logger.error(
+            'Failed to record SUBSCRIBE_CHANNEL task event',
+            telegram_id=telegram_id,
+            channel_id=channel_id,
+            error=exc,
+        )
+
+
 @router.chat_member(ChatMemberUpdatedFilter(member_status_changed=IS_NOT_MEMBER >> IS_MEMBER))
 async def on_user_joined_channel(event: ChatMemberUpdated, bot: Bot) -> None:
     """User subscribed to a channel -- update cache and reactivate VPN if applicable."""
     user = event.new_chat_member.user
     channel_id = str(event.chat.id)  # Normalize int to str (DB stores string)
 
-    # FILTER: Only process events for required channels
-    if not await _is_required_channel(channel_id):
+    is_required = await _is_required_channel(channel_id)
+    is_partner = await _is_task_partner_channel(channel_id)
+
+    # FILTER: Only process events for required or task partner channels
+    if not is_required and not is_partner:
+        return
+
+    # Если канал партнёрский (для заданий) — триггерим прогресс задания
+    if is_partner:
+        await _trigger_subscribe_channel_task(user.id, channel_id)
+
+    if not is_required:
         return
 
     await channel_subscription_service.on_user_joined(user.id, channel_id)
@@ -125,7 +171,12 @@ async def on_user_joined_channel(event: ChatMemberUpdated, bot: Bot) -> None:
 
 @router.chat_member(ChatMemberUpdatedFilter(member_status_changed=IS_MEMBER >> IS_NOT_MEMBER))
 async def on_user_left_channel(event: ChatMemberUpdated, bot: Bot) -> None:
-    """User unsubscribed from a channel -- update cache and deactivate VPN if applicable."""
+    """User unsubscribed from a channel -- update cache and deactivate VPN if applicable.
+
+    Партнёрские каналы (TaskPartnerChannel) тут не учитываем: задания SUBSCRIBE_CHANNEL
+    в режиме absolute completed-once. Отписка не должна откатывать выполненное задание
+    (юзер уже claim'нул награду).
+    """
     user = event.old_chat_member.user
     channel_id = str(event.chat.id)  # Normalize int to str (DB stores string)
 

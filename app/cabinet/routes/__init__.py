@@ -34,6 +34,7 @@ from .admin_servers import router as admin_servers_router
 from .admin_settings import router as admin_settings_router
 from .admin_stats import router as admin_stats_router
 from .admin_tariffs import router as admin_tariffs_router
+from .admin_tasks import router as admin_tasks_router
 from .admin_tickets import router as admin_tickets_router
 from .admin_traffic import router as admin_traffic_router
 from .admin_updates import router as admin_updates_router
@@ -64,6 +65,7 @@ from .ticket_notifications import (
     router as ticket_notifications_router,
 )
 from .tickets import router as tickets_router
+from .user_tasks import router as user_tasks_router
 from .websocket import router as websocket_router
 from .wheel import router as wheel_router
 from .withdrawal import router as withdrawal_router
@@ -109,6 +111,7 @@ router.include_router(landing_router)
 router.include_router(media_router)
 router.include_router(news_router)
 router.include_router(info_pages_router)
+router.include_router(user_tasks_router)
 
 # Wheel routes
 router.include_router(wheel_router)
@@ -158,6 +161,7 @@ router.include_router(admin_news_tags_router)
 router.include_router(admin_news_media_router)
 router.include_router(admin_news_router)
 router.include_router(admin_info_pages_router)
+router.include_router(admin_tasks_router)
 
 # WebSocket route
 router.include_router(websocket_router)
