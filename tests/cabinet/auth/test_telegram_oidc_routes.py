@@ -202,3 +202,123 @@ async def test_oidc_init_link_with_invalid_jwt_returns_401(app_client):
     )
     # Reject with 401 - not 500 (AttributeError) and not 403 (HTTPBearer auto_error)
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_oidc_callback_invalid_state(app_client, monkeypatch):
+    async def _no_state(state, provider):
+        return None
+
+    from app.cabinet.routes import auth as auth_routes
+    monkeypatch.setattr(auth_routes, 'validate_oauth_state', _no_state)
+
+    response = await app_client.post(
+        '/cabinet/auth/telegram/oidc/callback',
+        json={'code': 'abc', 'state': 'X' * 64},
+    )
+    assert response.status_code == 400
+    assert 'state' in response.json()['detail'].lower()
+
+
+@pytest.mark.asyncio
+async def test_oidc_callback_login_success(app_client, monkeypatch, make_id_token, jwks_doc):
+    from datetime import datetime, UTC
+
+    from app.cabinet.routes import auth as auth_routes
+    from app.cabinet.auth import telegram_auth
+    from app.cabinet.schemas.auth import AuthResponse, UserResponse
+
+    state_data = {
+        'provider': 'telegram',
+        'flow': 'login',
+        'code_verifier': 'verifier_xyz',
+        'nonce': 'nonce_xyz',
+    }
+
+    async def _validate_state(state, provider):
+        return state_data
+
+    async def _exchange(**kwargs):
+        return make_id_token(client_id='111222333', nonce='nonce_xyz')
+
+    async def _fake_get_jwks(force=False):
+        return jwks_doc
+
+    async def _no_replay(token_hash, ttl):
+        return False
+
+    async def _create_or_login(db, claims, *, campaign_slug, referral_code):
+        return AuthResponse(
+            access_token='access',
+            refresh_token='refresh',
+            token_type='bearer',
+            expires_in=3600,
+            user=UserResponse(
+                id=1,
+                telegram_id=int(claims.get('id') or claims.get('sub')),
+                created_at=datetime.now(UTC),
+            ),
+        )
+
+    monkeypatch.setattr(auth_routes, 'validate_oauth_state', _validate_state)
+    monkeypatch.setattr(auth_routes, 'exchange_authorization_code', _exchange)
+    monkeypatch.setattr(telegram_auth, '_get_jwks', _fake_get_jwks)
+    monkeypatch.setattr(auth_routes.TokenReplayCache, 'is_token_replayed', staticmethod(_no_replay))
+    monkeypatch.setattr(auth_routes, '_create_or_login_user_from_oidc_claims', _create_or_login)
+
+    response = await app_client.post(
+        '/cabinet/auth/telegram/oidc/callback',
+        json={'code': 'auth_code', 'state': 'S' * 64},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body['access_token'] == 'access'
+    assert body['user']['telegram_id'] == 1234567890
+
+
+@pytest.mark.asyncio
+async def test_oidc_callback_token_exchange_failure(app_client, monkeypatch):
+    state_data = {'provider': 'telegram', 'flow': 'login', 'code_verifier': 'v', 'nonce': 'n'}
+
+    async def _validate_state(state, provider):
+        return state_data
+
+    async def _exchange(**kwargs):
+        return None
+
+    from app.cabinet.routes import auth as auth_routes
+    monkeypatch.setattr(auth_routes, 'validate_oauth_state', _validate_state)
+    monkeypatch.setattr(auth_routes, 'exchange_authorization_code', _exchange)
+
+    response = await app_client.post(
+        '/cabinet/auth/telegram/oidc/callback',
+        json={'code': 'c', 'state': 'S' * 64},
+    )
+    assert response.status_code == 502
+    assert 'token exchange' in response.json()['detail'].lower()
+
+
+@pytest.mark.asyncio
+async def test_oidc_callback_nonce_mismatch(app_client, monkeypatch, make_id_token, jwks_doc):
+    state_data = {'provider': 'telegram', 'flow': 'login', 'code_verifier': 'v', 'nonce': 'expected_nonce'}
+
+    async def _validate_state(state, provider):
+        return state_data
+
+    async def _exchange(**kwargs):
+        return make_id_token(client_id='111222333', nonce='different_nonce')
+
+    async def _fake_get_jwks(force=False):
+        return jwks_doc
+
+    from app.cabinet.routes import auth as auth_routes
+    from app.cabinet.auth import telegram_auth
+    monkeypatch.setattr(auth_routes, 'validate_oauth_state', _validate_state)
+    monkeypatch.setattr(auth_routes, 'exchange_authorization_code', _exchange)
+    monkeypatch.setattr(telegram_auth, '_get_jwks', _fake_get_jwks)
+
+    response = await app_client.post(
+        '/cabinet/auth/telegram/oidc/callback',
+        json={'code': 'c', 'state': 'S' * 64},
+    )
+    assert response.status_code == 401

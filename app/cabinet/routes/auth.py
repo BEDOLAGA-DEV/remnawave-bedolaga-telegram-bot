@@ -975,6 +975,93 @@ async def oidc_init(
     )
 
 
+@router.post('/telegram/oidc/callback')
+async def oidc_callback(
+    request: TelegramOIDCCallbackRequest,
+    raw_request: Request,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Authorization Code + PKCE callback. Returns AuthResponse (login) or LinkCallbackResponse (link)."""
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'oidc_callback', limit=10, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    state_data = await validate_oauth_state(request.state, 'telegram')
+    if not state_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Invalid or expired OAuth state',
+        )
+
+    flow = state_data.get('flow')
+    if flow not in ('login', 'link'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='OAuth state flow mismatch',
+        )
+
+    code_verifier = state_data.get('code_verifier')
+    nonce = state_data.get('nonce')
+    if not code_verifier or not nonce:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='OAuth state is missing required fields',
+        )
+
+    enabled, client_id, client_secret, redirect_uri = await _resolve_oidc_settings(db)
+    if not enabled or not redirect_uri or not client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Telegram OIDC is not fully configured',
+        )
+
+    id_token = await exchange_authorization_code(
+        code=request.code,
+        code_verifier=code_verifier,
+        redirect_uri=redirect_uri,
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    if not id_token:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail='Token exchange failed (upstream)',
+        )
+
+    claims = await validate_telegram_oidc_token(id_token, client_id, expected_nonce=nonce)
+    if not claims:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid or expired Telegram OIDC token',
+        )
+
+    token_hash = hashlib.sha256(id_token.encode()).hexdigest()
+    token_ttl = max(int(claims.get('exp', 0) - datetime.now(UTC).timestamp()), 60)
+    if await TokenReplayCache.is_token_replayed(token_hash, ttl=min(token_ttl, 600)):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid or expired Telegram OIDC token',
+        )
+
+    if flow == 'login':
+        return await _create_or_login_user_from_oidc_claims(
+            db,
+            claims,
+            campaign_slug=state_data.get('campaign_slug'),
+            referral_code=state_data.get('referral_code'),
+        )
+
+    # flow == 'link' — wired in Task 14
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail='Link flow not yet wired',
+    )
+
+
 @router.get('/telegram/link-token', response_model=TelegramLinkTokenResponse)
 async def get_telegram_link_token(
     user: User = Depends(get_current_cabinet_user),
