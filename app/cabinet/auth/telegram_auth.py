@@ -1,9 +1,11 @@
 """Telegram authentication validation for cabinet."""
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qsl
@@ -16,6 +18,23 @@ from app.config import settings
 
 
 logger = structlog.get_logger(__name__)
+
+
+def generate_pkce_pair() -> tuple[str, str]:
+    """Generate a PKCE (verifier, challenge) pair using S256.
+
+    Verifier is 43–128 url-safe ASCII characters (RFC 7636 unreserved alphabet).
+    Challenge is base64url(sha256(verifier)) with padding removed.
+    """
+    verifier = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(verifier.encode('ascii')).digest()
+    challenge = base64.urlsafe_b64encode(digest).decode('ascii').rstrip('=')
+    return verifier, challenge
+
+
+def generate_oidc_nonce() -> str:
+    """Generate a random 32-hex nonce for OIDC replay protection."""
+    return secrets.token_hex(16)
 
 
 # Maximum allowed clock skew (seconds) for auth_date — tolerates minor drift between Telegram servers and ours.
