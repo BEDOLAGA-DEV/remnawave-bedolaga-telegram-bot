@@ -273,14 +273,35 @@ async def validate_telegram_oidc_token(
             logger.warning('Telegram OIDC: unknown kid in id_token', kid=kid)
             return None
 
+        # Telegram OIDC may encode `aud` as either string or integer (mirrors the
+        # type frontend passes to Telegram.Login.init). PyJWT's built-in audience
+        # check uses strict `==`, so `123 == '123'` is False and validation fails
+        # despite the values matching semantically. Skip PyJWT's audience check
+        # and compare manually after coercing both sides to strings.
         claims = pyjwt.decode(
             id_token,
             key=public_keys[kid],
             algorithms=['RS256'],
-            audience=client_id,
             issuer=_OIDC_ISSUER,
-            options={'require': ['exp', 'iat', 'iss', 'aud', 'sub']},
+            options={
+                'require': ['exp', 'iat', 'iss', 'aud', 'sub'],
+                'verify_aud': False,
+            },
         )
+        actual_aud = claims.get('aud')
+        # `aud` can be a string, an int, or a list per RFC 7519. Coerce all to str.
+        actual_aud_strs = (
+            [str(a) for a in actual_aud]
+            if isinstance(actual_aud, list)
+            else [str(actual_aud)]
+        )
+        if str(client_id) not in actual_aud_strs:
+            logger.warning(
+                'Telegram OIDC: aud mismatch',
+                expected=str(client_id),
+                actual=actual_aud_strs,
+            )
+            return None
 
         if expected_nonce is not None:
             actual = claims.get('nonce')
