@@ -269,16 +269,21 @@ async def get_current_admin_user(
 
 async def _optional_cabinet_user(
     request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> User | None:
     """Return the current user if a JWT was supplied, else None.
 
     Distinguishes 'no token' (return None) from 'invalid token' (raise 401).
+
+    Uses the module-level ``security`` HTTPBearer instance (auto_error=False),
+    which yields ``None`` for both missing and malformed Authorization headers.
+    For a present Bearer token we delegate to ``get_current_cabinet_user`` so
+    that token-expiry / signature errors propagate as 401, not 500.
     """
-    auth = request.headers.get('authorization')
-    if not auth or not auth.lower().startswith('bearer '):
+    if credentials is None:
         return None
-    return await get_current_cabinet_user(request, db)
+    return await get_current_cabinet_user(request, credentials, db)
 
 
 def require_permission(*permissions: str):

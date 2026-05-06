@@ -190,3 +190,15 @@ async def test_oidc_init_no_redirect_uri_returns_400(app_client, monkeypatch):
     response = await app_client.post('/cabinet/auth/telegram/oidc/init', json={'mode': 'login'})
     assert response.status_code == 400
     assert 'redirect uri' in response.json()['detail'].lower()
+
+
+@pytest.mark.asyncio
+async def test_oidc_init_link_with_invalid_jwt_returns_401(app_client):
+    """Invalid Bearer token must yield 401, not 500."""
+    response = await app_client.post(
+        '/cabinet/auth/telegram/oidc/init',
+        json={'mode': 'link'},
+        headers={'authorization': 'Bearer not-a-real-jwt'},
+    )
+    # Reject with 401 - not 500 (AttributeError) and not 403 (HTTPBearer auto_error)
+    assert response.status_code == 401
