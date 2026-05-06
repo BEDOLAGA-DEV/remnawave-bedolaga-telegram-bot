@@ -122,7 +122,9 @@ def _mount_cabinet_static(app: FastAPI) -> None:
 
     Hosts the Telegram OIDC manual test harness and any other cabinet
     static assets. Safe to call from both the production app builder
-    and the lightweight ``create_app()`` test factory.
+    and the lightweight ``create_app()`` test factory. The production
+    builder (``create_unified_app``) gates this call on ``settings.DEBUG``
+    so the dev-only test harness is not exposed in production.
     """
     cabinet_static_path = Path(__file__).resolve().parent.parent / 'cabinet' / 'static'
     if not cabinet_static_path.exists():
@@ -226,7 +228,16 @@ def create_unified_app(
 
     miniapp_mounted, miniapp_path = _mount_miniapp_static(app)
     _mount_uploads_static(app)
-    _mount_cabinet_static(app)
+    # Cabinet static directory hosts the Telegram OIDC manual test harness
+    # (telegram-login-test.html). Gate it on DEBUG so production deployments
+    # do not expose the dev-only test page. The lightweight ``create_app()``
+    # test factory always mounts it, so cabinet auth route tests keep working.
+    if settings.DEBUG:
+        _mount_cabinet_static(app)
+    else:
+        logger.debug(
+            'Skipping /cabinet/static mount; set DEBUG=True to expose the dev test harness'
+        )
 
     unified_health_path = '/health/unified' if settings.is_web_api_enabled() else '/health'
 
