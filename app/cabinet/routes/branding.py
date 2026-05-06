@@ -48,6 +48,7 @@ TELEGRAM_WIDGET_USERPIC_KEY = 'TELEGRAM_WIDGET_USERPIC'
 TELEGRAM_WIDGET_REQUEST_ACCESS_KEY = 'TELEGRAM_WIDGET_REQUEST_ACCESS'
 TELEGRAM_OIDC_ENABLED_KEY = 'TELEGRAM_OIDC_ENABLED'
 TELEGRAM_OIDC_CLIENT_ID_KEY = 'TELEGRAM_OIDC_CLIENT_ID'
+TELEGRAM_OIDC_REDIRECT_URI_KEY = 'TELEGRAM_OIDC_REDIRECT_URI'
 EMAIL_REGISTRATION_ENABLED_KEY = 'CABINET_EMAIL_REGISTRATION_ENABLED'  # Stores "true" or "false"
 
 # Default animation config
@@ -268,6 +269,11 @@ class TelegramWidgetConfigResponse(BaseModel):
     # OIDC fields (frontend decides which flow to use)
     oidc_enabled: bool = False
     oidc_client_id: str = ''
+    # New code-flow availability flag: true when OIDC is enabled AND a redirect URI is configured
+    oidc_code_flow_available: bool = False
+    # Legacy widget fields (size/radius/userpic/request_access) are deprecated;
+    # callers should use the OIDC code flow instead.
+    widget_deprecated: bool = True
 
 
 class LiteModeEnabledResponse(BaseModel):
@@ -912,10 +918,13 @@ async def get_telegram_widget_config(
 
     oidc_enabled_val = await get_setting_value(db, TELEGRAM_OIDC_ENABLED_KEY)
     oidc_client_id_val = await get_setting_value(db, TELEGRAM_OIDC_CLIENT_ID_KEY)
+    oidc_redirect_uri_val = await get_setting_value(db, TELEGRAM_OIDC_REDIRECT_URI_KEY)
     oidc_client_id = oidc_client_id_val or settings.TELEGRAM_OIDC_CLIENT_ID
+    oidc_redirect_uri = oidc_redirect_uri_val or settings.TELEGRAM_OIDC_REDIRECT_URI
     oidc_enabled = (
         oidc_enabled_val.lower() == 'true' if oidc_enabled_val is not None else settings.TELEGRAM_OIDC_ENABLED
     ) and bool(oidc_client_id)
+    oidc_code_flow_available = bool(oidc_enabled and oidc_redirect_uri)
 
     return TelegramWidgetConfigResponse(
         bot_username=bot_username,
@@ -929,6 +938,8 @@ async def get_telegram_widget_config(
         else settings.TELEGRAM_WIDGET_REQUEST_ACCESS,
         oidc_enabled=oidc_enabled,
         oidc_client_id=oidc_client_id if oidc_enabled else '',
+        oidc_code_flow_available=oidc_code_flow_available,
+        widget_deprecated=True,
     )
 
 

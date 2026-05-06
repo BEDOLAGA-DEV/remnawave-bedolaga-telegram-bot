@@ -428,3 +428,21 @@ async def test_oidc_callback_link_uses_state_user_id(app_client, monkeypatch, ma
     assert body['success'] is True
     assert captured['user_id'] == 42
     assert captured['telegram_id'] == 999888
+
+
+@pytest.mark.asyncio
+async def test_branding_auth_methods_marks_widget_deprecated(app_client, monkeypatch):
+    async def _enabled(db, key):
+        return {
+            'TELEGRAM_OIDC_ENABLED': 'true',
+            'TELEGRAM_OIDC_CLIENT_ID': '111',
+            'TELEGRAM_OIDC_REDIRECT_URI': 'https://cab.example.com/cb',
+        }.get(key)
+
+    from app.cabinet.routes import branding
+    monkeypatch.setattr(branding, 'get_setting_value', _enabled)
+
+    response = await app_client.get('/cabinet/branding/telegram-widget')
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get('oidc_code_flow_available') is True
