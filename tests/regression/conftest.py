@@ -26,4 +26,7 @@ if 'redis.exceptions' not in sys.modules:
         _redis.exceptions = _redis_exc
 
 
-pytest_plugins = ['pytest_asyncio']
+# Note: `pytest_plugins` is intentionally not declared here. pytest 9
+# forbids `pytest_plugins` in non-top-level conftest files, and
+# pytest-asyncio is auto-discovered via its entry point so an explicit
+# declaration is unnecessary.
