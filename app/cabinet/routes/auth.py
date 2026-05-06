@@ -8,7 +8,6 @@ from urllib.parse import parse_qs, urlencode
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -608,21 +607,111 @@ async def auth_telegram(
     return response
 
 
-@router.post('/telegram/widget')
-async def auth_telegram_widget(raw_request: Request) -> JSONResponse:
-    """Deprecated Telegram Login Widget endpoint. Returns HTTP 410 Gone."""
-    logger.warning(
-        'Deprecated Telegram widget endpoint called',
-        client_ip=get_client_ip(raw_request),
-        user_agent=raw_request.headers.get('user-agent'),
-    )
-    return JSONResponse(
-        status_code=status.HTTP_410_GONE,
-        content={
-            'detail': _WIDGET_DEPRECATION_DETAIL,
-            'migration_doc': _WIDGET_DEPRECATION_DOC,
-        },
-    )
+@router.post('/telegram/widget', response_model=AuthResponse)
+async def auth_telegram_widget(
+    request: TelegramWidgetAuthRequest,
+    raw_request: Request,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """
+    Authenticate using Telegram Login Widget data.
+
+    This endpoint validates data from Telegram Login Widget and returns
+    JWT tokens for authenticated access.
+    """
+    # Rate limit
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'telegram_widget', limit=10, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    widget_data = request.model_dump(exclude={'campaign_slug', 'referral_code'})
+
+    # Generous max_age: Telegram caches auth data with stale auth_date
+    if not validate_telegram_login_widget(widget_data, max_age_seconds=86400 * 30):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid or expired Telegram authentication data',
+        )
+
+    user = await get_user_by_telegram_id(db, request.id)
+
+    # Resolve referral code to referrer ID for new users
+    referrer_id = None
+    if request.referral_code and not user:
+        try:
+            referrer = await get_user_by_referral_code(db, request.referral_code)
+            if referrer:
+                # Self-referral protection by telegram_id (user doesn't exist yet, can't compare user.id)
+                if referrer.telegram_id and referrer.telegram_id == request.id:
+                    logger.warning(
+                        'Self-referral attempt blocked via telegram_id',
+                        telegram_id=request.id,
+                        referral_code=request.referral_code,
+                    )
+                else:
+                    referrer_id = referrer.id
+        except Exception as e:
+            logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
+
+    is_new_user = not user
+    if not user:
+        # Create new user from Telegram data
+        logger.info(
+            'Creating new user from cabinet: telegram_id=, username', request_id=request.id, username=request.username
+        )
+        user = await create_user(
+            db=db,
+            telegram_id=request.id,
+            username=request.username,
+            first_name=request.first_name,
+            last_name=request.last_name,
+            language='ru',
+            referred_by_id=referrer_id,
+        )
+        logger.info('User created successfully: id=, telegram_id', user_id=user.id, telegram_id=user.telegram_id)
+
+    if user.status != UserStatus.ACTIVE.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='User account is not active',
+        )
+
+    # Update user info from widget data
+    if request.username and request.username != user.username:
+        user.username = request.username
+    if request.first_name and request.first_name != user.first_name:
+        user.first_name = request.first_name
+    if request.last_name != user.last_name:
+        user.last_name = request.last_name
+
+    user.cabinet_last_login = datetime.now(UTC)
+    await db.commit()
+
+    response = await _create_auth_response(user, db)
+    await _store_refresh_token(db, user.id, response.refresh_token)
+
+    # Process referral code (only for new users — existing users cannot be assigned a referrer)
+    await _process_referral_code(db, user, request.referral_code, is_new_user=is_new_user)
+
+    # Clear Redis pending referral after successful registration
+    if referrer_id and request.id:
+        try:
+            from app.services.referral_service import clear_pending_referral
+
+            await clear_pending_referral(request.id)
+        except Exception:
+            pass
+
+    # Process campaign bonus
+    response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
+    if response.campaign_bonus:
+        response.user = _user_to_response(user)
+
+    return response
 
 
 async def _create_or_login_user_from_oidc_claims(
@@ -795,9 +884,6 @@ async def auth_telegram_oidc(
 
 _OIDC_AUTHORIZE_ENDPOINT = 'https://oauth.telegram.org/auth'
 _OIDC_STATE_TTL_SECONDS = 600
-
-_WIDGET_DEPRECATION_DETAIL = 'Telegram Login Widget endpoint is deprecated. Use OIDC at /auth/telegram/oidc.'
-_WIDGET_DEPRECATION_DOC = 'https://core.telegram.org/bots/telegram-login'
 
 
 async def _resolve_oidc_settings(db: AsyncSession) -> tuple[bool, str, str, str]:
@@ -1031,21 +1117,56 @@ async def get_telegram_link_token(
     )
 
 
-@router.post('/telegram/link-widget')
-async def link_telegram_widget(raw_request: Request) -> JSONResponse:
-    """Deprecated Telegram Login Widget linking endpoint. Returns HTTP 410 Gone."""
-    logger.warning(
-        'Deprecated Telegram link-widget endpoint called',
-        client_ip=get_client_ip(raw_request),
-        user_agent=raw_request.headers.get('user-agent'),
-    )
-    return JSONResponse(
-        status_code=status.HTTP_410_GONE,
-        content={
-            'detail': _WIDGET_DEPRECATION_DETAIL,
-            'migration_doc': _WIDGET_DEPRECATION_DOC,
-        },
-    )
+@router.post('/telegram/link-widget', response_model=UserResponse)
+async def link_telegram_widget(
+    request: TelegramWidgetAuthRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """
+    Link Telegram account using Telegram Login Widget data.
+
+    Requires valid JWT token from current session.
+    """
+    if user.telegram_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Telegram is already linked to this account',
+        )
+
+    widget_data = request.model_dump(exclude={'campaign_slug', 'referral_code'})
+
+    if not validate_telegram_login_widget(widget_data):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid or expired Telegram authentication data',
+        )
+
+    # Check if this telegram_id is already used by another user
+    existing_tg_user = await get_user_by_telegram_id(db, request.id)
+    if existing_tg_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='This Telegram account is already linked to another user',
+        )
+
+    # Link Telegram data
+    user.telegram_id = request.id
+    if request.username:
+        user.username = request.username
+    if request.first_name:
+        user.first_name = request.first_name
+    if request.last_name:
+        user.last_name = request.last_name
+
+    # If it was email-only account, it's now a 'telegram' account too
+    if getattr(user, 'auth_type', 'email') == 'email':
+        user.auth_type = 'telegram'
+
+    await db.commit()
+    await db.refresh(user)
+
+    return _user_to_response(user)
 
 
 @router.post('/email/register')

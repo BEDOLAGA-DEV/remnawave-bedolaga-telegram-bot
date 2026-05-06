@@ -324,37 +324,6 @@ async def test_oidc_callback_nonce_mismatch(app_client, monkeypatch, make_id_tok
     assert response.status_code == 401
 
 
-@pytest.mark.asyncio
-async def test_widget_endpoint_returns_410(app_client):
-    response = await app_client.post(
-        '/cabinet/auth/telegram/widget',
-        json={
-            'id': 123,
-            'first_name': 'X',
-            'auth_date': 1700000000,
-            'hash': 'a' * 64,
-        },
-    )
-    assert response.status_code == 410
-    body = response.json()
-    assert 'deprecated' in body['detail'].lower()
-    assert body['migration_doc'].startswith('https://core.telegram.org/bots/telegram-login')
-
-
-@pytest.mark.asyncio
-async def test_link_widget_endpoint_returns_410(app_client):
-    response = await app_client.post(
-        '/cabinet/auth/telegram/link-widget',
-        json={
-            'id': 123,
-            'first_name': 'X',
-            'auth_date': 1700000000,
-            'hash': 'a' * 64,
-        },
-    )
-    assert response.status_code == 410
-
-
 def test_link_telegram_request_accepts_nonce():
     from app.cabinet.routes.account_linking import LinkTelegramRequest
 
