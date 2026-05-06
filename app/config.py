@@ -398,6 +398,7 @@ class Settings(BaseSettings):
     TELEGRAM_OIDC_ENABLED: bool = False
     TELEGRAM_OIDC_CLIENT_ID: str = ''
     TELEGRAM_OIDC_CLIENT_SECRET: str = ''
+    TELEGRAM_OIDC_REDIRECT_URI: str = ''
 
     TRIBUTE_ENABLED: bool = False
     TRIBUTE_API_KEY: str | None = None

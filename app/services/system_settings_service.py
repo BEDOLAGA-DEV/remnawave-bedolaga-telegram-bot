@@ -1058,6 +1058,12 @@ class BotConfigurationService:
             'example': 'xxxxxxxxxxxxxxxxxxxxxxxx',
             'warning': 'НЕ совпадает с BOT_TOKEN. Получается отдельно в BotFather.',
         },
+        'TELEGRAM_OIDC_REDIRECT_URI': {
+            'description': 'Redirect URI для Authorization Code flow. Должен быть зарегистрирован в BotFather > Bot Settings > Web Login > Allowed URLs.',
+            'format': 'Полный HTTPS URL.',
+            'example': 'https://cabinet.example.com/auth/telegram/callback',
+            'warning': 'Без этого значения работает только popup flow.',
+        },
     }
 
     @classmethod

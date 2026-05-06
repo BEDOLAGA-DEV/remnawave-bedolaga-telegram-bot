@@ -156,3 +156,8 @@ async def test_set_value_applies_without_env_override(monkeypatch):
 
     assert settings.SUPPORT_MENU_ENABLED is target_value
     assert bot_configuration_service.has_override('SUPPORT_MENU_ENABLED')
+
+
+def test_telegram_oidc_redirect_uri_default_empty():
+    from app.config import settings
+    assert settings.TELEGRAM_OIDC_REDIRECT_URI == ''
