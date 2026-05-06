@@ -283,6 +283,7 @@ async def validate_telegram_oidc_token(
             key=public_keys[kid],
             algorithms=['RS256'],
             issuer=_OIDC_ISSUER,
+            leeway=_MAX_CLOCK_SKEW_SECONDS,
             options={
                 'require': ['exp', 'iat', 'iss', 'aud', 'sub'],
                 'verify_aud': False,
