@@ -841,9 +841,16 @@ async def auth_telegram_oidc(
             detail='Telegram OIDC is not configured',
         )
 
+    if request.nonce is None:
+        logger.info(
+            'Telegram OIDC popup token received without nonce (frontend should add nonce)',
+            client_ip=client_ip,
+        )
+
     claims = await validate_telegram_oidc_token(
         request.id_token,
         oidc_client_id,
+        expected_nonce=request.nonce,
     )
     if not claims:
         raise HTTPException(

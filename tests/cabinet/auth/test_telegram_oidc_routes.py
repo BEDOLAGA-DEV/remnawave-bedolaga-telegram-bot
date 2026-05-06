@@ -1,7 +1,25 @@
 """Schema and route tests for the Telegram OIDC rewrite."""
 
+import sys
+import types
+
 import pytest
 from pydantic import ValidationError
+
+
+# Extend the conftest redis stub: app.utils.cache imports `from redis.exceptions
+# import NoScriptError`, which the conftest stub doesn't provide. Add a minimal
+# `redis.exceptions` shim so tests that import route modules can load cache.py.
+if 'redis' in sys.modules and not hasattr(sys.modules['redis'], 'exceptions'):
+    _redis_mod = sys.modules['redis']
+    _redis_exc = types.ModuleType('redis.exceptions')
+
+    class _NoScriptError(Exception):
+        pass
+
+    _redis_exc.NoScriptError = _NoScriptError
+    _redis_mod.exceptions = _redis_exc
+    sys.modules['redis.exceptions'] = _redis_exc
 
 
 def test_init_request_login_mode_no_jwt():
@@ -52,3 +70,40 @@ def test_oidc_auth_request_optional_nonce():
 
     req2 = TelegramOIDCAuthRequest(id_token='x.y.z')
     assert req2.nonce is None
+
+
+@pytest.mark.asyncio
+async def test_popup_endpoint_passes_nonce_to_validator(monkeypatch):
+    """If request.nonce is set, validate_telegram_oidc_token receives expected_nonce."""
+    from app.cabinet.routes import auth as auth_routes
+    from app.cabinet.schemas.auth import TelegramOIDCAuthRequest
+
+    captured: dict = {}
+
+    async def _fake_validate(id_token, client_id, expected_nonce=None):
+        captured['expected_nonce'] = expected_nonce
+        return None  # 401 path keeps the test simple
+
+    async def _no_rate_limit(*a, **kw):
+        return False
+
+    async def _setting(db, key):
+        return {'TELEGRAM_OIDC_ENABLED': 'true', 'TELEGRAM_OIDC_CLIENT_ID': '111'}.get(key)
+
+    monkeypatch.setattr(auth_routes, 'validate_telegram_oidc_token', _fake_validate)
+    monkeypatch.setattr(auth_routes.RateLimitCache, 'is_ip_rate_limited', staticmethod(_no_rate_limit))
+    monkeypatch.setattr(auth_routes, 'get_setting_value', _setting)
+
+    request_obj = TelegramOIDCAuthRequest(id_token='x.y.z', nonce='nonce-from-frontend')
+
+    class _Req:
+        @property
+        def headers(self):
+            return {}
+
+        client = type('c', (), {'host': '127.0.0.1'})()
+
+    with pytest.raises(Exception):
+        await auth_routes.auth_telegram_oidc(request_obj, _Req(), db=None)
+
+    assert captured['expected_nonce'] == 'nonce-from-frontend'
