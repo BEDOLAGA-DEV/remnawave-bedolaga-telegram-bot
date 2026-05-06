@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Telegram OIDC test</title>
+  <script src="https://telegram.org/js/telegram-widget.js?22" async></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    button { padding: 0.6rem 1rem; font-size: 1rem; margin-right: 0.5rem; }
+    pre { background: #f5f5f5; padding: 1rem; border-radius: 6px; overflow: auto; }
+    .row { margin: 1rem 0; }
+    label { display: block; font-size: 0.85rem; color: #555; }
+    input { width: 100%; padding: 0.4rem; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <h1>Telegram OIDC test page</h1>
+  <p>Manual harness for popup and Authorization Code + PKCE flows. Configure the bot ID below before testing popup.</p>
+
+  <div class="row">
+    <label>Bot ID (BotFather &rarr; Web Login &rarr; Client ID)</label>
+    <input id="botId" placeholder="123456789" />
+  </div>
+
+  <div class="row">
+    <button id="popup-btn">Login (popup)</button>
+    <button id="code-btn">Login (code + PKCE)</button>
+  </div>
+
+  <h2>Output</h2>
+  <pre id="out">(none)</pre>
+
+  <script>
+    const out = document.getElementById('out');
+    const log = (label, payload) => {
+      out.textContent = label + '\n\n' + JSON.stringify(payload, null, 2);
+    };
+
+    function genNonce() {
+      const a = new Uint8Array(16);
+      crypto.getRandomValues(a);
+      return Array.from(a, x => x.toString(16).padStart(2, '0')).join('');
+    }
+
+    document.getElementById('popup-btn').addEventListener('click', () => {
+      const botId = document.getElementById('botId').value.trim();
+      if (!botId) {
+        out.textContent = 'Enter bot ID first';
+        return;
+      }
+      const nonce = genNonce();
+      sessionStorage.setItem('tg_oidc_nonce', nonce);
+
+      Telegram.Login.init({ bot_id: botId, request_access: 'write', nonce }, (idToken) => {
+        if (!idToken) {
+          out.textContent = 'Popup cancelled or failed';
+          return;
+        }
+        fetch('/cabinet/auth/telegram/oidc', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id_token: idToken, nonce }),
+        })
+          .then(r => r.json().then(b => ({ status: r.status, body: b })))
+          .then(({ status, body }) => log('POST /cabinet/auth/telegram/oidc -> ' + status, body));
+      });
+      Telegram.Login.open();
+    });
+
+    document.getElementById('code-btn').addEventListener('click', async () => {
+      const r = await fetch('/cabinet/auth/telegram/oidc/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'login' }),
+      });
+      const body = await r.json();
+      log('POST /cabinet/auth/telegram/oidc/init -> ' + r.status, body);
+      if (r.ok && body.authorize_url) {
+        sessionStorage.setItem('tg_oidc_state', body.state);
+        window.location = body.authorize_url;
+      }
+    });
+
+    const params = new URLSearchParams(location.search);
+    const code = params.get('code');
+    const state = params.get('state');
+    if (code && state) {
+      fetch('/cabinet/auth/telegram/oidc/callback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, state }),
+      })
+        .then(r => r.json().then(b => ({ status: r.status, body: b })))
+        .then(({ status, body }) => log('POST /cabinet/auth/telegram/oidc/callback -> ' + status, body));
+    }
+  </script>
+</body>
+</html>

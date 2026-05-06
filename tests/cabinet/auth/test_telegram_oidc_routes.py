@@ -446,3 +446,10 @@ async def test_branding_auth_methods_marks_widget_deprecated(app_client, monkeyp
     assert response.status_code == 200
     body = response.json()
     assert body.get('oidc_code_flow_available') is True
+
+
+@pytest.mark.asyncio
+async def test_static_test_page_mounted(app_client):
+    response = await app_client.get('/cabinet/static/telegram-login-test.html')
+    assert response.status_code == 200
+    assert 'Telegram OIDC test page' in response.text

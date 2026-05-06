@@ -117,6 +117,30 @@ def _mount_miniapp_static(app: FastAPI) -> tuple[bool, Path]:
     return True, static_path
 
 
+def _mount_cabinet_static(app: FastAPI) -> None:
+    """Mount the cabinet static directory at /cabinet/static.
+
+    Hosts the Telegram OIDC manual test harness and any other cabinet
+    static assets. Safe to call from both the production app builder
+    and the lightweight ``create_app()`` test factory.
+    """
+    cabinet_static_path = Path(__file__).resolve().parent.parent / 'cabinet' / 'static'
+    if not cabinet_static_path.exists():
+        return
+    try:
+        app.mount(
+            '/cabinet/static',
+            StaticFiles(directory=cabinet_static_path),
+            name='cabinet-static',
+        )
+        logger.info(
+            '📦 Cabinet static files mounted at /cabinet/static',
+            static_path=cabinet_static_path,
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.error('Failed to mount /cabinet/static', error=str(exc))
+
+
 def create_app() -> FastAPI:
     """Build a minimal FastAPI app exposing the cabinet aggregator router.
 
@@ -127,6 +151,7 @@ def create_app() -> FastAPI:
     """
     app = FastAPI(title='NoZapret Cabinet Auth', version=settings.WEB_API_VERSION)
     app.include_router(cabinet_router)
+    _mount_cabinet_static(app)
     return app
 
 
@@ -201,6 +226,7 @@ def create_unified_app(
 
     miniapp_mounted, miniapp_path = _mount_miniapp_static(app)
     _mount_uploads_static(app)
+    _mount_cabinet_static(app)
 
     unified_health_path = '/health/unified' if settings.is_web_api_enabled() else '/health'
 
