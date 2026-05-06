@@ -1,6 +1,7 @@
 """Authentication schemas for cabinet."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -39,12 +40,46 @@ class TelegramOIDCAuthRequest(BaseModel):
     """Request for Telegram OIDC authentication (popup flow)."""
 
     id_token: str = Field(..., max_length=4096, description='JWT id_token from Telegram OIDC popup')
+    nonce: str | None = Field(
+        None,
+        min_length=8,
+        max_length=128,
+        pattern=r'^[A-Za-z0-9_\-]+$',
+        description='Nonce that was passed to Telegram.Login.open() — must equal claims["nonce"]',
+    )
     campaign_slug: str | None = Field(
         None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description='Campaign slug from web link'
     )
     referral_code: str | None = Field(
         None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
     )
+
+
+class TelegramOIDCInitRequest(BaseModel):
+    """Initiate Authorization Code + PKCE flow."""
+
+    mode: Literal['login', 'link'] = Field(..., description='login (no JWT) or link (JWT required)')
+    campaign_slug: str | None = Field(
+        None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description='Campaign slug from web link'
+    )
+    referral_code: str | None = Field(
+        None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
+    )
+
+
+class TelegramOIDCInitResponse(BaseModel):
+    """Response containing Telegram authorize URL and state."""
+
+    authorize_url: str = Field(..., description='URL the browser should be redirected to')
+    state: str = Field(..., min_length=16, max_length=128, description='CSRF state token (echo of stored state)')
+    expires_in: int = Field(..., description='State TTL in seconds')
+
+
+class TelegramOIDCCallbackRequest(BaseModel):
+    """Body for the Authorization Code callback."""
+
+    code: str = Field(..., min_length=1, max_length=2048, description='Authorization code from Telegram')
+    state: str = Field(..., min_length=16, max_length=128, description='CSRF state token (must match init)')
 
 
 class EmailRegisterRequest(BaseModel):
