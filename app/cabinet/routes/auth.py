@@ -55,6 +55,7 @@ from ..auth import (
     get_token_payload,
     hash_password,
     validate_telegram_init_data,
+    validate_telegram_login_widget,
     validate_telegram_oidc_token,
     verify_password,
 )
@@ -97,6 +98,7 @@ from ..schemas.auth import (
     TelegramOIDCInitRequest,
     TelegramOIDCInitResponse,
     TelegramLinkTokenResponse,
+    TelegramWidgetAuthRequest,
     TokenResponse,
     UserResponse,
 )
