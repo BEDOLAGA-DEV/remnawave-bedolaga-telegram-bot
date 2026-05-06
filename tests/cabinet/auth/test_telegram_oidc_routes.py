@@ -135,7 +135,7 @@ async def test_oidc_init_login_returns_authorize_url(app_client, monkeypatch):
     from app.cabinet.routes import auth as auth_routes
     monkeypatch.setattr(auth_routes, 'generate_oauth_state', _gen_state)
 
-    response = await app_client.post('/auth/telegram/oidc/init', json={'mode': 'login'})
+    response = await app_client.post('/cabinet/auth/telegram/oidc/init', json={'mode': 'login'})
     assert response.status_code == 200
     body = response.json()
     assert body['state'] == 'S' * 64
@@ -168,14 +168,14 @@ async def test_oidc_init_disabled_returns_400(app_client, monkeypatch):
     from app.cabinet.routes import auth as auth_routes
     monkeypatch.setattr(auth_routes, 'get_setting_value', _disabled)
 
-    response = await app_client.post('/auth/telegram/oidc/init', json={'mode': 'login'})
+    response = await app_client.post('/cabinet/auth/telegram/oidc/init', json={'mode': 'login'})
     assert response.status_code == 400
     assert 'not configured' in response.json()['detail'].lower()
 
 
 @pytest.mark.asyncio
 async def test_oidc_init_link_requires_jwt(app_client):
-    response = await app_client.post('/auth/telegram/oidc/init', json={'mode': 'link'})
+    response = await app_client.post('/cabinet/auth/telegram/oidc/init', json={'mode': 'link'})
     assert response.status_code == 401
 
 
@@ -187,6 +187,6 @@ async def test_oidc_init_no_redirect_uri_returns_400(app_client, monkeypatch):
     from app.cabinet.routes import auth as auth_routes
     monkeypatch.setattr(auth_routes, 'get_setting_value', _missing_redirect)
 
-    response = await app_client.post('/auth/telegram/oidc/init', json={'mode': 'login'})
+    response = await app_client.post('/cabinet/auth/telegram/oidc/init', json={'mode': 'login'})
     assert response.status_code == 400
     assert 'redirect uri' in response.json()['detail'].lower()
