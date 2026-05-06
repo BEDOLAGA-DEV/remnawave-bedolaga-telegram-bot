@@ -43,7 +43,6 @@ from ..auth.oauth_providers import (
 )
 from ..auth.telegram_auth import (
     validate_telegram_init_data,
-    validate_telegram_login_widget,
     validate_telegram_oidc_token,
 )
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
@@ -122,33 +121,35 @@ class UnlinkResponse(BaseModel):
 
 
 class LinkTelegramRequest(BaseModel):
-    """Request for linking Telegram account. Supply EITHER init_data, id_token, OR widget fields."""
+    """Request for linking Telegram via Mini-App initData or OIDC id_token (popup).
 
-    # Mini App: Telegram WebApp initData
+    The Authorization Code + PKCE link path goes through `POST /auth/telegram/oidc/init`
+    with `mode=link` and `POST /auth/telegram/oidc/callback`.
+    """
+
+    model_config = {'extra': 'forbid'}
+
     init_data: str | None = Field(None, max_length=4096, description='Telegram WebApp initData string')
-    # OIDC: id_token from Telegram Login popup
     id_token: str | None = Field(None, max_length=4096, description='Telegram OIDC id_token (JWT)')
-    # Login Widget fields
-    id: int | None = Field(None, description='Telegram user ID from Login Widget')
-    first_name: str | None = Field(None, max_length=256, description="User's first name")
-    last_name: str | None = Field(None, max_length=256, description="User's last name")
-    username: str | None = Field(None, max_length=256, description="User's username")
-    photo_url: str | None = Field(None, max_length=2048, description="User's photo URL")
-    auth_date: int | None = Field(None, description='Unix timestamp of authentication')
-    hash: str | None = Field(None, min_length=64, max_length=64, description='Authentication hash (SHA-256 hex)')
+    nonce: str | None = Field(
+        None,
+        min_length=8,
+        max_length=128,
+        pattern=r'^[A-Za-z0-9_\-]+$',
+        description='Nonce for OIDC popup id_token (must equal claims["nonce"])',
+    )
 
     @model_validator(mode='after')
     def check_exclusive(self) -> 'LinkTelegramRequest':
         has_init = self.init_data is not None
         has_oidc = self.id_token is not None
-        has_widget = self.id is not None or self.hash is not None or self.auth_date is not None
-        modes = sum([has_init, has_oidc, has_widget])
+        modes = sum([has_init, has_oidc])
         if modes > 1:
-            raise ValueError('Provide exactly one of: init_data, id_token, or Login Widget fields')
+            raise ValueError('Provide exactly one of: init_data or id_token')
         if modes == 0:
-            raise ValueError('Provide one of: init_data, id_token, or Login Widget fields (id, auth_date, hash)')
-        if has_widget and not (self.id is not None and self.auth_date is not None and self.hash is not None):
-            raise ValueError('Login Widget mode requires id, auth_date, and hash fields')
+            raise ValueError('Provide one of: init_data or id_token')
+        if not has_oidc and self.nonce is not None:
+            raise ValueError('nonce is only valid with id_token')
         return self
 
 
@@ -462,7 +463,11 @@ async def link_telegram(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> LinkCallbackResponse:
-    """Link Telegram account via WebApp initData, OIDC id_token, or Login Widget."""
+    """Link Telegram account via WebApp initData or OIDC id_token (popup).
+
+    The Authorization Code + PKCE link flow goes through `/auth/telegram/oidc/init?mode=link`
+    and `/auth/telegram/oidc/callback`.
+    """
     # Rate limit
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'link_telegram', limit=10, window=60, fail_closed=True):
@@ -513,7 +518,11 @@ async def link_telegram(
                 detail='Telegram OIDC is not configured',
             )
 
-        claims = await validate_telegram_oidc_token(request.id_token, oidc_client_id)
+        claims = await validate_telegram_oidc_token(
+            request.id_token,
+            oidc_client_id,
+            expected_nonce=request.nonce,
+        )
         if not claims:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -545,37 +554,6 @@ async def link_telegram(
         telegram_username = claims.get('preferred_username')
         telegram_first_name = claims.get('name', claims.get('given_name', ''))
         telegram_last_name = claims.get('family_name')
-    elif request.id is not None and request.hash is not None and request.auth_date is not None:
-        # Login Widget flow: validate widget hash
-        widget_data = {
-            'id': request.id,
-            'auth_date': request.auth_date,
-            'hash': request.hash,
-        }
-        if request.first_name is not None:
-            widget_data['first_name'] = request.first_name
-        if request.last_name is not None:
-            widget_data['last_name'] = request.last_name
-        if request.username is not None:
-            widget_data['username'] = request.username
-        if request.photo_url is not None:
-            widget_data['photo_url'] = request.photo_url
-
-        # Generous max_age: Telegram caches auth data with stale auth_date
-        if not validate_telegram_login_widget(widget_data, max_age_seconds=86400 * 30):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Invalid or expired Telegram Login Widget data',
-            )
-        telegram_id = request.id
-        telegram_username = request.username
-        telegram_first_name = request.first_name
-        telegram_last_name = request.last_name
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Provide init_data (Mini App), id_token (OIDC), or Login Widget fields (id, auth_date, hash)',
-        )
 
     # 3. Check if telegram_id is linked to ANOTHER user
     existing_user = await get_user_by_telegram_id(db, telegram_id)

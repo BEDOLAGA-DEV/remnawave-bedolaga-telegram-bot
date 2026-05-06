@@ -353,3 +353,26 @@ async def test_link_widget_endpoint_returns_410(app_client):
         },
     )
     assert response.status_code == 410
+
+
+def test_link_telegram_request_accepts_nonce():
+    from app.cabinet.routes.account_linking import LinkTelegramRequest
+
+    req = LinkTelegramRequest(id_token='x.y.z', nonce='nonce_value_123')
+    assert req.nonce == 'nonce_value_123'
+
+
+def test_link_telegram_request_widget_fields_rejected():
+    from app.cabinet.routes.account_linking import LinkTelegramRequest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        LinkTelegramRequest(id=1, first_name='X', auth_date=1700000000, hash='a' * 64)
+
+
+def test_link_telegram_request_nonce_only_with_id_token():
+    from app.cabinet.routes.account_linking import LinkTelegramRequest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        LinkTelegramRequest(init_data='abc', nonce='not-allowed-here')
