@@ -267,6 +267,20 @@ async def get_current_admin_user(
     )
 
 
+async def _optional_cabinet_user(
+    request: Request,
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> User | None:
+    """Return the current user if a JWT was supplied, else None.
+
+    Distinguishes 'no token' (return None) from 'invalid token' (raise 401).
+    """
+    auth = request.headers.get('authorization')
+    if not auth or not auth.lower().startswith('bearer '):
+        return None
+    return await get_current_cabinet_user(request, db)
+
+
 def require_permission(*permissions: str):
     """
     FastAPI dependency factory for RBAC permission checks.

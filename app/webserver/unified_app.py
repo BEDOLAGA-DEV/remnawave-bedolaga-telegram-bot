@@ -117,6 +117,21 @@ def _mount_miniapp_static(app: FastAPI) -> tuple[bool, Path]:
     return True, static_path
 
 
+def create_app() -> FastAPI:
+    """Build a minimal FastAPI app exposing the cabinet auth router.
+
+    Used by tests and lightweight environments that only need the auth
+    surface without bot/dispatcher/payment-service wiring. Routes are
+    mounted at the root (``/auth/...``) to keep the public auth contract
+    consistent with the documented endpoints.
+    """
+    from app.cabinet.routes.auth import router as cabinet_auth_router
+
+    app = FastAPI(title='NoZapret Cabinet Auth', version=settings.WEB_API_VERSION)
+    app.include_router(cabinet_auth_router)
+    return app
+
+
 def create_unified_app(
     bot: Bot,
     dispatcher: Dispatcher,

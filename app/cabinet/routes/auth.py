@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -48,6 +48,9 @@ from ..auth import (
     create_link_token,
     create_refresh_token,
     decode_link_token,
+    exchange_authorization_code,
+    generate_oidc_nonce,
+    generate_pkce_pair,
     get_token_payload,
     hash_password,
     validate_telegram_init_data,
@@ -55,6 +58,7 @@ from ..auth import (
     validate_telegram_oidc_token,
     verify_password,
 )
+from ..auth.oauth_providers import generate_oauth_state, validate_oauth_state
 from ..auth.email_verification import (
     generate_email_change_code,
     generate_password_reset_token,
@@ -66,7 +70,7 @@ from ..auth.email_verification import (
 )
 from ..auth.jwt_handler import get_refresh_token_expires_at
 from ..auth.merge_service import create_merge_token
-from ..dependencies import get_cabinet_db, get_current_cabinet_user
+from ..dependencies import _optional_cabinet_user, get_cabinet_db, get_current_cabinet_user
 from ..ip_utils import get_client_ip
 from ..schemas.auth import (
     AuthResponse,
@@ -89,6 +93,9 @@ from ..schemas.auth import (
     RegisterResponse,
     TelegramAuthRequest,
     TelegramOIDCAuthRequest,
+    TelegramOIDCCallbackRequest,
+    TelegramOIDCInitRequest,
+    TelegramOIDCInitResponse,
     TelegramLinkTokenResponse,
     TelegramWidgetAuthRequest,
     TokenResponse,
@@ -873,6 +880,101 @@ async def auth_telegram_oidc(
         campaign_slug=request.campaign_slug,
         referral_code=request.referral_code,
     )
+
+
+_OIDC_AUTHORIZE_ENDPOINT = 'https://oauth.telegram.org/auth'
+_OIDC_STATE_TTL_SECONDS = 600
+
+
+async def _resolve_oidc_settings(db: AsyncSession) -> tuple[bool, str, str, str]:
+    """Read OIDC settings (DB override → env). Returns (enabled, client_id, client_secret, redirect_uri)."""
+    enabled_val = await get_setting_value(db, 'TELEGRAM_OIDC_ENABLED')
+    client_id_val = await get_setting_value(db, 'TELEGRAM_OIDC_CLIENT_ID')
+    client_secret_val = await get_setting_value(db, 'TELEGRAM_OIDC_CLIENT_SECRET')
+    redirect_uri_val = await get_setting_value(db, 'TELEGRAM_OIDC_REDIRECT_URI')
+
+    client_id = client_id_val or settings.TELEGRAM_OIDC_CLIENT_ID
+    client_secret = client_secret_val or settings.TELEGRAM_OIDC_CLIENT_SECRET
+    redirect_uri = redirect_uri_val or settings.TELEGRAM_OIDC_REDIRECT_URI
+    enabled = (
+        enabled_val.lower() == 'true' if enabled_val is not None else settings.TELEGRAM_OIDC_ENABLED
+    ) and bool(client_id)
+
+    return enabled, client_id, client_secret, redirect_uri
+
+
+@router.post('/telegram/oidc/init', response_model=TelegramOIDCInitResponse)
+async def oidc_init(
+    request: TelegramOIDCInitRequest,
+    raw_request: Request,
+    db: AsyncSession = Depends(get_cabinet_db),
+    user: User | None = Depends(_optional_cabinet_user),
+):
+    """Start the Authorization Code + PKCE flow."""
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'oidc_init', limit=10, window=60, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '60'},
+        )
+
+    user_id: int | None = None
+    if request.mode == 'link':
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='Linking requires authentication',
+            )
+        if user.telegram_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Telegram is already linked to your account',
+            )
+        user_id = user.id
+
+    enabled, client_id, _, redirect_uri = await _resolve_oidc_settings(db)
+    if not enabled:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Telegram OIDC is not configured')
+    if not redirect_uri:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Redirect URI not configured')
+
+    code_verifier, code_challenge = generate_pkce_pair()
+    nonce = generate_oidc_nonce()
+
+    extra_data: dict[str, str] = {
+        'flow': request.mode,
+        'code_verifier': code_verifier,
+        'nonce': nonce,
+    }
+    if request.campaign_slug:
+        extra_data['campaign_slug'] = request.campaign_slug
+    if request.referral_code:
+        extra_data['referral_code'] = request.referral_code
+    if user_id is not None:
+        extra_data['user_id'] = str(user_id)
+
+    state = await generate_oauth_state('telegram', extra_data=extra_data)
+
+    params = {
+        'client_id': client_id,
+        'response_type': 'code',
+        'scope': 'openid profile',
+        'redirect_uri': redirect_uri,
+        'state': state,
+        'code_challenge': code_challenge,
+        'code_challenge_method': 'S256',
+        'nonce': nonce,
+    }
+    authorize_url = f'{_OIDC_AUTHORIZE_ENDPOINT}?{urlencode(params)}'
+
+    return TelegramOIDCInitResponse(
+        authorize_url=authorize_url,
+        state=state,
+        expires_in=_OIDC_STATE_TTL_SECONDS,
+    )
+
+
 @router.get('/telegram/link-token', response_model=TelegramLinkTokenResponse)
 async def get_telegram_link_token(
     user: User = Depends(get_current_cabinet_user),
