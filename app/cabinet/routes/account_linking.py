@@ -456,6 +456,84 @@ async def unlink_provider(
     return UnlinkResponse(success=True)
 
 
+async def _link_telegram_to_user(
+    db: AsyncSession,
+    user_id: int,
+    telegram_id: int,
+    *,
+    telegram_username: str | None = None,
+    telegram_first_name: str | None = None,
+    telegram_last_name: str | None = None,
+) -> LinkCallbackResponse:
+    """Link a Telegram account to an existing cabinet user.
+
+    Encapsulates conflict detection, merge-token creation, profile sync, commit, and
+    post-link RemnaWave resync. Used by both the popup-id_token endpoint and the
+    Authorization Code callback.
+    """
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='User not found')
+
+    if user.telegram_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Telegram is already linked to your account',
+        )
+
+    existing_user = await get_user_by_telegram_id(db, telegram_id)
+    if existing_user and existing_user.id != user.id:
+        logger.info(
+            'Telegram linking conflict: telegram_id already linked to another user',
+            telegram_id=telegram_id,
+            current_user_id=user.id,
+            existing_user_id=existing_user.id,
+        )
+        merge_token = await create_merge_token(
+            primary_user_id=user.id,
+            secondary_user_id=existing_user.id,
+            provider='telegram',
+            provider_id=str(telegram_id),
+        )
+        return LinkCallbackResponse(success=False, merge_required=True, merge_token=merge_token)
+
+    user.telegram_id = telegram_id
+    if telegram_username and not user.username:
+        user.username = telegram_username
+    if telegram_first_name and not user.first_name:
+        user.first_name = telegram_first_name
+    if telegram_last_name and not user.last_name:
+        user.last_name = telegram_last_name
+    user.updated_at = datetime.now(UTC)
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='This Telegram account was just linked to another user',
+        ) from exc
+
+    logger.info('Telegram linked to account', telegram_id=telegram_id, user_id=user.id)
+
+    try:
+        from app.services.remnawave_resync_service import resync_user_subscriptions_with_panel
+
+        resync_result = await resync_user_subscriptions_with_panel(db, user)
+        logger.info(
+            'Post-TG-link resync completed',
+            user_id=user.id,
+            telegram_id=telegram_id,
+            synced=resync_result['synced'],
+            failed=resync_result['failed'],
+        )
+    except Exception as resync_error:
+        logger.error('Post-TG-link resync failed (non-fatal)', user_id=user.id, error=resync_error)
+
+    return LinkCallbackResponse(success=True, message='linked')
+
+
 @router.post('/link/telegram', response_model=LinkCallbackResponse)
 async def link_telegram(
     request: LinkTelegramRequest,
@@ -555,70 +633,15 @@ async def link_telegram(
         telegram_first_name = claims.get('name', claims.get('given_name', ''))
         telegram_last_name = claims.get('family_name')
 
-    # 3. Check if telegram_id is linked to ANOTHER user
-    existing_user = await get_user_by_telegram_id(db, telegram_id)
-    if existing_user and existing_user.id != user.id:
-        logger.info(
-            'Telegram linking conflict: telegram_id already linked to another user',
-            telegram_id=telegram_id,
-            current_user_id=user.id,
-            existing_user_id=existing_user.id,
-        )
-        merge_token = await create_merge_token(
-            primary_user_id=user.id,
-            secondary_user_id=existing_user.id,
-            provider='telegram',
-            provider_id=str(telegram_id),
-        )
-        return LinkCallbackResponse(
-            success=False,
-            merge_required=True,
-            merge_token=merge_token,
-        )
-
-    # 4. Link Telegram to current user
-    user.telegram_id = telegram_id
-    if telegram_username and not user.username:
-        user.username = telegram_username
-    if telegram_first_name and not user.first_name:
-        user.first_name = telegram_first_name
-    if telegram_last_name and not user.last_name:
-        user.last_name = telegram_last_name
-    user.updated_at = datetime.now(UTC)
-
-    try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail='This Telegram account was just linked to another user',
-        ) from exc
-
-    logger.info(
-        'Telegram linked to account',
-        telegram_id=telegram_id,
-        user_id=user.id,
+    # 3-4. Delegate conflict-check + commit + resync to shared helper
+    return await _link_telegram_to_user(
+        db,
+        user.id,
+        telegram_id,
+        telegram_username=telegram_username,
+        telegram_first_name=telegram_first_name,
+        telegram_last_name=telegram_last_name,
     )
-    # BUG-1 fix: Sync all subscriptions with RemnaWave panel so it knows the new telegram_id
-    try:
-        from app.services.remnawave_resync_service import resync_user_subscriptions_with_panel
-
-        resync_result = await resync_user_subscriptions_with_panel(db, user)
-        logger.info(
-            'Post-TG-link resync completed',
-            user_id=user.id,
-            telegram_id=telegram_id,
-            synced=resync_result['synced'],
-            failed=resync_result['failed'],
-        )
-    except Exception as resync_error:
-        logger.error(
-            'Post-TG-link resync failed (non-fatal)',
-            user_id=user.id,
-            error=resync_error,
-        )
-    return LinkCallbackResponse(success=True, message='linked')
 
 
 # ---------------------------------------------------------------------------

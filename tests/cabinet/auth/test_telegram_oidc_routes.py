@@ -376,3 +376,55 @@ def test_link_telegram_request_nonce_only_with_id_token():
 
     with pytest.raises(ValidationError):
         LinkTelegramRequest(init_data='abc', nonce='not-allowed-here')
+
+
+@pytest.mark.asyncio
+async def test_oidc_callback_link_uses_state_user_id(app_client, monkeypatch, make_id_token, jwks_doc):
+    """flow=link callback loads the user from state.user_id and links the telegram_id."""
+    state_data = {
+        'provider': 'telegram',
+        'flow': 'link',
+        'user_id': '42',
+        'code_verifier': 'v',
+        'nonce': 'n',
+    }
+
+    async def _validate_state(state, provider):
+        return state_data
+
+    async def _exchange(**kwargs):
+        return make_id_token(client_id='111222333', nonce='n', telegram_id=999888)
+
+    async def _fake_get_jwks(force=False):
+        return jwks_doc
+
+    async def _no_replay(token_hash, ttl):
+        return False
+
+    captured: dict = {}
+
+    async def _link_helper(db, user_id, telegram_id, **claims):
+        captured['user_id'] = user_id
+        captured['telegram_id'] = telegram_id
+        from app.cabinet.routes.account_linking import LinkCallbackResponse
+        return LinkCallbackResponse(success=True, message='linked')
+
+    from app.cabinet.routes import auth as auth_routes
+    from app.cabinet.routes import account_linking
+    from app.cabinet.auth import telegram_auth
+
+    monkeypatch.setattr(auth_routes, 'validate_oauth_state', _validate_state)
+    monkeypatch.setattr(auth_routes, 'exchange_authorization_code', _exchange)
+    monkeypatch.setattr(telegram_auth, '_get_jwks', _fake_get_jwks)
+    monkeypatch.setattr(auth_routes.TokenReplayCache, 'is_token_replayed', staticmethod(_no_replay))
+    monkeypatch.setattr(account_linking, '_link_telegram_to_user', _link_helper)
+
+    response = await app_client.post(
+        '/cabinet/auth/telegram/oidc/callback',
+        json={'code': 'c', 'state': 'S' * 64},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body['success'] is True
+    assert captured['user_id'] == 42
+    assert captured['telegram_id'] == 999888

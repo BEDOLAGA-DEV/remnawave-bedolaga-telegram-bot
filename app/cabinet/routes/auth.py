@@ -967,10 +967,35 @@ async def oidc_callback(
             referral_code=state_data.get('referral_code'),
         )
 
-    # flow == 'link' — wired in Task 14
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail='Link flow not yet wired',
+    # flow == 'link'
+    from app.cabinet.routes.account_linking import _link_telegram_to_user
+
+    raw_user_id = state_data.get('user_id')
+    try:
+        state_user_id = int(raw_user_id) if raw_user_id is not None else None
+    except (TypeError, ValueError):
+        state_user_id = None
+    if state_user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='OAuth state missing user_id for link flow',
+        )
+
+    try:
+        telegram_id = int(claims.get('id', claims.get('sub', 0)))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid user ID in OIDC claims',
+        ) from exc
+
+    return await _link_telegram_to_user(
+        db,
+        state_user_id,
+        telegram_id,
+        telegram_username=claims.get('preferred_username'),
+        telegram_first_name=claims.get('name', claims.get('given_name')),
+        telegram_last_name=claims.get('family_name'),
     )
 
 
