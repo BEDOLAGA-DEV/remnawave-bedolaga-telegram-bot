@@ -236,8 +236,10 @@ class TaskListItem(BaseModel):
     sort_order: int
     task_type: str
     target_value: int
+    target_meta: dict[str, Any] = Field(default_factory=dict)
     reward_type: str
     reward_value: int
+    reward_meta: dict[str, Any] = Field(default_factory=dict)
     user_audience: str
     promo_group_id: int | None = None
     parent_task_id: int | None = None
