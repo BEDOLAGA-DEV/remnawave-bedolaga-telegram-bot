@@ -302,3 +302,62 @@ async def validate_telegram_oidc_token(
     except httpx.HTTPError as e:
         logger.error('Telegram OIDC: failed to fetch JWKS', error=str(e))
         return None
+
+
+_TOKEN_ENDPOINT = 'https://oauth.telegram.org/token'
+_TOKEN_ENDPOINT_TIMEOUT_SECONDS = 10
+
+
+async def exchange_authorization_code(
+    *,
+    code: str,
+    code_verifier: str,
+    redirect_uri: str,
+    client_id: str,
+    client_secret: str,
+) -> str | None:
+    """Exchange an OAuth authorization code for an id_token at Telegram's token endpoint.
+
+    Returns the id_token string on success, or None on any failure (network, 4xx/5xx,
+    missing id_token in response).
+    """
+    proxy = settings.PROXY_URL if hasattr(settings, 'PROXY_URL') and settings.PROXY_URL else None
+    data = {
+        'grant_type': 'authorization_code',
+        'code': code,
+        'redirect_uri': redirect_uri,
+        'client_id': client_id,
+        'code_verifier': code_verifier,
+    }
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+
+    try:
+        async with httpx.AsyncClient(timeout=_TOKEN_ENDPOINT_TIMEOUT_SECONDS, proxy=proxy) as client:
+            response = await client.post(
+                _TOKEN_ENDPOINT,
+                data=data,
+                headers=headers,
+                auth=(client_id, client_secret),
+            )
+            response.raise_for_status()
+            payload = response.json()
+            id_token = payload.get('id_token')
+            if not isinstance(id_token, str) or not id_token:
+                logger.warning('Telegram OIDC: token endpoint response missing id_token')
+                return None
+            return id_token
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            'Telegram OIDC: token exchange rejected',
+            status=exc.response.status_code if exc.response is not None else None,
+        )
+        return None
+    except httpx.TimeoutException:
+        logger.error('Telegram OIDC: token exchange timeout')
+        return None
+    except httpx.HTTPError as exc:
+        logger.error('Telegram OIDC: token exchange transport error', error=str(exc))
+        return None
+    except (ValueError, TypeError) as exc:
+        logger.error('Telegram OIDC: token endpoint returned non-JSON', error=str(exc))
+        return None
