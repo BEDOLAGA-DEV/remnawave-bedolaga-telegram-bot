@@ -241,28 +241,29 @@ async def _force_refresh_jwks(kid: str) -> dict[str, Any] | None:
     return await _get_jwks(force=True)
 
 
-async def validate_telegram_oidc_token(id_token: str, client_id: str) -> dict[str, Any] | None:
+async def validate_telegram_oidc_token(
+    id_token: str,
+    client_id: str,
+    expected_nonce: str | None = None,
+) -> dict[str, Any] | None:
     """
     Validate a Telegram OIDC id_token using JWKS.
 
     Args:
-        id_token: JWT id_token from Telegram OIDC flow
-        client_id: Expected audience (bot's numeric ID as string)
+        id_token: JWT id_token from Telegram OIDC flow.
+        client_id: Expected audience (bot's numeric ID as string).
+        expected_nonce: If provided, claims['nonce'] must equal this value.
 
     Returns:
         Decoded claims dict if valid, None otherwise.
-        Claims include: sub, id, name, preferred_username, picture, iss, aud, exp, iat
     """
     try:
-        # Build public keys from JWKS
         jwks_data = await _get_jwks()
         public_keys = _build_public_keys(jwks_data)
 
-        # Decode header to get kid
         unverified_header = pyjwt.get_unverified_header(id_token)
         kid = unverified_header.get('kid')
 
-        # If kid not found, force JWKS refresh (key rotation) with cooldown
         if kid and kid not in public_keys:
             refreshed = await _force_refresh_jwks(kid)
             if refreshed:
@@ -280,6 +281,16 @@ async def validate_telegram_oidc_token(id_token: str, client_id: str) -> dict[st
             issuer=_OIDC_ISSUER,
             options={'require': ['exp', 'iat', 'iss', 'aud', 'sub']},
         )
+
+        if expected_nonce is not None:
+            actual = claims.get('nonce')
+            if actual != expected_nonce:
+                logger.warning(
+                    'Telegram OIDC: nonce mismatch',
+                    has_nonce=actual is not None,
+                )
+                return None
+
         return claims
 
     except pyjwt.ExpiredSignatureError:
