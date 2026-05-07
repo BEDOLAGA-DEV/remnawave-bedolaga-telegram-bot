@@ -235,3 +235,93 @@ async def test_wl_switch_same_gb_400(make_subscription, make_user, mock_db):
                 subscription_id=None,
             )
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_wl_reset_success(make_subscription, make_user, mock_db):
+    from app.cabinet.routes.subscription_modules import wl_traffic as wt
+
+    user = make_user(balance_kopeks=100_000)
+    sub = make_subscription(wl_traffic_used_gb=12.5)
+    sub.user_id = user.id
+
+    fake_api = MagicMock()
+    fake_api.get_user_by_username = AsyncMock(return_value=MagicMock(uuid='wl-uuid'))
+    fake_api.reset_user_traffic = AsyncMock()
+
+    fake_remnawave = MagicMock()
+    fake_remnawave.get_api_client = MagicMock(return_value=AsyncMock())
+    fake_remnawave.get_api_client.return_value.__aenter__ = AsyncMock(return_value=fake_api)
+    fake_remnawave.get_api_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    fake_subscription_service = MagicMock()
+    fake_subscription_service._build_wl_username = MagicMock(return_value=('wl_user', 'wl_user_legacy'))
+
+    with (
+        patch.object(wt, 'resolve_subscription', AsyncMock(return_value=sub)),
+        patch.object(wt, 'calculate_traffic_reset_price', return_value=5000),
+        patch.object(wt, 'subtract_user_balance', AsyncMock(return_value=True)),
+        patch.object(wt, 'create_transaction', AsyncMock()),
+        patch.object(wt, 'RemnaWaveService', return_value=fake_remnawave),
+        patch.object(wt, 'SubscriptionService', return_value=fake_subscription_service),
+    ):
+        result = await wt.reset_wl_traffic(
+            user=user,
+            db=mock_db,
+            subscription_id=None,
+        )
+
+    assert result['success'] is True
+    assert result['new_wl_traffic_used_gb'] == 0
+    assert sub.wl_traffic_used_gb == 0.0
+    fake_api.reset_user_traffic.assert_awaited_once_with('wl-uuid')
+
+
+@pytest.mark.asyncio
+async def test_wl_reset_insufficient_balance_402(make_subscription, make_user, mock_db):
+    from fastapi import HTTPException
+    from app.cabinet.routes.subscription_modules import wl_traffic as wt
+
+    user = make_user(balance_kopeks=100)
+    sub = make_subscription()
+
+    with (
+        patch.object(wt, 'resolve_subscription', AsyncMock(return_value=sub)),
+        patch.object(wt, 'calculate_traffic_reset_price', return_value=10000),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await wt.reset_wl_traffic(user=user, db=mock_db, subscription_id=None)
+    assert exc.value.status_code == 402
+
+
+@pytest.mark.asyncio
+async def test_wl_reset_remnawave_failure_is_non_fatal(make_subscription, make_user, mock_db):
+    from app.cabinet.routes.subscription_modules import wl_traffic as wt
+
+    user = make_user(balance_kopeks=100_000)
+    sub = make_subscription(wl_traffic_used_gb=8.0)
+
+    fake_api = MagicMock()
+    fake_api.get_user_by_username = AsyncMock(return_value=MagicMock(uuid='wl-uuid'))
+    fake_api.reset_user_traffic = AsyncMock(side_effect=Exception('upstream down'))
+
+    fake_remnawave = MagicMock()
+    fake_remnawave.get_api_client = MagicMock(return_value=AsyncMock())
+    fake_remnawave.get_api_client.return_value.__aenter__ = AsyncMock(return_value=fake_api)
+    fake_remnawave.get_api_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    fake_subscription_service = MagicMock()
+    fake_subscription_service._build_wl_username = MagicMock(return_value=('p', 'l'))
+
+    with (
+        patch.object(wt, 'resolve_subscription', AsyncMock(return_value=sub)),
+        patch.object(wt, 'calculate_traffic_reset_price', return_value=5000),
+        patch.object(wt, 'subtract_user_balance', AsyncMock(return_value=True)),
+        patch.object(wt, 'create_transaction', AsyncMock()),
+        patch.object(wt, 'RemnaWaveService', return_value=fake_remnawave),
+        patch.object(wt, 'SubscriptionService', return_value=fake_subscription_service),
+    ):
+        result = await wt.reset_wl_traffic(user=user, db=mock_db, subscription_id=None)
+
+    assert result['success'] is True
+    assert sub.wl_traffic_used_gb == 0.0

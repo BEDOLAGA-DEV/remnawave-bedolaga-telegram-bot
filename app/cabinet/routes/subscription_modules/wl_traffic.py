@@ -13,8 +13,11 @@ from app.database.crud.subscription import reactivate_subscription
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
 from app.database.models import TransactionType, User
+from app.services.remnawave_service import RemnaWaveService
+from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 from app.utils.pricing_utils import calculate_prorated_price
+from app.utils.traffic_pricing import calculate_traffic_reset_price
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import TrafficPackageResponse, TrafficPurchaseRequest
@@ -229,4 +232,69 @@ async def switch_wl_traffic(
         'charged_kopeks': charged,
         'balance_kopeks': user.balance_kopeks,
         'balance_label': settings.format_price(user.balance_kopeks),
+    }
+
+
+@router.post('/wl-traffic/reset')
+async def reset_wl_traffic(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+    subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+) -> dict:
+    """Reset the WL traffic counter."""
+    if settings.is_traffic_topup_blocked():
+        raise HTTPException(status_code=400, detail='В текущем режиме трафик фиксированный')
+
+    subscription = await resolve_subscription(db, user, subscription_id)
+    if not subscription:
+        raise HTTPException(status_code=404, detail='No subscription found')
+    if subscription.is_trial:
+        raise HTTPException(status_code=400, detail='Эта функция доступна только для платных подписок')
+    if (subscription.wl_traffic_limit_gb or 0) == 0:
+        raise HTTPException(status_code=400, detail='У вас уже безлимитный трафик')
+
+    reset_price = calculate_traffic_reset_price(subscription, kind='wl')
+    if reset_price > 0 and user.balance_kopeks < reset_price:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f'Insufficient balance. Need {settings.format_price(reset_price)}',
+        )
+
+    if reset_price > 0:
+        success = await subtract_user_balance(db, user, reset_price, 'Сброс WL-трафика')
+        if not success:
+            raise HTTPException(status_code=500, detail='Failed to charge balance')
+
+    subscription.wl_traffic_used_gb = 0.0
+    subscription.updated_at = datetime.now(UTC)
+    await db.commit()
+
+    try:
+        primary_wl, legacy_wl = SubscriptionService()._build_wl_username(user, subscription)
+        async with RemnaWaveService().get_api_client() as api:
+            wl_user = await api.get_user_by_username(primary_wl)
+            if wl_user is None and legacy_wl and legacy_wl != primary_wl:
+                wl_user = await api.get_user_by_username(legacy_wl)
+            if wl_user and getattr(wl_user, 'uuid', None):
+                await api.reset_user_traffic(wl_user.uuid)
+    except Exception as exc:
+        logger.warning('WL traffic reset on RemnaWave failed (non-fatal)', error=str(exc))
+
+    if reset_price > 0:
+        await create_transaction(
+            db=db,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=reset_price,
+            description='Сброс WL-трафика',
+        )
+
+    await db.refresh(user)
+    await db.refresh(subscription)
+
+    return {
+        'success': True,
+        'new_wl_traffic_used_gb': 0.0,
+        'charged_kopeks': reset_price,
+        'balance_kopeks': user.balance_kopeks,
     }
