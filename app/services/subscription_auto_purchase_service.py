@@ -3239,6 +3239,8 @@ async def _process_single_cart(
         return await _auto_add_devices(db, user, cart_data, bot=bot)
     if cart_mode == 'add_traffic':
         return await _auto_add_traffic(db, user, cart_data, bot=bot)
+    if cart_mode == 'add_wl_traffic':
+        return await _auto_add_wl_traffic(db, user, cart_data, bot=bot)
 
     logger.warning(
         'Автопокупка: неизвестный cart_mode, пропускаем',
@@ -3331,10 +3333,6 @@ async def _process_legacy_generic_cart(
         notify_user_subscription_activated,
         notify_user_subscription_renewed,
     )
-
-    # Обработка докупки WL (_wl) трафика
-    if cart_mode == 'add_wl_traffic':
-        return await _auto_add_wl_traffic(db, user, cart_data, bot=bot)
 
     try:
         prepared = await _prepare_auto_purchase(db, user, cart_data)

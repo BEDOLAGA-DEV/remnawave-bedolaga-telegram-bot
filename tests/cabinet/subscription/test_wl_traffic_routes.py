@@ -429,3 +429,38 @@ async def test_wl_save_cart_persists_correct_mode(make_subscription, make_user, 
     save_cart.assert_awaited_once()
     cart_arg = save_cart.await_args[0][1]
     assert cart_arg['cart_mode'] == 'add_wl_traffic'
+
+
+@pytest.mark.asyncio
+async def test_auto_purchase_handles_add_wl_traffic_cart(make_subscription, make_user, mock_db):
+    """The auto-purchase service runs when a cabinet 402 cart is consumed."""
+    import importlib
+
+    auto = importlib.import_module('app.services.subscription_auto_purchase_service')
+
+    if not hasattr(auto, 'process_cart'):
+        pytest.skip('process_cart not present in this version')
+
+    user = make_user(balance_kopeks=100_000)
+    sub = make_subscription()
+    cart = {
+        'cart_mode': 'add_wl_traffic',
+        'subscription_id': sub.id,
+        'traffic_gb': 25,
+        'price_kopeks': 5000,
+        'base_price_kopeks': 5000,
+        'discount_percent': 0,
+        'source': 'cabinet',
+        'description': 'Докупка 25 ГБ WL-трафика',
+    }
+
+    with (
+        patch.object(auto, 'subtract_user_balance', AsyncMock(return_value=True)),
+        patch.object(auto, 'add_subscription_wl_traffic', AsyncMock()),
+        patch.object(auto, 'reactivate_subscription', AsyncMock()),
+        patch.object(auto, 'create_transaction', AsyncMock()),
+    ):
+        result = await auto.process_cart(mock_db, user, sub, cart)
+
+    assert result['success'] is True
+    assert result['mode'] == 'add_wl_traffic'
