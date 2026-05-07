@@ -39,6 +39,10 @@ class SubscriptionData(BaseModel):
     traffic_limit_gb: int
     traffic_used_gb: float
     traffic_used_percent: float
+    wl_traffic_limit_gb: int = 0
+    wl_traffic_used_gb: float = 0.0
+    wl_traffic_used_percent: float = 0.0
+    wl_purchased_traffic_gb: int = 0
     device_limit: int
     connected_squads: list[str] = []
     servers: list[ServerInfo] = []  # Server display info

@@ -152,6 +152,15 @@ def _subscription_to_response(
     else:
         traffic_used_percent = 0
 
+    wl_traffic_limit_gb = subscription.wl_traffic_limit_gb or 0
+    wl_traffic_used_gb = subscription.wl_traffic_used_gb or 0.0
+    wl_purchased_traffic_gb = subscription.wl_purchased_traffic_gb or 0
+
+    if wl_traffic_limit_gb > 0:
+        wl_traffic_used_percent = min(100, (wl_traffic_used_gb / wl_traffic_limit_gb) * 100)
+    else:
+        wl_traffic_used_percent = 0
+
     # Check if this is a daily tariff
     is_daily_paused = getattr(subscription, 'is_daily_paused', False) or False
     tariff_id = getattr(subscription, 'tariff_id', None)
@@ -213,6 +222,10 @@ def _subscription_to_response(
         traffic_limit_gb=traffic_limit_gb,
         traffic_used_gb=round(traffic_used_gb, 2),
         traffic_used_percent=round(traffic_used_percent, 1),
+        wl_traffic_limit_gb=wl_traffic_limit_gb,
+        wl_traffic_used_gb=round(wl_traffic_used_gb, 2),
+        wl_traffic_used_percent=round(wl_traffic_used_percent, 1),
+        wl_purchased_traffic_gb=wl_purchased_traffic_gb,
         device_limit=subscription.device_limit or 0,
         connected_squads=subscription.connected_squads or [],
         servers=servers or [],
