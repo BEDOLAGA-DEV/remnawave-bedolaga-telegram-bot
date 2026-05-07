@@ -1,8 +1,4 @@
-"""Subscription sub-modules for cabinet API.
-
-Each module contains a subset of endpoints from the original monolithic subscription.py.
-The main subscription.py includes all sub-routers for backward compatibility.
-"""
+"""Subscription sub-modules for cabinet API."""
 
 from .autopay import router as autopay_router
 from .daily import router as daily_router
@@ -14,6 +10,7 @@ from .servers import router as servers_router
 from .status import router as status_router
 from .tariff_switch import router as tariff_switch_router
 from .traffic import router as traffic_router
+from .wl_traffic import router as wl_traffic_router
 
 
 __all__ = [
@@ -27,4 +24,5 @@ __all__ = [
     'status_router',
     'tariff_switch_router',
     'traffic_router',
+    'wl_traffic_router',
 ]

@@ -23,6 +23,7 @@ from .subscription_modules import (
     status_router,
     tariff_switch_router,
     traffic_router,
+    wl_traffic_router,
 )
 from .subscription_modules.status import get_subscription as _get_subscription_handler
 
@@ -45,6 +46,7 @@ router.include_router(status_router)
 router.include_router(renewal_router)
 router.include_router(purchase_router)
 router.include_router(traffic_router)
+router.include_router(wl_traffic_router)
 router.include_router(devices_router)
 router.include_router(servers_router)
 router.include_router(autopay_router)
