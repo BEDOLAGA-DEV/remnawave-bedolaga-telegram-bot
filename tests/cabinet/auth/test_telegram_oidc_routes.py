@@ -418,6 +418,25 @@ async def test_branding_auth_methods_marks_widget_deprecated(app_client, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_branding_exposes_wl_traffic_topup_flag(app_client, monkeypatch):
+    async def _settings(db, key):
+        return {
+            'TELEGRAM_OIDC_ENABLED': 'true',
+            'TELEGRAM_OIDC_CLIENT_ID': '111',
+            'TELEGRAM_OIDC_REDIRECT_URI': 'https://cab.example.com/cb',
+        }.get(key)
+
+    from app.cabinet.routes import branding
+    monkeypatch.setattr(branding, 'get_setting_value', _settings)
+
+    response = await app_client.get('/cabinet/branding/telegram-widget')
+    assert response.status_code == 200
+    body = response.json()
+    assert 'wl_traffic_topup_enabled' in body
+    assert isinstance(body['wl_traffic_topup_enabled'], bool)
+
+
+@pytest.mark.asyncio
 async def test_static_test_page_mounted(app_client):
     response = await app_client.get('/cabinet/static/telegram-login-test.html')
     assert response.status_code == 200

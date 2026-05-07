@@ -274,6 +274,8 @@ class TelegramWidgetConfigResponse(BaseModel):
     # Legacy widget fields (size/radius/userpic/request_access) are deprecated;
     # callers should use the OIDC code flow instead.
     widget_deprecated: bool = True
+    # WL traffic topup feature flag (mirrors settings.WL_TRAFFIC_TOPUP_ENABLED)
+    wl_traffic_topup_enabled: bool = False
 
 
 class LiteModeEnabledResponse(BaseModel):
@@ -940,6 +942,7 @@ async def get_telegram_widget_config(
         oidc_client_id=oidc_client_id if oidc_enabled else '',
         oidc_code_flow_available=oidc_code_flow_available,
         widget_deprecated=True,
+        wl_traffic_topup_enabled=bool(getattr(settings, 'WL_TRAFFIC_TOPUP_ENABLED', True)),
     )
 
 
