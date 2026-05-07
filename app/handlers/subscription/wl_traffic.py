@@ -120,41 +120,12 @@ async def handle_add_wl_traffic(callback: types.CallbackQuery, db_user: User, db
     await callback.answer()
 
 
+from app.utils.traffic_pricing import calculate_traffic_reset_price as _calculate_traffic_reset_price_util
+
+
 def _calculate_traffic_reset_price(subscription) -> int:
-    """Рассчитывает цену сброса трафика в зависимости от настроек."""
-    mode = settings.get_traffic_reset_price_mode()
-    base_price = settings.get_traffic_reset_base_price()
-
-    # Если базовая цена не задана, используем цену периода 30 дней
-    if base_price == 0:
-        base_price = PERIOD_PRICES.get(30, 0)
-
-    if mode == 'period':
-        # Старое поведение: фиксированная цена = стоимость периода
-        return base_price
-
-    if mode == 'traffic':
-        # Цена = стоимость текущего пакета трафика
-        traffic_price = settings.get_wl_traffic_price(subscription.wl_traffic_limit_gb)
-        return max(traffic_price, base_price)
-
-    if mode == 'traffic_with_purchased':
-        # Цена = стоимость базового трафика + докупленного
-        # Базовый трафик = текущий лимит - докупленный
-        purchased_gb = getattr(subscription, 'wl_purchased_traffic_gb', 0) or 0
-        base_traffic_gb = subscription.wl_traffic_limit_gb - purchased_gb
-
-        # Получаем цену базового трафика
-        base_traffic_price = settings.get_wl_traffic_price(base_traffic_gb) if base_traffic_gb > 0 else 0
-
-        # Получаем цену докупленного трафика
-        purchased_traffic_price = settings.get_wl_traffic_price(purchased_gb) if purchased_gb > 0 else 0
-
-        total_price = base_traffic_price + purchased_traffic_price
-        return max(total_price, base_price)
-
-    # Fallback на базовую цену
-    return base_price
+    """Bot-facing wrapper. Bot always operates on WL fields here."""
+    return _calculate_traffic_reset_price_util(subscription, kind='wl')
 
 
 async def handle_reset_wl_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
