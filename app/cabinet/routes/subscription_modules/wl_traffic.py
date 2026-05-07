@@ -373,6 +373,23 @@ async def refresh_wl_traffic(
         subscription.updated_at = datetime.now(UTC)
         await db.commit()
 
+    panel_limit_bytes = stats.get('traffic_limit_bytes')
+    if panel_limit_bytes is not None:
+        panel_limit_gb = int(panel_limit_bytes / (1024 ** 3))
+        if panel_limit_gb != (subscription.wl_traffic_limit_gb or 0):
+            logger.info(
+                'Sync WL traffic limit from panel',
+                subscription_id=subscription.id,
+                old_limit_gb=subscription.wl_traffic_limit_gb,
+                new_limit_gb=panel_limit_gb,
+            )
+            subscription.wl_traffic_limit_gb = panel_limit_gb
+            subscription.updated_at = datetime.now(UTC)
+            await db.commit()
+
+    # Re-read after potential sync
+    limit_gb = subscription.wl_traffic_limit_gb or 0
+
     percent = min(100, (used_gb / limit_gb) * 100) if limit_gb > 0 else 0
 
     payload = {

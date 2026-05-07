@@ -401,6 +401,35 @@ async def test_wl_refresh_no_panel_data_returns_database(make_subscription, make
 
 
 @pytest.mark.asyncio
+async def test_wl_refresh_syncs_limit_from_panel(make_subscription, make_user, mock_db):
+    """If panel reports a different traffic_limit_bytes, DB column is updated and response uses new value."""
+    from app.cabinet.routes.subscription_modules import wl_traffic as wt
+
+    user = make_user()
+    sub = make_subscription(wl_traffic_limit_gb=5, wl_traffic_used_gb=0.0)
+
+    panel_stats = {
+        'used_traffic_gb': 2.0,
+        'used_traffic_bytes': 1024 ** 3 * 2,
+        'traffic_limit_bytes': 1024 ** 3 * 50,  # 50 GB on panel
+        'lifetime_used_traffic_gb': 2.0,
+    }
+
+    with (
+        patch.object(wt, 'resolve_subscription', AsyncMock(return_value=sub)),
+        patch.object(wt.RateLimitCache, 'is_rate_limited', AsyncMock(return_value=False)),
+        patch.object(wt, 'refresh_used_from_panel', AsyncMock(return_value=panel_stats)),
+        patch.object(wt.cache, 'set', AsyncMock()),
+    ):
+        result = await wt.refresh_wl_traffic(user=user, db=mock_db, subscription_id=None)
+
+    assert result['source'] == 'remnawave'
+    assert result['wl_traffic_limit_gb'] == 50
+    assert result['wl_traffic_used_gb'] == 2.0
+    assert sub.wl_traffic_limit_gb == 50  # DB synced
+
+
+@pytest.mark.asyncio
 async def test_wl_save_cart_persists_correct_mode(make_subscription, make_user, mock_db):
     from app.cabinet.routes.subscription_modules import wl_traffic as wt
     from app.cabinet.schemas.subscription import TrafficPurchaseRequest
