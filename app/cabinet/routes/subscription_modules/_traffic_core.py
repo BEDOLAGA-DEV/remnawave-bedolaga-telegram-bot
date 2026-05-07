@@ -86,3 +86,39 @@ async def resolve_traffic_packages(
         })
 
     return result
+
+
+async def resolve_package_price(
+    db: AsyncSession,
+    subscription: Subscription,
+    *,
+    gb: int,
+    kind: TrafficKind,
+) -> int:
+    """Return the per-month base price for one top-up package.
+
+    Returns 0 when the package is unknown — caller is expected to reject.
+    """
+    if settings.is_tariffs_mode() and subscription.tariff_id:
+        tariff = await get_tariff_by_id(db, subscription.tariff_id)
+        if tariff is not None:
+            if kind == 'wl':
+                pkgs = tariff.wl_traffic_topup_packages or {}
+                if gb in pkgs:
+                    return int(pkgs[gb])
+            else:
+                if hasattr(tariff, 'get_traffic_topup_packages'):
+                    pkgs = tariff.get_traffic_topup_packages() or {}
+                    if gb in pkgs:
+                        return int(pkgs[gb])
+
+    if kind == 'wl':
+        if not settings.WL_TRAFFIC_TOPUP_ENABLED:
+            return 0
+        return int(settings.get_wl_traffic_topup_price(gb))
+
+    if not settings.is_traffic_topup_enabled():
+        return 0
+    pkgs = settings.get_traffic_topup_packages()
+    match = next((p for p in pkgs if p['gb'] == gb and p.get('enabled', True)), None)
+    return int(match['price']) if match else 0

@@ -93,3 +93,59 @@ async def test_resolve_packages_regular_returns_existing_logic(make_subscription
     with patch.object(tc, 'settings', fake_settings):
         packages = await tc.resolve_traffic_packages(mock_db, sub, kind='regular')
         assert [p['gb'] for p in packages] == [5]
+
+
+@pytest.mark.asyncio
+async def test_resolve_package_price_wl_tariff_match(make_subscription, mock_db):
+    from app.cabinet.routes.subscription_modules import _traffic_core as tc
+
+    sub = make_subscription(tariff_id=42)
+    fake_tariff = MagicMock()
+    fake_tariff.wl_traffic_topup_packages = {50: 12500}
+    fake_settings = MagicMock()
+    fake_settings.is_tariffs_mode.return_value = True
+    fake_settings.WL_TRAFFIC_TOPUP_ENABLED = True
+
+    with (
+        patch.object(tc, 'settings', fake_settings),
+        patch.object(tc, 'get_tariff_by_id', AsyncMock(return_value=fake_tariff)),
+    ):
+        price = await tc.resolve_package_price(mock_db, sub, gb=50, kind='wl')
+        assert price == 12500
+
+
+@pytest.mark.asyncio
+async def test_resolve_package_price_wl_classic_match(make_subscription, mock_db):
+    from app.cabinet.routes.subscription_modules import _traffic_core as tc
+
+    sub = make_subscription()
+    fake_settings = MagicMock()
+    fake_settings.is_tariffs_mode.return_value = False
+    fake_settings.is_traffic_topup_blocked.return_value = False
+    fake_settings.WL_TRAFFIC_TOPUP_ENABLED = True
+    fake_settings.get_wl_traffic_topup_price.return_value = 7777
+
+    with patch.object(tc, 'settings', fake_settings):
+        price = await tc.resolve_package_price(mock_db, sub, gb=25, kind='wl')
+        assert price == 7777
+
+
+@pytest.mark.asyncio
+async def test_resolve_package_price_returns_zero_when_unknown(make_subscription, mock_db):
+    from app.cabinet.routes.subscription_modules import _traffic_core as tc
+
+    sub = make_subscription(tariff_id=42)
+    fake_tariff = MagicMock()
+    fake_tariff.wl_traffic_topup_packages = {10: 1000}
+    fake_settings = MagicMock()
+    fake_settings.is_tariffs_mode.return_value = True
+    fake_settings.WL_TRAFFIC_TOPUP_ENABLED = True
+    fake_settings.is_traffic_topup_blocked.return_value = False
+    fake_settings.get_wl_traffic_topup_price.return_value = 0
+
+    with (
+        patch.object(tc, 'settings', fake_settings),
+        patch.object(tc, 'get_tariff_by_id', AsyncMock(return_value=fake_tariff)),
+    ):
+        price = await tc.resolve_package_price(mock_db, sub, gb=999, kind='wl')
+        assert price == 0
