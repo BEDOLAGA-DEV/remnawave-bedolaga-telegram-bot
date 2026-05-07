@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import structlog
+from sqlalchemy import delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -13,7 +14,8 @@ from app.database.crud.subscription import (
     add_subscription_wl_traffic,
 )
 from app.database.crud.tariff import get_tariff_by_id
-from app.database.models import Subscription
+from app.database.models import Subscription, TrafficPurchase, WlTrafficPurchase
+from app.services.subscription_service import SubscriptionService
 
 
 logger = structlog.get_logger(__name__)
@@ -140,3 +142,45 @@ async def apply_purchase_db(
         await add_subscription_wl_traffic(db, subscription, gb)
     else:
         await add_subscription_traffic(db, subscription, gb)
+
+
+async def delete_purchases_for_switch(
+    db: AsyncSession,
+    subscription: Subscription,
+    *,
+    kind: TrafficKind,
+) -> None:
+    """Wipe accumulated *TrafficPurchase rows before switching the package."""
+    table = WlTrafficPurchase if kind == 'wl' else TrafficPurchase
+    await db.execute(sql_delete(table).where(table.subscription_id == subscription.id))
+
+
+async def sync_remnawave_after_purchase(
+    db: AsyncSession,
+    subscription: Subscription,
+    user,
+) -> None:
+    """Best-effort RemnaWave sync after any traffic purchase.
+
+    On hard failure the subscription is enqueued for retry.
+    """
+    should_create = False
+    try:
+        service = SubscriptionService()
+        if settings.is_multi_tariff_enabled():
+            should_create = not subscription.remnawave_uuid
+        else:
+            should_create = not getattr(user, 'remnawave_uuid', None)
+        if should_create:
+            await service.create_remnawave_user(db, subscription)
+        else:
+            await service.update_remnawave_user(db, subscription)
+    except Exception as e:
+        logger.error('Failed to sync traffic with RemnaWave', error=str(e))
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        remnawave_retry_queue.enqueue(
+            subscription_id=subscription.id,
+            user_id=user.id,
+            action='create' if should_create else 'update',
+        )

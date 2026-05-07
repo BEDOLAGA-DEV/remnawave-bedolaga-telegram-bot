@@ -185,3 +185,62 @@ async def test_apply_purchase_db_regular_calls_add_regular_crud(make_subscriptio
 
     add_regular.assert_awaited_once_with(mock_db, sub, 10)
     add_wl.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_purchases_wl_uses_wl_purchase_table(make_subscription, mock_db):
+    from app.cabinet.routes.subscription_modules import _traffic_core as tc
+
+    sub = make_subscription()
+    captured = {}
+
+    async def _exec(stmt):
+        captured['sql'] = str(stmt)
+        return MagicMock()
+
+    mock_db.execute = AsyncMock(side_effect=_exec)
+
+    await tc.delete_purchases_for_switch(mock_db, sub, kind='wl')
+    assert 'wl_traffic_purchases' in captured['sql'].lower()
+
+
+@pytest.mark.asyncio
+async def test_delete_purchases_regular_uses_regular_purchase_table(make_subscription, mock_db):
+    from app.cabinet.routes.subscription_modules import _traffic_core as tc
+
+    sub = make_subscription()
+    captured = {}
+
+    async def _exec(stmt):
+        captured['sql'] = str(stmt)
+        return MagicMock()
+
+    mock_db.execute = AsyncMock(side_effect=_exec)
+
+    await tc.delete_purchases_for_switch(mock_db, sub, kind='regular')
+    sql = captured['sql'].lower()
+    assert 'traffic_purchases' in sql
+    assert 'wl_traffic_purchases' not in sql
+
+
+@pytest.mark.asyncio
+async def test_sync_remnawave_calls_update_when_uuid_present(make_subscription, make_user, mock_db):
+    from app.cabinet.routes.subscription_modules import _traffic_core as tc
+
+    user = make_user()
+    sub = make_subscription(remnawave_uuid='sub-uuid')
+
+    fake_service = MagicMock()
+    fake_service.update_remnawave_user = AsyncMock()
+    fake_service.create_remnawave_user = AsyncMock()
+    fake_settings = MagicMock()
+    fake_settings.is_multi_tariff_enabled.return_value = False
+
+    with (
+        patch.object(tc, 'SubscriptionService', return_value=fake_service),
+        patch.object(tc, 'settings', fake_settings),
+    ):
+        await tc.sync_remnawave_after_purchase(mock_db, sub, user)
+
+    fake_service.update_remnawave_user.assert_awaited_once_with(mock_db, sub)
+    fake_service.create_remnawave_user.assert_not_awaited()
