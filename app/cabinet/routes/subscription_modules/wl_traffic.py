@@ -395,3 +395,50 @@ async def refresh_wl_traffic(
         'source': 'remnawave',
         **payload,
     }
+
+
+@router.post('/wl-traffic/save-cart')
+async def save_wl_traffic_cart(
+    request: TrafficPurchaseRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+    subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+) -> dict[str, bool]:
+    """Persist a cart so auto-purchase can complete after balance top-up."""
+    subscription = await resolve_subscription(db, user, subscription_id)
+    if not subscription:
+        raise HTTPException(status_code=400, detail='У вас нет активной подписки')
+    if subscription.status not in ('active', 'trial'):
+        raise HTTPException(status_code=400, detail='Ваша подписка неактивна')
+    if subscription.is_trial:
+        raise HTTPException(status_code=400, detail='Докупка WL-трафика недоступна на пробном периоде')
+    if (subscription.wl_traffic_limit_gb or 0) == 0:
+        raise HTTPException(status_code=400, detail='У вас уже безлимитный трафик')
+
+    base_price = await resolve_package_price(db, subscription, gb=request.gb, kind='wl')
+    if base_price <= 0:
+        raise HTTPException(status_code=400, detail=f'Пакет {request.gb} ГБ недоступен')
+
+    is_tariff_mode = settings.is_tariffs_mode() and subscription.tariff_id
+    if is_tariff_mode:
+        prorated_price = base_price
+    else:
+        prorated_price, _ = calculate_prorated_price(base_price, subscription.end_date)
+
+    discount = _apply_addon_discount(user, 'traffic', prorated_price, 30)
+    final_price = discount['discounted']
+
+    await user_cart_service.save_user_cart(
+        user.id,
+        {
+            'cart_mode': 'add_wl_traffic',
+            'subscription_id': subscription.id,
+            'traffic_gb': request.gb,
+            'price_kopeks': final_price,
+            'base_price_kopeks': base_price,
+            'discount_percent': discount['percent'],
+            'source': 'cabinet',
+            'description': f'Докупка {request.gb} ГБ WL-трафика',
+        },
+    )
+    return {'success': True, 'cart_saved': True}
