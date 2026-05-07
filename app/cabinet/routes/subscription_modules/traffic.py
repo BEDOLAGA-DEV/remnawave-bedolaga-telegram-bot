@@ -17,20 +17,28 @@ from fastapi import APIRouter, Depends, HTTPException, Query as QueryParam, stat
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.crud.subscription import reactivate_subscription
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.transaction import create_transaction
-from app.database.crud.user import subtract_user_balance
+from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
 from app.database.models import TransactionType, User
 from app.services.pricing_engine import pricing_engine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 from app.utils.cache import RateLimitCache, cache, cache_key
+from app.utils.pricing_utils import calculate_prorated_price
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import (
     TrafficPackageResponse,
     TrafficPurchaseRequest,
+)
+from ._traffic_core import (
+    apply_purchase_db,
+    resolve_package_price,
+    resolve_traffic_packages,
+    sync_remnawave_after_purchase,
 )
 from .helpers import _apply_addon_discount, resolve_subscription
 
@@ -47,72 +55,19 @@ async def get_traffic_packages(
     subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
 ):
     """Get available traffic packages."""
-    from app.database.crud.tariff import get_tariff_by_id
-
     subscription = await resolve_subscription(db, user, subscription_id)
     if not subscription:
         return []
-
-    # Режим тарифов - берём пакеты из тарифа
-    if settings.is_tariffs_mode() and subscription.tariff_id:
-        tariff = await get_tariff_by_id(db, subscription.tariff_id)
-        if not tariff:
-            return []
-
-        # Проверяем, разрешена ли докупка для этого тарифа
-        if not getattr(tariff, 'traffic_topup_enabled', False):
-            return []
-
-        # Проверяем безлимит
-        if tariff.traffic_limit_gb == 0:
-            return []
-
-        packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
-        result = []
-
-        for gb, price in packages.items():
-            if price <= 0:
-                continue
-            result.append(
-                TrafficPackageResponse(
-                    gb=gb,
-                    price_kopeks=price,
-                    price_rubles=price / 100,
-                    is_unlimited=False,
-                )
-            )
-
-        return sorted(result, key=lambda x: x.gb)
-
-    # Classic режим - глобальные настройки
-    if not settings.is_traffic_topup_enabled():
-        return []
-
-    # Проверяем настройку тарифа пользователя (allow_traffic_topup)
-    if subscription.tariff_id:
-        tariff = await get_tariff_by_id(db, subscription.tariff_id)
-        if tariff and not tariff.allow_traffic_topup:
-            return []
-
-    packages = settings.get_traffic_topup_packages()
-    result = []
-
-    for pkg in packages:
-        if not pkg.get('enabled', True):
-            continue
-        if pkg['price'] <= 0:
-            continue
-
-        result.append(
-            TrafficPackageResponse(
-                gb=pkg['gb'],
-                price_kopeks=pkg['price'],
-                price_rubles=pkg['price'] / 100,
-                is_unlimited=pkg['gb'] == 0,
-            )
+    packages = await resolve_traffic_packages(db, subscription, kind='regular')
+    return [
+        TrafficPackageResponse(
+            gb=p['gb'],
+            price_kopeks=p['price'],
+            price_rubles=p['price'] / 100,
+            is_unlimited=p['is_unlimited'],
         )
-
-    return result
+        for p in packages
+    ]
 
 
 @router.post('/traffic')
@@ -129,10 +84,6 @@ async def purchase_traffic(
             detail='Subscription purchases are restricted for this account',
         )
 
-    from app.database.crud.subscription import add_subscription_traffic
-    from app.database.crud.tariff import get_tariff_by_id
-    from app.utils.pricing_utils import calculate_prorated_price
-
     subscription = await resolve_subscription(db, user, subscription_id)
 
     if not subscription:
@@ -141,7 +92,6 @@ async def purchase_traffic(
             detail='No subscription found',
         )
     tariff = None
-    base_price_kopeks = 0
     is_tariff_mode = settings.is_tariffs_mode() and subscription.tariff_id
 
     # Режим тарифов
@@ -179,20 +129,6 @@ async def purchase_traffic(
                     detail=f'Traffic limit exceeded. Max: {max_topup_limit} GB, available: {available_gb} GB',
                 )
 
-        # Получаем цену из тарифа
-        packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
-        if request.gb not in packages:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Traffic package {request.gb}GB is not available',
-            )
-        base_price_kopeks = packages[request.gb]
-        if base_price_kopeks <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Traffic package {request.gb}GB has no price configured',
-            )
-
     else:
         # Classic режим
         if not settings.is_traffic_topup_enabled():
@@ -210,20 +146,12 @@ async def purchase_traffic(
                     detail='Traffic top-up is not available for your tariff',
                 )
 
-        # Получаем цену из глобальных настроек
-        packages = settings.get_traffic_topup_packages()
-        matching_pkg = next((pkg for pkg in packages if pkg['gb'] == request.gb and pkg.get('enabled', True)), None)
-        if not matching_pkg:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Invalid traffic package',
-            )
-        base_price_kopeks = matching_pkg['price']
-        if base_price_kopeks <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Traffic package has no price configured',
-            )
+    base_price_kopeks = await resolve_package_price(db, subscription, gb=request.gb, kind='regular')
+    if base_price_kopeks <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Traffic package {request.gb}GB is not available',
+        )
 
     # На тарифах пакеты трафика покупаются на 1 месяц (30 дней),
     # цена в тарифе уже месячная — не умножаем на оставшиеся месяцы подписки.
@@ -238,8 +166,6 @@ async def purchase_traffic(
         )
 
     # Lock user row to prevent TOCTOU on promo-offer state
-    from app.database.crud.user import lock_user_for_pricing
-
     user = await lock_user_for_pricing(db, user.id)
 
     # Apply discount from promo group using proper method
@@ -305,43 +231,14 @@ async def purchase_traffic(
             detail='Failed to charge balance',
         )
 
-    # Добавляем трафик (add_subscription_traffic обновляет purchased_traffic_gb, traffic_reset_at и коммитит)
-    await add_subscription_traffic(db, subscription, request.gb)
+    # Добавляем трафик (apply_purchase_db обновляет purchased_traffic_gb, traffic_reset_at и коммитит)
+    await apply_purchase_db(db, subscription, gb=request.gb, kind='regular')
 
     # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
-    from app.database.crud.subscription import reactivate_subscription
-
     await reactivate_subscription(db, subscription)
 
     # Синхронизируем с RemnaWave
-    try:
-        subscription_service = SubscriptionService()
-        if settings.is_multi_tariff_enabled():
-            _should_create = not subscription.remnawave_uuid
-        else:
-            _should_create = not getattr(user, 'remnawave_uuid', None)
-
-        if _should_create:
-            await subscription_service.create_remnawave_user(db, subscription)
-        else:
-            await subscription_service.update_remnawave_user(db, subscription)
-            if subscription.status == 'active':
-                _enable_uuid = (
-                    subscription.remnawave_uuid
-                    if settings.is_multi_tariff_enabled()
-                    else getattr(user, 'remnawave_uuid', None)
-                )
-                if _enable_uuid:
-                    await subscription_service.enable_remnawave_user(_enable_uuid)
-    except Exception as e:
-        logger.error('Failed to sync traffic with RemnaWave', error=e)
-        from app.services.remnawave_retry_queue import remnawave_retry_queue
-
-        remnawave_retry_queue.enqueue(
-            subscription_id=subscription.id,
-            user_id=user.id,
-            action='create' if _should_create else 'update',
-        )
+    await sync_remnawave_after_purchase(db, subscription, user)
 
     # Создаём транзакцию
     await create_transaction(
@@ -434,7 +331,6 @@ async def save_traffic_cart(
 
     # Get traffic price from tariff or settings
     tariff = None
-    base_price_kopeks = 0
     is_tariff_mode = settings.is_tariffs_mode() and subscription.tariff_id
 
     if is_tariff_mode:
@@ -450,14 +346,6 @@ async def save_traffic_cart(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Докупка трафика недоступна на вашем тарифе',
             )
-
-        packages = tariff.get_traffic_topup_packages() if hasattr(tariff, 'get_traffic_topup_packages') else {}
-        if request.gb not in packages:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Пакет трафика {request.gb} ГБ недоступен',
-            )
-        base_price_kopeks = packages[request.gb]
     else:
         if not settings.is_traffic_topup_enabled():
             raise HTTPException(
@@ -465,21 +353,17 @@ async def save_traffic_cart(
                 detail='Докупка трафика отключена',
             )
 
-        packages = settings.get_traffic_topup_packages()
-        matching_pkg = next((pkg for pkg in packages if pkg['gb'] == request.gb and pkg.get('enabled', True)), None)
-        if not matching_pkg:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Недоступный пакет трафика',
-            )
-        base_price_kopeks = matching_pkg['price']
+    base_price_kopeks = await resolve_package_price(db, subscription, gb=request.gb, kind='regular')
+    if base_price_kopeks <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Пакет трафика {request.gb} ГБ недоступен',
+        )
 
     # Calculate prorated price (days-based), then apply discount
-    from app.utils.pricing_utils import calculate_prorated_price as _calc_prorated
-
     now = datetime.now(UTC)
     days_left = max(1, (subscription.end_date - now).days)
-    prorated_price, _ = _calc_prorated(
+    prorated_price, _ = calculate_prorated_price(
         base_price_kopeks,
         subscription.end_date,
     )
