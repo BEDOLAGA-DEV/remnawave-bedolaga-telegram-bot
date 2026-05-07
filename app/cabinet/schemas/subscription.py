@@ -109,6 +109,49 @@ class TrafficPurchaseRequest(BaseModel):
     gb: int = Field(..., ge=0, le=100_000, description='GB to purchase (0 = unlimited)')
 
 
+class WlTrafficPurchaseResponse(BaseModel):
+    success: bool = True
+    gb_added: int
+    new_wl_traffic_limit_gb: int
+    amount_paid_kopeks: int
+    new_balance_kopeks: int
+    discount_percent: int | None = None
+    discount_kopeks: int | None = None
+    base_price_kopeks: int | None = None
+
+
+class WlTrafficSwitchResponse(BaseModel):
+    success: bool = True
+    old_wl_traffic_gb: int
+    new_wl_traffic_gb: int
+    charged_kopeks: int
+    balance_kopeks: int
+    balance_label: str
+
+
+class WlTrafficResetResponse(BaseModel):
+    success: bool = True
+    new_wl_traffic_used_gb: float
+    charged_kopeks: int
+    balance_kopeks: int
+
+
+class WlTrafficRefreshResponse(BaseModel):
+    success: bool = True
+    cached: bool = False
+    rate_limited: bool = False
+    source: str
+    wl_traffic_used_bytes: int
+    wl_traffic_used_gb: float
+    wl_traffic_limit_bytes: int
+    wl_traffic_limit_gb: int
+    wl_traffic_used_percent: float
+    is_unlimited: bool
+    lifetime_used_bytes: int = 0
+    lifetime_used_gb: float = 0.0
+    retry_after_seconds: int | None = None
+
+
 class DevicePurchaseRequest(BaseModel):
     """Request to purchase additional device slots."""
 
