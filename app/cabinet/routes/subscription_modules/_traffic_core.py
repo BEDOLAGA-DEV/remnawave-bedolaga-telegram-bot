@@ -15,6 +15,7 @@ from app.database.crud.subscription import (
 )
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.models import Subscription, TrafficPurchase, WlTrafficPurchase
+from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 
 
@@ -184,3 +185,33 @@ async def sync_remnawave_after_purchase(
             user_id=user.id,
             action='create' if should_create else 'update',
         )
+
+
+async def refresh_used_from_panel(
+    user,
+    subscription: Subscription,
+    *,
+    kind: TrafficKind,
+) -> dict[str, Any] | None:
+    """Pull fresh used traffic from the relevant panel user."""
+    remnawave = RemnaWaveService()
+
+    if kind == 'wl':
+        try:
+            primary_wl, legacy_wl = SubscriptionService()._build_wl_username(user, subscription)
+        except Exception as exc:
+            logger.warning('Failed to build WL username', error=str(exc))
+            return None
+
+        async with remnawave.get_api_client() as api:
+            wl_user = await api.get_user_by_username(primary_wl)
+            if wl_user is None and legacy_wl and legacy_wl != primary_wl:
+                wl_user = await api.get_user_by_username(legacy_wl)
+            if wl_user is None or not getattr(wl_user, 'uuid', None):
+                return None
+            return await remnawave.get_user_traffic_stats_by_uuid(wl_user.uuid)
+
+    target_uuid = subscription.remnawave_uuid or getattr(user, 'remnawave_uuid', None)
+    if not target_uuid:
+        return None
+    return await remnawave.get_user_traffic_stats_by_uuid(target_uuid)

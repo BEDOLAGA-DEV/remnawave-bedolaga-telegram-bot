@@ -244,3 +244,54 @@ async def test_sync_remnawave_calls_update_when_uuid_present(make_subscription, 
 
     fake_service.update_remnawave_user.assert_awaited_once_with(mock_db, sub)
     fake_service.create_remnawave_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_refresh_used_wl_uses_wl_panel_user(make_subscription, make_user):
+    from app.cabinet.routes.subscription_modules import _traffic_core as tc
+
+    user = make_user()
+    sub = make_subscription()
+
+    fake_panel_user = MagicMock(uuid='wl-uuid-123')
+    fake_api = MagicMock()
+    fake_api.get_user_by_username = AsyncMock(side_effect=[fake_panel_user])
+
+    fake_remnawave = MagicMock()
+    fake_remnawave.get_api_client = MagicMock(return_value=AsyncMock())
+    fake_remnawave.get_api_client.return_value.__aenter__ = AsyncMock(return_value=fake_api)
+    fake_remnawave.get_api_client.return_value.__aexit__ = AsyncMock(return_value=False)
+    fake_remnawave.get_user_traffic_stats_by_uuid = AsyncMock(
+        return_value={'used_traffic_gb': 4.0, 'used_traffic_bytes': 1024**3 * 4},
+    )
+
+    fake_subscription_service = MagicMock()
+    fake_subscription_service._build_wl_username = MagicMock(return_value=('primary_wl', 'legacy_wl'))
+
+    with (
+        patch.object(tc, 'RemnaWaveService', return_value=fake_remnawave),
+        patch.object(tc, 'SubscriptionService', return_value=fake_subscription_service),
+    ):
+        stats = await tc.refresh_used_from_panel(user, sub, kind='wl')
+
+    assert stats is not None
+    assert stats['used_traffic_gb'] >= 4.0
+
+
+@pytest.mark.asyncio
+async def test_refresh_used_regular_uses_main_uuid(make_subscription, make_user):
+    from app.cabinet.routes.subscription_modules import _traffic_core as tc
+
+    user = make_user()
+    sub = make_subscription(remnawave_uuid='main-sub-uuid')
+
+    fake_remnawave = MagicMock()
+    fake_remnawave.get_user_traffic_stats_by_uuid = AsyncMock(
+        return_value={'used_traffic_gb': 1.5, 'used_traffic_bytes': 1024**3 * 1.5},
+    )
+
+    with patch.object(tc, 'RemnaWaveService', return_value=fake_remnawave):
+        stats = await tc.refresh_used_from_panel(user, sub, kind='regular')
+
+    fake_remnawave.get_user_traffic_stats_by_uuid.assert_awaited_once_with('main-sub-uuid')
+    assert stats['used_traffic_gb'] == 1.5
