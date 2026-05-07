@@ -8,6 +8,10 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.crud.subscription import (
+    add_subscription_traffic,
+    add_subscription_wl_traffic,
+)
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.models import Subscription
 
@@ -122,3 +126,17 @@ async def resolve_package_price(
     pkgs = settings.get_traffic_topup_packages()
     match = next((p for p in pkgs if p['gb'] == gb and p.get('enabled', True)), None)
     return int(match['price']) if match else 0
+
+
+async def apply_purchase_db(
+    db: AsyncSession,
+    subscription: Subscription,
+    *,
+    gb: int,
+    kind: TrafficKind,
+) -> None:
+    """Persist a successful top-up: increments limit + creates *TrafficPurchase row."""
+    if kind == 'wl':
+        await add_subscription_wl_traffic(db, subscription, gb)
+    else:
+        await add_subscription_traffic(db, subscription, gb)

@@ -149,3 +149,39 @@ async def test_resolve_package_price_returns_zero_when_unknown(make_subscription
     ):
         price = await tc.resolve_package_price(mock_db, sub, gb=999, kind='wl')
         assert price == 0
+
+
+@pytest.mark.asyncio
+async def test_apply_purchase_db_wl_calls_add_wl_crud(make_subscription, mock_db):
+    from app.cabinet.routes.subscription_modules import _traffic_core as tc
+
+    sub = make_subscription()
+    add_wl = AsyncMock()
+    add_regular = AsyncMock()
+
+    with (
+        patch.object(tc, 'add_subscription_wl_traffic', add_wl),
+        patch.object(tc, 'add_subscription_traffic', add_regular),
+    ):
+        await tc.apply_purchase_db(mock_db, sub, gb=50, kind='wl')
+
+    add_wl.assert_awaited_once_with(mock_db, sub, 50)
+    add_regular.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_apply_purchase_db_regular_calls_add_regular_crud(make_subscription, mock_db):
+    from app.cabinet.routes.subscription_modules import _traffic_core as tc
+
+    sub = make_subscription()
+    add_wl = AsyncMock()
+    add_regular = AsyncMock()
+
+    with (
+        patch.object(tc, 'add_subscription_wl_traffic', add_wl),
+        patch.object(tc, 'add_subscription_traffic', add_regular),
+    ):
+        await tc.apply_purchase_db(mock_db, sub, gb=10, kind='regular')
+
+    add_regular.assert_awaited_once_with(mock_db, sub, 10)
+    add_wl.assert_not_awaited()
