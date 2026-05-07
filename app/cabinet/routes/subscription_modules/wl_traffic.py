@@ -16,6 +16,7 @@ from app.database.models import TransactionType, User
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
+from app.utils.cache import RateLimitCache, cache, cache_key
 from app.utils.pricing_utils import calculate_prorated_price
 from app.utils.traffic_pricing import calculate_traffic_reset_price
 
@@ -24,6 +25,7 @@ from ...schemas.subscription import TrafficPackageResponse, TrafficPurchaseReque
 from ._traffic_core import (
     apply_purchase_db,
     delete_purchases_for_switch,
+    refresh_used_from_panel,
     resolve_package_price,
     resolve_traffic_packages,
     sync_remnawave_after_purchase,
@@ -297,4 +299,99 @@ async def reset_wl_traffic(
         'new_wl_traffic_used_gb': 0.0,
         'charged_kopeks': reset_price,
         'balance_kopeks': user.balance_kopeks,
+    }
+
+
+WL_TRAFFIC_REFRESH_RATE_LIMIT = 1
+WL_TRAFFIC_REFRESH_RATE_WINDOW = 60
+WL_TRAFFIC_CACHE_TTL = 60
+
+
+@router.post('/refresh-wl-traffic')
+async def refresh_wl_traffic(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+    subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+) -> dict:
+    """Refresh WL traffic from the RemnaWave WL panel user."""
+    subscription = await resolve_subscription(db, user, subscription_id)
+    if not subscription:
+        raise HTTPException(status_code=404, detail='No active subscription')
+
+    suffix = f'{user.id}_{subscription_id}' if subscription_id is not None else str(user.id)
+
+    is_limited = await RateLimitCache.is_rate_limited(
+        suffix,
+        'wl_traffic_refresh',
+        WL_TRAFFIC_REFRESH_RATE_LIMIT,
+        WL_TRAFFIC_REFRESH_RATE_WINDOW,
+    )
+    if is_limited:
+        cached = await cache.get(cache_key('wl_traffic', suffix))
+        if cached:
+            return {
+                'success': True,
+                'cached': True,
+                'rate_limited': True,
+                'source': 'cache',
+                'retry_after_seconds': WL_TRAFFIC_REFRESH_RATE_WINDOW,
+                **cached,
+            }
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f'Rate limited. Try again in {WL_TRAFFIC_REFRESH_RATE_WINDOW} seconds.',
+            headers={'Retry-After': str(WL_TRAFFIC_REFRESH_RATE_WINDOW)},
+        )
+
+    try:
+        stats = await refresh_used_from_panel(user, subscription, kind='wl')
+    except Exception as e:
+        logger.error('WL traffic refresh failed', user_id=user.id, error=str(e))
+        raise HTTPException(status_code=500, detail='Failed to refresh WL traffic data')
+
+    limit_gb = subscription.wl_traffic_limit_gb or 0
+
+    if not stats:
+        used_gb = subscription.wl_traffic_used_gb or 0.0
+        percent = min(100, (used_gb / limit_gb) * 100) if limit_gb > 0 else 0
+        return {
+            'success': True,
+            'cached': False,
+            'rate_limited': False,
+            'source': 'database',
+            'wl_traffic_used_bytes': int(used_gb * (1024 ** 3)),
+            'wl_traffic_used_gb': round(used_gb, 2),
+            'wl_traffic_limit_bytes': int(limit_gb * (1024 ** 3)),
+            'wl_traffic_limit_gb': limit_gb,
+            'wl_traffic_used_percent': round(percent, 1),
+            'is_unlimited': limit_gb == 0,
+        }
+
+    used_gb = stats.get('used_traffic_gb', 0.0)
+    if abs((subscription.wl_traffic_used_gb or 0.0) - used_gb) > 0.01:
+        subscription.wl_traffic_used_gb = used_gb
+        subscription.updated_at = datetime.now(UTC)
+        await db.commit()
+
+    percent = min(100, (used_gb / limit_gb) * 100) if limit_gb > 0 else 0
+
+    payload = {
+        'wl_traffic_used_bytes': stats.get('used_traffic_bytes', 0),
+        'wl_traffic_used_gb': round(used_gb, 2),
+        'wl_traffic_limit_bytes': int(limit_gb * (1024 ** 3)),
+        'wl_traffic_limit_gb': limit_gb,
+        'wl_traffic_used_percent': round(percent, 1),
+        'is_unlimited': limit_gb == 0,
+        'lifetime_used_bytes': stats.get('lifetime_used_traffic_bytes', 0),
+        'lifetime_used_gb': round(stats.get('lifetime_used_traffic_gb', 0), 2),
+    }
+
+    await cache.set(cache_key('wl_traffic', suffix), payload, WL_TRAFFIC_CACHE_TTL)
+
+    return {
+        'success': True,
+        'cached': False,
+        'rate_limited': False,
+        'source': 'remnawave',
+        **payload,
     }

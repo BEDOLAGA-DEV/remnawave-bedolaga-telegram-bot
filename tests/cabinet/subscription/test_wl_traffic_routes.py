@@ -325,3 +325,76 @@ async def test_wl_reset_remnawave_failure_is_non_fatal(make_subscription, make_u
 
     assert result['success'] is True
     assert sub.wl_traffic_used_gb == 0.0
+
+
+@pytest.mark.asyncio
+async def test_wl_refresh_success_returns_panel_data(make_subscription, make_user, mock_db):
+    from app.cabinet.routes.subscription_modules import wl_traffic as wt
+
+    user = make_user()
+    sub = make_subscription(wl_traffic_limit_gb=100, wl_traffic_used_gb=0.0)
+
+    with (
+        patch.object(wt, 'resolve_subscription', AsyncMock(return_value=sub)),
+        patch.object(wt.RateLimitCache, 'is_rate_limited', AsyncMock(return_value=False)),
+        patch.object(
+            wt,
+            'refresh_used_from_panel',
+            AsyncMock(return_value={'used_traffic_gb': 5.0, 'used_traffic_bytes': 1024**3 * 5, 'lifetime_used_traffic_gb': 5.0}),
+        ),
+        patch.object(wt.cache, 'set', AsyncMock()),
+    ):
+        result = await wt.refresh_wl_traffic(user=user, db=mock_db, subscription_id=None)
+
+    assert result['success'] is True
+    assert result['source'] == 'remnawave'
+    assert result['wl_traffic_used_gb'] == 5.0
+    assert result['wl_traffic_limit_gb'] == 100
+
+
+@pytest.mark.asyncio
+async def test_wl_refresh_rate_limited_returns_cached(make_subscription, make_user, mock_db):
+    from app.cabinet.routes.subscription_modules import wl_traffic as wt
+
+    user = make_user()
+    sub = make_subscription(wl_traffic_limit_gb=50)
+
+    cached_payload = {
+        'wl_traffic_used_gb': 3.0,
+        'wl_traffic_used_bytes': 1024**3 * 3,
+        'wl_traffic_limit_gb': 50,
+        'wl_traffic_limit_bytes': 1024**3 * 50,
+        'wl_traffic_used_percent': 6.0,
+        'is_unlimited': False,
+        'lifetime_used_bytes': 0,
+        'lifetime_used_gb': 0.0,
+    }
+
+    with (
+        patch.object(wt, 'resolve_subscription', AsyncMock(return_value=sub)),
+        patch.object(wt.RateLimitCache, 'is_rate_limited', AsyncMock(return_value=True)),
+        patch.object(wt.cache, 'get', AsyncMock(return_value=cached_payload)),
+    ):
+        result = await wt.refresh_wl_traffic(user=user, db=mock_db, subscription_id=None)
+
+    assert result['cached'] is True
+    assert result['rate_limited'] is True
+    assert result['wl_traffic_used_gb'] == 3.0
+
+
+@pytest.mark.asyncio
+async def test_wl_refresh_no_panel_data_returns_database(make_subscription, make_user, mock_db):
+    from app.cabinet.routes.subscription_modules import wl_traffic as wt
+
+    user = make_user()
+    sub = make_subscription(wl_traffic_limit_gb=100, wl_traffic_used_gb=2.0)
+
+    with (
+        patch.object(wt, 'resolve_subscription', AsyncMock(return_value=sub)),
+        patch.object(wt.RateLimitCache, 'is_rate_limited', AsyncMock(return_value=False)),
+        patch.object(wt, 'refresh_used_from_panel', AsyncMock(return_value=None)),
+    ):
+        result = await wt.refresh_wl_traffic(user=user, db=mock_db, subscription_id=None)
+
+    assert result['source'] == 'database'
+    assert result['wl_traffic_used_gb'] == 2.0
