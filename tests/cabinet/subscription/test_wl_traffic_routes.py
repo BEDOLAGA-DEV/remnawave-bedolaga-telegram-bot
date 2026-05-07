@@ -147,3 +147,91 @@ async def test_wl_purchase_insufficient_saves_cart_and_402(make_subscription, ma
     assert cart['cart_mode'] == 'add_wl_traffic'
     assert cart['traffic_gb'] == 10
     assert cart['source'] == 'cabinet'
+
+
+@pytest.mark.asyncio
+async def test_wl_switch_upgrade_charges_diff(make_subscription, make_user, mock_db):
+    from app.cabinet.routes.subscription_modules import wl_traffic as wt
+    from app.cabinet.schemas.subscription import TrafficPurchaseRequest
+
+    user = make_user(balance_kopeks=100_000)
+    sub = make_subscription(wl_traffic_limit_gb=50, wl_purchased_traffic_gb=0)
+    sub.user_id = user.id
+
+    fake_settings = MagicMock()
+    fake_settings.get_wl_traffic_price.side_effect = lambda gb: {50: 4000, 100: 9000}.get(gb, 0)
+    fake_settings.is_multi_tariff_enabled.return_value = False
+    fake_settings.format_price = lambda k: f'{k / 100:.2f} ₽'
+
+    with (
+        patch.object(wt, 'settings', fake_settings),
+        patch.object(wt, 'resolve_subscription', AsyncMock(return_value=sub)),
+        patch.object(wt, '_apply_addon_discount', return_value={'discounted': 5000, 'discount': 0, 'percent': 0}),
+        patch.object(wt, 'lock_user_for_pricing', AsyncMock(return_value=user)),
+        patch.object(wt, 'calculate_prorated_price', return_value=(5000, 30)),
+        patch.object(wt, 'subtract_user_balance', AsyncMock(return_value=True)),
+        patch.object(wt, 'delete_purchases_for_switch', AsyncMock()),
+        patch.object(wt, 'create_transaction', AsyncMock()),
+        patch.object(wt, 'sync_remnawise_after_purchase', AsyncMock(), create=True),
+        patch.object(wt, 'sync_remnawave_after_purchase', AsyncMock()),
+    ):
+        result = await wt.switch_wl_traffic(
+            request=TrafficPurchaseRequest(gb=100),
+            user=user,
+            db=mock_db,
+            subscription_id=None,
+        )
+
+    assert result['success'] is True
+    assert result['old_wl_traffic_gb'] == 50
+    assert result['new_wl_traffic_gb'] == 100
+    assert result['charged_kopeks'] == 5000
+
+
+@pytest.mark.asyncio
+async def test_wl_switch_downgrade_no_charge(make_subscription, make_user, mock_db):
+    from app.cabinet.routes.subscription_modules import wl_traffic as wt
+    from app.cabinet.schemas.subscription import TrafficPurchaseRequest
+
+    user = make_user()
+    sub = make_subscription(wl_traffic_limit_gb=100, wl_purchased_traffic_gb=0)
+    fake_settings = MagicMock()
+    fake_settings.get_wl_traffic_price.side_effect = lambda gb: {100: 9000, 50: 4000}.get(gb, 0)
+
+    with (
+        patch.object(wt, 'settings', fake_settings),
+        patch.object(wt, 'resolve_subscription', AsyncMock(return_value=sub)),
+        patch.object(wt, '_apply_addon_discount', return_value={'discounted': 0, 'discount': 0, 'percent': 0}),
+        patch.object(wt, 'lock_user_for_pricing', AsyncMock(return_value=user)),
+        patch.object(wt, 'delete_purchases_for_switch', AsyncMock()),
+        patch.object(wt, 'sync_remnawave_after_purchase', AsyncMock()),
+    ):
+        result = await wt.switch_wl_traffic(
+            request=TrafficPurchaseRequest(gb=50),
+            user=user,
+            db=mock_db,
+            subscription_id=None,
+        )
+
+    assert result['charged_kopeks'] == 0
+    assert result['new_wl_traffic_gb'] == 50
+
+
+@pytest.mark.asyncio
+async def test_wl_switch_same_gb_400(make_subscription, make_user, mock_db):
+    from fastapi import HTTPException
+    from app.cabinet.routes.subscription_modules import wl_traffic as wt
+    from app.cabinet.schemas.subscription import TrafficPurchaseRequest
+
+    user = make_user()
+    sub = make_subscription(wl_traffic_limit_gb=50)
+
+    with patch.object(wt, 'resolve_subscription', AsyncMock(return_value=sub)):
+        with pytest.raises(HTTPException) as exc:
+            await wt.switch_wl_traffic(
+                request=TrafficPurchaseRequest(gb=50),
+                user=user,
+                db=mock_db,
+                subscription_id=None,
+            )
+    assert exc.value.status_code == 400

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query as QueryParam, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,7 @@ from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import TrafficPackageResponse, TrafficPurchaseRequest
 from ._traffic_core import (
     apply_purchase_db,
+    delete_purchases_for_switch,
     resolve_package_price,
     resolve_traffic_packages,
     sync_remnawave_after_purchase,
@@ -153,3 +156,77 @@ async def purchase_wl_traffic(
         response['discount_kopeks'] = discount['discount']
         response['base_price_kopeks'] = prorated_price
     return response
+
+
+@router.put('/wl-traffic')
+async def switch_wl_traffic(
+    request: TrafficPurchaseRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+    subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+) -> dict:
+    """Switch the WL traffic package (upgrade or downgrade)."""
+    subscription = await resolve_subscription(db, user, subscription_id)
+    if not subscription:
+        raise HTTPException(status_code=404, detail='No subscription found')
+    if subscription.is_trial:
+        raise HTTPException(status_code=400, detail='Эта функция доступна только для платных подписок')
+
+    current = subscription.wl_traffic_limit_gb or 0
+    new_gb = request.gb
+    if current == new_gb:
+        raise HTTPException(status_code=400, detail='Already on this WL traffic package')
+
+    purchased = subscription.wl_purchased_traffic_gb or 0
+    base = max(0, current - purchased)
+    old_price = settings.get_wl_traffic_price(base)
+    new_price = settings.get_wl_traffic_price(new_gb)
+    if new_price <= 0 and new_gb != 0:
+        raise HTTPException(status_code=400, detail='Invalid WL traffic package')
+
+    user = await lock_user_for_pricing(db, user.id)
+
+    charged = 0
+    if new_price > old_price:
+        diff_per_month = new_price - old_price
+        discount = _apply_addon_discount(user, 'traffic', diff_per_month, 30)
+        per_month_after_discount = discount['discounted']
+        prorated_price, _days = calculate_prorated_price(per_month_after_discount, subscription.end_date)
+        if prorated_price > 0 and user.balance_kopeks < prorated_price:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f'Insufficient balance. Need {settings.format_price(prorated_price)}',
+            )
+        if prorated_price > 0:
+            description = f'WL traffic upgrade {current}GB → {new_gb}GB'
+            success = await subtract_user_balance(db, user, prorated_price, description)
+            if not success:
+                raise HTTPException(status_code=500, detail='Failed to charge balance')
+            await create_transaction(
+                db=db,
+                user_id=user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=prorated_price,
+                description=description,
+            )
+            charged = prorated_price
+
+    await delete_purchases_for_switch(db, subscription, kind='wl')
+    subscription.wl_traffic_limit_gb = new_gb
+    subscription.wl_purchased_traffic_gb = 0
+    subscription.wl_traffic_reset_at = None
+    subscription.updated_at = datetime.now(UTC)
+    await db.commit()
+
+    await sync_remnawave_after_purchase(db, subscription, user)
+    await db.refresh(user)
+    await db.refresh(subscription)
+
+    return {
+        'success': True,
+        'old_wl_traffic_gb': current,
+        'new_wl_traffic_gb': new_gb,
+        'charged_kopeks': charged,
+        'balance_kopeks': user.balance_kopeks,
+        'balance_label': settings.format_price(user.balance_kopeks),
+    }
