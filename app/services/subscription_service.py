@@ -128,6 +128,13 @@ class SubscriptionService:
 
     @staticmethod
     def _resolve_user_tag(subscription: Subscription) -> str | None:
+        # Bio-reward free subs get their own tag (default "FREE") so admins can
+        # filter them apart from regular trials in Remnawave.
+        if getattr(subscription, 'is_bio_reward', False):
+            bio_tag = settings.get_bio_reward_user_tag()
+            if bio_tag:
+                return bio_tag
+            # Fall through to trial tag if bio tag is explicitly disabled
         if getattr(subscription, 'is_trial', False):
             return settings.get_trial_user_tag()
 

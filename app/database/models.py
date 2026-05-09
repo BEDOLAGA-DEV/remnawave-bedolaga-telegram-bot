@@ -163,6 +163,7 @@ class PaymentMethod(Enum):
     KASSA_AI = 'kassa_ai'
     RIOPAY = 'riopay'
     SEVERPAY = 'severpay'
+    AURAPAY = 'aurapay'
     MANUAL = 'manual'
     BALANCE = 'balance'
 
@@ -879,6 +880,60 @@ class SeverPayPayment(Base):
         return f'<SeverPayPayment(id={self.id}, order_id={self.order_id}, amount={self.amount_rubles}₽, status={self.status})>'
 
 
+class AuraPayPayment(Base):
+    """Платежи через AuraPay (aurapay.tech)."""
+
+    __tablename__ = 'aurapay_payments'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+
+    order_id = Column(String(64), unique=True, nullable=False, index=True)
+    aurapay_invoice_id = Column(String(128), unique=True, nullable=True, index=True)
+
+    amount_kopeks = Column(Integer, nullable=False)
+    currency = Column(String(10), nullable=False, default='RUB')
+    description = Column(Text, nullable=True)
+
+    status = Column(String(32), nullable=False, default='pending')
+    is_paid = Column(Boolean, default=False)
+
+    payment_url = Column(Text, nullable=True)
+    payment_method = Column(String(32), nullable=True)
+
+    metadata_json = Column(JSON, nullable=True)
+    callback_payload = Column(JSON, nullable=True)
+
+    paid_at = Column(AwareDateTime(), nullable=True)
+    expires_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+
+    user = relationship('User', backref='aurapay_payments')
+    transaction = relationship('Transaction', backref='aurapay_payment')
+
+    @property
+    def amount_rubles(self) -> float:
+        return self.amount_kopeks / 100
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == 'pending'
+
+    @property
+    def is_success(self) -> bool:
+        return self.status == 'success' and self.is_paid
+
+    @property
+    def is_failed(self) -> bool:
+        return self.status in ['failed', 'expired', 'canceled', 'amount_mismatch']
+
+    def __repr__(self) -> str:  # pragma: no cover - debug helper
+        return f'<AuraPayPayment(id={self.id}, order_id={self.order_id}, amount={self.amount_rubles}₽, status={self.status})>'
+
+
 class PromoGroup(Base):
     __tablename__ = 'promo_groups'
 
@@ -1441,6 +1496,15 @@ class Subscription(Base):
     )  # Приостановлена ли суточная подписка пользователем
     last_daily_charge_at = Column(AwareDateTime(), nullable=True)  # Время последнего суточного списания
 
+    # Bio-reward: % скидки, применённой при покупке. Ненулевое значение = подписка
+    # куплена с bio-скидкой и подлежит пропорциональному пересчёту при revoke.
+    bio_reward_discount_percent = Column(Integer, nullable=True)
+
+    # Bio-reward free subscription marker: True для бесплатной подписки,
+    # выданной за наличие текста в bio. Используется для отдельного user-tag в Remnawave
+    # и для отображения статуса как "Бесплатная" вместо "Тестовая".
+    is_bio_reward = Column(Boolean, default=False, nullable=False, server_default='false')
+
     user = relationship('User', back_populates='subscriptions')
     tariff = relationship('Tariff', back_populates='subscriptions')
     discount_offers = relationship('DiscountOffer', back_populates='subscription')
@@ -1501,10 +1565,13 @@ class Subscription(Base):
     @property
     def status_display(self) -> str:
         actual_status = self.actual_status
+        is_bio = bool(getattr(self, 'is_bio_reward', False))
 
         if actual_status == 'expired':
             return '🔴 Истекла'
         if actual_status == 'active':
+            if is_bio:
+                return '🎁 Бесплатная (за bio)'
             if self.is_trial:
                 return '🎯 Тестовая'
             return '🟢 Активна'
@@ -1513,6 +1580,8 @@ class Subscription(Base):
         if actual_status == 'limited':
             return '⚠️ Трафик исчерпан'
         if actual_status == 'trial':
+            if is_bio:
+                return '🎁 Бесплатная (за bio)'
             return '🎯 Тестовая'
 
         return '❓ Неизвестно'
@@ -1520,10 +1589,13 @@ class Subscription(Base):
     @property
     def status_emoji(self) -> str:
         actual_status = self.actual_status
+        is_bio = bool(getattr(self, 'is_bio_reward', False))
 
         if actual_status == 'expired':
             return '🔴'
         if actual_status == 'active':
+            if is_bio:
+                return '🎁'
             if self.is_trial:
                 return '🎁'
             return '💎'
@@ -3744,3 +3816,109 @@ class HelpArticle(Base):
 
     def __repr__(self) -> str:
         return f"<HelpArticle id={self.id} slug='{self.slug}' locale='{self.locale}' published={self.is_published}>"
+
+
+class BioRewardStatus(StrEnum):
+    PENDING = 'pending'
+    ACTIVE = 'active'
+    GRACE = 'grace'
+    REVOKED = 'revoked'
+    COOLDOWN = 'cooldown'
+
+
+class BioRewardConfig(Base):
+    """Singleton config row for the bio-reward feature."""
+
+    __tablename__ = 'bio_reward_config'
+
+    id = Column(Integer, primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False, server_default='false')
+    discount_percent = Column(Integer, nullable=False, default=20, server_default='20')
+    grace_period_hours = Column(Integer, nullable=False, default=3, server_default='3')
+    cooldown_hours = Column(Integer, nullable=False, default=48, server_default='48')
+    check_interval_minutes = Column(Integer, nullable=False, default=60, server_default='60')
+    free_sub_window_days = Column(Integer, nullable=False, default=3, server_default='3')
+    free_sub_traffic_gb_per_day = Column(Integer, nullable=False, default=5, server_default='5')
+    free_sub_device_limit = Column(Integer, nullable=False, default=1, server_default='1')
+    free_sub_squad_uuid = Column(String(255), nullable=True)
+    accepted_bio_strings = Column(JSON, nullable=False, default=list)
+    match_personal_referral_link = Column(Boolean, nullable=False, default=True, server_default='true')
+    notify_on_opt_in = Column(Boolean, nullable=False, default=True, server_default='true')
+    notify_on_activate = Column(Boolean, nullable=False, default=True, server_default='true')
+    notify_on_grace = Column(Boolean, nullable=False, default=True, server_default='true')
+    notify_on_revoke = Column(Boolean, nullable=False, default=True, server_default='true')
+    instruction_text = Column(Text, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now(), server_default=func.now())
+
+
+class BioRewardParticipant(Base):
+    """One row per opted-in user. Status drives the bio-reward state machine."""
+
+    __tablename__ = 'bio_reward_participants'
+    __table_args__ = (
+        UniqueConstraint('user_id', name='uq_bio_reward_participants_user_id'),
+        Index('ix_bio_reward_participants_status', 'status'),
+        Index('ix_bio_reward_participants_cooldown_until', 'cooldown_until'),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default=BioRewardStatus.PENDING.value)
+    opted_in_at = Column(AwareDateTime(), default=func.now(), server_default=func.now())
+    last_check_at = Column(AwareDateTime(), nullable=True)
+    last_bio_seen_at = Column(AwareDateTime(), nullable=True)
+    grace_started_at = Column(AwareDateTime(), nullable=True)
+    revoked_at = Column(AwareDateTime(), nullable=True)
+    cooldown_until = Column(AwareDateTime(), nullable=True)
+    free_subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True)
+    bio_snapshot = Column(Text, nullable=True)
+    bypass_check = Column(Boolean, nullable=False, default=False, server_default='false')
+    created_at = Column(AwareDateTime(), default=func.now(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now(), server_default=func.now())
+
+    user = relationship('User', foreign_keys=[user_id])
+    free_subscription = relationship('Subscription', foreign_keys=[free_subscription_id])
+
+
+class BioRewardAnalyticsSnapshot(Base):
+    """Cached analytics rows for the bio-reward feature.
+
+    Populated by ``app/services/bio_reward_analytics.recompute_all`` on a daily
+    cadence so the in-bot admin dashboard renders instantly without scanning
+    participants/transactions live. ``snapshot_type`` is one of
+    ``conversion_monthly``, ``conversion_weekly``, ``viral``; ``bucket_key``
+    partitions within the type (e.g. ``2026-05``, ``2026-W18``, ``30d``).
+    """
+
+    __tablename__ = 'bio_reward_analytics_snapshot'
+    __table_args__ = (
+        UniqueConstraint('snapshot_type', 'bucket_key', name='uq_bio_reward_analytics_type_bucket'),
+        Index('ix_bio_reward_analytics_type_bucket', 'snapshot_type', 'bucket_key'),
+    )
+
+    id = Column(Integer, primary_key=True)
+    snapshot_type = Column(String(40), nullable=False)
+    bucket_key = Column(String(40), nullable=False)
+    payload = Column(JSON, nullable=False, default=dict)
+    computed_at = Column(AwareDateTime(), default=func.now(), server_default=func.now())
+
+
+class BioRewardEvent(Base):
+    """Audit trail for bio-reward state transitions and side effects."""
+
+    __tablename__ = 'bio_reward_events'
+    __table_args__ = (
+        Index('ix_bio_reward_events_participant_id', 'participant_id'),
+        Index('ix_bio_reward_events_created_at', 'created_at'),
+    )
+
+    id = Column(Integer, primary_key=True)
+    participant_id = Column(
+        Integer, ForeignKey('bio_reward_participants.id', ondelete='CASCADE'), nullable=False
+    )
+    event_type = Column(String(50), nullable=False)
+    payload = Column(JSON, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now(), server_default=func.now())
+
+    participant = relationship('BioRewardParticipant')

@@ -15,7 +15,7 @@ from typing import Any, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.routes.websocket import broadcast_admin_message_to_all
@@ -77,9 +77,23 @@ async def _resolve_target_user_ids(
     target: str,
     user_ids: list[int] | None,
 ) -> list[int]:
-    """Resolve target selector → list of user IDs."""
+    """Resolve target selector → list of user IDs.
+
+    For 'specific_users', the request may carry either internal `users.id`
+    or `users.telegram_id`. Resolve both kinds against the database and
+    return only existing internal `users.id`s — avoids FK violations on
+    downstream insert into `user_notifications`.
+    """
     if target == 'specific_users':
-        return user_ids or []
+        raw_ids = user_ids or []
+        if not raw_ids:
+            return []
+        result = await db.execute(
+            select(User.id).where(
+                or_(User.id.in_(raw_ids), User.telegram_id.in_(raw_ids))
+            )
+        )
+        return [row[0] for row in result.all()]
 
     if target == 'active_subscribers':
         # Users who have at least one active (non-trial) subscription

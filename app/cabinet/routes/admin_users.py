@@ -1377,6 +1377,34 @@ async def update_user_subscription(
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
+    if request.action == 'add_wl_traffic':
+        if not request.traffic_gb:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='traffic_gb parameter is required for add_wl_traffic action',
+            )
+
+        if (subscription.wl_traffic_limit_gb or 0) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='WL traffic is unlimited or disabled for this subscription',
+            )
+
+        from app.database.crud.subscription import add_subscription_wl_traffic, reactivate_subscription
+
+        await add_subscription_wl_traffic(db, subscription, request.traffic_gb)
+        await reactivate_subscription(db, subscription)
+        await db.refresh(subscription)
+        await _sync_subscription_to_panel(db, user, subscription)
+
+        logger.info('Admin added WL traffic for user', admin_id=admin.id, traffic_gb=request.traffic_gb, user_id=user_id)
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message=f'Added {request.traffic_gb} GB WL traffic (30 days)',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
     if request.action == 'remove_traffic':
         if not request.traffic_purchase_id:
             raise HTTPException(

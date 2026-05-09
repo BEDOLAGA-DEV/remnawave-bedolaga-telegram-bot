@@ -1895,6 +1895,27 @@ class RemnaWaveService:
                             except Exception:
                                 pass
 
+                        # Partial unique constraint uq_subscriptions_user_tariff_active forbids
+                        # two active/trial/limited subs for the same (user_id, tariff_id) when
+                        # tariff_id IS NOT NULL. If the user already has such a sub for the
+                        # matched tariff, store this panel-imported sub with tariff_id=NULL so
+                        # we don't drop it but also don't violate the constraint.
+                        if _matched_tariff_id is not None:
+                            _conflict_states = ('active', 'trial', 'limited')
+                            _has_active_for_tariff = any(
+                                s.tariff_id == _matched_tariff_id and s.status in _conflict_states
+                                for s in _user_subs
+                            )
+                            if _has_active_for_tariff:
+                                logger.info(
+                                    '⚠️ [multi-tariff] Tariff already has active sub for user; '
+                                    'inserting panel sub without tariff_id to avoid uq violation',
+                                    user_id=_bot_user.id,
+                                    matched_tariff_id=_matched_tariff_id,
+                                    panel_uuid=panel_uuid,
+                                )
+                                _matched_tariff_id = None
+
                         new_sub = Subscription(
                             user_id=_bot_user.id,
                             status=_sub_status.value,

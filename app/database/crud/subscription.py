@@ -695,9 +695,14 @@ async def extend_subscription(
     #    активного тарифа после изменения admin'ом `wl_default_traffic_gb`
     #    оставляли подписку с устаревшим WL (например, default=5 вместо
     #    тарифных 15). См. resolve_wl_traffic_for_tariff().
-    # 2) Счётчики (used / purchased / reset_at) сбрасываем только при смене
-    #    тарифа или продлении истёкшей подписки, чтобы не обнулять
-    #    докупленный WL у активного пользователя того же тарифа.
+    # 2) Счётчики purchased / reset_at сбрасываем при смене тарифа или
+    #    продлении истёкшей подписки.
+    # 3) При любом положительном продлении (admin, авто-продление, юзер сам)
+    #    обнуляем использованный WL-трафик — иначе после оплаты юзер видит
+    #    исчерпанный WL-counter и не может качать. Симметрично main traffic
+    #    при RESET_TRAFFIC_ON_PAYMENT.
+    from app.database.models import WlTrafficPurchase
+
     if wl_traffic_limit_gb is not None:
         old_wl = subscription.wl_traffic_limit_gb
         if old_wl != wl_traffic_limit_gb:
@@ -714,9 +719,27 @@ async def extend_subscription(
             subscription.wl_traffic_used_gb = 0.0
             subscription.wl_purchased_traffic_gb = 0
             subscription.wl_traffic_reset_at = None
+            await db.execute(
+                delete(WlTrafficPurchase).where(WlTrafficPurchase.subscription_id == subscription.id)
+            )
             logger.info(
                 '🔄 WL-счётчики сброшены',
                 reason='смена тарифа' if is_tariff_change else 'подписка была истёкшей',
+            )
+
+    # WL reset на любом положительном продлении того же активного тарифа.
+    # Без этого юзер после продления видит исчерпанный WL и не может качать
+    # (DB не сбросилось, panel-side counter держит). Caller дальше должен
+    # вызвать update_remnawave_user(reset_traffic=True) чтобы синхронизировать
+    # panel-side _wl аккаунт.
+    if days > 0 and not is_tariff_change and not was_expired:
+        if (subscription.wl_traffic_used_gb or 0) > 0:
+            old_used = subscription.wl_traffic_used_gb
+            subscription.wl_traffic_used_gb = 0.0
+            logger.info(
+                '🔄 Сброс WL traffic_used при продлении (active sub, тот же тариф)',
+                subscription_id=subscription.id,
+                old_used=old_used,
             )
 
     if device_limit is not None:

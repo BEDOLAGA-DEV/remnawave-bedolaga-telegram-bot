@@ -1093,6 +1093,10 @@ class MiniAppSubscriptionPurchaseService:
                     logger.error('Failed to create subscription conversion record', conversion_error=conversion_error)
 
             subscription.is_trial = False
+            # Bio-reward sub is being converted to paid: clear marker so
+            # Remnawave tag flips from FREE to PAID and status_display follows.
+            if getattr(subscription, 'is_bio_reward', False):
+                subscription.is_bio_reward = False
             subscription.status = SubscriptionStatus.ACTIVE.value
             subscription.traffic_limit_gb = pricing.selection.traffic_value
             subscription.device_limit = pricing.selection.devices
@@ -1148,6 +1152,18 @@ class MiniAppSubscriptionPurchaseService:
                 wl_traffic_limit_gb=settings.WL_DEFAULT_TRAFFIC_LIMIT_GB,
                 update_server_counters=False,
             )
+
+        # Bio-reward: stamp discount % on subscription so revoke can recalc precisely.
+        try:
+            from app.services.bio_reward_service import get_active_discount_percent as _bio_pct
+
+            stamped_pct = await _bio_pct(db, user)
+            if stamped_pct > 0 and subscription is not None:
+                subscription.bio_reward_discount_percent = stamped_pct
+                await db.commit()
+                await db.refresh(subscription)
+        except Exception as _bio_err:  # pragma: no cover - defensive
+            logger.warning('bio_reward.stamp_failed', user_id=user.id, err=str(_bio_err))
 
         if pricing.server_ids:
             try:

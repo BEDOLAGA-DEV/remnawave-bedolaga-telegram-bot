@@ -128,6 +128,25 @@ def _get_user_period_discount(db_user: User, period_days: int) -> tuple[int, int
     return group_discount, personal_discount, display_combined
 
 
+def _compact_traffic_label(tariff: Tariff) -> str:
+    """Compose compact traffic label including optional WL (БС-Трафик).
+
+    Output examples:
+        ``30 ГБ``                      — no WL
+        ``30 ГБ + 🌍 5 ГБ``           — WL specific limit
+        ``30 ГБ + 🌍∞``                — WL unlimited (wl_default == 0)
+        ``∞ + 🌍 5 ГБ``                — main unlimited, WL 5 GB
+    """
+    traffic_gb = tariff.traffic_limit_gb
+    base = '∞' if traffic_gb == 0 else f'{traffic_gb} ГБ'
+    wl = getattr(tariff, 'wl_default_traffic_gb', None)
+    if wl is None:
+        return base
+    if wl == 0:
+        return f'{base} + 🌍∞'
+    return f'{base} + 🌍 {wl} ГБ'
+
+
 def format_tariffs_list_text(
     tariffs: list[Tariff],
     db_user: User | None = None,
@@ -145,9 +164,8 @@ def format_tariffs_list_text(
     lines.append('')
 
     for tariff in tariffs:
-        # Трафик компактно
-        traffic_gb = tariff.traffic_limit_gb
-        traffic = '∞' if traffic_gb == 0 else f'{traffic_gb} ГБ'
+        # Трафик компактно (включая WL/БС-Трафик)
+        traffic = _compact_traffic_label(tariff)
 
         # Цена
         is_daily = getattr(tariff, 'is_daily', False)
@@ -2525,8 +2543,7 @@ def format_tariff_switch_list_text(
         if tariff.id == current_tariff_id:
             continue
 
-        traffic_gb = tariff.traffic_limit_gb
-        traffic = '∞' if traffic_gb == 0 else f'{traffic_gb} ГБ'
+        traffic = _compact_traffic_label(tariff)
 
         # Проверяем суточный ли тариф
         is_daily = getattr(tariff, 'is_daily', False)
@@ -3432,8 +3449,7 @@ def format_instant_switch_list_text(
         if tariff.id == current_tariff.id:
             continue
 
-        traffic_gb = tariff.traffic_limit_gb
-        traffic = '∞' if traffic_gb == 0 else f'{traffic_gb} ГБ'
+        traffic = _compact_traffic_label(tariff)
 
         # Рассчитываем стоимость переключения
         cost, is_upgrade = _calculate_instant_switch_cost(current_tariff, tariff, remaining_days, db_user)
