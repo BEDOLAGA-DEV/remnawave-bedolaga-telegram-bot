@@ -1382,6 +1382,53 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
+    # LOLZ webhook
+    if settings.is_lolz_enabled():
+
+        @router.get(settings.LOLZ_WEBHOOK_PATH)
+        async def lolz_webhook_status_check() -> JSONResponse:
+            return JSONResponse(
+                {
+                    'status': 'ok',
+                    'service': 'lolz_webhook',
+                    'enabled': settings.is_lolz_enabled(),
+                }
+            )
+
+        @router.post(settings.LOLZ_WEBHOOK_PATH)
+        async def lolz_webhook(request: Request) -> JSONResponse:
+            try:
+                raw_body = await request.body()
+                payload = json.loads(raw_body)
+            except Exception as parse_error:
+                logger.error('LOLZ webhook: failed to parse JSON', parse_error=parse_error)
+                return JSONResponse({'status': False}, status_code=status.HTTP_400_BAD_REQUEST)
+
+            received_secret = request.headers.get('x-secret-key', '')
+
+            from app.services.lolz_service import lolz_service
+
+            if not lolz_service.verify_webhook_signature(received_secret):
+                logger.warning('LOLZ webhook: invalid x-secret-key')
+                return JSONResponse({'status': False}, status_code=status.HTTP_403_FORBIDDEN)
+
+            try:
+                success = await _process_payment_service_callback(
+                    payment_service,
+                    payload,
+                    'process_lolz_webhook',
+                )
+                if not success:
+                    logger.error(
+                        'LOLZ webhook processing failed',
+                        payment_id=payload.get('payment_id'),
+                    )
+            except Exception as e:
+                logger.exception('LOLZ webhook processing error', error=e)
+            return JSONResponse({'status': True}, status_code=status.HTTP_200_OK)
+
+        routes_registered = True
+
     if routes_registered:
 
         @router.get('/health/payment-webhooks')

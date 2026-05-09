@@ -675,6 +675,19 @@ class Settings(BaseSettings):
     AURAPAY_RETURN_URL: str | None = None
     AURAPAY_PAYMENT_LIFETIME_MINUTES: int = 60
 
+    # LOLZ (lzt-market.com / prod-api.lzt.market)
+    LOLZ_ENABLED: bool = False
+    LOLZ_API_TOKEN: str | None = None
+    LOLZ_MERCHANT_ID: int | None = None
+    LOLZ_DISPLAY_NAME: str = 'LZT'
+    LOLZ_CURRENCY: str = 'rub'
+    LOLZ_MIN_AMOUNT_KOPEKS: int = 10000
+    LOLZ_MAX_AMOUNT_KOPEKS: int = 10000000
+    LOLZ_WEBHOOK_PATH: str = '/lolz-webhook'
+    LOLZ_RETURN_URL: str | None = None
+    LOLZ_PAYMENT_LIFETIME_MINUTES: int = 60
+    LOLZ_REQUIRE_TELEGRAM_ID: bool = True
+
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
     CABINET_BUTTON_STYLE: str = ''
@@ -2173,6 +2186,20 @@ class Settings(BaseSettings):
 
     def get_aurapay_display_name_html(self) -> str:
         return html.escape(self.get_aurapay_display_name())
+
+    def is_lolz_enabled(self) -> bool:
+        return (
+            self.LOLZ_ENABLED
+            and self.LOLZ_API_TOKEN is not None
+            and self.LOLZ_MERCHANT_ID is not None
+        )
+
+    def get_lolz_display_name(self) -> str:
+        name = (self.LOLZ_DISPLAY_NAME or '').strip()
+        return name if name else 'LZT'
+
+    def get_lolz_display_name_html(self) -> str:
+        return html.escape(self.get_lolz_display_name())
 
     def is_kassa_ai_sbp_enabled(self) -> bool:
         return self.KASSA_AI_SBP_ENABLED and self.is_kassa_ai_enabled()

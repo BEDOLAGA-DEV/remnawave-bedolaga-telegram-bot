@@ -163,6 +163,13 @@ async def route_payment_by_method(
             await process_aurapay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method == 'lolz':
+        from .lolz import process_lolz_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_lolz_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
     return False
 
 
@@ -837,6 +844,10 @@ def register_balance_handlers(dp: Dispatcher):
     from .aurapay import start_aurapay_topup
 
     dp.callback_query.register(start_aurapay_topup, F.data == 'nz!_topup_aurapay')
+
+    from .lolz import start_lolz_topup
+
+    dp.callback_query.register(start_lolz_topup, F.data == 'nz!_topup_lolz')
 
     from .mulenpay import check_mulenpay_payment_status
 
