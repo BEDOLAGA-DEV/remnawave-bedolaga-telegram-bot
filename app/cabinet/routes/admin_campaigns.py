@@ -565,6 +565,54 @@ async def update_existing_campaign(
         await db.commit()
         await db.refresh(campaign)
 
+    # Backfill: when a partner is set (or changed to a non-None partner),
+    # retroactively link existing campaign registrations that lack a
+    # referred_by_id. This mirrors the registration-time behaviour in
+    # app/handlers/start.py — the partner only "owns" referrals for users
+    # who don't already have one.
+    if partner_changed and campaign.partner_user_id is not None:
+        new_partner_id = campaign.partner_user_id
+        reg_query = select(AdvertisingCampaignRegistration.user_id).where(
+            AdvertisingCampaignRegistration.campaign_id == campaign_id,
+        )
+        reg_result = await db.execute(reg_query)
+        registered_user_ids = [row[0] for row in reg_result.fetchall()]
+
+        if registered_user_ids:
+            users_query = select(User).where(
+                User.id.in_(registered_user_ids),
+                User.referred_by_id.is_(None),
+                User.id != new_partner_id,
+            )
+            users_result = await db.execute(users_query)
+            candidates = users_result.scalars().all()
+
+            if candidates:
+                from app.services.referral_service import process_referral_registration
+
+                for candidate in candidates:
+                    candidate.referred_by_id = new_partner_id
+                await db.commit()
+
+                for candidate in candidates:
+                    try:
+                        await process_referral_registration(db, candidate.id, new_partner_id)
+                    except Exception as ref_error:
+                        logger.error(
+                            'Error backfilling campaign referral',
+                            user_id=candidate.id,
+                            partner_user_id=new_partner_id,
+                            campaign_id=campaign_id,
+                            error=ref_error,
+                        )
+
+                logger.info(
+                    'Backfilled campaign referrals from partner assignment',
+                    campaign_id=campaign_id,
+                    partner_user_id=new_partner_id,
+                    count=len(candidates),
+                )
+
     logger.info('Admin updated campaign', admin_id=admin.id, campaign_id=campaign_id)
 
     return await get_campaign(campaign_id, admin, db)

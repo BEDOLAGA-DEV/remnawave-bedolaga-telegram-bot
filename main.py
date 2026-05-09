@@ -21,6 +21,7 @@ from app.services.backup_service import backup_service
 from app.services.ban_notification_service import ban_notification_service
 from app.services.broadcast_service import broadcast_service
 from app.services.contest_rotation_service import contest_rotation_service
+from app.services.bio_reward_service import bio_reward_service
 from app.services.daily_subscription_service import daily_subscription_service
 from app.services.external_admin_service import ensure_external_admin_token
 from app.services.log_rotation_service import log_rotation_service
@@ -307,6 +308,7 @@ async def main():
         ban_notification_service.set_bot(bot)
         traffic_monitoring_scheduler.set_bot(bot)
         daily_subscription_service.set_bot(bot)
+        bio_reward_service.set_bot(bot)
         telegram_notifier.set_bot(bot)
 
         from app.services.channel_subscription_service import channel_subscription_service
@@ -667,6 +669,18 @@ async def main():
                 stage.skip('Суточные подписки отключены настройками')
 
         async with timeline.stage(
+            'Bio-reward scheduler',
+            '🎁',
+            success_message='Bio-reward scheduler запущен',
+        ) as stage:
+            if bio_reward_service.is_enabled():
+                bio_reward_task = asyncio.create_task(bio_reward_service.start_monitoring())
+                stage.log('Bio-reward активен; интервал берётся из BioRewardConfig')
+            else:
+                bio_reward_task = None
+                stage.skip('BIO_REWARD_ENABLED=False')
+
+        async with timeline.stage(
             'Сервис проверки версий',
             '📄',
             success_message='Проверка версий запущена',
@@ -887,6 +901,15 @@ async def main():
             daily_subscription_task.cancel()
             try:
                 await daily_subscription_task
+            except asyncio.CancelledError:
+                pass
+
+        if 'bio_reward_task' in locals() and bio_reward_task and not bio_reward_task.done():
+            logger.info('ℹ️ Остановка bio-reward scheduler...')
+            bio_reward_service.stop_monitoring()
+            bio_reward_task.cancel()
+            try:
+                await bio_reward_task
             except asyncio.CancelledError:
                 pass
 

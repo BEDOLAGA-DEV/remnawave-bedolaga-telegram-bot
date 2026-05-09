@@ -7,6 +7,7 @@ from .admin_achievements import router as admin_achievements_router
 from .admin_apps import router as admin_apps_router
 from .admin_audit_log import router as admin_audit_log_router
 from .admin_ban_system import router as admin_ban_system_router
+from .admin_bio_reward import router as admin_bio_reward_router
 from .admin_broadcasts import router as admin_broadcasts_router
 from .admin_button_styles import router as admin_button_styles_router
 from .admin_campaigns import router as admin_campaigns_router
@@ -156,6 +157,7 @@ router.include_router(admin_apps_router)
 router.include_router(admin_roles_router)
 router.include_router(admin_policies_router)
 router.include_router(admin_audit_log_router)
+router.include_router(admin_bio_reward_router)
 # Categories/tags/media routers MUST be before the main news router
 # to avoid /admin/news/{article_id} catching /admin/news/categories etc.
 router.include_router(admin_news_categories_router)

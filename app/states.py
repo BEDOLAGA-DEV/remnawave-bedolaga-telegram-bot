@@ -323,3 +323,16 @@ class AchievementAdminStates(StatesGroup):
 class ReviewStates(StatesGroup):
     rating = State()
     text = State()
+
+
+class BioRewardAdminStates(StatesGroup):
+    waiting_for_discount_percent = State()
+    waiting_for_grace_hours = State()
+    waiting_for_cooldown_hours = State()
+    waiting_for_check_interval = State()
+    waiting_for_window_days = State()
+    waiting_for_traffic_gb = State()
+    waiting_for_device_limit = State()
+    waiting_for_squad_uuid = State()
+    waiting_for_bio_string_add = State()
+    waiting_for_instruction_text = State()

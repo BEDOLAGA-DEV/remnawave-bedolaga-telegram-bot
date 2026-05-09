@@ -487,7 +487,11 @@ class SubscriptionRenewalService:
                     error=error,
                 )
 
-        reset_traffic = was_expired and settings.RESET_TRAFFIC_ON_PAYMENT
+        # Reset Remnawave-side counters on any positive extension (not just
+        # was_expired) so the _wl account also gets its used-traffic cleared.
+        # Без этого после продления активной подписки на panel-side держится
+        # старый WL counter и юзер не может качать WL ("не продлился _wl").
+        reset_traffic = (was_expired or period_days > 0) and settings.RESET_TRAFFIC_ON_PAYMENT
         subscription_service = SubscriptionService()
         try:
             await db.refresh(user)

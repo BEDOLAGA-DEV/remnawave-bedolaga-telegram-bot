@@ -8,6 +8,7 @@ from app.config import settings
 from app.handlers import (
     achievements as user_achievements,
     balance,
+    bio_reward,
     common,
     contests as user_contests,
     digest,
@@ -26,6 +27,7 @@ from app.handlers import (
 )
 from app.handlers.admin import (
     backup as admin_backup,
+    bio_reward as admin_bio_reward,
     blacklist as admin_blacklist,
     blocked_users as admin_blocked_users,
     bot_configuration as admin_bot_configuration,
@@ -253,6 +255,8 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     register_gift_activation_handlers(dp)
     digest.register_handlers(dp)
     user_achievements.register_handlers(dp)
+    bio_reward.register_handlers(dp)
+    admin_bio_reward.register_handlers(dp)
     common.register_handlers(dp)
     register_stars_handlers(dp)
     user_contests.register_handlers(dp)

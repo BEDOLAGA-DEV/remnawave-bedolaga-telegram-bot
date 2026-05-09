@@ -354,6 +354,18 @@ class Settings(BaseSettings):
     DAILY_SUBSCRIPTIONS_ENABLED: bool = True  # Включить автоматическое списание для суточных тарифов
     DAILY_SUBSCRIPTIONS_CHECK_INTERVAL_MINUTES: int = 30  # Интервал проверки в минутах
 
+    # Bio-reward feature: master switch + scheduler concurrency (rest is in DB BioRewardConfig)
+    BIO_REWARD_ENABLED: bool = False  # Master kill-switch; if False, scheduler does not start
+    BIO_REWARD_SCHEDULER_CONCURRENCY: int = 10  # Semaphore for bot.get_chat() calls in the loop
+    BIO_REWARD_USER_TAG: str | None = 'FREE'  # Remnawave user tag for bio-reward subs
+
+    # Premium custom-emoji IDs for bio-reward buttons. Empty → unicode fallback only.
+    # Get IDs from a forwarded premium-emoji message (MessageEntity.custom_emoji_id)
+    # or via the Bot API getCustomEmojiStickers method.
+    BIO_REWARD_EMOJI_GIFT: str | None = None  # Main menu button + panel header
+    BIO_REWARD_EMOJI_PARTICIPATE: str | None = None  # «Я участвую» button
+    BIO_REWARD_EMOJI_RECHECK: str | None = None  # «Проверить сейчас» button
+
     AUTOPAY_WARNING_DAYS: str = '3,1'
 
     # Пороги предупреждений о трафике для веб-уведомлений (% использованного)
@@ -1592,6 +1604,12 @@ class Settings(BaseSettings):
         return self._normalize_user_tag(
             self.PAID_SUBSCRIPTION_USER_TAG,
             'PAID_SUBSCRIPTION_USER_TAG',
+        )
+
+    def get_bio_reward_user_tag(self) -> str | None:
+        return self._normalize_user_tag(
+            self.BIO_REWARD_USER_TAG,
+            'BIO_REWARD_USER_TAG',
         )
 
     def get_bot_username(self) -> str | None:

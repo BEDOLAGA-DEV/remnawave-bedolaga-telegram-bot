@@ -4456,7 +4456,16 @@ async def _extend_subscription_by_days(
         await extend_subscription(db, subscription, days)
 
         subscription_service = SubscriptionService()
-        await subscription_service.update_remnawave_user(db, subscription)
+        # Reset Remnawave traffic counters (main + _wl) on positive extensions
+        # so panel-side state matches the DB reset that extend_subscription
+        # just performed. Without this the user sees stale used-traffic and
+        # the _wl аккаунт выглядит "не продлился".
+        await subscription_service.update_remnawave_user(
+            db,
+            subscription,
+            reset_traffic=days > 0,
+            reset_reason='admin extension' if days > 0 else None,
+        )
 
         if days > 0:
             logger.info('Админ продлил подписку пользователя на дней', admin_id=admin_id, user_id=user_id, days=days)

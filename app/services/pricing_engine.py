@@ -8,6 +8,7 @@ import structlog
 
 from app.config import CLASSIC_PERIOD_PRICES, PERIOD_PRICES, settings
 from app.database.crud.server_squad import get_server_squads_by_uuids
+from app.services.bio_reward_service import get_active_discount_percent as _bio_reward_pct
 from app.utils.pricing_utils import calculate_months_from_days
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 
@@ -607,6 +608,11 @@ class PricingEngine:
 
         offer_pct = get_user_active_promo_discount_percent(user) if user else 0
 
+        # --- Bio-reward additive stacking on offer % (capped at 100) ---
+        bio_pct = await _bio_reward_pct(db, user) if user else 0
+        if bio_pct > 0:
+            offer_pct = min(100, offer_pct + bio_pct)
+
         discounted_base = self.apply_discount(base_price, period_pct)
         discounted_devices = self.apply_discount(devices_price, devices_pct)
 
@@ -747,6 +753,11 @@ class PricingEngine:
             devices_pct = promo_group.get_discount_percent('devices', period_days)
 
         offer_pct = get_user_active_promo_discount_percent(user) if user else 0
+
+        # --- Bio-reward additive stacking on offer % (capped at 100) ---
+        bio_pct = await _bio_reward_pct(db, user) if user else 0
+        if bio_pct > 0:
+            offer_pct = min(100, offer_pct + bio_pct)
 
         # --- Base price with period discount ---
         base_price = self.apply_discount(base_price_original, period_pct)

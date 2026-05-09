@@ -564,6 +564,26 @@ def get_main_menu_keyboard(
     if simple_purchase_button:
         keyboard.append([simple_purchase_button])
 
+    # Bio-reward prominent button — show full-width near the top when the user
+    # has no active paid subscription (no sub, expired sub, or only trial/free).
+    if getattr(settings, 'BIO_REWARD_ENABLED', False):
+        _has_active_paid = (
+            has_active_subscription
+            and subscription_is_active
+            and subscription is not None
+            and not getattr(subscription, 'is_trial', False)
+        )
+        if not _has_active_paid:
+            _bio_btn_kwargs: dict = {
+                'text': texts.t('MENU_BIO_REWARD', '🎁 Бесплатно за описание'),
+                'callback_data': 'nz!_bio_reward_open',
+                'style': 'success',
+            }
+            _bio_emoji_id = getattr(settings, 'BIO_REWARD_EMOJI_GIFT', None)
+            if _bio_emoji_id:
+                _bio_btn_kwargs['icon_custom_emoji_id'] = _bio_emoji_id
+            keyboard.append([InlineKeyboardButton(**_bio_btn_kwargs)])
+
     # Connect button for active subscribers
     if has_active_subscription and subscription_is_active:
         connect_mode = settings.CONNECT_BUTTON_MODE
