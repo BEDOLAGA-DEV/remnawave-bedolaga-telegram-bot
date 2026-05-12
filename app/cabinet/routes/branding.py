@@ -1048,11 +1048,11 @@ async def store_yandex_cid(
 # ============ Partner Click ID Sync ============
 
 
-from app.utils.partner_click import _CLICK_ID_PATTERN
+from app.utils.partner_click import CLICK_ID_PATTERN
 
 
 class PartnerClickIdRequest(BaseModel):
-    click_id: str = Field(max_length=128, pattern=_CLICK_ID_PATTERN)
+    click_id: str = Field(max_length=128, pattern=CLICK_ID_PATTERN)
 
 
 @router.post('/analytics/partner-click-id', status_code=204)

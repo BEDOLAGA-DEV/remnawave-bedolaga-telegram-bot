@@ -16,7 +16,6 @@ That path keeps its inline send_postback() call.
 
 from __future__ import annotations
 
-from app.services.yandex_offline_conv_service import spawn_bg
 
 import structlog
 
@@ -27,6 +26,40 @@ from app.services.s2s_postback_service import send_postback
 
 
 logger = structlog.get_logger(__name__)
+
+# Module-level set keeps strong references to fire-and-forget tasks so the
+# event loop's weak-ref policy doesn't garbage-collect them mid-flight.
+_background_tasks: set = set()
+
+
+def _spawn_bg(coro) -> None:
+    """Schedule a coroutine without blocking the caller.
+
+    Tracks the task to prevent GC. Logs uncaught exceptions on completion.
+    Does NOT gate on any other feature flag — it's a pure scheduler.
+    """
+    import asyncio
+
+    try:
+        task = asyncio.create_task(coro)
+    except RuntimeError:
+        # No running event loop (e.g. import-time call): close coro to silence
+        # "coroutine was never awaited" warnings.
+        try:
+            coro.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    _background_tasks.add(task)
+
+    def _done(t):
+        _background_tasks.discard(t)
+        exc = t.exception()
+        if exc:
+            logger.warning('background_task_failed', error=str(exc))
+
+    task.add_done_callback(_done)
+
 
 _registered = False
 
@@ -85,7 +118,7 @@ async def _on_payment_completed(event_data: dict) -> None:
         return
 
     # Fire-and-forget so the emit caller is not blocked by the partner-tracker HTTP roundtrip.
-    spawn_bg(_fire_postback(
+    _spawn_bg(_fire_postback(
         user_id=user_id,
         amount_rubles=amount_rubles,
         transaction_id=transaction_id,

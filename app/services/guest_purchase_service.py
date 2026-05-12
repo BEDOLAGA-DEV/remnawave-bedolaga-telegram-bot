@@ -530,8 +530,8 @@ async def fulfill_purchase(
                 # central payment.completed listener does not catch them; keep the
                 # inline call here. Balance top-ups go through DEPOSIT and are
                 # handled by app/services/postback_listener.py — no double-fire.
-                from app.services.yandex_offline_conv_service import spawn_bg
-                spawn_bg(send_postback(
+                from app.services.postback_listener import _spawn_bg
+                _spawn_bg(send_postback(
                     'purchase',
                     _subid,
                     amount=purchase.amount_kopeks / 100,
