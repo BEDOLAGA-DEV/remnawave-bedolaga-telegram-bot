@@ -33,6 +33,7 @@ async def send_postback(
     subid: str,
     amount: float | None = None,
     user_id: int | None = None,
+    tx_id: str | None = None,
 ) -> bool:
     """Send S2S postback for an event.
 
@@ -53,7 +54,7 @@ async def send_postback(
 
     url_template = _get_url(event)
     if not url_template:
-        logger.debug('S2S postback URL not configured', event=event)
+        logger.debug('S2S postback URL not configured', event_type=event)
         return False
 
     # Replace placeholders (URL-encode subid to prevent injection)
@@ -67,13 +68,14 @@ async def send_postback(
         url = url.replace('{amount}', '0')
 
     url = url.replace('{user_id}', str(user_id) if user_id is not None else '0')
+    url = url.replace('{tx_id}', tx_id if tx_id else '')
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.get(url)
             logger.info(
                 'S2S postback sent',
-                event=event,
+                event_type=event,
                 subid=subid,
                 amount=amount,
                 user_id=user_id,
@@ -84,7 +86,7 @@ async def send_postback(
     except Exception as e:
         logger.error(
             'S2S postback failed',
-            event=event,
+            event_type=event,
             subid=subid,
             error=str(e),
             url=url[:100],

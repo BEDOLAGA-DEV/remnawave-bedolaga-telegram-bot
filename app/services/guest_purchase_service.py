@@ -520,15 +520,8 @@ async def fulfill_purchase(
         except Exception:
             logger.debug('Yandex on_purchase hook error')
 
-        try:
-            from app.database.crud.yandex_client_id import get_subid
-            from app.services.s2s_postback_service import send_postback
-
-            _subid = purchase.subid or await get_subid(db, user.id)
-            if _subid:
-                await send_postback('purchase', _subid, amount=purchase.amount_kopeks / 100, user_id=user.id)
-        except Exception:
-            logger.debug('S2S postback purchase hook error')
+        # NOTE: purchase postback handled centrally by postback_listener subscribed to
+        # event 'payment.completed' (Transaction(type=DEPOSIT)). Do not duplicate here.
 
         try:
             await send_guest_notification(

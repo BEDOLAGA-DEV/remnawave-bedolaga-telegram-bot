@@ -61,6 +61,12 @@ class GracefulExit:
 async def main():
     file_formatter, console_formatter, telegram_notifier = setup_logging()
 
+    try:
+        from app.services.postback_listener import register_postback_listeners
+        register_postback_listeners()
+    except Exception as _postback_err:
+        print(f'[WARN] postback_listener_register_failed: {_postback_err}')
+
     log_handlers = []
 
     # === Инициализация системы логирования ===
