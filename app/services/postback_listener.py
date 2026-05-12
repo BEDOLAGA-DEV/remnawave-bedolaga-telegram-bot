@@ -16,7 +16,6 @@ That path keeps its inline send_postback() call.
 
 from __future__ import annotations
 
-
 import structlog
 
 from app.config import settings
@@ -47,7 +46,7 @@ def _spawn_bg(coro) -> None:
         # "coroutine was never awaited" warnings.
         try:
             coro.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         return
     _background_tasks.add(task)
@@ -119,11 +118,13 @@ async def _on_payment_completed(event_data: dict) -> None:
         return
 
     # Fire-and-forget so the emit caller is not blocked by the partner-tracker HTTP roundtrip.
-    _spawn_bg(_fire_postback(
-        user_id=user_id,
-        amount_rubles=amount_rubles,
-        transaction_id=transaction_id,
-    ))
+    _spawn_bg(
+        _fire_postback(
+            user_id=user_id,
+            amount_rubles=amount_rubles,
+            transaction_id=transaction_id,
+        )
+    )
 
 
 def register_postback_listeners() -> None:

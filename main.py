@@ -63,11 +63,15 @@ async def main():
 
     try:
         from app.services.postback_listener import register_postback_listeners
+
         register_postback_listeners()
     except Exception as _postback_err:
         import sys as _sys
-        print(f'[WARN] postback_listener_register_failed: {_postback_err}', file=_sys.stderr)
 
+        print(
+            f'[WARN] postback_listener_register_failed: {_postback_err}',
+            file=_sys.stderr,
+        )
 
     log_handlers = []
 
@@ -277,7 +281,9 @@ async def main():
         ) as stage:
             try:
                 from app.database.database import AsyncSessionLocal
-                from app.services.payment_method_config_service import ensure_payment_method_configs
+                from app.services.payment_method_config_service import (
+                    ensure_payment_method_configs,
+                )
 
                 async with AsyncSessionLocal() as db:
                     await ensure_payment_method_configs(db)
@@ -315,7 +321,9 @@ async def main():
         daily_subscription_service.set_bot(bot)
         telegram_notifier.set_bot(bot)
 
-        from app.services.channel_subscription_service import channel_subscription_service
+        from app.services.channel_subscription_service import (
+            channel_subscription_service,
+        )
 
         channel_subscription_service.bot = bot
 
@@ -741,11 +749,16 @@ async def main():
 
         # Отправляем стартовое уведомление в админский чат
         try:
-            from app.services.startup_notification_service import send_bot_startup_notification
+            from app.services.startup_notification_service import (
+                send_bot_startup_notification,
+            )
 
             await send_bot_startup_notification(bot)
         except Exception as startup_notify_error:
-            logger.warning('Не удалось отправить стартовое уведомление', startup_notify_error=startup_notify_error)
+            logger.warning(
+                'Не удалось отправить стартовое уведомление',
+                startup_notify_error=startup_notify_error,
+            )
 
         try:
             while not killer.exit:
@@ -766,7 +779,10 @@ async def main():
                 if version_check_task and version_check_task.done():
                     exception = version_check_task.exception()
                     if exception:
-                        logger.error('Сервис проверки версий завершился с ошибкой', error=exception)
+                        logger.error(
+                            'Сервис проверки версий завершился с ошибкой',
+                            error=exception,
+                        )
                         if settings.is_version_check_enabled():
                             logger.info('🔄 Перезапуск сервиса проверки версий...')
                             version_check_task = asyncio.create_task(version_service.start_periodic_check())
@@ -784,7 +800,10 @@ async def main():
                 if daily_subscription_task and daily_subscription_task.done():
                     exception = daily_subscription_task.exception()
                     if exception:
-                        logger.error('Сервис суточных подписок завершился с ошибкой', error=exception)
+                        logger.error(
+                            'Сервис суточных подписок завершился с ошибкой',
+                            error=exception,
+                        )
                         if daily_subscription_service.is_enabled():
                             logger.info('🔄 Перезапуск сервиса суточных подписок...')
                             daily_subscription_task = asyncio.create_task(daily_subscription_service.start_monitoring())

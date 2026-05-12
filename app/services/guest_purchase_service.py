@@ -64,7 +64,11 @@ async def _send_admin_notification(
                 is_pending_activation=is_pending_activation,
             )
     except Exception:
-        logger.warning('Failed to send admin notification for guest purchase', purchase_id=purchase.id, exc_info=True)
+        logger.warning(
+            'Failed to send admin notification for guest purchase',
+            purchase_id=purchase.id,
+            exc_info=True,
+        )
 
 
 class GuestPurchaseError(Exception):
@@ -352,7 +356,9 @@ async def fulfill_purchase(
 
         # Check if user already has a subscription
         if settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+            from app.database.crud.subscription import (
+                get_subscription_by_user_and_tariff,
+            )
 
             # In multi-tariff mode, only block if user already has THIS SPECIFIC tariff active.
             # Different tariffs can be purchased simultaneously — that's the whole point.
@@ -377,7 +383,10 @@ async def fulfill_purchase(
                     is_new_account=is_new_account,
                 )
             except Exception:
-                logger.exception('Failed to send pending_activation notification', purchase_id=purchase.id)
+                logger.exception(
+                    'Failed to send pending_activation notification',
+                    purchase_id=purchase.id,
+                )
 
             await _send_admin_notification(purchase, notification_tariff_name, is_pending_activation=True)
 
@@ -479,7 +488,10 @@ async def fulfill_purchase(
                     is_completed=True,
                 )
             except Exception:
-                logger.exception('Failed to create transaction for guest purchase', purchase_id=purchase.id)
+                logger.exception(
+                    'Failed to create transaction for guest purchase',
+                    purchase_id=purchase.id,
+                )
 
         # Save Yandex CID from Redis → DB (enables on_registration/on_purchase to use it)
         try:
@@ -531,13 +543,16 @@ async def fulfill_purchase(
                 # inline call here. Balance top-ups go through DEPOSIT and are
                 # handled by app/services/postback_listener.py — no double-fire.
                 from app.services.postback_listener import _spawn_bg
-                _spawn_bg(send_postback(
-                    'purchase',
-                    _subid,
-                    amount=purchase.amount_kopeks / 100,
-                    user_id=user.id,
-                    tx_id=f'gp-{purchase.id}',
-                ))
+
+                _spawn_bg(
+                    send_postback(
+                        'purchase',
+                        _subid,
+                        amount=purchase.amount_kopeks / 100,
+                        user_id=user.id,
+                        tx_id=f'gp-{purchase.id}',
+                    )
+                )
         except Exception:
             logger.debug('S2S postback purchase hook error')
 
@@ -763,7 +778,11 @@ async def _find_or_create_user(
                     username = chat.username
                     normalized = username.lower()
         except Exception as exc:
-            logger.debug('Could not resolve telegram_id for username', username=username, error=str(exc))
+            logger.debug(
+                'Could not resolve telegram_id for username',
+                username=username,
+                error=str(exc),
+            )
 
     # Search by telegram_id first (most reliable), then by username (case-insensitive)
     user = None
@@ -948,7 +967,9 @@ async def send_guest_notification(
     if recipient_type == 'telegram':
         if purchase.is_gift:
             await _send_telegram_gift_notification(
-                purchase, is_pending_activation=is_pending_activation, tariff_name=tariff_name
+                purchase,
+                is_pending_activation=is_pending_activation,
+                tariff_name=tariff_name,
             )
         return
 
@@ -1003,7 +1024,10 @@ async def send_guest_notification(
         template = templates.get_template(notification_type, language, context)
 
     if not template:
-        logger.warning('No email template found for guest notification', notification_type=notification_type.value)
+        logger.warning(
+            'No email template found for guest notification',
+            notification_type=notification_type.value,
+        )
         return
 
     result = await asyncio.to_thread(
@@ -1031,7 +1055,9 @@ async def send_guest_notification(
     if purchase.cabinet_password:
         cred_template = None
         try:
-            from app.cabinet.services.email_template_overrides import get_rendered_override
+            from app.cabinet.services.email_template_overrides import (
+                get_rendered_override,
+            )
 
             cred_rendered = await get_rendered_override(
                 NotificationType.GUEST_CABINET_CREDENTIALS.value, language, context
@@ -1122,7 +1148,9 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
 
         # In multi-tariff mode, always create a new subscription (new Remnawave user)
         if settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+            from app.database.crud.subscription import (
+                get_subscription_by_user_and_tariff,
+            )
 
             existing_for_tariff = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
             _has_time = (
@@ -1243,7 +1271,10 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     is_completed=True,
                 )
             except Exception:
-                logger.exception('Failed to create transaction for activated purchase', purchase_id=purchase.id)
+                logger.exception(
+                    'Failed to create transaction for activated purchase',
+                    purchase_id=purchase.id,
+                )
 
         if not skip_notification:
             try:
@@ -1255,7 +1286,10 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     is_new_account=is_new_account,
                 )
             except Exception:
-                logger.exception('Failed to send delivery notification after activation', purchase_id=purchase.id)
+                logger.exception(
+                    'Failed to send delivery notification after activation',
+                    purchase_id=purchase.id,
+                )
 
         await _send_admin_notification(purchase, notification_tariff_name, is_pending_activation=False)
 
@@ -1388,7 +1422,10 @@ async def retry_stuck_pending_activation(
                 await _increment_retry_count(retry_db, token)
                 await activate_purchase(retry_db, token)
                 retried += 1
-                logger.info('Retried stuck pending_activation successfully', token_prefix=token[:5])
+                logger.info(
+                    'Retried stuck pending_activation successfully',
+                    token_prefix=token[:5],
+                )
         except Exception:
             logger.exception('Failed to retry stuck pending_activation', token_prefix=token[:5])
 
@@ -1474,7 +1511,10 @@ async def _send_stuck_purchase_alert(data: dict, retry_count: int, phase: str) -
         import html as html_mod
 
         from app.bot_factory import create_bot
-        from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
+        from app.services.admin_notification_service import (
+            AdminNotificationService,
+            NotificationCategory,
+        )
 
         amount_rub = data['amount_kopeks'] / 100
         contact_value = html_mod.escape(str(data.get('contact_value', '?')))
@@ -1496,7 +1536,11 @@ async def _send_stuck_purchase_alert(data: dict, retry_count: int, phase: str) -
             service = AdminNotificationService(bot)
             await service.send_admin_notification(text, category=NotificationCategory.ERRORS)
     except Exception:
-        logger.warning('Failed to send stuck purchase admin alert', purchase_id=data.get('id'), exc_info=True)
+        logger.warning(
+            'Failed to send stuck purchase admin alert',
+            purchase_id=data.get('id'),
+            exc_info=True,
+        )
 
 
 async def _send_amount_mismatch_alert(
@@ -1512,7 +1556,10 @@ async def _send_amount_mismatch_alert(
         import html as html_mod
 
         from app.bot_factory import create_bot
-        from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
+        from app.services.admin_notification_service import (
+            AdminNotificationService,
+            NotificationCategory,
+        )
 
         text = (
             f'<b>AMOUNT MISMATCH — purchase marked FAILED</b>\n\n'
@@ -1530,7 +1577,11 @@ async def _send_amount_mismatch_alert(
             service = AdminNotificationService(bot)
             await service.send_admin_notification(text, category=NotificationCategory.ERRORS)
     except Exception:
-        logger.warning('Failed to send amount mismatch alert', purchase_id=purchase.id, exc_info=True)
+        logger.warning(
+            'Failed to send amount mismatch alert',
+            purchase_id=purchase.id,
+            exc_info=True,
+        )
 
 
 async def recover_stuck_pending_purchases(
@@ -1632,7 +1683,10 @@ async def _find_succeeded_provider_payment(
     if base_method.startswith('yookassa'):
         model = YooKassaPayment
         payment_id_attr = 'yookassa_payment_id'
-        extra_conditions = [YooKassaPayment.status == 'succeeded', YooKassaPayment.is_paid.is_(True)]
+        extra_conditions = [
+            YooKassaPayment.status == 'succeeded',
+            YooKassaPayment.is_paid.is_(True),
+        ]
     elif base_method == 'heleket':
         model = HeleketPayment
         payment_id_attr = 'uuid'
@@ -1656,23 +1710,38 @@ async def _find_succeeded_provider_payment(
     elif base_method == 'cloudpayments':
         model = CloudPaymentsPayment
         payment_id_attr = 'invoice_id'
-        extra_conditions = [CloudPaymentsPayment.status == 'completed', CloudPaymentsPayment.is_paid.is_(True)]
+        extra_conditions = [
+            CloudPaymentsPayment.status == 'completed',
+            CloudPaymentsPayment.is_paid.is_(True),
+        ]
     elif base_method == 'freekassa':
         model = FreekassaPayment
         payment_id_attr = 'order_id'
-        extra_conditions = [FreekassaPayment.status == 'success', FreekassaPayment.is_paid.is_(True)]
+        extra_conditions = [
+            FreekassaPayment.status == 'success',
+            FreekassaPayment.is_paid.is_(True),
+        ]
     elif base_method == 'kassa_ai':
         model = KassaAiPayment
         payment_id_attr = 'order_id'
-        extra_conditions = [KassaAiPayment.status == 'success', KassaAiPayment.is_paid.is_(True)]
+        extra_conditions = [
+            KassaAiPayment.status == 'success',
+            KassaAiPayment.is_paid.is_(True),
+        ]
     elif base_method == 'riopay':
         model = RioPayPayment
         payment_id_attr = 'order_id'
-        extra_conditions = [RioPayPayment.status == 'success', RioPayPayment.is_paid.is_(True)]
+        extra_conditions = [
+            RioPayPayment.status == 'success',
+            RioPayPayment.is_paid.is_(True),
+        ]
     elif base_method == 'severpay':
         model = SeverPayPayment
         payment_id_attr = 'order_id'
-        extra_conditions = [SeverPayPayment.status == 'success', SeverPayPayment.is_paid.is_(True)]
+        extra_conditions = [
+            SeverPayPayment.status == 'success',
+            SeverPayPayment.is_paid.is_(True),
+        ]
 
     if model is None:
         return None
