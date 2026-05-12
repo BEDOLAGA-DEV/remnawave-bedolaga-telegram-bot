@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 
-CLICK_ID_PATTERN = r'^[A-Za-z0-9._:-]{1,128}$'
+CLICK_ID_PATTERN = r'^[A-Za-z0-9._:_-]{1,128}$'
 CLICK_ID_RE = re.compile(CLICK_ID_PATTERN)
 
 

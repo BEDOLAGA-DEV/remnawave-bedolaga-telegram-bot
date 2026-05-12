@@ -765,13 +765,12 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             try:
                 _campaign_part, _click_part = start_parameter.split('_clk_', 1)
                 if _click_part:
-                    _candidate = _click_part[:128]
-                    if _CLICK_ID_RE.match(_candidate):
+                    if _CLICK_ID_RE.match(_click_part):
                         start_parameter = _campaign_part or None
-                        await state.update_data(pending_click_id=_candidate)
+                        await state.update_data(pending_click_id=_click_part)
                         logger.info(
                             'click_id_extracted_from_start',
-                            click_id_prefix=_candidate[:8],
+                            click_id_prefix=_click_part[:8],
                         )
             except Exception:  # noqa: BLE001
                 pass

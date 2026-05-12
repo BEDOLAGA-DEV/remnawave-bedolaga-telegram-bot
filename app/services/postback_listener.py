@@ -96,8 +96,9 @@ async def _fire_postback(
 async def _on_payment_completed(event_data: dict) -> None:
     """Schedule a postback for every completed DEPOSIT transaction.
 
-    Wrapped in asyncio.create_task so we do NOT block the emit caller
-    (which is awaited from inside create_transaction right after db.commit()).
+    Wrapped in _spawn_bg (fire-and-forget with strong refs) so we do NOT block
+    the emit caller (which is awaited from inside create_transaction right
+    after db.commit()).
     """
     # Honor the global feature flag — avoids a DB roundtrip when disabled.
     if not getattr(settings, 'S2S_POSTBACK_ENABLED', False):
