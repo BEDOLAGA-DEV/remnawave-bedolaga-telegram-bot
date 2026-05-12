@@ -68,7 +68,7 @@ async def send_postback(
         url = url.replace('{amount}', '0')
 
     url = url.replace('{user_id}', str(user_id) if user_id is not None else '0')
-    url = url.replace('{tx_id}', tx_id if tx_id else '')
+    url = url.replace('{tx_id}', quote(tx_id, safe='') if tx_id else '')
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:

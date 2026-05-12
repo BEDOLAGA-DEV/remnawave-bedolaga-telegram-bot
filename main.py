@@ -65,7 +65,9 @@ async def main():
         from app.services.postback_listener import register_postback_listeners
         register_postback_listeners()
     except Exception as _postback_err:
-        print(f'[WARN] postback_listener_register_failed: {_postback_err}')
+        # Cannot use structlog here — logging handlers are not yet attached.
+        import sys as _sys
+        print(f'[WARN] postback_listener_register_failed: {_postback_err}', file=_sys.stderr)
 
     log_handlers = []
 
