@@ -677,6 +677,22 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
     if state_needs_update:
         await state.set_data(data)
 
+    # Extract optional partner/aff click_id from /start payload.
+    # Convention: '<campaign>_clk_<click_id>' (Telegram allows one payload, max 64 chars).
+    if start_parameter and '_clk_' in start_parameter:
+        try:
+            _campaign_part, _click_part = start_parameter.split('_clk_', 1)
+            if _click_part:
+                _click_id = _click_part[:128]
+                start_parameter = _campaign_part or None
+                await state.update_data(pending_click_id=_click_id)
+                logger.info(
+                    'Click_id extracted from /start payload',
+                    click_id_prefix=_click_id[:8],
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
     # Handle gift code deep links: /start GIFT_{token}
     if start_parameter and start_parameter.startswith('GIFT_'):
         gift_token = start_parameter[5:]  # Strip "GIFT_" prefix
@@ -815,9 +831,29 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                     await merge_phantom_into_user(db, phantom, user)
                     await db.commit()
                     await db.refresh(user, ['subscriptions'])
+                    try:
+                        _state_data = await state.get_data()
+                        _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+                        if _click_id:
+                            from app.database.crud.yandex_client_id import upsert_subid
+                            await upsert_subid(db, user.id, _click_id, source='telegram_bot')
+                            await db.commit()
+                            logger.info('Saved /start click_id to yandex_client_id_map', user_id=user.id)
+                    except Exception as _click_err:  # noqa: BLE001
+                        logger.debug('Failed to persist /start click_id', error=str(_click_err))
                 except Exception:
                     await db.rollback()
                     await db.refresh(user, ['subscriptions'])
+                    try:
+                        _state_data = await state.get_data()
+                        _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+                        if _click_id:
+                            from app.database.crud.yandex_client_id import upsert_subid
+                            await upsert_subid(db, user.id, _click_id, source='telegram_bot')
+                            await db.commit()
+                            logger.info('Saved /start click_id to yandex_client_id_map', user_id=user.id)
+                    except Exception as _click_err:  # noqa: BLE001
+                        logger.debug('Failed to persist /start click_id', error=str(_click_err))
                     logger.exception(
                         'Failed to merge phantom user',
                         phantom_id=phantom.id,
@@ -1666,6 +1702,16 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                             active_user_id=user.id,
                         )
                 await db.refresh(user, ['subscriptions'])
+                try:
+                    _state_data = await state.get_data()
+                    _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+                    if _click_id:
+                        from app.database.crud.yandex_client_id import upsert_subid
+                        await upsert_subid(db, user.id, _click_id, source='telegram_bot')
+                        await db.commit()
+                        logger.info('Saved /start click_id to yandex_client_id_map', user_id=user.id)
+                except Exception as _click_err:  # noqa: BLE001
+                    logger.debug('Failed to persist /start click_id', error=str(_click_err))
             elif not claimed:
                 logger.critical(
                     'Phantom claim failed with no fallback user, proceeding to normal registration',
@@ -1690,6 +1736,16 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                 referral_code=referral_code,
             )
             await db.refresh(user, ['subscriptions'])
+            try:
+                _state_data = await state.get_data()
+                _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+                if _click_id:
+                    from app.database.crud.yandex_client_id import upsert_subid
+                    await upsert_subid(db, user.id, _click_id, source='telegram_bot')
+                    await db.commit()
+                    logger.info('Saved /start click_id to yandex_client_id_map', user_id=user.id)
+            except Exception as _click_err:  # noqa: BLE001
+                logger.debug('Failed to persist /start click_id', error=str(_click_err))
     else:
         logger.info('🔄 Обновляем существующего пользователя', from_user_id=callback.from_user.id)
         existing_user.status = UserStatus.ACTIVE.value
@@ -1724,6 +1780,16 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
 
     try:
         await db.refresh(user, ['subscriptions'])
+        try:
+            _state_data = await state.get_data()
+            _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+            if _click_id:
+                from app.database.crud.yandex_client_id import upsert_subid
+                await upsert_subid(db, user.id, _click_id, source='telegram_bot')
+                await db.commit()
+                logger.info('Saved /start click_id to yandex_client_id_map', user_id=user.id)
+        except Exception as _click_err:  # noqa: BLE001
+            logger.debug('Failed to persist /start click_id', error=str(_click_err))
     except Exception as refresh_subscription_error:
         logger.error(
             'Ошибка обновления подписки пользователя после бонуса кампании',
@@ -1984,6 +2050,16 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                             active_user_id=user.id,
                         )
                 await db.refresh(user, ['subscriptions'])
+                try:
+                    _state_data = await state.get_data()
+                    _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+                    if _click_id:
+                        from app.database.crud.yandex_client_id import upsert_subid
+                        await upsert_subid(db, user.id, _click_id, source='telegram_bot')
+                        await db.commit()
+                        logger.info('Saved /start click_id to yandex_client_id_map', user_id=user.id)
+                except Exception as _click_err:  # noqa: BLE001
+                    logger.debug('Failed to persist /start click_id', error=str(_click_err))
             elif not claimed:
                 logger.critical(
                     'Phantom claim failed with no fallback user, proceeding to normal registration',
@@ -2008,6 +2084,16 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                 referral_code=referral_code,
             )
             await db.refresh(user, ['subscriptions'])
+            try:
+                _state_data = await state.get_data()
+                _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+                if _click_id:
+                    from app.database.crud.yandex_client_id import upsert_subid
+                    await upsert_subid(db, user.id, _click_id, source='telegram_bot')
+                    await db.commit()
+                    logger.info('Saved /start click_id to yandex_client_id_map', user_id=user.id)
+            except Exception as _click_err:  # noqa: BLE001
+                logger.debug('Failed to persist /start click_id', error=str(_click_err))
     else:
         logger.info('🔄 Обновляем существующего пользователя', from_user_id=message.from_user.id)
         existing_user.status = UserStatus.ACTIVE.value
@@ -2072,6 +2158,16 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
     try:
         await db.refresh(user, ['subscriptions'])
+        try:
+            _state_data = await state.get_data()
+            _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+            if _click_id:
+                from app.database.crud.yandex_client_id import upsert_subid
+                await upsert_subid(db, user.id, _click_id, source='telegram_bot')
+                await db.commit()
+                logger.info('Saved /start click_id to yandex_client_id_map', user_id=user.id)
+        except Exception as _click_err:  # noqa: BLE001
+            logger.debug('Failed to persist /start click_id', error=str(_click_err))
     except Exception as refresh_subscription_error:
         logger.error(
             'Ошибка обновления подписки пользователя после бонуса кампании',
@@ -2638,6 +2734,16 @@ async def required_sub_channel_check(
                                         active_user_id=user.id,
                                     )
                             await db.refresh(user, ['subscriptions'])
+                            try:
+                                _state_data = await state.get_data()
+                                _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+                                if _click_id:
+                                    from app.database.crud.yandex_client_id import upsert_subid
+                                    await upsert_subid(db, user.id, _click_id, source='telegram_bot')
+                                    await db.commit()
+                                    logger.info('Saved /start click_id to yandex_client_id_map', user_id=user.id)
+                            except Exception as _click_err:  # noqa: BLE001
+                                logger.debug('Failed to persist /start click_id', error=str(_click_err))
                         elif not claimed:
                             logger.critical(
                                 'Phantom claim failed with no fallback user, proceeding to normal registration',
@@ -2660,6 +2766,16 @@ async def required_sub_channel_check(
                             referred_by_id=referrer_id,
                         )
                         await db.refresh(user, ['subscriptions'])
+                        try:
+                            _state_data = await state.get_data()
+                            _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+                            if _click_id:
+                                from app.database.crud.yandex_client_id import upsert_subid
+                                await upsert_subid(db, user.id, _click_id, source='telegram_bot')
+                                await db.commit()
+                                logger.info('Saved /start click_id to yandex_client_id_map', user_id=user.id)
+                        except Exception as _click_err:  # noqa: BLE001
+                            logger.debug('Failed to persist /start click_id', error=str(_click_err))
 
                     # ИСПРАВЛЕНИЕ БАГА: Очищаем pending_start_payload из state после создания пользователя
                     state_data.pop('pending_start_payload', None)
@@ -2686,6 +2802,16 @@ async def required_sub_channel_check(
                         )
                     try:
                         await db.refresh(user, ['subscriptions'])
+                        try:
+                            _state_data = await state.get_data()
+                            _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+                            if _click_id:
+                                from app.database.crud.yandex_client_id import upsert_subid
+                                await upsert_subid(db, user.id, _click_id, source='telegram_bot')
+                                await db.commit()
+                                logger.info('Saved /start click_id to yandex_client_id_map', user_id=user.id)
+                        except Exception as _click_err:  # noqa: BLE001
+                            logger.debug('Failed to persist /start click_id', error=str(_click_err))
                     except Exception as refresh_sub_error:
                         logger.error(
                             'Ошибка обновления подписки после бонуса кампании',

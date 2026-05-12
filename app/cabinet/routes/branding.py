@@ -1045,6 +1045,36 @@ async def store_yandex_cid(
             pass
 
 
+# ============ Partner Click ID Sync ============
+
+
+class PartnerClickIdRequest(BaseModel):
+    click_id: str = Field(max_length=128, pattern=r'^[A-Za-z0-9._:-]{1,128}$')
+
+
+@router.post('/analytics/partner-click-id', status_code=204)
+async def store_partner_click_id(
+    body: PartnerClickIdRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Store partner/affiliate click_id (Keitaro etc.) for the authenticated user.
+
+    Saved into ``yandex_client_id_map.subid`` so that the central S2S postback
+    listener picks it up and reports every subsequent deposit."""
+    try:
+        from app.database.crud.yandex_client_id import upsert_subid
+
+        await upsert_subid(db, user.id, body.click_id, source='cabinet')
+        await db.commit()
+    except Exception as exc:
+        logger.warning('Failed to store partner click_id', user_id=user.id, exc=str(exc))
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
+
 # ============ Lite Mode Routes ============
 
 
