@@ -69,6 +69,40 @@ from app.utils.user_utils import generate_unique_referral_code
 logger = structlog.get_logger(__name__)
 
 
+
+import re as _re
+
+_CLICK_ID_RE = _re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
+
+
+async def _persist_pending_click_id(state, user_id: int) -> None:
+    """Persist FSM-stored partner click_id to yandex_client_id_map.subid.
+
+    Uses an isolated AsyncSessionLocal so it is safe to call right after the
+    caller's session was rolled back (e.g. phantom-merge failure branch).
+    Best-effort: errors are logged at debug and never propagate. Idempotent —
+    safe to call multiple times for the same user (UNIQUE on user_id +
+    ON CONFLICT DO UPDATE in upsert_subid)."""
+    try:
+        _state_data = await state.get_data()
+        _click_id = _state_data.get('pending_click_id') if isinstance(_state_data, dict) else None
+        if not _click_id or not _CLICK_ID_RE.match(_click_id):
+            return
+        from app.database.crud.yandex_client_id import upsert_subid
+        from app.database.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as _db:
+            await upsert_subid(_db, user_id, _click_id, source='telegram_bot')
+            await _db.commit()
+        try:
+            await state.update_data(pending_click_id=None)
+        except Exception:  # noqa: BLE001
+            pass
+        logger.info('saved_start_click_id_to_yandex_client_id_map', user_id=user_id)
+    except Exception as _click_err:  # noqa: BLE001
+        logger.debug('persist_start_click_id_failed', error=str(_click_err))
+
+
 async def _activate_pending_gift_after_registration(
     db: AsyncSession,
     state: FSMContext,
@@ -833,11 +867,11 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                     await merge_phantom_into_user(db, phantom, user)
                     await db.commit()
                     await db.refresh(user, ['subscriptions'])
-                    await _persist_pending_click_id(db, state, user.id)
+                    await _persist_pending_click_id(state, user.id)
                 except Exception:
                     await db.rollback()
                     await db.refresh(user, ['subscriptions'])
-                    await _persist_pending_click_id(db, state, user.id)
+                    await _persist_pending_click_id(state, user.id)
                     logger.exception(
                         'Failed to merge phantom user',
                         phantom_id=phantom.id,
@@ -1686,7 +1720,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                             active_user_id=user.id,
                         )
                 await db.refresh(user, ['subscriptions'])
-                await _persist_pending_click_id(db, state, user.id)
+                await _persist_pending_click_id(state, user.id)
             elif not claimed:
                 logger.critical(
                     'Phantom claim failed with no fallback user, proceeding to normal registration',
@@ -1711,7 +1745,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                 referral_code=referral_code,
             )
             await db.refresh(user, ['subscriptions'])
-            await _persist_pending_click_id(db, state, user.id)
+            await _persist_pending_click_id(state, user.id)
     else:
         logger.info('🔄 Обновляем существующего пользователя', from_user_id=callback.from_user.id)
         existing_user.status = UserStatus.ACTIVE.value
@@ -1746,7 +1780,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
 
     try:
         await db.refresh(user, ['subscriptions'])
-        await _persist_pending_click_id(db, state, user.id)
+        await _persist_pending_click_id(state, user.id)
     except Exception as refresh_subscription_error:
         logger.error(
             'Ошибка обновления подписки пользователя после бонуса кампании',
@@ -2007,7 +2041,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                             active_user_id=user.id,
                         )
                 await db.refresh(user, ['subscriptions'])
-                await _persist_pending_click_id(db, state, user.id)
+                await _persist_pending_click_id(state, user.id)
             elif not claimed:
                 logger.critical(
                     'Phantom claim failed with no fallback user, proceeding to normal registration',
@@ -2032,7 +2066,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                 referral_code=referral_code,
             )
             await db.refresh(user, ['subscriptions'])
-            await _persist_pending_click_id(db, state, user.id)
+            await _persist_pending_click_id(state, user.id)
     else:
         logger.info('🔄 Обновляем существующего пользователя', from_user_id=message.from_user.id)
         existing_user.status = UserStatus.ACTIVE.value
@@ -2097,7 +2131,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
     try:
         await db.refresh(user, ['subscriptions'])
-        await _persist_pending_click_id(db, state, user.id)
+        await _persist_pending_click_id(state, user.id)
     except Exception as refresh_subscription_error:
         logger.error(
             'Ошибка обновления подписки пользователя после бонуса кампании',
@@ -2664,7 +2698,7 @@ async def required_sub_channel_check(
                                         active_user_id=user.id,
                                     )
                             await db.refresh(user, ['subscriptions'])
-                            await _persist_pending_click_id(db, state, user.id)
+                            await _persist_pending_click_id(state, user.id)
                         elif not claimed:
                             logger.critical(
                                 'Phantom claim failed with no fallback user, proceeding to normal registration',
@@ -2687,7 +2721,7 @@ async def required_sub_channel_check(
                             referred_by_id=referrer_id,
                         )
                         await db.refresh(user, ['subscriptions'])
-                        await _persist_pending_click_id(db, state, user.id)
+                        await _persist_pending_click_id(state, user.id)
 
                     # ИСПРАВЛЕНИЕ БАГА: Очищаем pending_start_payload из state после создания пользователя
                     state_data.pop('pending_start_payload', None)
@@ -2714,7 +2748,7 @@ async def required_sub_channel_check(
                         )
                     try:
                         await db.refresh(user, ['subscriptions'])
-                        await _persist_pending_click_id(db, state, user.id)
+                        await _persist_pending_click_id(state, user.id)
                     except Exception as refresh_sub_error:
                         logger.error(
                             'Ошибка обновления подписки после бонуса кампании',

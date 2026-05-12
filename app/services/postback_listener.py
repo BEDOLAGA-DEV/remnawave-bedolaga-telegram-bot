@@ -1,7 +1,12 @@
 """Listener for payment.completed event → sends S2S postback if subid present.
 
-Listens for any Transaction(type=DEPOSIT) event:
-- cabinet/bot top-ups, recurrent autopayments, admin manual top-ups.
+Catches deposit-class transactions that go through the event-emitter side
+effects in app/database/crud/transaction.py:
+
+- Direct create_transaction(..., commit=True) paths — emits inline.
+- Two-phase create_transaction(commit=False) + emit_transaction_side_effects()
+  paths — caller is responsible for the second call after its own db.commit().
+  Providers that skip the second call do NOT trigger this listener.
 
 Landing-purchase postbacks are NOT routed through this listener because
 guest_purchase_service.fulfill_purchase creates a SUBSCRIPTION_PAYMENT
