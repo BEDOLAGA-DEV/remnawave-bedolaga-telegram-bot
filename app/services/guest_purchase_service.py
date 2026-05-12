@@ -530,16 +530,14 @@ async def fulfill_purchase(
                 # central payment.completed listener does not catch them; keep the
                 # inline call here. Balance top-ups go through DEPOSIT and are
                 # handled by app/services/postback_listener.py — no double-fire.
-                import asyncio
-                asyncio.create_task(
-                    send_postback(
-                        'purchase',
-                        _subid,
-                        amount=purchase.amount_kopeks / 100,
-                        user_id=user.id,
-                        tx_id=str(purchase.id),
-                    )
-                )
+                from app.services.yandex_offline_conv_service import spawn_bg
+                spawn_bg(send_postback(
+                    'purchase',
+                    _subid,
+                    amount=purchase.amount_kopeks / 100,
+                    user_id=user.id,
+                    tx_id=f'gp-{purchase.id}',
+                ))
         except Exception:
             logger.debug('S2S postback purchase hook error')
 

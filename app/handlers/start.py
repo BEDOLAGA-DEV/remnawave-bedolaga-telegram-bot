@@ -70,9 +70,7 @@ logger = structlog.get_logger(__name__)
 
 
 
-import re as _re
-
-_CLICK_ID_RE = _re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
+from app.utils.partner_click import CLICK_ID_RE as _CLICK_ID_RE
 
 
 async def _persist_pending_click_id(state, user_id: int) -> None:

@@ -16,7 +16,7 @@ That path keeps its inline send_postback() call.
 
 from __future__ import annotations
 
-import asyncio
+from app.services.yandex_offline_conv_service import spawn_bg
 
 import structlog
 
@@ -49,7 +49,7 @@ async def _fire_postback(
                 subid,
                 amount=float(amount_rubles),
                 user_id=user_id,
-                tx_id=str(transaction_id) if transaction_id is not None else None,
+                tx_id=f'tx-{transaction_id}' if transaction_id is not None else None,
             )
     except Exception as error:
         logger.exception(
@@ -69,6 +69,8 @@ async def _on_payment_completed(event_data: dict) -> None:
     # Honor the global feature flag — avoids a DB roundtrip when disabled.
     if not getattr(settings, 'S2S_POSTBACK_ENABLED', False):
         return
+    if not getattr(settings, 'S2S_POSTBACK_PURCHASE_URL', ''):
+        return
 
     payload = event_data.get('payload', {}) if isinstance(event_data, dict) else {}
     user_id = payload.get('user_id')
@@ -83,13 +85,11 @@ async def _on_payment_completed(event_data: dict) -> None:
         return
 
     # Fire-and-forget so the emit caller is not blocked by the partner-tracker HTTP roundtrip.
-    asyncio.create_task(
-        _fire_postback(
-            user_id=user_id,
-            amount_rubles=amount_rubles,
-            transaction_id=transaction_id,
-        )
-    )
+    spawn_bg(_fire_postback(
+        user_id=user_id,
+        amount_rubles=amount_rubles,
+        transaction_id=transaction_id,
+    ))
 
 
 def register_postback_listeners() -> None:

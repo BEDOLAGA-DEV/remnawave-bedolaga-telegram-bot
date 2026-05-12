@@ -1048,8 +1048,11 @@ async def store_yandex_cid(
 # ============ Partner Click ID Sync ============
 
 
+from app.utils.partner_click import _CLICK_ID_PATTERN
+
+
 class PartnerClickIdRequest(BaseModel):
-    click_id: str = Field(max_length=128, pattern=r'^[A-Za-z0-9._:-]{1,128}$')
+    click_id: str = Field(max_length=128, pattern=_CLICK_ID_PATTERN)
 
 
 @router.post('/analytics/partner-click-id', status_code=204)
@@ -1073,6 +1076,10 @@ async def store_partner_click_id(
             await db.rollback()
         except Exception:
             pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to store partner click_id',
+        ) from exc
 
 
 # ============ Lite Mode Routes ============
