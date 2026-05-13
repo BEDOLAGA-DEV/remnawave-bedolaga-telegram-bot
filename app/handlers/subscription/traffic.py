@@ -57,6 +57,36 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
 
     texts = get_texts(db_user.language)
 
+    # nz!_buy_traffic — main-menu shortcut. Ask user which traffic kind (normal vs WL/БС)
+    # if WL topup feature is enabled AND the current subscription tariff actually supports
+    # WL topups. Falls through to normal flow when WL is not applicable.
+    if callback.data == 'nz!_buy_traffic' and settings.WL_TRAFFIC_TOPUP_ENABLED:
+        subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+        if subscription is not None and not subscription.is_trial:
+            wl_supported = False
+            if subscription.tariff_id:
+                tariff = await get_tariff_by_id(db, subscription.tariff_id)
+                if tariff and getattr(tariff, 'can_topup_wl_traffic', None) and tariff.can_topup_wl_traffic():
+                    wl_supported = True
+            else:
+                wl_supported = bool(getattr(subscription, 'wl_traffic_limit_gb', 0))
+
+            if wl_supported:
+                keyboard = types.InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [types.InlineKeyboardButton(text='📊 Обычный трафик', callback_data=f'nz!_st:{sub_id}')],
+                        [types.InlineKeyboardButton(text='🌍 БС-Трафик', callback_data=f'nz!_swl:{sub_id}')],
+                        [types.InlineKeyboardButton(text='◀️ Назад', callback_data='nz!_back_to_menu')],
+                    ]
+                )
+                await callback.message.edit_text(
+                    '📈 <b>Докупить трафик</b>\n\nВыберите тип трафика:',
+                    reply_markup=keyboard,
+                    parse_mode='HTML',
+                )
+                await callback.answer()
+                return
+
     # В режиме мульти-тарифов без явного sub_id в callback — показываем выбор подписки.
     if settings.is_multi_tariff_enabled() and callback.data == 'buy_traffic':
         active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)

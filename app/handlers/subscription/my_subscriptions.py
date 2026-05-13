@@ -218,6 +218,17 @@ async def show_subscription_detail(
         f'📋 <b>{tariff_name}</b>\n\n'
         f'Статус: {status}\n'
         f'📊 Трафик: {traffic}\n'
+    )
+
+    # WL (БС) трафик — показываем только если фича включена для тарифа
+    wl_limit = getattr(subscription, 'wl_traffic_limit_gb', 0) or 0
+    wl_used = getattr(subscription, 'wl_traffic_used_gb', 0) or 0
+    if wl_limit > 0 or wl_used > 0:
+        wl_used_str = f'{wl_used:.1f}' if wl_used else '0'
+        wl_traffic = f'{wl_used_str} / ∞ ГБ' if wl_limit == 0 else f'{wl_used_str} / {wl_limit} ГБ'
+        text += f'🌍 БС-Трафик: {wl_traffic}\n'
+
+    text += (
         f'📱 Устройства: {subscription.device_limit}\n'
         f'📅 До: {end_date}\n'
     )
