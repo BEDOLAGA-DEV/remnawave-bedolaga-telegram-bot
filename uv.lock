@@ -581,6 +581,15 @@ wheels = [
 ]
 
 [[package]]
+name = "http-ece"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7c/af/249d1576653b69c20b9ac30e284b63bd94af6a175d72d87813235caf2482/http_ece-1.2.1.tar.gz", hash = "sha256:8c6ab23116bbf6affda894acfd5f2ca0fb8facbcbb72121c11c75c33e7ce8cff", size = 8830, upload-time = "2024-08-08T00:10:47.301Z" }
+
+[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -875,6 +884,18 @@ wheels = [
 ]
 
 [[package]]
+name = "py-vapid"
+version = "1.9.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a3/ed/c648c8018fab319951764f4babe68ddcbbff7f2bbcd7ff7e531eac1788c8/py_vapid-1.9.4.tar.gz", hash = "sha256:a004023560cbc54e34fc06380a0580f04ffcc788e84fb6d19e9339eeb6551a28", size = 74750, upload-time = "2026-01-05T22:13:25.201Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/15/f9d0171e1ad863ca49e826d5afb6b50566f20dc9b4f76965096d3555ce9e/py_vapid-1.9.4-py2.py3-none-any.whl", hash = "sha256:f165a5bf90dcf966b226114f01f178f137579a09784c7f0628fa2f0a299741b6", size = 23912, upload-time = "2026-01-05T20:42:05.455Z" },
+]
+
+[[package]]
 name = "pycparser"
 version = "3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1115,6 +1136,22 @@ wheels = [
 ]
 
 [[package]]
+name = "pywebpush"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "cryptography" },
+    { name = "http-ece" },
+    { name = "py-vapid" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/87/d9/e497a24bc9f659bfc0e570382a41e6b2d6726fbcfa4d85aaa23fe9c81ba2/pywebpush-2.3.0.tar.gz", hash = "sha256:d1e27db8de9e6757c1875f67292554bd54c41874c36f4b5c4ebb5442dce204f2", size = 28489, upload-time = "2026-02-09T23:30:18.574Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3d/d8/ac21241cf8007cb93255eabf318da4f425ec0f75d28c366992253aa8c1b2/pywebpush-2.3.0-py3-none-any.whl", hash = "sha256:3d97469fb14d4323c362319d438183737249a4115b50e146ce233e7f01e3cf98", size = 22851, upload-time = "2026-02-09T23:30:16.093Z" },
+]
+
+[[package]]
 name = "pyyaml"
 version = "6.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1171,8 +1208,8 @@ wheels = [
 ]
 
 [[package]]
-name = "remnawave-bedolaga-telegram-bot"
-version = "3.49.0"
+name = "remnawave-nozapret-telegram-bot"
+version = "3.54.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aiogram" },
@@ -1185,9 +1222,11 @@ dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "httpx", extra = ["socks"] },
     { name = "packaging" },
+    { name = "py-vapid" },
     { name = "pycryptodome" },
     { name = "pyjwt" },
     { name = "python-dateutil" },
+    { name = "pywebpush" },
     { name = "pyyaml" },
     { name = "pyzipper" },
     { name = "qrcode", extra = ["pil"] },
@@ -1218,9 +1257,11 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.129.0" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.27.0" },
     { name = "packaging", specifier = ">=26.0" },
+    { name = "py-vapid", specifier = ">=1.9.0" },
     { name = "pycryptodome", specifier = ">=3.21.0" },
     { name = "pyjwt", specifier = ">=2.11.0" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
+    { name = "pywebpush", specifier = ">=2.0.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "pyzipper", specifier = ">=0.3.6" },
     { name = "qrcode", extras = ["pil"], specifier = ">=8.0" },
