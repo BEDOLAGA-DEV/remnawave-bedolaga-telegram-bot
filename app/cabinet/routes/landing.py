@@ -23,7 +23,7 @@ from app.services.guest_purchase_service import (
 )
 from app.services.payment_method_config_service import _get_method_defaults
 from app.services.payment_service import PaymentService
-from app.utils.cache import RateLimitCache
+from app.utils.cache import RateLimitCache, cache
 
 
 logger = structlog.get_logger(__name__)
@@ -99,6 +99,11 @@ class LandingConfigResponse(BaseModel):
     meta_description: str | None = None
     discount: LandingDiscountInfo | None = None  # null if no active discount
     background_config: dict | None = None
+    sticky_pay_button: bool = False
+    analytics_view_enabled: bool = False
+    analytics_view_goal: str | None = None
+    analytics_click_enabled: bool = False
+    analytics_click_goal: str | None = None
 
 
 _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
@@ -123,6 +128,9 @@ class PurchaseRequest(BaseModel):
     gift_recipient_type: str | None = Field(default=None, pattern=r'^(email|telegram)$')
     gift_recipient_value: str | None = Field(default=None, max_length=255)
     gift_message: str | None = Field(default=None, max_length=1000)
+    yandex_cid: str | None = Field(default=None, max_length=128, pattern=r'^[A-Za-z0-9._:-]{4,128}$')
+    referrer: str | None = Field(default=None, max_length=500)
+    subid: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode='after')
     def validate_contacts(self) -> 'PurchaseRequest':
@@ -535,6 +543,11 @@ async def get_landing_config(
         meta_description=resolve_locale_text(landing.meta_description, lang) or None,
         discount=discount,
         background_config=landing.background_config,
+        sticky_pay_button=landing.sticky_pay_button,
+        analytics_view_enabled=landing.analytics_view_enabled,
+        analytics_view_goal=landing.analytics_view_goal,
+        analytics_click_enabled=landing.analytics_click_enabled,
+        analytics_click_goal=landing.analytics_click_goal,
     )
 
 
@@ -644,8 +657,16 @@ async def create_landing_purchase(
         gift_recipient_type=body.gift_recipient_type,
         gift_recipient_value=body.gift_recipient_value,
         gift_message=body.gift_message,
+        subid=body.subid,
+        referrer=body.referrer,
         commit=False,
     )
+
+    # Fallback to HTTP Referer header if body did not supply one
+    if not purchase.referrer:
+        http_referrer = raw_request.headers.get('referer') or raw_request.headers.get('referrer')
+        if http_referrer and len(http_referrer) <= 500:
+            purchase.referrer = http_referrer
 
     # Determine return URL: per-method override → default cabinet URL
     cabinet_base = (settings.CABINET_URL or '').rstrip('/')
@@ -689,6 +710,20 @@ async def create_landing_purchase(
 
     await db.commit()
     await db.refresh(purchase)
+
+    # Persist Yandex CID in cache so fulfill_purchase can link it to the user later
+    if body.yandex_cid and settings.YANDEX_OFFLINE_CONV_ENABLED:
+        try:
+            await cache.set(f'yacid:purchase:{purchase.token}', body.yandex_cid, expire=86400)
+        except Exception:
+            pass
+
+    # Persist subid in cache for S2S postback
+    if body.subid:
+        try:
+            await cache.set(f'subid:purchase:{purchase.token}', body.subid, expire=86400)
+        except Exception:
+            pass
 
     return PurchaseResponse(
         purchase_token=purchase.token,

@@ -20,6 +20,7 @@ from ..schemas.tickets import (
     TicketCreateRequest,
     TicketDetailResponse,
     TicketListResponse,
+    TicketMediaItem,
     TicketMessageCreateRequest,
     TicketMessageResponse,
     TicketResponse,
@@ -33,14 +34,23 @@ router = APIRouter(prefix='/tickets', tags=['Cabinet Tickets'])
 
 def _message_to_response(message: TicketMessage) -> TicketMessageResponse:
     """Convert TicketMessage to response."""
+    raw_items = getattr(message, 'media_items', None) or None
+    items = None
+    if raw_items:
+        try:
+            items = [TicketMediaItem(**it) for it in raw_items]
+        except (TypeError, KeyError, ValueError) as exc:
+            logger.warning('Failed to parse media_items', message_id=message.id, error=str(exc))
+            items = None
     return TicketMessageResponse(
         id=message.id,
         message_text=message.message_text or '',
         is_from_admin=message.is_from_admin,
-        has_media=bool(message.media_file_id),
+        has_media=bool(message.media_file_id) or bool(items),
         media_type=message.media_type,
         media_file_id=message.media_file_id,
         media_caption=message.media_caption,
+        media_items=items,
         created_at=message.created_at,
     )
 
@@ -143,15 +153,30 @@ async def create_ticket(
     db.add(ticket)
     await db.flush()
 
+    # Resolve media payload
+    items_payload = None
+    primary_type = request.media_type
+    primary_file_id = request.media_file_id
+    primary_caption = request.media_caption
+    if getattr(request, 'media_items', None):
+        items_payload = [it.model_dump() for it in request.media_items]
+        first = request.media_items[0]
+        primary_type = first.type
+        primary_file_id = first.file_id
+        primary_caption = primary_caption or first.caption
+
     # Create initial message with optional media
+    has_media = bool(primary_file_id)
     message = TicketMessage(
         ticket_id=ticket.id,
         user_id=user.id,
         message_text=request.message,
         is_from_admin=False,
-        media_type=request.media_type,
-        media_file_id=request.media_file_id,
-        media_caption=request.media_caption,
+        has_media=has_media,
+        media_type=primary_type if has_media else None,
+        media_file_id=primary_file_id if has_media else None,
+        media_caption=primary_caption if has_media else None,
+        media_items=items_payload,
         created_at=datetime.now(UTC),
     )
     db.add(message)
@@ -259,15 +284,30 @@ async def add_ticket_message(
             detail='Replies to this ticket are blocked',
         )
 
+    # Resolve media payload
+    items_payload = None
+    primary_type = request.media_type
+    primary_file_id = request.media_file_id
+    primary_caption = request.media_caption
+    if getattr(request, 'media_items', None):
+        items_payload = [it.model_dump() for it in request.media_items]
+        first = request.media_items[0]
+        primary_type = first.type
+        primary_file_id = first.file_id
+        primary_caption = primary_caption or first.caption
+
     # Create message with optional media
+    has_media = bool(primary_file_id)
     message = TicketMessage(
         ticket_id=ticket.id,
         user_id=user.id,
         message_text=request.message,
         is_from_admin=False,
-        media_type=request.media_type,
-        media_file_id=request.media_file_id,
-        media_caption=request.media_caption,
+        has_media=has_media,
+        media_type=primary_type if has_media else None,
+        media_file_id=primary_file_id if has_media else None,
+        media_caption=primary_caption if has_media else None,
+        media_items=items_payload,
         created_at=datetime.now(UTC),
     )
     db.add(message)
@@ -286,8 +326,8 @@ async def add_ticket_message(
             ticket,
             request.message,
             db,
-            media_file_id=request.media_file_id,
-            media_type=request.media_type,
+            media_file_id=primary_file_id,
+            media_type=primary_type,
         )
     except Exception as e:
         logger.error('Error notifying admins about ticket reply from cabinet', error=e)

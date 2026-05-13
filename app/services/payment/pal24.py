@@ -558,8 +558,8 @@ class Pal24PaymentMixin:
                     payment_id_str = str(payment.payment_id)
                     try:
                         payment_response = await service.get_payment_status(payment_id_str)
-                    except Pal24APIError as error:
-                        logger.error('Ошибка Pal24 API при получении статуса платежа', error=error)
+                    except Pal24APIError:
+                        logger.debug('Pal24 payment_id не найден или невалиден', payment_id=payment_id_str)
                     else:
                         if payment_response:
                             remote_payloads['payment_status'] = payment_response
@@ -569,8 +569,8 @@ class Pal24PaymentMixin:
 
                 try:
                     payments_response = await service.get_bill_payments(bill_id_str)
-                except Pal24APIError as error:
-                    logger.error('Ошибка Pal24 API при получении списка платежей', error=error)
+                except Pal24APIError:
+                    logger.debug('Pal24 bill payments не найдены', bill_id=bill_id_str)
                 else:
                     if payments_response:
                         remote_payloads['bill_payments'] = payments_response

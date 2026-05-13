@@ -1,3 +1,4 @@
+import math
 import secrets
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
@@ -159,8 +160,8 @@ async def create_trial_subscription(
     if device_limit is None:
         device_limit = settings.TRIAL_DEVICE_LIMIT
 
-    # Если переданы connected_squads, используем их
-    # Иначе используем squad_uuid или получаем случайный
+    # Если переданы connected_squads, используем их.
+    # Иначе используем squad_uuid или все доступные сквады по умолчанию.
     final_squads = []
     if connected_squads:
         final_squads = connected_squads
@@ -168,13 +169,14 @@ async def create_trial_subscription(
         final_squads = [squad_uuid]
     else:
         try:
-            from app.database.crud.server_squad import get_random_trial_squad_uuid
+            from app.database.crud.server_squad import get_effective_tariff_squad_uuids
 
-            random_squad = await get_random_trial_squad_uuid(db)
-            if random_squad:
-                final_squads = [random_squad]
+            final_squads = await get_effective_tariff_squad_uuids(db, None)
+            if final_squads:
                 logger.debug(
-                    'Выбран сквад для триальной подписки пользователя', random_squad=random_squad, user_id=user_id
+                    'Выбраны дефолтные сквады для триальной подписки пользователя',
+                    final_squads=final_squads,
+                    user_id=user_id,
                 )
         except Exception as error:
             logger.error('Не удалось получить сквад для триальной подписки пользователя', user_id=user_id, error=error)
@@ -1448,7 +1450,7 @@ async def add_subscription_servers(
 
     if paid_prices is None:
         now = datetime.now(UTC)
-        days_remaining = max(1, (subscription.end_date - now).days)
+        days_remaining = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
         paid_prices = []
 
         from app.database.models import ServerSquad

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.database.crud.server_squad import get_random_trial_squad_uuid
+from app.database.crud.server_squad import get_effective_tariff_squad_uuids
 from app.database.crud.subscription import (
     add_subscription_devices,
     add_subscription_squad,
@@ -75,16 +75,16 @@ async def _choose_trial_squads(
         return fallback_squads
 
     try:
-        squad_uuid = await get_random_trial_squad_uuid(db)
+        default_squads = await get_effective_tariff_squad_uuids(db, None)
     except Exception as error:
-        logger.error('Failed to select trial squad', error=error)
-        squad_uuid = None
+        logger.error('Failed to resolve default trial squads', error=error)
+        default_squads = []
 
-    if not squad_uuid:
+    if not default_squads:
         return []
 
-    logger.debug('Selected trial squad for subscription replacement', squad_uuid=squad_uuid)
-    return [squad_uuid]
+    logger.debug('Selected default trial squads for subscription replacement', squad_uuids=default_squads)
+    return default_squads
 
 
 async def _get_subscription(db: AsyncSession, subscription_id: int) -> Subscription:

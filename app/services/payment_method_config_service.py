@@ -169,6 +169,16 @@ def _get_method_defaults() -> dict:
                 {'id': 'crypto', 'name': 'Криптовалюта'},
             ],
         },
+        'overpay': {
+            'default_display_name': settings.get_overpay_display_name(),
+            'is_configured': settings.is_overpay_enabled(),
+            'default_min': settings.OVERPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.OVERPAY_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'fps', 'name': 'СБП'},
+            ],
+        },
         'aurapay': {
             'default_display_name': settings.get_aurapay_display_name(),
             'is_configured': settings.is_aurapay_enabled(),
@@ -185,6 +195,57 @@ def _get_method_defaults() -> dict:
             'default_min': settings.LOLZ_MIN_AMOUNT_KOPEKS,
             'default_max': settings.LOLZ_MAX_AMOUNT_KOPEKS,
             'available_sub_options': None,
+        },
+        'etoplatezhi': {
+            'default_display_name': settings.get_etoplatezhi_display_name(),
+            'is_configured': settings.is_etoplatezhi_enabled(),
+            'default_min': settings.ETOPLATEZHI_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.ETOPLATEZHI_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+            ],
+        },
+        'antilopay': {
+            'default_display_name': settings.get_antilopay_display_name(),
+            'is_configured': settings.is_antilopay_enabled(),
+            'default_min': settings.ANTILOPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.ANTILOPAY_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+                {'id': 'sberpay', 'name': 'SberPay'},
+            ],
+        },
+        'jupiter': {
+            'default_display_name': settings.get_jupiter_display_name(),
+            'is_configured': settings.is_jupiter_enabled(),
+            'default_min': settings.JUPITER_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.JUPITER_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'sbp', 'name': 'СБП'},
+            ],
+        },
+        'donut': {
+            'default_display_name': settings.get_donut_display_name(),
+            'is_configured': settings.is_donut_enabled(),
+            'default_min': settings.DONUT_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.DONUT_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+                {'id': 'sbp_qr', 'name': 'СБП QR'},
+            ],
+        },
+        'lava': {
+            'default_display_name': settings.get_lava_display_name(),
+            'is_configured': settings.is_lava_enabled(),
+            'default_min': settings.LAVA_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.LAVA_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+            ],
         },
     }
 
@@ -230,8 +291,14 @@ DEFAULT_METHOD_ORDER = [
     'severpay',
     'paypear',
     'rollypay',
+    'overpay',
     'aurapay',
     'lolz',
+    'etoplatezhi',
+    'antilopay',
+    'jupiter',
+    'donut',
+    'lava',
 ]
 
 

@@ -982,6 +982,13 @@ async def handle_custom_confirm(
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
 
+    # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
+    # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
     texts = get_texts(db_user.language)
 
     # Save promo offer state before deduction (for restore on failure)
@@ -1001,11 +1008,17 @@ async def handle_custom_confirm(
             mark_as_paid_subscription=True,
         )
         if not success:
-            await callback.answer('Ошибка списания баланса', show_alert=True)
+            try:
+                await callback.message.edit_text('❌ Ошибка списания баланса')
+            except Exception:
+                pass
             return
     except Exception as e:
         logger.error('Ошибка списания баланса при покупке кастомного тарифа', error=e, exc_info=True)
-        await callback.answer('Ошибка списания баланса', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ Ошибка списания баланса')
+        except Exception:
+            pass
         return
 
     # Получаем список серверов из тарифа
@@ -1094,7 +1107,10 @@ async def handle_custom_confirm(
                 price_kopeks=total_price,
                 refund_error=refund_error,
             )
-        await callback.answer('Произошла ошибка при оформлении подписки', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ Произошла ошибка при оформлении подписки')
+        except Exception:
+            pass
         return
 
     try:
@@ -1173,11 +1189,12 @@ async def handle_custom_confirm(
             ),
             parse_mode='HTML',
         )
-        await callback.answer('Подписка оформлена!', show_alert=True)
-
     except Exception as e:
         logger.error('Ошибка при покупке тарифа с кастомными параметрами', error=e, exc_info=True)
-        await callback.answer('Произошла ошибка при оформлении подписки', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ Произошла ошибка при оформлении подписки')
+        except Exception:
+            pass
 
 
 @error_handler
@@ -1409,6 +1426,13 @@ async def confirm_tariff_purchase(
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
 
+    # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
+    # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
     texts = get_texts(db_user.language)
 
     # Списываем баланс
@@ -1427,11 +1451,17 @@ async def confirm_tariff_purchase(
             mark_as_paid_subscription=True,
         )
         if not success:
-            await callback.answer('Ошибка списания баланса', show_alert=True)
+            try:
+                await callback.message.edit_text('❌ Ошибка списания баланса')
+            except Exception:
+                pass
             return
     except Exception as e:
         logger.error('Ошибка списания баланса при покупке тарифа', error=e, exc_info=True)
-        await callback.answer('Ошибка списания баланса', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ Ошибка списания баланса')
+        except Exception:
+            pass
         return
 
     # Получаем список серверов из тарифа
@@ -1490,10 +1520,12 @@ async def confirm_tariff_purchase(
                         db_user.promo_offer_discount_source = saved_promo_source
                         db_user.promo_offer_discount_expires_at = saved_promo_expires
                     await db.commit()
-                    await callback.answer(
-                        f'Максимум подписок: {settings.get_max_active_subscriptions()}',
-                        show_alert=True,
-                    )
+                    try:
+                        await callback.message.edit_text(
+                            f'❌ Максимум подписок: {settings.get_max_active_subscriptions()}'
+                        )
+                    except Exception:
+                        pass
                     return
 
                 # Create NEW subscription for this tariff (multi-tariff: new Remnawave user)
@@ -1573,7 +1605,10 @@ async def confirm_tariff_purchase(
                 reason='Возврат: тариф уже активен',
                 error=refund_error,
             )
-        await callback.answer('У вас уже есть активная подписка на этот тариф', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ У вас уже есть активная подписка на этот тариф')
+        except Exception:
+            pass
         return
     except Exception as e:
         logger.error('Ошибка создания/продления подписки при покупке тарифа', error=e, exc_info=True)
@@ -1617,7 +1652,10 @@ async def confirm_tariff_purchase(
                 reason='Возврат: ошибка покупки тарифа',
                 error=refund_error,
             )
-        await callback.answer('Произошла ошибка при оформлении подписки', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ Произошла ошибка при оформлении подписки')
+        except Exception:
+            pass
         return
 
     # Обновляем пользователя в Remnawave
@@ -1754,7 +1792,6 @@ async def confirm_tariff_purchase(
         ),
         parse_mode='HTML',
     )
-    await callback.answer('Подписка оформлена!', show_alert=True)
 
 
 # ==================== Покупка суточного тарифа ====================
@@ -1810,6 +1847,13 @@ async def confirm_daily_tariff_purchase(
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
 
+    # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
+    # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
     texts = get_texts(db_user.language)
 
     try:
@@ -1823,11 +1867,17 @@ async def confirm_daily_tariff_purchase(
             mark_as_paid_subscription=True,
         )
         if not success:
-            await callback.answer('Ошибка списания баланса', show_alert=True)
+            try:
+                await callback.message.edit_text('❌ Ошибка списания баланса')
+            except Exception:
+                pass
             return
     except Exception as e:
         logger.error('Ошибка списания баланса при покупке суточного тарифа', error=e, exc_info=True)
-        await callback.answer('Ошибка списания баланса', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ Ошибка списания баланса')
+        except Exception:
+            pass
         return
 
     # Получаем список серверов из тарифа
@@ -1946,35 +1996,10 @@ async def confirm_daily_tariff_purchase(
                 price_kopeks=final_daily_price,
                 refund_error=refund_error,
             )
-        except Exception as e:
-            logger.error('Ошибка очистки корзины', error=e)
-
-        await state.clear()
-
-        traffic = _format_traffic(tariff.traffic_limit_gb)
-
-        await callback.message.edit_text(
-            f'🎉 <b>Суточная подписка оформлена!</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
-            f'📊 Трафик: {traffic}\n'
-            f'📱 Устройств: {tariff.device_limit}\n'
-            f'🔄 Тип: Суточный\n'
-            f'💰 Списано: {format_price_kopeks(daily_price)}\n\n'
-            f'ℹ️ Следующее списание через 24 часа.\n'
-            f'Перейдите в раздел «Подписка» для подключения.',
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text='📱 Моя подписка', callback_data='nz!_menu_subscription')],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
-                ]
-            ),
-            parse_mode='HTML',
-        )
-        await callback.answer('Подписка оформлена!', show_alert=True)
-
-    except Exception as e:
-        logger.error('Ошибка при покупке суточного тарифа', error=e, exc_info=True)
-        await callback.answer('Произошла ошибка при оформлении подписки', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ Произошла ошибка при оформлении подписки')
+        except Exception:
+            pass
         return
 
     # Обновляем пользователя в Remnawave
@@ -2054,7 +2079,6 @@ async def confirm_daily_tariff_purchase(
         ),
         parse_mode='HTML',
     )
-    await callback.answer('Подписка оформлена!', show_alert=True)
 
 
 # ==================== Продление по тарифу ====================
@@ -2202,6 +2226,31 @@ async def show_tariff_extend(
     tariff = await get_tariff_by_id(db, subscription.tariff_id)
     if not tariff:
         await callback.answer('Тариф не найден', show_alert=True)
+        return
+
+    # Скрытый/неактивный тариф (например, триальный после промокода) —
+    # показываем список доступных тарифов вместо продления скрытого
+    if not tariff.is_active:
+        promo_group_id = getattr(db_user, 'promo_group_id', None)
+        tariffs = await get_tariffs_for_user(db, promo_group_id)
+        active_tariffs = [t for t in tariffs if not t.is_daily]
+        if not active_tariffs:
+            await callback.answer('Нет доступных тарифов для продления', show_alert=True)
+            return
+
+        keyboard = []
+        for t in active_tariffs:
+            keyboard.append([InlineKeyboardButton(text=f'📦 {t.name}', callback_data=f'tariff_select:{t.id}')])
+        keyboard.append([InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+
+        await callback.message.edit_text(
+            '🔄 <b>Выберите тариф для продления</b>\n\n'
+            'Для продления подписки необходимо выбрать тариф.\n'
+            'Подписка будет обновлена с параметрами выбранного тарифа.',
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+            parse_mode='HTML',
+        )
+        await callback.answer()
         return
 
     traffic = format_traffic(tariff.traffic_limit_gb)
@@ -2403,6 +2452,13 @@ async def confirm_tariff_extend(
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
 
+    # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
+    # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
     texts = get_texts(db_user.language)
 
     try:
@@ -2416,7 +2472,10 @@ async def confirm_tariff_extend(
             mark_as_paid_subscription=True,
         )
         if not success:
-            await callback.answer('Ошибка списания баланса', show_alert=True)
+            try:
+                await callback.message.edit_text('❌ Ошибка списания баланса')
+            except Exception:
+                pass
             return
 
         # Запоминаем, был ли триал ДО продления
@@ -2509,11 +2568,12 @@ async def confirm_tariff_extend(
             ),
             parse_mode='HTML',
         )
-        await callback.answer('Подписка продлена!', show_alert=True)
-
     except Exception as e:
         logger.error('Ошибка при продлении тарифа', error=e, exc_info=True)
-        await callback.answer('Произошла ошибка при продлении подписки', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ Произошла ошибка при продлении подписки')
+        except Exception:
+            pass
 
 
 # ==================== Переключение тарифов ====================
@@ -2687,6 +2747,18 @@ async def show_tariff_switch_list(
 
     current_tariff_id = subscription.tariff_id
 
+    # Проверяем, разрешена ли смена тарифа хотя бы в одном направлении
+    if not settings.TARIFF_SWITCH_UPGRADE_ENABLED and not settings.TARIFF_SWITCH_DOWNGRADE_ENABLED:
+        await callback.message.edit_text(
+            '🚫 <b>Смена тарифа недоступна</b>\n\nАдминистратор отключил возможность смены тарифа.',
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')]]
+            ),
+            parse_mode='HTML',
+        )
+        await callback.answer()
+        return
+
     # Получаем доступные тарифы
     promo_group_id = getattr(db_user, 'promo_group_id', None)
     tariffs = await get_tariffs_for_user(db, promo_group_id)
@@ -2698,6 +2770,14 @@ async def show_tariff_switch_list(
         available_tariffs = [t for t in tariffs if t.id not in _purchased_ids]
     else:
         available_tariffs = [t for t in tariffs if t.id != current_tariff_id]
+
+    # Фильтруем по разрешённым направлениям (upgrade/downgrade)
+    current_tariff = await get_tariff_by_id(db, current_tariff_id) if current_tariff_id else None
+    if current_tariff:
+        remaining_days = max(0, (subscription.end_date - datetime.now(UTC)).days) if subscription.end_date else 0
+        available_tariffs = _filter_tariffs_by_switch_direction(
+            available_tariffs, current_tariff, remaining_days, db_user
+        )
 
     if not available_tariffs:
         await callback.message.edit_text(
@@ -2759,6 +2839,24 @@ async def select_tariff_switch(
     if not tariff or not tariff.is_active:
         await callback.answer('Тариф недоступен', show_alert=True)
         return
+
+    # Проверяем разрешение на смену в данном направлении
+    current_subscription_sw, _sw_sub_id_check = await _resolve_subscription(callback, db_user, db, state)
+    if current_subscription_sw and current_subscription_sw.tariff_id:
+        cur_tariff_sw = await get_tariff_by_id(db, current_subscription_sw.tariff_id)
+        if cur_tariff_sw:
+            rem_days = (
+                max(0, (current_subscription_sw.end_date - datetime.now(UTC)).days)
+                if current_subscription_sw.end_date
+                else 0
+            )
+            _, is_up = _calculate_instant_switch_cost(cur_tariff_sw, tariff, rem_days, db_user)
+            if is_up and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
+                await callback.answer('Повышение тарифа недоступно', show_alert=True)
+                return
+            if not is_up and not settings.TARIFF_SWITCH_DOWNGRADE_ENABLED:
+                await callback.answer('Понижение тарифа недоступно', show_alert=True)
+                return
 
     traffic = format_traffic(tariff.traffic_limit_gb)
 
@@ -2982,6 +3080,19 @@ async def confirm_tariff_switch(
         await callback.answer('У вас нет активной подписки', show_alert=True)
         return
 
+    # Проверяем разрешение на смену в данном направлении
+    if subscription.tariff_id and subscription.tariff_id != tariff_id:
+        cur_tariff_obj = await get_tariff_by_id(db, subscription.tariff_id)
+        if cur_tariff_obj:
+            rem_days = max(0, (subscription.end_date - datetime.now(UTC)).days) if subscription.end_date else 0
+            _, is_up = _calculate_instant_switch_cost(cur_tariff_obj, tariff, rem_days, db_user)
+            if is_up and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
+                await callback.answer('Повышение тарифа недоступно', show_alert=True)
+                return
+            if not is_up and not settings.TARIFF_SWITCH_DOWNGRADE_ENABLED:
+                await callback.answer('Понижение тарифа недоступно', show_alert=True)
+                return
+
     # Calculate price via PricingEngine (handles per-category discounts + extra devices)
     from app.services.pricing_engine import pricing_engine
 
@@ -3003,6 +3114,13 @@ async def confirm_tariff_switch(
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
 
+    # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
+    # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
     texts = get_texts(db_user.language)
 
     try:
@@ -3016,7 +3134,10 @@ async def confirm_tariff_switch(
             mark_as_paid_subscription=True,
         )
         if not success:
-            await callback.answer('Ошибка списания баланса', show_alert=True)
+            try:
+                await callback.message.edit_text('❌ Ошибка списания баланса')
+            except Exception:
+                pass
             return
 
         # Получаем список серверов из тарифа
@@ -3150,11 +3271,13 @@ async def confirm_tariff_switch(
             ),
             parse_mode='HTML',
         )
-        await callback.answer('Тариф изменён!', show_alert=True)
 
     except Exception as e:
         logger.error('Ошибка при переключении тарифа', error=e, exc_info=True)
-        await callback.answer('Произошла ошибка при переключении тарифа', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ Произошла ошибка при переключении тарифа')
+        except Exception:
+            pass
 
 
 # ==================== Смена на суточный тариф ====================
@@ -3216,6 +3339,26 @@ async def confirm_daily_tariff_switch(
         await callback.answer('У вас нет активной подписки', show_alert=True)
         return
 
+    # Проверяем разрешение на смену в данном направлении
+    if subscription.tariff_id and subscription.tariff_id != tariff_id:
+        cur_tariff_daily = await get_tariff_by_id(db, subscription.tariff_id)
+        if cur_tariff_daily:
+            rem_days = max(0, (subscription.end_date - datetime.now(UTC)).days) if subscription.end_date else 0
+            _, is_up = _calculate_instant_switch_cost(cur_tariff_daily, tariff, rem_days, db_user)
+            if is_up and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
+                await callback.answer('Повышение тарифа недоступно', show_alert=True)
+                return
+            if not is_up and not settings.TARIFF_SWITCH_DOWNGRADE_ENABLED:
+                await callback.answer('Понижение тарифа недоступно', show_alert=True)
+                return
+
+    # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
+    # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
     texts = get_texts(db_user.language)
 
     try:
@@ -3229,7 +3372,10 @@ async def confirm_daily_tariff_switch(
             mark_as_paid_subscription=True,
         )
         if not success:
-            await callback.answer('Ошибка списания баланса', show_alert=True)
+            try:
+                await callback.message.edit_text('❌ Ошибка списания баланса')
+            except Exception:
+                pass
             return
 
         # Получаем список серверов из тарифа
@@ -3365,7 +3511,6 @@ async def confirm_daily_tariff_switch(
             ),
             parse_mode='HTML',
         )
-        await callback.answer('Тариф изменён!', show_alert=True)
 
     except Exception as e:
         logger.error('Ошибка при смене на суточный тариф', error=e, exc_info=True)
@@ -3398,7 +3543,10 @@ async def confirm_daily_tariff_switch(
                 price_kopeks=final_daily_price,
                 refund_error=refund_error,
             )
-        await callback.answer('Произошла ошибка при смене тарифа', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ Произошла ошибка при смене тарифа')
+        except Exception:
+            pass
 
 
 # ==================== Мгновенное переключение тарифов (без выбора периода) ====================
@@ -3427,6 +3575,30 @@ def _calculate_instant_switch_cost(
     return result.upgrade_cost, result.is_upgrade
 
 
+def _filter_tariffs_by_switch_direction(
+    tariffs: list[Tariff],
+    current_tariff: Tariff,
+    remaining_days: int,
+    db_user: User | None = None,
+) -> list[Tariff]:
+    """Фильтрует тарифы по разрешённым направлениям смены (upgrade/downgrade)."""
+    upgrade_ok = settings.TARIFF_SWITCH_UPGRADE_ENABLED
+    downgrade_ok = settings.TARIFF_SWITCH_DOWNGRADE_ENABLED
+
+    if upgrade_ok and downgrade_ok:
+        return tariffs
+
+    filtered = []
+    for tariff in tariffs:
+        if tariff.id == current_tariff.id:
+            filtered.append(tariff)
+            continue
+        _, is_upgrade = _calculate_instant_switch_cost(current_tariff, tariff, remaining_days, db_user)
+        if (is_upgrade and upgrade_ok) or (not is_upgrade and downgrade_ok):
+            filtered.append(tariff)
+    return filtered
+
+
 def format_instant_switch_list_text(
     tariffs: list[Tariff],
     current_tariff: Tariff,
@@ -3434,16 +3606,21 @@ def format_instant_switch_list_text(
     db_user: User | None = None,
 ) -> str:
     """Форматирует текст со списком тарифов для мгновенного переключения."""
+    upgrade_ok = settings.TARIFF_SWITCH_UPGRADE_ENABLED
+    downgrade_ok = settings.TARIFF_SWITCH_DOWNGRADE_ENABLED
+
     lines = [
         '📦 <b>Мгновенная смена тарифа</b>',
         f'📌 Текущий: <b>{html.escape(current_tariff.name)}</b>',
         f'⏰ Осталось: <b>{remaining_days} дн.</b>',
         '',
         '💡 При переключении остаток дней сохраняется.',
-        '⬆️ Повышение тарифа = доплата за разницу',
-        '⬇️ Понижение = бесплатно',
-        '',
     ]
+    if upgrade_ok:
+        lines.append('⬆️ Повышение тарифа = доплата за разницу')
+    if downgrade_ok:
+        lines.append('⬇️ Понижение = бесплатно')
+    lines.append('')
 
     for tariff in tariffs:
         if tariff.id == current_tariff.id:
@@ -3574,6 +3751,18 @@ async def show_instant_switch_list(
         await callback.answer()
         return
 
+    # Проверяем, разрешена ли смена тарифа хотя бы в одном направлении
+    if not settings.TARIFF_SWITCH_UPGRADE_ENABLED and not settings.TARIFF_SWITCH_DOWNGRADE_ENABLED:
+        await callback.message.edit_text(
+            '🚫 <b>Смена тарифа недоступна</b>\n\nАдминистратор отключил возможность смены тарифа.',
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')]]
+            ),
+            parse_mode='HTML',
+        )
+        await callback.answer()
+        return
+
     # Получаем доступные тарифы
     promo_group_id = getattr(db_user, 'promo_group_id', None)
     tariffs = await get_tariffs_for_user(db, promo_group_id)
@@ -3585,6 +3774,9 @@ async def show_instant_switch_list(
         available_tariffs = [t for t in tariffs if t.id not in _purchased_ids_instant]
     else:
         available_tariffs = [t for t in tariffs if t.id != current_tariff.id]
+
+    # Фильтруем по разрешённым направлениям (upgrade/downgrade)
+    available_tariffs = _filter_tariffs_by_switch_direction(available_tariffs, current_tariff, remaining_days, db_user)
 
     if not available_tariffs:
         await callback.message.edit_text(
@@ -3654,6 +3846,14 @@ async def preview_instant_switch(
 
     # Рассчитываем стоимость переключения
     upgrade_cost, is_upgrade = _calculate_instant_switch_cost(current_tariff, new_tariff, remaining_days, db_user)
+
+    # Проверяем разрешение на смену в данном направлении
+    if is_upgrade and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
+        await callback.answer('Повышение тарифа недоступно', show_alert=True)
+        return
+    if not is_upgrade and not settings.TARIFF_SWITCH_DOWNGRADE_ENABLED:
+        await callback.answer('Понижение тарифа недоступно', show_alert=True)
+        return
 
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
@@ -3829,11 +4029,26 @@ async def confirm_instant_switch(
     is_upgrade = switch_result.is_upgrade
     consume_promo = switch_result.offer_discount_pct > 0
 
+    # Проверяем разрешение на смену в данном направлении
+    if is_upgrade and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
+        await callback.answer('Повышение тарифа недоступно', show_alert=True)
+        return
+    if not is_upgrade and not settings.TARIFF_SWITCH_DOWNGRADE_ENABLED:
+        await callback.answer('Понижение тарифа недоступно', show_alert=True)
+        return
+
     # Проверяем баланс если это upgrade (use locked user's fresh balance)
     user_balance = db_user.balance_kopeks or 0
     if is_upgrade and user_balance < upgrade_cost:
         await callback.answer('Недостаточно средств на балансе', show_alert=True)
         return
+
+    # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
+    # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
     texts = get_texts(db_user.language)
 
@@ -3850,7 +4065,10 @@ async def confirm_instant_switch(
                 mark_as_paid_subscription=True,
             )
             if not success:
-                await callback.answer('Ошибка списания баланса', show_alert=True)
+                try:
+                    await callback.message.edit_text('❌ Ошибка списания баланса')
+                except Exception:
+                    pass
                 return
 
         # Получаем список серверов из нового тарифа
@@ -3918,7 +4136,10 @@ async def confirm_instant_switch(
                         mark_as_paid_subscription=True,
                     )
                     if not success:
-                        await callback.answer('❌ Недостаточно средств', show_alert=True)
+                        try:
+                            await callback.message.edit_text('❌ Недостаточно средств')
+                        except Exception:
+                            pass
                         return
                     await create_transaction(
                         db,
@@ -4072,11 +4293,13 @@ async def confirm_instant_switch(
                 ),
                 parse_mode='HTML',
             )
-        await callback.answer('Тариф изменён!', show_alert=True)
 
     except Exception as e:
         logger.error('Ошибка при мгновенном переключении тарифа', error=e, exc_info=True)
-        await callback.answer('Произошла ошибка при переключении тарифа', show_alert=True)
+        try:
+            await callback.message.edit_text('❌ Произошла ошибка при переключении тарифа')
+        except Exception:
+            pass
 
 
 async def return_to_saved_tariff_cart(

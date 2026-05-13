@@ -1,4 +1,5 @@
 import html as html_mod
+import math
 from datetime import UTC, datetime
 
 from aiogram import types
@@ -325,9 +326,14 @@ async def confirm_change_devices(
     if devices_difference > 0:
         additional_devices = devices_difference
 
-        # Для тарифов - все устройства платные (нет бесплатного лимита)
+        # Устройства в пределах тарифного лимита — бесплатные
         if tariff:
-            chargeable_devices = additional_devices
+            tariff_included = tariff.device_limit or 0
+            if current_devices < tariff_included:
+                free_devices = tariff_included - current_devices
+                chargeable_devices = max(0, additional_devices - free_devices)
+            else:
+                chargeable_devices = additional_devices
         elif current_devices < settings.DEFAULT_DEVICE_LIMIT:
             free_devices = settings.DEFAULT_DEVICE_LIMIT - current_devices
             chargeable_devices = max(0, additional_devices - free_devices)
@@ -338,7 +344,7 @@ async def confirm_change_devices(
 
         # Считаем стоимость по оставшимся дням подписки
         now = datetime.now(UTC)
-        days_left = max(1, (subscription.end_date - now).days)
+        days_left = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
         period_hint_days = days_left
 
         devices_discount_percent = PricingEngine.get_addon_discount_percent(
@@ -352,7 +358,8 @@ async def confirm_change_devices(
         )
         # Цена = месячная_цена * days_left / 30
         price = int(discounted_per_month * days_left / 30)
-        price = max(100, price)  # Минимум 1 рубль
+        if chargeable_devices > 0:
+            price = max(100, price)  # Минимум 1 рубль (только для платных устройств)
         total_discount = int(discount_per_month * days_left / 30)
         period_label = f'{days_left} дн.' if days_left > 1 else '1 день'
 
@@ -555,7 +562,12 @@ async def execute_change_devices(
     devices_difference = new_devices_count - current_devices
     if devices_difference > 0:
         if tariff:
-            chargeable_devices = devices_difference
+            tariff_included = tariff.device_limit or 0
+            if current_devices < tariff_included:
+                free_devices = tariff_included - current_devices
+                chargeable_devices = max(0, devices_difference - free_devices)
+            else:
+                chargeable_devices = devices_difference
         elif current_devices < settings.DEFAULT_DEVICE_LIMIT:
             free_devices = settings.DEFAULT_DEVICE_LIMIT - current_devices
             chargeable_devices = max(0, devices_difference - free_devices)
@@ -563,7 +575,7 @@ async def execute_change_devices(
             chargeable_devices = devices_difference
 
         devices_price_per_month = chargeable_devices * price_per_device
-        days_left = max(1, (subscription.end_date - datetime.now(UTC)).days)
+        days_left = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
         devices_discount_percent = PricingEngine.get_addon_discount_percent(
             db_user,
             'devices',
@@ -574,7 +586,8 @@ async def execute_change_devices(
             devices_discount_percent,
         )
         price = int(discounted_per_month * days_left / 30)
-        price = max(100, price)
+        if chargeable_devices > 0:
+            price = max(100, price)
     else:
         price = 0
 
@@ -591,7 +604,7 @@ async def execute_change_devices(
                 )
                 return
 
-            charged_days = max(1, (subscription.end_date - datetime.now(UTC)).days)
+            charged_days = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
             await create_transaction(
                 db=db,
                 user_id=db_user.id,
@@ -1218,7 +1231,22 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         )
         return
 
-    devices_price_per_month = devices_count * price_per_device
+    # Устройства в пределах тарифного лимита — бесплатные
+    current_devices = subscription.device_limit or 1
+    if tariff:
+        tariff_included = tariff.device_limit or 0
+        if current_devices < tariff_included:
+            free_devices = tariff_included - current_devices
+            chargeable_devices = max(0, devices_count - free_devices)
+        else:
+            chargeable_devices = devices_count
+    elif current_devices < settings.DEFAULT_DEVICE_LIMIT:
+        free_devices = settings.DEFAULT_DEVICE_LIMIT - current_devices
+        chargeable_devices = max(0, devices_count - free_devices)
+    else:
+        chargeable_devices = devices_count
+
+    devices_price_per_month = chargeable_devices * price_per_device
 
     # TOCTOU: lock user row before reading promo/discount state
     db_user = await lock_user_for_pricing(db, db_user.id)
@@ -1229,7 +1257,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
     if is_daily_tariff:
         # Для суточных тарифов считаем по дням (как в кабинете)
         now = datetime.now(UTC)
-        days_left = max(1, (subscription.end_date - now).days)
+        days_left = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
         period_hint_days = days_left
 
         devices_discount_percent = PricingEngine.get_addon_discount_percent(
@@ -1243,13 +1271,14 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         )
         # Цена = месячная_цена * days_left / 30
         price = int(discounted_per_month * days_left / 30)
-        price = max(100, price)  # Минимум 1 рубль
+        if chargeable_devices > 0:
+            price = max(100, price)  # Минимум 1 рубль (только для платных устройств)
         total_discount = int(discount_per_month * days_left / 30)
         period_label = f'{days_left} дн.' if days_left > 1 else '1 день'
     else:
         # Для обычных тарифов - по дням (как в кабинете)
         now = datetime.now(UTC)
-        days_left = max(1, (subscription.end_date - now).days)
+        days_left = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
         period_hint_days = days_left
 
         devices_discount_percent = PricingEngine.get_addon_discount_percent(
@@ -1263,7 +1292,8 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         )
         # Цена = месячная_цена * days_left / 30
         price = int(discounted_per_month * days_left / 30)
-        price = max(100, price)  # Минимум 1 рубль
+        if chargeable_devices > 0:
+            price = max(100, price)  # Минимум 1 рубль (только для платных устройств)
         total_discount = int(discount_per_month * days_left / 30)
         period_label = f'{days_left} дн.' if days_left > 1 else '1 день'
 

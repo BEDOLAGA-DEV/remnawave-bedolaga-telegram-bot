@@ -196,12 +196,10 @@ class AuraPayService:
                 logger.warning('AuraPay webhook: отсутствует X-SIGNATURE')
                 return False
 
-            # Сортируем ключи по алфавиту и конкатенируем значения.
-            # AuraPay при подписи не учитывает null-поля; Python str(None) даёт
-            # 'None'. Чтобы получить байт-в-байт совпадение с эталонной реализацией,
-            # удаляем подстроку 'None' из итоговой строки после конкатенации.
+            # Сортируем ключи по алфавиту и конкатенируем значения
+            # None → '' (PHP implode() converts null to empty string, not "None")
             sorted_keys = sorted(payload.keys())
-            concatenated_values = ''.join(str(payload[key]) for key in sorted_keys).replace('None', '')
+            concatenated_values = ''.join(str(payload[key]) if payload[key] is not None else '' for key in sorted_keys)
 
             expected = hmac.new(
                 self.secret_key.encode('utf-8'),

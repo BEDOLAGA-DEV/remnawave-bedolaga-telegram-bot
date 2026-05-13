@@ -1,5 +1,6 @@
 """Admin routes for managing users in cabinet."""
 
+import math
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -70,6 +71,7 @@ from ..schemas.users import (
     ResetTrialRequest,
     ResetTrialResponse,
     SortByEnum,
+    SubscriptionListItem,
     SyncFromPanelRequest,
     SyncFromPanelResponse,
     SyncToPanelRequest,
@@ -119,6 +121,12 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
     subscription_is_trial = False
     subscription_end_date = None
     has_subscription = False
+    tariff_id = None
+    tariff_name = None
+    traffic_used_gb = 0.0
+    traffic_limit_gb = 0
+    device_limit = 0
+    days_remaining = 0
 
     subs = getattr(user, 'subscriptions', None) or []
     subscription = next((s for s in subs if s.is_active), subs[0] if subs else None)
@@ -127,6 +135,37 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
         subscription_status = subscription.status
         subscription_is_trial = subscription.is_trial
         subscription_end_date = subscription.end_date
+        tariff_id = subscription.tariff_id
+        tariff_name = subscription.tariff.name if subscription.tariff else None
+        traffic_used_gb = subscription.traffic_used_gb or 0.0
+        traffic_limit_gb = subscription.traffic_limit_gb or 0
+        device_limit = subscription.device_limit or 0
+        if subscription.end_date:
+            delta = subscription.end_date - datetime.now(UTC)
+            days_remaining = max(0, delta.days)
+
+    # Build per-subscription list (always — bulk actions need it for any mode)
+    sub_list: list[SubscriptionListItem] = []
+    if subs:
+        for s in subs:
+            s_days = 0
+            if s.end_date:
+                s_delta = s.end_date - datetime.now(UTC)
+                s_days = max(0, s_delta.days)
+            sub_list.append(
+                SubscriptionListItem(
+                    id=s.id,
+                    tariff_id=s.tariff_id,
+                    tariff_name=s.tariff.name if s.tariff else None,
+                    status=s.status,
+                    is_trial=bool(s.is_trial),
+                    end_date=s.end_date,
+                    days_remaining=s_days,
+                    traffic_used_gb=s.traffic_used_gb or 0.0,
+                    traffic_limit_gb=s.traffic_limit_gb or 0,
+                    device_limit=s.device_limit or 0,
+                )
+            )
 
     return UserListItem(
         id=user.id,
@@ -144,6 +183,13 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
         subscription_status=subscription_status,
         subscription_is_trial=subscription_is_trial,
         subscription_end_date=subscription_end_date,
+        tariff_id=tariff_id,
+        tariff_name=tariff_name,
+        traffic_used_gb=traffic_used_gb,
+        traffic_limit_gb=traffic_limit_gb,
+        device_limit=device_limit,
+        days_remaining=days_remaining,
+        subscriptions=sub_list,
         promo_group_id=user.promo_group_id,
         promo_group_name=user.promo_group.name if user.promo_group else None,
         total_spent_kopeks=user_stats.get('total_spent', 0),
@@ -347,7 +393,10 @@ async def _sync_subscription_to_panel(
                     changes['action'] = 'updated'
                     logger.info('Updated user in Remnawave panel', user_id=user.id)
                 except Exception as update_error:
-                    if hasattr(update_error, 'status_code') and update_error.status_code == 404:
+                    error_code = (getattr(update_error, 'response_data', None) or {}).get('errorCode', '')
+                    if (
+                        hasattr(update_error, 'status_code') and update_error.status_code == 404
+                    ) or error_code == 'A018':
                         panel_uuid = None  # Will create new
                     else:
                         raise
@@ -417,6 +466,11 @@ async def list_users(
     search: str | None = Query(None, max_length=255),
     email: str | None = Query(None, max_length=255),
     status: UserStatusEnum | None = Query(None),
+    subscription_status: str | None = Query(None, max_length=20),
+    tariff_id: str | None = Query(None, max_length=255),
+    promo_group_id: int | None = Query(None),
+    campaign_id: int | None = Query(None),
+    partner_id: int | None = Query(None),
     sort_by: SortByEnum = Query(SortByEnum.CREATED_AT),
     admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
@@ -443,6 +497,14 @@ async def list_users(
     order_by_total_spent = sort_by == SortByEnum.TOTAL_SPENT
     order_by_purchase_count = sort_by == SortByEnum.PURCHASE_COUNT
 
+    # Parse comma-separated tariff_ids
+    tariff_ids: list[int] | None = None
+    if tariff_id:
+        try:
+            tariff_ids = [int(x.strip()) for x in tariff_id.split(',') if x.strip()]
+        except ValueError:
+            tariff_ids = None
+
     users = await get_users_list(
         db=db,
         offset=offset,
@@ -450,6 +512,11 @@ async def list_users(
         search=search,
         email=email,
         status=user_status,
+        subscription_status=subscription_status,
+        tariff_ids=tariff_ids,
+        promo_group_id=promo_group_id,
+        campaign_id=campaign_id,
+        partner_id=partner_id,
         order_by_balance=order_by_balance,
         order_by_traffic=order_by_traffic,
         order_by_last_activity=order_by_last_activity,
@@ -457,7 +524,17 @@ async def list_users(
         order_by_purchase_count=order_by_purchase_count,
     )
 
-    total = await get_users_count(db=db, status=user_status, search=search, email=email)
+    total = await get_users_count(
+        db=db,
+        status=user_status,
+        search=search,
+        email=email,
+        subscription_status=subscription_status,
+        tariff_ids=tariff_ids,
+        promo_group_id=promo_group_id,
+        campaign_id=campaign_id,
+        partner_id=partner_id,
+    )
 
     # Get spending stats for all users
     user_ids = [u.id for u in users]
@@ -823,6 +900,50 @@ async def get_user_panel_info(
         return UserPanelInfoResponse(found=False)
 
 
+@router.get('/{user_id}/subscription-request-history')
+async def get_subscription_request_history(
+    user_id: int,
+    admin: User = Depends(require_permission('users:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+    subscription_id: int | None = Query(None, description='Subscription ID for multi-tariff'),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """Get subscription request history from RemnaWave panel."""
+    from app.database.crud.user import get_user_by_id
+
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    panel_uuid = None
+    if settings.is_multi_tariff_enabled() and subscription_id:
+        from app.database.crud.subscription import get_subscription_by_id_for_user
+
+        sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
+        if sub:
+            panel_uuid = sub.remnawave_uuid
+    else:
+        panel_uuid = getattr(user, 'remnawave_uuid', None)
+
+    if not panel_uuid:
+        return {'total': 0, 'records': []}
+
+    try:
+        from app.services.remnawave_service import RemnaWaveService
+
+        service = RemnaWaveService()
+        if not service.is_configured:
+            return {'total': 0, 'records': []}
+
+        async with service.get_api_client() as api:
+            result = await api.get_subscription_request_history(panel_uuid, offset=offset, limit=limit)
+            return result
+    except Exception as e:
+        logger.error('Error getting subscription request history', user_id=user_id, error=e)
+        return {'total': 0, 'records': []}
+
+
 @router.get('/{user_id}/node-usage', response_model=UserNodeUsageResponse)
 async def get_user_node_usage(
     user_id: int,
@@ -1050,6 +1171,17 @@ async def update_user_subscription(
                 detail='User already has a subscription. Enable multi-tariff mode to add more.',
             )
 
+        # Проверка: нельзя создать вторую активную подписку с тем же тарифом
+        if is_multi_tariff and request.tariff_id:
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            existing = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail='User already has an active subscription for this tariff. Extend it instead.',
+                )
+
         from app.database.crud.subscription import create_paid_subscription
 
         days = request.days or 30
@@ -1069,16 +1201,25 @@ async def update_user_subscription(
                 if tariff.allowed_squads:
                     connected_squads = tariff.allowed_squads
 
-        new_sub = await create_paid_subscription(
-            db=db,
-            user_id=user.id,
-            duration_days=days,
-            traffic_limit_gb=traffic_limit,
-            device_limit=device_limit,
-            is_trial=is_trial,
-            tariff_id=request.tariff_id,
-            connected_squads=connected_squads,
-        )
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            new_sub = await create_paid_subscription(
+                db=db,
+                user_id=user.id,
+                duration_days=days,
+                traffic_limit_gb=traffic_limit,
+                device_limit=device_limit,
+                is_trial=is_trial,
+                tariff_id=request.tariff_id,
+                connected_squads=connected_squads,
+            )
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail='User already has an active subscription for this tariff. Extend it instead.',
+            )
 
         # Sync to Remnawave panel
         await _sync_subscription_to_panel(db, user, new_sub)
@@ -1190,6 +1331,18 @@ async def update_user_subscription(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail='Tariff not found',
             )
+
+        # Проверка: нельзя сменить тариф, если у пользователя уже есть
+        # другая активная подписка с целевым тарифом
+        if is_multi_tariff and request.tariff_id != subscription.tariff_id:
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            existing = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
+            if existing and existing.id != subscription.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail='User already has an active subscription for the target tariff',
+                )
 
         # Preserve extra purchased devices above the old tariff's base limit
         from app.database.crud.subscription import calc_device_limit_on_tariff_switch
@@ -1322,6 +1475,18 @@ async def update_user_subscription(
         )
 
     if request.action == 'activate':
+        # Проверка: нельзя активировать, если у пользователя уже есть
+        # другая активная подписка с тем же тарифом
+        if is_multi_tariff and subscription.tariff_id:
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            existing = await get_subscription_by_user_and_tariff(db, user.id, subscription.tariff_id)
+            if existing and existing.id != subscription.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail='Cannot activate: user already has an active subscription for this tariff',
+                )
+
         subscription.status = SubscriptionStatus.ACTIVE.value
         if subscription.end_date and subscription.end_date <= datetime.now(UTC):
             # Extend by 30 days if expired
@@ -1655,9 +1820,25 @@ async def block_user(
     admin: User = Depends(require_permission('users:block')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Block a user (shortcut for status update)."""
-    request = UpdateUserStatusRequest(status=UserStatusEnum.BLOCKED, reason=reason)
-    return await update_user_status(user_id, request, admin, db)
+    """Block a user — sets DB status AND disables panel user in RemnaWave."""
+    from app.services.user_service import UserService
+
+    user_service = UserService()
+    success = await user_service.block_user(
+        db,
+        user_id,
+        admin.id,
+        reason=reason or 'Заблокирован администратором',
+    )
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found or block failed')
+
+    return UpdateUserStatusResponse(
+        success=True,
+        old_status='active',
+        new_status='blocked',
+        message='User blocked',
+    )
 
 
 @router.post('/{user_id}/unblock', response_model=UpdateUserStatusResponse)
@@ -1666,9 +1847,20 @@ async def unblock_user(
     admin: User = Depends(require_permission('users:block')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Unblock a user (shortcut for status update)."""
-    request = UpdateUserStatusRequest(status=UserStatusEnum.ACTIVE)
-    return await update_user_status(user_id, request, admin, db)
+    """Unblock a user — sets DB status AND re-enables panel user in RemnaWave."""
+    from app.services.user_service import UserService
+
+    user_service = UserService()
+    success = await user_service.unblock_user(db, user_id, admin.id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found or unblock failed')
+
+    return UpdateUserStatusResponse(
+        success=True,
+        old_status='blocked',
+        new_status='active',
+        message='User unblocked',
+    )
 
 
 # === Restrictions Management ===
@@ -3071,7 +3263,7 @@ async def sync_user_from_panel(
                     int(panel_user.traffic_limit_bytes / (1024**3)) if panel_user.traffic_limit_bytes else 100
                 )
                 panel_expire_utc = panel_datetime_to_utc(panel_user.expire_at)
-                days_remaining = max(1, (panel_expire_utc - datetime.now(UTC)).days)
+                days_remaining = max(1, math.ceil((panel_expire_utc - datetime.now(UTC)).total_seconds() / 86400))
 
                 new_sub = await create_paid_subscription(
                     db=db,
@@ -3274,7 +3466,10 @@ async def sync_user_to_panel(
                     await api.update_user(**update_kwargs)
                     action = 'updated'
                 except Exception as update_error:
-                    if hasattr(update_error, 'status_code') and update_error.status_code == 404:
+                    error_code = (getattr(update_error, 'response_data', None) or {}).get('errorCode', '')
+                    if (
+                        hasattr(update_error, 'status_code') and update_error.status_code == 404
+                    ) or error_code == 'A018':
                         # User not found in panel, create new
                         panel_uuid = None
                     else:

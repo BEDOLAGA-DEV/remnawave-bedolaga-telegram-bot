@@ -3835,9 +3835,11 @@ async def activate_subscription_trial_endpoint(
                     trial_tariff = await get_tariff_by_id(db, trial_tariff_id)
 
             if trial_tariff:
+                from app.database.crud.server_squad import get_effective_tariff_squad_uuids
+
                 trial_traffic_limit = trial_tariff.traffic_limit_gb
                 trial_device_limit = trial_tariff.device_limit
-                trial_squads = trial_tariff.allowed_squads or []
+                trial_squads = await get_effective_tariff_squad_uuids(db, trial_tariff.allowed_squads)
                 tariff_id_for_trial = trial_tariff.id
                 tariff_trial_days = getattr(trial_tariff, 'trial_duration_days', None)
                 if tariff_trial_days:
@@ -5753,7 +5755,7 @@ async def update_subscription_servers_endpoint(
             subscription.end_date,
         )
     else:
-        charged_days = max(1, (subscription.end_date - datetime.now(UTC)).days)
+        charged_days = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
 
     added_server_ids = [catalog[uuid].get('server_id') for uuid in added if catalog[uuid].get('server_id') is not None]
     added_server_prices = [
@@ -5931,7 +5933,7 @@ async def update_subscription_traffic_endpoint(
             },
         )
 
-    days_remaining = max(1, (subscription.end_date - datetime.now(UTC)).days)
+    days_remaining = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
     period_hint_days = days_remaining
 
     # Lock user BEFORE discount computation to prevent TOCTOU on promo group
@@ -6109,7 +6111,7 @@ async def update_subscription_devices_endpoint(
         chargeable_diff = new_chargeable - current_chargeable
 
         price_per_month = chargeable_diff * tariff_device_price
-        days_remaining = max(1, (subscription.end_date - datetime.now(UTC)).days)
+        days_remaining = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
         period_hint_days = days_remaining
 
         # Lock user BEFORE price computation to prevent TOCTOU on promo discount
@@ -6157,7 +6159,7 @@ async def update_subscription_devices_endpoint(
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=price_to_charge,
-            description=f'{description} за {charged_days or max(1, (subscription.end_date - datetime.now(UTC)).days)} дн.',
+            description=f'{description} за {charged_days or max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))} дн.',
         )
 
     if price_to_charge > 0:

@@ -70,8 +70,8 @@ class ReadOnlySettingError(RuntimeError):
 class BotConfigurationService:
     EXCLUDED_KEYS: set[str] = {'BOT_TOKEN', 'ADMIN_IDS'}
 
-    READ_ONLY_KEYS: set[str] = {'EXTERNAL_ADMIN_TOKEN', 'EXTERNAL_ADMIN_TOKEN_BOT_ID'}
-    PLAIN_TEXT_KEYS: set[str] = {'EXTERNAL_ADMIN_TOKEN', 'EXTERNAL_ADMIN_TOKEN_BOT_ID'}
+    READ_ONLY_KEYS: set[str] = set()
+    PLAIN_TEXT_KEYS: set[str] = set()
 
     CATEGORY_TITLES: dict[str, str] = {
         'CORE': '🤖 Основные настройки',
@@ -91,13 +91,21 @@ class BotConfigurationService:
         'KASSA_AI': '💳 KassaAI',
         'RIOPAY': '💳 RioPay',
         'SEVERPAY': '💳 SeverPay',
+        'PAYPEAR': '💳 PayPear',
+        'ROLLYPAY': '💳 RollyPay',
+        'OVERPAY': '💳 Overpay',
+        'AURAPAY': '💳 AuraPay',
+        'ANTILOPAY': '🦌 Antilopay',
+        'ETOPLATEZHI': '💳 Etoplatezhi',
+        'JUPITER': '🪐 Jupiter',
+        'DONUT': '🍩 Donut',
+        'LAVA': '🌋 Lava',
         'YOOKASSA': '🟣 YooKassa',
         'PLATEGA': '💳 {platega_name}',
         'TRIBUTE': '🎁 Tribute',
         'MULENPAY': '💰 {mulenpay_name}',
         'PAL24': '🏦 PAL24 / PayPalych',
         'WATA': '💠 Wata',
-        'EXTERNAL_ADMIN': '🛡️ Внешняя админка',
         'SUBSCRIPTIONS_CORE': '📅 Подписки и лимиты',
         'SIMPLE_SUBSCRIPTION': '⚡ Простая покупка',
         'PERIODS': '📆 Периоды подписок',
@@ -152,6 +160,15 @@ class BotConfigurationService:
         'FREEKASSA': 'Freekassa: ID магазина, API ключ, секретные слова и вебхуки.',
         'KASSA_AI': 'KassaAI: отдельная платёжка api.fk.life с СБП, картами и SberPay.',
         'RIOPAY': 'RioPay: платёжная система api.riopay.online с поддержкой карт и СБП.',
+        'PAYPEAR': 'PayPear: платёжная система api.paypear.ru с поддержкой карт, СБП, SberPay и T-Pay.',
+        'ROLLYPAY': 'RollyPay: платёжный шлюз rollypay.io с СБП, картами и криптовалютой.',
+        'OVERPAY': 'Overpay: платёжный шлюз pay.overpay.io с mTLS и поддержкой карт и СБП.',
+        'AURAPAY': 'AuraPay: платёжный шлюз aurapay.tech с поддержкой карт и СБП.',
+        'ANTILOPAY': 'Antilopay: lk.antilopay.com, оплата картой, СБП и SberPay.',
+        'ETOPLATEZHI': 'Etoplatezhi: paymentpage.etoplatezhi.ru, оплата картой и через СБП.',
+        'JUPITER': 'Jupiter (FPGate P2P v2.1): app.juppiter.tech, эквайринг СБП с HMAC-SHA256.',
+        'DONUT': 'Donut P2P: gw.donut.business, P2P-оплата картой, СБП по телефону и QR.',
+        'LAVA': 'Lava Business: gate.lava.ru, оплата картой и СБП с HMAC-SHA256 и подтверждением через webhook.',
         'PLATEGA': '{platega_name}: merchant ID, секрет, ссылки возврата и методы оплаты.',
         'MULENPAY': 'Платежи {mulenpay_name} и параметры магазина.',
         'PAL24': 'PAL24 / PayPalych подключения и лимиты.',
@@ -160,7 +177,6 @@ class BotConfigurationService:
         'TELEGRAM_WIDGET': 'Внешний вид виджета авторизации Telegram на странице входа в кабинет.',
         'TELEGRAM_OIDC': 'OpenID Connect авторизация через Telegram (новая система). Требует настройки в BotFather > Bot Settings > Web Login.',
         'WATA': 'Wata: токен доступа, тип платежа и пределы сумм.',
-        'EXTERNAL_ADMIN': 'Токен внешней админки для проверки запросов.',
         'SUBSCRIPTIONS_CORE': 'Лимиты устройств, трафика и базовые цены подписок.',
         'SIMPLE_SUBSCRIPTION': 'Параметры упрощённой покупки: период, трафик, устройства и сквады.',
         'PERIODS': 'Доступные периоды подписок и продлений.',
@@ -367,13 +383,21 @@ class BotConfigurationService:
         'KASSA_AI_': 'KASSA_AI',
         'RIOPAY_': 'RIOPAY',
         'SEVERPAY_': 'SEVERPAY',
+        'PAYPEAR_': 'PAYPEAR',
+        'ROLLYPAY_': 'ROLLYPAY',
+        'OVERPAY_': 'OVERPAY',
+        'AURAPAY_': 'AURAPAY',
+        'ANTILOPAY_': 'ANTILOPAY',
+        'ETOPLATEZHI_': 'ETOPLATEZHI',
+        'JUPITER_': 'JUPITER',
+        'DONUT_': 'DONUT',
+        'LAVA_': 'LAVA',
         'PLATEGA_': 'PLATEGA',
         'MULENPAY_': 'MULENPAY',
         'PAL24_': 'PAL24',
         'PAYMENT_': 'PAYMENT',
         'PAYMENT_VERIFICATION_': 'PAYMENT_VERIFICATION',
         'WATA_': 'WATA',
-        'EXTERNAL_ADMIN_': 'EXTERNAL_ADMIN',
         'SIMPLE_SUBSCRIPTION_': 'SIMPLE_SUBSCRIPTION',
         'CONNECT_BUTTON_HAPP': 'HAPP',
         'HAPP_': 'HAPP',
@@ -729,20 +753,6 @@ class BotConfigurationService:
                 'Недопустимые символы автоматически заменяются на подчёркивания. '
                 'Если результат пустой, используется user_{telegram_id}.'
             ),
-        },
-        'EXTERNAL_ADMIN_TOKEN': {
-            'description': 'Приватный токен, который использует внешняя админка для проверки запросов.',
-            'format': 'Значение генерируется автоматически из username бота и его токена и доступно только для чтения.',
-            'example': 'Генерируется автоматически',
-            'warning': 'Токен обновится при смене username или токена бота.',
-            'dependencies': 'Username телеграм-бота, токен бота',
-        },
-        'EXTERNAL_ADMIN_TOKEN_BOT_ID': {
-            'description': 'Идентификатор телеграм-бота, с которым связан токен внешней админки.',
-            'format': 'Проставляется автоматически после первого запуска и не редактируется вручную.',
-            'example': '123456789',
-            'warning': 'Несовпадение ID блокирует обновление токена, предотвращая его подмену на другом боте.',
-            'dependencies': 'Результат вызова getMe() в Telegram Bot API',
         },
         'TRIAL_USER_TAG': {
             'description': (

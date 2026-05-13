@@ -354,6 +354,9 @@ async def get_purchase_options(
                 'all_tariffs_purchased': len(purchased_tariff_ids) >= len(tariffs)
                 if settings.is_multi_tariff_enabled()
                 else False,
+                # Направления смены тарифа
+                'tariff_switch_upgrade_enabled': settings.TARIFF_SWITCH_UPGRADE_ENABLED,
+                'tariff_switch_downgrade_enabled': settings.TARIFF_SWITCH_DOWNGRADE_ENABLED,
             }
 
         # Classic mode - return periods
@@ -896,8 +899,14 @@ async def purchase_tariff(
             except Exception as trial_err:
                 logger.warning('Failed to disable trial on RemnaWave', error=trial_err, trial_id=trial_sub.id)
         try:
-            if subscription.remnawave_uuid:
-                # Existing subscription with Remnawave user — update it
+            # Mirror the bot handler logic: in single-tariff mode, check user.remnawave_uuid
+            # (webhook clears it on panel deletion), not subscription.remnawave_uuid
+            if settings.is_multi_tariff_enabled():
+                _should_create = not subscription.remnawave_uuid
+            else:
+                _should_create = not getattr(user, 'remnawave_uuid', None)
+
+            if not _should_create:
                 await service.update_remnawave_user(
                     db,
                     subscription,
@@ -906,7 +915,6 @@ async def purchase_tariff(
                     sync_squads=True,
                 )
             else:
-                # New subscription — create new Remnawave user
                 await service.create_remnawave_user(
                     db,
                     subscription,
@@ -920,7 +928,7 @@ async def purchase_tariff(
             remnawave_retry_queue.enqueue(
                 subscription_id=subscription.id,
                 user_id=user.id,
-                action='create' if not subscription.remnawave_uuid else 'update',
+                action='create' if _should_create else 'update',
             )
 
         # Save cart for auto-renewal (not for daily tariffs - they have their own charging)
@@ -1330,9 +1338,11 @@ async def activate_trial(
                     trial_tariff = None
 
         if trial_tariff:
+            from app.database.crud.server_squad import get_effective_tariff_squad_uuids
+
             trial_traffic_limit = trial_tariff.traffic_limit_gb
             trial_device_limit = trial_tariff.device_limit
-            trial_squads = trial_tariff.allowed_squads or []
+            trial_squads = await get_effective_tariff_squad_uuids(db, trial_tariff.allowed_squads)
             tariff_id_for_trial = trial_tariff.id
             tariff_trial_days = getattr(trial_tariff, 'trial_duration_days', None)
             if tariff_trial_days:
@@ -1346,7 +1356,7 @@ async def activate_trial(
     except Exception as e:
         logger.error('Error getting trial tariff', error=e)
 
-    # BUG-12 fix: If no squads from tariff, fallback to trial-eligible servers
+    # No trial tariff configured, use the legacy random trial squad fallback.
     if not trial_squads:
         from app.database.crud.server_squad import get_random_trial_squad_uuid
 

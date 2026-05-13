@@ -57,7 +57,14 @@ async def get_renewal_options(
         return []
 
     # Determine available periods
-    if subscription.tariff_id and subscription.tariff and subscription.tariff.period_prices:
+    # Скрытый/неактивный тариф (например, триальный после промокода) —
+    # не показываем его периоды, используем стандартные
+    if (
+        subscription.tariff_id
+        and subscription.tariff
+        and subscription.tariff.is_active
+        and subscription.tariff.period_prices
+    ):
         periods = sorted(int(k) for k in subscription.tariff.period_prices.keys())
     else:
         periods = settings.get_available_renewal_periods()
@@ -128,7 +135,12 @@ async def renew_subscription(
             detail=f'Cannot renew subscription with status: {_actual_status}',
         )
 
-    if subscription.tariff_id and subscription.tariff and subscription.tariff.period_prices:
+    if (
+        subscription.tariff_id
+        and subscription.tariff
+        and subscription.tariff.is_active
+        and subscription.tariff.period_prices
+    ):
         available_periods = [int(p) for p in subscription.tariff.period_prices.keys()]
     else:
         available_periods = settings.get_available_renewal_periods()

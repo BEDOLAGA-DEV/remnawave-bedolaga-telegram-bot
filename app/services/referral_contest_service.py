@@ -301,6 +301,10 @@ class ReferralContestService:
             lines.append('')
             lines.append(f'Приз: {html.escape(contest.prize_text)}')
 
+        # Respect per-category enable/disable
+        if not getattr(settings, 'ADMIN_NOTIFICATIONS_PROMO_ENABLED', True):
+            return
+
         try:
             await self.bot.send_message(
                 chat_id=chat_id,

@@ -5,6 +5,12 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+class TicketMediaItemResponse(BaseModel):
+    type: str
+    file_id: str
+    caption: str | None = None
+
+
 class TicketMessageResponse(BaseModel):
     id: int
     user_id: int
@@ -14,6 +20,7 @@ class TicketMessageResponse(BaseModel):
     media_type: str | None = None
     media_file_id: str | None = None
     media_caption: str | None = None
+    media_items: list[TicketMediaItemResponse] | None = None
     created_at: datetime
 
 

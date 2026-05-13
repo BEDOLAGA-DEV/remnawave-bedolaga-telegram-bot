@@ -1,3 +1,4 @@
+import math
 from datetime import UTC, datetime
 
 from aiogram import types
@@ -786,7 +787,7 @@ async def confirm_switch_traffic(
     new_price_per_month = settings.get_traffic_price(new_traffic_gb)
 
     now = datetime.now(UTC)
-    days_remaining = max(1, (subscription.end_date - now).days)
+    days_remaining = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
     period_hint_days = days_remaining if days_remaining > 0 else None
     traffic_discount_percent = PricingEngine.get_addon_discount_percent(
         db_user,
@@ -887,7 +888,7 @@ async def execute_switch_traffic(
     base_traffic = current_traffic - purchased_traffic
     old_price_per_month = settings.get_traffic_price(base_traffic)
     new_price_per_month = settings.get_traffic_price(new_traffic_gb)
-    days_remaining = max(1, (subscription.end_date - datetime.now(UTC)).days)
+    days_remaining = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
     traffic_discount_percent = PricingEngine.get_addon_discount_percent(
         db_user,
         'traffic',
@@ -912,7 +913,7 @@ async def execute_switch_traffic(
                 await callback.answer('⚠️ Ошибка списания средств', show_alert=True)
                 return
 
-            days_remaining = max(1, (subscription.end_date - datetime.now(UTC)).days)
+            days_remaining = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
             await create_transaction(
                 db=db,
                 user_id=db_user.id,

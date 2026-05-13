@@ -3,7 +3,7 @@ import string
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import and_, case, func, nullslast, or_, select, text
+from sqlalchemy import and_, case, exists, func, nullslast, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -13,6 +13,8 @@ from app.database.crud.discount_offer import get_latest_claimed_offer_for_user
 from app.database.crud.promo_group import get_default_promo_group
 from app.database.crud.promo_offer_log import log_promo_offer_action
 from app.database.models import (
+    AdvertisingCampaign,
+    AdvertisingCampaignRegistration,
     PaymentMethod,
     PromoGroup,
     Subscription,
@@ -710,30 +712,52 @@ async def subtract_user_balance(
             await db.refresh(user)
 
         if consume_promo_offer and log_context:
-            try:
-                await log_promo_offer_action(
-                    db,
-                    user_id=user.id,
-                    offer_id=log_context.get('offer_id'),
-                    action='consumed',
-                    source=log_context.get('source'),
-                    percent=log_context.get('percent'),
-                    effect_type=log_context.get('effect_type'),
-                    details=log_context.get('details'),
-                    commit=commit,
-                )
-            except Exception as log_error:  # pragma: no cover - defensive logging
-                logger.warning(
-                    'Failed to record promo offer consumption log for user', user_id=user.id, log_error=log_error
-                )
-                if commit:
-                    try:
-                        await db.rollback()
-                    except Exception as rollback_error:  # pragma: no cover - defensive logging
-                        logger.warning(
-                            'Failed to rollback session after promo offer consumption log failure',
-                            rollback_error=rollback_error,
+            # Пишем лог в ОТДЕЛЬНОЙ сессии, чтобы его commit/rollback не касался
+            # основной сессии caller'а. Иначе rollback в случае фейла логирования
+            # экспайрит объекты сессии и следующее обращение к subscription/user
+            # attrs у caller'а падает с MissingGreenlet.
+            if commit:
+                try:
+                    from app.database.database import AsyncSessionLocal
+
+                    async with AsyncSessionLocal() as log_db:
+                        await log_promo_offer_action(
+                            log_db,
+                            user_id=user.id,
+                            offer_id=log_context.get('offer_id'),
+                            action='consumed',
+                            source=log_context.get('source'),
+                            percent=log_context.get('percent'),
+                            effect_type=log_context.get('effect_type'),
+                            details=log_context.get('details'),
+                            commit=True,
                         )
+                except Exception as log_error:  # pragma: no cover - defensive logging
+                    logger.warning(
+                        'Failed to record promo offer consumption log for user',
+                        user_id=user.id,
+                        log_error=log_error,
+                    )
+            else:
+                # Caller управляет транзакцией — пишем в его сессию без commit.
+                try:
+                    await log_promo_offer_action(
+                        db,
+                        user_id=user.id,
+                        offer_id=log_context.get('offer_id'),
+                        action='consumed',
+                        source=log_context.get('source'),
+                        percent=log_context.get('percent'),
+                        effect_type=log_context.get('effect_type'),
+                        details=log_context.get('details'),
+                        commit=False,
+                    )
+                except Exception as log_error:  # pragma: no cover - defensive logging
+                    logger.warning(
+                        'Failed to record promo offer consumption log for user',
+                        user_id=user.id,
+                        log_error=log_error,
+                    )
 
         logger.info('✅ Средства списаны: →', old_balance=old_balance, balance_kopeks=user.balance_kopeks)
         return True
@@ -839,6 +863,11 @@ async def get_users_list(
     search: str | None = None,
     email: str | None = None,
     status: UserStatus | None = None,
+    subscription_status: str | None = None,
+    tariff_ids: list[int] | None = None,
+    promo_group_id: int | None = None,
+    campaign_id: int | None = None,
+    partner_id: int | None = None,
     order_by_balance: bool = False,
     order_by_traffic: bool = False,
     order_by_last_activity: bool = False,
@@ -853,6 +882,41 @@ async def get_users_list(
 
     if status:
         query = query.where(User.status == status.value)
+
+    # Subscription-level filters via subquery
+    if subscription_status or tariff_ids:
+        sub_conditions = []
+        if subscription_status:
+            sub_conditions.append(Subscription.status == subscription_status)
+        if tariff_ids:
+            sub_conditions.append(Subscription.tariff_id.in_(tariff_ids))
+        sub_query = select(Subscription.user_id).where(and_(*sub_conditions)).distinct().scalar_subquery()
+        query = query.where(User.id.in_(sub_query))
+
+    if promo_group_id:
+        query = query.where(User.promo_group_id == promo_group_id)
+
+    if campaign_id:
+        query = query.where(
+            exists(
+                select(AdvertisingCampaignRegistration.id).where(
+                    AdvertisingCampaignRegistration.user_id == User.id,
+                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                )
+            )
+        )
+
+    if partner_id:
+        query = query.where(
+            exists(
+                select(AdvertisingCampaignRegistration.id)
+                .join(AdvertisingCampaign, AdvertisingCampaign.id == AdvertisingCampaignRegistration.campaign_id)
+                .where(
+                    AdvertisingCampaignRegistration.user_id == User.id,
+                    AdvertisingCampaign.partner_user_id == partner_id,
+                )
+            )
+        )
 
     if search:
         search_term = f'%{search}%'
@@ -933,12 +997,54 @@ async def get_users_list(
 
 
 async def get_users_count(
-    db: AsyncSession, status: UserStatus | None = None, search: str | None = None, email: str | None = None
+    db: AsyncSession,
+    status: UserStatus | None = None,
+    search: str | None = None,
+    email: str | None = None,
+    subscription_status: str | None = None,
+    tariff_ids: list[int] | None = None,
+    promo_group_id: int | None = None,
+    campaign_id: int | None = None,
+    partner_id: int | None = None,
 ) -> int:
     query = select(func.count(User.id))
 
     if status:
         query = query.where(User.status == status.value)
+
+    if subscription_status or tariff_ids:
+        sub_conditions = []
+        if subscription_status:
+            sub_conditions.append(Subscription.status == subscription_status)
+        if tariff_ids:
+            sub_conditions.append(Subscription.tariff_id.in_(tariff_ids))
+        sub_query = select(Subscription.user_id).where(and_(*sub_conditions)).distinct().scalar_subquery()
+        query = query.where(User.id.in_(sub_query))
+
+    if promo_group_id:
+        query = query.where(User.promo_group_id == promo_group_id)
+
+    if campaign_id:
+        query = query.where(
+            exists(
+                select(AdvertisingCampaignRegistration.id).where(
+                    AdvertisingCampaignRegistration.user_id == User.id,
+                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                )
+            )
+        )
+
+    if partner_id:
+        query = query.where(
+            exists(
+                select(AdvertisingCampaignRegistration.id)
+                .join(AdvertisingCampaign, AdvertisingCampaign.id == AdvertisingCampaignRegistration.campaign_id)
+                .where(
+                    AdvertisingCampaignRegistration.user_id == User.id,
+                    AdvertisingCampaign.partner_user_id == partner_id,
+                )
+            )
+        )
 
     if search:
         search_term = f'%{search}%'
@@ -1090,6 +1196,12 @@ async def get_users_for_promo_segment(db: AsyncSession, segment: str) -> list[Us
 async def get_inactive_users(db: AsyncSession, months: int = 3) -> list[User]:
     threshold_date = datetime.now(UTC) - timedelta(days=months * 30)
 
+    # Подзапрос: пользователи, у которых есть подписка с end_date >= threshold
+    # (активная или недавно истёкшая) — таких удалять нельзя
+    users_with_recent_subs = (
+        select(Subscription.user_id).where(Subscription.end_date >= threshold_date).distinct().scalar_subquery()
+    )
+
     result = await db.execute(
         select(User)
         .options(
@@ -1098,7 +1210,13 @@ async def get_inactive_users(db: AsyncSession, months: int = 3) -> list[User]:
             selectinload(User.referrer),
             selectinload(User.promo_group),
         )
-        .where(and_(User.last_activity < threshold_date, User.status == UserStatus.ACTIVE.value))
+        .where(
+            and_(
+                User.last_activity < threshold_date,
+                User.status == UserStatus.ACTIVE.value,
+                User.id.not_in(users_with_recent_subs),
+            )
+        )
     )
     users = result.scalars().all()
 

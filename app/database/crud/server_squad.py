@@ -33,7 +33,15 @@ logger = structlog.get_logger(__name__)
 
 async def _get_default_promo_group_id(db: AsyncSession) -> int | None:
     result = await db.execute(select(PromoGroup.id).where(PromoGroup.is_default.is_(True)).limit(1))
-    return result.scalar_one_or_none()
+    default_id = result.scalar_one_or_none()
+    if default_id is not None:
+        return default_id
+
+    # На пустой БД дефолтной промогруппы нет — создаём автоматически
+    from app.database.crud.user import _get_or_create_default_promo_group
+
+    default_group = await _get_or_create_default_promo_group(db)
+    return default_group.id
 
 
 async def create_server_squad(
@@ -153,6 +161,20 @@ async def get_available_server_squads(
 
     result = await db.execute(query)
     return result.scalars().unique().all()
+
+
+async def get_effective_tariff_squad_uuids(
+    db: AsyncSession,
+    allowed_squads: Sequence[str] | None,
+) -> list[str]:
+    """Resolve tariff squads, treating an empty list as "all available squads"."""
+
+    normalized = [str(squad_uuid) for squad_uuid in (allowed_squads or []) if squad_uuid]
+    if normalized:
+        return list(dict.fromkeys(normalized))
+
+    available = await get_available_server_squads(db)
+    return [squad.squad_uuid for squad in available if squad.squad_uuid]
 
 
 async def get_active_server_squads(db: AsyncSession) -> list[ServerSquad]:

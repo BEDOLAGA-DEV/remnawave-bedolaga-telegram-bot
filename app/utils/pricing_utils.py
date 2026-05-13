@@ -1,3 +1,4 @@
+import math
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Optional
@@ -33,7 +34,7 @@ def calculate_prorated_price(monthly_price: int, end_date: datetime, min_charge_
         tuple of (total_price_kopeks, days_charged)
     """
     now = datetime.now(UTC)
-    days_remaining = max(1, (end_date - now).days)
+    days_remaining = max(1, math.ceil((end_date - now).total_seconds() / 86400))
     days_to_charge = max(min_charge_days, days_remaining)
 
     total_price = monthly_price * days_to_charge // 30

@@ -99,6 +99,73 @@ async def clear_pending_referral(telegram_id: int) -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# Pending campaign helpers (Redis)
+#
+# Mirrors pending_referral: lets us survive the case where /start <campaign>
+# stored campaign_id only in FSM, but the user opened the cabinet WebApp before
+# completing bot registration. The cabinet auth route reads this as a fallback
+# when the HTTP request didn't carry an explicit campaign_slug.
+# ---------------------------------------------------------------------------
+_PENDING_CAMPAIGN_TTL = 7 * 24 * 3600  # 7 days
+
+
+async def save_pending_campaign(telegram_id: int, campaign_slug: str, campaign_id: int) -> bool:
+    """Save pending campaign attribution to Redis for a not-yet-registered user.
+
+    Called from /start handler immediately after resolving an advertising campaign.
+    Picked up by the cabinet auth route if the user opens the WebApp before
+    completing the bot registration flow.
+    """
+    client = _get_redis()
+    if client is None:
+        return False
+    try:
+        key = f'pending_campaign:{telegram_id}'
+        data = json.dumps({'campaign_slug': campaign_slug, 'campaign_id': campaign_id})
+        await client.setex(key, _PENDING_CAMPAIGN_TTL, data)
+        logger.info(
+            'Saved pending campaign to Redis',
+            telegram_id=telegram_id,
+            campaign_slug=campaign_slug,
+            campaign_id=campaign_id,
+        )
+        return True
+    except Exception as exc:
+        logger.warning('Failed to save pending campaign to Redis', error=exc)
+        return False
+
+
+async def get_pending_campaign(telegram_id: int) -> dict[str, str | int] | None:
+    """Get pending campaign from Redis.
+
+    Returns ``{'campaign_slug': ..., 'campaign_id': ...}`` or ``None``.
+    """
+    client = _get_redis()
+    if client is None:
+        return None
+    try:
+        key = f'pending_campaign:{telegram_id}'
+        data = await client.get(key)
+        if data:
+            return json.loads(data)
+        return None
+    except Exception as exc:
+        logger.warning('Failed to get pending campaign from Redis', error=exc)
+        return None
+
+
+async def clear_pending_campaign(telegram_id: int) -> None:
+    """Clear pending campaign after successful application."""
+    client = _get_redis()
+    if client is None:
+        return
+    try:
+        await client.delete(f'pending_campaign:{telegram_id}')
+    except Exception:
+        pass
+
+
 async def _is_commission_limit_reached(db: AsyncSession, referrer_id: int, referral_id: int) -> bool:
     """Проверяет, исчерпан ли лимит комиссионных платежей для пары реферер-реферал."""
     if settings.REFERRAL_MAX_COMMISSION_PAYMENTS <= 0:

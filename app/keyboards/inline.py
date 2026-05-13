@@ -1,3 +1,4 @@
+import math
 from datetime import UTC, datetime
 
 import structlog
@@ -7,6 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import PERIOD_PRICES, settings
 from app.database.models import User
+from app.handlers.subscription.common import (
+    build_redirect_link,
+    create_deep_link,
+    get_localized_value,
+    resolve_button_url,
+)
 from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
@@ -1954,7 +1961,47 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
-    if settings.is_aurapay_enabled():
+    if settings.is_overpay_enabled():
+        overpay_name = settings.get_overpay_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_OVERPAY', f'💳 {overpay_name}'),
+                    callback_data=_build_callback('overpay'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_aurapay_sbp_enabled():
+        sbp_name = settings.get_aurapay_sbp_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_AURAPAY_SBP', f'📱 {sbp_name}'),
+                    callback_data=_build_callback('aurapay_sbp'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_aurapay_card_enabled():
+        card_name = settings.get_aurapay_card_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_AURAPAY_CARD', f'💳 {card_name}'),
+                    callback_data=_build_callback('aurapay_card'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if (
+        settings.is_aurapay_enabled()
+        and not settings.is_aurapay_sbp_enabled()
+        and not settings.is_aurapay_card_enabled()
+    ):
         aurapay_name = settings.get_aurapay_display_name()
         keyboard.append(
             [
@@ -1973,6 +2020,212 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
                 InlineKeyboardButton(
                     text=texts.t('PAYMENT_LOLZ', f'💳 {lolz_name}'),
                     callback_data=_build_callback('lolz'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_etoplatezhi_sbp_enabled():
+        sbp_name = settings.get_etoplatezhi_sbp_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_ETOPLATEZHI_SBP', f'📱 {sbp_name}'),
+                    callback_data=_build_callback('etoplatezhi_sbp'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_etoplatezhi_card_enabled():
+        card_name = settings.get_etoplatezhi_card_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_ETOPLATEZHI_CARD', f'💳 {card_name}'),
+                    callback_data=_build_callback('etoplatezhi_card'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if (
+        settings.is_etoplatezhi_enabled()
+        and not settings.is_etoplatezhi_sbp_enabled()
+        and not settings.is_etoplatezhi_card_enabled()
+    ):
+        etoplatezhi_name = settings.get_etoplatezhi_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_ETOPLATEZHI', f'💳 {etoplatezhi_name}'),
+                    callback_data=_build_callback('etoplatezhi'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_antilopay_sbp_enabled():
+        sbp_name = settings.get_antilopay_sbp_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_ANTILOPAY_SBP', f'📱 {sbp_name}'),
+                    callback_data=_build_callback('antilopay_sbp'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_antilopay_card_enabled():
+        card_name = settings.get_antilopay_card_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_ANTILOPAY_CARD', f'💳 {card_name}'),
+                    callback_data=_build_callback('antilopay_card'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_antilopay_sberpay_enabled():
+        sberpay_name = settings.get_antilopay_sberpay_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_ANTILOPAY_SBERPAY', f'💳 {sberpay_name}'),
+                    callback_data=_build_callback('antilopay_sberpay'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if (
+        settings.is_antilopay_enabled()
+        and not settings.is_antilopay_sbp_enabled()
+        and not settings.is_antilopay_card_enabled()
+        and not settings.is_antilopay_sberpay_enabled()
+    ):
+        antilopay_name = settings.get_antilopay_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_ANTILOPAY', f'💳 {antilopay_name}'),
+                    callback_data=_build_callback('antilopay'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_jupiter_sbp_enabled():
+        jupiter_sbp_name = settings.get_jupiter_sbp_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_JUPITER_SBP', f'📱 {jupiter_sbp_name}'),
+                    callback_data=_build_callback('jupiter_sbp'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_jupiter_enabled() and not settings.is_jupiter_sbp_enabled():
+        jupiter_name = settings.get_jupiter_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_JUPITER', f'🪐 {jupiter_name}'),
+                    callback_data=_build_callback('jupiter'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_donut_card_enabled():
+        donut_card_name = settings.get_donut_card_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_DONUT_CARD', f'💳 {donut_card_name}'),
+                    callback_data=_build_callback('donut_card'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_donut_sbp_enabled():
+        donut_sbp_name = settings.get_donut_sbp_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_DONUT_SBP', f'📱 {donut_sbp_name}'),
+                    callback_data=_build_callback('donut_sbp'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_donut_sbp_qr_enabled():
+        donut_qr_name = settings.get_donut_sbp_qr_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_DONUT_SBP_QR', f'🏦 {donut_qr_name}'),
+                    callback_data=_build_callback('donut_sbp_qr'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if (
+        settings.is_donut_enabled()
+        and not settings.is_donut_card_enabled()
+        and not settings.is_donut_sbp_enabled()
+        and not settings.is_donut_sbp_qr_enabled()
+    ):
+        donut_name = settings.get_donut_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_DONUT', f'🍩 {donut_name}'),
+                    callback_data=_build_callback('donut'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_lava_card_enabled():
+        lava_card_name = settings.get_lava_card_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_LAVA_CARD', f'💳 {lava_card_name}'),
+                    callback_data=_build_callback('lava_card'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_lava_sbp_enabled():
+        lava_sbp_name = settings.get_lava_sbp_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_LAVA_SBP', f'📱 {lava_sbp_name}'),
+                    callback_data=_build_callback('lava_sbp'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_lava_enabled() and not settings.is_lava_card_enabled() and not settings.is_lava_sbp_enabled():
+        lava_name = settings.get_lava_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_LAVA', f'🌋 {lava_name}'),
+                    callback_data=_build_callback('lava'),
                 )
             ]
         )
@@ -2340,6 +2593,13 @@ def get_add_traffic_keyboard(
         months_multiplier = get_remaining_months(subscription_end_date)
         if months_multiplier > 1:
             period_text = f' (за {months_multiplier} мес)'
+        now = datetime.now(UTC)
+        days_left = max(1, math.ceil((subscription_end_date - now).total_seconds() / 86400))
+        price_multiplier = days_left / 30
+        period_text = f' (за {days_left} дн.)' if days_left > 1 else ' (за 1 день)'
+    else:
+        price_multiplier = 1
+        period_text = ''
 
     packages = settings.get_traffic_topup_packages()
     enabled_packages = [pkg for pkg in packages if pkg['enabled'] and pkg['price'] > 0]
@@ -2484,6 +2744,7 @@ def get_change_devices_keyboard(
         now = datetime.now(UTC)
         days_left = max(1, (subscription_end_date - now).days)
         # Множитель = days_left / 30 (как в кабинете)
+        days_left = max(1, math.ceil((subscription_end_date - now).total_seconds() / 86400))
         price_multiplier = days_left / 30
         period_text = f' (за {days_left} дн.)' if days_left > 1 else ' (за 1 день)'
     else:
@@ -2500,8 +2761,8 @@ def get_change_devices_keyboard(
     tariff_device_price = getattr(tariff, 'device_price_kopeks', None) if tariff else None
     if tariff and tariff_device_price:
         device_price_per_month = tariff_device_price
-        # Для тарифов все устройства платные (нет бесплатного лимита)
-        default_device_limit = 0
+        # Устройства в пределах тарифного лимита — бесплатные
+        default_device_limit = tariff.device_limit if tariff else 0
     else:
         device_price_per_month = settings.PRICE_PER_DEVICE
         default_device_limit = settings.DEFAULT_DEVICE_LIMIT
@@ -2781,6 +3042,9 @@ def get_manage_countries_keyboard(
     months_multiplier = 1
     if subscription_end_date:
         months_multiplier = get_remaining_months(subscription_end_date)
+        now = datetime.now(UTC)
+        days_left = max(1, math.ceil((subscription_end_date - now).total_seconds() / 86400))
+        price_multiplier = days_left / 30
         logger.info(
             '🔍 Расчет для управления странами: осталось месяцев до',
             months_multiplier=months_multiplier,
@@ -2854,9 +3118,6 @@ def get_device_selection_keyboard(
     platforms: list[dict] | None = None,
     sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
-    from app.config import settings
-    from app.handlers.subscription.common import get_localized_value
-
     texts = get_texts(language)
     back_cb = f'nz!_sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'nz!_menu_subscription'
 
@@ -2911,8 +3172,6 @@ def get_connection_guide_keyboard(
     has_other_apps: bool = False,
     sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
-    from app.handlers.subscription.common import create_deep_link, get_localized_value, resolve_button_url
-
     texts = get_texts(language)
     back_cb = f'nz!_sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'nz!_menu_subscription'
 
@@ -2925,6 +3184,10 @@ def get_connection_guide_keyboard(
             if not isinstance(btn, dict):
                 continue
             btn_type = btn.get('type', '')
+            # Support both 'external' and 'externalLink' for backward compatibility
+            if btn_type == 'external':
+                btn_type = 'externalLink'
+
             btn_text = btn.get('text', {})
             if isinstance(btn_text, dict):
                 btn_text = get_localized_value(btn_text, language)
@@ -2946,9 +3209,26 @@ def get_connection_guide_keyboard(
                         ]
                     )
             elif btn_type == 'subscriptionLink':
+                # First try to resolve the button's URL template
                 url = resolved_url or resolve_button_url(btn_url, subscription_url)
-                deep_link = create_deep_link(app.get('_raw', app), subscription_url)
-                final_url = deep_link or url or subscription_url
+
+                # If button has no template, try deep link
+                if not btn_url or '{{SUBSCRIPTION_LINK}}' not in btn_url:
+                    deep_link = create_deep_link(app.get('_raw', app), subscription_url)
+                    final_url = deep_link or url or subscription_url
+                else:
+                    final_url = url or subscription_url
+
+                # Telegram doesn't support custom URL schemes — wrap with redirect
+                if final_url and not final_url.startswith(('http://', 'https://')):
+                    template = settings.get_happ_cryptolink_redirect_template()
+                    if template:
+                        wrapped_url = build_redirect_link(final_url, template)
+                        if wrapped_url:
+                            final_url = wrapped_url
+                    else:
+                        final_url = subscription_url
+
                 if final_url:
                     keyboard.append(
                         [
@@ -3320,6 +3600,17 @@ def get_updated_subscription_settings_keyboard(
     )
 
     keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription', style='danger')])
+    if settings.is_subscription_revoke_enabled():
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('SUBSCRIPTION_REVOKE_BTN', '🔄 Перевыпустить подписку'),
+                    callback_data='subscription_revoke',
+                )
+            ]
+        )
+
+    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

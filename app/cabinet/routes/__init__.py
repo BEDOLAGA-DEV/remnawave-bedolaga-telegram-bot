@@ -9,11 +9,13 @@ from .admin_audit_log import router as admin_audit_log_router
 from .admin_ban_system import router as admin_ban_system_router
 from .admin_bio_reward import router as admin_bio_reward_router
 from .admin_broadcasts import router as admin_broadcasts_router
+from .admin_bulk_actions import router as admin_bulk_actions_router
 from .admin_button_styles import router as admin_button_styles_router
 from .admin_campaigns import router as admin_campaigns_router
 from .admin_channels import router as admin_channels_router
 from .admin_email_templates import router as admin_email_templates_router
 from .admin_help import router as admin_help_router
+from .admin_info_pages import router as admin_info_pages_router
 from .admin_landings import router as admin_landings_router
 from .admin_menu_layout import router as admin_menu_layout_router
 from .admin_news import router as admin_news_router
@@ -52,6 +54,7 @@ from .contests import router as contests_router
 from .gift import router as gift_router
 from .help import router as help_router
 from .info import router as info_router
+from .info_pages import router as info_pages_router
 from .landing import router as landing_router
 from .media import router as media_router
 from .news import router as news_router
@@ -78,6 +81,13 @@ from .wheel import router as wheel_router
 from .withdrawal import router as withdrawal_router
 
 
+# Conditional imports
+try:
+    from .apple_iap import router as apple_iap_router
+except ImportError:
+    apple_iap_router = None
+
+
 # Main cabinet router
 router = APIRouter(prefix='/cabinet', tags=['Cabinet'], redirect_slashes=False)
 
@@ -90,6 +100,11 @@ router.include_router(subscription_router)
 router.include_router(multi_tariff_subscription_router)
 router.include_router(balance_router)
 router.include_router(referral_router)
+
+# Apple IAP routes
+if apple_iap_router is not None:
+    router.include_router(apple_iap_router)
+
 router.include_router(partner_application_router)
 router.include_router(withdrawal_router)
 # Notifications router MUST be before tickets router to avoid route conflict
@@ -110,6 +125,7 @@ router.include_router(media_router)
 router.include_router(news_router)
 router.include_router(help_router)
 router.include_router(utils_router)
+router.include_router(info_pages_router)
 
 # Wheel routes
 router.include_router(wheel_router)
@@ -135,6 +151,7 @@ router.include_router(admin_campaigns_router)
 router.include_router(admin_partners_router)
 router.include_router(admin_withdrawals_router)
 router.include_router(admin_users_router)
+router.include_router(admin_bulk_actions_router)
 router.include_router(admin_payment_methods_router)
 router.include_router(admin_landings_router)
 router.include_router(admin_payments_router)
@@ -164,6 +181,7 @@ router.include_router(admin_news_categories_router)
 router.include_router(admin_news_tags_router)
 router.include_router(admin_news_media_router)
 router.include_router(admin_news_router)
+router.include_router(admin_info_pages_router)
 
 # WebSocket route
 router.include_router(websocket_router)

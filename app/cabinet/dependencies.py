@@ -1,5 +1,7 @@
 """FastAPI dependencies for cabinet module."""
 
+from datetime import UTC, datetime
+
 import structlog
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -175,6 +177,15 @@ async def get_current_cabinet_user(
                             'channels': channels_with_status,
                         },
                     )
+
+    # Throttled update of cabinet_last_login (at most every 5 minutes)
+    now = datetime.now(UTC)
+    if not user.cabinet_last_login or (now - user.cabinet_last_login).total_seconds() > 300:
+        try:
+            user.cabinet_last_login = now
+            await db.commit()
+        except Exception:
+            pass
 
     return user
 

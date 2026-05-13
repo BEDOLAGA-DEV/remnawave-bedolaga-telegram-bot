@@ -9,6 +9,7 @@ POST /subscription/traffic/save-cart
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from typing import Any
 
@@ -362,7 +363,7 @@ async def save_traffic_cart(
 
     # Calculate prorated price (days-based), then apply discount
     now = datetime.now(UTC)
-    days_left = max(1, (subscription.end_date - now).days)
+    days_left = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
     prorated_price, _ = calculate_prorated_price(
         base_price_kopeks,
         subscription.end_date,

@@ -159,17 +159,13 @@ class AdvertisingCampaignService:
         device_limit = campaign.subscription_device_limit
         if device_limit is None:
             device_limit = settings.DEFAULT_DEVICE_LIMIT
-        squads = list(campaign.subscription_squads or [])
+        try:
+            from app.database.crud.server_squad import get_effective_tariff_squad_uuids
 
-        if not squads:
-            try:
-                from app.database.crud.server_squad import get_random_trial_squad_uuid
-
-                trial_uuid = await get_random_trial_squad_uuid(db)
-                if trial_uuid:
-                    squads = [trial_uuid]
-            except Exception as error:
-                logger.error('Не удалось подобрать сквад для кампании', campaign_id=campaign.id, error=error)
+            squads = await get_effective_tariff_squad_uuids(db, campaign.subscription_squads)
+        except Exception as error:
+            logger.error('Не удалось подобрать сквады для кампании', campaign_id=campaign.id, error=error)
+            squads = list(campaign.subscription_squads or [])
 
         if existing_subscription:
             # Multi-tariff: extend the best existing subscription
@@ -305,17 +301,13 @@ class AdvertisingCampaignService:
 
         traffic_limit = tariff.traffic_limit_gb
         device_limit = tariff.device_limit
-        squads = list(tariff.allowed_squads or [])
+        try:
+            from app.database.crud.server_squad import get_effective_tariff_squad_uuids
 
-        if not squads:
-            try:
-                from app.database.crud.server_squad import get_random_trial_squad_uuid
-
-                trial_uuid = await get_random_trial_squad_uuid(db)
-                if trial_uuid:
-                    squads = [trial_uuid]
-            except Exception as error:
-                logger.error('Не удалось подобрать сквад для тарифа кампании', campaign_id=campaign.id, error=error)
+            squads = await get_effective_tariff_squad_uuids(db, tariff.allowed_squads)
+        except Exception as error:
+            logger.error('Не удалось подобрать сквады для тарифа кампании', campaign_id=campaign.id, error=error)
+            squads = list(tariff.allowed_squads or [])
 
         if existing_subscription:
             # Multi-tariff: extend the existing subscription for this tariff

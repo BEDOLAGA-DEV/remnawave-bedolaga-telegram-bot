@@ -143,8 +143,6 @@ async def update_menu_layout(
             btn_dict = btn.model_dump()
             # Автоматически определяем наличие плейсхолдеров, если dynamic_text не установлен
             if not btn_dict.get('dynamic_text', False):
-                from app.services.menu_layout.service import MenuLayoutService
-
                 btn_dict['dynamic_text'] = MenuLayoutService._text_has_placeholders(btn_dict.get('text', {}))
             buttons_config[btn_id] = btn_dict
         config['buttons'] = buttons_config
@@ -306,8 +304,6 @@ async def add_custom_button(
         # Автоматически определяем наличие плейсхолдеров, если dynamic_text не установлен
         dynamic_text = payload.dynamic_text
         if not dynamic_text:
-            from app.services.menu_layout.service import MenuLayoutService
-
             dynamic_text = MenuLayoutService._text_has_placeholders(payload.text)
 
         button_config = {

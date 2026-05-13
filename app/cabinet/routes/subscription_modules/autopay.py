@@ -49,7 +49,8 @@ async def update_autopay(
             )
 
         # Триальные подписки — пробник, автопродление не имеет смысла
-        if subscription.is_trial:
+        # NULL-safe: is_trial can be None in legacy rows — treat as trial
+        if subscription.is_trial is not False:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Autopay is not available for trial subscriptions',

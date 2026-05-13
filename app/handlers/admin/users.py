@@ -4803,11 +4803,9 @@ async def _grant_paid_subscription(
         trial_squads: list[str] = []
 
         try:
-            from app.database.crud.server_squad import get_random_trial_squad_uuid
+            from app.database.crud.server_squad import get_effective_tariff_squad_uuids
 
-            trial_uuid = await get_random_trial_squad_uuid(db)
-            if trial_uuid:
-                trial_squads = [trial_uuid]
+            trial_squads = await get_effective_tariff_squad_uuids(db, None)
         except Exception as error:
             logger.error('Не удалось подобрать сквад при выдаче подписки админом', admin_id=admin_id, error=error)
 

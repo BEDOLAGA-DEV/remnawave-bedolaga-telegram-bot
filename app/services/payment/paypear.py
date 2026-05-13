@@ -106,18 +106,30 @@ class PayPearPaymentMixin:
             )
 
             confirmation = result.get('confirmation', {})
-            payment_url = confirmation.get('url') if isinstance(confirmation, dict) else None
+            payment_url = (
+                (confirmation.get('confirmation_url') or confirmation.get('url'))
+                if isinstance(confirmation, dict)
+                else None
+            )
             paypear_id = result.get('id')
 
             if not payment_url:
-                logger.error('PayPear API не вернул URL платежа', result=result)
+                logger.error('PayPear API не вернул confirmation_url', result=result)
                 return None
+
+            # PayPear может добавить комиссию к сумме — сохраняем фактическую сумму
+            # для корректной проверки в webhook (amount включает комиссию)
+            api_amount = result.get('amount', {})
+            if isinstance(api_amount, dict) and api_amount.get('value') is not None:
+                charged_kopeks = round(float(api_amount['value']) * 100)
+                metadata['paypear_charged_kopeks'] = charged_kopeks
 
             logger.info(
                 'PayPear API: создан платеж',
                 order_id=order_id,
                 paypear_id=paypear_id,
                 payment_url=payment_url,
+                charged_kopeks=metadata.get('paypear_charged_kopeks'),
             )
 
             # Срок действия — 30 минут по умолчанию
@@ -239,6 +251,8 @@ class PayPearPaymentMixin:
             }
 
             # Проверка суммы ДО обновления статуса
+            # PayPear добавляет комиссию к amount — сравниваем с сохранённой суммой
+            # (paypear_charged_kopeks), а не с исходной суммой пополнения
             if is_paid:
                 amount_info = obj.get('amount', {})
                 if isinstance(amount_info, dict):
@@ -248,11 +262,14 @@ class PayPearPaymentMixin:
 
                 if amount_value is not None:
                     received_kopeks = round(float(amount_value) * 100)
-                    if abs(received_kopeks - payment.amount_kopeks) > 1:
+                    payment_metadata = dict(getattr(payment, 'metadata_json', {}) or {})
+                    expected_kopeks = payment_metadata.get('paypear_charged_kopeks', payment.amount_kopeks)
+                    if abs(received_kopeks - expected_kopeks) > 1:
                         logger.error(
                             'PayPear amount mismatch',
-                            expected_kopeks=payment.amount_kopeks,
+                            expected_kopeks=expected_kopeks,
                             received_kopeks=received_kopeks,
+                            original_amount_kopeks=payment.amount_kopeks,
                             order_id=payment.order_id,
                         )
                         await paypear_crud.update_paypear_payment_status(
@@ -539,16 +556,20 @@ class PayPearPaymentMixin:
                         internal_status, is_paid = status_info
 
                         if is_paid:
-                            # Проверка суммы
+                            # Проверка суммы — сравниваем с paypear_charged_kopeks
+                            # (amount включает комиссию PayPear)
                             amount_info = order_data.get('amount', {})
                             api_amount = amount_info.get('value') if isinstance(amount_info, dict) else amount_info
                             if api_amount is not None:
                                 received_kopeks = round(float(api_amount) * 100)
-                                if abs(received_kopeks - payment.amount_kopeks) > 1:
+                                payment_metadata = dict(getattr(payment, 'metadata_json', {}) or {})
+                                expected_kopeks = payment_metadata.get('paypear_charged_kopeks', payment.amount_kopeks)
+                                if abs(received_kopeks - expected_kopeks) > 1:
                                     logger.error(
                                         'PayPear amount mismatch (API check)',
-                                        expected_kopeks=payment.amount_kopeks,
+                                        expected_kopeks=expected_kopeks,
                                         received_kopeks=received_kopeks,
+                                        original_amount_kopeks=payment.amount_kopeks,
                                         order_id=payment.order_id,
                                     )
                                     await paypear_crud.update_paypear_payment_status(

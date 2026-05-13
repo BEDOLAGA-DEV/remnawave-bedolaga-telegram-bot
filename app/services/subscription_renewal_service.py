@@ -492,6 +492,7 @@ class SubscriptionRenewalService:
         # Без этого после продления активной подписки на panel-side держится
         # старый WL counter и юзер не может качать WL ("не продлился _wl").
         reset_traffic = (was_expired or period_days > 0) and settings.RESET_TRAFFIC_ON_PAYMENT
+        reset_devices = settings.RESET_DEVICES_ON_RENEWAL
         subscription_service = SubscriptionService()
         try:
             await db.refresh(user)
@@ -529,6 +530,28 @@ class SubscriptionRenewalService:
                 user_id=subscription_after.user_id,
                 action='create' if not getattr(subscription_after, 'remnawave_uuid', None) else 'update',
             )
+
+        # Сброс привязанных устройств при продлении (если включено)
+        if reset_devices:
+            try:
+                from app.services.remnawave_service import RemnaWaveService
+
+                rw_service = RemnaWaveService()
+                _uuid = (
+                    getattr(subscription_after, 'remnawave_uuid', None)
+                    if settings.is_multi_tariff_enabled()
+                    else getattr(user, 'remnawave_uuid', None)
+                )
+                if _uuid:
+                    async with rw_service.get_api_client() as api:
+                        await api.reset_user_devices(_uuid)
+                    logger.info(
+                        'Devices reset on renewal',
+                        subscription_id=subscription_after.id,
+                        user_id=user.id,
+                    )
+            except Exception as error:
+                logger.warning('Failed to reset devices on renewal', error=error, exc_info=True)
 
         transaction: Transaction | None = None
         try:

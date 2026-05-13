@@ -1,4 +1,5 @@
 import html
+import math
 from datetime import UTC, datetime
 
 from aiogram import types
@@ -266,7 +267,7 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
     logger.info('🔧 Добавлено: Удалено', added=added, removed=removed)
 
     now = datetime.now(UTC)
-    days_to_pay = max(1, (subscription.end_date - now).days)
+    days_to_pay = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
 
     period_hint_days = days_to_pay if days_to_pay > 0 else None
 

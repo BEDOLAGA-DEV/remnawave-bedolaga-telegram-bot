@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database.models import User
 from app.services.promocode_service import PromoCodeService
 
@@ -66,6 +67,29 @@ async def activate_promocode(
     if result['success']:
         balance_before_rubles = result.get('balance_before_kopeks', 0) / 100
         balance_after_rubles = result.get('balance_after_kopeks', 0) / 100
+
+        # Send admin notification (same as bot handler)
+        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
+            try:
+                from aiogram import Bot
+
+                from app.services.admin_notification_service import AdminNotificationService
+
+                bot = Bot(token=settings.BOT_TOKEN)
+                try:
+                    notification_service = AdminNotificationService(bot)
+                    await notification_service.send_promocode_activation_notification(
+                        db,
+                        user,
+                        result.get('promocode', {'code': request.code.strip()}),
+                        result.get('description', ''),
+                        result.get('balance_before_kopeks'),
+                        result.get('balance_after_kopeks'),
+                    )
+                finally:
+                    await bot.session.close()
+            except Exception:
+                pass
 
         return PromocodeActivateResponse(
             success=True,

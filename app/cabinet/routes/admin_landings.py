@@ -205,6 +205,19 @@ class LandingCreateRequest(BaseModel):
     discount_ends_at: datetime | None = None
     discount_badge_text: dict[str, str] | None = None
     background_config: dict | None = None
+    sticky_pay_button: bool = False
+    analytics_view_enabled: bool = False
+    analytics_view_goal: str | None = Field(default=None, max_length=64)
+    analytics_click_enabled: bool = False
+    analytics_click_goal: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode='after')
+    def validate_analytics_goals(self) -> 'LandingCreateRequest':
+        if self.analytics_view_enabled and not self.analytics_view_goal:
+            raise ValueError('analytics_view_goal is required when analytics_view_enabled is True')
+        if self.analytics_click_enabled and not self.analytics_click_goal:
+            raise ValueError('analytics_click_goal is required when analytics_click_enabled is True')
+        return self
 
     @field_validator('background_config')
     @classmethod
@@ -314,6 +327,11 @@ class LandingUpdateRequest(BaseModel):
     discount_ends_at: datetime | None = None
     discount_badge_text: dict[str, str] | None = None
     background_config: dict | None = None
+    sticky_pay_button: bool | None = None
+    analytics_view_enabled: bool | None = None
+    analytics_view_goal: str | None = Field(default=None, max_length=64)
+    analytics_click_enabled: bool | None = None
+    analytics_click_goal: str | None = Field(default=None, max_length=64)
 
     @field_validator('background_config')
     @classmethod
@@ -461,6 +479,11 @@ class LandingDetailResponse(BaseModel):
     discount_ends_at: datetime | None = None
     discount_badge_text: dict[str, str] | None = None
     background_config: dict | None = None
+    sticky_pay_button: bool = False
+    analytics_view_enabled: bool = False
+    analytics_view_goal: str | None = None
+    analytics_click_enabled: bool = False
+    analytics_click_goal: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -527,6 +550,7 @@ class LandingPurchaseItem(BaseModel):
     currency: str
     payment_method: str | None = None
     status: str
+    referrer: str | None = None
     created_at: datetime | None = None
     paid_at: datetime | None = None
 
@@ -638,6 +662,11 @@ async def create_landing_page(
         discount_ends_at=request.discount_ends_at,
         discount_badge_text=request.discount_badge_text,
         background_config=request.background_config,
+        sticky_pay_button=request.sticky_pay_button,
+        analytics_view_enabled=request.analytics_view_enabled,
+        analytics_view_goal=request.analytics_view_goal,
+        analytics_click_enabled=request.analytics_click_enabled,
+        analytics_click_goal=request.analytics_click_goal,
     )
 
     logger.info('Admin created landing page', admin_id=admin.id, slug=landing.slug, landing_id=landing.id)
@@ -979,6 +1008,7 @@ async def get_landing_purchases(
             GuestPurchase.currency,
             GuestPurchase.payment_method,
             GuestPurchase.status,
+            GuestPurchase.referrer,
             GuestPurchase.created_at,
             GuestPurchase.paid_at,
         )
@@ -1004,6 +1034,7 @@ async def get_landing_purchases(
             currency=row.currency,
             payment_method=row.payment_method,
             status=row.status,
+            referrer=row.referrer,
             created_at=row.created_at,
             paid_at=row.paid_at,
         )
@@ -1068,6 +1099,11 @@ def _landing_to_detail(landing: LandingPage) -> LandingDetailResponse:
         discount_ends_at=landing.discount_ends_at,
         discount_badge_text=landing.discount_badge_text,
         background_config=landing.background_config,
+        sticky_pay_button=landing.sticky_pay_button,
+        analytics_view_enabled=landing.analytics_view_enabled,
+        analytics_view_goal=landing.analytics_view_goal,
+        analytics_click_enabled=landing.analytics_click_enabled,
+        analytics_click_goal=landing.analytics_click_goal,
         created_at=landing.created_at,
         updated_at=landing.updated_at,
     )

@@ -78,6 +78,7 @@ CATEGORY_GROUP_METADATA: dict[str, dict[str, object]] = {
             'SEVERPAY',
             'PAYPEAR',
             'ROLLYPAY',
+            'OVERPAY',
             'AURAPAY',
             'MULENPAY',
             'PAL24',
@@ -157,7 +158,6 @@ CATEGORY_GROUP_METADATA: dict[str, dict[str, object]] = {
             'LOG',
             'MODERATION',
             'DEBUG',
-            'EXTERNAL_ADMIN',
         ),
     },
 }
@@ -1269,6 +1269,9 @@ def _build_settings_keyboard(
     elif category_key == 'ROLLYPAY':
         label = texts.t('PAYMENT_ROLLYPAY', f'💳 {settings.get_rollypay_display_name()}')
         test_payment_buttons.append([_test_button(f'{label} · тест', 'rollypay')])
+    elif category_key == 'OVERPAY':
+        label = texts.t('PAYMENT_OVERPAY', f'💳 {settings.get_overpay_display_name()}')
+        test_payment_buttons.append([_test_button(f'{label} · тест', 'overpay')])
     elif category_key == 'AURAPAY':
         label = texts.t('PAYMENT_AURAPAY', f'💳 {settings.get_aurapay_display_name()}')
         test_payment_buttons.append([_test_button(f'{label} · тест', 'aurapay')])
