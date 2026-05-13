@@ -329,6 +329,43 @@ class SubscriptionService:
             email=user.email,
             user_id=user.id,
         )
+
+        # Legacy fallback: pre-multi-tariff bot created a single Remnawave
+        # account per user with the historical default template
+        # 'user_<telegram_id>' (no per-subscription suffix). When the admin
+        # later changed REMNAWAVE_USER_USERNAME_TEMPLATE or migrated to
+        # multi-tariff mode, those legacy panel users remain orphaned —
+        # subscription.remnawave_uuid is empty so the UUID-lookup branch
+        # above misses them, and we'd otherwise create a fresh
+        # 'u_<tg>_<sub.id>' account every update. Try the legacy username
+        # first; if it exists, adopt it (caller saves uuid into subscription)
+        # and update in place instead of duplicating.
+        if user.telegram_id:
+            legacy_main = f'user_{user.telegram_id}'
+            try:
+                legacy_user = await api.get_user_by_username(legacy_main)
+            except Exception as legacy_err:
+                logger.warning(
+                    'Legacy main lookup failed', legacy=legacy_main, error=legacy_err
+                )
+                legacy_user = None
+
+            if legacy_user:
+                logger.info(
+                    '♻️ Found legacy main user, adopting',
+                    legacy=legacy_main,
+                    uuid=legacy_user.uuid,
+                    subscription_id=subscription.id,
+                )
+                try:
+                    await api.reset_user_devices(legacy_user.uuid)
+                except Exception as hwid_error:
+                    logger.warning('⚠️ Не удалось сбросить HWID (legacy)', hwid_error=hwid_error)
+                updated_user = await api.update_user(uuid=legacy_user.uuid, **common_kwargs)
+                if reset_traffic:
+                    await self._reset_user_traffic(api, updated_user.uuid, user, reset_reason)
+                return updated_user
+
         # Use subscription.id as suffix — short, readable, mirrors WL naming
         # (user_<tg>_<sub.id> + _wl). Legacy accounts may still have the
         # remnawave_short_id hex suffix; they're tracked via remnawave_uuid
@@ -694,6 +731,31 @@ class SubscriptionService:
                         username_wl = legacy_wl
                 except Exception as legacy_err:
                     logger.warning('Legacy WL fallback lookup failed', error=legacy_err)
+
+            # Second legacy fallback: pre-template-change WL accounts used the
+            # historical default template 'user_<telegram_id>_wl' regardless of
+            # the current REMNAWAVE_USER_USERNAME_TEMPLATE. If admin later
+            # changed the template to e.g. 'u_{telegram_id}', the first legacy
+            # check above would search 'u_<tg>_wl' and miss the actual stored
+            # name 'user_<tg>_wl'. Try the hardcoded historical name too.
+            if not wl_user and user.telegram_id:
+                hardcoded_legacy_wl = f'user_{user.telegram_id}_wl'
+                if hardcoded_legacy_wl not in (primary_wl, legacy_wl):
+                    try:
+                        wl_user = await api.get_user_by_username(hardcoded_legacy_wl)
+                        if wl_user:
+                            logger.info(
+                                '♻️ Found pre-template-change WL user, will reuse',
+                                legacy=hardcoded_legacy_wl,
+                                primary=primary_wl,
+                                wl_uuid=wl_user.uuid,
+                            )
+                            username_wl = hardcoded_legacy_wl
+                    except Exception as hardcoded_err:
+                        logger.warning(
+                            'Pre-template-change WL fallback lookup failed',
+                            error=hardcoded_err,
+                        )
 
             if wl_user:
                 logger.info('♻️ _wl пользователь найден, обновляем', username_wl=username_wl, wl_uuid=wl_user.uuid)
