@@ -14,106 +14,87 @@ from aiogram.types import Message
 
 
 class TestRedisPayloadFunctions:
-    """Тесты для Redis-функций сохранения payload."""
+    """Тесты для Redis-функций сохранения payload (через cache singleton)."""
 
     async def test_save_pending_payload_to_redis_success(self, monkeypatch):
-        """Тест успешного сохранения payload в Redis."""
         from app.middlewares import channel_checker
 
-        mock_redis = AsyncMock()
-        mock_redis.set = AsyncMock(return_value=True)
-        mock_redis.aclose = AsyncMock()
+        mock_cache = MagicMock()
+        mock_cache.set = AsyncMock(return_value=True)
 
-        with patch('app.middlewares.channel_checker.aioredis') as mock_aioredis:
-            mock_aioredis.from_url = MagicMock(return_value=mock_redis)
-
+        with patch('app.middlewares.channel_checker.cache', mock_cache):
             result = await channel_checker.save_pending_payload_to_redis(123456, 'ref_test123')
 
             assert result is True
-            mock_redis.set.assert_awaited_once()
-            call_args = mock_redis.set.await_args
+            mock_cache.set.assert_awaited_once()
+            call_args = mock_cache.set.await_args
             assert 'pending_start_payload:123456' in call_args.args[0]
             assert call_args.args[1] == 'ref_test123'
-            assert call_args.kwargs.get('ex') == 3600
-            mock_redis.aclose.assert_awaited_once()
+            assert call_args.kwargs.get('expire') == 3600
 
     async def test_save_pending_payload_to_redis_failure(self, monkeypatch):
-        """Тест обработки ошибки при сохранении в Redis."""
         from app.middlewares import channel_checker
 
-        with patch('app.middlewares.channel_checker.aioredis') as mock_aioredis:
-            mock_aioredis.from_url = MagicMock(side_effect=Exception('Redis connection failed'))
+        mock_cache = MagicMock()
+        mock_cache.set = AsyncMock(side_effect=Exception('Redis connection failed'))
 
+        with patch('app.middlewares.channel_checker.cache', mock_cache):
             result = await channel_checker.save_pending_payload_to_redis(123456, 'ref_test123')
 
             assert result is False
 
     async def test_get_pending_payload_from_redis_success(self, monkeypatch):
-        """Тест успешного получения payload из Redis."""
         from app.middlewares import channel_checker
 
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=b'ref_test123')
-        mock_redis.aclose = AsyncMock()
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value='ref_test123')
 
-        with patch('app.middlewares.channel_checker.aioredis') as mock_aioredis:
-            mock_aioredis.from_url = MagicMock(return_value=mock_redis)
-
+        with patch('app.middlewares.channel_checker.cache', mock_cache):
             result = await channel_checker.get_pending_payload_from_redis(123456)
 
             assert result == 'ref_test123'
-            mock_redis.get.assert_awaited_once()
-            mock_redis.aclose.assert_awaited_once()
+            mock_cache.get.assert_awaited_once()
 
     async def test_get_pending_payload_from_redis_not_found(self, monkeypatch):
-        """Тест когда payload не найден в Redis."""
         from app.middlewares import channel_checker
 
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
-        mock_redis.aclose = AsyncMock()
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value=None)
 
-        with patch('app.middlewares.channel_checker.aioredis') as mock_aioredis:
-            mock_aioredis.from_url = MagicMock(return_value=mock_redis)
-
+        with patch('app.middlewares.channel_checker.cache', mock_cache):
             result = await channel_checker.get_pending_payload_from_redis(123456)
 
             assert result is None
 
     async def test_get_pending_payload_from_redis_failure(self, monkeypatch):
-        """Тест обработки ошибки при получении из Redis."""
         from app.middlewares import channel_checker
 
-        with patch('app.middlewares.channel_checker.aioredis') as mock_aioredis:
-            mock_aioredis.from_url = MagicMock(side_effect=Exception('Redis connection failed'))
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(side_effect=Exception('Redis connection failed'))
 
+        with patch('app.middlewares.channel_checker.cache', mock_cache):
             result = await channel_checker.get_pending_payload_from_redis(123456)
 
             assert result is None
 
     async def test_delete_pending_payload_from_redis(self, monkeypatch):
-        """Тест удаления payload из Redis."""
         from app.middlewares import channel_checker
 
-        mock_redis = AsyncMock()
-        mock_redis.delete = AsyncMock(return_value=1)
-        mock_redis.aclose = AsyncMock()
+        mock_cache = MagicMock()
+        mock_cache.delete = AsyncMock(return_value=1)
 
-        with patch('app.middlewares.channel_checker.aioredis') as mock_aioredis:
-            mock_aioredis.from_url = MagicMock(return_value=mock_redis)
-
-            # Не должно бросать исключение
+        with patch('app.middlewares.channel_checker.cache', mock_cache):
             await channel_checker.delete_pending_payload_from_redis(123456)
 
-            mock_redis.delete.assert_awaited_once()
+            mock_cache.delete.assert_awaited_once()
 
     async def test_delete_pending_payload_from_redis_handles_error(self, monkeypatch):
-        """Тест что удаление не бросает исключение при ошибке."""
         from app.middlewares import channel_checker
 
-        with patch('app.middlewares.channel_checker.aioredis') as mock_aioredis:
-            mock_aioredis.from_url = MagicMock(side_effect=Exception('Redis error'))
+        mock_cache = MagicMock()
+        mock_cache.delete = AsyncMock(side_effect=Exception('Redis error'))
 
+        with patch('app.middlewares.channel_checker.cache', mock_cache):
             # Не должно бросать исключение
             await channel_checker.delete_pending_payload_from_redis(123456)
 

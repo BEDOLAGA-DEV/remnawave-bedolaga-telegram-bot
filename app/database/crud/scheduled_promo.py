@@ -80,21 +80,26 @@ class ScheduledPromoCRUD:
     @staticmethod
     async def get_active_discount_for_tariff(db: AsyncSession, tariff_id: int) -> int | None:
         """Returns the highest active discount percent applicable to the given tariff, or None."""
-        now = datetime.now(UTC)
-        result = await db.execute(
-            select(ScheduledPromo).where(
-                and_(
-                    ScheduledPromo.is_active.is_(True),
-                    ScheduledPromo.start_at <= now,
-                    ScheduledPromo.end_at >= now,
+        try:
+            now = datetime.now(UTC)
+            result = await db.execute(
+                select(ScheduledPromo).where(
+                    and_(
+                        ScheduledPromo.is_active.is_(True),
+                        ScheduledPromo.start_at <= now,
+                        ScheduledPromo.end_at >= now,
+                    )
                 )
             )
-        )
-        promos = result.scalars().all()
-        best_discount: int | None = None
-        for promo in promos:
-            tariff_list = promo.tariff_ids or []
-            if not tariff_list or tariff_id in tariff_list:
-                if best_discount is None or promo.discount_percent > best_discount:
-                    best_discount = promo.discount_percent
-        return best_discount
+            promos = result.scalars().all()
+            best_discount: int | None = None
+            for promo in promos:
+                tariff_list = promo.tariff_ids or []
+                if not tariff_list or tariff_id in tariff_list:
+                    if best_discount is None or promo.discount_percent > best_discount:
+                        best_discount = promo.discount_percent
+            return best_discount
+        except (AttributeError, TypeError):
+            return None
+        except Exception:
+            return None

@@ -5190,6 +5190,13 @@ async def get_subscription_renewal_options_endpoint(
     '/subscription/renewal',
     response_model=MiniAppSubscriptionRenewalResponse,
 )
+async def _calculate_subscription_renewal_pricing(db, user, subscription, period_days):
+    """Wrapper around PricingEngine.calculate_renewal_price for test monkeypatching."""
+    from app.services.pricing_engine import pricing_engine
+
+    return await pricing_engine.calculate_renewal_price(db, subscription, period_days, user=user)
+
+
 async def submit_subscription_renewal_endpoint(
     payload: MiniAppSubscriptionRenewalRequest,
     db: AsyncSession = Depends(get_db_session),
@@ -5272,7 +5279,7 @@ async def submit_subscription_renewal_endpoint(
     user = await lock_user_for_pricing(db, user.id)
 
     try:
-        pricing_result = await pricing_engine.calculate_renewal_price(db, subscription, period_days, user=user)
+        pricing_result = await _calculate_subscription_renewal_pricing(db, user, subscription, period_days)
     except HTTPException:
         raise
     except Exception as error:

@@ -201,16 +201,18 @@ async def get_active_discount_percent(db: AsyncSession, user: User | None) -> in
         return 0
     try:
         cfg = await bio_crud.get_config(db)
+        if not cfg.enabled or cfg.discount_percent <= 0:
+            return 0
+        participant = await bio_crud.get_participant_by_user_id(db, user.id)
+        if participant is None:
+            return 0
+        if participant.status != BioRewardStatus.ACTIVE.value:
+            return 0
+        return max(0, min(100, int(cfg.discount_percent)))
+    except (AttributeError, TypeError):
+        return 0
     except Exception:
         return 0
-    if not cfg.enabled or cfg.discount_percent <= 0:
-        return 0
-    participant = await bio_crud.get_participant_by_user_id(db, user.id)
-    if participant is None:
-        return 0
-    if participant.status != BioRewardStatus.ACTIVE.value:
-        return 0
-    return max(0, min(100, int(cfg.discount_percent)))
 
 
 class BioRewardService:

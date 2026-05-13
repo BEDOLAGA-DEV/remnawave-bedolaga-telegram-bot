@@ -45,6 +45,10 @@ def _make_user(
     subscription: object | None = None,
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
+    has_had_paid_subscription: bool = False,
+    has_made_first_topup: bool = False,
+    restriction_topup: bool = False,
+    restriction_subscription: bool = False,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=id,
@@ -69,6 +73,20 @@ def _make_user(
         subscription=subscription,
         created_at=created_at or datetime(2024, 1, 1, tzinfo=UTC),
         updated_at=updated_at or datetime(2024, 1, 1, tzinfo=UTC),
+        has_had_paid_subscription=has_had_paid_subscription,
+        has_made_first_topup=has_made_first_topup,
+        restriction_topup=restriction_topup,
+        restriction_subscription=restriction_subscription,
+        restriction_reason=None,
+        email_change_code=None,
+        email_change_expires=None,
+        email_change_new=None,
+        email_verification_token=None,
+        email_verification_expires=None,
+        password_reset_token=None,
+        password_reset_expires=None,
+        full_name=None,
+        used_promocodes=[],
     )
 
 

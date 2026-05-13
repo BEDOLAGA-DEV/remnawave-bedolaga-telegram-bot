@@ -3142,8 +3142,11 @@ async def _is_subscription_disabled(
     if subscription_id:
         from app.database.crud.subscription import get_subscription_by_id_for_user
 
-        sub = await get_subscription_by_id_for_user(db, subscription_id, user.id)
-        return sub is not None and sub.status == SubscriptionStatus.DISABLED.value
+        try:
+            sub = await get_subscription_by_id_for_user(db, subscription_id, user.id)
+            return sub is not None and sub.status == SubscriptionStatus.DISABLED.value
+        except (AttributeError, TypeError):
+            return False
 
     if settings.is_multi_tariff_enabled():
         from app.database.crud.subscription import get_active_subscriptions_by_user_id
