@@ -99,6 +99,7 @@ async def test_submit_subscription_renewal_uses_balance_when_sufficient(monkeypa
     monkeypatch.setattr(settings, 'CRYPTOBOT_ENABLED', False, raising=False)
     monkeypatch.setattr(settings, 'CRYPTOBOT_API_TOKEN', None, raising=False)
     monkeypatch.setattr(type(settings), 'get_available_renewal_periods', lambda self: [30], raising=False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False, raising=False)
 
     user = types.SimpleNamespace(id=10, balance_kopeks=10000, language='ru')
     subscription = types.SimpleNamespace(
@@ -127,7 +128,7 @@ async def test_submit_subscription_renewal_uses_balance_when_sufficient(monkeypa
     async def fake_authorize(init_data, db):
         return user
 
-    def fake_ensure(subscription_user, allowed_statuses=None):
+    def fake_ensure(subscription_user, allowed_statuses=None, subscription_id=None):
         return subscription
 
     async def fake_calculate(db, u, sub, period):
@@ -150,6 +151,11 @@ async def test_submit_subscription_renewal_uses_balance_when_sufficient(monkeypa
     monkeypatch.setattr(miniapp, '_authorize_miniapp_user', fake_authorize)
     monkeypatch.setattr(miniapp, '_ensure_paid_subscription', fake_ensure)
     monkeypatch.setattr(miniapp, '_validate_subscription_id', lambda *args, **kwargs: None)
+
+    async def fake_lock_user(_db, uid):
+        return user
+
+    monkeypatch.setattr('app.database.crud.user.lock_user_for_pricing', fake_lock_user)
     monkeypatch.setattr(miniapp, '_calculate_subscription_renewal_pricing', fake_calculate)
     monkeypatch.setattr(miniapp.renewal_service, 'finalize', fake_finalize)
 
@@ -179,6 +185,7 @@ async def test_submit_subscription_renewal_returns_cryptobot_invoice(monkeypatch
     monkeypatch.setattr(settings, 'CRYPTOBOT_API_TOKEN', 'token', raising=False)
     monkeypatch.setattr(settings, 'CRYPTOBOT_DEFAULT_ASSET', 'USDT', raising=False)
     monkeypatch.setattr(type(settings), 'get_available_renewal_periods', lambda self: [30], raising=False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False, raising=False)
 
     user = types.SimpleNamespace(id=15, balance_kopeks=5000, language='ru')
     subscription = types.SimpleNamespace(
@@ -207,7 +214,7 @@ async def test_submit_subscription_renewal_returns_cryptobot_invoice(monkeypatch
     async def fake_authorize(init_data, db):
         return user
 
-    def fake_ensure(subscription_user, allowed_statuses=None):
+    def fake_ensure(subscription_user, allowed_statuses=None, subscription_id=None):
         return subscription
 
     async def fake_calculate(db, u, sub, period):
@@ -235,6 +242,11 @@ async def test_submit_subscription_renewal_returns_cryptobot_invoice(monkeypatch
     monkeypatch.setattr(miniapp, '_authorize_miniapp_user', fake_authorize)
     monkeypatch.setattr(miniapp, '_ensure_paid_subscription', fake_ensure)
     monkeypatch.setattr(miniapp, '_validate_subscription_id', lambda *args, **kwargs: None)
+
+    async def fake_lock_user(_db, uid):
+        return user
+
+    monkeypatch.setattr('app.database.crud.user.lock_user_for_pricing', fake_lock_user)
     monkeypatch.setattr(miniapp, '_calculate_subscription_renewal_pricing', fake_calculate)
     monkeypatch.setattr(miniapp, 'PaymentService', lambda *args, **kwargs: DummyPaymentService())
     monkeypatch.setattr(miniapp, '_get_usd_to_rub_rate', fake_rate)
@@ -270,6 +282,7 @@ async def test_submit_subscription_renewal_rounds_up_cryptobot_amount(monkeypatc
     monkeypatch.setattr(settings, 'CRYPTOBOT_API_TOKEN', 'token', raising=False)
     monkeypatch.setattr(settings, 'CRYPTOBOT_DEFAULT_ASSET', 'USDT', raising=False)
     monkeypatch.setattr(type(settings), 'get_available_renewal_periods', lambda self: [30], raising=False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False, raising=False)
 
     user = types.SimpleNamespace(id=42, balance_kopeks=0, language='ru')
     subscription = types.SimpleNamespace(
@@ -298,7 +311,7 @@ async def test_submit_subscription_renewal_rounds_up_cryptobot_amount(monkeypatc
     async def fake_authorize(init_data, db):
         return user
 
-    def fake_ensure(subscription_user, allowed_statuses=None):
+    def fake_ensure(subscription_user, allowed_statuses=None, subscription_id=None):
         return subscription
 
     async def fake_calculate(db, u, sub, period):
@@ -326,6 +339,11 @@ async def test_submit_subscription_renewal_rounds_up_cryptobot_amount(monkeypatc
     monkeypatch.setattr(miniapp, '_authorize_miniapp_user', fake_authorize)
     monkeypatch.setattr(miniapp, '_ensure_paid_subscription', fake_ensure)
     monkeypatch.setattr(miniapp, '_validate_subscription_id', lambda *args, **kwargs: None)
+
+    async def fake_lock_user(_db, uid):
+        return user
+
+    monkeypatch.setattr('app.database.crud.user.lock_user_for_pricing', fake_lock_user)
     monkeypatch.setattr(miniapp, '_calculate_subscription_renewal_pricing', fake_calculate)
     monkeypatch.setattr(miniapp, 'PaymentService', lambda *args, **kwargs: DummyPaymentService())
     monkeypatch.setattr(miniapp, '_get_usd_to_rub_rate', fake_rate)

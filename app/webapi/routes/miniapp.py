@@ -5220,7 +5220,7 @@ async def submit_subscription_renewal_endpoint(
     _validate_subscription_id(payload.subscription_id, subscription)
 
     # Block classic subscription renewal when tariff mode is active
-    if settings.is_tariffs_mode() and not subscription.tariff_id:
+    if settings.is_tariffs_mode() and not getattr(subscription, 'tariff_id', None):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -5295,7 +5295,7 @@ async def submit_subscription_renewal_endpoint(
         ) from error
 
     final_total = pricing_result.final_total
-    promo_offer_discount_value = pricing_result.promo_offer_discount
+    promo_offer_discount_value = getattr(pricing_result, 'promo_offer_discount', 0)
 
     method = (payload.method or '').strip().lower()
 

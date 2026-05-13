@@ -111,6 +111,9 @@ class FakeSession:
     async def commit(self) -> None:
         self.commits += 1
 
+    async def flush(self) -> None:
+        return None
+
     async def rollback(self) -> None:  # pragma: no cover
         return None
 
@@ -159,6 +162,7 @@ async def test_process_mulenpay_callback_success(monkeypatch: pytest.MonkeyPatch
     service = _make_service(bot)
     fake_session = FakeSession()
     payment = SimpleNamespace(
+        id=901,
         uuid='mulen_uuid',
         mulen_payment_id=123,
         amount_kopeks=5000,
@@ -175,6 +179,13 @@ async def test_process_mulenpay_callback_success(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(payment_service_module, 'get_mulenpay_payment_by_uuid', fake_get_by_uuid)
     monkeypatch.setattr(payment_service_module, 'get_mulenpay_payment_by_mulen_id', fake_get_by_id)
+
+    async def fake_lock(db, payment_id):
+        return payment if payment.id == payment_id else None
+
+    mulenpay_module = ModuleType('app.database.crud.mulenpay')
+    mulenpay_module.get_mulenpay_payment_by_id_for_update = fake_lock
+    monkeypatch.setitem(sys.modules, 'app.database.crud.mulenpay', mulenpay_module)
 
     transactions: list[dict[str, Any]] = []
 
@@ -260,6 +271,7 @@ async def test_process_cryptobot_webhook_success(monkeypatch: pytest.MonkeyPatch
     service = _make_service(bot)
     fake_session = FakeSession()
     payment = SimpleNamespace(
+        id=902,
         invoice_id='inv_1',
         user_id=7,
         status='pending',
@@ -384,6 +396,7 @@ async def test_process_heleket_webhook_success(monkeypatch: pytest.MonkeyPatch) 
     fake_session = FakeSession()
 
     payment = SimpleNamespace(
+        id=903,
         uuid='heleket-uuid',
         order_id='heleket-order',
         user_id=77,
@@ -439,9 +452,13 @@ async def test_process_heleket_webhook_success(monkeypatch: pytest.MonkeyPatch) 
         payment.transaction_id = transaction_id
         return payment
 
+    async def fake_get_by_id_for_update(db, payment_id):
+        return payment if payment.id == payment_id else None
+
     heleket_module = ModuleType('app.database.crud.heleket')
     heleket_module.get_heleket_payment_by_uuid = fake_get_by_uuid
     heleket_module.get_heleket_payment_by_order_id = fake_get_by_order
+    heleket_module.get_heleket_payment_by_id_for_update = fake_get_by_id_for_update
     heleket_module.update_heleket_payment = fake_update
     heleket_module.link_heleket_payment_to_transaction = fake_link
     monkeypatch.setitem(sys.modules, 'app.database.crud.heleket', heleket_module)
@@ -525,6 +542,7 @@ async def test_process_yookassa_webhook_success(monkeypatch: pytest.MonkeyPatch)
     service = _make_service(bot)
     fake_session = FakeSession()
     payment = SimpleNamespace(
+        id=904,
         yookassa_payment_id='yk_123',
         user_id=21,
         amount_kopeks=10000,
@@ -627,6 +645,7 @@ async def test_process_yookassa_webhook_uses_remote_status(monkeypatch: pytest.M
     service = _make_service(bot)
     fake_session = FakeSession()
     payment = SimpleNamespace(
+        id=905,
         yookassa_payment_id='yk_789',
         user_id=42,
         amount_kopeks=20000,
@@ -737,6 +756,7 @@ async def test_process_yookassa_webhook_handles_cancellation(monkeypatch: pytest
     service = _make_service(bot)
     fake_session = FakeSession()
     payment = SimpleNamespace(
+        id=906,
         yookassa_payment_id='yk_cancel',
         user_id=77,
         amount_kopeks=5000,
@@ -795,6 +815,7 @@ async def test_process_yookassa_webhook_restores_missing_payment(
     fake_session = FakeSession()
 
     restored_payment = SimpleNamespace(
+        id=907,
         yookassa_payment_id='yk_456',
         user_id=21,
         amount_kopeks=0,
@@ -968,6 +989,7 @@ async def test_process_pal24_callback_success(monkeypatch: pytest.MonkeyPatch) -
     service.pal24_service = SimpleNamespace(is_configured=True)
     fake_session = FakeSession()
     payment = SimpleNamespace(
+        id=908,
         bill_id='BILL-1',
         order_id='order-1',
         amount_kopeks=5000,
