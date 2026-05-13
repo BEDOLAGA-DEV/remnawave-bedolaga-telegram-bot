@@ -1006,6 +1006,15 @@ async def _render_user_subscription_overview(
                     )
                 ]
             )
+
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text='🗑 Удалить подписку',
+                    callback_data=f'admin_sub_delete_{user_id}{_sid}',
+                )
+            ]
+        )
     else:
         text += '❌ <b>Подписка отсутствует</b>\n\n'
         text += 'Пользователь еще не активировал подписку.'
@@ -3319,6 +3328,57 @@ async def confirm_subscription_deactivation(callback: types.CallbackQuery, db_us
 
 @admin_required
 @error_handler
+async def delete_user_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+
+    _sid = f'_s{subscription_id}' if subscription_id else ''
+    back_cb = (
+        f'admin_user_sub_select_{user_id}_{subscription_id}'
+        if subscription_id
+        else f'admin_user_subscription_{user_id}'
+    )
+
+    await callback.message.edit_text(
+        '🗑 <b>Удаление подписки</b>\n\n'
+        '⚠️ Эта операция необратима. Подписка и все связанные с ней данные '
+        '(пакеты трафика, WL-пакеты, привязки серверов) будут удалены, '
+        'а пользователь — отключён в RemnaWave.\n\n'
+        'Продолжить?',
+        reply_markup=get_confirmation_keyboard(
+            f'admin_sub_delete_confirm_{user_id}{_sid}', back_cb, db_user.language
+        ),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def confirm_subscription_deletion(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+    back_cb = f'admin_user_manage_{user_id}'
+
+    success = await _delete_user_subscription(db, user_id, db_user.id, subscription_id=subscription_id)
+
+    if success:
+        await callback.message.edit_text(
+            '✅ Подписка пользователя удалена',
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ К пользователю', callback_data=back_cb)]]
+            ),
+        )
+    else:
+        await callback.message.edit_text(
+            '❌ Ошибка удаления подписки',
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ К пользователю', callback_data=back_cb)]]
+            ),
+        )
+
+    await callback.answer()
+
+
+@admin_required
+@error_handler
 async def activate_user_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     user_id, subscription_id = _extract_admin_sub_context(callback.data)
 
@@ -4617,6 +4677,49 @@ async def _deactivate_user_subscription(
 
     except Exception as e:
         logger.error('Ошибка деактивации подписки', error=e)
+        return False
+
+
+async def _delete_user_subscription(
+    db: AsyncSession, user_id: int, admin_id: int, subscription_id: int | None = None
+) -> bool:
+    try:
+        from app.database.crud.subscription import decrement_subscription_server_counts
+        from app.services.subscription_service import SubscriptionService
+
+        subscription = await _resolve_admin_subscription(db, user_id, subscription_id)
+        if not subscription:
+            logger.error('Подписка не найдена для пользователя', user_id=user_id)
+            return False
+
+        # Удаляем пользователя на панели RemnaWave (останавливает webhooks/phantom-уведомления)
+        if subscription.remnawave_uuid:
+            try:
+                service = SubscriptionService()
+                await service.delete_remnawave_user(subscription.remnawave_uuid)
+            except Exception as e:
+                logger.warning('Не удалось удалить пользователя RemnaWave', error=e)
+
+        # Декремент счётчиков серверов
+        try:
+            await decrement_subscription_server_counts(db, subscription)
+        except Exception as e:
+            logger.warning('Не удалось декрементировать счётчики серверов', error=e)
+
+        # Hard delete (CASCADE на traffic_purchases, wl_traffic_purchases, subscription_servers)
+        await db.delete(subscription)
+        await db.commit()
+
+        logger.info(
+            'Админ удалил подписку пользователя',
+            admin_id=admin_id,
+            user_id=user_id,
+            subscription_id=subscription_id,
+        )
+        return True
+
+    except Exception as e:
+        logger.error('Ошибка удаления подписки', error=e)
         return False
 
 
@@ -6004,7 +6107,8 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         # Сбрасываем докупленный трафик при смене тарифа
         from sqlalchemy import delete as sql_delete
 
-        from app.database.models import TrafficPurchase
+        from app.database.crud.subscription import resolve_wl_traffic_for_tariff
+        from app.database.models import TrafficPurchase, WlTrafficPurchase
 
         await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
         subscription.purchased_traffic_gb = 0
@@ -6013,6 +6117,26 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         # Сброс использованного трафика по админ-настройке
         if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
             subscription.traffic_used_gb = 0.0
+
+        # WL-трафик берём из настроек нового тарифа.
+        # resolve_wl_traffic_for_tariff: -1 = WL отключён в тарифе,
+        # 0 = безлимит, >0 = конкретный лимит, None = нет тарифа (пропускаем).
+        wl_resolved = resolve_wl_traffic_for_tariff(tariff)
+        if wl_resolved is not None:
+            if wl_resolved == -1:
+                # Тариф не предусматривает WL — обнуляем (0 = WL не применим)
+                subscription.wl_traffic_limit_gb = 0
+            else:
+                subscription.wl_traffic_limit_gb = wl_resolved
+
+            # Сбрасываем WL-докупки и счётчики при смене тарифа
+            await db.execute(
+                sql_delete(WlTrafficPurchase).where(WlTrafficPurchase.subscription_id == subscription.id)
+            )
+            subscription.wl_purchased_traffic_gb = 0
+            subscription.wl_traffic_reset_at = None
+            if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+                subscription.wl_traffic_used_gb = 0.0
 
         # Записываем транзакцию о смене тарифа
         from app.database.crud.transaction import create_transaction
@@ -6449,6 +6573,11 @@ def register_handlers(dp: Dispatcher):
     )
 
     dp.callback_query.register(confirm_subscription_deactivation, F.data.startswith('admin_sub_deactivate_confirm_'))
+
+    dp.callback_query.register(
+        delete_user_subscription, F.data.startswith('admin_sub_delete_') & ~F.data.contains('confirm')
+    )
+    dp.callback_query.register(confirm_subscription_deletion, F.data.startswith('admin_sub_delete_confirm_'))
 
     dp.callback_query.register(activate_user_subscription, F.data.startswith('admin_sub_activate_'))
 
