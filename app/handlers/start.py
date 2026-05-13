@@ -64,7 +64,10 @@ from app.services.subscription_service import SubscriptionService
 from app.services.support_settings_service import SupportSettingsService
 from app.services.web_auth_service import WEB_AUTH_TOKEN_MIN_LENGTH, link_web_auth_token
 from app.states import RegistrationStates
-from app.utils.partner_click import CLICK_ID_RE as _CLICK_ID_RE
+from app.utils.partner_click import (
+    CLICK_ID_RE as _CLICK_ID_RE,
+    extract_click_id_from_start_param,
+)
 from app.utils.promo_offer import (
     build_promo_offer_hint,
     build_test_access_hint,
@@ -783,20 +786,14 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         # Extract optional partner/aff click_id from /start payload — AFTER gift/webauth
         # so those prefixes are not accidentally truncated when they happen to contain
         # the substring '_clk_'.
-        if start_parameter and '_clk_' in start_parameter:
+        _campaign_part, _click_part = extract_click_id_from_start_param(start_parameter)
+        if _click_part:
+            start_parameter = _campaign_part
             try:
-                # rsplit so campaign names that themselves contain `_clk_` stay intact;
-                # we always treat the rightmost segment as the click_id.
-                _campaign_part, _click_part = start_parameter.rsplit('_clk_', 1)
-                if _click_part and _CLICK_ID_RE.match(_click_part):
-                    start_parameter = _campaign_part or None
-                    await state.update_data(pending_click_id=_click_part)
-                    logger.info(
-                        'click_id_extracted_from_start',
-                        click_id_prefix=_click_part[:8],
-                    )
+                await state.update_data(pending_click_id=_click_part)
             except Exception:
                 pass
+            logger.info('click_id_extracted_from_start', click_id_prefix=_click_part[:8])
 
         campaign = await get_campaign_by_start_parameter(
             db,

@@ -63,8 +63,67 @@ if 'redis.asyncio' not in sys.modules:
 
     redis_async_module.from_url = _from_url
     redis_async_module.Redis = _FakeRedisClient
+
+    redis_exceptions_module = types.ModuleType('redis.exceptions')
+
+    class _StubRedisError(Exception):
+        pass
+
+    redis_exceptions_module.RedisError = _StubRedisError
+    redis_exceptions_module.NoScriptError = _StubRedisError
+    redis_exceptions_module.ConnectionError = _StubRedisError
+    redis_exceptions_module.TimeoutError = _StubRedisError
+
+    redis_module.asyncio = redis_async_module
+    redis_module.exceptions = redis_exceptions_module
     sys.modules['redis'] = redis_module
     sys.modules['redis.asyncio'] = redis_async_module
+    sys.modules['redis.exceptions'] = redis_exceptions_module
+
+# Stub pycryptodome (Crypto) used by Antilopay payment service.
+if 'Crypto' not in sys.modules:
+    _crypto = types.ModuleType('Crypto')
+    _crypto_hash = types.ModuleType('Crypto.Hash')
+    _crypto_pk = types.ModuleType('Crypto.PublicKey')
+    _crypto_sig = types.ModuleType('Crypto.Signature')
+
+    class _StubSHA256:
+        @staticmethod
+        def new(*args, **kwargs):
+            return _StubSHA256()
+
+        def update(self, *args, **kwargs):
+            pass
+
+        def hexdigest(self):
+            return ''
+
+        def digest(self):
+            return b''
+
+    class _StubRSA:
+        @staticmethod
+        def import_key(*args, **kwargs):
+            return _StubRSA()
+
+    class _StubPKCS115:
+        @staticmethod
+        def new(*args, **kwargs):
+            return _StubPKCS115()
+
+        def sign(self, *args, **kwargs):
+            return b''
+
+    _crypto_hash.SHA256 = _StubSHA256
+    _crypto_pk.RSA = _StubRSA
+    _crypto_sig.pkcs1_15 = _StubPKCS115
+    _crypto.Hash = _crypto_hash
+    _crypto.PublicKey = _crypto_pk
+    _crypto.Signature = _crypto_sig
+    sys.modules['Crypto'] = _crypto
+    sys.modules['Crypto.Hash'] = _crypto_hash
+    sys.modules['Crypto.PublicKey'] = _crypto_pk
+    sys.modules['Crypto.Signature'] = _crypto_sig
 
 # Минимальная реализация SDK YooKassa, чтобы импорт сервисов не падал.
 if 'yookassa' not in sys.modules:
