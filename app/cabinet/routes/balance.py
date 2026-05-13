@@ -1036,7 +1036,6 @@ async def create_topup(
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail='Failed to create Lava payment',
->>>>>>> upstream/main
                 )
 
         else:
