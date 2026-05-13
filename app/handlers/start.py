@@ -64,6 +64,7 @@ from app.services.subscription_service import SubscriptionService
 from app.services.support_settings_service import SupportSettingsService
 from app.services.web_auth_service import WEB_AUTH_TOKEN_MIN_LENGTH, link_web_auth_token
 from app.states import RegistrationStates
+from app.utils.partner_click import CLICK_ID_RE as _CLICK_ID_RE
 from app.utils.promo_offer import (
     build_promo_offer_hint,
     build_test_access_hint,
@@ -75,10 +76,7 @@ from app.utils.user_utils import generate_unique_referral_code
 logger = structlog.get_logger(__name__)
 
 
-from app.utils.partner_click import CLICK_ID_RE as _CLICK_ID_RE
-
-
-async def _persist_pending_click_id(state, user_id: int) -> None:
+async def _persist_pending_click_id(state: FSMContext, user_id: int) -> None:
     """Persist FSM-stored partner click_id to yandex_client_id_map.subid.
 
     Uses an isolated AsyncSessionLocal so it is safe to call right after the
@@ -787,15 +785,16 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         # the substring '_clk_'.
         if start_parameter and '_clk_' in start_parameter:
             try:
-                _campaign_part, _click_part = start_parameter.split('_clk_', 1)
-                if _click_part:
-                    if _CLICK_ID_RE.match(_click_part):
-                        start_parameter = _campaign_part or None
-                        await state.update_data(pending_click_id=_click_part)
-                        logger.info(
-                            'click_id_extracted_from_start',
-                            click_id_prefix=_click_part[:8],
-                        )
+                # rsplit so campaign names that themselves contain `_clk_` stay intact;
+                # we always treat the rightmost segment as the click_id.
+                _campaign_part, _click_part = start_parameter.rsplit('_clk_', 1)
+                if _click_part and _CLICK_ID_RE.match(_click_part):
+                    start_parameter = _campaign_part or None
+                    await state.update_data(pending_click_id=_click_part)
+                    logger.info(
+                        'click_id_extracted_from_start',
+                        click_id_prefix=_click_part[:8],
+                    )
             except Exception:
                 pass
 

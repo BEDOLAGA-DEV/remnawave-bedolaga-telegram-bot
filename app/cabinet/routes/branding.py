@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.system_setting import get_setting_value
 from app.database.models import SystemSetting, User
+from app.utils.cache import RateLimitCache
+from app.utils.partner_click import CLICK_ID_PATTERN
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user, require_permission
 
@@ -1048,9 +1050,6 @@ async def store_yandex_cid(
 # ============ Partner Click ID Sync ============
 
 
-from app.utils.partner_click import CLICK_ID_PATTERN
-
-
 class PartnerClickIdRequest(BaseModel):
     click_id: str = Field(max_length=128, pattern=CLICK_ID_PATTERN)
 
@@ -1063,15 +1062,25 @@ async def store_partner_click_id(
 ):
     """Store partner/affiliate click_id (Keitaro etc.) for the authenticated user.
 
-    Saved into ``yandex_client_id_map.subid`` so that the central S2S postback
-    listener picks it up and reports every subsequent deposit."""
+    Saved into ``yandex_client_id_map.subid`` so the central S2S postback
+    listener picks it up and reports every subsequent deposit.
+
+    First-writer-wins (see ``upsert_subid``) — a user's first attribution is
+    locked and cannot be overwritten by repeated calls, blocking subid hijack.
+    Rate-limited per user to keep log noise and DB chatter bounded under abuse.
+    """
+    if await RateLimitCache.is_rate_limited(user.id, 'partner_click_id', limit=5, window=300):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+        )
     try:
         from app.database.crud.yandex_client_id import upsert_subid
 
         await upsert_subid(db, user.id, body.click_id, source='cabinet')
         await db.commit()
     except Exception as exc:
-        logger.warning('Failed to store partner click_id', user_id=user.id, exc=str(exc))
+        logger.exception('store_partner_click_id_failed', user_id=user.id)
         try:
             await db.rollback()
         except Exception:

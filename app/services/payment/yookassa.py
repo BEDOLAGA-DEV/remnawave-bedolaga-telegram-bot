@@ -1370,7 +1370,7 @@ class YooKassaPaymentMixin:
         yookassa_payment_id = event_object.get('id')
 
         if not yookassa_payment_id:
-            logger.warning('Webhook без payment id', event=event)
+            logger.warning('Webhook без payment id', webhook_event=event)
             return False
 
         remote_data: dict[str, Any] | None = None

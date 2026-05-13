@@ -65,13 +65,8 @@ async def main():
         from app.services.postback_listener import register_postback_listeners
 
         register_postback_listeners()
-    except Exception as _postback_err:
-        import sys as _sys
-
-        print(
-            f'[WARN] postback_listener_register_failed: {_postback_err}',
-            file=_sys.stderr,
-        )
+    except Exception:
+        structlog.get_logger(__name__).warning('postback_listener_register_failed', exc_info=True)
 
     log_handlers = []
 
