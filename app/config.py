@@ -855,6 +855,7 @@ class Settings(BaseSettings):
     LOLZ_ENABLED: bool = False
     LOLZ_API_TOKEN: str | None = None
     LOLZ_MERCHANT_ID: int | None = None
+    LOLZ_WEBHOOK_SECRET: str | None = None
     LOLZ_DISPLAY_NAME: str = 'LZT'
     LOLZ_CURRENCY: str = 'rub'
     LOLZ_MIN_AMOUNT_KOPEKS: int = 10000

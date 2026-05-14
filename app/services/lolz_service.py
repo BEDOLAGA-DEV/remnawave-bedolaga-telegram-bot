@@ -37,6 +37,10 @@ class LolzService:
     def merchant_id(self) -> int | None:
         return settings.LOLZ_MERCHANT_ID
 
+    @property
+    def webhook_secret(self) -> str:
+        return settings.LOLZ_WEBHOOK_SECRET or ''
+
     async def _get_session(self) -> aiohttp.ClientSession:
         """Возвращает переиспользуемую HTTP-сессию."""
         if self._session is None or self._session.closed:
@@ -190,13 +194,15 @@ class LolzService:
         """Верификация подписи webhook LOLZ.
 
         Сравнение через `hmac.compare_digest` (constant-time):
-        заголовок `x-secret-key` должен совпадать с API-токеном мерчанта.
+        заголовок `x-secret-key` должен совпадать с webhook secret мерчанта,
+        который задаётся в merchant panel LZT отдельно от API-токена.
         """
         try:
-            if not received_secret or not self.api_token:
-                logger.warning('LOLZ webhook: отсутствует x-secret-key или токен')
+            expected = self.webhook_secret
+            if not received_secret or not expected:
+                logger.warning('LOLZ webhook: отсутствует x-secret-key или LOLZ_WEBHOOK_SECRET не задан')
                 return False
-            return hmac.compare_digest(received_secret, self.api_token)
+            return hmac.compare_digest(received_secret, expected)
         except Exception as e:
             logger.error('LOLZ webhook verify error', error=e)
             return False
