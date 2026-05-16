@@ -1,5 +1,49 @@
 # Changelog
 
+## [3.56.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.55.0...v3.56.0) (2026-05-16)
+
+
+### New Features
+
+* **antilopay:** expose apay-tag site-verification via cabinet ([20f5d72](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/20f5d72d8318899db465654f0fc14540b4ab1ef4))
+* **deleted-users:** auto-revive via Telegram signature, friendly cabinet 403, OAuth merge ([1561077](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1561077904f1595f61c79cc2bcbf3da35d473829))
+* **devices:** per-user local aliases for HWID devices ([19e7bf7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/19e7bf76bcd29bf7c315053f8fd8781f9f8262a9))
+
+
+### Bug Fixes
+
+* **admin:** allow custom device count when MAX_DEVICES_LIMIT=0 (unlimited) ([eef8dfb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/eef8dfb430597f598dec429c2c144e5a18bf85ae))
+* **antilopay:** correct return annotation + lift imports + no-store cache ([85d5305](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/85d5305fdc6bc8082ab091ee0c4918bfc8a2cd2a))
+* **backup:** skip empty/corrupted backup files in get_backup_list gracefully ([389a5b4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/389a5b44bb2e135d414b179e563fcb0c25cf714a))
+* **cabinet:** support multi-kty Telegram OIDC JWKS (RSA + EC + OKP) ([86f97e6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/86f97e62bf5595ac25052c8a9a6a0b25444727e8))
+* **cabinet:** tighten OIDC algorithm list + align PyJWT pin ([9ef5f90](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9ef5f90f2ecbe4c4796459e641db67c9dc735e83))
+* **devices:** harden alias upsert + cabinet fallback + FSM filter ([431a50d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/431a50def87650e63083cfa508291bf805c119fa))
+* **devices:** multi-tariff hwid validation + unconditional delete commit ([7b0fe38](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/7b0fe38cc4848f0f9536a5de2a4f0e68f9f4c797))
+* **freekassa:** read client IP from X-Forwarded-For header ([b016244](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b016244f9fe7b80e6680ce5dce6ad7e1daa36b61))
+* **lava:** switch outgoing signature to Signature HTTP header (raw body HMAC) ([d19b39e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d19b39ee8191c11cd12e699d420063a13610c86b))
+* **notifications:** graceful shutdown drain + strong-ref task tracking ([5862385](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5862385f0d2e4ccd785c86e55f6c0af593ad04bc))
+* **notifications:** harden coalescing buffer and redact bot token from logs ([0461279](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0461279eed2e93b779d4c7881372ae1a522409b1))
+* **notifications:** migrate to lifespan, env-tune coalescer, harden defense-in-depth ([31fa43f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/31fa43ff9276f67019052c2012c1706f41396944))
+* **notifications:** preserve fail-fast startup semantics in lifespan ([f5ad777](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f5ad7778b8c4000889590b8f4d6cdc541af74db8))
+* **notifications:** stop flood-control feedback loop on RemnaWave node webhook bursts ([3756ad6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3756ad66a4d42d8cfb18ce745298c06d865ee50d))
+* **oauth:** return 409 instead of 500 when local email is unverified ([010a3fa](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/010a3faeae936c4064e8dc2ac698e9686d7a29f8))
+* **payment:** dedup post-topup notification and respect MAIN_MENU_MODE=cabinet ([aa5e8ba](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/aa5e8ba84bb9a416a3ce5c9ccc8ccd84828b7dd2))
+* **referral:** close 3 security gaps surfaced by audit (HIGH/MED/MED) ([bb26394](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/bb263947c0b634c721a9583a23bd97a5f8d484f2))
+* **referral:** close the race where miniapp opens before /start finishes ([593cb36](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/593cb3612b2ffe2aa66b12efc0bae8b66574d1a3))
+* **referral:** dedupe cross-session race + lazy-create bot for cabinet attach ([418f1d5](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/418f1d56f69ae537b8c0b263105851214aa2cf11))
+* **stars:** credit user the payload-encoded amount, not stars×rate ([7e8e354](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/7e8e354a917823de975d135b9564d74a8459b2b6))
+* **stars:** default rate 1.3 → 1.0 ₽/⭐ to match Telegram cash-out ([1f32fed](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1f32fed03dfce89f3df33e282d059fb8f2f850dd))
+* **stars:** migration to drop stale TELEGRAM_STARS_RATE_RUB=1.3 from system_settings ([0f09132](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0f09132ff7b8478cc2a5f837f13c75255e561497))
+* **subscription:** apply 36-char username helper to admin extend-subscription path ([33037fb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/33037fbf67d254f17e96cc302d881220f0ee1414))
+* **subscription:** apply 36-char username limit fix to admin sync + bulk-sync ([e57f496](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e57f496d11e0dae2fb517be56b406ba5778c395e))
+* **subscription:** keep RemnaWave username within 36-char API limit ([506af16](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/506af1677aca86078137534c683008d494103d25))
+* **subscription:** remove SubscriptionStates re-import that broke bot startup ([e971449](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e971449e4ecd16d6672722b0408c8908d0295de6))
+
+
+### Refactoring
+
+* **devices:** close all MED/LOW review items ([599ab07](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/599ab07fdd0a0581a11715f879e783c32a52ecd7))
+
 ## [3.55.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.54.0...v3.55.0) (2026-05-13)
 
 
