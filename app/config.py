@@ -1038,6 +1038,14 @@ class Settings(BaseSettings):
     OAUTH_VK_CLIENT_SECRET: str = ''
     OAUTH_VK_ENABLED: bool = False
 
+    OAUTH_APPLE_WEB_CLIENT_ID: str = ''
+    OAUTH_APPLE_IOS_CLIENT_ID: str = ''
+    OAUTH_APPLE_TEAM_ID: str = ''
+    OAUTH_APPLE_KEY_ID: str = ''
+    OAUTH_APPLE_PRIVATE_KEY: str = ''
+    OAUTH_APPLE_PRIVATE_KEY_PATH: str = ''
+    OAUTH_APPLE_ENABLED: bool = False
+
     # SMTP settings for cabinet email
     SMTP_HOST: str | None = None
     SMTP_PORT: int = 587
@@ -2302,6 +2310,23 @@ class Settings(BaseSettings):
                 return None
         return None
 
+    def get_oauth_apple_private_key(self) -> str:
+        """Return Sign in with Apple .p8 private key contents."""
+        if self.OAUTH_APPLE_PRIVATE_KEY:
+            return self.OAUTH_APPLE_PRIVATE_KEY
+        if self.OAUTH_APPLE_PRIVATE_KEY_PATH:
+            key_path = Path(self.OAUTH_APPLE_PRIVATE_KEY_PATH)
+            try:
+                return key_path.read_text().strip()
+            except (OSError, UnicodeDecodeError) as error:
+                logger.error(
+                    'Failed to load Apple OAuth private key file',
+                    path=str(key_path),
+                    error=str(error),
+                    exc_info=True,
+                )
+        return ''
+
     def is_paypear_enabled(self) -> bool:
         return self.PAYPEAR_ENABLED and self.PAYPEAR_SHOP_ID is not None and self.PAYPEAR_SECRET_KEY is not None
 
@@ -3338,6 +3363,25 @@ class Settings(BaseSettings):
                 'client_secret': self.OAUTH_VK_CLIENT_SECRET,
                 'enabled': self.OAUTH_VK_ENABLED,
                 'display_name': 'VK',
+            },
+            'apple': {
+                # Web is the default client for authorize_url/backwards-compatible provider metadata.
+                'client_id': self.OAUTH_APPLE_WEB_CLIENT_ID,
+                'client_secret': '',
+                'enabled': (
+                    self.OAUTH_APPLE_ENABLED
+                    and bool(self.OAUTH_APPLE_WEB_CLIENT_ID)
+                    and bool(self.OAUTH_APPLE_IOS_CLIENT_ID)
+                    and bool(self.OAUTH_APPLE_TEAM_ID)
+                    and bool(self.OAUTH_APPLE_KEY_ID)
+                    and bool(self.get_oauth_apple_private_key())
+                ),
+                'display_name': 'Apple',
+                'web_client_id': self.OAUTH_APPLE_WEB_CLIENT_ID,
+                'ios_client_id': self.OAUTH_APPLE_IOS_CLIENT_ID,
+                'team_id': self.OAUTH_APPLE_TEAM_ID,
+                'key_id': self.OAUTH_APPLE_KEY_ID,
+                'private_key': self.get_oauth_apple_private_key(),
             },
         }
 

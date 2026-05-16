@@ -52,13 +52,14 @@ def _mask_email(value: str | None) -> str:
 # - cabinet: юзер ввёл OTP-код, отправленный кабинетом — реальный proof of ownership.
 # - oauth_google: OIDC userinfo over TLS, Google enforces email verification.
 # - oauth_discord: Discord API `verified` flag — провайдер сам проверяет.
+# - oauth_apple: Apple-signed id_token with `email_verified`.
 # - admin_override: установлено вручную через admin UI / migrations.
 # VK / Yandex отсутствуют — их `email_verified=True` обусловлен лишь наличием
 # email в OAuth-ответе, но провайдер не выдаёт cryptographic proof of ownership.
 # Email используется для UX (recovery, linking, panel sync), но не доверяется
 # для match с ADMIN_EMAILS.
 TRUSTED_EMAIL_VERIFICATION_SOURCES: 'frozenset[str]' = frozenset(
-    {'cabinet', 'oauth_google', 'oauth_discord', 'admin_override'}
+    {'cabinet', 'oauth_google', 'oauth_discord', 'oauth_apple', 'admin_override'}
 )
 
 

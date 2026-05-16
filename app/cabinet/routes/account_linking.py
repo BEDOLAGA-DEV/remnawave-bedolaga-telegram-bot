@@ -7,7 +7,7 @@ Router 2 (`merge_router`): Public endpoints for merge preview and execution.
 
 import hashlib
 from datetime import UTC, datetime
-from typing import Literal, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
@@ -55,10 +55,10 @@ from .auth import _create_auth_response, _store_refresh_token, _user_to_response
 logger = structlog.get_logger(__name__)
 
 
-OAuthProviderName = Literal['google', 'yandex', 'discord', 'vk']
+OAuthProviderName = Literal['google', 'yandex', 'discord', 'vk', 'apple']
 
 # Ensure OAuthProviderName Literal stays in sync with OAUTH_PROVIDER_COLUMNS
-_EXPECTED_PROVIDERS = {'google', 'yandex', 'discord', 'vk'}
+_EXPECTED_PROVIDERS = {'google', 'yandex', 'discord', 'vk', 'apple'}
 if set(OAUTH_PROVIDER_COLUMNS.keys()) != _EXPECTED_PROVIDERS:
     raise RuntimeError(
         f'OAuthProviderName Literal is out of sync with OAUTH_PROVIDER_COLUMNS: '
@@ -73,6 +73,8 @@ class OAuthStateData(TypedDict):
     linking: NotRequired[str]  # 'true' if account linking flow
     user_id: NotRequired[str]  # ID of user who initiated linking
     code_verifier: NotRequired[str]  # PKCE code verifier (VK)
+    nonce: NotRequired[str]  # OIDC nonce (Apple)
+    client_type: NotRequired[str]  # Apple client type: web or ios
 
 
 def _get_active_providers() -> list[str]:
@@ -100,14 +102,18 @@ class LinkedProvidersResponse(BaseModel):
 
 
 class LinkInitResponse(BaseModel):
-    authorize_url: str
+    authorize_url: str | None = None
     state: str
+    nonce: str | None = None
+    client_type: str | None = None
 
 
 class LinkCallbackRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=2048, description='Authorization code from provider')
     state: str = Field(..., min_length=1, max_length=128, description='CSRF state token')
     device_id: str | None = Field(None, max_length=256, description='Device ID from VK ID callback')
+    id_token: str | None = Field(None, max_length=4096, description='OIDC identity token from provider')
+    user: dict[str, Any] | str | None = Field(None, description='First-login user payload from Apple')
 
 
 class LinkCallbackResponse(BaseModel):
@@ -226,6 +232,7 @@ async def _exchange_and_link_oauth(
     state_data: OAuthStateData,
     device_id: str | None,
     log_context: str,
+    user_payload: dict[str, Any] | str | None = None,
 ) -> LinkCallbackResponse:
     """Shared OAuth linking logic: exchange code, fetch user info, link or merge.
 
@@ -239,12 +246,20 @@ async def _exchange_and_link_oauth(
         )
 
     # Exchange code for tokens
-    exchange_kwargs: dict[str, str] = {'state': state}
+    exchange_kwargs: dict[str, Any] = {'state': state}
     code_verifier = state_data.get('code_verifier')
     if code_verifier:
         exchange_kwargs['code_verifier'] = code_verifier
+    nonce = state_data.get('nonce')
+    if nonce:
+        exchange_kwargs['nonce'] = nonce
+    apple_client_type = state_data.get('client_type')
+    if apple_client_type:
+        exchange_kwargs['client_type'] = apple_client_type
     if device_id:
         exchange_kwargs['device_id'] = device_id
+    if user_payload is not None:
+        exchange_kwargs['user'] = user_payload
 
     try:
         token_data = await oauth_provider.exchange_code(code, **exchange_kwargs)
@@ -343,6 +358,7 @@ async def get_linked_providers(
 @router.get('/link/{provider}/init', response_model=LinkInitResponse)
 async def link_provider_init(
     provider: OAuthProviderName,
+    client_type: Literal['web', 'ios'] = 'web',
     user: User = Depends(get_current_cabinet_user),
 ) -> LinkInitResponse:
     """Start OAuth flow for linking a new provider to the current account."""
@@ -370,13 +386,24 @@ async def link_provider_init(
     }
     if auth_extra:
         extra_data.update(auth_extra)
+    if provider == 'apple':
+        extra_data['client_type'] = client_type
+        auth_extra['_client_type'] = client_type
 
     state = await generate_oauth_state(provider, extra_data=extra_data)
-    # Only pass URL-safe params (prefixed with _) to authorize URL; exclude secrets like code_verifier
-    url_params = {k: v for k, v in auth_extra.items() if k.startswith('_')} if auth_extra else {}
-    authorize_url = oauth_provider.get_authorization_url(state, **url_params)
+    authorize_url: str | None = None
+    if not (provider == 'apple' and client_type == 'ios'):
+        # Only pass URL-safe params (prefixed with _) to authorize URL; exclude secrets like code_verifier
+        url_params = {k: v for k, v in auth_extra.items() if k.startswith('_')} if auth_extra else {}
+        authorize_url = oauth_provider.get_authorization_url(state, **url_params)
 
-    return LinkInitResponse(authorize_url=authorize_url, state=state)
+    nonce = auth_extra.get('nonce') if auth_extra else None
+    return LinkInitResponse(
+        authorize_url=authorize_url,
+        state=state,
+        nonce=nonce,
+        client_type=extra_data.get('client_type'),
+    )
 
 
 @router.post('/link/{provider}/callback', response_model=LinkCallbackResponse)
@@ -425,6 +452,7 @@ async def link_provider_callback(
         state=request.state,
         state_data=state_data,
         device_id=request.device_id,
+        user_payload=request.user,
         log_context='link-callback',
     )
 
@@ -654,6 +682,8 @@ class ServerCompleteRequest(BaseModel):
     state: str = Field(..., min_length=1, max_length=128, description='CSRF state token')
     provider: OAuthProviderName | None = Field(None, description='OAuth provider name (resolved from state if omitted)')
     device_id: str | None = Field(None, max_length=256, description='Device ID from VK ID callback')
+    id_token: str | None = Field(None, max_length=4096, description='OIDC identity token from provider')
+    user: dict[str, Any] | str | None = Field(None, description='First-login user payload from Apple')
 
 
 class ServerCompleteResponse(LinkCallbackResponse):
@@ -742,6 +772,7 @@ async def link_server_complete(
         state=request.state,
         state_data=state_data,
         device_id=request.device_id,
+        user_payload=request.user,
         log_context='server-complete',
     )
 

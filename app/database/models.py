@@ -1879,7 +1879,7 @@ class User(Base):
     email_verified = Column(Boolean, default=False, nullable=False)
     email_verified_at = Column(AwareDateTime(), nullable=True)
     # Источник верификации email — используется как trust signal для admin escalation.
-    # 'cabinet'/'oauth_google'/'oauth_discord' доверяем (real ownership proof);
+    # 'cabinet'/'oauth_google'/'oauth_discord'/'oauth_apple' доверяем (real ownership proof);
     # 'oauth_vk'/'oauth_yandex' — email используется, но НЕ trusted для ADMIN_EMAILS match.
     # NULL для legacy строк до миграции 0079 (трактуется так же, как 'cabinet' для
     # bootstrap-compat — см. is_user_admin_by_env).
@@ -1901,6 +1901,7 @@ class User(Base):
     yandex_id = Column(String(255), unique=True, nullable=True, index=True)
     discord_id = Column(String(255), unique=True, nullable=True, index=True)
     vk_id = Column(BigInteger, unique=True, nullable=True, index=True)
+    apple_id = Column(String(255), unique=True, nullable=True, index=True)
     broadcasts = relationship('BroadcastHistory', back_populates='admin')
     referrals = relationship(
         'User', backref='referrer', remote_side=[id], foreign_keys='User.referred_by_id', post_update=True

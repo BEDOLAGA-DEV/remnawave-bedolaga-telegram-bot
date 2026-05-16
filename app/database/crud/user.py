@@ -1536,6 +1536,7 @@ OAUTH_PROVIDER_COLUMNS: dict[str, str] = {
     'yandex': 'yandex_id',
     'discord': 'discord_id',
     'vk': 'vk_id',
+    'apple': 'apple_id',
 }
 
 
