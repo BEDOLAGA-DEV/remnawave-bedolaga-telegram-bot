@@ -1295,11 +1295,7 @@ async def show_user_management(callback: types.CallbackQuery, db_user: User, db:
     ]
 
     def _format_subscription_block(sub, index: int | None = None) -> str:
-        sub_type = (
-            texts.ADMIN_USER_SUBSCRIPTION_TYPE_TRIAL
-            if sub.is_trial
-            else texts.ADMIN_USER_SUBSCRIPTION_TYPE_PAID
-        )
+        sub_type = texts.ADMIN_USER_SUBSCRIPTION_TYPE_TRIAL if sub.is_trial else texts.ADMIN_USER_SUBSCRIPTION_TYPE_PAID
         sub_status = (
             texts.ADMIN_USER_SUBSCRIPTION_STATUS_ACTIVE
             if sub.is_active
