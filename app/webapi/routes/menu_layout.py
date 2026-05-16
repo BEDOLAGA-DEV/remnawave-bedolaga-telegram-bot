@@ -73,36 +73,60 @@ from ..schemas.menu_layout import (
 router = APIRouter()
 
 
+def _safe_parse_conditions(conditions_data: dict | None) -> ButtonConditions | None:
+    """Безопасно распарсить условия кнопки, игнорируя неизвестные поля."""
+    if not conditions_data:
+        return None
+    try:
+        return ButtonConditions(**conditions_data)
+    except Exception as e:
+        logger.warning('Ошибка парсинга conditions, пропускаю', error=str(e), data=conditions_data)
+        # Пробуем отфильтровать только известные поля
+        try:
+            known_fields = set(ButtonConditions.model_fields.keys())
+            filtered = {k: v for k, v in conditions_data.items() if k in known_fields}
+            return ButtonConditions(**filtered) if filtered else None
+        except Exception:
+            return None
+
+
 def _serialize_config(config: dict, is_enabled: bool, updated_at) -> MenuLayoutResponse:
     """Сериализовать конфигурацию в response."""
     rows = []
     for row_data in config.get('rows', []):
-        rows.append(
-            MenuRowConfig(
-                id=row_data['id'],
-                buttons=row_data.get('buttons', []),
-                conditions=ButtonConditions(**row_data['conditions']) if row_data.get('conditions') else None,
-                max_per_row=row_data.get('max_per_row', 2),
+        try:
+            rows.append(
+                MenuRowConfig(
+                    id=row_data['id'],
+                    buttons=row_data.get('buttons', []),
+                    conditions=_safe_parse_conditions(row_data.get('conditions')),
+                    max_per_row=row_data.get('max_per_row', 2),
+                )
             )
-        )
+        except Exception as e:
+            logger.warning('Ошибка сериализации ряда, пропускаю', row_id=row_data.get('id'), error=str(e))
 
     buttons = {}
     for btn_id, btn_data in config.get('buttons', {}).items():
-        buttons[btn_id] = MenuButtonConfig(
-            type=btn_data['type'],
-            builtin_id=btn_data.get('builtin_id'),
-            text=btn_data.get('text', {}),
-            icon=btn_data.get('icon'),
-            action=btn_data.get('action', ''),
-            enabled=btn_data.get('enabled', True),
-            visibility=btn_data.get('visibility', 'all'),
-            conditions=ButtonConditions(**btn_data['conditions']) if btn_data.get('conditions') else None,
-            dynamic_text=btn_data.get('dynamic_text', False),
-            open_mode=btn_data.get('open_mode', 'callback'),
-            webapp_url=btn_data.get('webapp_url'),
-            description=btn_data.get('description'),
-            sort_order=btn_data.get('sort_order'),
-        )
+        try:
+            buttons[btn_id] = MenuButtonConfig(
+                type=btn_data.get('type', 'builtin'),
+                builtin_id=btn_data.get('builtin_id'),
+                text=btn_data.get('text', {}),
+                icon=btn_data.get('icon'),
+                action=btn_data.get('action', ''),
+                enabled=btn_data.get('enabled', True),
+                visibility=btn_data.get('visibility', 'all'),
+                conditions=_safe_parse_conditions(btn_data.get('conditions')),
+                dynamic_text=btn_data.get('dynamic_text', False),
+                open_mode=btn_data.get('open_mode', 'callback'),
+                webapp_url=btn_data.get('webapp_url'),
+                description=btn_data.get('description'),
+                sort_order=btn_data.get('sort_order'),
+                icon_custom_emoji_id=btn_data.get('icon_custom_emoji_id'),
+            )
+        except Exception as e:
+            logger.warning('Ошибка сериализации кнопки, пропускаю', button_id=btn_id, error=str(e))
 
     return MenuLayoutResponse(
         version=config.get('version', 1),
@@ -119,9 +143,15 @@ async def get_menu_layout(
     db: AsyncSession = Depends(get_db_session),
 ) -> MenuLayoutResponse:
     """Получить текущую конфигурацию меню."""
-    config = await MenuLayoutService.get_config(db)
-    updated_at = await MenuLayoutService.get_config_updated_at(db)
-    return _serialize_config(config, settings.MENU_LAYOUT_ENABLED, updated_at)
+    try:
+        config = await MenuLayoutService.get_config(db)
+        updated_at = await MenuLayoutService.get_config_updated_at(db)
+        return _serialize_config(config, settings.MENU_LAYOUT_ENABLED, updated_at)
+    except Exception as e:
+        logger.error('Ошибка получения конфигурации меню, возвращаю дефолтную', error=str(e))
+        # При любой ошибке возвращаем дефолтную конфигурацию
+        default_config = MenuLayoutService.get_default_config()
+        return _serialize_config(default_config, settings.MENU_LAYOUT_ENABLED, None)
 
 
 @router.put('', response_model=MenuLayoutResponse)
@@ -135,12 +165,12 @@ async def update_menu_layout(
     config = config.copy()
 
     if payload.rows is not None:
-        config['rows'] = [row.model_dump() for row in payload.rows]
+        config['rows'] = [row.model_dump(mode='json') for row in payload.rows]
 
     if payload.buttons is not None:
         buttons_config = {}
         for btn_id, btn in payload.buttons.items():
-            btn_dict = btn.model_dump()
+            btn_dict = btn.model_dump(mode='json')
             # Автоматически определяем наличие плейсхолдеров, если dynamic_text не установлен
             if not btn_dict.get('dynamic_text', False):
                 btn_dict['dynamic_text'] = MenuLayoutService._text_has_placeholders(btn_dict.get('text', {}))
@@ -226,6 +256,7 @@ async def update_button(
             open_mode=button.get('open_mode', 'callback'),
             webapp_url=button.get('webapp_url'),
             description=button.get('description'),
+            icon_custom_emoji_id=button.get('icon_custom_emoji_id'),
         )
     except KeyError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from e
@@ -315,6 +346,7 @@ async def add_custom_button(
             'conditions': payload.conditions.model_dump(exclude_none=True) if payload.conditions else None,
             'dynamic_text': dynamic_text,
             'description': payload.description,
+            'icon_custom_emoji_id': payload.icon_custom_emoji_id,
         }
         button = await MenuLayoutService.add_custom_button(db, payload.id, button_config, payload.row_id)
 
@@ -331,6 +363,7 @@ async def add_custom_button(
             open_mode=button.get('open_mode', 'callback'),
             webapp_url=button.get('webapp_url'),
             description=button.get('description'),
+            icon_custom_emoji_id=button.get('icon_custom_emoji_id'),
         )
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
@@ -579,6 +612,7 @@ async def export_menu_layout(
             open_mode=btn_data.get('open_mode', 'callback'),
             webapp_url=btn_data.get('webapp_url'),
             description=btn_data.get('description'),
+            icon_custom_emoji_id=btn_data.get('icon_custom_emoji_id'),
         )
 
     return MenuLayoutExportResponse(

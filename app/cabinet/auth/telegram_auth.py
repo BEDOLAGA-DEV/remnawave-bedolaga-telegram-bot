@@ -171,13 +171,53 @@ _jwks_last_force_refresh: datetime | None = None
 _JWKS_FORCE_REFRESH_COOLDOWN_SECONDS = 30
 
 
-def _build_public_keys(jwks_data: dict[str, Any]) -> dict[str, Any]:
-    """Build public key mapping from JWKS data."""
-    public_keys: dict[str, Any] = {}
+# JWKS `kty` (key type) → PyJWT algorithm class, способный распарсить JWK.
+# Telegram OIDC JWKS теперь содержит RSA + EC + OKP ключи одновременно —
+# слепо пихать все в RSAAlgorithm.from_jwk() даёт InvalidKeyError "Not an RSA key".
+_KTY_TO_ALGORITHM_CLASS: dict[str, Any] = {
+    'RSA': pyjwt.algorithms.RSAAlgorithm,
+    'EC': pyjwt.algorithms.ECAlgorithm,
+    'OKP': pyjwt.algorithms.OKPAlgorithm,
+}
+
+# Дефолт `alg` если JWK его не указал. Telegram сейчас выдаёт alg в каждом ключе,
+# но IANA не обязывает — оставляем safety net.
+_KTY_DEFAULT_ALG: dict[str, str] = {
+    'RSA': 'RS256',
+    'EC': 'ES256',
+    'OKP': 'EdDSA',
+}
+
+
+def _build_public_keys(jwks_data: dict[str, Any]) -> dict[str, tuple[Any, str]]:
+    """Build {kid: (public_key, alg)} mapping from JWKS data.
+
+    Dispatchим по `kty`, чтобы поддерживать RSA / EC / OKP без падения на
+    не-RSA ключах. Возвращаем алгоритм рядом с ключом, чтобы pyjwt.decode
+    мог проверить совпадение `alg` в header'e токена со списком разрешённых.
+    """
+    public_keys: dict[str, tuple[Any, str]] = {}
     for key_data in jwks_data.get('keys', []):
         kid = key_data.get('kid')
-        if kid:
-            public_keys[kid] = pyjwt.algorithms.RSAAlgorithm.from_jwk(key_data)
+        if not kid:
+            continue
+        kty = key_data.get('kty')
+        algorithm_cls = _KTY_TO_ALGORITHM_CLASS.get(kty)
+        if algorithm_cls is None:
+            logger.debug('Telegram OIDC: skipping JWK with unsupported kty', kid=kid, kty=kty)
+            continue
+        try:
+            public_key = algorithm_cls.from_jwk(key_data)
+        except Exception as exc:
+            logger.warning(
+                'Telegram OIDC: failed to load JWK',
+                kid=kid,
+                kty=kty,
+                error=str(exc)[:200],
+            )
+            continue
+        alg = key_data.get('alg') or _KTY_DEFAULT_ALG.get(kty, '')
+        public_keys[kid] = (public_key, alg)
     return public_keys
 
 
@@ -253,10 +293,16 @@ async def validate_telegram_oidc_token(id_token: str, client_id: str) -> dict[st
             logger.warning('Telegram OIDC: unknown kid in id_token', kid=kid)
             return None
 
+        public_key, key_alg = public_keys[kid]
+        # `_build_public_keys` гарантирует non-empty `alg` для каждого
+        # принятого ключа (либо JWK.alg, либо _KTY_DEFAULT_ALG[kty]) — поэтому
+        # передаём строго один алгоритм. Это уже-узкое окно для алгоритмов
+        # выбрано лучше, чем безусловный fallback на все 4: pyjwt сверит
+        # header.alg токена с этим списком и отвергнет любой mismatch.
         claims = pyjwt.decode(
             id_token,
-            key=public_keys[kid],
-            algorithms=['RS256'],
+            key=public_key,
+            algorithms=[key_alg],
             audience=client_id,
             issuer=_OIDC_ISSUER,
             options={'require': ['exp', 'iat', 'iss', 'aud', 'sub']},

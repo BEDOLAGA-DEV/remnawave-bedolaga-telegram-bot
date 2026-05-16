@@ -980,9 +980,10 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
             logger.error(
                 'Insufficient funds detected after trial creation for user', db_user_id=db_user.id, error=error
             )
-            required_label = settings.format_price(error.required_amount)
-            balance_label = settings.format_price(error.balance_amount)
-            missing_label = settings.format_price(error.missing_amount)
+            # Без округления — копейки критичны, чтобы юзер понял что именно не хватает.
+            required_label = settings.format_price(error.required_amount, round_kopeks=False)
+            balance_label = settings.format_price(error.balance_amount, round_kopeks=False)
+            missing_label = settings.format_price(error.missing_amount, round_kopeks=False)
             message = texts.t(
                 'TRIAL_PAYMENT_INSUFFICIENT_FUNDS',
                 '⚠️ Недостаточно средств для активации триала.\n'
@@ -1437,8 +1438,8 @@ async def save_cart_and_redirect_to_topup(
 
     await callback.message.edit_text(
         f'💰 Недостаточно средств для оформления подписки\n\n'
-        f'Требуется: {texts.format_price(missing_amount)}\n'
-        f'У вас: {texts.format_price(db_user.balance_kopeks)}\n\n'
+        f'Требуется: {texts.format_price(missing_amount, round_kopeks=False)}\n'
+        f'У вас: {texts.format_price(db_user.balance_kopeks, round_kopeks=False)}\n\n'
         f'🛒 Ваша корзина сохранена!\n'
         f'После пополнения баланса вы сможете вернуться к оформлению подписки.\n\n'
         f'Выберите способ пополнения:',
@@ -1554,9 +1555,9 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
         )
         insufficient_text = (
             f'❌ Все еще недостаточно средств\n\n'
-            f'Требуется: {texts.format_price(total_price)}\n'
-            f'У вас: {texts.format_price(db_user.balance_kopeks)}\n'
-            f'Не хватает: {texts.format_price(missing_amount)}'
+            f'Требуется: {texts.format_price(total_price, round_kopeks=False)}\n'
+            f'У вас: {texts.format_price(db_user.balance_kopeks, round_kopeks=False)}\n'
+            f'Не хватает: {texts.format_price(missing_amount, round_kopeks=False)}'
         )
 
         if _message_needs_update(callback.message, insufficient_text, insufficient_keyboard):
@@ -1961,8 +1962,8 @@ async def confirm_extend_subscription(
             ),
         ).format(
             required=required_text,
-            balance=texts.format_price(db_user.balance_kopeks),
-            missing=texts.format_price(missing_kopeks),
+            balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
+            missing=texts.format_price(missing_kopeks, round_kopeks=False),
         )
 
         # Подготовим данные для сохранения в корзину
@@ -2375,9 +2376,9 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 'Выберите способ пополнения. Сумма подставится автоматически.'
             ),
         ).format(
-            required=texts.format_price(final_price),
-            balance=texts.format_price(db_user.balance_kopeks),
-            missing=texts.format_price(missing_kopeks),
+            required=texts.format_price(final_price, round_kopeks=False),
+            balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
+            missing=texts.format_price(missing_kopeks, round_kopeks=False),
         )
 
         # Сохраняем данные корзины в Redis перед переходом к пополнению
@@ -2428,9 +2429,9 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                     'Выберите способ пополнения. Сумма подставится автоматически.'
                 ),
             ).format(
-                required=texts.format_price(final_price),
-                balance=texts.format_price(db_user.balance_kopeks),
-                missing=texts.format_price(missing_kopeks),
+                required=texts.format_price(final_price, round_kopeks=False),
+                balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
+                missing=texts.format_price(missing_kopeks, round_kopeks=False),
             )
 
             await callback.message.edit_text(
@@ -4294,6 +4295,18 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(handle_single_device_reset, F.data.regexp(r'^reset_device_\d+_\d+$'))
 
+    # Локальное переименование устройства (alias). Callback пускает FSM-prompt,
+    # текстовый handler ловит ответ юзера (см. process_device_rename ниже).
+    # NB: `SubscriptionStates` уже импортирован на уровне модуля (строка 107) —
+    # повторный локальный `from app.states import …` превратил бы имя в local
+    # и сломал бы строку 4197 с UnboundLocalError на старте.
+    from app.handlers.subscription.devices import process_device_rename, start_device_rename
+
+    dp.callback_query.register(start_device_rename, F.data.regexp(r'^device_rename_\d+_\d+$'))
+    # F.text — игнорируем стикеры/фото/voice пока юзер в FSM, иначе
+    # message.text==None трактуется как пустая строка и очищает alias.
+    dp.message.register(process_device_rename, SubscriptionStates.renaming_device, F.text)
+
     dp.callback_query.register(handle_all_devices_reset_from_management, F.data == 'reset_all_devices')
 
     dp.callback_query.register(show_device_connection_help, F.data == 'device_connection_help')
@@ -4518,9 +4531,9 @@ async def _extend_existing_subscription(
                 'Выберите способ пополнения. Сумма подставится автоматически.'
             ),
         ).format(
-            required=texts.format_price(price_kopeks),
-            balance=texts.format_price(db_user.balance_kopeks),
-            missing=texts.format_price(missing_kopeks),
+            required=texts.format_price(price_kopeks, round_kopeks=False),
+            balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
+            missing=texts.format_price(missing_kopeks, round_kopeks=False),
         )
 
         # Подготовим данные для сохранения в корзину

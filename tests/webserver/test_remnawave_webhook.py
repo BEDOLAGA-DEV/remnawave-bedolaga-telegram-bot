@@ -61,6 +61,10 @@ async def test_remnawave_webhook_accepts_event_without_scope(monkeypatch: pytest
     service = SimpleNamespace(
         process_event=process_event,
         is_admin_event=lambda _event_name: True,
+        # needs_db_session появился в роутере при добавлении dual events
+        # (см. `process_event` логику в RemnaWaveWebhookService) — стаб должен
+        # отвечать False, иначе тест уходит в DB-ветку и падает на сессии.
+        needs_db_session=lambda _event_name: False,
     )
 
     monkeypatch.setattr(

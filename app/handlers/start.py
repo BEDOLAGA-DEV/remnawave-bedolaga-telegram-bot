@@ -420,6 +420,8 @@ async def _apply_campaign_bonus_if_needed(
     user,
     state_data: dict,
     texts,
+    *,
+    bot=None,
 ):
     campaign_id = state_data.get('campaign_id') if state_data else None
     if not campaign_id:
@@ -444,6 +446,39 @@ async def _apply_campaign_bonus_if_needed(
             await clear_pending_campaign(user.telegram_id)
     except Exception:
         pass
+
+    # Отправить админу уведомление о РЕГИСТРАЦИИ ровно один раз — когда запись в
+    # advertising_campaign_registrations реально создана (is_new_registration=True).
+    # При повторном вызове record_campaign_registration возвращает существующую
+    # запись с is_new_registration=False — тогда повторное уведомление не идёт,
+    # и количество сообщений в чате == количеству регистраций в кабинете.
+    if result.is_new_registration and bot is not None and getattr(user, 'telegram_id', None):
+        try:
+            notification_service = AdminNotificationService(bot)
+            await notification_service.send_campaign_registration_notification(
+                db,
+                telegram_user_id=user.telegram_id,
+                telegram_user_name=getattr(user, 'full_name', None)
+                or getattr(user, 'username', None)
+                or str(user.telegram_id),
+                telegram_username=getattr(user, 'username', None),
+                campaign=campaign,
+                user=user,
+                bonus_type=result.bonus_type or 'none',
+                balance_kopeks=result.balance_kopeks or 0,
+                subscription_days=result.subscription_days,
+                subscription_traffic_gb=result.subscription_traffic_gb,
+                subscription_device_limit=result.subscription_device_limit,
+                tariff_name=result.tariff_name,
+            )
+        except Exception as notify_error:
+            logger.error(
+                'Ошибка отправки админ уведомления о регистрации по кампании',
+                campaign_id=campaign.id,
+                user_id=getattr(user, 'id', None),
+                error=str(notify_error),
+                exc_info=True,
+            )
 
     if result.bonus_type == 'balance':
         amount_text = texts.format_price(result.balance_kopeks)
@@ -845,23 +880,58 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
 
     if referral_code:
         await state.update_data(referral_code=referral_code)
-        # Persist referral to Redis immediately so it survives if user opens miniapp/cabinet
-        # Only for new users — existing users don't need pending referral
-        if not db_user:
-            try:
-                referrer = await get_user_by_referral_code(db, referral_code)
-                if referrer and referrer.telegram_id != message.from_user.id:
+        try:
+            referrer = await get_user_by_referral_code(db, referral_code)
+        except Exception as exc:
+            logger.warning('Failed to resolve referral code at /start', referral_code=referral_code, error=exc)
+            referrer = None
+
+        if referrer and referrer.telegram_id != message.from_user.id:
+            if not db_user:
+                # New user — save to Redis so the cabinet/miniapp
+                # auth route can pick it up if the user opens the
+                # WebApp before completing the bot FSM.
+                try:
                     await save_pending_referral(message.from_user.id, referral_code, referrer.id)
-            except Exception as exc:
-                logger.warning(
-                    'Failed to persist pending referral',
-                    referral_code=referral_code,
-                    error=exc,
-                )
+                except Exception as exc:
+                    logger.warning('Failed to persist pending referral', referral_code=referral_code, error=exc)
+            elif db_user.referred_by_id is None:
+                # RACE FIX: the miniapp may have created the user row
+                # between the /start link click and this handler firing
+                # (e.g. user tapped the WebApp menu button immediately
+                # after pressing the bot's Start button, and the
+                # cabinet's auth endpoint ran first). The Redis fallback
+                # the cabinet checks was not populated yet, so the user
+                # was created without a referrer. Attach it now —
+                # idempotent and self-referral-safe (see
+                # `attach_referrer_if_missing`).
+                from app.services.referral_service import attach_referrer_if_missing
+
+                try:
+                    await attach_referrer_if_missing(
+                        db,
+                        db_user,
+                        referral_code=referral_code,
+                        bot=message.bot,
+                        source='bot_start_retroactive',
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        'Failed to retroactively attach referrer at /start',
+                        referral_code=referral_code,
+                        user_id=db_user.id,
+                        error=exc,
+                    )
 
     user = db_user or await get_user_by_telegram_id(db, message.from_user.id)
 
-    if campaign and not campaign_notification_sent:
+    # Visit notification шлётся только для НОВОГО юзера (user is None) — это первый
+    # touch top-of-funnel. Для существующих юзеров (которые ещё не зарегистрированы
+    # в кампании) уведомление о ПЕРЕХОДЕ больше не идёт: вместо него админу прилетит
+    # отдельное «РЕГИСТРАЦИЯ ПО РК» позже, в _apply_campaign_bonus_if_needed, ровно
+    # при создании записи в advertising_campaign_registrations. Это даёт паритет
+    # между числом сообщений в чате и числом регистраций в кабинете.
+    if campaign and not campaign_notification_sent and user is None:
         try:
             notification_service = AdminNotificationService(message.bot)
             await notification_service.send_campaign_link_visit_notification(
@@ -1864,7 +1934,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
         except Exception as e:
             logger.error('Ошибка при обработке реферальной регистрации', error=e)
 
-    campaign_message = await _apply_campaign_bonus_if_needed(db, user, data, texts)
+    campaign_message = await _apply_campaign_bonus_if_needed(db, user, data, texts, bot=callback.bot)
 
     try:
         await db.refresh(user)
@@ -2242,7 +2312,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                 error=e,
             )
 
-    campaign_message = await _apply_campaign_bonus_if_needed(db, user, data, texts)
+    campaign_message = await _apply_campaign_bonus_if_needed(db, user, data, texts, bot=message.bot)
 
     try:
         await db.refresh(user)
@@ -2901,7 +2971,7 @@ async def required_sub_channel_check(
                             logger.error('Ошибка при обработке реферальной регистрации', error=e)
 
                     # Применяем бонус рекламной кампании (record_campaign_registration)
-                    campaign_message = await _apply_campaign_bonus_if_needed(db, user, state_data, texts)
+                    campaign_message = await _apply_campaign_bonus_if_needed(db, user, state_data, texts, bot=bot)
                     try:
                         await db.refresh(user)
                     except Exception as refresh_error:

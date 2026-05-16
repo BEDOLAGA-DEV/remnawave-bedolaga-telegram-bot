@@ -1410,8 +1410,11 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
                 )
                 min_price = min_new_pricing.final_total
             missing = min_price - balance
+            # texts.format_price(..., round_kopeks=False) показывает копейки, чтобы юзер видел
+            # «не хватает 0.40 ₽» вместо обрезанного «0 ₽» от integer division.
+            missing_label = texts.format_price(missing, round_kopeks=False)
             await callback.answer(
-                texts.t('INSUFFICIENT_FUNDS_DETAILED', f'❌ Недостаточно средств. Не хватает {missing // 100} ₽'),
+                texts.t('INSUFFICIENT_FUNDS_DETAILED', f'❌ Недостаточно средств. Не хватает {missing_label}'),
                 show_alert=True,
             )
             return

@@ -5770,7 +5770,9 @@ async def update_subscription_servers_endpoint(
             status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 'code': 'insufficient_funds',
-                'message': (f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing)}'),
+                'message': (
+                    f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing, round_kopeks=False)}'
+                ),
             },
         )
 
@@ -5959,7 +5961,9 @@ async def update_subscription_traffic_endpoint(
                 status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     'code': 'insufficient_funds',
-                    'message': (f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing)}'),
+                    'message': (
+                        f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing, round_kopeks=False)}'
+                    ),
                 },
             )
 
@@ -6133,7 +6137,9 @@ async def update_subscription_devices_endpoint(
             status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 'code': 'insufficient_funds',
-                'message': (f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing)}'),
+                'message': (
+                    f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing, round_kopeks=False)}'
+                ),
             },
         )
 
@@ -6574,7 +6580,7 @@ async def purchase_tariff_endpoint(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 'code': 'insufficient_funds',
-                'message': f'Недостаточно средств. Не хватает {settings.format_price(missing)}',
+                'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
                 'missing_amount': missing,
             },
         )
@@ -6816,10 +6822,13 @@ async def preview_tariff_switch_endpoint(
         upgrade_cost_kopeks=upgrade_cost,
         upgrade_cost_label=settings.format_price(upgrade_cost) if upgrade_cost > 0 else 'Бесплатно',
         balance_kopeks=balance,
-        balance_label=settings.format_price(balance),
+        # Когда показываем missing_amount_label с копейками (round_kopeks=False),
+        # balance_label тоже должен быть с копейками — иначе пары "Баланс 150 ₽,
+        # не хватает 0.40 ₽" выглядит противоречиво ("150 ₽ это > 150 ₽? зачем не хватает?").
+        balance_label=settings.format_price(balance, round_kopeks=False),
         has_enough_balance=has_enough,
         missing_amount_kopeks=missing,
-        missing_amount_label=settings.format_price(missing) if missing > 0 else '',
+        missing_amount_label=settings.format_price(missing, round_kopeks=False) if missing > 0 else '',
         is_upgrade=is_upgrade,
         message=None,
     )
@@ -6919,7 +6928,7 @@ async def switch_tariff_endpoint(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     'code': 'insufficient_funds',
-                    'message': f'Недостаточно средств. Не хватает {settings.format_price(missing)}',
+                    'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
                     'missing_amount': missing,
                 },
             )

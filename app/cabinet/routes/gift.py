@@ -98,6 +98,14 @@ async def get_gift_config(
     # Get active promo offer discount
     promo_offer_discount_percent = get_user_active_promo_discount_percent(user)
 
+    # Используем pricing_engine как единственный источник правды для расчёта цены.
+    # Раньше config считал цену "вручную" (применял promo_group скидку безусловно),
+    # а /purchase через pricing_engine — с проверкой `is_available_for_promo_group`.
+    # Если тариф был не в `allowed_promo_groups` юзера — на бэке скидка срезалась,
+    # цена становилась выше показанной, и юзер получал "Insufficient balance" даже
+    # при достаточном балансе.
+    from app.services.pricing_engine import pricing_engine
+
     tariffs: list[GiftConfigTariff] = []
     for tariff in tariffs_db:
         period_days_list = tariff.get_available_periods()
@@ -107,26 +115,35 @@ async def get_gift_config(
             if base_price is None:
                 continue
 
+            try:
+                pricing_result = await pricing_engine.calculate_tariff_purchase_price(
+                    tariff,
+                    days,
+                    device_limit=tariff.device_limit,
+                    user=user,
+                )
+            except Exception as error:
+                logger.warning(
+                    'pricing_engine error in gift config, fallback to base price',
+                    tariff_id=tariff.id,
+                    days=days,
+                    error=str(error),
+                )
+                # Fallback: показываем базовую цену без скидок, чтобы не сломать UI.
+                periods.append(
+                    GiftConfigTariffPeriod(
+                        days=days,
+                        price_kopeks=base_price,
+                        price_label=settings.format_price(base_price),
+                    )
+                )
+                continue
+
+            price = max(1, pricing_result.final_total)
+            # original_price: только тарифная составляющая (без устройств и трафика),
+            # чтобы UI показал тот же бейдж "-40%" что и юзер видел до фикса.
             original_price = base_price
-            price = base_price
 
-            # Apply promo group discount
-            from app.services.pricing_engine import PricingEngine
-
-            promo_group_discount = 0
-            if promo_group:
-                promo_group_discount = promo_group.get_discount_percent('period', days)
-                if promo_group_discount > 0:
-                    price = PricingEngine.apply_discount(price, promo_group_discount)
-
-            # Apply active promo offer discount (stacks on top)
-            if promo_offer_discount_percent > 0:
-                price = PricingEngine.apply_discount(price, promo_offer_discount_percent)
-
-            # Ensure minimum price of 1 kopek after all discounts
-            price = max(1, price)
-
-            # Calculate combined discount percent
             combined_discount = 0
             if original_price > 0 and original_price != price:
                 combined_discount = int((original_price - price) * 100 / original_price)

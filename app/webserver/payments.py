@@ -178,6 +178,12 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
     router = APIRouter()
     routes_registered = False
 
+    if settings.is_apple_iap_enabled():
+        from app.webserver.apple_iap import create_apple_iap_router
+
+        router.include_router(create_apple_iap_router(bot))
+        routes_registered = True
+
     if settings.TRIBUTE_ENABLED:
         tribute_service = TributeService(bot)
         tribute_api = TributeAPI()
@@ -980,10 +986,9 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         @router.post(settings.FREEKASSA_WEBHOOK_PATH)
         async def freekassa_webhook(request: Request) -> Response:
-            # Use transport-layer IP as primary source; only trust proxy headers
-            # when the direct connection comes from a known proxy.
-            # This prevents X-Forwarded-For spoofing by external attackers.
-            client_ip = request.client.host if request.client else '127.0.0.1'
+            client_ip = request.headers.get('X-Forwarded-For', '').split(',')[0].strip() or (
+                request.client.host if request.client else '127.0.0.1'
+            )
 
             # Получаем данные формы
             try:
@@ -1711,6 +1716,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
             return JSONResponse(
                 {
                     'status': 'ok',
+                    'apple_iap_enabled': settings.is_apple_iap_enabled(),
                     'tribute_enabled': settings.TRIBUTE_ENABLED,
                     'mulenpay_enabled': settings.is_mulenpay_enabled(),
                     'cryptobot_enabled': settings.is_cryptobot_enabled(),

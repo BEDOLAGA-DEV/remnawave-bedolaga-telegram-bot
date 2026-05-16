@@ -1154,6 +1154,67 @@ class UserService:
             except Exception as e:
                 logger.error('❌ Ошибка удаления KassaAi платежей', error=e)
 
+            # Платёжные провайдеры, которые ссылаются на transactions через FK без ON DELETE,
+            # но раньше не очищались в этом блоке. Без них DELETE FROM transactions падал с
+            # ForeignKeyViolationError (например, rollypay_payments_transaction_id_fkey).
+            from app.database.models import (
+                AntilopayPayment,
+                AppleTransaction,
+                AuraPayPayment,
+                DonutPayment,
+                EtoplatezhiPayment,
+                JupiterPayment,
+                LavaPayment,
+                OverpayPayment,
+                PayPearPayment,
+                RioPayPayment,
+                RollyPayPayment,
+                SeverPayPayment,
+            )
+
+            extra_payment_models = (
+                RioPayPayment,
+                RollyPayPayment,
+                SeverPayPayment,
+                PayPearPayment,
+                OverpayPayment,
+                AuraPayPayment,
+                EtoplatezhiPayment,
+                AntilopayPayment,
+                JupiterPayment,
+                DonutPayment,
+                LavaPayment,
+            )
+            for model in extra_payment_models:
+                try:
+                    async with db.begin_nested():
+                        await db.execute(update(model).where(model.user_id == user_id).values(transaction_id=None))
+                        await db.flush()
+                        await db.execute(delete(model).where(model.user_id == user_id))
+                        await db.flush()
+                except Exception as error:
+                    logger.error(
+                        '❌ Ошибка удаления платежей провайдера',
+                        provider=model.__tablename__,
+                        error=str(error),
+                    )
+
+            # Apple IAP: FK поле называется transaction_id_fk (не transaction_id),
+            # поэтому отдельным блоком. user_id имеет CASCADE на users, но это сработает
+            # позже при DELETE User — а DELETE Transaction раньше падал бы из-за FK на apple_transactions.
+            try:
+                async with db.begin_nested():
+                    await db.execute(
+                        update(AppleTransaction)
+                        .where(AppleTransaction.user_id == user_id)
+                        .values(transaction_id_fk=None)
+                    )
+                    await db.flush()
+                    await db.execute(delete(AppleTransaction).where(AppleTransaction.user_id == user_id))
+                    await db.flush()
+            except Exception as error:
+                logger.error('❌ Ошибка удаления Apple IAP платежей', error=str(error))
+
             try:
                 async with db.begin_nested():
                     transactions_result = await db.execute(select(Transaction).where(Transaction.user_id == user_id))
@@ -1298,14 +1359,13 @@ class UserService:
                     AccessPolicy,
                     AdminAuditLog,
                     AdminRole,
-                    RioPayPayment,
                     SavedPaymentMethod,
                     UserRole,
                     WithdrawalRequest,
                 )
 
                 await db.execute(delete(SavedPaymentMethod).where(SavedPaymentMethod.user_id == user_id))
-                await db.execute(delete(RioPayPayment).where(RioPayPayment.user_id == user_id))
+                # RioPayPayment удаляется выше в extra_payment_models — здесь дубликат не нужен.
                 await db.execute(delete(AdminAuditLog).where(AdminAuditLog.user_id == user_id))
                 await db.execute(delete(WithdrawalRequest).where(WithdrawalRequest.user_id == user_id))
                 await db.execute(

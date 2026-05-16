@@ -2270,16 +2270,22 @@ class RemnaWaveService:
                                 ) and sub.end_date > datetime.now(UTC)
                                 status = UserStatus.ACTIVE if is_subscription_active else UserStatus.DISABLED
 
-                                username = settings.format_remnawave_username(
+                                # multi-tariff create-path в bulk-sync приклеивает
+                                # `_<remnawave_short_id>` — helper резервирует под него
+                                # место и гарантирует ≤ REMNAWAVE_USERNAME_MAX_LENGTH.
+                                username_suffix = (
+                                    f'_{sub.remnawave_short_id}'
+                                    if (settings.is_multi_tariff_enabled() and sub.remnawave_short_id)
+                                    else ''
+                                )
+                                username = settings.build_remnawave_subscription_username(
                                     full_name=user.full_name,
                                     username=user.username,
                                     telegram_id=user.telegram_id,
                                     email=user.email,
                                     user_id=user.id,
+                                    suffix=username_suffix,
                                 )
-                                # Append permanent short_id suffix in multi-tariff mode
-                                if settings.is_multi_tariff_enabled() and sub.remnawave_short_id:
-                                    username = f'{username}_{sub.remnawave_short_id}'
 
                                 create_kwargs = dict(
                                     username=username,

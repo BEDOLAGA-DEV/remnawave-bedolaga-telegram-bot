@@ -27,6 +27,7 @@ REAL_PAYMENT_METHODS = [
     PaymentMethod.KASSA_AI.value,
     PaymentMethod.RIOPAY.value,
     PaymentMethod.SEVERPAY.value,
+    PaymentMethod.APPLE_IAP.value,
     PaymentMethod.ROLLYPAY.value,
     PaymentMethod.PAYPEAR.value,
     PaymentMethod.OVERPAY.value,

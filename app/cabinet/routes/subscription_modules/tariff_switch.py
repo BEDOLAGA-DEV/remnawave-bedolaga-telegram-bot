@@ -149,10 +149,12 @@ async def preview_tariff_switch(
         'upgrade_cost_kopeks': upgrade_cost,
         'upgrade_cost_label': settings.format_price(upgrade_cost) if upgrade_cost > 0 else 'Бесплатно',
         'balance_kopeks': balance,
-        'balance_label': settings.format_price(balance),
+        # Когда есть нехватка <1₽ (FX-rounding), показ копеек обязателен — без него
+        # юзер видит "Баланс 150 ₽, не хватает 0 ₽" и думает что баг.
+        'balance_label': settings.format_price(balance, round_kopeks=False),
         'has_enough_balance': has_enough,
         'missing_amount_kopeks': missing,
-        'missing_amount_label': settings.format_price(missing) if missing > 0 else '',
+        'missing_amount_label': settings.format_price(missing, round_kopeks=False) if missing > 0 else '',
         'is_upgrade': is_upgrade,
     }
 
@@ -314,7 +316,7 @@ async def switch_tariff(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     'code': 'insufficient_funds',
-                    'message': f'Insufficient funds. Missing {settings.format_price(missing)}',
+                    'message': f'Insufficient funds. Missing {settings.format_price(missing, round_kopeks=False)}',
                     'missing_amount': missing,
                 },
             )

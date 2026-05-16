@@ -1,170 +1,267 @@
-"""Apple App Store Server API client for In-App Purchase verification and webhook handling."""
+"""Apple App Store Server API integration backed by Apple's official library."""
 
 from __future__ import annotations
 
-import base64
-import datetime
-import json
-import time
+import datetime as dt
+import hashlib
+from enum import Enum
 from typing import Any
+from uuid import UUID
 
-import httpx
-import jwt as pyjwt
+import attrs
 import structlog
-from cryptography import x509
-from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils
-from cryptography.hazmat.primitives.hashes import SHA256
-from cryptography.x509 import load_der_x509_certificate
-from cryptography.x509.oid import ExtensionOID, ObjectIdentifier
+from appstoreserverlibrary.api_client import APIException, AsyncAppStoreServerAPIClient
+from appstoreserverlibrary.models.Environment import Environment
+from appstoreserverlibrary.signed_data_verifier import SignedDataVerifier, VerificationException
 
 from app.config import settings
 
 
 logger = structlog.get_logger(__name__)
 
-# Apple Root CA - G3 SHA-256 fingerprint for chain pinning
-# https://www.apple.com/certificateauthority/
-APPLE_ROOT_CA_G3_SHA256 = bytes.fromhex('63343abfb89a6a03ebb57e9b3f5fa7be7c4f5c756f3017b3a8c488c3653e9179')
 
-# Apple WWDR Intermediate Certificate OID
-APPLE_WWDR_INTERMEDIATE_OID = ObjectIdentifier('1.2.840.113635.100.6.2.1')
+class AppleIAPConfigurationError(RuntimeError):
+    """Raised when Apple IAP settings are incomplete or invalid."""
 
-PRODUCTION_BASE_URL = 'https://api.storekit.itunes.apple.com'
-SANDBOX_BASE_URL = 'https://api.storekit-sandbox.itunes.apple.com'
+
+def _apple_environment(environment: str | None = None) -> Environment:
+    configured = environment or settings.get_apple_iap_environment()
+    return Environment.SANDBOX if configured == 'Sandbox' else Environment.PRODUCTION
+
+
+def _opposite_environment(environment: Environment) -> Environment:
+    return Environment.SANDBOX if environment == Environment.PRODUCTION else Environment.PRODUCTION
+
+
+def _environment_name(environment: Environment | str | None) -> str | None:
+    if environment is None:
+        return None
+    if isinstance(environment, Environment):
+        return 'Sandbox' if environment == Environment.SANDBOX else 'Production'
+    if environment == 'Sandbox':
+        return 'Sandbox'
+    if environment == 'Production':
+        return 'Production'
+    return str(environment)
+
+
+def _hash_token(token: str | None) -> str | None:
+    if not token:
+        return None
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def _primitive(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, (dt.datetime, dt.date)):
+        return value.isoformat()
+    if attrs.has(value.__class__):
+        return _model_to_dict(value)
+    if isinstance(value, list):
+        return [_primitive(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _primitive(item) for key, item in value.items()}
+    return value
+
+
+def _model_to_dict(model: Any) -> dict[str, Any]:
+    if model is None:
+        return {}
+    if isinstance(model, dict):
+        return {str(key): _primitive(value) for key, value in model.items()}
+    if attrs.has(model.__class__):
+        return {field.name: _primitive(getattr(model, field.name, None)) for field in attrs.fields(model.__class__)}
+    return {
+        key: _primitive(value) for key, value in vars(model).items() if not key.startswith('_') and value is not None
+    }
+
+
+def parse_apple_timestamp(value: Any) -> dt.datetime | None:
+    """Convert Apple millisecond timestamps or ISO strings to aware UTC datetimes."""
+    if value is None:
+        return None
+    if isinstance(value, dt.datetime):
+        return value if value.tzinfo else value.replace(tzinfo=dt.UTC)
+    if isinstance(value, str):
+        if value.isdigit():
+            value = int(value)
+        else:
+            try:
+                parsed = dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+            except ValueError:
+                return None
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.UTC)
+    if isinstance(value, int | float):
+        timestamp = float(value)
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000
+        return dt.datetime.fromtimestamp(timestamp, tz=dt.UTC)
+    return None
 
 
 class AppleIAPService:
-    """Service for verifying Apple In-App Purchase transactions and handling notifications."""
+    """Library-backed adapter for App Store Server API and signed payload verification."""
 
-    def _get_base_url(self, environment: str | None = None) -> str:
-        env = environment or settings.APPLE_IAP_ENVIRONMENT
-        if env == 'Sandbox':
-            return SANDBOX_BASE_URL
-        return PRODUCTION_BASE_URL
+    def __init__(self):
+        self._root_certificate_cache: list[bytes] | None = None
 
-    def _generate_jwt(self) -> str:
-        """Generate a fresh ES256 JWT for App Store Server API authentication.
-
-        Apple recommends generating a new JWT for each request.
-        """
+    def _private_key_bytes(self) -> bytes:
         private_key = settings.get_apple_iap_private_key()
         if not private_key:
-            raise ValueError('Apple IAP private key is not configured')
+            raise AppleIAPConfigurationError('Apple IAP private key is not configured')
+        return private_key.encode('utf-8')
 
-        now = int(time.time())
-        payload = {
-            'iss': settings.APPLE_IAP_ISSUER_ID,
-            'iat': now,
-            'exp': now + 3600,
-            'aud': 'appstoreconnect-v1',
-            'bid': settings.APPLE_IAP_BUNDLE_ID,
-        }
-        headers = {
-            'alg': 'ES256',
-            'kid': settings.APPLE_IAP_KEY_ID,
-            'typ': 'JWT',
-        }
+    def _root_certificates(self) -> list[bytes]:
+        if self._root_certificate_cache is not None:
+            return self._root_certificate_cache
 
-        return pyjwt.encode(payload, private_key, algorithm='ES256', headers=headers)
-
-    async def _fetch_transaction(
-        self,
-        transaction_id: str,
-        base_url: str,
-    ) -> httpx.Response | None:
-        """Send a GET request to Apple's transaction lookup endpoint."""
-        url = f'{base_url}/inApps/v1/transactions/{transaction_id}'
-        token = self._generate_jwt()
-
-        async with httpx.AsyncClient(timeout=30) as client:
+        certificates: list[bytes] = []
+        for cert_path in settings.get_apple_iap_root_cert_paths():
             try:
-                return await client.get(
-                    url,
-                    headers={'Authorization': f'Bearer {token}'},
-                )
-            except httpx.RequestError as e:
-                logger.error('Apple API request failed', error=str(e), transaction_id=transaction_id)
-                return None
+                certificates.append(cert_path.read_bytes())
+            except OSError as error:
+                raise AppleIAPConfigurationError(f'Apple root certificate is not readable: {cert_path}') from error
+        if not certificates:
+            raise AppleIAPConfigurationError('Apple root certificates are not configured')
+        self._root_certificate_cache = certificates
+        return certificates
+
+    def _client(self, environment: Environment) -> AsyncAppStoreServerAPIClient:
+        key_id = settings.APPLE_IAP_KEY_ID
+        issuer_id = settings.APPLE_IAP_ISSUER_ID
+        if not key_id or not issuer_id:
+            raise AppleIAPConfigurationError('Apple IAP key ID or issuer ID is not configured')
+        return AsyncAppStoreServerAPIClient(
+            self._private_key_bytes(),
+            key_id,
+            issuer_id,
+            settings.APPLE_IAP_BUNDLE_ID,
+            environment,
+        )
+
+    def _verifier(self, environment: Environment | None = None) -> SignedDataVerifier:
+        env = environment or _apple_environment()
+        app_apple_id = settings.APPLE_IAP_APP_APPLE_ID if env == Environment.PRODUCTION else None
+        return SignedDataVerifier(
+            self._root_certificates(),
+            settings.APPLE_IAP_ENABLE_ONLINE_CERT_CHECKS,
+            env,
+            settings.APPLE_IAP_BUNDLE_ID,
+            app_apple_id,
+        )
 
     async def verify_transaction(
         self,
         transaction_id: str,
         environment: str | None = None,
+        *,
+        allow_environment_fallback: bool = True,
     ) -> dict[str, Any] | None:
-        """Verify a transaction with Apple's App Store Server API.
-
-        Follows Apple's recommendation: if the configured environment returns
-        a 4xx error, retries against the opposite environment.  This ensures
-        Sandbox purchases made during App Review still verify when the server
-        is configured for Production.
-        """
-        primary_url = self._get_base_url(environment)
-        # Determine fallback URL (opposite environment)
-        fallback_url = SANDBOX_BASE_URL if primary_url == PRODUCTION_BASE_URL else PRODUCTION_BASE_URL
-
-        for attempt_url in (primary_url, fallback_url):
-            response = await self._fetch_transaction(transaction_id, attempt_url)
-            if response is None:
-                return None  # network error -- don't retry
-
-            if response.status_code == 200:
-                return self._parse_transaction_response(response, transaction_id)
-
-            # 4xx on primary -> retry on fallback per Apple docs
-            if 400 <= response.status_code < 500 and attempt_url == primary_url:
-                logger.info(
-                    'Apple API returned 4xx on primary env, retrying fallback',
-                    status=response.status_code,
-                    primary=attempt_url,
-                    fallback=fallback_url,
+        """Fetch a transaction from Apple and verify the returned signedTransactionInfo."""
+        primary = _apple_environment(environment)
+        environments = (primary, _opposite_environment(primary)) if allow_environment_fallback else (primary,)
+        for attempt_env in environments:
+            client = self._client(attempt_env)
+            try:
+                response = await client.get_transaction_info(transaction_id)
+            except APIException as error:
+                await client.async_close()
+                status = getattr(error, 'http_status_code', None)
+                if allow_environment_fallback and attempt_env == primary and status is not None and 400 <= status < 500:
+                    logger.info(
+                        'Apple transaction lookup failed on primary environment, retrying fallback',
+                        transaction_id=transaction_id,
+                        status=status,
+                        environment=_environment_name(attempt_env),
+                    )
+                    continue
+                self._log_api_exception(error, transaction_id)
+                return None
+            except Exception as error:
+                await client.async_close()
+                logger.error(
+                    'Apple transaction lookup failed',
                     transaction_id=transaction_id,
+                    error=str(error),
+                    exc_info=True,
+                )
+                return None
+            else:
+                await client.async_close()
+
+            signed_transaction_info = getattr(response, 'signedTransactionInfo', None)
+            if not signed_transaction_info:
+                logger.warning(
+                    'Apple transaction response missing signedTransactionInfo', transaction_id=transaction_id
+                )
+                return None
+
+            decoded = self.verify_signed_transaction_info(signed_transaction_info, _environment_name(attempt_env))
+            if decoded:
+                decoded['signedTransactionInfoHash'] = _hash_token(signed_transaction_info)
+                return decoded
+            return None
+
+        return None
+
+    def verify_signed_transaction_info(
+        self,
+        signed_transaction_info: str,
+        environment: str | None = None,
+    ) -> dict[str, Any] | None:
+        environments = [_apple_environment(environment)]
+        if environment is None:
+            environments.append(_opposite_environment(environments[0]))
+
+        for env in environments:
+            try:
+                verifier = self._verifier(env)
+                decoded = verifier.verify_and_decode_signed_transaction(signed_transaction_info)
+                return _model_to_dict(decoded)
+            except VerificationException as error:
+                logger.warning(
+                    'Apple signed transaction verification failed',
+                    status=str(getattr(error, 'status', 'unknown')),
+                    environment=_environment_name(env),
                 )
                 continue
-
-            # Log the final failure
-            self._log_api_error(response, transaction_id)
-            return None
-
+            except AppleIAPConfigurationError:
+                raise
+            except Exception as error:
+                logger.error('Apple signed transaction verification error', error=str(error), exc_info=True)
+                return None
         return None
 
-    def _parse_transaction_response(
-        self,
-        response: httpx.Response,
-        transaction_id: str,
-    ) -> dict[str, Any] | None:
-        """Extract and verify signedTransactionInfo from a 200 response."""
-        data = response.json()
-        signed_transaction_info = data.get('signedTransactionInfo')
-        if signed_transaction_info:
-            decoded = self._verify_and_decode_jws(signed_transaction_info)
-            if decoded:
-                return decoded
-            logger.warning('Failed to verify signedTransactionInfo', transaction_id=transaction_id)
-            return None
-        logger.warning('No signedTransactionInfo in response', transaction_id=transaction_id)
-        return None
+    def verify_notification(self, signed_payload: str, environment: str | None = None) -> dict[str, Any] | None:
+        environments = [_apple_environment(environment)]
+        if environment is None:
+            environments.append(_opposite_environment(environments[0]))
 
-    @staticmethod
-    def _log_api_error(response: httpx.Response, transaction_id: str) -> None:
-        if response.status_code == 404:
-            logger.warning('Apple transaction not found', transaction_id=transaction_id)
-        elif response.status_code == 401:
-            logger.error('Apple API auth failed -- check key configuration')
-        elif response.status_code == 429:
-            logger.warning('Apple API rate limit exceeded')
-        else:
-            logger.error(
-                'Apple API unexpected status',
-                status=response.status_code,
-                body=response.text[:500],
-                transaction_id=transaction_id,
-            )
+        for env in environments:
+            try:
+                verifier = self._verifier(env)
+                decoded = verifier.verify_and_decode_notification(signed_payload)
+                notification = _model_to_dict(decoded)
+                notification['signedPayloadHash'] = _hash_token(signed_payload)
+                return notification
+            except VerificationException as error:
+                logger.warning(
+                    'Apple notification verification failed',
+                    status=str(getattr(error, 'status', 'unknown')),
+                    environment=_environment_name(env),
+                )
+                continue
+            except AppleIAPConfigurationError:
+                raise
+            except Exception as error:
+                logger.error('Apple notification verification error', error=str(error), exc_info=True)
+                return None
+        return None
 
     def validate_transaction_info(self, txn_info: dict[str, Any], expected_product_id: str) -> str | None:
-        """Validate decoded transaction info fields.
-
-        Returns None if valid, or an error message string.
-        """
         bundle_id = txn_info.get('bundleId')
         if bundle_id != settings.APPLE_IAP_BUNDLE_ID:
             return f'Bundle ID mismatch: {bundle_id}'
@@ -173,7 +270,7 @@ class AppleIAPService:
         if product_id != expected_product_id:
             return f'Product ID mismatch: {product_id} != {expected_product_id}'
 
-        txn_type = txn_info.get('type')
+        txn_type = txn_info.get('type') or txn_info.get('rawType')
         if txn_type != 'Consumable':
             return f'Unexpected transaction type: {txn_type}'
 
@@ -182,230 +279,20 @@ class AppleIAPService:
 
         return None
 
-    def _verify_and_decode_jws(self, jws_token: str) -> dict[str, Any] | None:
-        """Verify x5c certificate chain and ES256 signature, then decode the JWS payload.
-
-        Returns the decoded payload dict, or None if verification fails.
-        Used for both outer notification payloads and inner signed data
-        (signedTransactionInfo, signedRenewalInfo).
-        """
-        try:
-            parts = jws_token.split('.')
-            if len(parts) != 3:
-                logger.warning('Invalid JWS format: expected 3 parts')
-                return None
-
-            # Decode header to get x5c chain
-            header_b64 = parts[0]
-            padding = 4 - len(header_b64) % 4
-            if padding != 4:
-                header_b64 += '=' * padding
-            header_json = base64.urlsafe_b64decode(header_b64)
-            header = json.loads(header_json)
-
-            x5c_chain = header.get('x5c', [])
-            if not x5c_chain:
-                logger.warning('No x5c certificate chain in JWS header')
-                return None
-
-            # Verify the certificate chain
-            if not self._verify_x5c_chain(x5c_chain):
-                logger.warning('x5c certificate chain verification failed')
-                return None
-
-            # Verify the signature using the leaf certificate
-            leaf_cert_der = base64.b64decode(x5c_chain[0])
-            leaf_cert = load_der_x509_certificate(leaf_cert_der)
-            public_key = leaf_cert.public_key()
-
-            signing_input = f'{parts[0]}.{parts[1]}'.encode('ascii')
-            signature_b64 = parts[2]
-            sig_padding = 4 - len(signature_b64) % 4
-            if sig_padding != 4:
-                signature_b64 += '=' * sig_padding
-            signature = base64.urlsafe_b64decode(signature_b64)
-
-            # ES256 signatures from JWS are in raw (r||s) format, convert to DER
-            if len(signature) == 64:
-                r = int.from_bytes(signature[:32], 'big')
-                s = int.from_bytes(signature[32:], 'big')
-                signature = asym_utils.encode_dss_signature(r, s)
-
-            public_key.verify(signature, signing_input, ec.ECDSA(SHA256()))
-
-            # Signature valid -- decode payload
-            return self._decode_jws_payload(jws_token)
-
-        except Exception as e:
-            logger.error('JWS verification failed', error=str(e), exc_info=True)
-            return None
-
-    def verify_notification(self, signed_payload: str) -> dict[str, Any] | None:
-        """Verify and decode an App Store Server Notification V2 payload.
-
-        Verifies the JWS x5c certificate chain, then returns the decoded payload.
-        Returns None if verification fails.
-        """
-        return self._verify_and_decode_jws(signed_payload)
-
-    def _verify_x5c_chain(self, x5c_chain: list[str]) -> bool:
-        """Verify the x5c certificate chain ends with an Apple Root CA."""
-        try:
-            if len(x5c_chain) < 2:
-                logger.warning('x5c chain too short', length=len(x5c_chain))
-                return False
-
-            certs = []
-            for cert_b64 in x5c_chain:
-                cert_der = base64.b64decode(cert_b64)
-                cert = load_der_x509_certificate(cert_der)
-                certs.append(cert)
-
-            # Check certificate validity periods
-            now = datetime.datetime.now(datetime.UTC)
-            for i, cert in enumerate(certs):
-                if now < cert.not_valid_before_utc:
-                    logger.warning('x5c cert not yet valid', index=i, not_before=str(cert.not_valid_before_utc))
-                    return False
-                if now > cert.not_valid_after_utc:
-                    logger.warning('x5c cert expired', index=i, not_after=str(cert.not_valid_after_utc))
-                    return False
-
-            # Pin the root (last) certificate by SHA-256 fingerprint
-            root_cert = certs[-1]
-            root_fingerprint = root_cert.fingerprint(SHA256())
-            if root_fingerprint != APPLE_ROOT_CA_G3_SHA256:
-                logger.warning(
-                    'Root CA fingerprint mismatch -- not genuine Apple Root CA - G3',
-                    got=root_fingerprint.hex(),
-                )
-                return False
-
-            # Verify each certificate is signed by the next one in the chain
-            for i in range(len(certs) - 1):
-                child = certs[i]
-                parent = certs[i + 1]
-                parent_public_key = parent.public_key()
-                parent_public_key.verify(
-                    child.signature,
-                    child.tbs_certificate_bytes,
-                    ec.ECDSA(child.signature_hash_algorithm),
-                )
-
-            # FIX 3: Validate Apple WWDR intermediate OID
-            # The intermediate cert (index 1) must contain the Apple WWDR OID
-            # to ensure it is a genuine Apple WWDR intermediate certificate.
-            if len(certs) >= 2:
-                intermediate_cert = certs[1]
-                try:
-                    # Check for the Apple WWDR OID in certificate extensions
-                    found_apple_oid = False
-                    for ext in intermediate_cert.extensions:
-                        if ext.oid == ExtensionOID.CERTIFICATE_POLICIES:
-                            for policy in ext.value:
-                                if policy.policy_identifier == APPLE_WWDR_INTERMEDIATE_OID:
-                                    found_apple_oid = True
-                                    break
-                            if found_apple_oid:
-                                break
-                    if not found_apple_oid:
-                        logger.warning(
-                            'Intermediate cert missing Apple WWDR OID',
-                            oid=str(APPLE_WWDR_INTERMEDIATE_OID),
-                        )
-                        return False
-                except x509.ExtensionNotFound:
-                    logger.warning('Intermediate cert has no certificate policies extension')
-                    return False
-
-            return True
-
-        except Exception as e:
-            logger.error('x5c chain verification error', error=str(e))
-            return False
-
-    def _decode_jws_payload(self, jws_token: str) -> dict[str, Any] | None:
-        """Decode the payload from a JWS token without signature verification.
-
-        Use only after the signature has already been verified.
-        """
-        try:
-            parts = jws_token.split('.')
-            if len(parts) != 3:
-                return None
-
-            payload_b64 = parts[1]
-            # Add base64url padding
-            padding = 4 - len(payload_b64) % 4
-            if padding != 4:
-                payload_b64 += '=' * padding
-
-            payload_json = base64.urlsafe_b64decode(payload_b64)
-            return json.loads(payload_json)
-
-        except Exception as e:
-            logger.error('Failed to decode JWS payload', error=str(e))
-            return None
-
-    async def send_consumption_info(
-        self,
-        transaction_id: str,
-        customer_consented: bool,
-        consumption_status: int = 0,
-        delivery_status: int = 0,
-        lifetime_dollars_purchased: int = 0,
-        lifetime_dollars_refunded: int = 0,
-        platform: int = 1,
-        play_time: int = 0,
-        sample_content_provided: bool = False,
-        user_status: int = 0,
-        environment: str | None = None,
-        refund_preference: int | None = None,
-    ) -> bool:
-        """Send consumption information to Apple in response to CONSUMPTION_REQUEST.
-
-        Must be sent within 12 hours of receiving the notification.
-        """
-        base_url = self._get_base_url(environment)
-        url = f'{base_url}/inApps/v2/transactions/consumption/{transaction_id}'
-        token = self._generate_jwt()
-
-        body: dict[str, Any] = {
-            'customerConsented': customer_consented,
-            'consumptionStatus': consumption_status,
-            'deliveryStatus': delivery_status,
-            'lifetimeDollarsPurchased': lifetime_dollars_purchased,
-            'lifetimeDollarsRefunded': lifetime_dollars_refunded,
-            'platform': platform,
-            'playTime': play_time,
-            'sampleContentProvided': sample_content_provided,
-            'userStatus': user_status,
-        }
-        if refund_preference is not None:
-            body['refundPreference'] = refund_preference
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            try:
-                response = await client.put(
-                    url,
-                    json=body,
-                    headers={
-                        'Authorization': f'Bearer {token}',
-                        'Content-Type': 'application/json',
-                    },
-                )
-            except httpx.RequestError as e:
-                logger.error('Apple consumption API request failed', error=str(e))
-                return False
-
-        if response.status_code == 202:
-            logger.info('Consumption info sent to Apple', transaction_id=transaction_id)
-            return True
-
-        logger.error(
-            'Apple consumption API error',
-            status=response.status_code,
-            body=response.text[:500],
-            transaction_id=transaction_id,
-        )
-        return False
+    @staticmethod
+    def _log_api_exception(error: APIException, transaction_id: str | None = None) -> None:
+        status = getattr(error, 'http_status_code', None)
+        if status == 401:
+            logger.error('Apple API auth failed -- check key configuration', transaction_id=transaction_id)
+        elif status == 404:
+            logger.warning('Apple transaction not found', transaction_id=transaction_id)
+        elif status == 429:
+            logger.warning('Apple API rate limit exceeded', transaction_id=transaction_id)
+        else:
+            logger.error(
+                'Apple API error',
+                transaction_id=transaction_id,
+                status=status,
+                raw_api_error=getattr(error, 'raw_api_error', None),
+                error_message=getattr(error, 'error_message', None),
+            )

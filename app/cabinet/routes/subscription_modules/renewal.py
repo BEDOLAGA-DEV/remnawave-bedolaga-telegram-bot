@@ -236,7 +236,7 @@ async def renew_subscription(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 'code': 'insufficient_funds',
-                'message': f'Недостаточно средств. Не хватает {settings.format_price(missing)}',
+                'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
                 'missing_amount': missing,
                 'cart_saved': True,
                 'cart_mode': 'extend',

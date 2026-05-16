@@ -212,6 +212,7 @@ async def get_payment_methods(
                 max_amount_kopeks=method_data['max_amount_kopeks'],
                 is_available=True,
                 options=options,
+                open_url_direct=bool(method_data.get('open_url_direct', False)),
             )
         )
 

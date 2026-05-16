@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import structlog
 from aiogram import Bot, Dispatcher
-from fastapi import FastAPI, status
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import FastAPI, Response, status
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.cabinet.routes import router as cabinet_router
+from app.cabinet.apple_iap import apple_iap_only_router
 from app.config import settings
 from app.services.disposable_email_service import disposable_email_service
 from app.services.payment_service import PaymentService
-from app.webapi.app import create_web_api_app
 from app.webapi.docs import add_redoc_endpoint
 
 from . import payments, telegram
@@ -40,11 +42,13 @@ def _attach_docs_alias(app: FastAPI, docs_url: str | None) -> None:
         return RedirectResponse(url=target_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
-def _create_base_app() -> FastAPI:
+def _create_base_app(lifespan: Any = None) -> FastAPI:
     docs_config = settings.get_web_api_docs_config()
 
     if settings.is_web_api_enabled():
-        app = create_web_api_app()
+        from app.webapi.app import create_web_api_app
+
+        app = create_web_api_app(lifespan=lifespan)
     else:
         app = FastAPI(
             title='Bedolaga Unified Server',
@@ -52,6 +56,7 @@ def _create_base_app() -> FastAPI:
             docs_url=docs_config.get('docs_url'),
             redoc_url=None,
             openapi_url=docs_config.get('openapi_url'),
+            lifespan=lifespan,
         )
 
         add_redoc_endpoint(
@@ -62,7 +67,7 @@ def _create_base_app() -> FastAPI:
         )
 
         # Add cabinet routes even when web API is disabled
-        if settings.is_cabinet_enabled():
+        if settings.is_cabinet_enabled() or settings.is_apple_iap_enabled():
             from fastapi.middleware.cors import CORSMiddleware
 
             cabinet_origins = settings.get_cabinet_allowed_origins()
@@ -83,7 +88,12 @@ def _create_base_app() -> FastAPI:
                     allow_methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
                     allow_headers=['Authorization', 'Content-Type', 'X-CSRF-Token', 'X-Telegram-Init-Data'],
                 )
-            app.include_router(cabinet_router)
+            if settings.is_cabinet_enabled():
+                from app.cabinet.routes import router as cabinet_router
+
+                app.include_router(cabinet_router)
+            else:
+                app.include_router(apple_iap_only_router)
 
     _attach_docs_alias(app, app.docs_url)
     return app
@@ -123,7 +133,40 @@ def create_unified_app(
     *,
     enable_telegram_webhook: bool,
 ) -> FastAPI:
-    app = _create_base_app()
+    # Single ASGI lifespan, заменяет 5 deprecated @app.on_event() хуков.
+    # Хэндлеры регистрируются ниже после того, как соответствующие сервисы
+    # инстанцируются. Замыкаемся на списки — FastAPI(lifespan=...) фиксирует
+    # объект функции, но функция читает списки по ссылке в момент срабатывания.
+    startup_handlers: list[Callable[[], Awaitable[None]]] = []
+    # Shutdown идёт в порядке append'а (НЕ reverse), чтобы критичные drain'ы
+    # (например RemnaWave webhook drain — он шлёт через aiogram) выполнились
+    # ПЕРЕД остановкой нижележащих процессоров. См. порядок ниже.
+    shutdown_handlers: list[Callable[[], Awaitable[None]]] = []
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):  # pragma: no cover - ASGI lifespan
+        # Startup — fail-fast: если критичный сервис не поднялся, лучше
+        # crash loop в orchestrator'е, чем «бот запустился» в /health, но
+        # не принимает updates. Совпадает с прежней семантикой @app.on_event,
+        # где raise в startup-хэндлере отменял ASGI lifespan.
+        for handler in startup_handlers:
+            await handler()
+        try:
+            yield
+        finally:
+            # Shutdown — best-effort: ошибка в одном drain'е не должна блокировать
+            # остальные. Особенно важно для drain'а RemnaWave webhook'а, который
+            # шлёт реальные Telegram-сообщения и может упасть на flood control.
+            for handler in shutdown_handlers:
+                try:
+                    await handler()
+                except Exception:
+                    logger.exception(
+                        'Lifespan shutdown handler failed',
+                        handler=getattr(handler, '__qualname__', repr(handler)),
+                    )
+
+    app = _create_base_app(lifespan=lifespan)
 
     app.state.bot = bot
     app.state.dispatcher = dispatcher
@@ -136,11 +179,20 @@ def create_unified_app(
     # Mount RemnaWave incoming webhook router
     remnawave_webhook_enabled = settings.is_remnawave_webhook_enabled()
     if remnawave_webhook_enabled:
+        from app.services.remnawave_webhook_service import RemnaWaveWebhookService
         from app.webserver.remnawave_webhook import create_remnawave_webhook_router
 
-        remnawave_router = create_remnawave_webhook_router(bot)
+        remnawave_webhook_service = RemnaWaveWebhookService(bot)
+        remnawave_router = create_remnawave_webhook_router(bot, remnawave_webhook_service)
         app.include_router(remnawave_router)
+        app.state.remnawave_webhook_service = remnawave_webhook_service
         logger.info('RemnaWave webhook router mounted at', REMNAWAVE_WEBHOOK_PATH=settings.REMNAWAVE_WEBHOOK_PATH)
+
+        # ВАЖНО: drain должен выполниться ПЕРЕД остановкой telegram-процессора
+        # и disposable-email сервиса (последние могут закрыть aiogram session,
+        # без которой drain не сможет послать уведомление). Поэтому добавляем
+        # ПЕРВЫМ в shutdown_handlers — итерация без reverse.
+        shutdown_handlers.append(remnawave_webhook_service.stop)
 
     payment_providers_state = {
         'tribute': settings.TRIBUTE_ENABLED,
@@ -150,6 +202,7 @@ def create_unified_app(
         'pal24': settings.is_pal24_enabled(),
         'wata': settings.is_wata_enabled(),
         'heleket': settings.is_heleket_enabled(),
+        'apple_iap': settings.is_apple_iap_enabled(),
         'freekassa': settings.is_freekassa_enabled(),
         'riopay': settings.is_riopay_enabled(),
     }
@@ -165,28 +218,35 @@ def create_unified_app(
         )
         app.state.telegram_webhook_processor = telegram_processor
 
-        @app.on_event('startup')
-        async def start_telegram_webhook_processor() -> None:  # pragma: no cover - event hook
-            await telegram_processor.start()
-
-        @app.on_event('shutdown')
-        async def stop_telegram_webhook_processor() -> None:  # pragma: no cover - event hook
-            await telegram_processor.stop()
+        startup_handlers.append(telegram_processor.start)
+        shutdown_handlers.append(telegram_processor.stop)
 
         app.include_router(telegram.create_telegram_router(bot, dispatcher, processor=telegram_processor))
     else:
         telegram_processor = None
 
-    @app.on_event('startup')
-    async def start_disposable_email_service() -> None:  # pragma: no cover - event hook
-        await disposable_email_service.start()
-
-    @app.on_event('shutdown')
-    async def stop_disposable_email_service() -> None:  # pragma: no cover - event hook
-        await disposable_email_service.stop()
+    startup_handlers.append(disposable_email_service.start)
+    shutdown_handlers.append(disposable_email_service.stop)
 
     miniapp_mounted, miniapp_path = _mount_miniapp_static(app)
     _mount_uploads_static(app)
+
+    # Root-level Antilopay site-verification file. Antilopay crawler ходит
+    # точно по `/<host>/apay-meta-file.txt`, поэтому не можем спрятать роут
+    # под /cabinet prefix. Отдаём 404, если значение не настроено, чтобы
+    # не светить статус «фича выключена» отдельным сигналом.
+    # `no-store`: если оператор ротирует токен, верификация Antilopay не должна
+    # упираться в кэш промежуточных CDN/прокси.
+    @app.get('/apay-meta-file.txt', include_in_schema=False)
+    async def apay_meta_file() -> Response:  # pragma: no cover - thin static endpoint
+        token = (settings.ANTILOPAY_APAY_VERIFICATION_TAG or '').strip()
+        if not token:
+            return Response(status_code=status.HTTP_404_NOT_FOUND)
+        return PlainTextResponse(
+            content=token,
+            media_type='text/plain; charset=utf-8',
+            headers={'Cache-Control': 'no-store'},
+        )
 
     unified_health_path = '/health/unified' if settings.is_web_api_enabled() else '/health'
 

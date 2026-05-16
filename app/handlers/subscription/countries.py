@@ -345,8 +345,8 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
             ),
         ).format(
             required=required_text,
-            balance=texts.format_price(db_user.balance_kopeks),
-            missing=texts.format_price(missing_kopeks),
+            balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
+            missing=texts.format_price(missing_kopeks, round_kopeks=False),
         )
 
         await callback.message.answer(
@@ -885,9 +885,9 @@ async def confirm_add_countries_to_subscription(
                 'Выберите способ пополнения. Сумма подставится автоматически.'
             ),
         ).format(
-            required=texts.format_price(total_price),
-            balance=texts.format_price(db_user.balance_kopeks),
-            missing=texts.format_price(missing_kopeks),
+            required=texts.format_price(total_price, round_kopeks=False),
+            balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
+            missing=texts.format_price(missing_kopeks, round_kopeks=False),
         )
 
         await callback.message.edit_text(

@@ -442,7 +442,8 @@ async def handle_successful_topup_with_cart(user_id: int, amount_kopeks: int, bo
                 balance_hint = 'Средств на балансе достаточно для оформления.'
             else:
                 missing = max(total_price - user.balance_kopeks, 0)
-                balance_hint = f'Не хватает: {texts.format_price(missing)}'
+                # Без округления, иначе при не хватке <50 копеек покажется «0 ₽».
+                balance_hint = f'Не хватает: {texts.format_price(missing, round_kopeks=False)}'
 
             success_text = (
                 f'✅ Баланс пополнен на {texts.format_price(amount_kopeks)}!\n\n'

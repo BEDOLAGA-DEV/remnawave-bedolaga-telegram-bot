@@ -538,6 +538,7 @@ async def main():
                 settings.is_pal24_enabled(),
                 settings.is_wata_enabled(),
                 settings.is_heleket_enabled(),
+                settings.is_apple_iap_enabled(),
             ]
         )
 
@@ -705,6 +706,8 @@ async def main():
             webhook_lines.append(f'WATA: {_fmt(settings.WATA_WEBHOOK_PATH)}')
         if settings.is_heleket_enabled():
             webhook_lines.append(f'Heleket: {_fmt(settings.HELEKET_WEBHOOK_PATH)}')
+        if settings.is_apple_iap_enabled():
+            webhook_lines.append(f'Apple IAP: {_fmt(settings.APPLE_IAP_WEBHOOK_PATH)}')
         if settings.is_platega_enabled():
             webhook_lines.append(f'Platega: {_fmt(settings.PLATEGA_WEBHOOK_PATH)}')
         if settings.is_cloudpayments_enabled():

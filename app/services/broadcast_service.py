@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING
 
 import structlog
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+    TelegramServerError,
+)
 from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy import select
 from sqlalchemy.exc import InterfaceError, SQLAlchemyError
@@ -321,6 +327,21 @@ class BroadcastService:
                     if 'bot was blocked' in err or 'user is deactivated' in err or 'chat not found' in err:
                         return 'blocked'
                     return 'failed'
+
+                except (TelegramNetworkError, TelegramServerError) as exc:
+                    # Транзиентные сетевые/5xx — warning, не error (иначе спам в админ-чат
+                    # через TelegramNotifierProcessor при каждом ConnectionReset).
+                    logger.warning(
+                        'Транзиентная сетевая ошибка рассылки (retry)',
+                        broadcast_id=broadcast_id,
+                        telegram_id=telegram_id,
+                        attempt=attempt + 1,
+                        TG_MAX_RETRIES=_TG_MAX_RETRIES,
+                        error=str(exc)[:200],
+                        error_type=type(exc).__name__,
+                    )
+                    if attempt < _TG_MAX_RETRIES - 1:
+                        await asyncio.sleep(0.5 * (attempt + 1))
 
                 except Exception as exc:
                     logger.error(

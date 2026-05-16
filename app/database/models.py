@@ -347,13 +347,24 @@ class AppleTransaction(Base):
     bundle_id = Column(String(255), nullable=False)
     amount_kopeks = Column(Integer, nullable=False)
     environment = Column(String(16), nullable=False)
+    app_account_token = Column(String(36), nullable=True, index=True)
+    web_order_line_item_id = Column(String(64), unique=True, nullable=True, index=True)
+    storefront = Column(String(16), nullable=True)
+    currency = Column(String(3), nullable=True)
+    price_micros = Column(BigInteger, nullable=True)
+    purchase_date = Column(AwareDateTime(), nullable=True)
+    revocation_date = Column(AwareDateTime(), nullable=True)
+    revocation_reason = Column(String(50), nullable=True)
 
     status = Column(String(50), default='verified')
     is_paid = Column(Boolean, default=True)
     paid_at = Column(AwareDateTime(), nullable=True)
+    credited_at = Column(AwareDateTime(), nullable=True)
     refunded_at = Column(AwareDateTime(), nullable=True)
+    refund_reversed_at = Column(AwareDateTime(), nullable=True)
 
     transaction_id_fk = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+    signed_transaction_hash = Column(String(64), nullable=True, index=True)
     metadata_json = Column(JSON, nullable=True)
 
     created_at = Column(AwareDateTime(), default=func.now())
@@ -368,6 +379,70 @@ class AppleTransaction(Base):
 
     def __repr__(self):
         return f'<AppleTransaction(id={self.id}, txn={self.transaction_id}, product={self.product_id}, status={self.status})>'
+
+
+class AppleIAPAccount(Base):
+    __tablename__ = 'apple_iap_accounts'
+    __table_args__ = (
+        UniqueConstraint('user_id', name='uq_apple_iap_accounts_user_id'),
+        UniqueConstraint('account_token_uuid', name='uq_apple_iap_accounts_token'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    account_token_uuid = Column(String(36), nullable=False)
+    created_at = Column(AwareDateTime(), default=func.now())
+    rotated_at = Column(AwareDateTime(), nullable=True)
+    disabled_at = Column(AwareDateTime(), nullable=True)
+
+    user = relationship('User', backref='apple_iap_account')
+
+    def __repr__(self):
+        return f'<AppleIAPAccount(id={self.id}, user_id={self.user_id})>'
+
+
+class AppleNotification(Base):
+    __tablename__ = 'apple_notifications'
+
+    id = Column(Integer, primary_key=True, index=True)
+    notification_uuid = Column(String(64), unique=True, nullable=False, index=True)
+    notification_type = Column(String(64), nullable=False, index=True)
+    subtype = Column(String(64), nullable=True)
+    environment = Column(String(16), nullable=True, index=True)
+    transaction_id = Column(String(64), nullable=True, index=True)
+    original_transaction_id = Column(String(64), nullable=True, index=True)
+    status = Column(String(32), nullable=False, default='received')
+    error = Column(Text, nullable=True)
+    payload_hash = Column(String(64), unique=True, nullable=False, index=True)
+    metadata_json = Column(JSON, nullable=True)
+    received_at = Column(AwareDateTime(), default=func.now())
+    processed_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return (
+            f'<AppleNotification(uuid={self.notification_uuid}, type={self.notification_type}, status={self.status})>'
+        )
+
+
+class AppleIAPAbuseEvent(Base):
+    __tablename__ = 'apple_iap_abuse_events'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    event_type = Column(String(64), nullable=False, index=True)
+    severity = Column(String(16), nullable=False, default='warning')
+    transaction_id = Column(String(64), nullable=True, index=True)
+    product_id = Column(String(128), nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    details_json = Column(JSON, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+
+    user = relationship('User', backref='apple_iap_abuse_events')
+
+    def __repr__(self):
+        return f'<AppleIAPAbuseEvent(type={self.event_type}, user_id={self.user_id})>'
 
 
 class HeleketPayment(Base):
@@ -1803,6 +1878,12 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=True, index=True)
     email_verified = Column(Boolean, default=False, nullable=False)
     email_verified_at = Column(AwareDateTime(), nullable=True)
+    # Источник верификации email — используется как trust signal для admin escalation.
+    # 'cabinet'/'oauth_google'/'oauth_discord' доверяем (real ownership proof);
+    # 'oauth_vk'/'oauth_yandex' — email используется, но НЕ trusted для ADMIN_EMAILS match.
+    # NULL для legacy строк до миграции 0079 (трактуется так же, как 'cabinet' для
+    # bootstrap-compat — см. is_user_admin_by_env).
+    email_verification_source = Column(String(32), nullable=True)
     password_hash = Column(String(255), nullable=True)
     email_verification_token = Column(String(255), nullable=True)
     email_verification_expires = Column(AwareDateTime(), nullable=True)
@@ -2189,10 +2270,18 @@ class TrafficPurchase(Base):
     """Докупка трафика с индивидуальной датой истечения."""
 
     __tablename__ = 'traffic_purchases'
-    __table_args__ = (Index('ix_traffic_purchases_created_at', 'created_at'),)
+    __table_args__ = (
+        Index('ix_traffic_purchases_created_at', 'created_at'),
+        # Composite index ускоряет housekeeping-запросы вида
+        # `WHERE subscription_id = :id AND expires_at <op> :now` (DELETE/SELECT
+        # в _housekeep_expired_purchases / _apply_base_limit_preserving_active_purchases).
+        Index('ix_traffic_purchases_sub_expires', 'subscription_id', 'expires_at'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False, index=True)
+    # subscription_id: индекс не нужен — leftmost prefix покрывается композитным
+    # ix_traffic_purchases_sub_expires(subscription_id, expires_at).
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False)
 
     traffic_gb = Column(Integer, nullable=False)  # Количество ГБ в покупке
     expires_at = Column(AwareDateTime(), nullable=False, index=True)  # Дата истечения (покупка + 30 дней)
@@ -3677,6 +3766,15 @@ class PaymentMethodConfig(Base):
         lazy='selectin',
     )
 
+    # Если True — кабинет, получив payment_url от провайдера, сразу делает
+    # window.location.href вместо показа панели "Нажмите чтобы открыть ссылку
+    # оплаты". Внутри Telegram MiniApp это даёт seamless flow — провайдер
+    # открывается в том же WebView, после оплаты return_url возвращает на
+    # /balance/top-up/result. Для t.me/ URL (Telegram Stars, CryptoBot) флаг
+    # игнорируется — такие ссылки всегда идут через нативный handler.
+    # По умолчанию False (классическое поведение со ссылкой) — backwards-compat.
+    open_url_direct = Column(Boolean, nullable=False, default=False)
+
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
 
@@ -3771,6 +3869,10 @@ class UserRole(Base):
     assigned_at = Column(AwareDateTime(), server_default=func.now())
     expires_at = Column(AwareDateTime(), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Источник revoke: 'env' (bootstrap снял по ADMIN_IDS/ADMIN_EMAILS),
+    # 'ui' (senior-админ вручную отозвал через кабинет), NULL (legacy строки
+    # до миграции 0078 или активная запись). Bootstrap reactivates только env/NULL.
+    revocation_source = Column(String(20), nullable=True)
 
     __table_args__ = (UniqueConstraint('user_id', 'role_id', name='uq_user_role'),)
 
@@ -4070,3 +4172,31 @@ class InfoPage(Base):
     replaces_tab = Column(String(20), nullable=True)  # 'faq', 'rules', 'privacy', 'offer', or null
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+
+class UserDeviceAlias(Base):
+    """Local nickname for a RemnaWave HWID device.
+
+    RemnaWave stores devices by HWID + platform + deviceModel. None of these
+    are user-friendly («Android-SM-S908U», «iOS-iPhone15,2»…), so we let the
+    end user assign a short alias («Жены iPhone», «Рабочий ноут»). The
+    alias lives ONLY in our DB — it is never pushed back to the panel and
+    only affects display in the bot / cabinet.
+
+    Scope is per-(user, hwid): the same physical device shares the alias
+    across all of a user's subscriptions in multi-tariff mode. ON DELETE
+    CASCADE on user_id so aliases follow the account through deletion.
+    """
+
+    __tablename__ = 'user_device_aliases'
+    __table_args__ = (
+        UniqueConstraint('user_id', 'hwid', name='uq_user_device_aliases_user_hwid'),
+        Index('ix_user_device_aliases_user_id', 'user_id'),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    hwid = Column(String(255), nullable=False)
+    alias = Column(String(64), nullable=False)
+    created_at = Column(AwareDateTime(), server_default=func.now(), nullable=False)
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now(), nullable=False)

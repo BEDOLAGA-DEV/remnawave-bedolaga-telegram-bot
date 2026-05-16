@@ -21,3 +21,9 @@ class ApplePurchaseResponse(BaseModel):
     """Response indicating whether the purchase was successfully credited."""
 
     success: bool
+
+
+class AppleAccountTokenResponse(BaseModel):
+    """Stable StoreKit appAccountToken for the authenticated user."""
+
+    app_account_token: str

@@ -455,6 +455,9 @@ class DeviceInfo(BaseModel):
     platform: str = ''
     device_model: str = ''
     created_at: str | None = None
+    # User-set local alias (per `user_device_aliases`). None when the user
+    # hasn't renamed this device — clients fall back to platform/device_model.
+    local_name: str | None = None
 
 
 class UserDevicesResponse(BaseModel):
@@ -471,6 +474,19 @@ class DeleteDeviceResponse(BaseModel):
     success: bool
     message: str
     deleted_hwid: str | None = None
+
+
+class RenameDeviceRequest(BaseModel):
+    """Admin payload for `PATCH /admin/users/{user_id}/devices/{hwid}/name`."""
+
+    name: str | None = None
+
+
+class RenameDeviceResponse(BaseModel):
+    """Result of a device-rename operation. `local_name` is None when cleared."""
+
+    hwid: str
+    local_name: str | None = None
 
 
 class ResetDevicesResponse(BaseModel):
