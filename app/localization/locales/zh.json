@@ -748,6 +748,8 @@
   "ADMIN_USER_MANAGEMENT_PROMO_GROUP": "<b>促销组：</b>\n•名称：{name}\n•服务器折扣：{server_discount}%\n•流量折扣：{traffic_discount}%\n•设备折扣：{device_discount}%",
   "ADMIN_USER_MANAGEMENT_PROMO_GROUP_NONE": "<b>促销组：</b>未指定",
   "ADMIN_USER_MANAGEMENT_SUBSCRIPTION": "<b>订阅：</b>\n•类型：{type}\n•状态：{status}\n•截止日期：{end_date}\n•流量：{traffic}\n•设备：{devices}\n•国家：{countries}",
+  "ADMIN_USER_MANAGEMENT_SUBSCRIPTIONS_HEADER": "<b>订阅（{count}）：</b>",
+  "ADMIN_USER_MANAGEMENT_SUBSCRIPTION_ITEM": "▫️ <b>#{index}{tariff}</b>\n•类型：{type}\n•状态：{status}\n•截止日期：{end_date}\n•流量：{traffic}\n•设备：{devices}\n•国家：{countries}",
   "ADMIN_USER_MANAGEMENT_SUBSCRIPTION_NONE": "<b>订阅：</b>无",
   "ADMIN_USER_PROMO_GROUP_ALREADY": "ℹ️用户已在此促销组中。",
   "ADMIN_USER_PROMO_GROUP_BACK": "⬅️返回用户",

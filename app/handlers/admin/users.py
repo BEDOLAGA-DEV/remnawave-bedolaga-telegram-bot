@@ -1261,6 +1261,7 @@ async def show_user_management(callback: types.CallbackQuery, db_user: User, db:
 
     user = profile['user']
     subscription = profile['subscription']
+    active_subscriptions = profile.get('active_subscriptions') or ([subscription] if subscription else [])
 
     texts = get_texts(db_user.language)
 
@@ -1293,33 +1294,59 @@ async def show_user_management(callback: types.CallbackQuery, db_user: User, db:
         )
     ]
 
-    if subscription:
-        subscription_type = (
+    def _format_subscription_block(sub, index: int | None = None) -> str:
+        sub_type = (
             texts.ADMIN_USER_SUBSCRIPTION_TYPE_TRIAL
-            if subscription.is_trial
+            if sub.is_trial
             else texts.ADMIN_USER_SUBSCRIPTION_TYPE_PAID
         )
-        subscription_status = (
+        sub_status = (
             texts.ADMIN_USER_SUBSCRIPTION_STATUS_ACTIVE
-            if subscription.is_active
+            if sub.is_active
             else texts.ADMIN_USER_SUBSCRIPTION_STATUS_INACTIVE
         )
-        traffic_usage = texts.ADMIN_USER_TRAFFIC_USAGE.format(
-            used=f'{subscription.traffic_used_gb:.1f}',
-            limit=subscription.traffic_limit_gb,
+        traffic = texts.ADMIN_USER_TRAFFIC_USAGE.format(
+            used=f'{sub.traffic_used_gb:.1f}',
+            limit=sub.traffic_limit_gb,
         )
-        sections.append(
-            texts.ADMIN_USER_MANAGEMENT_SUBSCRIPTION.format(
-                type=subscription_type,
-                status=subscription_status,
-                end_date=format_datetime(subscription.end_date),
-                traffic=traffic_usage,
-                devices=subscription.device_limit,
-                countries=len(subscription.connected_squads or []),
-            )
+        common = {
+            'type': sub_type,
+            'status': sub_status,
+            'end_date': format_datetime(sub.end_date),
+            'traffic': traffic,
+            'devices': sub.device_limit,
+            'countries': len(sub.connected_squads or []),
+        }
+        if index is None:
+            return texts.ADMIN_USER_MANAGEMENT_SUBSCRIPTION.format(**common)
+
+        tariff_name = getattr(getattr(sub, 'tariff', None), 'name', None)
+        tariff_suffix = f' — {html.escape(tariff_name)}' if tariff_name else ''
+        item_template = texts.t(
+            'ADMIN_USER_MANAGEMENT_SUBSCRIPTION_ITEM',
+            '▫️ <b>#{index}{tariff}</b>\n'
+            '• Тип: {type}\n'
+            '• Статус: {status}\n'
+            '• До: {end_date}\n'
+            '• Трафик: {traffic}\n'
+            '• Устройства: {devices}\n'
+            '• Стран: {countries}',
         )
-    else:
+        return item_template.format(index=index, tariff=tariff_suffix, **common)
+
+    if not active_subscriptions:
         sections.append(texts.ADMIN_USER_MANAGEMENT_SUBSCRIPTION_NONE)
+    elif len(active_subscriptions) == 1:
+        sections.append(_format_subscription_block(active_subscriptions[0]))
+    else:
+        sections.append(
+            texts.t(
+                'ADMIN_USER_MANAGEMENT_SUBSCRIPTIONS_HEADER',
+                '<b>Подписки ({count}):</b>',
+            ).format(count=len(active_subscriptions))
+        )
+        for idx, sub in enumerate(active_subscriptions, start=1):
+            sections.append(_format_subscription_block(sub, index=idx))
 
     # Display promo groups
     primary_group = user.get_primary_promo_group()

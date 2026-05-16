@@ -828,6 +828,8 @@
   "ADMIN_USER_MANAGEMENT_PROMO_GROUP": "<b>Промогруппа:</b>\n• Название: {name}\n• Скидка на сервера: {server_discount}%\n• Скидка на трафик: {traffic_discount}%\n• Скидка на устройства: {device_discount}%",
   "ADMIN_USER_MANAGEMENT_PROMO_GROUP_NONE": "<b>Промогруппа:</b> Не назначена",
   "ADMIN_USER_MANAGEMENT_SUBSCRIPTION": "<b>Подписка:</b>\n• Тип: {type}\n• Статус: {status}\n• До: {end_date}\n• Трафик: {traffic}\n• Устройства: {devices}\n• Стран: {countries}",
+  "ADMIN_USER_MANAGEMENT_SUBSCRIPTIONS_HEADER": "<b>Подписки ({count}):</b>",
+  "ADMIN_USER_MANAGEMENT_SUBSCRIPTION_ITEM": "▫️ <b>#{index}{tariff}</b>\n• Тип: {type}\n• Статус: {status}\n• До: {end_date}\n• Трафик: {traffic}\n• Устройства: {devices}\n• Стран: {countries}",
   "ADMIN_USER_MANAGEMENT_SUBSCRIPTION_NONE": "<b>Подписка:</b> Отсутствует",
   "ADMIN_USER_PROMO_GROUP_ALREADY": "ℹ️ Пользователь уже состоит в этой промогруппе.",
   "ADMIN_USER_PROMO_GROUP_BACK": "⬅️ К пользователю",

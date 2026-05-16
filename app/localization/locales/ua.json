@@ -750,6 +750,8 @@
   "ADMIN_USER_MANAGEMENT_PROMO_GROUP": "<b>Промогрупа:</b>\n• Назва: {name}\n• Знижка на сервери: {server_discount}%\n• Знижка на трафік: {traffic_discount}%\n• Знижка на пристрої: {device_discount}%",
   "ADMIN_USER_MANAGEMENT_PROMO_GROUP_NONE": "<b>Промогрупа:</b> Не призначена",
   "ADMIN_USER_MANAGEMENT_SUBSCRIPTION": "<b>Підписка:</b>\n• Тип: {type}\n• Статус: {status}\n• До: {end_date}\n• Трафік: {traffic}\n• Пристрої: {devices}\n• Країн: {countries}",
+  "ADMIN_USER_MANAGEMENT_SUBSCRIPTIONS_HEADER": "<b>Підписки ({count}):</b>",
+  "ADMIN_USER_MANAGEMENT_SUBSCRIPTION_ITEM": "▫️ <b>#{index}{tariff}</b>\n• Тип: {type}\n• Статус: {status}\n• До: {end_date}\n• Трафік: {traffic}\n• Пристрої: {devices}\n• Країн: {countries}",
   "ADMIN_USER_MANAGEMENT_SUBSCRIPTION_NONE": "<b>Підписка:</b> Відсутня",
   "ADMIN_USER_PROMO_GROUP_ALREADY": "ℹ️ Користувач вже перебуває у цій промогрупі.",
   "ADMIN_USER_PROMO_GROUP_BACK": "⬅️ До користувача",

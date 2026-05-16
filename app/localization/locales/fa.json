@@ -828,6 +828,8 @@
   "ADMIN_USER_MANAGEMENT_PROMO_GROUP": "<b>گروه تخفیف:</b>\n• نام: {name}\n• تخفیف سرور: {server_discount}%\n• تخفیف ترافیک: {traffic_discount}%\n• تخفیف دستگاه: {device_discount}%",
   "ADMIN_USER_MANAGEMENT_PROMO_GROUP_NONE": "<b>گروه تخفیف:</b> تعیین نشده",
   "ADMIN_USER_MANAGEMENT_SUBSCRIPTION": "<b>اشتراک:</b>\n• نوع: {type}\n• وضعیت: {status}\n• تا: {end_date}\n• ترافیک: {traffic}\n• دستگاه‌ها: {devices}\n• کشورها: {countries}",
+  "ADMIN_USER_MANAGEMENT_SUBSCRIPTIONS_HEADER": "<b>اشتراک‌ها ({count}):</b>",
+  "ADMIN_USER_MANAGEMENT_SUBSCRIPTION_ITEM": "▫️ <b>#{index}{tariff}</b>\n• نوع: {type}\n• وضعیت: {status}\n• تا: {end_date}\n• ترافیک: {traffic}\n• دستگاه‌ها: {devices}\n• کشورها: {countries}",
   "ADMIN_USER_MANAGEMENT_SUBSCRIPTION_NONE": "<b>اشتراک:</b> ندارد",
   "ADMIN_USER_PROMO_GROUP_ALREADY": "ℹ️ کاربر قبلاً در این گروه است.",
   "ADMIN_USER_PROMO_GROUP_BACK": "⬅️ بازگشت به کاربر",
