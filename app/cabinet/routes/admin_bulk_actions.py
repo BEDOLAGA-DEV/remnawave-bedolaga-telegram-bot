@@ -502,6 +502,16 @@ async def _do_delete_subscription(
 
     tariff_name = sub.tariff.name if sub.tariff else f'#{sub.id}'
 
+    # Protect active paid subscriptions from accidental deletion
+    if sub.is_active and not sub.is_trial and not params.force_delete_active_paid:
+        return BulkUserResult(
+            user_id=user.id,
+            success=False,
+            message=f'Skipped: {tariff_name} is active and paid (enable force_delete_active_paid to override)',
+            username=user.username,
+            subscriptions=_build_subscription_info(getattr(user, 'subscriptions', None) or []),
+        )
+
     if dry_run:
         return BulkUserResult(
             user_id=user.id,
@@ -890,7 +900,7 @@ async def _execute_for_subscription(
 async def bulk_execute(
     request: BulkExecuteRequest,
     stream: bool = Query(default=False, description='Stream progress via SSE'),
-    admin: User = Depends(require_permission('users:edit')),
+    admin: User = Depends(require_permission('bulk_actions:execute')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Execute a bulk action on multiple users or subscriptions.

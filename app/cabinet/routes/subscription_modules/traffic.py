@@ -9,6 +9,7 @@ POST /subscription/traffic/save-cart
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from typing import Any
 
@@ -284,7 +285,7 @@ async def purchase_traffic(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 'code': 'insufficient_funds',
-                'message': f'Недостаточно средств. Не хватает {settings.format_price(missing)}',
+                'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
                 'missing_amount': missing,
                 'cart_saved': True,
                 'cart_mode': 'add_traffic',
@@ -478,7 +479,7 @@ async def save_traffic_cart(
     from app.utils.pricing_utils import calculate_prorated_price as _calc_prorated
 
     now = datetime.now(UTC)
-    days_left = max(1, (subscription.end_date - now).days)
+    days_left = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
     prorated_price, _ = _calc_prorated(
         base_price_kopeks,
         subscription.end_date,

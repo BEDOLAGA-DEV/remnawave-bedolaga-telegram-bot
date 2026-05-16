@@ -197,8 +197,9 @@ class AuraPayService:
                 return False
 
             # Сортируем ключи по алфавиту и конкатенируем значения
+            # None → '' (PHP implode() converts null to empty string, not "None")
             sorted_keys = sorted(payload.keys())
-            concatenated_values = ''.join(str(payload[key]) for key in sorted_keys)
+            concatenated_values = ''.join(str(payload[key]) if payload[key] is not None else '' for key in sorted_keys)
 
             expected = hmac.new(
                 self.secret_key.encode('utf-8'),

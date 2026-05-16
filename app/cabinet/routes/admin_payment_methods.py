@@ -49,6 +49,7 @@ class PaymentMethodConfigResponse(BaseModel):
     first_topup_filter: str
     promo_group_filter_mode: str
     allowed_promo_group_ids: list[int] = Field(default_factory=list)
+    open_url_direct: bool = False
     is_provider_configured: bool
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -80,6 +81,7 @@ class PaymentMethodConfigUpdateRequest(BaseModel):
     first_topup_filter: str | None = Field(default=None, pattern='^(any|yes|no)$')
     promo_group_filter_mode: str | None = Field(default=None, pattern='^(all|selected)$')
     allowed_promo_group_ids: list[int] | None = None
+    open_url_direct: bool | None = None
     # Allow explicitly resetting display_name to null
     reset_display_name: bool = False
     reset_min_amount: bool = False
@@ -126,6 +128,7 @@ def _enrich_config(config, defaults: dict) -> PaymentMethodConfigResponse:
         first_topup_filter=config.first_topup_filter,
         promo_group_filter_mode=config.promo_group_filter_mode,
         allowed_promo_group_ids=[pg.id for pg in config.allowed_promo_groups],
+        open_url_direct=bool(getattr(config, 'open_url_direct', False)),
         is_provider_configured=method_def.get('is_configured', False),
         created_at=config.created_at,
         updated_at=config.updated_at,
@@ -225,6 +228,9 @@ async def update_payment_method(
 
     if request.promo_group_filter_mode is not None:
         data['promo_group_filter_mode'] = request.promo_group_filter_mode
+
+    if request.open_url_direct is not None:
+        data['open_url_direct'] = request.open_url_direct
 
     promo_group_ids = request.allowed_promo_group_ids
 

@@ -40,8 +40,11 @@ qrcode[pil]==8.0
 
 # Личный кабинет (Cabinet)
 bcrypt==5.0.0
-PyJWT==2.11.0
+PyJWT>=2.11.0
 email-validator==2.1.0
+
+# Apple App Store Server API / Notifications
+app-store-server-library[async]>=3.1.1
 
 # Для работы с версиями
 packaging==26.0

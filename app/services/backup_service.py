@@ -31,6 +31,11 @@ from app.database.models import (
     AdminRole,
     AdvertisingCampaign,
     AdvertisingCampaignRegistration,
+    AppleIAPAbuseEvent,
+    AppleIAPAccount,
+    AppleNotification,
+    AppleTransaction,
+    AuraPayPayment,
     BroadcastHistory,
     ButtonClickLog,
     CabinetRefreshToken,
@@ -40,18 +45,27 @@ from app.database.models import (
     ContestTemplate,
     CryptoBotPayment,
     DiscountOffer,
+    EmailTemplate,
     FaqPage,
     FaqSetting,
     FreekassaPayment,
+    GuestPurchase,
     HeleketPayment,
+    InfoPage,
     KassaAiPayment,
+    LandingPage,
     MainMenuButton,
     MenuLayoutHistory,
     MonitoringLog,
     MulenPayPayment,
+    NewsArticle,
+    NewsCategory,
+    NewsTag,
+    OverpayPayment,
     Pal24Payment,
     PartnerApplication,
     PaymentMethodConfig,
+    PayPearPayment,
     PinnedMessage,
     PlategaPayment,
     Poll,
@@ -71,9 +85,13 @@ from app.database.models import (
     ReferralContestVirtualParticipant,
     ReferralEarning,
     RequiredChannel,
+    RioPayPayment,
+    RollyPayPayment,
+    SavedPaymentMethod,
     SentNotification,
     ServerSquad,
     ServiceRule,
+    SeverPayPayment,
     Squad,
     Subscription,
     SubscriptionConversion,
@@ -102,6 +120,7 @@ from app.database.models import (
     WheelPrize,
     WheelSpin,
     WithdrawalRequest,
+    YandexClientIdMap,
     YooKassaPayment,
     payment_method_promo_groups,
     server_squad_promo_groups,
@@ -183,6 +202,17 @@ class BackupService:
             CloudPaymentsPayment,
             FreekassaPayment,
             KassaAiPayment,
+            RioPayPayment,
+            SeverPayPayment,
+            PayPearPayment,
+            RollyPayPayment,
+            OverpayPayment,
+            AuraPayPayment,
+            AppleIAPAccount,
+            AppleTransaction,
+            AppleNotification,
+            AppleIAPAbuseEvent,
+            SavedPaymentMethod,
             # --- Settings/content ---
             PaymentMethodConfig,
             PrivacyPolicy,
@@ -192,6 +222,17 @@ class BackupService:
             PinnedMessage,
             MainMenuButton,
             MenuLayoutHistory,
+            EmailTemplate,
+            InfoPage,
+            # --- News (FK: none / self-contained) ---
+            NewsCategory,
+            NewsTag,
+            NewsArticle,
+            # --- Landing / Guest purchases (FK: users, tariffs, landings) ---
+            LandingPage,
+            GuestPurchase,
+            # --- Yandex analytics (FK: users) ---
+            YandexClientIdMap,
             # --- User data (FK: users, promo_groups, subscriptions) ---
             UserPromoGroup,
             TrafficPurchase,
@@ -247,15 +288,53 @@ class BackupService:
         }
 
     def _load_settings(self) -> BackupSettings:
+        """Загружает настройки бекапов из `settings` (а не напрямую из env).
+
+        `SystemSettingsService.set_value` (вызывается при сохранении из кабинета)
+        делает `setattr(settings, key, value)`, поэтому чтение через `settings.*`
+        автоматически подхватывает изменения из БД. Чтение через `os.getenv`
+        работало бы только до первого изменения через UI.
+        """
         return BackupSettings(
-            auto_backup_enabled=os.getenv('BACKUP_AUTO_ENABLED', 'true').lower() == 'true',
-            backup_interval_hours=int(os.getenv('BACKUP_INTERVAL_HOURS', '24')),
-            backup_time=os.getenv('BACKUP_TIME', '03:00'),
-            max_backups_keep=int(os.getenv('BACKUP_MAX_KEEP', '7')),
-            compression_enabled=os.getenv('BACKUP_COMPRESSION', 'true').lower() == 'true',
-            include_logs=os.getenv('BACKUP_INCLUDE_LOGS', 'false').lower() == 'true',
-            backup_location=os.getenv('BACKUP_LOCATION', '/app/data/backups'),
+            auto_backup_enabled=bool(settings.BACKUP_AUTO_ENABLED),
+            backup_interval_hours=int(settings.BACKUP_INTERVAL_HOURS or 24),
+            backup_time=str(settings.BACKUP_TIME or '03:00'),
+            max_backups_keep=int(settings.BACKUP_MAX_KEEP or 7),
+            compression_enabled=bool(settings.BACKUP_COMPRESSION),
+            include_logs=bool(settings.BACKUP_INCLUDE_LOGS),
+            backup_location=str(settings.BACKUP_LOCATION or '/app/data/backups'),
         )
+
+    def reload_settings_from_db(self) -> BackupSettings:
+        """Перечитывает настройки из `settings` (которые синхронизируются с БД).
+
+        Используется в `_auto_backup_loop` перед расчётом next_run, чтобы изменения
+        BACKUP_TIME/BACKUP_INTERVAL_HOURS из кабинета вступали в силу без рестарта
+        бота. Также может быть вызван из SystemSettingsService для немедленного
+        применения изменений (перезапуск scheduler-таски).
+
+        Обновляет вычисляемые поля, которые зависят от настроек:
+        - `backup_dir` — берётся из `BACKUP_LOCATION`
+        - `backup_models_ordered` — включает MonitoringLog только при `include_logs`
+        """
+        new_settings = self._load_settings()
+        old_location = self._settings.backup_location
+        old_include_logs = self._settings.include_logs
+        self._settings = new_settings
+
+        # BACKUP_LOCATION мог измениться — обновляем backup_dir / data_dir
+        if new_settings.backup_location != old_location:
+            self.backup_dir = Path(new_settings.backup_location).expanduser().resolve()
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+            self.data_dir = self.backup_dir.parent
+
+        # BACKUP_INCLUDE_LOGS мог измениться — пересобираем список моделей
+        if new_settings.include_logs != old_include_logs:
+            self.backup_models_ordered = self._base_backup_models.copy()
+            if new_settings.include_logs:
+                self.backup_models_ordered.append(MonitoringLog)
+
+        return self._settings
 
     def _parse_backup_time(self) -> tuple[int, int]:
         time_str = (self._settings.backup_time or '').strip()
@@ -1476,6 +1555,16 @@ class BackupService:
             'cloudpayments_payments',
             'freekassa_payments',
             'kassa_ai_payments',
+            'riopay_payments',
+            'severpay_payments',
+            'paypear_payments',
+            'rollypay_payments',
+            'overpay_payments',
+            'aurapay_payments',
+            'etoplatezhi_payments',
+            'antilopay_payments',
+            'apple_transactions',
+            'saved_payment_methods',
             # --- Content/config ---
             'pinned_messages',
             'main_menu_buttons',
@@ -1485,6 +1574,17 @@ class BackupService:
             'privacy_policies',
             'public_offers',
             'payment_method_configs',
+            'email_templates',
+            'info_pages',
+            # --- News ---
+            'news_articles',
+            'news_categories',
+            'news_tags',
+            # --- Landing / Guest purchases ---
+            'guest_purchases',
+            'landing_pages',
+            # --- Yandex analytics ---
+            'yandex_client_id_map',
             # --- Support ---
             'support_audit_logs',
             'ticket_messages',
@@ -1596,6 +1696,25 @@ class BackupService:
     async def _restore_file_snapshots(self, file_snapshots: dict[str, dict[str, Any]]) -> int:
         return 0
 
+    @staticmethod
+    def _build_corrupted_backup_entry(backup_file: Path, file_stats: os.stat_result, *, reason: str) -> dict[str, Any]:
+        """Build a list-entry placeholder for a backup file we can't read."""
+        return {
+            'filename': backup_file.name,
+            'filepath': str(backup_file),
+            'timestamp': datetime.fromtimestamp(file_stats.st_mtime, tz=UTC).isoformat(),
+            'tables_count': '?',
+            'total_records': '?',
+            'compressed': backup_file.suffix == '.gz',
+            'file_size_bytes': file_stats.st_size,
+            'file_size_mb': round(file_stats.st_size / 1024 / 1024, 2),
+            'created_by': None,
+            'database_type': 'unknown',
+            'version': 'unknown',
+            'error': reason,
+            'corrupted': True,
+        }
+
     async def get_backup_list(self) -> list[dict[str, Any]]:
         backups = []
 
@@ -1606,8 +1725,20 @@ class BackupService:
                 if not await asyncio.to_thread(backup_file.is_file):
                     continue
 
+                file_stats = await asyncio.to_thread(backup_file.stat)
+
+                # Empty file (0 bytes) — прерванный бэкап / гонка записи. Не пытаемся
+                # его открыть, иначе tarfile/gzip/json валятся с ReadError и логируют
+                # ERROR (а через TelegramNotifierProcessor — заливают админ-чат).
+                if file_stats.st_size == 0:
+                    logger.warning('Skipping empty backup file', backup_file=str(backup_file))
+                    backups.append(
+                        self._build_corrupted_backup_entry(backup_file, file_stats, reason='Файл пуст (0 байт)')
+                    )
+                    continue
+
                 try:
-                    metadata = {}
+                    metadata: dict[str, Any] = {}
 
                     if self._is_archive_backup(backup_file):
                         mode = 'r:gz' if backup_file.suffixes and backup_file.suffixes[-1] == '.gz' else 'r'
@@ -1626,8 +1757,6 @@ class BackupService:
                             with open(backup_file, encoding='utf-8') as f:
                                 backup_structure = json_lib.load(f)
                         metadata = backup_structure.get('metadata', {})
-
-                    file_stats = await asyncio.to_thread(backup_file.stat)
 
                     backup_info = {
                         'filename': backup_file.name,
@@ -1653,24 +1782,35 @@ class BackupService:
 
                     backups.append(backup_info)
 
-                except Exception as e:
-                    logger.error('Ошибка чтения метаданных', backup_file=backup_file, error=e)
-                    file_stats = await asyncio.to_thread(backup_file.stat)
+                except (
+                    tarfile.ReadError,
+                    tarfile.CompressionError,
+                    gzip.BadGzipFile,
+                    json_lib.JSONDecodeError,
+                    EOFError,
+                    UnicodeDecodeError,
+                ) as corruption_error:
+                    # Известные классы повреждения — это не «упало», это плохой
+                    # архив. Логируем как warning, чтобы не уезжало через
+                    # TelegramNotifierProcessor в админ-чат на каждом list-вызове.
+                    logger.warning(
+                        'Backup file appears corrupted',
+                        backup_file=str(backup_file),
+                        error=str(corruption_error)[:200],
+                        error_type=type(corruption_error).__name__,
+                    )
                     backups.append(
-                        {
-                            'filename': backup_file.name,
-                            'filepath': str(backup_file),
-                            'timestamp': datetime.fromtimestamp(file_stats.st_mtime, tz=UTC).isoformat(),
-                            'tables_count': '?',
-                            'total_records': '?',
-                            'compressed': backup_file.suffix == '.gz',
-                            'file_size_bytes': file_stats.st_size,
-                            'file_size_mb': round(file_stats.st_size / 1024 / 1024, 2),
-                            'created_by': None,
-                            'database_type': 'unknown',
-                            'version': 'unknown',
-                            'error': f'Ошибка чтения: {e!s}',
-                        }
+                        self._build_corrupted_backup_entry(
+                            backup_file,
+                            file_stats,
+                            reason=f'{type(corruption_error).__name__}: {corruption_error!s}'[:200],
+                        )
+                    )
+                except Exception as e:
+                    # Реально неожиданное — оставляем error для расследования.
+                    logger.error('Ошибка чтения метаданных', backup_file=str(backup_file), error=e)
+                    backups.append(
+                        self._build_corrupted_backup_entry(backup_file, file_stats, reason=f'Ошибка чтения: {e!s}')
                     )
 
         except Exception as e:
@@ -1737,8 +1877,14 @@ class BackupService:
             return False
 
     async def start_auto_backup(self):
+        # Дожидаемся отмены старой таски, чтобы не было двух циклов параллельно
+        # во время рестарта scheduler'а после изменения BACKUP_TIME из кабинета.
         if self._auto_backup_task and not self._auto_backup_task.done():
             self._auto_backup_task.cancel()
+            import contextlib
+
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._auto_backup_task
 
         if self._settings.auto_backup_enabled:
             next_run = self._calculate_next_backup_datetime()
@@ -1753,11 +1899,17 @@ class BackupService:
     async def stop_auto_backup(self):
         if self._auto_backup_task and not self._auto_backup_task.done():
             self._auto_backup_task.cancel()
+            import contextlib
+
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._auto_backup_task
             logger.info('ℹ️ Автобекапы остановлены')
 
     async def _auto_backup_loop(self, next_run: datetime | None = None):
+        # Перечитываем настройки в начале цикла — на случай если admin изменил
+        # BACKUP_TIME до того, как scheduler первый раз сюда зашёл.
+        self.reload_settings_from_db()
         next_run = next_run or self._calculate_next_backup_datetime()
-        interval = self._get_backup_interval()
 
         while True:
             try:
@@ -1785,12 +1937,23 @@ class BackupService:
                 else:
                     logger.error('❌ Ошибка автобекапа', message=message)
 
+                # Перед расчётом следующего запуска перечитываем настройки —
+                # admin мог изменить BACKUP_TIME / BACKUP_INTERVAL_HOURS из кабинета,
+                # пока scheduler спал. Без этого изменения вступали в силу только
+                # после рестарта бота.
+                self.reload_settings_from_db()
+                if not self._settings.auto_backup_enabled:
+                    logger.info('ℹ️ Автобекапы отключены через настройки, останавливаем цикл')
+                    break
+                interval = self._get_backup_interval()
                 next_run = next_run + interval
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error('Ошибка в цикле автобекапов', error=e)
+                self.reload_settings_from_db()
+                interval = self._get_backup_interval()
                 next_run = datetime.now(UTC) + interval
 
     async def _send_backup_notification(self, event_type: str, message: str, file_path: str = None):

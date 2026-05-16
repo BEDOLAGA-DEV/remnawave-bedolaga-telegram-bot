@@ -1779,5 +1779,15 @@
   "WEBHOOK_TORRENT_DETECTED": "🚫 <b>تورنت شناسایی شد</b>\n\nترافیک تورنت در اتصال{tariff_label} شما شناسایی شد. استفاده از تورنت ممکن است منجر به محدودیت اشتراک شود.",
   "WEBHOOK_CLOSE_BUTTON": "✖️ بستن",
   "TRAFFIC_WARNING_ALERT": "⚠️ <b>هشدار ترافیک</b>\n\nاستفاده شده: {used:.1f} / {limit} گیگابایت ({percent:.0f}%)\n\nحد ترافیک شما تقریباً تمام شده است.",
-  "LOW_BALANCE_ALERT": "⚠️ <b>موجودی کم</b>\n\nموجودی شما: {balance} ₽\nآستانه اطلاع‌رسانی: {threshold} ₽\n\nموجودی خود را شارژ کنید تا تمدید خودکار اشتراک با موفقیت انجام شود."
+  "LOW_BALANCE_ALERT": "⚠️ <b>موجودی کم</b>\n\nموجودی شما: {balance} ₽\nآستانه اطلاع‌رسانی: {threshold} ₽\n\nموجودی خود را شارژ کنید تا تمدید خودکار اشتراک با موفقیت انجام شود.",
+
+  "SUBSCRIPTION_REVOKE_BTN": "🔄 صدور مجدد اشتراک",
+  "SUBSCRIPTION_REVOKE_TITLE": "⚠️ صدور مجدد اشتراک",
+  "SUBSCRIPTION_REVOKE_WARNING": "⚠️ <b>صدور مجدد اشتراک</b>\n\nاین عمل:\n• لینک اتصال جدیدی تولید می‌کند\n• تمام دستگاه‌های متصل را قطع می‌کند\n• لینک قدیمی دیگر کار نخواهد کرد\n\nادامه می‌دهید؟",
+  "SUBSCRIPTION_REVOKE_CONFIRM_BTN": "✅ تأیید",
+  "SUBSCRIPTION_REVOKE_SUCCESS": "✅ <b>اشتراک مجدداً صادر شد!</b>\n\nلینک اتصال جدید آماده است. لینک قدیمی دیگر معتبر نیست.\n\nتمام دستگاه‌ها قطع شدند.",
+  "SUBSCRIPTION_REVOKE_COOLDOWN": "⏱ صدور مجدد {minutes} دقیقه و {seconds} ثانیه دیگر در دسترس خواهد بود.",
+  "SUBSCRIPTION_REVOKE_DISABLED": "صدور مجدد اشتراک در دسترس نیست",
+  "SUBSCRIPTION_REVOKE_ERROR": "❌ خطا در صدور مجدد اشتراک. لطفاً بعداً دوباره امتحان کنید.",
+  "SUBSCRIPTION_REVOKE_CONNECT_BTN": "🔗 اتصال"
 }

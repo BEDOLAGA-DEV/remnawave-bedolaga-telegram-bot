@@ -120,8 +120,7 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
 
     # Show bot link
     referral_text += (
-        texts.t('REFERRAL_BOT_LINK_TITLE', '🤖 <b>Ссылка на бота:</b>')
-        + f'\n<code>{html_escape(bot_referral_link)}</code>\n'
+        texts.t('REFERRAL_BOT_LINK_TITLE', '🤖 <b>Ссылка на бота:</b>') + f'\n{html_escape(bot_referral_link)}\n'
     )
 
     # Show cabinet link if configured
@@ -129,7 +128,7 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
         referral_text += (
             '\n'
             + texts.t('REFERRAL_CABINET_LINK_TITLE', '🌐 <b>Ссылка на кабинет:</b>')
-            + f'\n<code>{html_escape(cabinet_referral_link)}</code>\n'
+            + f'\n{html_escape(cabinet_referral_link)}\n'
         )
 
     referral_text += (
@@ -551,7 +550,7 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User):
                 'Нажмите на текст ниже, чтобы скопировать:',
             )
             + '\n\n'
-            f'<blockquote><code>{html_escape(invite_text)}</code></blockquote>'
+            f'<blockquote>{html_escape(invite_text)}</blockquote>'
         ),
         keyboard,
     )

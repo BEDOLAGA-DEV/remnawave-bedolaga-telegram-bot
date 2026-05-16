@@ -19,6 +19,7 @@ from .subscription_modules import (
     devices_router,
     purchase_router,
     renewal_router,
+    revoke_router,
     servers_router,
     status_router,
     tariff_switch_router,
@@ -50,3 +51,4 @@ router.include_router(servers_router)
 router.include_router(autopay_router)
 router.include_router(daily_router)
 router.include_router(tariff_switch_router)
+router.include_router(revoke_router)

@@ -22,7 +22,6 @@ from app.services.ban_notification_service import ban_notification_service
 from app.services.broadcast_service import broadcast_service
 from app.services.contest_rotation_service import contest_rotation_service
 from app.services.daily_subscription_service import daily_subscription_service
-from app.services.external_admin_service import ensure_external_admin_token
 from app.services.log_rotation_service import log_rotation_service
 from app.services.maintenance_service import maintenance_service
 from app.services.monitoring_service import monitoring_service
@@ -515,24 +514,6 @@ async def main():
             else:
                 stage.skip('NaloGO отключен настройками')
 
-        async with timeline.stage(
-            'Внешняя админка',
-            '🛡️',
-            success_message='Токен внешней админки готов',
-        ) as stage:
-            try:
-                token = await ensure_external_admin_token(
-                    bot_user.username,
-                    bot_user.id,
-                )
-                if token:
-                    stage.log('Токен синхронизирован')
-                else:
-                    stage.warning('Не удалось получить токен внешней админки')
-            except Exception as error:  # pragma: no cover - защитный блок
-                stage.warning(f'Ошибка подготовки внешней админки: {error}')
-                logger.error('❌ Ошибка подготовки внешней админки', error=error)
-
         bot_run_mode = settings.get_bot_run_mode()
         polling_enabled = bot_run_mode == 'polling'
         telegram_webhook_enabled = bot_run_mode == 'webhook'
@@ -546,6 +527,7 @@ async def main():
                 settings.is_pal24_enabled(),
                 settings.is_wata_enabled(),
                 settings.is_heleket_enabled(),
+                settings.is_apple_iap_enabled(),
             ]
         )
 
@@ -713,6 +695,8 @@ async def main():
             webhook_lines.append(f'WATA: {_fmt(settings.WATA_WEBHOOK_PATH)}')
         if settings.is_heleket_enabled():
             webhook_lines.append(f'Heleket: {_fmt(settings.HELEKET_WEBHOOK_PATH)}')
+        if settings.is_apple_iap_enabled():
+            webhook_lines.append(f'Apple IAP: {_fmt(settings.APPLE_IAP_WEBHOOK_PATH)}')
         if settings.is_platega_enabled():
             webhook_lines.append(f'Platega: {_fmt(settings.PLATEGA_WEBHOOK_PATH)}')
         if settings.is_cloudpayments_enabled():

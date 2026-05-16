@@ -541,6 +541,27 @@ class RemnaWaveAPI:
                 return []
             raise
 
+    async def get_subscription_request_history(
+        self,
+        uuid: str,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> dict:
+        """Get subscription request history for a panel user.
+
+        Returns dict with 'total' and 'records' list.
+        Each record has: id, userUuid, requestAt, requestIp, userAgent.
+        """
+        try:
+            response = await self._make_request(
+                'GET',
+                f'/api/users/{uuid}/subscription-request-history',
+                params={'offset': offset, 'limit': limit},
+            )
+            return response.get('response', {'total': 0, 'records': []})
+        except RemnaWaveAPIError:
+            return {'total': 0, 'records': []}
+
     async def update_user(
         self,
         uuid: str,

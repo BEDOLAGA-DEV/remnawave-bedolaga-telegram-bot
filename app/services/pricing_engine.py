@@ -603,6 +603,9 @@ class PricingEngine:
         period_pct = 0
         devices_pct = 0
         promo_group = self.resolve_promo_group(user)
+        # Only apply promo group discount if the tariff is available for this group
+        if promo_group is not None and not tariff.is_available_for_promo_group(promo_group.id):
+            promo_group = None
         if promo_group is not None:
             period_pct = promo_group.get_discount_percent('period', period_days)
             devices_pct = promo_group.get_discount_percent('devices', period_days)
@@ -612,9 +615,9 @@ class PricingEngine:
         discounted_base = self.apply_discount(base_price, period_pct)
         discounted_devices = self.apply_discount(devices_price, devices_pct)
 
-        # Traffic uses addon discount (checks apply_discounts_to_addons flag)
+        # Traffic uses addon discount — but only if promo_group passed the tariff availability check
         discounted_traffic = traffic_price
-        if traffic_price > 0 and user:
+        if traffic_price > 0 and user and promo_group is not None:
             discounted_traffic, _, _ = self.calculate_traffic_discount(traffic_price, user)
 
         base_group_disc = base_price - discounted_base

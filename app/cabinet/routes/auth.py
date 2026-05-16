@@ -31,6 +31,10 @@ from app.database.crud.user import (
 from app.database.models import CabinetRefreshToken, User, UserStatus
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
+from app.services.rbac_bootstrap_service import (
+    ensure_superadmin_role_on_login,
+    is_user_admin_by_env,
+)
 from app.services.referral_service import process_referral_registration
 from app.services.web_auth_service import (
     WEB_AUTH_TOKEN_TTL,
@@ -117,6 +121,26 @@ def _user_to_response(user: User) -> UserResponse:
 
 async def _create_auth_response(user: User, db: AsyncSession) -> AuthResponse:
     """Create full auth response with tokens and RBAC permissions."""
+    # Idempotent Superadmin re-assignment for users in ADMIN_IDS / ADMIN_EMAILS.
+    # Покрывает кейс: юзер был удалён через кабинет → пересоздан через /start
+    # → у нового user.id нет роли, потому что RBAC bootstrap отрабатывает только
+    # на старте бота. Без этой проверки админ из ADMIN_IDS получает access_token
+    # с пустыми permissions до следующего рестарта и видит 401 на /me/is-admin.
+    try:
+        await ensure_superadmin_role_on_login(db, user)
+    except Exception as bootstrap_error:
+        # IntegrityError изолирован savepoint'ом внутри ensure_superadmin_role_on_login,
+        # сюда долетают только программистские/инфраструктурные сбои (DB down, attribute
+        # errors). Login сам не валится — get_user_permissions ниже выдаст актуальное
+        # состояние ролей, какое бы оно ни было.
+        logger.error(
+            'Failed to ensure Superadmin role on login',
+            user_id=user.id,
+            telegram_id=user.telegram_id,
+            error=str(bootstrap_error),
+            exc_info=True,
+        )
+
     user_permissions, user_role_names, user_role_level = await UserRoleCRUD.get_user_permissions(db, user.id)
 
     access_token = create_access_token(
@@ -172,74 +196,112 @@ async def _process_campaign_bonus(
     db: AsyncSession,
     user: User,
     campaign_slug: str | None,
+    telegram_id: int | None = None,
 ) -> CampaignBonusInfo | None:
-    """Process campaign bonus for user during auth. Never raises."""
+    """Process campaign bonus for user during auth. Never raises.
+
+    If ``campaign_slug`` is not provided but ``telegram_id`` is given, the
+    function falls back to Redis ``pending_campaign:{telegram_id}`` -- populated
+    by the bot's /start handler when a user opens an advertising campaign link
+    but then completes registration via the cabinet WebApp (Telegram menu
+    button) instead of the bot dialog. The Redis entry is cleared after a
+    successful consumption attempt.
+    """
+    pending_campaign_consumed = False
+    if not campaign_slug and telegram_id:
+        try:
+            from app.services.referral_service import get_pending_campaign
+
+            pending = await get_pending_campaign(telegram_id)
+            if pending and pending.get('campaign_slug'):
+                campaign_slug = pending['campaign_slug']
+                pending_campaign_consumed = True
+                logger.info(
+                    'Resolved campaign from Redis pending_campaign (cabinet)',
+                    telegram_id=telegram_id,
+                    campaign_slug=campaign_slug,
+                )
+        except Exception as e:
+            logger.warning('Failed to check pending campaign', error=e)
+
     if not campaign_slug:
         return None
     try:
-        campaign = await get_campaign_by_start_parameter(db, campaign_slug, only_active=True)
-        if not campaign:
-            return None
+        try:
+            campaign = await get_campaign_by_start_parameter(db, campaign_slug, only_active=True)
+            if not campaign:
+                return None
 
-        # Skip if user IS the campaign partner — prevent self-referral
-        if campaign.partner_user_id and campaign.partner_user_id == user.id:
-            logger.debug(
-                'Skipping campaign attribution: user is the campaign partner',
-                user_id=user.id,
-                campaign_id=campaign.id,
-            )
-            return None
-
-        # Lock user row to prevent concurrent bonus application (race condition)
-        await db.execute(select(User).where(User.id == user.id).with_for_update())
-
-        existing = await get_campaign_registration_by_user(db, user.id)
-        if existing:
-            logger.debug('User already has campaign registration', user_id=user.id)
-            return None
-
-        # Привязать реферала к партнёру кампании (если партнёр назначен и юзер ещё не привязан)
-        if campaign.partner_user_id and not user.referred_by_id:
-            user.referred_by_id = campaign.partner_user_id
-            await db.flush()
-            try:
-                from app.bot_factory import create_bot
-
-                async with create_bot() as bot:
-                    await process_referral_registration(db, user.id, campaign.partner_user_id, bot=bot)
-                logger.info(
-                    'Referral set from campaign partner',
+            # Skip if user IS the campaign partner — prevent self-referral
+            if campaign.partner_user_id and campaign.partner_user_id == user.id:
+                logger.debug(
+                    'Skipping campaign attribution: user is the campaign partner',
                     user_id=user.id,
-                    partner_user_id=campaign.partner_user_id,
                     campaign_id=campaign.id,
                 )
-            except Exception as e:
-                logger.error('Failed to process referral from campaign partner', error=e)
+                return None
 
-        service = AdvertisingCampaignService()
-        result = await service.apply_campaign_bonus(db, user, campaign)
-        if not result.success:
-            return None
+            # Lock user row to prevent concurrent bonus application (race condition)
+            await db.execute(select(User).where(User.id == user.id).with_for_update())
 
-        # Refresh user to get updated balance after bonus
-        await db.refresh(user)
+            existing = await get_campaign_registration_by_user(db, user.id)
+            if existing:
+                logger.debug('User already has campaign registration', user_id=user.id)
+                return None
 
-        return CampaignBonusInfo(
-            campaign_name=campaign.name,
-            bonus_type=result.bonus_type or campaign.bonus_type,
-            balance_kopeks=result.balance_kopeks,
-            subscription_days=result.subscription_days,
-            tariff_name=result.tariff_name,
-        )
-    except Exception:
-        logger.exception('Failed to process campaign bonus', user_id=user.id, campaign_slug=campaign_slug)
-        try:
-            await db.rollback()
-            # Re-fetch user so session stays usable for the caller
+            # Привязать реферала к партнёру кампании (если партнёр назначен и юзер ещё не привязан)
+            if campaign.partner_user_id and not user.referred_by_id:
+                user.referred_by_id = campaign.partner_user_id
+                await db.flush()
+                try:
+                    from app.bot_factory import create_bot
+
+                    async with create_bot() as bot:
+                        await process_referral_registration(db, user.id, campaign.partner_user_id, bot=bot)
+                    logger.info(
+                        'Referral set from campaign partner',
+                        user_id=user.id,
+                        partner_user_id=campaign.partner_user_id,
+                        campaign_id=campaign.id,
+                    )
+                except Exception as e:
+                    logger.error('Failed to process referral from campaign partner', error=e)
+
+            service = AdvertisingCampaignService()
+            result = await service.apply_campaign_bonus(db, user, campaign)
+            if not result.success:
+                return None
+
+            # Refresh user to get updated balance after bonus
             await db.refresh(user)
+
+            return CampaignBonusInfo(
+                campaign_name=campaign.name,
+                bonus_type=result.bonus_type or campaign.bonus_type,
+                balance_kopeks=result.balance_kopeks,
+                subscription_days=result.subscription_days,
+                tariff_name=result.tariff_name,
+            )
         except Exception:
-            logger.exception('Failed to rollback after campaign bonus error', user_id=user.id)
-        return None
+            logger.exception('Failed to process campaign bonus', user_id=user.id, campaign_slug=campaign_slug)
+            try:
+                await db.rollback()
+                # Re-fetch user so session stays usable for the caller
+                await db.refresh(user)
+            except Exception:
+                logger.exception('Failed to rollback after campaign bonus error', user_id=user.id)
+            return None
+    finally:
+        # Clear Redis pending_campaign whenever we consumed it. Done regardless
+        # of success — if processing failed (already applied, race, exception),
+        # we don't want to keep retrying on every subsequent login.
+        if pending_campaign_consumed and telegram_id:
+            try:
+                from app.services.referral_service import clear_pending_campaign
+
+                await clear_pending_campaign(telegram_id)
+            except Exception:
+                pass
 
 
 async def _process_referral_code(
@@ -558,10 +620,22 @@ async def auth_telegram(
             logger.info('User profile updated from initData', user_id=user.id)
 
     if user.status != UserStatus.ACTIVE.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='User account is not active',
-        )
+        # DELETED users authenticating via initData (cryptographically
+        # signed by Telegram) get auto-revived inline — the signature on
+        # initData is the moral equivalent of a fresh /start. BLOCKED
+        # users still get the hard 403.
+        # revive_deleted_user does NOT commit — the endpoint's commit
+        # at the end of the function persists this together with
+        # cabinet_last_login in one round-trip.
+        if user.status == UserStatus.DELETED.value:
+            from app.services.user_revival_service import revive_deleted_user
+
+            await revive_deleted_user(db, user, source='cabinet_telegram_login')
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail='User account is not active',
+            )
 
     # Update last login
     user.cabinet_last_login = datetime.now(UTC)
@@ -575,6 +649,34 @@ async def auth_telegram(
     # Process referral code (only for new users — existing users cannot be assigned a referrer)
     await _process_referral_code(db, user, request.referral_code, is_new_user=is_new_user)
 
+    # Race-resilience: an existing user whose miniapp opened BEFORE
+    # the bot's /start handler finished processing may still have
+    # referred_by_id=None despite the user clicking the referral link.
+    # The pending_referral Redis key the cabinet checked above was
+    # not yet written at that moment. Now that /start has had a chance
+    # to run, the key may exist — try the eager attach helper. It
+    # idempotently no-ops when referred_by_id is already set, and
+    # otherwise reads Redis pending_referral + attaches + fires the
+    # registration event exactly once.
+    #
+    # SECURITY: do NOT pass `request.referral_code` here. The cabinet
+    # request body is fully client-controlled, and accepting it for
+    # the retroactive branch would let any user POST an arbitrary
+    # referrer code and self-attach it to their orphan (no-referrer)
+    # account — monetizing the multi-account self-referral attack.
+    # The Redis pending_referral key is provably written by the bot
+    # itself (only after validating the ref-link click maps to THIS
+    # telegram_id), so it's the only trusted retroactive source.
+    if not is_new_user:
+        from app.services.referral_service import attach_referrer_if_missing
+
+        await attach_referrer_if_missing(
+            db,
+            user,
+            referral_code=None,
+            source='cabinet_telegram_retroactive',
+        )
+
     # Clear Redis pending referral after successful user creation with referral
     if referrer_id:
         try:
@@ -584,8 +686,11 @@ async def auth_telegram(
         except Exception:
             pass
 
-    # Process campaign bonus
-    response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
+    # Process campaign bonus.
+    # Pass telegram_id so the function can fall back to Redis pending_campaign
+    # if the user came via /start <campaign> in the bot but completed
+    # registration in the WebApp without an explicit campaign_slug.
+    response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug, telegram_id=telegram_id)
     if response.campaign_bonus:
         response.user = _user_to_response(user)
 
@@ -624,23 +729,44 @@ async def auth_telegram_widget(
 
     user = await get_user_by_telegram_id(db, request.id)
 
-    # Resolve referral code to referrer ID for new users
+    # Resolve referral code to referrer ID for new users.
+    # Order: explicit request.referral_code, then Redis pending_referral
+    # written by /start ref_XYZ. The Redis fallback used to be missing
+    # from this widget endpoint (initData endpoint had it, widget didn't),
+    # so users who hit /start ref_XYZ then logged in via Telegram Login
+    # Widget were silently losing attribution.
     referrer_id = None
-    if request.referral_code and not user:
-        try:
-            referrer = await get_user_by_referral_code(db, request.referral_code)
-            if referrer:
-                # Self-referral protection by telegram_id (user doesn't exist yet, can't compare user.id)
-                if referrer.telegram_id and referrer.telegram_id == request.id:
-                    logger.warning(
-                        'Self-referral attempt blocked via telegram_id',
+    if not user:
+        if request.referral_code:
+            try:
+                referrer = await get_user_by_referral_code(db, request.referral_code)
+                if referrer:
+                    # Self-referral protection by telegram_id (user doesn't exist yet, can't compare user.id)
+                    if referrer.telegram_id and referrer.telegram_id == request.id:
+                        logger.warning(
+                            'Self-referral attempt blocked via telegram_id',
+                            telegram_id=request.id,
+                            referral_code=request.referral_code,
+                        )
+                    else:
+                        referrer_id = referrer.id
+            except Exception as e:
+                logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
+
+        if not referrer_id and request.id:
+            try:
+                from app.services.referral_service import get_pending_referral
+
+                pending = await get_pending_referral(request.id)
+                if pending and pending.get('referrer_id'):
+                    referrer_id = pending['referrer_id']
+                    logger.info(
+                        'Resolved referral from Redis pending_referral (widget)',
                         telegram_id=request.id,
-                        referral_code=request.referral_code,
+                        referrer_id=referrer_id,
                     )
-                else:
-                    referrer_id = referrer.id
-        except Exception as e:
-            logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
+            except Exception as e:
+                logger.warning('Failed to check pending referral (widget)', error=e)
 
     is_new_user = not user
     if not user:
@@ -682,6 +808,21 @@ async def auth_telegram_widget(
     # Process referral code (only for new users — existing users cannot be assigned a referrer)
     await _process_referral_code(db, user, request.referral_code, is_new_user=is_new_user)
 
+    # Race-resilience: existing users whose miniapp opened before the
+    # bot's /start finished may still be missing the referrer. The
+    # Redis pending_referral is the only TRUSTED source for retroactive
+    # attach (request.referral_code is client-controlled — see security
+    # comment in /telegram above).
+    if not is_new_user:
+        from app.services.referral_service import attach_referrer_if_missing
+
+        await attach_referrer_if_missing(
+            db,
+            user,
+            referral_code=None,
+            source='cabinet_widget_retroactive',
+        )
+
     # Clear Redis pending referral after successful registration
     if referrer_id and request.id:
         try:
@@ -691,8 +832,8 @@ async def auth_telegram_widget(
         except Exception:
             pass
 
-    # Process campaign bonus
-    response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
+    # Process campaign bonus (pending_campaign Redis fallback for Telegram Login Widget)
+    response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug, telegram_id=request.id)
     if response.campaign_bonus:
         response.user = _user_to_response(user)
 
@@ -774,23 +915,43 @@ async def auth_telegram_oidc(
 
     user = await get_user_by_telegram_id(db, telegram_id)
 
-    # Resolve referral code for new users
+    # Resolve referral code for new users.
+    # Order: explicit request.referral_code, then Redis pending_referral
+    # written by /start ref_XYZ. The Redis fallback was previously
+    # missing from this OIDC endpoint — users who hit /start ref_XYZ
+    # then logged in via the cabinet's OIDC flow lost attribution.
     referrer_id = None
-    if request.referral_code and not user:
-        try:
-            referrer = await get_user_by_referral_code(db, request.referral_code)
-            if referrer:
-                # Self-referral protection by telegram_id (user doesn't exist yet, can't compare user.id)
-                if referrer.telegram_id and referrer.telegram_id == telegram_id:
-                    logger.warning(
-                        'Self-referral attempt blocked via telegram_id',
+    if not user:
+        if request.referral_code:
+            try:
+                referrer = await get_user_by_referral_code(db, request.referral_code)
+                if referrer:
+                    # Self-referral protection by telegram_id (user doesn't exist yet, can't compare user.id)
+                    if referrer.telegram_id and referrer.telegram_id == telegram_id:
+                        logger.warning(
+                            'Self-referral attempt blocked via telegram_id',
+                            telegram_id=telegram_id,
+                            referral_code=request.referral_code,
+                        )
+                    else:
+                        referrer_id = referrer.id
+            except Exception as e:
+                logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
+
+        if not referrer_id and telegram_id:
+            try:
+                from app.services.referral_service import get_pending_referral
+
+                pending = await get_pending_referral(telegram_id)
+                if pending and pending.get('referrer_id'):
+                    referrer_id = pending['referrer_id']
+                    logger.info(
+                        'Resolved referral from Redis pending_referral (oidc)',
                         telegram_id=telegram_id,
-                        referral_code=request.referral_code,
+                        referrer_id=referrer_id,
                     )
-                else:
-                    referrer_id = referrer.id
-        except Exception as e:
-            logger.warning('Failed to resolve referral code', referral_code=request.referral_code, error=e)
+            except Exception as e:
+                logger.warning('Failed to check pending referral (oidc)', error=e)
 
     is_new_user = not user
     if not user:
@@ -828,6 +989,21 @@ async def auth_telegram_oidc(
     # Process referral code (only for new users — existing users cannot be assigned a referrer)
     await _process_referral_code(db, user, request.referral_code, is_new_user=is_new_user)
 
+    # Race-resilience: an existing user whose miniapp opened before the
+    # bot's /start finished may still have referred_by_id=None. The
+    # Redis pending_referral is the only TRUSTED source for retroactive
+    # attach (request.referral_code is client-controlled — see security
+    # comment in /telegram above).
+    if not is_new_user:
+        from app.services.referral_service import attach_referrer_if_missing
+
+        await attach_referrer_if_missing(
+            db,
+            user,
+            referral_code=None,
+            source='cabinet_oidc_retroactive',
+        )
+
     # Clear Redis pending referral after successful registration
     if referrer_id and telegram_id:
         try:
@@ -837,7 +1013,8 @@ async def auth_telegram_oidc(
         except Exception:
             pass
 
-    response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug)
+    # Process campaign bonus (pending_campaign Redis fallback for Telegram OIDC)
+    response.campaign_bonus = await _process_campaign_bonus(db, user, request.campaign_slug, telegram_id=telegram_id)
     if response.campaign_bonus:
         response.user = _user_to_response(user)
 
@@ -1171,9 +1348,11 @@ async def verify_email(
             detail='Verification token has expired',
         )
 
-    # Mark email as verified
+    # Mark email as verified through cabinet OTP — trusted source for admin
+    # escalation (юзер реально получил code на email и ввёл его).
     user.email_verified = True
     user.email_verified_at = datetime.now(UTC)
+    user.email_verification_source = 'cabinet'
     user.email_verification_token = None
     user.email_verification_expires = None
     user.cabinet_last_login = datetime.now(UTC)
@@ -1329,17 +1508,29 @@ async def login_email(
             detail='Invalid email or password',
         )
 
+    # Status check BEFORE email-verification gate:
+    # 1. Security: emitting `account_deleted` here after correct
+    #    password would be an enumeration oracle. A successful login
+    #    that returns 403 `account_deleted` confirms BOTH email-exists
+    #    AND password-correct AND row-is-deleted — strictly worse than
+    #    the standard 401. Return generic invalid-credentials instead.
+    # 2. Correctness: a DELETED user whose email_verified=False would
+    #    otherwise hit the "Please verify your email first" branch and
+    #    never see the deletion message. The non-disclosing 401 below
+    #    sidesteps that ordering issue entirely.
+    # BLOCKED users also fall here — same generic 401 keeps admin
+    # actions opaque to attackers.
+    if user.status != UserStatus.ACTIVE.value:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid email or password',
+        )
+
     # Test email and disabled verification bypass the check
     if not user.email_verified and not is_test_email and settings.is_cabinet_email_verification_enabled():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Please verify your email first',
-        )
-
-    if user.status != UserStatus.ACTIVE.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='User account is not active',
         )
 
     user.cabinet_last_login = datetime.now(UTC)
@@ -1489,6 +1680,24 @@ async def auto_login(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Account is deactivated',
+        )
+
+    # SECURITY: auto-login токены создаются по результатам guest purchase, где
+    # User.telegram_id выставляется из bot.get_chat('@username') без proof of
+    # ownership — то есть атакер может сделать guest-purchase с username админа
+    # и получить токен, ведущий к этому user. Запрещаем такой path для админов
+    # из ADMIN_IDS / ADMIN_EMAILS — пусть проходят полную Telegram WebApp /
+    # password аутентификацию.
+    if is_user_admin_by_env(user).is_admin:
+        logger.warning(
+            'Auto-login blocked for admin account — must use full auth flow',
+            user_id=user.id,
+            telegram_id=user.telegram_id,
+            client_ip=client_ip,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Administrator accounts cannot use auto-login. Please sign in via Telegram.',
         )
 
     response = await _create_auth_response(user, db)

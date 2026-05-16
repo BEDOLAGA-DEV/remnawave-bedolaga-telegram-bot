@@ -1,5 +1,7 @@
 """FastAPI dependencies for cabinet module."""
 
+from datetime import UTC, datetime
+
 import structlog
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -8,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.user import get_user_by_id
 from app.database.database import AsyncSessionLocal
-from app.database.models import User
+from app.database.models import User, UserStatus
 from app.services.blacklist_service import blacklist_service
 from app.services.maintenance_service import maintenance_service
+from app.services.user_revival_service import NotDeletedError, revive_deleted_user
 
 from .auth.jwt_handler import get_token_payload
 from .auth.telegram_auth import validate_telegram_init_data
@@ -89,51 +92,106 @@ async def get_current_cabinet_user(
             detail='User not found',
         )
 
-    if user.status != 'active':
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='User account is not active',
-        )
-
-    # Defense in depth: cross-validate Telegram identity.
-    # The frontend sends X-Telegram-Init-Data on every request.
-    # If the header is present and cryptographically valid, verify that
-    # the Telegram user ID matches the JWT user's telegram_id.
-    # This prevents cross-account token reuse when Telegram WebView
-    # shares localStorage across accounts on the same device.
+    # Validate Telegram initData first — we need its outcome both for the
+    # cross-account guard (existing) and for the DELETED auto-revival
+    # (new). Reading the header always; verification only when it's
+    # present.
     init_data_raw = request.headers.get('X-Telegram-Init-Data')
+    init_data_telegram_id: int | None = None
+    init_data_matches_user = False
     if init_data_raw and user.telegram_id is not None:
         # Use generous max_age: Telegram Desktop caches initData
+        # (https://github.com/telegramdesktop/tdesktop/issues/28303).
         tg_user = validate_telegram_init_data(init_data_raw, max_age_seconds=86400 * 30)
         if tg_user is None:
             logger.warning(
                 'Telegram initData validation failed but header was present',
                 jwt_user_id=user.id,
             )
-        elif tg_user.get('id') != user.telegram_id:
-            logger.warning(
-                'Telegram identity mismatch: JWT belongs to different user than current Telegram account',
-                jwt_user_id=user.id,
-                jwt_telegram_id=user.telegram_id,
-                init_data_telegram_id=tg_user.get('id'),
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail='Session belongs to a different Telegram account. Please restart the app.',
-                headers={'WWW-Authenticate': 'Bearer'},
-            )
+        else:
+            init_data_telegram_id = tg_user.get('id')
+            init_data_matches_user = init_data_telegram_id == user.telegram_id
+            if not init_data_matches_user:
+                # Defense in depth: cross-validate Telegram identity.
+                # The frontend sends X-Telegram-Init-Data on every request.
+                # This prevents cross-account token reuse when Telegram
+                # WebView shares localStorage across accounts on the
+                # same device.
+                logger.warning(
+                    'Telegram identity mismatch: JWT belongs to different user than current Telegram account',
+                    jwt_user_id=user.id,
+                    jwt_telegram_id=user.telegram_id,
+                    init_data_telegram_id=init_data_telegram_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail='Session belongs to a different Telegram account. Please restart the app.',
+                    headers={'WWW-Authenticate': 'Bearer'},
+                )
 
-    # Check blacklist
+    # Blacklist check happens BEFORE the status branching: a blacklisted
+    # account must show as blacklisted regardless of whether it's also
+    # DELETED. This prevents (1) auto-revival of banned users and (2)
+    # leaking the existence of a DELETED-but-banned row via the friendly
+    # `account_deleted` error code (security audit recommendation).
     if user.telegram_id is not None:
-        is_blacklisted, reason = await blacklist_service.is_user_blacklisted(user.telegram_id, user.username)
+        is_blacklisted, blacklist_reason = await blacklist_service.is_user_blacklisted(user.telegram_id, user.username)
         if is_blacklisted:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
                     'code': 'blacklisted',
-                    'message': reason or 'Доступ запрещен',
+                    'message': blacklist_reason or 'Доступ запрещен',
                 },
             )
+
+    if user.status != UserStatus.ACTIVE.value:
+        # DELETED users with a cryptographically-valid Telegram initData
+        # proving the same Telegram identity may be auto-revived: the
+        # signature on initData is the moral equivalent of a fresh login.
+        can_auto_revive = (
+            user.status == UserStatus.DELETED.value and user.telegram_id is not None and init_data_matches_user
+        )
+        if can_auto_revive:
+            try:
+                await revive_deleted_user(db, user, source='cabinet_dependencies')
+                # revive_deleted_user no longer commits — caller owns
+                # the transaction. Persist before further checks (the
+                # downstream `cabinet_last_login` throttle will commit
+                # again on its own which is fine).
+                await db.commit()
+                await db.refresh(user)
+            except NotDeletedError:
+                # Raced — another request already revived. Treat as success.
+                logger.info('Auto-revival race: user already revived by concurrent request', user_id=user.id)
+        elif user.status == UserStatus.DELETED.value:
+            # DELETED but no proof of identity (no initData or token-only
+            # request) → structured friendly error so the frontend can
+            # show the "open bot" screen.
+            bot_username = settings.get_bot_username()
+            detail: dict[str, str | None] = {
+                'code': 'account_deleted',
+                'message': 'Account was deactivated for inactivity. Open the bot and press /start to restore access.',
+            }
+            if bot_username:
+                detail['bot_username'] = bot_username
+                detail['telegram_deep_link'] = f'https://t.me/{bot_username}?start=revive'
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=detail,
+            )
+        else:
+            # BLOCKED or any other non-ACTIVE status: keep the generic
+            # message — these are admin actions, not user-recoverable.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail='User account is not active',
+            )
+
+    # Blacklist check was hoisted ABOVE the status-branching block (see
+    # comment at the top of that section) so that DELETED-but-banned
+    # users see the blacklist message instead of the friendly revival
+    # screen. No duplicate check needed here.
 
     # Check maintenance mode (allow admins to pass)
     if maintenance_service.is_maintenance_active():
@@ -175,6 +233,15 @@ async def get_current_cabinet_user(
                             'channels': channels_with_status,
                         },
                     )
+
+    # Throttled update of cabinet_last_login (at most every 5 minutes)
+    now = datetime.now(UTC)
+    if not user.cabinet_last_login or (now - user.cabinet_last_login).total_seconds() > 300:
+        try:
+            user.cabinet_last_login = now
+            await db.commit()
+        except Exception:
+            pass
 
     return user
 

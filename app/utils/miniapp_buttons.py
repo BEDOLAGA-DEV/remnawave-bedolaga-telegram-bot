@@ -1,8 +1,39 @@
+import re
+
 from aiogram import types
 from aiogram.types import InlineKeyboardButton
 
 from app.config import settings
 from app.utils.button_styles_cache import CALLBACK_TO_SECTION, get_cached_button_styles
+
+
+# Юникод-диапазоны для одиночного emoji в начале строки + модификаторы (skin tone,
+# variation selector, zero-width joiner-цепочки) + опциональный пробел после.
+# Используется когда у кнопки задан icon_custom_emoji_id — Telegram сам рендерит
+# кастом emoji слева, и если оставить юникод-emoji в тексте, юзер увидит дубль.
+_EMOJI_CHAR_CLASS = (
+    r'[℀-⅏'  # Letterlike (ℹ ™ ©)
+    r'←-⇿'  # Arrows
+    r'⌀-⏿'  # Misc Technical (⌚ ⌨ ⏰ etc.)
+    r'①-⓿'  # Enclosed Alphanumerics
+    r'■-⛿'  # Geometric Shapes + Misc Symbols (☀ ★ ✈ etc.)
+    r'✀-➿'  # Dingbats (✂ ✅ ✔ etc.)
+    r'⬀-⯿'  # Misc Symbols/Arrows (⬅ ⭐ etc.)
+    r'〰-〽'  # CJK swung dash etc.
+    r'㊗㊙'  # Japanese marks
+    r'\U0001F000-\U0001FFFF'  # Все supplementary planes (emoticons, pictographs, transport, supp symbols)
+    r']'
+)
+_LEADING_EMOJI_RE = re.compile(
+    r'^' + _EMOJI_CHAR_CLASS + r'(?:[️‍\U0001F3FB-\U0001F3FF]|' + _EMOJI_CHAR_CLASS + r')*' + r'\s*'
+)
+
+
+def strip_leading_emoji(text: str) -> str:
+    """Удалить ведущий юникод-emoji + следующий пробел. Безопасно для текста без emoji."""
+    if not text:
+        return text
+    return _LEADING_EMOJI_RE.sub('', text, count=1)
 
 
 # Mapping from callback_data to cabinet frontend paths.
@@ -150,8 +181,12 @@ def build_miniapp_or_callback_button(
                 # Emoji chain: explicit param > per-section DB
                 resolved_emoji = icon_custom_emoji_id or section_cfg.get('icon_custom_emoji_id') or None
 
+                # Если есть кастом emoji — стрипаем ведущий юникод-эмодзи из текста,
+                # иначе у юзера будут две иконки слева (custom + default).
+                final_text = strip_leading_emoji(text) if resolved_emoji else text
+
                 return InlineKeyboardButton(
-                    text=text,
+                    text=final_text,
                     web_app=types.WebAppInfo(url=url),
                     style=resolved_style,
                     icon_custom_emoji_id=resolved_emoji or None,

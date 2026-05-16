@@ -1,4 +1,5 @@
 import html as html_mod
+import math
 from datetime import UTC, datetime
 
 from aiogram import types
@@ -9,6 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
+from app.database.crud.user_device_alias import (
+    ALIAS_MAX_LENGTH,
+    attach_aliases_to_devices,
+    delete_alias,
+    get_alias,
+    get_aliases_for_user,
+    normalize_alias,
+    upsert_alias,
+)
 from app.database.models import Subscription, TransactionType, User
 from app.keyboards.inline import (
     get_app_selection_keyboard,
@@ -26,6 +36,7 @@ from app.services.pricing_engine import PricingEngine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
+from app.states import SubscriptionStates
 from app.utils.pagination import paginate_list
 from app.utils.pricing_utils import (
     apply_percentage_discount,
@@ -343,7 +354,7 @@ async def confirm_change_devices(
 
         # Считаем стоимость по оставшимся дням подписки
         now = datetime.now(UTC)
-        days_left = max(1, (subscription.end_date - now).days)
+        days_left = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
         period_hint_days = days_left
 
         devices_discount_percent = PricingEngine.get_addon_discount_percent(
@@ -572,7 +583,7 @@ async def execute_change_devices(
             chargeable_devices = devices_difference
 
         devices_price_per_month = chargeable_devices * price_per_device
-        days_left = max(1, (subscription.end_date - datetime.now(UTC)).days)
+        days_left = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
         devices_discount_percent = PricingEngine.get_addon_discount_percent(
             db_user,
             'devices',
@@ -601,7 +612,7 @@ async def execute_change_devices(
                 )
                 return
 
-            charged_days = max(1, (subscription.end_date - datetime.now(UTC)).days)
+            charged_days = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
             await create_transaction(
                 db=db,
                 user_id=db_user.id,
@@ -849,11 +860,34 @@ async def handle_device_management(
     await callback.answer()
 
 
+async def _enrich_devices_with_aliases(devices_list: list[dict], user_id: int) -> list[dict]:
+    """Attach user-local aliases to each device dict, in-place.
+
+    `local_name` is read from `user_device_aliases` (per-user, per-hwid) and
+    falls back to None when the user hasn't set one. Keeping this in a
+    dedicated helper lets all show-page callers stay tiny.
+    """
+    try:
+        from app.database.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            aliases = await get_aliases_for_user(db, user_id)
+    except Exception as exc:  # pragma: no cover - alias DB read is best-effort
+        logger.warning('Failed to load device aliases', user_id=user_id, error=str(exc)[:200])
+        aliases = {}
+    return attach_aliases_to_devices(devices_list, aliases)
+
+
 async def show_devices_page(
     callback: types.CallbackQuery, db_user: User, devices_list: list[dict], page: int = 1, sub_id: int | None = None
 ):
     texts = get_texts(db_user.language)
     devices_per_page = 5
+
+    # Все вызовы рендера проходят через show_devices_page, поэтому единое место
+    # для прикрепления локальных имён — здесь. Клавиатура и текст подтягивают
+    # `local_name` из enriched dict'ов.
+    devices_list = await _enrich_devices_with_aliases(devices_list, db_user.id)
 
     pagination = paginate_list(devices_list, page=page, per_page=devices_per_page)
 
@@ -871,10 +905,14 @@ async def show_devices_page(
             'DEVICE_MANAGEMENT_CONNECTED_HEADER',
             '<b>Подключенные устройства:</b>\n',
         )
-        for i, device in enumerate(pagination.items, 1):
-            platform = device.get('platform', 'Unknown')
-            device_model = device.get('deviceModel', 'Unknown')
-            device_info = f'{platform} - {device_model}'
+        for device in pagination.items:
+            local_name = (device.get('local_name') or '').strip()
+            if local_name:
+                device_info = local_name
+            else:
+                platform = device.get('platform', 'Unknown')
+                device_model = device.get('deviceModel', 'Unknown')
+                device_info = f'{platform} - {device_model}'
 
             if len(device_info) > 35:
                 device_info = device_info[:32] + '...'
@@ -882,11 +920,16 @@ async def show_devices_page(
             devices_text += texts.t(
                 'DEVICE_MANAGEMENT_LIST_ITEM',
                 '• {device}\n',
-            ).format(device=device_info)
+            ).format(device=html_mod.escape(device_info))
 
     devices_text += texts.t(
         'DEVICE_MANAGEMENT_ACTIONS',
-        ('\n💡 <b>Действия:</b>\n• Выберите устройство для сброса\n• Или сбросьте все устройства сразу'),
+        (
+            '\n💡 <b>Действия:</b>\n'
+            '• ✏️ — переименовать устройство (видно только вам)\n'
+            '• 🔄 — сбросить устройство\n'
+            '• Или сбросьте все устройства сразу'
+        ),
     )
 
     await callback.message.edit_text(
@@ -929,6 +972,183 @@ async def handle_devices_page(callback: types.CallbackQuery, db_user: User, db: 
             texts.t('DEVICE_PAGE_LOAD_ERROR', '❌ Ошибка загрузки страницы'),
             show_alert=True,
         )
+
+
+async def start_device_rename(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
+    """Callback `device_rename_<idx>_<page>` — prompts user for the new alias.
+
+    Stores hwid/page/sub_id in FSM state so the text-handler can finalize and
+    re-render the same listing page.
+    """
+    texts = get_texts(db_user.language)
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    remnawave_uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
+    if not remnawave_uuid:
+        await callback.answer(
+            texts.t('DEVICE_UUID_NOT_FOUND', '❌ UUID пользователя не найден'),
+            show_alert=True,
+        )
+        return
+
+    try:
+        callback_parts = callback.data.split('_')
+        if len(callback_parts) < 4:
+            await callback.answer(
+                texts.t('DEVICE_RENAME_INVALID_REQUEST', '❌ Ошибка: некорректный запрос'),
+                show_alert=True,
+            )
+            return
+        device_index = int(callback_parts[2])
+        page = int(callback_parts[3])
+    except (ValueError, IndexError) as exc:
+        logger.error('❌ Ошибка парсинга rename callback_data', callback_data=callback.data, error=exc)
+        await callback.answer(
+            texts.t('DEVICE_RENAME_PARSE_ERROR', '❌ Ошибка обработки запроса'),
+            show_alert=True,
+        )
+        return
+
+    try:
+        from app.services.remnawave_service import RemnaWaveService
+
+        service = RemnaWaveService()
+        async with service.get_api_client() as api:
+            response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
+    except Exception as exc:
+        logger.error('Ошибка получения устройств перед переименованием', error=exc)
+        await callback.answer(
+            texts.t('DEVICE_FETCH_INFO_ERROR', '❌ Ошибка получения информации об устройствах'),
+            show_alert=True,
+        )
+        return
+
+    devices_list = (response or {}).get('response', {}).get('devices', []) or []
+    pagination = paginate_list(devices_list, page=page, per_page=5)
+    if device_index >= len(pagination.items):
+        await callback.answer(
+            texts.t('DEVICE_RENAME_NOT_FOUND', '❌ Устройство не найдено'),
+            show_alert=True,
+        )
+        return
+
+    device = pagination.items[device_index]
+    hwid = (device.get('hwid') or '').strip()
+    if not hwid:
+        await callback.answer(
+            texts.t('DEVICE_RENAME_NO_HWID', '❌ У устройства нет идентификатора'),
+            show_alert=True,
+        )
+        return
+
+    # Загружаем текущий alias чтобы юзер видел что меняет
+    current = await get_alias(db, db_user.id, hwid)
+
+    if state is not None:
+        await state.set_state(SubscriptionStates.renaming_device)
+        await state.update_data(rename_hwid=hwid, rename_page=page, rename_sub_id=sub_id)
+
+    prompt = texts.t(
+        'DEVICE_RENAME_PROMPT',
+        (
+            '✏️ <b>Новое имя устройства</b>\n\n'
+            'Текущее: <code>{current}</code>\n\n'
+            'Введите новое имя (до {max_len} символов).\n'
+            'Чтобы убрать имя — отправьте <code>-</code> или <code>/clear</code>.\n'
+            'Отмена — /cancel'
+        ),
+    ).format(
+        current=html_mod.escape(current or '—'),
+        max_len=ALIAS_MAX_LENGTH,
+    )
+    await callback.message.edit_text(prompt)
+    await callback.answer()
+
+
+async def process_device_rename(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
+    """Text input from the user with the new alias (or `-`/`/clear` to delete).
+
+    State carries hwid + the listing page so we can re-render after save.
+    """
+    texts = get_texts(db_user.language)
+    data = await state.get_data() if state else {}
+    hwid = data.get('rename_hwid')
+    page = int(data.get('rename_page') or 1)
+    sub_id = data.get('rename_sub_id')
+
+    if not hwid:
+        await message.answer(texts.t('DEVICE_RENAME_STATE_LOST', '❌ Сессия истекла, повторите.'))
+        if state is not None:
+            await state.clear()
+        return
+
+    raw = (message.text or '').strip()
+    if raw.lower() in {'/cancel', 'cancel', 'отмена'}:
+        await message.answer(texts.t('DEVICE_RENAME_CANCELLED', '✖️ Переименование отменено'))
+        if state is not None:
+            await state.clear()
+        return
+
+    try:
+        if raw in {'-', '—', '/clear', 'clear'} or not raw:
+            await delete_alias(db, db_user.id, hwid)
+            await message.answer(texts.t('DEVICE_RENAME_CLEARED', '✅ Имя устройства сброшено к стандартному'))
+        else:
+            new_alias = normalize_alias(raw)
+            if not new_alias:
+                await message.answer(
+                    texts.t('DEVICE_RENAME_EMPTY', '❌ Имя не может быть пустым (или используйте «-» для сброса)')
+                )
+                return
+            if len(new_alias) > ALIAS_MAX_LENGTH:
+                # Доп. защита; normalize_alias уже режет, но даём явный feedback.
+                await message.answer(
+                    texts.t(
+                        'DEVICE_RENAME_TOO_LONG',
+                        '⚠️ Имя слишком длинное, сократили до {max_len} символов.',
+                    ).format(max_len=ALIAS_MAX_LENGTH)
+                )
+            saved = await upsert_alias(db, db_user.id, hwid, new_alias)
+            await message.answer(
+                texts.t('DEVICE_RENAME_SAVED', '✅ Имя устройства обновлено: <code>{name}</code>').format(
+                    name=html_mod.escape(saved)
+                ),
+                parse_mode='HTML',
+            )
+    finally:
+        if state is not None:
+            await state.clear()
+
+    # Re-fetch + re-render текущей страницы списка, чтобы юзер сразу увидел
+    # новое имя. Используем fake callback из последнего message — пишем
+    # новый список «как новое сообщение» (edit_text здесь не сработает).
+    try:
+        subscription = None
+        if sub_id:
+            result = await db.execute(select(Subscription).where(Subscription.id == sub_id))
+            subscription = result.scalar_one_or_none()
+        remnawave_uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
+        if not remnawave_uuid:
+            return
+        from app.services.remnawave_service import RemnaWaveService
+
+        service = RemnaWaveService()
+        async with service.get_api_client() as api:
+            response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
+        devices_list = (response or {}).get('response', {}).get('devices', []) or []
+
+        # Сообщения от FSM-handler'а — не callback, поэтому отдельный пост.
+        devices_list = await _enrich_devices_with_aliases(devices_list, db_user.id)
+        pagination = paginate_list(devices_list, page=page, per_page=5)
+        back_cb = f'sm:{sub_id}' if settings.is_multi_tariff_enabled() and sub_id else 'subscription_settings'
+
+        await message.answer(
+            texts.t('DEVICE_RENAME_OPEN_LIST', '📱 Откройте список устройств, чтобы продолжить'),
+            reply_markup=get_devices_management_keyboard(
+                pagination.items, pagination, db_user.language, back_callback=back_cb
+            ),
+        )
+    except Exception as exc:
+        logger.warning('Failed to re-render devices list after rename', error=str(exc)[:200])
 
 
 async def handle_single_device_reset(
@@ -1253,7 +1473,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
     if is_daily_tariff:
         # Для суточных тарифов считаем по дням (как в кабинете)
         now = datetime.now(UTC)
-        days_left = max(1, (subscription.end_date - now).days)
+        days_left = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
         period_hint_days = days_left
 
         devices_discount_percent = PricingEngine.get_addon_discount_percent(
@@ -1274,7 +1494,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
     else:
         # Для обычных тарифов - по дням (как в кабинете)
         now = datetime.now(UTC)
-        days_left = max(1, (subscription.end_date - now).days)
+        days_left = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
         period_hint_days = days_left
 
         devices_discount_percent = PricingEngine.get_addon_discount_percent(

@@ -170,11 +170,46 @@ async def route_payment_by_method(
             await process_overpay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
-    if payment_method == 'aurapay':
+    if payment_method in ('aurapay', 'aurapay_sbp', 'aurapay_card'):
         from .aurapay import process_aurapay_payment_amount
 
         async with AsyncSessionLocal() as db:
             await process_aurapay_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
+    if payment_method in ('etoplatezhi', 'etoplatezhi_sbp', 'etoplatezhi_card'):
+        from .etoplatezhi import process_etoplatezhi_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_etoplatezhi_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
+    if payment_method in ('antilopay', 'antilopay_sbp', 'antilopay_card', 'antilopay_sberpay'):
+        from .antilopay import process_antilopay_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_antilopay_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
+    if payment_method in ('jupiter', 'jupiter_sbp'):
+        from .jupiter import process_jupiter_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_jupiter_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
+    if payment_method in ('donut', 'donut_card', 'donut_sbp', 'donut_sbp_qr'):
+        from .donut import process_donut_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_donut_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
+    if payment_method in ('lava', 'lava_card', 'lava_sbp'):
+        from .lava import process_lava_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_lava_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
     if payment_method == 'riopay':
@@ -407,7 +442,8 @@ async def handle_successful_topup_with_cart(user_id: int, amount_kopeks: int, bo
                 balance_hint = 'Средств на балансе достаточно для оформления.'
             else:
                 missing = max(total_price - user.balance_kopeks, 0)
-                balance_hint = f'Не хватает: {texts.format_price(missing)}'
+                # Без округления, иначе при не хватке <50 копеек покажется «0 ₽».
+                balance_hint = f'Не хватает: {texts.format_price(missing, round_kopeks=False)}'
 
             success_text = (
                 f'✅ Баланс пополнен на {texts.format_price(amount_kopeks)}!\n\n'
@@ -768,9 +804,52 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.callback_query.register(start_overpay_topup, F.data == 'topup_overpay')
 
-    from .aurapay import start_aurapay_topup
+    from .aurapay import start_aurapay_card_topup, start_aurapay_sbp_topup, start_aurapay_topup
 
     dp.callback_query.register(start_aurapay_topup, F.data == 'topup_aurapay')
+    dp.callback_query.register(start_aurapay_sbp_topup, F.data == 'topup_aurapay_sbp')
+    dp.callback_query.register(start_aurapay_card_topup, F.data == 'topup_aurapay_card')
+
+    from .etoplatezhi import start_etoplatezhi_card_topup, start_etoplatezhi_sbp_topup, start_etoplatezhi_topup
+
+    dp.callback_query.register(start_etoplatezhi_topup, F.data == 'topup_etoplatezhi')
+    dp.callback_query.register(start_etoplatezhi_sbp_topup, F.data == 'topup_etoplatezhi_sbp')
+    dp.callback_query.register(start_etoplatezhi_card_topup, F.data == 'topup_etoplatezhi_card')
+
+    from .antilopay import (
+        start_antilopay_card_topup,
+        start_antilopay_sberpay_topup,
+        start_antilopay_sbp_topup,
+        start_antilopay_topup,
+    )
+
+    dp.callback_query.register(start_antilopay_topup, F.data == 'topup_antilopay')
+    dp.callback_query.register(start_antilopay_sbp_topup, F.data == 'topup_antilopay_sbp')
+    dp.callback_query.register(start_antilopay_card_topup, F.data == 'topup_antilopay_card')
+    dp.callback_query.register(start_antilopay_sberpay_topup, F.data == 'topup_antilopay_sberpay')
+
+    from .jupiter import start_jupiter_sbp_topup, start_jupiter_topup
+
+    dp.callback_query.register(start_jupiter_topup, F.data == 'topup_jupiter')
+    dp.callback_query.register(start_jupiter_sbp_topup, F.data == 'topup_jupiter_sbp')
+
+    from .donut import (
+        start_donut_card_topup,
+        start_donut_sbp_qr_topup,
+        start_donut_sbp_topup,
+        start_donut_topup,
+    )
+
+    dp.callback_query.register(start_donut_topup, F.data == 'topup_donut')
+    dp.callback_query.register(start_donut_card_topup, F.data == 'topup_donut_card')
+    dp.callback_query.register(start_donut_sbp_topup, F.data == 'topup_donut_sbp')
+    dp.callback_query.register(start_donut_sbp_qr_topup, F.data == 'topup_donut_sbp_qr')
+
+    from .lava import start_lava_card_topup, start_lava_sbp_topup, start_lava_topup
+
+    dp.callback_query.register(start_lava_topup, F.data == 'topup_lava')
+    dp.callback_query.register(start_lava_card_topup, F.data == 'topup_lava_card')
+    dp.callback_query.register(start_lava_sbp_topup, F.data == 'topup_lava_sbp')
 
     from .mulenpay import check_mulenpay_payment_status
 

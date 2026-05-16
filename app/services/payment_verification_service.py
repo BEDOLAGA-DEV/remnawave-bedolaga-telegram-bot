@@ -18,16 +18,24 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database.database import AsyncSessionLocal
 from app.database.models import (
+    AntilopayPayment,
+    AuraPayPayment,
     CloudPaymentsPayment,
     CryptoBotPayment,
+    DonutPayment,
+    EtoplatezhiPayment,
     FreekassaPayment,
     HeleketPayment,
+    JupiterPayment,
     KassaAiPayment,
+    LavaPayment,
     MulenPayPayment,
     Pal24Payment,
     PaymentMethod,
+    PayPearPayment,
     PlategaPayment,
     RioPayPayment,
+    RollyPayPayment,
     SeverPayPayment,
     Transaction,
     TransactionType,
@@ -77,6 +85,11 @@ SUPPORTED_MANUAL_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.RIOPAY,
         PaymentMethod.SEVERPAY,
         PaymentMethod.OVERPAY,
+        PaymentMethod.PAYPEAR,
+        PaymentMethod.ROLLYPAY,
+        PaymentMethod.AURAPAY,
+        # ETOPLATEZHI / ANTILOPAY / JUPITER / DONUT / LAVA — webhook-driven,
+        # без API-метода синхронизации БД, manual check не реализован.
     }
 )
 
@@ -98,6 +111,9 @@ SUPPORTED_AUTO_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.RIOPAY,
         PaymentMethod.SEVERPAY,
         PaymentMethod.OVERPAY,
+        PaymentMethod.PAYPEAR,
+        PaymentMethod.ROLLYPAY,
+        PaymentMethod.AURAPAY,
     }
 )
 
@@ -129,6 +145,22 @@ def method_display_name(method: PaymentMethod) -> str:
         return settings.get_severpay_display_name()
     if method == PaymentMethod.OVERPAY:
         return settings.get_overpay_display_name()
+    if method == PaymentMethod.PAYPEAR:
+        return settings.get_paypear_display_name()
+    if method == PaymentMethod.ROLLYPAY:
+        return settings.get_rollypay_display_name()
+    if method == PaymentMethod.AURAPAY:
+        return settings.get_aurapay_display_name()
+    if method == PaymentMethod.ETOPLATEZHI:
+        return settings.get_etoplatezhi_display_name()
+    if method == PaymentMethod.ANTILOPAY:
+        return settings.get_antilopay_display_name()
+    if method == PaymentMethod.JUPITER:
+        return settings.get_jupiter_display_name()
+    if method == PaymentMethod.DONUT:
+        return settings.get_donut_display_name()
+    if method == PaymentMethod.LAVA:
+        return settings.get_lava_display_name()
     if method == PaymentMethod.TELEGRAM_STARS:
         return 'Telegram Stars'
     return method.value
@@ -161,6 +193,22 @@ def _method_is_enabled(method: PaymentMethod) -> bool:
         return settings.is_severpay_enabled()
     if method == PaymentMethod.OVERPAY:
         return settings.is_overpay_enabled()
+    if method == PaymentMethod.PAYPEAR:
+        return settings.is_paypear_enabled()
+    if method == PaymentMethod.ROLLYPAY:
+        return settings.is_rollypay_enabled()
+    if method == PaymentMethod.AURAPAY:
+        return settings.is_aurapay_enabled()
+    if method == PaymentMethod.ETOPLATEZHI:
+        return settings.is_etoplatezhi_enabled()
+    if method == PaymentMethod.ANTILOPAY:
+        return settings.is_antilopay_enabled()
+    if method == PaymentMethod.JUPITER:
+        return settings.is_jupiter_enabled()
+    if method == PaymentMethod.DONUT:
+        return settings.is_donut_enabled()
+    if method == PaymentMethod.LAVA:
+        return settings.is_lava_enabled()
     return False
 
 
@@ -408,6 +456,62 @@ def _is_riopay_pending(payment: RioPayPayment) -> bool:
         return False
     status = (payment.status or '').lower()
     return status in {'pending'}
+
+
+def _is_paypear_pending(payment: PayPearPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'pending', 'created', 'processing'}
+
+
+def _is_rollypay_pending(payment: RollyPayPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'pending', 'created', 'processing'}
+
+
+def _is_aurapay_pending(payment: AuraPayPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'pending', 'created', 'processing'}
+
+
+def _is_etoplatezhi_pending(payment: EtoplatezhiPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'pending', 'created', 'processing'}
+
+
+def _is_antilopay_pending(payment: AntilopayPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'pending', 'created', 'processing'}
+
+
+def _is_jupiter_pending(payment: JupiterPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'pending', 'created', 'processing'}
+
+
+def _is_donut_pending(payment: DonutPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'pending', 'created', 'processing'}
+
+
+def _is_lava_pending(payment: LavaPayment) -> bool:
+    if payment.is_paid:
+        return False
+    status = (payment.status or '').lower()
+    return status in {'pending', 'created', 'processing'}
 
 
 def _parse_cryptobot_amount_kopeks(payment: CryptoBotPayment) -> int:
@@ -779,6 +883,214 @@ async def _fetch_severpay_payments(db: AsyncSession, cutoff: datetime) -> list[P
     return records
 
 
+async def _fetch_paypear_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(PayPearPayment)
+        .options(selectinload(PayPearPayment.user))
+        .where(PayPearPayment.created_at >= cutoff)
+        .order_by(desc(PayPearPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_paypear_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.PAYPEAR,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _fetch_rollypay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(RollyPayPayment)
+        .options(selectinload(RollyPayPayment.user))
+        .where(RollyPayPayment.created_at >= cutoff)
+        .order_by(desc(RollyPayPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_rollypay_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.ROLLYPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _fetch_aurapay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(AuraPayPayment)
+        .options(selectinload(AuraPayPayment.user))
+        .where(AuraPayPayment.created_at >= cutoff)
+        .order_by(desc(AuraPayPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_aurapay_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.AURAPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _fetch_etoplatezhi_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(EtoplatezhiPayment)
+        .options(selectinload(EtoplatezhiPayment.user))
+        .where(EtoplatezhiPayment.created_at >= cutoff)
+        .order_by(desc(EtoplatezhiPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_etoplatezhi_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.ETOPLATEZHI,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _fetch_antilopay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(AntilopayPayment)
+        .options(selectinload(AntilopayPayment.user))
+        .where(AntilopayPayment.created_at >= cutoff)
+        .order_by(desc(AntilopayPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_antilopay_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.ANTILOPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _fetch_jupiter_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(JupiterPayment)
+        .options(selectinload(JupiterPayment.user))
+        .where(JupiterPayment.created_at >= cutoff)
+        .order_by(desc(JupiterPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_jupiter_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.JUPITER,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _fetch_donut_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(DonutPayment)
+        .options(selectinload(DonutPayment.user))
+        .where(DonutPayment.created_at >= cutoff)
+        .order_by(desc(DonutPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_donut_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.DONUT,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _fetch_lava_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(LavaPayment)
+        .options(selectinload(LavaPayment.user))
+        .where(LavaPayment.created_at >= cutoff)
+        .order_by(desc(LavaPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_lava_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.LAVA,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 async def _fetch_stars_transactions(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
     stmt = (
         select(Transaction)
@@ -828,6 +1140,14 @@ async def list_recent_pending_payments(
         await _fetch_kassa_ai_payments(db, cutoff),
         await _fetch_riopay_payments(db, cutoff),
         await _fetch_severpay_payments(db, cutoff),
+        await _fetch_paypear_payments(db, cutoff),
+        await _fetch_rollypay_payments(db, cutoff),
+        await _fetch_aurapay_payments(db, cutoff),
+        await _fetch_etoplatezhi_payments(db, cutoff),
+        await _fetch_antilopay_payments(db, cutoff),
+        await _fetch_jupiter_payments(db, cutoff),
+        await _fetch_donut_payments(db, cutoff),
+        await _fetch_lava_payments(db, cutoff),
         await _fetch_stars_transactions(db, cutoff),
     )
 
@@ -1026,6 +1346,126 @@ async def get_payment_record(
             expires_at=getattr(payment, 'expires_at', None),
         )
 
+    if method == PaymentMethod.PAYPEAR:
+        payment = await db.get(PayPearPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
+    if method == PaymentMethod.ROLLYPAY:
+        payment = await db.get(RollyPayPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
+    if method == PaymentMethod.AURAPAY:
+        payment = await db.get(AuraPayPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
+    if method == PaymentMethod.ETOPLATEZHI:
+        payment = await db.get(EtoplatezhiPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
+    if method == PaymentMethod.ANTILOPAY:
+        payment = await db.get(AntilopayPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
+    if method == PaymentMethod.JUPITER:
+        payment = await db.get(JupiterPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
+    if method == PaymentMethod.DONUT:
+        payment = await db.get(DonutPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
+    if method == PaymentMethod.LAVA:
+        payment = await db.get(LavaPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
     if method == PaymentMethod.TELEGRAM_STARS:
         transaction = await db.get(Transaction, local_payment_id)
         if not transaction:
@@ -1095,6 +1535,27 @@ async def run_manual_check(
             riopay_payment = await db.get(RioPayPayment, local_payment_id)
             if riopay_payment:
                 result = await payment_service.check_riopay_payment_status(db, riopay_payment.order_id)
+                payment = result.get('payment') if result else None
+            else:
+                payment = None
+        elif method == PaymentMethod.PAYPEAR:
+            paypear_payment = await db.get(PayPearPayment, local_payment_id)
+            if paypear_payment:
+                result = await payment_service.check_paypear_payment_status(db, paypear_payment.order_id)
+                payment = result.get('payment') if result else None
+            else:
+                payment = None
+        elif method == PaymentMethod.ROLLYPAY:
+            rollypay_payment = await db.get(RollyPayPayment, local_payment_id)
+            if rollypay_payment:
+                result = await payment_service.check_rollypay_payment_status(db, rollypay_payment.order_id)
+                payment = result.get('payment') if result else None
+            else:
+                payment = None
+        elif method == PaymentMethod.AURAPAY:
+            aurapay_payment = await db.get(AuraPayPayment, local_payment_id)
+            if aurapay_payment:
+                result = await payment_service.check_aurapay_payment_status(db, aurapay_payment.order_id)
                 payment = result.get('payment') if result else None
             else:
                 payment = None

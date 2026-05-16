@@ -1648,5 +1648,15 @@
   "BALANCE_TOPPED_UP_CART_SUFFICIENT": "✅ 余额已充值 {amount}！\n\n💰 当前余额：{balance}\n\n🛒 您有一个已保存的购物车，金额为 {cart_total}\n余额足够完成订购。",
   "BALANCE_TOPPED_UP_CART_INSUFFICIENT": "✅ 余额已充值 {amount}！\n\n💰 当前余额：{balance}\n\n🛒 您有一个已保存的购物车，金额为 {cart_total}\n还差：{missing}",
   "TRAFFIC_WARNING_ALERT": "⚠️ <b>流量警告</b>\n\n已使用：{used:.1f} / {limit} GB ({percent:.0f}%)\n\n您的流量限制即将用完。",
-  "LOW_BALANCE_ALERT": "⚠️ <b>余额不足</b>\n\n您的余额：{balance} ₽\n通知阈值：{threshold} ₽\n\n请充值以确保订阅自动续费成功。"
+  "LOW_BALANCE_ALERT": "⚠️ <b>余额不足</b>\n\n您的余额：{balance} ₽\n通知阈值：{threshold} ₽\n\n请充值以确保订阅自动续费成功。",
+
+  "SUBSCRIPTION_REVOKE_BTN": "🔄 重新签发订阅",
+  "SUBSCRIPTION_REVOKE_TITLE": "⚠️ 重新签发订阅",
+  "SUBSCRIPTION_REVOKE_WARNING": "⚠️ <b>重新签发订阅</b>\n\n此操作将：\n• 生成新的连接链接\n• 断开所有已连接的设备\n• 旧链接将失效\n\n是否继续？",
+  "SUBSCRIPTION_REVOKE_CONFIRM_BTN": "✅ 确认",
+  "SUBSCRIPTION_REVOKE_SUCCESS": "✅ <b>订阅已重新签发！</b>\n\n新的连接链接已准备就绪。旧链接已失效。\n\n所有设备已断开连接。",
+  "SUBSCRIPTION_REVOKE_COOLDOWN": "⏱ 重新签发将在 {minutes} 分 {seconds} 秒后可用。",
+  "SUBSCRIPTION_REVOKE_DISABLED": "订阅重新签发不可用",
+  "SUBSCRIPTION_REVOKE_ERROR": "❌ 重新签发订阅时出错。请稍后重试。",
+  "SUBSCRIPTION_REVOKE_CONNECT_BTN": "🔗 连接"
 }

@@ -1706,12 +1706,11 @@ async def _check_and_recover_pending_purchase(
 
     match = await _find_succeeded_provider_payment(db, base_method, purchase_token)
     if match is None:
-        if base_method:
-            logger.debug(
-                'No succeeded provider payment found for PENDING purchase',
-                token_prefix=purchase_token[:5],
-                payment_method=payment_method,
-            )
+        # Это нормальный путь — гость нажал «Оплатить», но ещё не завершил оплату
+        # у провайдера. Polling задача проверяет каждые N секунд для каждой PENDING
+        # покупки, поэтому раньше этот debug-лог спамил в LOG_LEVEL=DEBUG режиме
+        # без полезной diagnostic info. Реальные ошибки (amount mismatch и т.д.)
+        # логируются на уровне ERROR ниже.
         return False
 
     provider_payment_id, provider_amount_kopeks = match

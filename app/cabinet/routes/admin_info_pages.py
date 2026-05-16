@@ -34,7 +34,7 @@ router = APIRouter(prefix='/admin/info-pages', tags=['Cabinet Admin Info Pages']
 @router.get('', response_model=list[InfoPageListItem])
 async def list_all_info_pages(
     page_type: str | None = Query(None, pattern=r'^(page|faq)$'),
-    admin: User = Depends(require_permission('settings:read')),
+    admin: User = Depends(require_permission('info_pages:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> list[InfoPageListItem]:
     """Get all info pages (admin view, includes inactive)."""
@@ -54,7 +54,7 @@ async def list_all_info_pages(
 @router.get('/{page_id}', response_model=InfoPageResponse)
 async def get_info_page_detail(
     page_id: int,
-    admin: User = Depends(require_permission('settings:read')),
+    admin: User = Depends(require_permission('info_pages:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> InfoPageResponse:
     """Get a single info page by ID (admin view)."""
@@ -70,7 +70,7 @@ async def get_info_page_detail(
 @router.post('', response_model=InfoPageResponse, status_code=status.HTTP_201_CREATED)
 async def create_page(
     request: InfoPageCreateRequest,
-    admin: User = Depends(require_permission('settings:edit')),
+    admin: User = Depends(require_permission('info_pages:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> InfoPageResponse:
     """Create a new info page."""
@@ -108,7 +108,7 @@ async def create_page(
 async def update_page(
     page_id: int,
     request: InfoPageUpdateRequest,
-    admin: User = Depends(require_permission('settings:edit')),
+    admin: User = Depends(require_permission('info_pages:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> InfoPageResponse:
     """Update an existing info page."""
@@ -150,7 +150,7 @@ async def update_page(
 @router.delete('/{page_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def remove_page(
     page_id: int,
-    admin: User = Depends(require_permission('settings:edit')),
+    admin: User = Depends(require_permission('info_pages:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> None:
     """Delete an info page."""
@@ -174,7 +174,7 @@ async def remove_page(
 @router.post('/reorder', status_code=status.HTTP_204_NO_CONTENT)
 async def reorder_pages(
     request: ReorderRequest,
-    admin: User = Depends(require_permission('settings:edit')),
+    admin: User = Depends(require_permission('info_pages:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> None:
     """Bulk update sort_order for info pages."""
@@ -191,7 +191,7 @@ async def reorder_pages(
 @router.post('/{page_id}/toggle-active', response_model=InfoPageResponse)
 async def toggle_active(
     page_id: int,
-    admin: User = Depends(require_permission('settings:edit')),
+    admin: User = Depends(require_permission('info_pages:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> InfoPageResponse:
     """Toggle the active status of an info page."""

@@ -99,24 +99,34 @@ async def upload_media(
     bot = create_bot()
 
     try:
+        # Send with disable_notification to avoid pinging admins — this is just staging
         if media_type_normalized == 'photo':
             message = await bot.send_photo(
                 chat_id=target_chat_id,
                 photo=upload,
+                disable_notification=True,
             )
             media = message.photo[-1]
         elif media_type_normalized == 'video':
             message = await bot.send_video(
                 chat_id=target_chat_id,
                 video=upload,
+                disable_notification=True,
             )
             media = message.video
         else:
             message = await bot.send_document(
                 chat_id=target_chat_id,
                 document=upload,
+                disable_notification=True,
             )
             media = message.document
+
+        # Delete the staging message immediately — file_id persists after deletion
+        try:
+            await bot.delete_message(chat_id=target_chat_id, message_id=message.message_id)
+        except Exception:
+            pass  # Best-effort cleanup — file_id is already captured
 
         media_url = _build_media_url(request, media.file_id)
 

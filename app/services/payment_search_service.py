@@ -15,17 +15,25 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.types import String as SAString
 
 from app.database.models import (
+    AntilopayPayment,
+    AuraPayPayment,
     CloudPaymentsPayment,
     CryptoBotPayment,
+    DonutPayment,
+    EtoplatezhiPayment,
     FreekassaPayment,
     HeleketPayment,
+    JupiterPayment,
     KassaAiPayment,
+    LavaPayment,
     MulenPayPayment,
     OverpayPayment,
     Pal24Payment,
     PaymentMethod,
+    PayPearPayment,
     PlategaPayment,
     RioPayPayment,
+    RollyPayPayment,
     SeverPayPayment,
     Transaction,
     TransactionType,
@@ -683,6 +691,280 @@ async def _search_overpay(db: AsyncSession, params: SearchParams) -> list[Pendin
     return records
 
 
+async def _search_paypear(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = select(PayPearPayment).options(selectinload(PayPearPayment.user)).order_by(desc(PayPearPayment.created_at))
+    stmt = _apply_date_filter(stmt, PayPearPayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            conditions = [
+                PayPearPayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
+                PayPearPayment.paypear_id.ilike(f'%{_escape_like(params.search)}%'),
+            ]
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, PayPearPayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.PAYPEAR,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _search_rollypay(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = (
+        select(RollyPayPayment).options(selectinload(RollyPayPayment.user)).order_by(desc(RollyPayPayment.created_at))
+    )
+    stmt = _apply_date_filter(stmt, RollyPayPayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            conditions = [
+                RollyPayPayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
+                RollyPayPayment.rollypay_payment_id.ilike(f'%{_escape_like(params.search)}%'),
+            ]
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, RollyPayPayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.ROLLYPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _search_aurapay(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = select(AuraPayPayment).options(selectinload(AuraPayPayment.user)).order_by(desc(AuraPayPayment.created_at))
+    stmt = _apply_date_filter(stmt, AuraPayPayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            conditions = [
+                AuraPayPayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
+                AuraPayPayment.aurapay_invoice_id.ilike(f'%{_escape_like(params.search)}%'),
+            ]
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, AuraPayPayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.AURAPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _search_etoplatezhi(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = (
+        select(EtoplatezhiPayment)
+        .options(selectinload(EtoplatezhiPayment.user))
+        .order_by(desc(EtoplatezhiPayment.created_at))
+    )
+    stmt = _apply_date_filter(stmt, EtoplatezhiPayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            conditions = [
+                EtoplatezhiPayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
+                EtoplatezhiPayment.etoplatezhi_payment_id.ilike(f'%{_escape_like(params.search)}%'),
+            ]
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, EtoplatezhiPayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.ETOPLATEZHI,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _search_antilopay(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = (
+        select(AntilopayPayment)
+        .options(selectinload(AntilopayPayment.user))
+        .order_by(desc(AntilopayPayment.created_at))
+    )
+    stmt = _apply_date_filter(stmt, AntilopayPayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            conditions = [
+                AntilopayPayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
+                AntilopayPayment.antilopay_payment_id.ilike(f'%{_escape_like(params.search)}%'),
+            ]
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, AntilopayPayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.ANTILOPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _search_jupiter(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = select(JupiterPayment).options(selectinload(JupiterPayment.user)).order_by(desc(JupiterPayment.created_at))
+    stmt = _apply_date_filter(stmt, JupiterPayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            conditions = [
+                JupiterPayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
+                JupiterPayment.jupiter_transaction_id.ilike(f'%{_escape_like(params.search)}%'),
+            ]
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, JupiterPayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.JUPITER,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _search_donut(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = select(DonutPayment).options(selectinload(DonutPayment.user)).order_by(desc(DonutPayment.created_at))
+    stmt = _apply_date_filter(stmt, DonutPayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            conditions = [
+                DonutPayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
+                DonutPayment.donut_transaction_id.ilike(f'%{_escape_like(params.search)}%'),
+            ]
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, DonutPayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.DONUT,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
+async def _search_lava(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = select(LavaPayment).options(selectinload(LavaPayment.user)).order_by(desc(LavaPayment.created_at))
+    stmt = _apply_date_filter(stmt, LavaPayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            conditions = [
+                LavaPayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
+                LavaPayment.lava_invoice_id.ilike(f'%{_escape_like(params.search)}%'),
+            ]
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, LavaPayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.LAVA,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 async def _search_stars(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
     stmt = (
         select(Transaction)
@@ -737,6 +1019,14 @@ _PROVIDER_SEARCH_MAP: dict[PaymentMethod, Any] = {
     PaymentMethod.RIOPAY: _search_riopay,
     PaymentMethod.SEVERPAY: _search_severpay,
     PaymentMethod.OVERPAY: _search_overpay,
+    PaymentMethod.PAYPEAR: _search_paypear,
+    PaymentMethod.ROLLYPAY: _search_rollypay,
+    PaymentMethod.AURAPAY: _search_aurapay,
+    PaymentMethod.ETOPLATEZHI: _search_etoplatezhi,
+    PaymentMethod.ANTILOPAY: _search_antilopay,
+    PaymentMethod.JUPITER: _search_jupiter,
+    PaymentMethod.DONUT: _search_donut,
+    PaymentMethod.LAVA: _search_lava,
     PaymentMethod.TELEGRAM_STARS: _search_stars,
 }
 

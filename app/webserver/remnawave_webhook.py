@@ -33,9 +33,19 @@ def _verify_signature(raw_body: bytes, received_signature: str, secret: str) -> 
     return hmac.compare_digest(expected, received_signature)
 
 
-def create_remnawave_webhook_router(bot: Bot) -> APIRouter:
+def create_remnawave_webhook_router(bot: Bot, webhook_service: RemnaWaveWebhookService | None = None) -> APIRouter:
+    """Build the FastAPI router for RemnaWave webhooks.
+
+    Service is injectable so the caller (`unified_app.create_unified_app`) can
+    own the service lifecycle (startup/shutdown hooks), keeping it consistent
+    with the way `TelegramWebhookProcessor` is wired up next to it. When the
+    service isn't passed in (e.g. legacy callers, tests), a fresh one is
+    instantiated — but in that case the in-flight node-event coalescing
+    buffer won't be drained on shutdown.
+    """
     router = APIRouter()
-    webhook_service = RemnaWaveWebhookService(bot)
+    if webhook_service is None:
+        webhook_service = RemnaWaveWebhookService(bot)
     webhook_path = settings.REMNAWAVE_WEBHOOK_PATH
 
     @router.get(webhook_path)

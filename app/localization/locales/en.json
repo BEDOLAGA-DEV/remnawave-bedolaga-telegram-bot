@@ -1758,5 +1758,15 @@
   "WEBHOOK_TORRENT_DETECTED": "🚫 <b>Torrent detected</b>\n\nTorrent traffic was detected on your connection{tariff_label}. Using torrents may result in subscription restrictions.",
   "WEBHOOK_CLOSE_BUTTON": "✖️ Close",
   "TRAFFIC_WARNING_ALERT": "⚠️ <b>Traffic Warning</b>\n\nUsed: {used:.1f} / {limit} GB ({percent:.0f}%)\n\nYour traffic limit is almost reached.",
-  "LOW_BALANCE_ALERT": "⚠️ <b>Low Balance</b>\n\nYour balance: {balance} ₽\nNotification threshold: {threshold} ₽\n\nTop up your balance to ensure automatic subscription renewal."
+  "LOW_BALANCE_ALERT": "⚠️ <b>Low Balance</b>\n\nYour balance: {balance} ₽\nNotification threshold: {threshold} ₽\n\nTop up your balance to ensure automatic subscription renewal.",
+
+  "SUBSCRIPTION_REVOKE_BTN": "🔄 Reissue Subscription",
+  "SUBSCRIPTION_REVOKE_TITLE": "⚠️ Reissue Subscription",
+  "SUBSCRIPTION_REVOKE_WARNING": "⚠️ <b>Reissue Subscription</b>\n\nThis action will:\n• Generate a new connection link\n• Disconnect all devices\n• The old link will stop working\n\nContinue?",
+  "SUBSCRIPTION_REVOKE_CONFIRM_BTN": "✅ Confirm",
+  "SUBSCRIPTION_REVOKE_SUCCESS": "✅ <b>Subscription reissued!</b>\n\nYour new connection link is ready. The old link is no longer valid.\n\nAll devices have been disconnected.",
+  "SUBSCRIPTION_REVOKE_COOLDOWN": "⏱ Reissue will be available in {minutes} min {seconds} sec.",
+  "SUBSCRIPTION_REVOKE_DISABLED": "Subscription reissue is not available",
+  "SUBSCRIPTION_REVOKE_ERROR": "❌ Error reissuing subscription. Please try again later.",
+  "SUBSCRIPTION_REVOKE_CONNECT_BTN": "🔗 Connect"
 }

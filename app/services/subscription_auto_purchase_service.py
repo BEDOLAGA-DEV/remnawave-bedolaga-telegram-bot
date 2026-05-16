@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -1533,7 +1534,7 @@ async def _auto_add_devices(
 
     # Recompute price fresh under lock (pricing config may have changed since cart was saved)
     devices_price_per_month = devices_to_add * tariff_device_price
-    days_left = max(1, (subscription.end_date - datetime.now(UTC)).days)
+    days_left = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
     devices_discount_percent = PricingEngine.get_addon_discount_percent(
         user,
         'devices',
@@ -2137,7 +2138,7 @@ async def try_auto_extend_expired_after_topup(
         from app.database.crud.subscription import get_all_subscriptions_by_user_id
 
         all_subs = await get_all_subscriptions_by_user_id(db, user.id)
-        expired_subs = [s for s in all_subs if s.status == SubscriptionStatus.EXPIRED.value and not s.is_trial]
+        expired_subs = [s for s in all_subs if s.status == SubscriptionStatus.EXPIRED.value and s.is_trial is False]
         if not expired_subs:
             subscription = None
         else:
@@ -2153,9 +2154,10 @@ async def try_auto_extend_expired_after_topup(
         return False
 
     # Only process expired subscriptions (not trial, not disabled)
+    # NULL-safe: is_trial can be None in legacy rows — treat as trial
     if subscription.status != SubscriptionStatus.EXPIRED.value:
         return False
-    if subscription.is_trial:
+    if subscription.is_trial is not False:
         return False
 
     # Only process subscriptions expired within the last 30 days

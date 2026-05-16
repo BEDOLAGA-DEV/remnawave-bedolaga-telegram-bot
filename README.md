@@ -55,7 +55,7 @@ Bedolaga — полнофункциональная платформа для п
 
 ### 💳 Платежи
 
-- 🏦 **18 платёжных провайдеров** одновременно
+- 🏦 **24+ платёжных провайдера** одновременно
 - 💰 Единый баланс: пополнение любым способом → покупка с баланса
 - ⚡ Автопокупка подписки после пополнения
 - 💾 Рекуррентные платежи (сохранённые карты)
@@ -127,6 +127,12 @@ Bedolaga — полнофункциональная платформа для п
 | 🤝 | **[RollyPay](https://rollypay.io/?utm_source=bedolaga&utm_medium=community&utm_campaign=integration)** 🔸 | СБП, карты, крипто | RUB → USDT |
 | 🤝 | **[AuraPay](https://aurapay.tech/)** 🔸 | Карты, СБП | RUB |
 | 🤝 | **[Overpay](https://overpay.pro/)** 🔸 | Карты, СБП | RUB |
+| 🦌 | **Antilopay** | Карты, СБП, SberPay (RSA подпись) | RUB |
+| 💳 | **Etoplatezhi** | Карты, СБП | RUB |
+| 🪐 | **[Jupiter](https://t.me/k_juppiter)** 🔸 | СБП через QR (FPGate P2P v2.1) | RUB |
+| 🍩 | **[Donut](https://t.me/donut_payment)** 🔸 | Карты, СБП по телефону, СБП QR (P2P) | RUB |
+| 🌋 | **Lava Business** | Карты, СБП (gate.lava.ru) | RUB |
+| 🍎 | **Apple In-App Purchase** | Покупки через iOS App Store | USD |
 | 📲 | **Tribute** | Telegram-платежи | RUB |
 
 </div>
@@ -212,6 +218,32 @@ Bedolaga — официальный партнёр платёжного шлюз
 
 </td>
 </tr>
+<tr>
+<td align="center">
+
+**🤝 Официальный партнёр Jupiter (FPGate P2P)**
+
+Bedolaga — официальный партнёр платёжного шлюза **Jupiter** (FPGate P2P v2.1).<br>
+Эквайринг СБП через QR-код банковского приложения, HMAC-SHA256 подпись.<br>
+Высокая проходимость, callback-driven архитектура, защита от replay-атак.<br>
+Подключение по кодовому слову **`БЕДОЛАГА`** — **спец. условия**
+
+📩 Менеджер: [@k_juppiter](https://t.me/k_juppiter)
+
+</td>
+<td align="center">
+
+**🤝 Официальный партнёр Donut**
+
+Bedolaga — официальный партнёр платёжной системы **Donut** (Donut P2P).<br>
+P2P-оплата картой, СБП по номеру телефона и СБП QR — три метода через единый API.<br>
+HMAC-SHA256 подпись, sticky terminal-status guard, защита от amount tampering.<br>
+Подключение по кодовому слову **`БЕДОЛАГА`** — **спец. условия**
+
+📩 Менеджер: [@donut_payment](https://t.me/donut_payment)
+
+</td>
+</tr>
 </table>
 </div>
 
@@ -275,7 +307,7 @@ docker compose up -d
 | | Раздел | Описание |
 |:---:|:---|:---|
 | 🚀 | [Быстрый старт](https://docs.bedolagam.ru/getting-started/quickstart) | Развёртывание за 5 минут |
-| 💳 | [Настройка платежей](https://docs.bedolagam.ru/bot/payments) | 18 провайдеров, webhook, фискализация |
+| 💳 | [Настройка платежей](https://docs.bedolagam.ru/bot/payments) | 24+ провайдера, webhook, фискализация, Apple IAP |
 | 📦 | [Подписки и тарифы](https://docs.bedolagam.ru/bot/subscriptions) | Конфигурация планов и трафика |
 | 👥 | [Реферальная программа](https://docs.bedolagam.ru/bot/referral-program) | Партнёрка и вывод средств |
 | 🖥 | [Cabinet](https://docs.bedolagam.ru/cabinet/overview) | Настройка веб-кабинета |

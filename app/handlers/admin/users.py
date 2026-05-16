@@ -3821,35 +3821,37 @@ async def start_devices_edit(callback: types.CallbackQuery, db_user: User, state
         else f'admin_user_subscription_{user_id}'
     )
 
-    max_dev = settings.MAX_DEVICES_LIMIT
-    # Build device buttons dynamically: rows of 4, respect Telegram 100 button limit (99 + cancel)
-    if max_dev <= 99:
-        device_buttons: list[list[types.InlineKeyboardButton]] = []
-        row: list[types.InlineKeyboardButton] = []
-        for i in range(1, max_dev + 1):
-            row.append(
-                types.InlineKeyboardButton(
-                    text=str(i),
-                    callback_data=f'admin_user_devices_set_{user_id}{_sid}_{i}',
-                )
+    # По всей кодовой базе MAX_DEVICES_LIMIT=0 трактуется как «без ограничения»
+    # (см. subscription.py, devices.py, inline.py, miniapp.py — 16+ мест).
+    # Если читать буквально — получаем `range(1, 1)` → пустая клавиатура и
+    # промпт "от 1 до 0", который блокирует любой ввод (репорт от 2026-05-16).
+    raw_limit = settings.MAX_DEVICES_LIMIT
+    is_unlimited = raw_limit <= 0
+    # Для quick-pick клавиатуры используем разумный потолок 20 (как в других
+    # местах UI), для текстового ввода админ может задать любое положительное.
+    quick_pick_cap = 20 if is_unlimited else min(raw_limit, 99)
+    limit_display = '∞' if is_unlimited else str(raw_limit)
+
+    device_buttons: list[list[types.InlineKeyboardButton]] = []
+    row: list[types.InlineKeyboardButton] = []
+    for i in range(1, quick_pick_cap + 1):
+        row.append(
+            types.InlineKeyboardButton(
+                text=str(i),
+                callback_data=f'admin_user_devices_set_{user_id}{_sid}_{i}',
             )
-            if len(row) == 4:
-                device_buttons.append(row)
-                row = []
-        if row:
-            device_buttons.append(row)
-        device_buttons.append([types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb)])
-        markup = types.InlineKeyboardMarkup(inline_keyboard=device_buttons)
-    else:
-        markup = types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb)],
-            ]
         )
+        if len(row) == 4:
+            device_buttons.append(row)
+            row = []
+    if row:
+        device_buttons.append(row)
+    device_buttons.append([types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb)])
+    markup = types.InlineKeyboardMarkup(inline_keyboard=device_buttons)
 
     await callback.message.edit_text(
         '📱 <b>Изменение количества устройств</b>\n\n'
-        f'Введите новое количество устройств (от 1 до {max_dev}):\n'
+        f'Введите новое количество устройств (от 1 до {limit_display}):\n'
         '• Текущее значение будет заменено\n\n'
         'Или нажмите /cancel для отмены',
         reply_markup=markup,
@@ -3922,8 +3924,14 @@ async def process_devices_edit_text(message: types.Message, db_user: User, state
     try:
         devices = int(message.text.strip())
 
-        if devices <= 0 or devices > settings.MAX_DEVICES_LIMIT:
-            await message.answer(f'❌ Количество устройств должно быть от 1 до {settings.MAX_DEVICES_LIMIT}')
+        # MAX_DEVICES_LIMIT=0 ≡ «без ограничения» (та же конвенция, что и в
+        # остальной кодовой базе). До фикса валидатор отвергал любое значение,
+        # потому что `devices > 0` всегда true для положительных чисел.
+        raw_limit = settings.MAX_DEVICES_LIMIT
+        is_unlimited = raw_limit <= 0
+        if devices <= 0 or (not is_unlimited and devices > raw_limit):
+            limit_display = '∞' if is_unlimited else str(raw_limit)
+            await message.answer(f'❌ Количество устройств должно быть от 1 до {limit_display}')
             return
 
         success = await _update_user_devices(db, user_id, devices, db_user.id, subscription_id=subscription_id)
@@ -4791,11 +4799,13 @@ async def admin_buy_subscription_confirm(callback: types.CallbackQuery, db_user:
 
     if target_user.balance_kopeks < price_kopeks:
         missing_kopeks = price_kopeks - target_user.balance_kopeks
+        # Без округления — иначе при не хватке <50 копеек все три суммы покажутся
+        # одинаковыми и админ увидит «не хватает 0 ₽».
         await callback.message.edit_text(
             f'❌ Недостаточно средств на балансе пользователя\n\n'
-            f'💰 Баланс пользователя: {settings.format_price(target_user.balance_kopeks)}\n'
-            f'💳 Стоимость подписки: {settings.format_price(price_kopeks)}\n'
-            f'📉 Не хватает: {settings.format_price(missing_kopeks)}\n\n'
+            f'💰 Баланс пользователя: {settings.format_price(target_user.balance_kopeks, round_kopeks=False)}\n'
+            f'💳 Стоимость подписки: {settings.format_price(price_kopeks, round_kopeks=False)}\n'
+            f'📉 Не хватает: {settings.format_price(missing_kopeks, round_kopeks=False)}\n\n'
             f'Пополните баланс пользователя перед покупкой.',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
@@ -5008,12 +5018,23 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
 
                         remnawave_user = await api.update_user(**update_kwargs)
                 else:
-                    username = settings.format_remnawave_username(
+                    # При multi-tariff подписке username должен включать
+                    # `_<remnawave_short_id>` (как и в трёх других create-path'ах:
+                    # subscription_service, cabinet admin sync, bulk sync) — иначе
+                    # подписки, созданные через админский extend, имеют другой
+                    # формат username'а и не уникальны per-subscription.
+                    username_suffix = (
+                        f'_{subscription.remnawave_short_id}'
+                        if (settings.is_multi_tariff_enabled() and getattr(subscription, 'remnawave_short_id', None))
+                        else ''
+                    )
+                    username = settings.build_remnawave_subscription_username(
                         full_name=target_user.full_name,
                         username=target_user.username,
                         telegram_id=target_user.telegram_id,
                         email=target_user.email,
                         user_id=target_user.id,
+                        suffix=username_suffix,
                     )
                     async with remnawave_service.get_api_client() as api:
                         create_kwargs = dict(
@@ -5268,9 +5289,9 @@ async def admin_buy_tariff_confirm(callback: types.CallbackQuery, db_user: User,
         missing = price_kopeks - target_user.balance_kopeks
         await callback.message.edit_text(
             f'❌ <b>Недостаточно средств</b>\n\n'
-            f'💰 Баланс: {settings.format_price(target_user.balance_kopeks)}\n'
-            f'💳 Стоимость: {settings.format_price(price_kopeks)}\n'
-            f'📉 Не хватает: {settings.format_price(missing)}\n\n'
+            f'💰 Баланс: {settings.format_price(target_user.balance_kopeks, round_kopeks=False)}\n'
+            f'💳 Стоимость: {settings.format_price(price_kopeks, round_kopeks=False)}\n'
+            f'📉 Не хватает: {settings.format_price(missing, round_kopeks=False)}\n\n'
             f'Пополните баланс пользователя перед покупкой.',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[

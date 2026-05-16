@@ -742,7 +742,7 @@ async def purchase_tariff(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     'code': 'insufficient_funds',
-                    'message': f'Недостаточно средств. Не хватает {settings.format_price(missing)}',
+                    'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
                     'missing_amount': missing,
                     'cart_saved': True,
                     'cart_mode': cart_data['cart_mode'],
@@ -895,8 +895,14 @@ async def purchase_tariff(
             except Exception as trial_err:
                 logger.warning('Failed to disable trial on RemnaWave', error=trial_err, trial_id=trial_sub.id)
         try:
-            if subscription.remnawave_uuid:
-                # Existing subscription with Remnawave user — update it
+            # Mirror the bot handler logic: in single-tariff mode, check user.remnawave_uuid
+            # (webhook clears it on panel deletion), not subscription.remnawave_uuid
+            if settings.is_multi_tariff_enabled():
+                _should_create = not subscription.remnawave_uuid
+            else:
+                _should_create = not getattr(user, 'remnawave_uuid', None)
+
+            if not _should_create:
                 await service.update_remnawave_user(
                     db,
                     subscription,
@@ -905,7 +911,6 @@ async def purchase_tariff(
                     sync_squads=True,
                 )
             else:
-                # New subscription — create new Remnawave user
                 await service.create_remnawave_user(
                     db,
                     subscription,
@@ -919,7 +924,7 @@ async def purchase_tariff(
             remnawave_retry_queue.enqueue(
                 subscription_id=subscription.id,
                 user_id=user.id,
-                action='create' if not subscription.remnawave_uuid else 'update',
+                action='create' if _should_create else 'update',
             )
 
         # Save cart for auto-renewal (not for daily tariffs - they have their own charging)

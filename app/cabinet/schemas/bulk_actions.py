@@ -29,6 +29,7 @@ class BulkActionParams(BaseModel):
     promo_group_id: int | None = None
     device_limit: int | None = Field(None, ge=1, le=50)
     delete_from_panel: bool = Field(default=True)
+    force_delete_active_paid: bool = Field(default=False)
 
 
 class BulkSubscriptionInfo(BaseModel):

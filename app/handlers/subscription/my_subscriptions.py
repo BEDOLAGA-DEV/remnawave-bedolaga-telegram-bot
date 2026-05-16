@@ -132,6 +132,16 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
     if is_inactive:
         buttons.append([types.InlineKeyboardButton(text='🗑 Удалить подписку', callback_data=f'sub_del:{sub_id}')])
 
+    if not is_inactive and settings.is_subscription_revoke_enabled():
+        buttons.append(
+            [
+                types.InlineKeyboardButton(
+                    text='🔄 Перевыпустить',
+                    callback_data=f'sr:{sub_id}',
+                )
+            ]
+        )
+
     buttons.append([types.InlineKeyboardButton(text='◀️ К списку подписок', callback_data='my_subscriptions')])
 
     return types.InlineKeyboardMarkup(inline_keyboard=buttons)
