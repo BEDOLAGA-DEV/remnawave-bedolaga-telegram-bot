@@ -82,6 +82,7 @@ def _ensure_client_type_configured(oauth_provider: Any, provider: str, client_ty
             detail=str(exc),
         ) from exc
 
+
 # Ensure OAuthProviderName Literal stays in sync with OAUTH_PROVIDER_COLUMNS
 _EXPECTED_PROVIDERS = {'google', 'yandex', 'discord', 'vk', 'apple'}
 if set(OAUTH_PROVIDER_COLUMNS.keys()) != _EXPECTED_PROVIDERS:

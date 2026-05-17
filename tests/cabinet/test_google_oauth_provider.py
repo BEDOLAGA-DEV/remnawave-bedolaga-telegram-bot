@@ -127,7 +127,9 @@ async def test_validate_google_id_token_accepts_matching_nonce(monkeypatch: pyte
         AsyncMock(return_value={'keys': [_jwk_for_key(private_key, kid)]}),
     )
 
-    claims = await validate_google_id_token(_google_token(private_key_pem, kid, nonce='backend-nonce'), 'ios-client', 'backend-nonce')
+    claims = await validate_google_id_token(
+        _google_token(private_key_pem, kid, nonce='backend-nonce'), 'ios-client', 'backend-nonce'
+    )
 
     assert claims is not None
     assert claims['sub'] == 'google-sub'
@@ -143,7 +145,9 @@ async def test_validate_google_id_token_rejects_nonce_mismatch(monkeypatch: pyte
         AsyncMock(return_value={'keys': [_jwk_for_key(private_key, kid)]}),
     )
 
-    claims = await validate_google_id_token(_google_token(private_key_pem, kid, nonce='other-nonce'), 'ios-client', 'backend-nonce')
+    claims = await validate_google_id_token(
+        _google_token(private_key_pem, kid, nonce='other-nonce'), 'ios-client', 'backend-nonce'
+    )
 
     assert claims is None
 
@@ -173,7 +177,9 @@ async def test_validate_google_id_token_rejects_wrong_issuer(monkeypatch: pytest
         AsyncMock(return_value={'keys': [_jwk_for_key(private_key, kid)]}),
     )
 
-    claims = await validate_google_id_token(_google_token(private_key_pem, kid, issuer='https://evil.example'), 'ios-client')
+    claims = await validate_google_id_token(
+        _google_token(private_key_pem, kid, issuer='https://evil.example'), 'ios-client'
+    )
 
     assert claims is None
 

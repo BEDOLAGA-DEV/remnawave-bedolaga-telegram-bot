@@ -636,7 +636,9 @@ def _build_jwks_public_keys(jwks_data: dict[str, Any], *, log_context: str) -> d
         try:
             public_key = algorithm_cls.from_jwk(key_data)
         except Exception as exc:
-            logger.warning('OAuth JWKS: failed to load JWK', provider=log_context, kid=kid, kty=kty, error=str(exc)[:200])
+            logger.warning(
+                'OAuth JWKS: failed to load JWK', provider=log_context, kid=kid, kty=kty, error=str(exc)[:200]
+            )
             continue
         alg = key_data.get('alg') or _JWK_KTY_DEFAULT_ALG.get(kty, '')
         public_keys[kid] = (public_key, alg)
