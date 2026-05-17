@@ -1024,6 +1024,8 @@ class Settings(BaseSettings):
     # OAuth 2.0 provider settings for cabinet
     OAUTH_GOOGLE_CLIENT_ID: str = ''
     OAUTH_GOOGLE_CLIENT_SECRET: str = ''
+    OAUTH_GOOGLE_IOS_CLIENT_ID: str = ''
+    OAUTH_GOOGLE_ANDROID_CLIENT_ID: str = ''
     OAUTH_GOOGLE_ENABLED: bool = False
 
     OAUTH_YANDEX_CLIENT_ID: str = ''
@@ -3345,6 +3347,9 @@ class Settings(BaseSettings):
                 'client_secret': self.OAUTH_GOOGLE_CLIENT_SECRET,
                 'enabled': self.OAUTH_GOOGLE_ENABLED,
                 'display_name': 'Google',
+                'web_client_id': self.OAUTH_GOOGLE_CLIENT_ID,
+                'ios_client_id': self.OAUTH_GOOGLE_IOS_CLIENT_ID,
+                'android_client_id': self.OAUTH_GOOGLE_ANDROID_CLIENT_ID,
             },
             'yandex': {
                 'client_id': self.OAUTH_YANDEX_CLIENT_ID,

@@ -6,6 +6,7 @@ Router 2 (`merge_router`): Public endpoints for merge preview and execution.
 """
 
 import hashlib
+import secrets
 from datetime import UTC, datetime
 from typing import Any, Literal, NotRequired, TypedDict
 
@@ -56,6 +57,30 @@ logger = structlog.get_logger(__name__)
 
 
 OAuthProviderName = Literal['google', 'yandex', 'discord', 'vk', 'apple']
+OAuthClientType = Literal['web', 'ios', 'android']
+_GOOGLE_NATIVE_CLIENT_TYPES = {'ios', 'android'}
+
+
+def _should_skip_authorize_url(provider: str, client_type: str) -> bool:
+    return (provider == 'apple' and client_type == 'ios') or (
+        provider == 'google' and client_type in _GOOGLE_NATIVE_CLIENT_TYPES
+    )
+
+
+def _is_google_native_token_flow(provider: str, client_type: str | None) -> bool:
+    return provider == 'google' and client_type in _GOOGLE_NATIVE_CLIENT_TYPES
+
+
+def _ensure_client_type_configured(oauth_provider: Any, provider: str, client_type: str) -> None:
+    if not _is_google_native_token_flow(provider, client_type):
+        return
+    try:
+        oauth_provider.ensure_client_type_configured(client_type)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 # Ensure OAuthProviderName Literal stays in sync with OAUTH_PROVIDER_COLUMNS
 _EXPECTED_PROVIDERS = {'google', 'yandex', 'discord', 'vk', 'apple'}
@@ -74,7 +99,7 @@ class OAuthStateData(TypedDict):
     user_id: NotRequired[str]  # ID of user who initiated linking
     code_verifier: NotRequired[str]  # PKCE code verifier (VK)
     nonce: NotRequired[str]  # OIDC nonce (Apple)
-    client_type: NotRequired[str]  # Apple client type: web or ios
+    client_type: NotRequired[str]  # OAuth client type: web, ios, or android
 
 
 def _get_active_providers() -> list[str]:
@@ -109,11 +134,17 @@ class LinkInitResponse(BaseModel):
 
 
 class LinkCallbackRequest(BaseModel):
-    code: str = Field(..., min_length=1, max_length=2048, description='Authorization code from provider')
+    code: str | None = Field(None, min_length=1, max_length=2048, description='Authorization code from provider')
     state: str = Field(..., min_length=1, max_length=128, description='CSRF state token')
     device_id: str | None = Field(None, max_length=256, description='Device ID from VK ID callback')
     id_token: str | None = Field(None, max_length=4096, description='OIDC identity token from provider')
     user: dict[str, Any] | str | None = Field(None, description='First-login user payload from Apple')
+
+    @model_validator(mode='after')
+    def require_code_or_id_token(self) -> 'LinkCallbackRequest':
+        if not self.code and not self.id_token:
+            raise ValueError('Provide either authorization code or id_token')
+        return self
 
 
 class LinkCallbackResponse(BaseModel):
@@ -227,12 +258,13 @@ async def _exchange_and_link_oauth(
     db: AsyncSession,
     user: User,
     provider: str,
-    code: str,
+    code: str | None,
     state: str,
     state_data: OAuthStateData,
     device_id: str | None,
     log_context: str,
     user_payload: dict[str, Any] | str | None = None,
+    id_token: str | None = None,
 ) -> LinkCallbackResponse:
     """Shared OAuth linking logic: exchange code, fetch user info, link or merge.
 
@@ -245,7 +277,25 @@ async def _exchange_and_link_oauth(
             detail='Requested OAuth provider is not available',
         )
 
-    # Exchange code for tokens
+    client_type = state_data.get('client_type') or 'web'
+    if _is_google_native_token_flow(provider, client_type):
+        if not state_data.get('nonce'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Invalid Google native OAuth state',
+            )
+        if not id_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='id_token is required for Google native authentication',
+            )
+    elif not code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Authorization code is required for this OAuth flow',
+        )
+
+    # Exchange code or native id_token for provider tokens/user info
     exchange_kwargs: dict[str, Any] = {'state': state}
     code_verifier = state_data.get('code_verifier')
     if code_verifier:
@@ -253,16 +303,17 @@ async def _exchange_and_link_oauth(
     nonce = state_data.get('nonce')
     if nonce:
         exchange_kwargs['nonce'] = nonce
-    apple_client_type = state_data.get('client_type')
-    if apple_client_type:
-        exchange_kwargs['client_type'] = apple_client_type
+    if client_type:
+        exchange_kwargs['client_type'] = client_type
     if device_id:
         exchange_kwargs['device_id'] = device_id
     if user_payload is not None:
         exchange_kwargs['user'] = user_payload
+    if id_token and _is_google_native_token_flow(provider, client_type):
+        exchange_kwargs['id_token'] = id_token
 
     try:
-        token_data = await oauth_provider.exchange_code(code, **exchange_kwargs)
+        token_data = await oauth_provider.exchange_code(code or '', **exchange_kwargs)
     except Exception as exc:
         logger.error('OAuth code exchange failed', context=log_context, provider=provider, exc_info=True)
         raise HTTPException(
@@ -358,10 +409,15 @@ async def get_linked_providers(
 @router.get('/link/{provider}/init', response_model=LinkInitResponse)
 async def link_provider_init(
     provider: OAuthProviderName,
-    client_type: Literal['web', 'ios'] = 'web',
+    client_type: OAuthClientType = 'web',
     user: User = Depends(get_current_cabinet_user),
 ) -> LinkInitResponse:
     """Start OAuth flow for linking a new provider to the current account."""
+    if provider == 'apple' and client_type == 'android':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Apple OAuth does not support Android client_type',
+        )
 
     # Check if already linked
     column = OAUTH_PROVIDER_COLUMNS[provider]
@@ -377,6 +433,7 @@ async def link_provider_init(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Requested OAuth provider is not available',
         )
+    _ensure_client_type_configured(oauth_provider, provider, client_type)
 
     # Generate PKCE data for VK (and potentially future providers)
     auth_extra = oauth_provider.prepare_auth_state()
@@ -389,10 +446,16 @@ async def link_provider_init(
     if provider == 'apple':
         extra_data['client_type'] = client_type
         auth_extra['_client_type'] = client_type
+    if provider == 'google' and client_type in _GOOGLE_NATIVE_CLIENT_TYPES:
+        extra_data['client_type'] = client_type
+        nonce = secrets.token_urlsafe(32)
+        extra_data['nonce'] = nonce
+        auth_extra['nonce'] = nonce
+        auth_extra['_nonce'] = nonce
 
     state = await generate_oauth_state(provider, extra_data=extra_data)
     authorize_url: str | None = None
-    if not (provider == 'apple' and client_type == 'ios'):
+    if not _should_skip_authorize_url(provider, client_type):
         # Only pass URL-safe params (prefixed with _) to authorize URL; exclude secrets like code_verifier
         url_params = {k: v for k, v in auth_extra.items() if k.startswith('_')} if auth_extra else {}
         authorize_url = oauth_provider.get_authorization_url(state, **url_params)
@@ -453,6 +516,7 @@ async def link_provider_callback(
         state_data=state_data,
         device_id=request.device_id,
         user_payload=request.user,
+        id_token=request.id_token,
         log_context='link-callback',
     )
 
@@ -678,12 +742,18 @@ async def link_telegram(
 
 
 class ServerCompleteRequest(BaseModel):
-    code: str = Field(..., min_length=1, max_length=2048, description='Authorization code from provider')
+    code: str | None = Field(None, min_length=1, max_length=2048, description='Authorization code from provider')
     state: str = Field(..., min_length=1, max_length=128, description='CSRF state token')
     provider: OAuthProviderName | None = Field(None, description='OAuth provider name (resolved from state if omitted)')
     device_id: str | None = Field(None, max_length=256, description='Device ID from VK ID callback')
     id_token: str | None = Field(None, max_length=4096, description='OIDC identity token from provider')
     user: dict[str, Any] | str | None = Field(None, description='First-login user payload from Apple')
+
+    @model_validator(mode='after')
+    def require_code_or_id_token(self) -> 'ServerCompleteRequest':
+        if not self.code and not self.id_token:
+            raise ValueError('Provide either authorization code or id_token')
+        return self
 
 
 class ServerCompleteResponse(LinkCallbackResponse):
@@ -773,6 +843,7 @@ async def link_server_complete(
         state_data=state_data,
         device_id=request.device_id,
         user_payload=request.user,
+        id_token=request.id_token,
         log_context='server-complete',
     )
 

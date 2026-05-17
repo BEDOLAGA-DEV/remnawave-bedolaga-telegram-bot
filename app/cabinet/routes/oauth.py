@@ -1,11 +1,12 @@
 """OAuth 2.0 authentication routes for cabinet."""
 
+import secrets
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -34,6 +35,30 @@ from .auth import _create_auth_response, _process_campaign_bonus, _store_refresh
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/auth/oauth', tags=['Cabinet OAuth'])
+OAuthClientType = Literal['web', 'ios', 'android']
+_GOOGLE_NATIVE_CLIENT_TYPES = {'ios', 'android'}
+
+
+def _should_skip_authorize_url(provider: str, client_type: str) -> bool:
+    return (provider == 'apple' and client_type == 'ios') or (
+        provider == 'google' and client_type in _GOOGLE_NATIVE_CLIENT_TYPES
+    )
+
+
+def _is_google_native_token_flow(provider: str, client_type: str | None) -> bool:
+    return provider == 'google' and client_type in _GOOGLE_NATIVE_CLIENT_TYPES
+
+
+def _ensure_client_type_configured(oauth_provider: Any, provider: str, client_type: str) -> None:
+    if not _is_google_native_token_flow(provider, client_type):
+        return
+    try:
+        oauth_provider.ensure_client_type_configured(client_type)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 async def _finalize_oauth_login(
@@ -82,7 +107,7 @@ class OAuthAuthorizeResponse(BaseModel):
 
 
 class OAuthCallbackRequest(BaseModel):
-    code: str = Field(..., min_length=1, max_length=2048, description='Authorization code from provider')
+    code: str | None = Field(None, min_length=1, max_length=2048, description='Authorization code from provider')
     state: str = Field(..., min_length=1, max_length=128, description='CSRF state token')
     device_id: str | None = Field(None, max_length=256, description='Device ID from VK ID callback')
     id_token: str | None = Field(None, max_length=4096, description='OIDC identity token from provider')
@@ -93,6 +118,12 @@ class OAuthCallbackRequest(BaseModel):
     referral_code: str | None = Field(
         None, max_length=32, pattern=r'^[a-zA-Z0-9_-]+$', description='Referral code of inviter'
     )
+
+    @model_validator(mode='after')
+    def require_code_or_id_token(self) -> 'OAuthCallbackRequest':
+        if not self.code and not self.id_token:
+            raise ValueError('Provide either authorization code or id_token')
+        return self
 
 
 # --- Endpoints ---
@@ -111,23 +142,35 @@ async def get_oauth_providers():
 
 
 @router.get('/{provider}/authorize', response_model=OAuthAuthorizeResponse)
-async def get_oauth_authorize_url(provider: OAuthProviderName, client_type: Literal['web', 'ios'] = 'web'):
+async def get_oauth_authorize_url(provider: OAuthProviderName, client_type: OAuthClientType = 'web'):
     """Get authorization URL for an OAuth provider."""
+    if provider == 'apple' and client_type == 'android':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Apple OAuth does not support Android client_type',
+        )
+
     oauth_provider = get_provider(provider)
     if not oauth_provider:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Requested OAuth provider is not available',
         )
+    _ensure_client_type_configured(oauth_provider, provider, client_type)
 
     # Generate extra state data (e.g., PKCE code_verifier for VK)
     auth_extra = oauth_provider.prepare_auth_state()
     if provider == 'apple':
         auth_extra['client_type'] = client_type
         auth_extra['_client_type'] = client_type
+    if provider == 'google' and client_type in _GOOGLE_NATIVE_CLIENT_TYPES:
+        auth_extra['client_type'] = client_type
+        nonce = secrets.token_urlsafe(32)
+        auth_extra['nonce'] = nonce
+        auth_extra['_nonce'] = nonce
     state = await generate_oauth_state(provider, extra_data=auth_extra or None)
     authorize_url: str | None = None
-    if not (provider == 'apple' and client_type == 'ios'):
+    if not _should_skip_authorize_url(provider, client_type):
         # Only pass URL-safe params (prefixed with _) to authorize URL; exclude secrets like code_verifier
         url_params = {k: v for k, v in auth_extra.items() if k.startswith('_')} if auth_extra else {}
         authorize_url = oauth_provider.get_authorization_url(state, **url_params)
@@ -173,6 +216,24 @@ async def oauth_callback(
             detail='Requested OAuth provider is not available',
         )
 
+    client_type = state_data.get('client_type') or 'web'
+    if _is_google_native_token_flow(provider, client_type):
+        if not state_data.get('nonce'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Invalid Google native OAuth state',
+            )
+        if not request.id_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='id_token is required for Google native authentication',
+            )
+    elif not request.code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Authorization code is required for this OAuth flow',
+        )
+
     # 3. Exchange code for tokens (pass PKCE code_verifier and device_id if present)
     exchange_kwargs: dict[str, Any] = {'state': request.state}
     code_verifier = state_data.get('code_verifier')
@@ -181,16 +242,17 @@ async def oauth_callback(
     nonce = state_data.get('nonce')
     if nonce:
         exchange_kwargs['nonce'] = nonce
-    apple_client_type = state_data.get('client_type')
-    if apple_client_type:
-        exchange_kwargs['client_type'] = apple_client_type
+    if client_type:
+        exchange_kwargs['client_type'] = client_type
     if request.device_id:
         exchange_kwargs['device_id'] = request.device_id
     if request.user is not None:
         exchange_kwargs['user'] = request.user
+    if request.id_token and _is_google_native_token_flow(provider, client_type):
+        exchange_kwargs['id_token'] = request.id_token
 
     try:
-        token_data = await oauth_provider.exchange_code(request.code, **exchange_kwargs)
+        token_data = await oauth_provider.exchange_code(request.code or '', **exchange_kwargs)
     except Exception as exc:
         logger.error('OAuth code exchange failed', provider=provider, exc_info=True)
         raise HTTPException(
