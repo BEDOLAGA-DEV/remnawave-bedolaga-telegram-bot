@@ -713,6 +713,13 @@ class SubscriptionService:
         """
         if not user.telegram_id:
             return
+        if primary_uuid is None:
+            logger.warning(
+                'WL cleanup: skipping — primary_uuid unknown',
+                primary_wl=primary_wl,
+                user_id=user.id,
+            )
+            return
 
         candidates: set[str] = set()
 
@@ -742,17 +749,14 @@ class SubscriptionService:
                 continue
             try:
                 dup = await api.get_user_by_username(candidate)
-            except Exception as lookup_err:
-                logger.warning(
-                    'WL cleanup: lookup failed',
-                    candidate=candidate,
-                    error=lookup_err,
-                )
-                continue
+            except RemnaWaveAPIError as lookup_err:
+                if lookup_err.status_code == 404:
+                    continue
+                raise
             if not dup:
                 continue
             dup_uuid = getattr(dup, 'uuid', None)
-            if primary_uuid and dup_uuid == primary_uuid:
+            if dup_uuid == primary_uuid:
                 # Same account, different alias — skip.
                 continue
             logger.warning(
