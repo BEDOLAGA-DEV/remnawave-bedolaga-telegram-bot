@@ -962,9 +962,12 @@ class SubscriptionService:
             if not user or not user.remnawave_uuid:
                 return False
 
-            primary_wl, legacy_wl = self._build_wl_username(user, subscription)
-
             async with self.get_api_client() as api:
+                main_user = await api.get_user_by_uuid(user.remnawave_uuid)
+                main_username = main_user.username if main_user else ''
+                primary_wl = self._derive_wl_username(main_username, user, subscription)
+                legacy_wl = None
+
                 remnawave_user = await api.get_user_by_username(primary_wl)
                 if not remnawave_user and legacy_wl and legacy_wl != primary_wl:
                     remnawave_user = await api.get_user_by_username(legacy_wl)
