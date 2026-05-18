@@ -62,3 +62,54 @@ async def test_primary_wl_username_built_from_main_username_legacy_form():
     assert api.create_user.await_count == 1
     create_kwargs = api.create_user.await_args.kwargs
     assert create_kwargs['username'] == 'user_123_wl'
+
+
+@pytest.mark.asyncio
+async def test_primary_wl_username_built_from_main_username_new_form():
+    """When main is created as 'u_<tg>_<sub_id>', WL must be 'u_<tg>_<sub_id>_wl'."""
+    service = SubscriptionService()
+    api = MagicMock()
+    api.get_user_by_username = AsyncMock(return_value=None)
+    api.create_user = AsyncMock(return_value=types.SimpleNamespace(uuid='new-wl-uuid'))
+    api.delete_user = AsyncMock(return_value=True)
+
+    user = _make_user(telegram_id=123)
+    subscription = _make_subscription(sub_id=42)
+
+    await service._ensure_wl_user_synced(
+        api,
+        user,
+        subscription,
+        is_actually_active=True,
+        main_username='u_123_42',
+    )
+
+    create_kwargs = api.create_user.await_args.kwargs
+    assert create_kwargs['username'] == 'u_123_42_wl'
+
+
+@pytest.mark.asyncio
+async def test_primary_wl_username_truncated_when_main_too_long():
+    """Main usernames longer than 33 chars are truncated before appending _wl."""
+    service = SubscriptionService()
+    api = MagicMock()
+    api.get_user_by_username = AsyncMock(return_value=None)
+    api.create_user = AsyncMock(return_value=types.SimpleNamespace(uuid='new-wl-uuid'))
+    api.delete_user = AsyncMock(return_value=True)
+
+    user = _make_user(telegram_id=123)
+    subscription = _make_subscription(sub_id=42)
+    long_main = 'a' * 50  # 50 chars
+
+    await service._ensure_wl_user_synced(
+        api,
+        user,
+        subscription,
+        is_actually_active=True,
+        main_username=long_main,
+    )
+
+    final = api.create_user.await_args.kwargs['username']
+    assert final.endswith('_wl')
+    assert len(final) <= 36
+    assert final == 'a' * 33 + '_wl'
