@@ -676,6 +676,24 @@ class SubscriptionService:
             return f'{stem}_wl'
         return f'{base[:33].rstrip("_-")}_wl'
 
+    def _build_wl_username(
+        self,
+        user: User,
+        subscription: Subscription | None,
+    ) -> tuple[str, None]:
+        """Backward-compatible shim — prefer `_derive_wl_username`.
+
+        Existing callers in cabinet routes, handlers, blocked_users_service,
+        and user_service still use the old `(primary_wl, legacy_wl)` tuple
+        return shape. This shim delegates to `_derive_wl_username('', user,
+        subscription)` so they keep working: the empty-string `main_username`
+        triggers the defensive template-based fallback, which matches the
+        old behaviour. `legacy_wl` is always `None` now — duplicate cleanup
+        is handled by `_cleanup_wl_duplicates` (added in Task 4).
+        """
+        primary_wl = self._derive_wl_username('', user, subscription)
+        return primary_wl, None
+
     async def _ensure_wl_user_synced(
         self,
         api: RemnaWaveAPI,
