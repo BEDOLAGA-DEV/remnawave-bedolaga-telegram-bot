@@ -694,6 +694,82 @@ class SubscriptionService:
         primary_wl = self._derive_wl_username('', user, subscription)
         return primary_wl, None
 
+    async def _cleanup_wl_duplicates(
+        self,
+        api: RemnaWaveAPI,
+        user: User,
+        subscription: Subscription,
+        primary_wl: str,
+        primary_uuid: str | None,
+    ) -> None:
+        """Delete other-format WL accounts for this user.
+
+        Iterates known WL naming conventions (legacy 'user_<tg>_wl', new
+        'u_<tg>_<sub_id>_wl' for the current subscription, and the
+        template-based name derived from `format_remnawave_username`).
+        Anything that is NOT primary_wl and does NOT share primary_uuid gets
+        deleted. Lookup 404s are expected; delete failures are logged and
+        swallowed so the main sync keeps working.
+        """
+        if not user.telegram_id:
+            return
+
+        candidates: set[str] = set()
+
+        # Legacy default-template form.
+        candidates.add(f'user_{user.telegram_id}_wl')
+
+        # New per-subscription form for the current subscription.
+        sub_id = getattr(subscription, 'id', None)
+        if sub_id:
+            candidates.add(f'u_{user.telegram_id}_{sub_id}_wl')
+
+        # Template-based form (whatever the current template would generate).
+        try:
+            base = settings.format_remnawave_username(
+                full_name=user.full_name,
+                username=user.username,
+                telegram_id=user.telegram_id,
+                email=user.email,
+                user_id=user.id,
+            )
+            candidates.add(f'{base[:33].rstrip("_-")}_wl')
+        except Exception as fmt_err:
+            logger.warning('WL cleanup: template format failed', error=fmt_err)
+
+        for candidate in candidates:
+            if candidate == primary_wl:
+                continue
+            try:
+                dup = await api.get_user_by_username(candidate)
+            except Exception as lookup_err:
+                logger.warning(
+                    'WL cleanup: lookup failed',
+                    candidate=candidate,
+                    error=lookup_err,
+                )
+                continue
+            if not dup:
+                continue
+            dup_uuid = getattr(dup, 'uuid', None)
+            if primary_uuid and dup_uuid == primary_uuid:
+                # Same account, different alias — skip.
+                continue
+            logger.warning(
+                '🧹 Удаляю дублирующий WL аккаунт',
+                duplicate=candidate,
+                primary=primary_wl,
+                duplicate_uuid=dup_uuid,
+            )
+            try:
+                await api.delete_user(dup_uuid)
+            except Exception as delete_err:
+                logger.warning(
+                    '⚠️ Не удалось удалить дубликат WL',
+                    duplicate=candidate,
+                    error=delete_err,
+                )
+
     async def _ensure_wl_user_synced(
         self,
         api: RemnaWaveAPI,
@@ -750,10 +826,12 @@ class SubscriptionService:
                 return
 
 
+            primary_uuid: str | None = None
             if wl_user:
                 logger.info('♻️ _wl пользователь найден, обновляем', username_wl=username_wl, wl_uuid=wl_user.uuid)
                 try:
                     updated_wl = await api.update_user(uuid=wl_user.uuid, **wl_kwargs)
+                    primary_uuid = updated_wl.uuid
                     if reset_traffic:
                         await self._reset_user_traffic(
                             api,
@@ -766,7 +844,8 @@ class SubscriptionService:
                     if api_error.status_code == 404:
                         logger.warning('⚠️ _wl пользователь не найден при обновлении (404), пробуем создать', username_wl=username_wl)
                         wl_kwargs['username'] = username_wl
-                        await api.create_user(**wl_kwargs)
+                        created_wl = await api.create_user(**wl_kwargs)
+                        primary_uuid = created_wl.uuid
                         logger.info('✅ Пересоздан _wl пользователь после 404', username=username_wl)
                     else:
                         raise api_error
@@ -774,6 +853,7 @@ class SubscriptionService:
                 logger.info('🆕 _wl пользователь не найден, создаём', username_wl=username_wl)
                 wl_kwargs['username'] = username_wl
                 created_wl = await api.create_user(**wl_kwargs)
+                primary_uuid = created_wl.uuid
                 if reset_traffic:
                     await self._reset_user_traffic(
                         api,
@@ -782,6 +862,10 @@ class SubscriptionService:
                         reset_reason,
                     )
                 logger.info('✅ Создан _wl пользователь', username=username_wl)
+
+            await self._cleanup_wl_duplicates(
+                api, user, subscription, primary_wl, primary_uuid,
+            )
 
         except Exception as e:
             logger.error('Ошибка создания/обновления _wl пользователя', error=e, exc_info=True)

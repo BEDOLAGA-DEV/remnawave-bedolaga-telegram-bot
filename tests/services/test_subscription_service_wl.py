@@ -113,3 +113,139 @@ async def test_primary_wl_username_truncated_when_main_too_long():
     assert final.endswith('_wl')
     assert len(final) <= 36
     assert final == 'a' * 33 + '_wl'
+
+
+@pytest.mark.asyncio
+async def test_cleanup_deletes_orphan_legacy_wl_when_primary_is_new_form():
+    """If main is new-form, the legacy 'user_<tg>_wl' orphan must be deleted."""
+    service = SubscriptionService()
+    api = MagicMock()
+    primary_wl_user = types.SimpleNamespace(uuid='primary-wl-uuid')
+    legacy_orphan = types.SimpleNamespace(uuid='legacy-wl-uuid')
+
+    async def fake_get(username: str):
+        if username == 'u_123_42_wl':
+            return primary_wl_user
+        if username == 'user_123_wl':
+            return legacy_orphan
+        return None
+
+    api.get_user_by_username = AsyncMock(side_effect=fake_get)
+    api.update_user = AsyncMock(return_value=primary_wl_user)
+    api.delete_user = AsyncMock(return_value=True)
+    api.reset_user_devices = AsyncMock(return_value=True)
+
+    user = _make_user(telegram_id=123)
+    subscription = _make_subscription(sub_id=42)
+
+    await service._ensure_wl_user_synced(
+        api,
+        user,
+        subscription,
+        is_actually_active=True,
+        main_username='u_123_42',
+    )
+
+    assert api.delete_user.await_count == 1
+    api.delete_user.assert_awaited_with('legacy-wl-uuid')
+
+
+@pytest.mark.asyncio
+async def test_cleanup_deletes_orphan_new_form_when_primary_is_legacy():
+    """If main is legacy, the new-form 'u_<tg>_<sub_id>_wl' orphan must be deleted."""
+    service = SubscriptionService()
+    api = MagicMock()
+    primary_wl_user = types.SimpleNamespace(uuid='primary-wl-uuid')
+    new_orphan = types.SimpleNamespace(uuid='orphan-uuid')
+
+    async def fake_get(username: str):
+        if username == 'user_123_wl':
+            return primary_wl_user
+        if username == 'u_123_42_wl':
+            return new_orphan
+        return None
+
+    api.get_user_by_username = AsyncMock(side_effect=fake_get)
+    api.update_user = AsyncMock(return_value=primary_wl_user)
+    api.delete_user = AsyncMock(return_value=True)
+    api.reset_user_devices = AsyncMock(return_value=True)
+
+    user = _make_user(telegram_id=123)
+    subscription = _make_subscription(sub_id=42)
+
+    await service._ensure_wl_user_synced(
+        api,
+        user,
+        subscription,
+        is_actually_active=True,
+        main_username='user_123',
+    )
+
+    assert api.delete_user.await_count == 1
+    api.delete_user.assert_awaited_with('orphan-uuid')
+
+
+@pytest.mark.asyncio
+async def test_cleanup_no_duplicates_no_delete():
+    """When no duplicate exists, delete_user must not be called."""
+    service = SubscriptionService()
+    api = MagicMock()
+    primary_wl_user = types.SimpleNamespace(uuid='primary-wl-uuid')
+
+    async def fake_get(username: str):
+        if username == 'user_123_wl':
+            return primary_wl_user
+        return None
+
+    api.get_user_by_username = AsyncMock(side_effect=fake_get)
+    api.update_user = AsyncMock(return_value=primary_wl_user)
+    api.delete_user = AsyncMock(return_value=True)
+    api.reset_user_devices = AsyncMock(return_value=True)
+
+    user = _make_user(telegram_id=123)
+    subscription = _make_subscription(sub_id=42)
+
+    await service._ensure_wl_user_synced(
+        api,
+        user,
+        subscription,
+        is_actually_active=True,
+        main_username='user_123',
+    )
+
+    assert api.delete_user.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_cleanup_delete_failure_does_not_break_flow():
+    """If delete_user raises, the sync still completes."""
+    service = SubscriptionService()
+    api = MagicMock()
+    primary_wl_user = types.SimpleNamespace(uuid='primary-wl-uuid')
+    orphan = types.SimpleNamespace(uuid='orphan-uuid')
+
+    async def fake_get(username: str):
+        if username == 'user_123_wl':
+            return primary_wl_user
+        if username == 'u_123_42_wl':
+            return orphan
+        return None
+
+    api.get_user_by_username = AsyncMock(side_effect=fake_get)
+    api.update_user = AsyncMock(return_value=primary_wl_user)
+    api.delete_user = AsyncMock(side_effect=Exception('boom'))
+    api.reset_user_devices = AsyncMock(return_value=True)
+
+    user = _make_user(telegram_id=123)
+    subscription = _make_subscription(sub_id=42)
+
+    # Must NOT raise.
+    await service._ensure_wl_user_synced(
+        api,
+        user,
+        subscription,
+        is_actually_active=True,
+        main_username='user_123',
+    )
+
+    assert api.delete_user.await_count == 1
