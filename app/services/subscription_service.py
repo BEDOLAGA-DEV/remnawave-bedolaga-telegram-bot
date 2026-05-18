@@ -235,7 +235,7 @@ class SubscriptionService:
                     subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value) 
                     and subscription.end_date > current_time
                 )
-                main_username_for_wl = getattr(updated_user, 'username', '') or ''
+                main_username_for_wl = updated_user.username if updated_user else ''
                 await self._ensure_wl_user_synced(
                     api,
                     user,
@@ -612,7 +612,7 @@ class SubscriptionService:
                             reset_reason,
                         )
 
-                main_username_for_wl = getattr(updated_user, 'username', '') or ''
+                main_username_for_wl = updated_user.username if updated_user else ''
                 await self._ensure_wl_user_synced(
                     api,
                     user,
