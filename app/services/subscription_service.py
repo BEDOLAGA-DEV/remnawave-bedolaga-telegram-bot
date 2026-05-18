@@ -235,8 +235,15 @@ class SubscriptionService:
                     subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value) 
                     and subscription.end_date > current_time
                 )
+                main_username_for_wl = ''  # Filled by Task 3
                 await self._ensure_wl_user_synced(
-                    api, user, subscription, is_actually_active, reset_traffic, reset_reason
+                    api,
+                    user,
+                    subscription,
+                    is_actually_active,
+                    main_username=main_username_for_wl,
+                    reset_traffic=reset_traffic,
+                    reset_reason=reset_reason,
                 )
 
                 subscription.remnawave_short_uuid = updated_user.short_uuid
@@ -605,8 +612,15 @@ class SubscriptionService:
                             reset_reason,
                         )
 
+                main_username_for_wl = ''  # Filled by Task 3
                 await self._ensure_wl_user_synced(
-                    api, user, subscription, is_actually_active, reset_traffic, reset_reason
+                    api,
+                    user,
+                    subscription,
+                    is_actually_active,
+                    main_username=main_username_for_wl,
+                    reset_traffic=reset_traffic,
+                    reset_reason=reset_reason,
                 )
 
                 subscription.subscription_url = updated_user.subscription_url
@@ -630,22 +644,25 @@ class SubscriptionService:
             logger.error('Ошибка обновления RemnaWave пользователя', error=e)
             return None
 
-    def _build_wl_username(self, user: User, subscription: Subscription | None) -> tuple[str, str | None]:
-        """Return (primary, legacy_fallback) WL username pair.
 
-        Primary = user_<tg>_<sub.id>_wl. Uses Subscription.id (integer DB key)
-        for shortest readable WL identifier (e.g. user_543534800_42_wl ~ 22
-        chars). Note this differs from main user format which uses hex
-        remnawave_short_id; the trade-off is shorter WL names at the cost
-        of not directly mirroring main_username.
+    def _derive_wl_username(
+        self,
+        main_username: str,
+        user: User,
+        subscription: Subscription | None,
+    ) -> str:
+        """Build WL panel username from the resolved main-account username.
 
-        Legacy fallback: user_<tg>_wl (pre-multi-tariff format, one WL per
-        user). Lookup tries primary first, falls back to legacy so existing
-        prod accounts created before this change keep working.
-
-        Remnawave caps usernames at 36 chars; we reserve 3 for the "_wl"
-        suffix.
+        Mirrors '<main>_wl', truncating main to 33 chars first so the final
+        string fits the RemnaWave 36-char username cap. If main_username is
+        empty (defensive — should not happen at call site), falls back to
+        template-based logic to avoid creating an unnamed account.
         """
+        cleaned = (main_username or '').strip().rstrip('_-')
+        if cleaned:
+            trimmed = cleaned[:33].rstrip('_-')
+            return f'{trimmed}_wl'
+        # Defensive fallback: template-based legacy behaviour.
         base = settings.format_remnawave_username(
             full_name=user.full_name,
             username=user.username,
@@ -653,13 +670,11 @@ class SubscriptionService:
             email=user.email,
             user_id=user.id,
         )
-        legacy = f'{base[:33]}_wl'
         sub_id = getattr(subscription, 'id', None) if subscription else None
         if sub_id:
-            new_stem = f'{base}_{sub_id}'[:33]
-            primary = f'{new_stem}_wl'
-            return primary, legacy
-        return legacy, None
+            stem = f'{base}_{sub_id}'[:33].rstrip('_-')
+            return f'{stem}_wl'
+        return f'{base[:33].rstrip("_-")}_wl'
 
     async def _ensure_wl_user_synced(
         self,
@@ -667,12 +682,16 @@ class SubscriptionService:
         user: User,
         subscription: Subscription,
         is_actually_active: bool,
+        main_username: str,
         reset_traffic: bool = False,
         reset_reason: str | None = None,
     ) -> None:
         try:
-            primary_wl, legacy_wl = self._build_wl_username(user, subscription)
+            primary_wl = self._derive_wl_username(main_username, user, subscription)
             username_wl = primary_wl
+            # Legacy lookup fallbacks removed — primary_wl now mirrors the main
+            # account name on panel, so the only correct WL account is the one
+            # named '<main>_wl'.
 
             description = settings.format_remnawave_user_description(
                 full_name=user.full_name,
@@ -712,50 +731,6 @@ class SubscriptionService:
                 logger.error('❌ Ошибка поиска _wl пользователя', username_wl=username_wl, error=lookup_error, exc_info=True)
                 return
 
-            # Legacy fallback: existing accounts created before per-sub WL
-            # naming used user_<tg>_wl (no sub.id). Try the legacy name once
-            # before deciding to create a new account.
-            if not wl_user and legacy_wl and legacy_wl != primary_wl:
-                try:
-                    wl_user = await api.get_user_by_username(legacy_wl)
-                    if wl_user:
-                        logger.info(
-                            '♻️ Found legacy WL user, will reuse',
-                            legacy=legacy_wl,
-                            primary=primary_wl,
-                            wl_uuid=wl_user.uuid,
-                        )
-                        # Keep updates pointing at the legacy account so we
-                        # don't create a duplicate. Future creations (when
-                        # legacy is gone) will use primary_wl.
-                        username_wl = legacy_wl
-                except Exception as legacy_err:
-                    logger.warning('Legacy WL fallback lookup failed', error=legacy_err)
-
-            # Second legacy fallback: pre-template-change WL accounts used the
-            # historical default template 'user_<telegram_id>_wl' regardless of
-            # the current REMNAWAVE_USER_USERNAME_TEMPLATE. If admin later
-            # changed the template to e.g. 'u_{telegram_id}', the first legacy
-            # check above would search 'u_<tg>_wl' and miss the actual stored
-            # name 'user_<tg>_wl'. Try the hardcoded historical name too.
-            if not wl_user and user.telegram_id:
-                hardcoded_legacy_wl = f'user_{user.telegram_id}_wl'
-                if hardcoded_legacy_wl not in (primary_wl, legacy_wl):
-                    try:
-                        wl_user = await api.get_user_by_username(hardcoded_legacy_wl)
-                        if wl_user:
-                            logger.info(
-                                '♻️ Found pre-template-change WL user, will reuse',
-                                legacy=hardcoded_legacy_wl,
-                                primary=primary_wl,
-                                wl_uuid=wl_user.uuid,
-                            )
-                            username_wl = hardcoded_legacy_wl
-                    except Exception as hardcoded_err:
-                        logger.warning(
-                            'Pre-template-change WL fallback lookup failed',
-                            error=hardcoded_err,
-                        )
 
             if wl_user:
                 logger.info('♻️ _wl пользователь найден, обновляем', username_wl=username_wl, wl_uuid=wl_user.uuid)

@@ -35,6 +35,7 @@ def _make_subscription(sub_id: int = 42, tariff=None) -> MagicMock:
     sub.wl_traffic_used_gb = 0.0
     sub.end_date = MagicMock()
     sub.status = 'active'
+    sub.device_limit = None
     return sub
 
 
