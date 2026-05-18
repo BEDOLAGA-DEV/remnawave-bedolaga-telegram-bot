@@ -982,13 +982,18 @@ class SubscriptionService:
 
             async with self.get_api_client() as api:
                 main_user = await api.get_user_by_uuid(user.remnawave_uuid)
-                main_username = main_user.username if main_user else ''
+                if main_user is None:
+                    logger.warning(
+                        'WL sync: main user not found on panel — skipping WL sync',
+                        user_id=user.id,
+                        remnawave_uuid=user.remnawave_uuid,
+                        subscription_id=subscription.id,
+                    )
+                    return False
+                main_username = main_user.username
                 primary_wl = self._derive_wl_username(main_username, user, subscription)
-                legacy_wl = None
 
                 remnawave_user = await api.get_user_by_username(primary_wl)
-                if not remnawave_user and legacy_wl and legacy_wl != primary_wl:
-                    remnawave_user = await api.get_user_by_username(legacy_wl)
                 if not remnawave_user:
                     return False
 
