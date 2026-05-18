@@ -690,6 +690,14 @@ class SubscriptionService:
         triggers the defensive template-based fallback, which matches the
         old behaviour. `legacy_wl` is always `None` now — duplicate cleanup
         is handled by `_cleanup_wl_duplicates` (added in Task 4).
+
+        Known gap: callers like `user_service`, `blocked_users_service`, and
+        `handlers/subscription/wl_traffic` historically used `legacy_wl` as a
+        secondary lookup. Since the shim always returns `legacy_wl=None`, that
+        branch is now dead in those callers — orphan WL accounts only get
+        cleaned up via `_cleanup_wl_duplicates` during a fresh sync of
+        `_ensure_wl_user_synced`. Deactivation/block paths that never trigger
+        a sync will leave the orphan alive on panel.
         """
         primary_wl = self._derive_wl_username('', user, subscription)
         return primary_wl, None
@@ -1063,6 +1071,16 @@ class SubscriptionService:
             return False
 
     async def sync_wl_subscription_usage(self, db: AsyncSession, subscription: Subscription) -> bool:
+        """Sync WL traffic usage from the panel back to the local subscription row.
+
+        Note: this method fetches the main RemnaWave account via
+        `api.get_user_by_uuid` before looking up the WL account. The extra
+        call is necessary because the WL username now mirrors the main
+        username on panel, and the source of truth for that name is the
+        panel itself — not the local template. If this becomes a perf
+        bottleneck, consider caching `main_username` on the subscription
+        row at write time.
+        """
         try:
             user = await get_user_by_id(db, subscription.user_id)
             if not user or not user.remnawave_uuid:
