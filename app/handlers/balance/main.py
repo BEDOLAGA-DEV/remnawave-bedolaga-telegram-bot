@@ -818,8 +818,8 @@ def register_balance_handlers(dp: Dispatcher):
 
     from .etoplatezhi import (
         start_etoplatezhi_card_topup,
-        start_etoplatezhi_sbp_topup,
         start_etoplatezhi_sberpay_topup,
+        start_etoplatezhi_sbp_topup,
         start_etoplatezhi_topup,
         start_etoplatezhi_yoomoney_topup,
     )
