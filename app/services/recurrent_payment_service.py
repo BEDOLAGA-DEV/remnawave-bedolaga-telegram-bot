@@ -1,8 +1,9 @@
-"""Сервис рекуррентных автоплатежей через YooKassa.
+"""Сервис рекуррентных автоплатежей через сохранённые карты.
 
 Находит подписки с autopay, у которых недостаточно баланса для продления,
-и пополняет баланс с сохранённой карты. Существующий autopay в
-monitoring_service затем спишет баланс и продлит подписку.
+и пополняет баланс с сохранённой карты. Поставщик карты выбирается через
+:mod:`app.services.payment.recurring` registry — текущая реализация
+поддерживает YooKassa и легко расширяется новыми провайдерами.
 """
 
 from __future__ import annotations
@@ -304,10 +305,12 @@ async def _process_single_subscription(
     topup_amount_kopeks = max(shortage, min_amount)
     topup_amount_rubles = topup_amount_kopeks / 100
 
-    # Создаём автоплатёж
-    yookassa_service = payment_service.yookassa_service
-    if not yookassa_service or not yookassa_service.configured:
-        logger.warning('YooKassa сервис не сконфигурирован для рекуррентных платежей')
+    # Заведомо не выходим за рамки локальных рекуррентов: список провайдеров
+    # берётся из registry. Если ни один не настроен — пропускаем подписку.
+    from app.services.payment.recurring import get_provider, is_any_recurring_enabled
+
+    if not is_any_recurring_enabled():
+        logger.warning('Ни один провайдер рекуррентных платежей не сконфигурирован')
         return 'skipped'
 
     description = settings.get_balance_payment_description(
@@ -324,61 +327,89 @@ async def _process_single_subscription(
     # Перебираем все сохранённые карты пока не найдём рабочую
     today = datetime.now(UTC).strftime('%Y-%m-%d')
     for saved_method in saved_methods:
-        # Детерминированный ключ: при рестарте/повторе YooKassa вернёт тот же платёж
+        provider_name = saved_method.provider or 'yookassa'
+        provider_token = saved_method.provider_token or saved_method.yookassa_payment_method_id
+        provider = get_provider(provider_name)
+        if not provider or not provider.is_enabled() or not provider_token:
+            logger.debug(
+                'Провайдер карты недоступен, пробуем следующую',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                provider=provider_name,
+                saved_method_id=saved_method.id,
+            )
+            continue
+
+        # Детерминированный ключ: при рестарте/повторе платформа вернёт тот же платёж
         idem_key = f'recurrent_{subscription.id}_{saved_method.id}_{today}'
-        result = await yookassa_service.create_autopayment(
-            amount=topup_amount_rubles,
-            currency='RUB',
+        charge = await provider.charge(
+            provider_token=provider_token,
+            amount_kopeks=topup_amount_kopeks,
             description=description,
-            payment_method_id=saved_method.yookassa_payment_method_id,
             metadata=metadata,
-            idempotence_key=idem_key,
+            idempotency_key=idem_key,
+            user_id=user.id,
         )
 
-        if not result:
+        if not charge.success:
             card_display = f'*{saved_method.card_last4}' if saved_method.card_last4 else ''
             logger.warning(
                 'Не удалось списать с карты, пробуем следующую',
                 user_id=user.id,
                 subscription_id=subscription.id,
-                payment_method_id=saved_method.yookassa_payment_method_id,
+                provider=provider_name,
+                payment_method_id=provider_token,
                 card_display=card_display,
+                error=charge.error_message,
             )
             continue
 
-        # Успешно — сохраняем локальную запись с привязкой к YooKassa ID
-        try:
-            from app.database.crud.yookassa import create_yookassa_payment
+        result = charge.raw or {}
 
-            yookassa_created_at = None
-            if result.get('created_at'):
-                try:
-                    yookassa_created_at = datetime.fromisoformat(result['created_at'].replace('Z', '+00:00'))
-                except Exception:
-                    pass
+        # Успешно — сохраняем локальную запись (пока только для YooKassa).
+        if provider_name == 'yookassa':
+            try:
+                from app.database.crud.yookassa import create_yookassa_payment
 
-            result_payment = await create_yookassa_payment(
-                db=db,
-                user_id=user.id,
-                yookassa_payment_id=result['id'],
-                amount_kopeks=topup_amount_kopeks,
-                currency='RUB',
-                description=description,
-                status=result.get('status', 'pending'),
-                metadata_json=metadata,
-                yookassa_created_at=yookassa_created_at,
-                test_mode=result.get('test_mode', False),
-            )
-            if result_payment:
-                logger.info(
-                    'Рекуррентный автоплатёж создан',
+                yookassa_created_at = None
+                if result.get('created_at'):
+                    try:
+                        yookassa_created_at = datetime.fromisoformat(result['created_at'].replace('Z', '+00:00'))
+                    except Exception:
+                        pass
+
+                result_payment = await create_yookassa_payment(
+                    db=db,
                     user_id=user.id,
-                    subscription_id=subscription.id,
-                    amount_kopeks=topup_amount_kopeks,
                     yookassa_payment_id=result['id'],
+                    amount_kopeks=topup_amount_kopeks,
+                    currency='RUB',
+                    description=description,
+                    status=result.get('status', 'pending'),
+                    metadata_json=metadata,
+                    yookassa_created_at=yookassa_created_at,
+                    test_mode=result.get('test_mode', False),
                 )
-        except Exception as e:
-            logger.warning('Ошибка создания локальной записи рекуррентного платежа', error=e)
+                if result_payment:
+                    logger.info(
+                        'Рекуррентный автоплатёж создан',
+                        user_id=user.id,
+                        subscription_id=subscription.id,
+                        provider=provider_name,
+                        amount_kopeks=topup_amount_kopeks,
+                        provider_payment_id=charge.provider_payment_id,
+                    )
+            except Exception as e:
+                logger.warning('Ошибка создания локальной записи рекуррентного платежа', error=e)
+        else:
+            logger.info(
+                'Рекуррентный автоплатёж создан',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                provider=provider_name,
+                amount_kopeks=topup_amount_kopeks,
+                provider_payment_id=charge.provider_payment_id,
+            )
 
         # Уведомляем пользователя
         if bot and user.telegram_id:
@@ -405,7 +436,8 @@ async def _process_single_subscription(
                     logger.info(
                         'Рекуррентный платёж в обработке',
                         user_id=user.id,
-                        yookassa_payment_id=result.get('id'),
+                        provider=provider_name,
+                        provider_payment_id=charge.provider_payment_id,
                     )
             except Exception as notify_error:
                 logger.warning('Ошибка уведомления об автоплатеже', notify_error=notify_error)

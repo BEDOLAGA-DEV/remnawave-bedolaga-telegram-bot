@@ -255,13 +255,30 @@ class YooKassaPayment(Base):
 
 class SavedPaymentMethod(Base):
     __tablename__ = 'saved_payment_methods'
-    __table_args__ = (Index('ix_saved_payment_methods_user_active', 'user_id', 'is_active'),)
+    __table_args__ = (
+        Index('ix_saved_payment_methods_user_active', 'user_id', 'is_active'),
+        Index(
+            'ix_saved_payment_methods_provider_token',
+            'provider',
+            'provider_token',
+            unique=True,
+            postgresql_where=text('provider_token IS NOT NULL'),
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
 
-    # YooKassa payment_method.id — ключ для рекуррентных списаний
-    yookassa_payment_method_id = Column(String(255), unique=True, nullable=False, index=True)
+    # Provider name: 'yookassa', 'etoplatezhi', ...
+    provider = Column(String(32), nullable=False, server_default='yookassa')
+    # Unified saved-card token (YooKassa payment_method.id, EtoPlatezhi recurring_id, etc.)
+    provider_token = Column(String(255), nullable=True)
+    # Provider-side expiry of the saved-card record (NULL if provider does not expose it)
+    valid_thru = Column(AwareDateTime(), nullable=True)
+
+    # YooKassa payment_method.id — legacy alias for provider_token when provider='yookassa'.
+    # Kept for backward compatibility with existing callers; will be dropped in a follow-up release.
+    yookassa_payment_method_id = Column(String(255), unique=True, nullable=True, index=True)
 
     # Тип метода: bank_card, yoo_money, sberbank, tinkoff_bank, sbp, mir_pay
     method_type = Column(String(50), nullable=False, default='bank_card')
@@ -282,7 +299,7 @@ class SavedPaymentMethod(Base):
     user = relationship('User', backref='saved_payment_methods')
 
     def __repr__(self):
-        return f'<SavedPaymentMethod(id={self.id}, user_id={self.user_id}, type={self.method_type}, last4={self.card_last4})>'
+        return f'<SavedPaymentMethod(id={self.id}, user_id={self.user_id}, provider={self.provider}, type={self.method_type}, last4={self.card_last4})>'
 
 
 class CryptoBotPayment(Base):
