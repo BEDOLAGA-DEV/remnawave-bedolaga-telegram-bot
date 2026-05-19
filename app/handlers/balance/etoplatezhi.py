@@ -267,20 +267,35 @@ async def _start_etoplatezhi_topup_impl(
         ]
     )
 
+    recurring_active = bool(
+        settings.ETOPLATEZHI_RECURRENT_ENABLED and settings.ETOPLATEZHI_RECURRENT_REQUIRED
+    )
+    consent_block = ''
+    if recurring_active:
+        consent_block = (
+            '\n\n⚠️ <b>Внимание:</b> при оплате будет подключено автоматическое '
+            'продление подписки (рекуррентные платежи). Продолжая, вы соглашаетесь с условиями: '
+            '<a href="https://matrixvpn.top/privacy">политика</a>, '
+            '<a href="https://matrixvpn.top/offer">оферта</a>, '
+            '<a href="https://matrixvpn.top/recurrent-payments">соглашение о рекуррентах</a>.'
+        )
+
     await callback.message.edit_text(
         texts.t(
             'ETOPLATEZHI_ENTER_AMOUNT',
             '\U0001f4b3 <b>Пополнение через {name}</b>\n\n'
             'Введите сумму пополнения в рублях.\n\n'
             'Минимум: {min_amount}\u20bd\n'
-            'Максимум: {max_amount}\u20bd',
+            'Максимум: {max_amount}\u20bd{consent}',
         ).format(
             name=display_name,
+            consent=consent_block,
             min_amount=min_amount,
             max_amount=f'{max_amount:,}'.replace(',', ' '),
         ),
         parse_mode='HTML',
         reply_markup=keyboard,
+        disable_web_page_preview=True,
     )
 
 

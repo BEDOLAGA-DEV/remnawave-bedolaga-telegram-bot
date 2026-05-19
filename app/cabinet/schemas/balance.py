@@ -61,6 +61,9 @@ class PaymentMethodResponse(BaseModel):
     # сразу (seamless flow внутри MiniApp WebView). Если False — показывает панель
     # "Открыть страницу оплаты" с кнопкой.
     open_url_direct: bool = False
+    # True when the provider will register a recurring card during this payment.
+    # Frontend should display a consent checkbox referencing the public legal pages.
+    requires_recurring_consent: bool = False
 
 
 class TopUpRequest(BaseModel):
