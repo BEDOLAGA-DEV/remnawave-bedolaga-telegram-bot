@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import json
 from typing import Any
 from urllib.parse import urlencode
 
@@ -156,9 +157,16 @@ class EtoplatezhiService:
         if language_code:
             params['language_code'] = language_code
         if register_recurring:
-            # stored_card_type=3 → платформа сохранит карту и пришлёт recurring.id
-            # в callback'е (см. ru_gate_payment_recurring_registration.html).
-            params['card'] = {'stored_card_type': 3}
+            # Payment Page принимает регистрацию повторяемых оплат через
+            # отдельный параметр ``recurring`` — JSON-строка (см.
+            # ru_pp_recurring.html). ``type=U`` означает "автооплата" —
+            # списания инициируются мерчантом (см.
+            # ru_gate__saved_cards_payments_type.html). После успешной
+            # оплаты ETO пришлёт ``recurring.id`` в webhook'е, который мы
+            # сохраним как ``provider_token`` в ``saved_payment_methods``.
+            params['recurring'] = json.dumps(
+                {'register': True, 'type': 'U'}, separators=(',', ':')
+            )
 
         params['signature'] = self._sign(params)
 
