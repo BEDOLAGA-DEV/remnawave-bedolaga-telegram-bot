@@ -106,12 +106,16 @@ class EtoplatezhiPaymentMixin:
 
             lifetime = settings.ETOPLATEZHI_PAYMENT_LIFETIME_MINUTES
 
-            # Определяем force_payment_method по типу подметода
-            force_method = None
-            if payment_method_type == 'sbp':
-                force_method = 'sbp'
-            elif payment_method_type == 'card':
-                force_method = 'card'
+            # Определяем force_payment_method по типу подметода.
+            # Коды берутся из справочника ETO (ru_pm_codes.html). На нашем
+            # проекте активны: card-partner, sberpay, yoomoney-wallet.
+            force_method_map = {
+                'sbp': 'sbp-qr',
+                'card': 'card-partner',
+                'sberpay': 'sberpay',
+                'yoomoney': 'yoomoney-wallet',
+            }
+            force_method = force_method_map.get(payment_method_type or '')
 
             # Если включены рекуррентные платежи EtoPlatezhi — регистрируем карту
             # в этой же транзакции (stored_card_type=3). После успешного callback

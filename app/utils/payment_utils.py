@@ -296,10 +296,36 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    if settings.is_etoplatezhi_sberpay_enabled():
+        sberpay_name = settings.get_etoplatezhi_sberpay_display_name()
+        methods.append(
+            {
+                'id': 'etoplatezhi_sberpay',
+                'name': sberpay_name,
+                'icon': '🟢',
+                'description': f'через {sberpay_name}',
+                'callback': 'topup_etoplatezhi_sberpay',
+            }
+        )
+
+    if settings.is_etoplatezhi_yoomoney_enabled():
+        yoomoney_name = settings.get_etoplatezhi_yoomoney_display_name()
+        methods.append(
+            {
+                'id': 'etoplatezhi_yoomoney',
+                'name': yoomoney_name,
+                'icon': '💜',
+                'description': f'через {yoomoney_name}',
+                'callback': 'topup_etoplatezhi_yoomoney',
+            }
+        )
+
     if (
         settings.is_etoplatezhi_enabled()
         and not settings.is_etoplatezhi_sbp_enabled()
         and not settings.is_etoplatezhi_card_enabled()
+        and not settings.is_etoplatezhi_sberpay_enabled()
+        and not settings.is_etoplatezhi_yoomoney_enabled()
     ):
         etoplatezhi_name = settings.get_etoplatezhi_display_name()
         methods.append(
@@ -512,6 +538,10 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_etoplatezhi_sbp_enabled()
     if method_id == 'etoplatezhi_card':
         return settings.is_etoplatezhi_card_enabled()
+    if method_id == 'etoplatezhi_sberpay':
+        return settings.is_etoplatezhi_sberpay_enabled()
+    if method_id == 'etoplatezhi_yoomoney':
+        return settings.is_etoplatezhi_yoomoney_enabled()
     if method_id == 'antilopay':
         return settings.is_antilopay_enabled()
     if method_id == 'antilopay_sbp':
@@ -553,6 +583,8 @@ def get_payment_method_status() -> dict[str, bool]:
         'etoplatezhi': settings.is_etoplatezhi_enabled(),
         'etoplatezhi_sbp': settings.is_etoplatezhi_sbp_enabled(),
         'etoplatezhi_card': settings.is_etoplatezhi_card_enabled(),
+        'etoplatezhi_sberpay': settings.is_etoplatezhi_sberpay_enabled(),
+        'etoplatezhi_yoomoney': settings.is_etoplatezhi_yoomoney_enabled(),
         'antilopay': settings.is_antilopay_enabled(),
         'antilopay_sbp': settings.is_antilopay_sbp_enabled(),
         'antilopay_card': settings.is_antilopay_card_enabled(),

@@ -198,12 +198,20 @@ async def process_etoplatezhi_payment_amount(
     )
 
 
-ETOPLATEZHI_PAYMENT_METHODS = {'etoplatezhi', 'etoplatezhi_sbp', 'etoplatezhi_card'}
+ETOPLATEZHI_PAYMENT_METHODS = {
+    'etoplatezhi',
+    'etoplatezhi_sbp',
+    'etoplatezhi_card',
+    'etoplatezhi_sberpay',
+    'etoplatezhi_yoomoney',
+}
 
 ETOPLATEZHI_SERVICE_MAP: dict[str, str | None] = {
     'etoplatezhi': None,
     'etoplatezhi_sbp': 'sbp',
     'etoplatezhi_card': 'card',
+    'etoplatezhi_sberpay': 'sberpay',
+    'etoplatezhi_yoomoney': 'yoomoney',
 }
 
 
@@ -241,6 +249,10 @@ async def _start_etoplatezhi_topup_impl(
         display_name = settings.get_etoplatezhi_sbp_display_name()
     elif payment_method == 'etoplatezhi_card':
         display_name = settings.get_etoplatezhi_card_display_name()
+    elif payment_method == 'etoplatezhi_sberpay':
+        display_name = settings.get_etoplatezhi_sberpay_display_name()
+    elif payment_method == 'etoplatezhi_yoomoney':
+        display_name = settings.get_etoplatezhi_yoomoney_display_name()
     else:
         display_name = settings.get_etoplatezhi_display_name()
 
@@ -300,3 +312,23 @@ async def start_etoplatezhi_card_topup(
     state: FSMContext,
 ):
     await _start_etoplatezhi_topup_impl(callback, db_user, state, 'etoplatezhi_card')
+
+
+@error_handler
+async def start_etoplatezhi_sberpay_topup(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _start_etoplatezhi_topup_impl(callback, db_user, state, 'etoplatezhi_sberpay')
+
+
+@error_handler
+async def start_etoplatezhi_yoomoney_topup(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _start_etoplatezhi_topup_impl(callback, db_user, state, 'etoplatezhi_yoomoney')

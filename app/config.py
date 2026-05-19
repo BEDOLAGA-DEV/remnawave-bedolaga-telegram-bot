@@ -819,6 +819,10 @@ class Settings(BaseSettings):
     ETOPLATEZHI_SBP_DISPLAY_NAME: str = 'СБП (Etoplatezhi)'
     ETOPLATEZHI_CARD_ENABLED: bool = False
     ETOPLATEZHI_CARD_DISPLAY_NAME: str = 'Карта (Etoplatezhi)'
+    ETOPLATEZHI_SBERPAY_ENABLED: bool = False
+    ETOPLATEZHI_SBERPAY_DISPLAY_NAME: str = 'SberPay (Etoplatezhi)'
+    ETOPLATEZHI_YOOMONEY_ENABLED: bool = False
+    ETOPLATEZHI_YOOMONEY_DISPLAY_NAME: str = 'ЮMoney (Etoplatezhi)'
 
     # Recurring (Card-on-File) charges via EtoPlatezhi Gate API.
     ETOPLATEZHI_RECURRENT_ENABLED: bool = False
@@ -2552,6 +2556,26 @@ class Settings(BaseSettings):
 
     def get_etoplatezhi_card_display_name_html(self) -> str:
         return html.escape(self.get_etoplatezhi_card_display_name())
+
+    def is_etoplatezhi_sberpay_enabled(self) -> bool:
+        return self.ETOPLATEZHI_SBERPAY_ENABLED and self.is_etoplatezhi_enabled()
+
+    def get_etoplatezhi_sberpay_display_name(self) -> str:
+        name = (self.ETOPLATEZHI_SBERPAY_DISPLAY_NAME or '').strip()
+        return name or 'SberPay (Etoplatezhi)'
+
+    def get_etoplatezhi_sberpay_display_name_html(self) -> str:
+        return html.escape(self.get_etoplatezhi_sberpay_display_name())
+
+    def is_etoplatezhi_yoomoney_enabled(self) -> bool:
+        return self.ETOPLATEZHI_YOOMONEY_ENABLED and self.is_etoplatezhi_enabled()
+
+    def get_etoplatezhi_yoomoney_display_name(self) -> str:
+        name = (self.ETOPLATEZHI_YOOMONEY_DISPLAY_NAME or '').strip()
+        return name or 'ЮMoney (Etoplatezhi)'
+
+    def get_etoplatezhi_yoomoney_display_name_html(self) -> str:
+        return html.escape(self.get_etoplatezhi_yoomoney_display_name())
 
     def is_kassa_ai_sbp_enabled(self) -> bool:
         return self.KASSA_AI_SBP_ENABLED and self.is_kassa_ai_enabled()

@@ -177,7 +177,13 @@ async def route_payment_by_method(
             await process_aurapay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
-    if payment_method in ('etoplatezhi', 'etoplatezhi_sbp', 'etoplatezhi_card'):
+    if payment_method in (
+        'etoplatezhi',
+        'etoplatezhi_sbp',
+        'etoplatezhi_card',
+        'etoplatezhi_sberpay',
+        'etoplatezhi_yoomoney',
+    ):
         from .etoplatezhi import process_etoplatezhi_payment_amount
 
         async with AsyncSessionLocal() as db:
@@ -810,11 +816,19 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_aurapay_sbp_topup, F.data == 'topup_aurapay_sbp')
     dp.callback_query.register(start_aurapay_card_topup, F.data == 'topup_aurapay_card')
 
-    from .etoplatezhi import start_etoplatezhi_card_topup, start_etoplatezhi_sbp_topup, start_etoplatezhi_topup
+    from .etoplatezhi import (
+        start_etoplatezhi_card_topup,
+        start_etoplatezhi_sbp_topup,
+        start_etoplatezhi_sberpay_topup,
+        start_etoplatezhi_topup,
+        start_etoplatezhi_yoomoney_topup,
+    )
 
     dp.callback_query.register(start_etoplatezhi_topup, F.data == 'topup_etoplatezhi')
     dp.callback_query.register(start_etoplatezhi_sbp_topup, F.data == 'topup_etoplatezhi_sbp')
     dp.callback_query.register(start_etoplatezhi_card_topup, F.data == 'topup_etoplatezhi_card')
+    dp.callback_query.register(start_etoplatezhi_sberpay_topup, F.data == 'topup_etoplatezhi_sberpay')
+    dp.callback_query.register(start_etoplatezhi_yoomoney_topup, F.data == 'topup_etoplatezhi_yoomoney')
 
     from .antilopay import (
         start_antilopay_card_topup,
