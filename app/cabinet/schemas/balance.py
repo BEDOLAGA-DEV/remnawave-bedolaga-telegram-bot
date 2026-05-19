@@ -150,6 +150,7 @@ class SavedCardResponse(BaseModel):
     card_type: str | None = None
     title: str | None = None
     created_at: datetime
+    provider: str = 'yookassa'
 
     model_config = ConfigDict(from_attributes=True)
 

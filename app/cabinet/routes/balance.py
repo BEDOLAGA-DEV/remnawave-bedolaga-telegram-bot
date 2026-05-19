@@ -1534,7 +1534,9 @@ async def get_saved_cards(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get user's saved payment methods (cards) for recurrent payments."""
-    recurrent_enabled = settings.YOOKASSA_RECURRENT_ENABLED
+    from app.services.payment.recurring import is_any_recurring_enabled
+
+    recurrent_enabled = is_any_recurring_enabled()
 
     if not recurrent_enabled:
         return SavedCardsListResponse(cards=[], recurrent_enabled=False)
@@ -1549,6 +1551,7 @@ async def get_saved_cards(
             card_type=m.card_type,
             title=m.title,
             created_at=m.created_at,
+            provider=m.provider,
         )
         for m in methods
     ]
@@ -1563,7 +1566,9 @@ async def delete_saved_card(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Unlink (deactivate) a saved payment method."""
-    if not settings.YOOKASSA_RECURRENT_ENABLED:
+    from app.services.payment.recurring import is_any_recurring_enabled
+
+    if not is_any_recurring_enabled():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Recurrent payments are not enabled',

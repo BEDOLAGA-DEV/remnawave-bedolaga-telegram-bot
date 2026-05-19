@@ -108,6 +108,7 @@ class EtoplatezhiService:
         force_payment_method: str | None = None,
         customer_email: str | None = None,
         language_code: str | None = None,
+        register_recurring: bool = False,
     ) -> str:
         """Строит URL для редиректа на платёжную страницу Etoplatezhi.
 
@@ -124,6 +125,10 @@ class EtoplatezhiService:
             force_payment_method: 'sbp' или 'card' для принудительного выбора.
             customer_email: Email покупателя.
             language_code: Язык интерфейса ('ru', 'en').
+            register_recurring: если True — добавляет ``card.stored_card_type=3``,
+                регистрируя автоматические повторяемые списания. EtoPlatezhi
+                вернёт ``recurring.id`` в callback'е об успешной оплате — он
+                сохраняется как ``provider_token`` в ``saved_payment_methods``.
 
         Returns:
             Полный URL с параметрами и подписью.
@@ -150,6 +155,10 @@ class EtoplatezhiService:
             params['customer_email'] = customer_email
         if language_code:
             params['language_code'] = language_code
+        if register_recurring:
+            # stored_card_type=3 → платформа сохранит карту и пришлёт recurring.id
+            # в callback'е (см. ru_gate_payment_recurring_registration.html).
+            params['card'] = {'stored_card_type': 3}
 
         params['signature'] = self._sign(params)
 

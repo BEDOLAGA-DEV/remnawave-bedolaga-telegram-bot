@@ -113,6 +113,14 @@ class EtoplatezhiPaymentMixin:
             elif payment_method_type == 'card':
                 force_method = 'card'
 
+            # Если включены рекуррентные платежи EtoPlatezhi — регистрируем карту
+            # в этой же транзакции (stored_card_type=3). После успешного callback
+            # сохраняем recurring.id в saved_payment_methods.
+            register_recurring = bool(
+                settings.ETOPLATEZHI_RECURRENT_ENABLED
+                and settings.ETOPLATEZHI_RECURRENT_REQUIRED
+            )
+
             # Строим URL для редиректа на платёжную страницу
             payment_url = etoplatezhi_service.build_payment_url(
                 project_id=settings.ETOPLATEZHI_PROJECT_ID or 0,
@@ -127,6 +135,7 @@ class EtoplatezhiPaymentMixin:
                 force_payment_method=force_method,
                 customer_email=email,
                 language_code=language,
+                register_recurring=register_recurring,
             )
 
             logger.info(
@@ -284,6 +293,12 @@ class EtoplatezhiPaymentMixin:
                 payment.callback_payload = callback_payload
                 payment.updated_at = datetime.now(UTC)
                 await db.flush()
+
+                # Persist saved card for recurring charges if the platform
+                # included a ``recurring`` block in the callback (i.e. the
+                # initial payment was registered with stored_card_type=3).
+                await self._save_etoplatezhi_recurring_card(db, payment, payload)
+
                 return await self._finalize_etoplatezhi_payment(db, payment, trigger='webhook')
 
             # Для не-success статусов можно безопасно коммитить
@@ -300,6 +315,96 @@ class EtoplatezhiPaymentMixin:
         except Exception as e:
             logger.exception('Etoplatezhi callback: ошибка обработки', error=e)
             return False
+
+    async def _save_etoplatezhi_recurring_card(
+        self,
+        db: AsyncSession,
+        payment: Any,
+        payload: dict[str, Any],
+    ) -> None:
+        """Если в callback'е есть ``recurring`` → создаём saved-card запись.
+
+        Вызывается только после успешного платежа. Промахи логируются,
+        но не валят основную обработку платежа.
+        """
+        if not settings.ETOPLATEZHI_RECURRENT_ENABLED:
+            return
+
+        recurring = payload.get('recurring') if isinstance(payload, dict) else None
+        if not isinstance(recurring, dict):
+            return
+        recurring_id = recurring.get('id')
+        if recurring_id in (None, ''):
+            return
+
+        user_id = getattr(payment, 'user_id', None)
+        if not user_id:
+            logger.warning(
+                'Etoplatezhi: recurring.id есть, но user_id неизвестен — карту не сохраняем',
+                order_id=getattr(payment, 'order_id', None),
+                recurring_id=recurring_id,
+            )
+            return
+
+        account = payload.get('account') if isinstance(payload, dict) else None
+        if not isinstance(account, dict):
+            account = {}
+
+        number = account.get('number') or ''
+        card_first6 = number[:6] if len(number) >= 6 else None
+        card_last4 = number[-4:] if len(number) >= 4 else None
+        card_type = (account.get('type') or '').lower() or None
+        expiry_month = account.get('expiry_month')
+        expiry_year = account.get('expiry_year')
+        card_holder = account.get('card_holder')
+
+        title = None
+        if card_last4:
+            type_label = (card_type or 'card').capitalize()
+            title = f'{type_label} *{card_last4}'
+        elif card_holder:
+            title = str(card_holder)
+
+        valid_thru_raw = recurring.get('valid_thru')
+        valid_thru = None
+        if isinstance(valid_thru_raw, str) and valid_thru_raw:
+            try:
+                valid_thru = datetime.fromisoformat(valid_thru_raw.replace('Z', '+00:00'))
+            except ValueError:
+                valid_thru = None
+
+        from app.database.crud.saved_payment_method import create_saved_payment_method
+
+        try:
+            saved = await create_saved_payment_method(
+                db=db,
+                user_id=user_id,
+                provider='etoplatezhi',
+                provider_token=str(recurring_id),
+                method_type='bank_card',
+                card_first6=card_first6,
+                card_last4=card_last4,
+                card_type=card_type,
+                card_expiry_month=str(expiry_month) if expiry_month is not None else None,
+                card_expiry_year=str(expiry_year) if expiry_year is not None else None,
+                title=title,
+                valid_thru=valid_thru,
+            )
+            if saved:
+                logger.info(
+                    'Etoplatezhi: карта сохранена для рекуррентных платежей',
+                    saved_method_id=saved.id,
+                    user_id=user_id,
+                    recurring_id=str(recurring_id),
+                    card_last4=card_last4,
+                )
+        except Exception as e:  # pragma: no cover - safety net
+            logger.warning(
+                'Etoplatezhi: не удалось сохранить карту для рекуррентных платежей',
+                user_id=user_id,
+                recurring_id=str(recurring_id),
+                error=e,
+            )
 
     async def _finalize_etoplatezhi_payment(
         self,

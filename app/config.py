@@ -820,6 +820,12 @@ class Settings(BaseSettings):
     ETOPLATEZHI_CARD_ENABLED: bool = False
     ETOPLATEZHI_CARD_DISPLAY_NAME: str = 'Карта (Etoplatezhi)'
 
+    # Recurring (Card-on-File) charges via EtoPlatezhi Gate API.
+    ETOPLATEZHI_RECURRENT_ENABLED: bool = False
+    # When True, initial payments register a recurring (stored_card_type=3) unconditionally;
+    # otherwise the platform / user is expected to opt in via the Payment Page.
+    ETOPLATEZHI_RECURRENT_REQUIRED: bool = False
+
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
     CABINET_BUTTON_STYLE: str = ''

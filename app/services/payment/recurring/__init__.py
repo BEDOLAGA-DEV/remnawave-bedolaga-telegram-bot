@@ -12,6 +12,7 @@ from app.services.payment.recurring.base import (
     ChargeResult,
     RecurringProvider,
 )
+from app.services.payment.recurring.etoplatezhi_provider import EtoPlatezhiRecurringProvider
 from app.services.payment.recurring.yookassa_provider import YooKassaRecurringProvider
 
 
@@ -42,6 +43,7 @@ def is_any_recurring_enabled() -> bool:
 
 # Built-in providers
 register_provider(YooKassaRecurringProvider())
+register_provider(EtoPlatezhiRecurringProvider())
 
 
 __all__ = [
