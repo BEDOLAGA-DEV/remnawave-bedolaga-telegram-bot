@@ -75,9 +75,7 @@ async def test_yookassa_provider_delegates_to_service(monkeypatch: pytest.Monkey
 
     fake_service = SimpleNamespace(
         configured=True,
-        create_autopayment=AsyncMock(
-            return_value={'id': 'yk_1', 'status': 'succeeded', 'paid': True}
-        ),
+        create_autopayment=AsyncMock(return_value={'id': 'yk_1', 'status': 'succeeded', 'paid': True}),
     )
     provider._service = fake_service  # type: ignore[attr-defined]
 
@@ -150,7 +148,7 @@ class _FakeAsyncClient:
         self.last_json: dict[str, Any] | None = None
         self.last_headers: dict[str, str] | None = None
 
-    async def __aenter__(self) -> '_FakeAsyncClient':
+    async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:

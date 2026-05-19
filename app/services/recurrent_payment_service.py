@@ -303,7 +303,6 @@ async def _process_single_subscription(
     # Сумма пополнения = нехватка (минимум YOOKASSA_MIN_AMOUNT_KOPEKS)
     min_amount = settings.YOOKASSA_MIN_AMOUNT_KOPEKS
     topup_amount_kopeks = max(shortage, min_amount)
-    topup_amount_rubles = topup_amount_kopeks / 100
 
     # Заведомо не выходим за рамки локальных рекуррентов: список провайдеров
     # берётся из registry. Если ни один не настроен — пропускаем подписку.

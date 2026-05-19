@@ -117,8 +117,7 @@ class EtoplatezhiPaymentMixin:
             # в этой же транзакции (stored_card_type=3). После успешного callback
             # сохраняем recurring.id в saved_payment_methods.
             register_recurring = bool(
-                settings.ETOPLATEZHI_RECURRENT_ENABLED
-                and settings.ETOPLATEZHI_RECURRENT_REQUIRED
+                settings.ETOPLATEZHI_RECURRENT_ENABLED and settings.ETOPLATEZHI_RECURRENT_REQUIRED
             )
 
             # Строим URL для редиректа на платёжную страницу
