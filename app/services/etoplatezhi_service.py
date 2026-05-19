@@ -126,10 +126,11 @@ class EtoplatezhiService:
             force_payment_method: 'sbp' или 'card' для принудительного выбора.
             customer_email: Email покупателя.
             language_code: Язык интерфейса ('ru', 'en').
-            register_recurring: если True — добавляет ``card.stored_card_type=3``,
-                регистрируя автоматические повторяемые списания. EtoPlatezhi
-                вернёт ``recurring.id`` в callback'е об успешной оплате — он
-                сохраняется как ``provider_token`` в ``saved_payment_methods``.
+            register_recurring: если True — добавляет Payment Page параметр
+                ``recurring={"register":true,"type":"U"}`` (автооплата,
+                merchant-initiated). EtoPlatezhi вернёт ``recurring.id`` в
+                callback'е об успешной оплате — он сохраняется как
+                ``provider_token`` в ``saved_payment_methods``.
 
         Returns:
             Полный URL с параметрами и подписью.
@@ -164,9 +165,7 @@ class EtoplatezhiService:
             # ru_gate__saved_cards_payments_type.html). После успешной
             # оплаты ETO пришлёт ``recurring.id`` в webhook'е, который мы
             # сохраним как ``provider_token`` в ``saved_payment_methods``.
-            params['recurring'] = json.dumps(
-                {'register': True, 'type': 'U'}, separators=(',', ':')
-            )
+            params['recurring'] = json.dumps({'register': True, 'type': 'U'}, separators=(',', ':'))
 
         params['signature'] = self._sign(params)
 
