@@ -169,7 +169,35 @@ class EtoplatezhiService:
             customer_id=customer_id,
         )
 
-        return f'{PAYMENT_PAGE_BASE_URL}?{urlencode(params)}'
+        return f'{PAYMENT_PAGE_BASE_URL}?{urlencode(self._flatten_url_params(params))}'
+
+    def _flatten_url_params(self, params: dict[str, Any]) -> list[tuple[str, Any]]:
+        """Flatten nested dicts into ``key[subkey]=value`` pairs for ``urlencode``.
+
+        EtoPlatezhi Payment Page accepts nested fields (``card``, ``customer``
+        etc.) in bracket notation. The default ``urlencode`` does not handle
+        nested dicts — it serialises them as ``key=<dict repr>`` which the
+        platform rejects with ``/error/invalid-initial-params``.
+        """
+        out: list[tuple[str, Any]] = []
+
+        def walk(value: Any, prefix: str) -> None:
+            if isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    next_prefix = f'{prefix}[{sub_key}]' if prefix else str(sub_key)
+                    walk(sub_value, next_prefix)
+            elif isinstance(value, list):
+                for idx, item in enumerate(value):
+                    next_prefix = f'{prefix}[{idx}]' if prefix else str(idx)
+                    walk(item, next_prefix)
+            elif isinstance(value, bool):
+                out.append((prefix, '1' if value else '0'))
+            elif value is not None:
+                out.append((prefix, value))
+
+        for key, value in params.items():
+            walk(value, str(key))
+        return out
 
     def verify_callback_signature(self, payload: dict[str, Any]) -> bool:
         """Верифицирует подпись в callback-е Etoplatezhi.
