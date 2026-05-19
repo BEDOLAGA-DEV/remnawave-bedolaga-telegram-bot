@@ -267,11 +267,8 @@ async def _start_etoplatezhi_topup_impl(
         ]
     )
 
-    # Recurring is supported on card + SberPay. YooMoney sub-option doesn't.
     recurring_active = bool(
-        settings.ETOPLATEZHI_RECURRENT_ENABLED
-        and settings.ETOPLATEZHI_RECURRENT_REQUIRED
-        and payment_method in ('etoplatezhi', 'etoplatezhi_card', 'etoplatezhi_sberpay')
+        settings.ETOPLATEZHI_RECURRENT_ENABLED and settings.ETOPLATEZHI_RECURRENT_REQUIRED
     )
     consent_block = ''
     if recurring_active:
