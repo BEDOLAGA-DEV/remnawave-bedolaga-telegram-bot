@@ -30,6 +30,7 @@ class KassaAiPaymentMixin:
         language: str = 'ru',
         payment_system_id: int | None = None,
         return_url: str | None = None,
+        fail_url: str | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж KassaAI.
@@ -110,7 +111,7 @@ class KassaAiPaymentMixin:
                 if payment_system_id is not None
                 else settings.KASSA_AI_PAYMENT_SYSTEM_ID,
                 success_url=return_url,
-                fail_url=return_url,
+                fail_url=fail_url or return_url,
                 notification_url=webhook_url,
             )
 
