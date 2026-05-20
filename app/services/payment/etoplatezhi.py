@@ -379,6 +379,10 @@ class EtoplatezhiPaymentMixin:
         from app.database.crud.saved_payment_method import create_saved_payment_method
 
         try:
+            # commit=False keeps the FOR UPDATE lock on the payment row held by
+            # the caller (process_etoplatezhi_callback) until _finalize_etoplatezhi_payment
+            # issues its single commit. Otherwise a concurrent webhook delivery
+            # could reprocess the same payment between save_card and finalize.
             saved = await create_saved_payment_method(
                 db=db,
                 user_id=user_id,
@@ -392,6 +396,7 @@ class EtoplatezhiPaymentMixin:
                 card_expiry_year=str(expiry_year) if expiry_year is not None else None,
                 title=title,
                 valid_thru=valid_thru,
+                commit=False,
             )
             if saved:
                 logger.info(

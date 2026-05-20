@@ -47,6 +47,7 @@ async def create_saved_payment_method(
     card_expiry_year: str | None = None,
     title: str | None = None,
     valid_thru: datetime | None = None,
+    commit: bool = True,
 ) -> SavedPaymentMethod | None:
     """Создаёт или реактивирует сохранённый метод оплаты.
 
@@ -90,7 +91,10 @@ async def create_saved_payment_method(
     )
     reactivated = result.scalar_one_or_none()
     if reactivated:
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
         logger.info(
             'Реактивирован сохранённый метод оплаты',
             saved_method_id=reactivated.id,
@@ -118,9 +122,13 @@ async def create_saved_payment_method(
 
     db.add(method)
     try:
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
     except IntegrityError as e:
-        await db.rollback()
+        if commit:
+            await db.rollback()
         logger.error(
             'Ошибка создания сохранённого метода оплаты',
             provider=provider_name,

@@ -82,11 +82,11 @@ async def process_recurrent_payments(db: AsyncSession, bot: Bot | None = None) -
     Returns:
         dict: Статистика обработки
     """
-    if not settings.YOOKASSA_RECURRENT_ENABLED:
-        return {'skipped': True, 'reason': 'recurrent_disabled'}
+    # Provider-agnostic gate: skip only if NO recurring provider is configured.
+    from app.services.payment.recurring import is_any_recurring_enabled
 
-    if not settings.YOOKASSA_ENABLED:
-        return {'skipped': True, 'reason': 'yookassa_disabled'}
+    if not is_any_recurring_enabled():
+        return {'skipped': True, 'reason': 'recurrent_disabled'}
 
     if not settings.ENABLE_AUTOPAY:
         return {'skipped': True, 'reason': 'autopay_disabled'}

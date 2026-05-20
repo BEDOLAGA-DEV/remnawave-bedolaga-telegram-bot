@@ -97,12 +97,17 @@ async def validate_and_calculate(
 
     # Trial-as-period: when TRIAL_PAYMENT_ENABLED, the landing exposes a virtual
     # period with days=TRIAL_DURATION_DAYS / price=TRIAL_ACTIVATION_PRICE. Accept
-    # it for any allowed tariff without checking tariff.period_prices.
+    # it for any allowed tariff without checking tariff.period_prices, BUT still
+    # enforce the per-landing allowed_periods override so admins can disable the
+    # trial on a specific landing.
     if (
         settings.TRIAL_PAYMENT_ENABLED
         and settings.TRIAL_ACTIVATION_PRICE > 0
         and period_days == settings.TRIAL_DURATION_DAYS
     ):
+        landing_periods_override = (landing.allowed_periods or {}).get(str(tariff_id))
+        if landing_periods_override is not None and period_days not in landing_periods_override:
+            raise GuestPurchaseError('Trial period is disabled for this landing')
         return tariff, int(settings.TRIAL_ACTIVATION_PRICE)
 
     # Check period against landing-level override (if set)
@@ -454,7 +459,10 @@ async def fulfill_purchase(
                 update_server_counters=True,
             )
         else:
-            # No subscription at all — create new
+            # No subscription at all — create new. is_trial is passed in the
+            # constructor so the row is persisted with the correct flag in a
+            # single transaction (no two-commit window where a crash could
+            # leave is_trial=False on a trial subscription).
             subscription = await create_paid_subscription(
                 db=db,
                 user_id=user.id,
@@ -463,12 +471,9 @@ async def fulfill_purchase(
                 device_limit=device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
+                is_trial=is_trial_purchase,
                 update_server_counters=True,
             )
-            if is_trial_purchase:
-                subscription.is_trial = True
-                await db.commit()
-                await db.refresh(subscription)
 
         subscription_service = SubscriptionService()
         await subscription_service.create_remnawave_user(db, subscription)
