@@ -119,6 +119,13 @@ class UserStatus(Enum):
     DELETED = 'deleted'
 
 
+class AccountDeletionRequestStatus(Enum):
+    PENDING = 'pending'
+    PROCESSING = 'processing'
+    COMPLETED = 'completed'
+    FAILED = 'failed'
+
+
 class SubscriptionStatus(Enum):
     TRIAL = 'trial'
     ACTIVE = 'active'
@@ -3554,6 +3561,34 @@ class CabinetRefreshToken(Base):
     def __repr__(self) -> str:
         status = 'valid' if self.is_valid else ('revoked' if self.is_revoked else 'expired')
         return f'<CabinetRefreshToken id={self.id} user_id={self.user_id} status={status}>'
+
+
+class AccountDeletionRequest(Base):
+    """Durable cleanup job for user-initiated account deletion."""
+
+    __tablename__ = 'account_deletion_requests'
+    __table_args__ = (
+        Index('ix_account_deletion_requests_status_next_retry', 'status', 'next_retry_at'),
+        Index('ix_account_deletion_requests_user_status', 'user_id', 'status'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    status = Column(String(20), default=AccountDeletionRequestStatus.PENDING.value, nullable=False, index=True)
+    panel_uuids = Column(JSON, nullable=False, default=list)
+    telegram_id = Column(BigInteger, nullable=True)
+    attempt_count = Column(Integer, default=0, nullable=False)
+    max_attempts = Column(Integer, default=10, nullable=False)
+    next_retry_at = Column(AwareDateTime(), default=func.now(), nullable=False)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+    completed_at = Column(AwareDateTime(), nullable=True)
+
+    user = relationship('User', backref='account_deletion_requests')
+
+    def __repr__(self) -> str:
+        return f"<AccountDeletionRequest id={self.id} user_id={self.user_id} status='{self.status}'>"
 
 
 # ==================== FORTUNE WHEEL ====================

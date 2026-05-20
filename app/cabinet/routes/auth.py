@@ -29,6 +29,7 @@ from app.database.crud.user import (
     verify_and_apply_email_change,
 )
 from app.database.models import CabinetRefreshToken, User, UserStatus
+from app.services.account_deletion_service import account_deletion_service
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
 from app.services.rbac_bootstrap_service import (
@@ -69,6 +70,8 @@ from ..auth.merge_service import create_merge_token
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 from ..ip_utils import get_client_ip
 from ..schemas.auth import (
+    AccountDeleteRequest,
+    AccountDeleteResponse,
     AuthResponse,
     AutoLoginRequest,
     CampaignBonusInfo,
@@ -1823,6 +1826,74 @@ async def get_current_user(
 ):
     """Get current authenticated user info."""
     return _user_to_response(user)
+
+
+def _verify_account_delete_proof(user: User, request: AccountDeleteRequest) -> None:
+    if user.password_hash:
+        if not request.password:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='Current password is required',
+            )
+        if not verify_password(request.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='Invalid current password',
+            )
+        return
+
+    if user.telegram_id is not None:
+        if not request.telegram_init_data:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='Telegram confirmation is required',
+            )
+
+        user_data = validate_telegram_init_data(request.telegram_init_data)
+        try:
+            telegram_id = int(user_data.get('id')) if user_data else None
+        except (TypeError, ValueError):
+            telegram_id = None
+        if telegram_id != user.telegram_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='Invalid Telegram confirmation',
+            )
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail='Account ownership cannot be verified',
+    )
+
+
+@router.post('/me/delete', response_model=AccountDeleteResponse)
+async def delete_current_account(
+    request: AccountDeleteRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Delete the current user's account while preserving audit records.
+
+    Frontend contract:
+    - send `confirmation="DELETE"` for every request;
+    - send `password` for accounts with a password;
+    - otherwise send `telegram_init_data` for Telegram-only accounts;
+    - clear local access/refresh tokens after a successful response.
+    """
+    _verify_account_delete_proof(user, request)
+
+    try:
+        await account_deletion_service.delete_own_account(db, user)
+    except Exception as error:
+        await db.rollback()
+        logger.error('Failed to self-delete cabinet account', user_id=user.id, error=error)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to delete account',
+        ) from error
+
+    return AccountDeleteResponse(message='Account deletion requested')
 
 
 @router.get('/me/permissions')

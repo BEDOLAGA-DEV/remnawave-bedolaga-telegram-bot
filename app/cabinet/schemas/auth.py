@@ -1,6 +1,7 @@
 """Authentication schemas for cabinet."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -126,6 +127,24 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AccountDeleteRequest(BaseModel):
+    """Request to self-delete the current cabinet account."""
+
+    confirmation: Literal['DELETE'] = Field(..., description='Must be exactly DELETE')
+    password: str | None = Field(None, min_length=1, max_length=128, description='Current password for password accounts')
+    telegram_init_data: str | None = Field(
+        None,
+        max_length=4096,
+        description='Telegram WebApp initData for Telegram-only accounts',
+    )
+
+
+class AccountDeleteResponse(BaseModel):
+    """Response after self-service account deletion."""
+
+    message: str = Field(..., description='Deletion result message')
 
 
 class EmailRegisterStandaloneRequest(BaseModel):
