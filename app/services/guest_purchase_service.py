@@ -343,22 +343,32 @@ async def fulfill_purchase(
         notification_tariff_name = tariff.name
         notification_language = user.language or 'ru'
 
-        # Verify the tariff still has a price configured for this period.
-        # We do NOT re-verify the exact amount because discounts, price changes,
-        # or promo codes may have altered the price at purchase time. The amount
-        # was validated server-side in validate_and_calculate() and the payment
-        # provider confirmed the charged amount.
-        expected_price = tariff.get_price_for_period(purchase.period_days)
-        if expected_price is None:
-            logger.error(
-                'Price no longer configured for period — aborting fulfillment',
-                purchase_id=purchase.id,
-                tariff_id=tariff.id,
-                period_days=purchase.period_days,
-            )
-            purchase.status = GuestPurchaseStatus.FAILED.value
-            await db.commit()
-            return purchase
+        # Trial-as-period purchases use TRIAL_ACTIVATION_PRICE / TRIAL_DURATION_DAYS
+        # from settings — the price is NOT in tariff.period_prices, so skip the
+        # tariff-level price check for them.
+        is_trial_purchase = (
+            settings.TRIAL_PAYMENT_ENABLED
+            and settings.TRIAL_ACTIVATION_PRICE > 0
+            and purchase.period_days == settings.TRIAL_DURATION_DAYS
+        )
+
+        if not is_trial_purchase:
+            # Verify the tariff still has a price configured for this period.
+            # We do NOT re-verify the exact amount because discounts, price changes,
+            # or promo codes may have altered the price at purchase time. The amount
+            # was validated server-side in validate_and_calculate() and the payment
+            # provider confirmed the charged amount.
+            expected_price = tariff.get_price_for_period(purchase.period_days)
+            if expected_price is None:
+                logger.error(
+                    'Price no longer configured for period — aborting fulfillment',
+                    purchase_id=purchase.id,
+                    tariff_id=tariff.id,
+                    period_days=purchase.period_days,
+                )
+                purchase.status = GuestPurchaseStatus.FAILED.value
+                await db.commit()
+                return purchase
 
         # Check if user already has a subscription
         if settings.is_multi_tariff_enabled():

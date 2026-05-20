@@ -345,8 +345,12 @@ async def _load_landing_tariffs(
         periods = []
 
         # Prepend trial period (only on first eligible tariff to avoid duplicates).
-        # Trial uses TRIAL_DURATION_DAYS / TRIAL_ACTIVATION_PRICE from settings.
-        if trial_enabled and not landing_tariffs:
+        # If admin set an allowed_periods override for this tariff and trial_days
+        # is NOT in the override, the trial is suppressed on this landing.
+        trial_allowed_for_this_tariff = (
+            tariff_period_override is None or trial_days in tariff_period_override
+        )
+        if trial_enabled and not landing_tariffs and trial_allowed_for_this_tariff:
             periods.append(
                 LandingTariffPeriod(
                     days=trial_days,
