@@ -347,13 +347,10 @@ async def _load_landing_tariffs(
         # Prepend trial period (only on first eligible tariff to avoid duplicates).
         # Trial uses TRIAL_DURATION_DAYS / TRIAL_ACTIVATION_PRICE from settings.
         if trial_enabled and not landing_tariffs:
-            day_word = (
-                'день' if trial_days == 1 else 'дня' if 1 < trial_days < 5 else 'дней'
-            )
             periods.append(
                 LandingTariffPeriod(
                     days=trial_days,
-                    label=f'Пробный период {trial_days} {day_word}',
+                    label='Пробный период',
                     price_kopeks=trial_price,
                     price_label=settings.format_price(trial_price),
                     original_price_kopeks=None,
