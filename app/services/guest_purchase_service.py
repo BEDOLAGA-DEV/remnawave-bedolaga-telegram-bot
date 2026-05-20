@@ -95,6 +95,16 @@ async def validate_and_calculate(
     if tariff is None or not tariff.is_active:
         raise GuestPurchaseError('Tariff not found or inactive')
 
+    # Trial-as-period: when TRIAL_PAYMENT_ENABLED, the landing exposes a virtual
+    # period with days=TRIAL_DURATION_DAYS / price=TRIAL_ACTIVATION_PRICE. Accept
+    # it for any allowed tariff without checking tariff.period_prices.
+    if (
+        settings.TRIAL_PAYMENT_ENABLED
+        and settings.TRIAL_ACTIVATION_PRICE > 0
+        and period_days == settings.TRIAL_DURATION_DAYS
+    ):
+        return tariff, int(settings.TRIAL_ACTIVATION_PRICE)
+
     # Check period against landing-level override (if set)
     allowed_periods = landing.allowed_periods or {}
     if allowed_periods:
@@ -405,6 +415,21 @@ async def fulfill_purchase(
             all_servers, _ = await get_all_server_squads(db, available_only=True)
             squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
+        # Trial purchase: when period_days matches TRIAL_DURATION_DAYS and paid trial
+        # is enabled, the subscription is created with is_trial=True and uses the
+        # trial-specific traffic / device limits from settings (not the tariff's).
+        is_trial_purchase = (
+            settings.TRIAL_PAYMENT_ENABLED
+            and settings.TRIAL_ACTIVATION_PRICE > 0
+            and purchase.period_days == settings.TRIAL_DURATION_DAYS
+        )
+        if is_trial_purchase:
+            traffic_limit = settings.TRIAL_TRAFFIC_LIMIT_GB
+            device_limit = settings.TRIAL_DEVICE_LIMIT
+        else:
+            traffic_limit = tariff.traffic_limit_gb
+            device_limit = tariff.device_limit
+
         if existing_subscription is not None:
             # Expired/inactive subscription — replace it
             existing_subscription.tariff_id = tariff.id
@@ -412,10 +437,10 @@ async def fulfill_purchase(
                 db,
                 existing_subscription,
                 duration_days=purchase.period_days,
-                traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
+                traffic_limit_gb=traffic_limit,
+                device_limit=device_limit,
                 connected_squads=squads,
-                is_trial=False,
+                is_trial=is_trial_purchase,
                 update_server_counters=True,
             )
         else:
@@ -424,12 +449,16 @@ async def fulfill_purchase(
                 db=db,
                 user_id=user.id,
                 duration_days=purchase.period_days,
-                traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
+                traffic_limit_gb=traffic_limit,
+                device_limit=device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
                 update_server_counters=True,
             )
+            if is_trial_purchase:
+                subscription.is_trial = True
+                await db.commit()
+                await db.refresh(subscription)
 
         subscription_service = SubscriptionService()
         await subscription_service.create_remnawave_user(db, subscription)

@@ -48,6 +48,7 @@ class LandingTariffPeriod(BaseModel):
     original_price_kopeks: int | None = None  # set if discount active
     original_price_label: str | None = None
     discount_percent: int | None = None  # effective discount for this tariff
+    is_trial: bool = False  # True when this period activates a paid trial subscription
 
 
 class LandingTariff(BaseModel):
@@ -326,6 +327,13 @@ async def _load_landing_tariffs(
     allowed_periods = landing.allowed_periods or {}
     landing_tariffs = []
 
+    # Trial config: when TRIAL_PAYMENT_ENABLED and price > 0, expose the trial
+    # period alongside the tariff's regular periods so it appears as the first
+    # purchasable option on the landing.
+    trial_enabled = bool(settings.TRIAL_PAYMENT_ENABLED and settings.TRIAL_ACTIVATION_PRICE > 0)
+    trial_days = settings.TRIAL_DURATION_DAYS if trial_enabled else None
+    trial_price = settings.TRIAL_ACTIVATION_PRICE if trial_enabled else 0
+
     for tariff in tariffs:
         # Determine which periods to show
         tariff_period_override = allowed_periods.get(str(tariff.id))
@@ -335,6 +343,23 @@ async def _load_landing_tariffs(
             period_days_list = tariff.get_available_periods()
 
         periods = []
+
+        # Prepend trial period (only on first eligible tariff to avoid duplicates).
+        # Trial uses TRIAL_DURATION_DAYS / TRIAL_ACTIVATION_PRICE from settings.
+        if trial_enabled and not landing_tariffs:
+            periods.append(
+                LandingTariffPeriod(
+                    days=trial_days,
+                    label=f'Триал {trial_days} {"день" if trial_days == 1 else "дня" if trial_days < 5 else "дней"}',
+                    price_kopeks=trial_price,
+                    price_label=settings.format_price(trial_price),
+                    original_price_kopeks=None,
+                    original_price_label=None,
+                    discount_percent=None,
+                    is_trial=True,
+                )
+            )
+
         for days in period_days_list:
             price = tariff.get_price_for_period(days)
             if price is None:
