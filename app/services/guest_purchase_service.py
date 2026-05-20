@@ -202,6 +202,102 @@ async def create_purchase(
     return purchase
 
 
+async def _maybe_save_etoplatezhi_card_from_guest_payment(
+    db: AsyncSession,
+    purchase: GuestPurchase,
+    user: User,
+) -> None:
+    """If this guest purchase was paid via EtoPlatezhi with a recurring card,
+    create the saved_payment_methods row now that user_id is known.
+
+    The webhook handler stashes recurring + account data in
+    etoplatezhi_payments.metadata_json when payment.user_id is None
+    (guest flow). We retrieve it here and call create_saved_payment_method.
+    """
+    payment_method = (purchase.payment_method or '').lower()
+    if not payment_method.startswith('etoplatezhi'):
+        return
+    if not settings.ETOPLATEZHI_RECURRENT_ENABLED:
+        return
+
+    try:
+        etoplatezhi_crud = __import__(
+            'app.database.crud.etoplatezhi',
+            fromlist=['get_etoplatezhi_payment_by_order_id'],
+        )
+        eto_payment = await etoplatezhi_crud.get_etoplatezhi_payment_by_order_id(db, purchase.payment_id)
+        if eto_payment is None:
+            return
+
+        metadata = eto_payment.metadata_json or {}
+        if not isinstance(metadata, dict):
+            return
+        recurring = metadata.get('recurring')
+        if not isinstance(recurring, dict):
+            return
+        recurring_id = recurring.get('id')
+        if recurring_id in (None, ''):
+            return
+
+        account = metadata.get('account') if isinstance(metadata.get('account'), dict) else {}
+        number = (account.get('number') if isinstance(account, dict) else '') or ''
+        card_first6 = number[:6] if len(number) >= 6 else None
+        card_last4 = number[-4:] if len(number) >= 4 else None
+        card_type = (account.get('type') if isinstance(account, dict) else '') or ''
+        card_type = card_type.lower() or None
+        expiry_month = account.get('expiry_month') if isinstance(account, dict) else None
+        expiry_year = account.get('expiry_year') if isinstance(account, dict) else None
+        card_holder = account.get('card_holder') if isinstance(account, dict) else None
+
+        title = None
+        if card_last4:
+            type_label = (card_type or 'card').capitalize()
+            title = f'{type_label} *{card_last4}'
+        elif card_holder:
+            title = str(card_holder)
+
+        valid_thru = None
+        valid_thru_raw = recurring.get('valid_thru')
+        if isinstance(valid_thru_raw, str) and valid_thru_raw:
+            try:
+                valid_thru = datetime.fromisoformat(valid_thru_raw.replace('Z', '+00:00'))
+            except ValueError:
+                valid_thru = None
+
+        from app.database.crud.saved_payment_method import create_saved_payment_method
+
+        saved = await create_saved_payment_method(
+            db=db,
+            user_id=user.id,
+            provider='etoplatezhi',
+            provider_token=str(recurring_id),
+            method_type='bank_card',
+            card_first6=card_first6,
+            card_last4=card_last4,
+            card_type=card_type,
+            card_expiry_month=str(expiry_month) if expiry_month is not None else None,
+            card_expiry_year=str(expiry_year) if expiry_year is not None else None,
+            title=title,
+            valid_thru=valid_thru,
+            commit=False,
+        )
+        if saved:
+            logger.info(
+                'Etoplatezhi: saved card created during guest fulfillment',
+                purchase_id=purchase.id,
+                saved_method_id=saved.id,
+                user_id=user.id,
+                recurring_id=str(recurring_id),
+            )
+    except Exception as e:
+        logger.warning(
+            'Failed to save etoplatezhi card during guest fulfillment',
+            purchase_id=purchase.id,
+            user_id=user.id,
+            error=e,
+        )
+
+
 async def _create_nalogo_receipt_for_purchase(
     db: AsyncSession,
     purchase: GuestPurchase,
@@ -486,6 +582,12 @@ async def fulfill_purchase(
         purchase.status = GuestPurchaseStatus.DELIVERED.value
         purchase.user_id = user.id
         purchase.delivered_at = datetime.now(UTC)
+
+        # EtoPlatezhi guest payments register their recurring card during the
+        # webhook, but at that moment user_id is unknown. The webhook stashes
+        # the recurring/account data in payment.metadata_json — pick it up now
+        # that user_id is resolved and persist the saved_payment_methods row.
+        await _maybe_save_etoplatezhi_card_from_guest_payment(db, purchase, user)
 
         # Extract subid from Redis cache (saved at purchase creation)
         try:

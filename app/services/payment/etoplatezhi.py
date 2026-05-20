@@ -342,11 +342,28 @@ class EtoplatezhiPaymentMixin:
 
         user_id = getattr(payment, 'user_id', None)
         if not user_id:
-            logger.warning(
-                'Etoplatezhi: recurring.id есть, но user_id неизвестен — карту не сохраняем',
-                order_id=getattr(payment, 'order_id', None),
-                recurring_id=recurring_id,
-            )
+            # Guest landing flow: user is created later in fulfill_purchase.
+            # Stash the recurring + account block in payment.metadata_json so the
+            # guest fulfillment step can pick it up and create the saved card
+            # once user_id is resolved.
+            try:
+                existing_metadata = payment.metadata_json or {}
+                if not isinstance(existing_metadata, dict):
+                    existing_metadata = {}
+                existing_metadata['recurring'] = recurring
+                existing_metadata['account'] = payload.get('account') if isinstance(payload, dict) else None
+                payment.metadata_json = existing_metadata
+                logger.info(
+                    'Etoplatezhi: recurring data сохранён в metadata для guest платежа — карта создастся в fulfill',
+                    order_id=getattr(payment, 'order_id', None),
+                    recurring_id=recurring_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    'Etoplatezhi: не удалось сохранить recurring data в metadata',
+                    order_id=getattr(payment, 'order_id', None),
+                    error=e,
+                )
             return
 
         account = payload.get('account') if isinstance(payload, dict) else None
