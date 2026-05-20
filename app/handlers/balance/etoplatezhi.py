@@ -267,9 +267,7 @@ async def _start_etoplatezhi_topup_impl(
         ]
     )
 
-    recurring_active = bool(
-        settings.ETOPLATEZHI_RECURRENT_ENABLED and settings.ETOPLATEZHI_RECURRENT_REQUIRED
-    )
+    recurring_active = bool(settings.ETOPLATEZHI_RECURRENT_ENABLED and settings.ETOPLATEZHI_RECURRENT_REQUIRED)
     consent_block = ''
     if recurring_active:
         consent_block = (

@@ -507,7 +507,11 @@ async def get_landing_config(
                 resolved_sub_options = resolved
 
         requires_recurring_consent = False
-        if method_id == 'etoplatezhi' and settings.ETOPLATEZHI_RECURRENT_ENABLED and settings.ETOPLATEZHI_RECURRENT_REQUIRED:
+        if (
+            method_id == 'etoplatezhi'
+            and settings.ETOPLATEZHI_RECURRENT_ENABLED
+            and settings.ETOPLATEZHI_RECURRENT_REQUIRED
+        ):
             requires_recurring_consent = True
         elif method_id == 'yookassa' and getattr(settings, 'YOOKASSA_RECURRENT_ENABLED', False):
             requires_recurring_consent = True
