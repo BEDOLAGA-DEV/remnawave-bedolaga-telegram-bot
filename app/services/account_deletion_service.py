@@ -222,7 +222,9 @@ class AccountDeletionService:
         except Exception as error:
             exhausted = self._schedule_cleanup_retry(deletion_request, error, now)
             logger.warning(
-                'Account deletion panel cleanup retry scheduled' if not exhausted else 'Account deletion panel cleanup failed',
+                'Account deletion panel cleanup retry scheduled'
+                if not exhausted
+                else 'Account deletion panel cleanup failed',
                 deletion_request_id=deletion_request.id,
                 attempt_count=deletion_request.attempt_count,
                 max_attempts=deletion_request.max_attempts,
