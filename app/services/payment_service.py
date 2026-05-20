@@ -1202,10 +1202,13 @@ class PaymentService(
             return None
 
         # --- Etoplatezhi ------------------------------------------------------
-        if payment_method == 'etoplatezhi':
+        if payment_method == 'etoplatezhi' or payment_method.startswith('etoplatezhi_'):
             if not settings.is_etoplatezhi_enabled():
                 logger.warning('Etoplatezhi is not enabled, cannot create guest payment')
                 return None
+
+            # 'etoplatezhi_card' -> 'card', 'etoplatezhi_sberpay' -> 'sberpay', 'etoplatezhi' -> None
+            sub_method = payment_method.split('_', 1)[1] if '_' in payment_method else None
 
             result = await self.create_etoplatezhi_payment(
                 db=db,
@@ -1213,6 +1216,7 @@ class PaymentService(
                 amount_kopeks=amount_kopeks,
                 description=description,
                 return_url=return_url,
+                payment_method_type=sub_method,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'etoplatezhi')
