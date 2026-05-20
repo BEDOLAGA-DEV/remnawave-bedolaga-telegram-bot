@@ -353,6 +353,10 @@ class EtoplatezhiPaymentMixin:
                 existing_metadata['recurring'] = recurring
                 existing_metadata['account'] = payload.get('account') if isinstance(payload, dict) else None
                 payment.metadata_json = existing_metadata
+                # Explicit flush — AsyncSessionLocal uses autoflush=False, so
+                # the subsequent SELECT in _maybe_save_etoplatezhi_card_from_guest_payment
+                # would otherwise read the pre-stash row and silently skip card creation.
+                await db.flush()
                 logger.info(
                     'Etoplatezhi: recurring data сохранён в metadata для guest платежа — карта создастся в fulfill',
                     order_id=getattr(payment, 'order_id', None),

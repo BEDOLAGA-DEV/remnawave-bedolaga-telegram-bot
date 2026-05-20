@@ -127,8 +127,12 @@ async def create_saved_payment_method(
         else:
             await db.flush()
     except IntegrityError as e:
-        if commit:
-            await db.rollback()
+        # Must rollback in BOTH paths — otherwise the session is poisoned
+        # (PostgreSQL aborts the transaction on IntegrityError, any subsequent
+        # statement raises PendingRollbackError). For commit=False the caller
+        # owns the transaction and will get the error on its next operation,
+        # so we still need to roll back here to keep the session usable.
+        await db.rollback()
         logger.error(
             'Ошибка создания сохранённого метода оплаты',
             provider=provider_name,
