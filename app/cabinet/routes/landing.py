@@ -347,9 +347,7 @@ async def _load_landing_tariffs(
         # Prepend trial period (only on first eligible tariff to avoid duplicates).
         # If admin set an allowed_periods override for this tariff and trial_days
         # is NOT in the override, the trial is suppressed on this landing.
-        trial_allowed_for_this_tariff = (
-            tariff_period_override is None or trial_days in tariff_period_override
-        )
+        trial_allowed_for_this_tariff = tariff_period_override is None or trial_days in tariff_period_override
         if trial_enabled and not landing_tariffs and trial_allowed_for_this_tariff:
             periods.append(
                 LandingTariffPeriod(
@@ -540,9 +538,7 @@ async def get_landing_config(
             method_id == 'etoplatezhi'
             and settings.ETOPLATEZHI_RECURRENT_ENABLED
             and settings.ETOPLATEZHI_RECURRENT_REQUIRED
-        ):
-            requires_recurring_consent = True
-        elif method_id == 'yookassa' and getattr(settings, 'YOOKASSA_RECURRENT_ENABLED', False):
+        ) or (method_id == 'yookassa' and getattr(settings, 'YOOKASSA_RECURRENT_ENABLED', False)):
             requires_recurring_consent = True
 
         payment_methods.append(

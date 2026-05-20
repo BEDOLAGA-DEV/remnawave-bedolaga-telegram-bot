@@ -208,9 +208,7 @@ async def get_payment_methods(
             method_id == 'etoplatezhi'
             and settings.ETOPLATEZHI_RECURRENT_ENABLED
             and settings.ETOPLATEZHI_RECURRENT_REQUIRED
-        ):
-            requires_recurring_consent = True
-        elif method_id == 'yookassa' and getattr(settings, 'YOOKASSA_RECURRENT_ENABLED', False):
+        ) or (method_id == 'yookassa' and getattr(settings, 'YOOKASSA_RECURRENT_ENABLED', False)):
             requires_recurring_consent = True
 
         methods.append(
