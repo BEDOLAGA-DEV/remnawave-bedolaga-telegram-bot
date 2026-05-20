@@ -1058,6 +1058,7 @@ class PaymentService(
                 amount_kopeks=amount_kopeks,
                 description=description,
                 payment_system_id=ps_id,
+                return_url=return_url,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'kassa_ai')
