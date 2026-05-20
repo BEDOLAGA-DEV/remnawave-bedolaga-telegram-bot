@@ -987,6 +987,7 @@ class PaymentService(
                 amount_kopeks=amount_kopeks,
                 description=description,
                 return_url=return_url,
+                failed_url=return_url,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'wata')
