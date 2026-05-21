@@ -75,6 +75,8 @@ class ReferralTermsResponse(BaseModel):
 
     is_enabled: bool
     commission_percent: int
+    first_payment_commission_percent: int | None = None
+    recurring_commission_tiers: str = ''
     minimum_topup_kopeks: int
     minimum_topup_rubles: float
     first_topup_bonus_kopeks: int
