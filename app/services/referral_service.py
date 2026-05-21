@@ -4,7 +4,7 @@ import json
 import redis.asyncio as aioredis
 import structlog
 from aiogram import Bot
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -97,6 +97,86 @@ async def clear_pending_referral(telegram_id: int) -> None:
         await client.delete(f'pending_referral:{telegram_id}')
     except Exception:
         pass
+
+
+def _normalize_percent(percent: int | None, fallback: int) -> int:
+    if percent is None:
+        percent = fallback
+    return max(0, min(100, int(percent)))
+
+
+def _parse_recurring_commission_tiers(raw_tiers: str | None) -> list[tuple[int, int]]:
+    tiers: list[tuple[int, int]] = []
+    if not raw_tiers:
+        return tiers
+
+    for part in raw_tiers.split(','):
+        item = part.strip()
+        if not item or ':' not in item:
+            continue
+        threshold_raw, percent_raw = item.split(':', 1)
+        try:
+            threshold = max(0, int(threshold_raw.strip()))
+            percent = _normalize_percent(int(percent_raw.strip()), settings.REFERRAL_COMMISSION_PERCENT)
+        except ValueError:
+            logger.warning('Invalid referral recurring commission tier skipped', tier=item)
+            continue
+        tiers.append((threshold, percent))
+
+    return sorted(tiers, key=lambda tier: tier[0])
+
+
+async def get_paid_referrals_count(db: AsyncSession, referrer_id: int) -> int:
+    result = await db.execute(
+        select(func.count(User.id)).where(
+            User.referred_by_id == referrer_id,
+            User.has_made_first_topup.is_(True),
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def get_referral_reward_payment_count(db: AsyncSession, referrer_id: int, referral_id: int) -> int:
+    result = await db.execute(
+        select(func.count(ReferralEarning.id)).where(
+            ReferralEarning.user_id == referrer_id,
+            ReferralEarning.referral_id == referral_id,
+            ReferralEarning.reason.in_(['referral_first_topup', 'referral_commission_topup']),
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def calculate_referral_commission_percent(
+    db: AsyncSession,
+    referrer,
+    *,
+    is_first_payment: bool,
+) -> int:
+    base_percent = get_effective_referral_commission_percent(referrer)
+
+    if is_first_payment:
+        return _normalize_percent(settings.REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT, base_percent)
+
+    tiers = _parse_recurring_commission_tiers(settings.REFERRAL_RECURRING_COMMISSION_TIERS)
+    if not tiers:
+        return base_percent
+
+    paid_referrals_count = await get_paid_referrals_count(db, referrer.id)
+    selected_percent = base_percent
+    for threshold, percent in tiers:
+        if paid_referrals_count >= threshold:
+            selected_percent = percent
+        else:
+            break
+
+    logger.debug(
+        'Recurring referral commission tier selected',
+        referrer_id=referrer.id,
+        paid_referrals_count=paid_referrals_count,
+        commission_percent=selected_percent,
+    )
+    return selected_percent
 
 
 async def _is_commission_limit_reached(db: AsyncSession, referrer_id: int, referral_id: int) -> bool:
@@ -261,7 +341,12 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
             return False
 
         campaign_id = await get_user_campaign_id(db, user.id)
-        commission_percent = get_effective_referral_commission_percent(referrer)
+        prior_reward_payments = await get_referral_reward_payment_count(db, referrer.id, user.id)
+        commission_percent = await calculate_referral_commission_percent(
+            db,
+            referrer,
+            is_first_payment=prior_reward_payments == 0,
+        )
 
         logger.info(
             'Обработка реферального пополнения',
