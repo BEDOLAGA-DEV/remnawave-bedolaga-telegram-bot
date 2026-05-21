@@ -2075,6 +2075,8 @@ class Subscription(Base):
 
     autopay_enabled = Column(Boolean, default=False)
     autopay_days_before = Column(Integer, default=3)
+    # NULL → fall back to settings.DEFAULT_AUTOPAY_PERIOD_DAYS, then tariff shortest period
+    autopay_period_days = Column(Integer, nullable=True)
 
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())

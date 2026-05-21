@@ -1283,12 +1283,29 @@ class MonitoringService:
 
                     user_identifier = user.telegram_id or f'email:{user.id}'
 
-                    # Определяем период продления: из тарифа (минимальный) или 30 дней по умолчанию
+                    # Период продления выбирается с такой иерархией:
+                    #   1. subscription.autopay_period_days — выбор пользователя/админа
+                    #   2. settings.DEFAULT_AUTOPAY_PERIOD_DAYS — глобальный дефолт из .env
+                    #   3. tariff.get_shortest_period() — самый дешёвый период тарифа (legacy-поведение)
+                    #   4. 30 — финальный fallback, если тарифа нет
+                    # Любой явно выставленный период валидируется по списку доступных периодов тарифа,
+                    # чтобы не списать сумму за период, которого в тарифе нет.
                     tariff = getattr(subscription, 'tariff', None)
-                    if tariff:
-                        autopay_period = tariff.get_shortest_period() or 30
-                    else:
-                        autopay_period = 30
+                    available_periods = tariff.get_available_periods() if tariff else []
+
+                    def _pick_period(candidate: int | None) -> int | None:
+                        if not candidate or candidate <= 0:
+                            return None
+                        if available_periods and candidate not in available_periods:
+                            return None
+                        return candidate
+
+                    autopay_period = (
+                        _pick_period(getattr(subscription, 'autopay_period_days', None))
+                        or _pick_period(getattr(settings, 'DEFAULT_AUTOPAY_PERIOD_DAYS', 0))
+                        or (tariff.get_shortest_period() if tariff else None)
+                        or 30
+                    )
 
                     try:
                         from app.database.crud.user import lock_user_for_pricing

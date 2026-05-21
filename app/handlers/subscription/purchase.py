@@ -121,7 +121,9 @@ from .autopay import (
     handle_subscription_cancel,
     handle_subscription_config_back,
     set_autopay_days,
+    set_autopay_period,
     show_autopay_days,
+    show_autopay_period,
     toggle_autopay,
 )
 from .common import _get_promo_offer_discount_percent, update_traffic_prices
@@ -4231,11 +4233,15 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(show_autopay_days, F.data == 'autopay_set_days')
 
+    dp.callback_query.register(show_autopay_period, F.data == 'autopay_set_period')
+
     dp.callback_query.register(handle_subscription_config_back, F.data == 'subscription_config_back')
 
     dp.callback_query.register(handle_subscription_cancel, F.data == 'subscription_cancel')
 
     dp.callback_query.register(set_autopay_days, F.data.startswith('autopay_days_'))
+
+    dp.callback_query.register(set_autopay_period, F.data.startswith('autopay_period_'))
 
     dp.callback_query.register(select_country, F.data.startswith('country_'), SubscriptionStates.selecting_countries)
 

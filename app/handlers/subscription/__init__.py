@@ -8,7 +8,9 @@ from .autopay import (
     handle_subscription_config_back,
     handle_unlink_card,
     set_autopay_days,
+    set_autopay_period,
     show_autopay_days,
+    show_autopay_period,
     toggle_autopay,
 )
 from .common import (
@@ -218,7 +220,9 @@ __all__ = [
     'send_purchase_notification',
     'send_trial_notification',
     'set_autopay_days',
+    'set_autopay_period',
     'show_autopay_days',
+    'show_autopay_period',
     'show_device_connection_help',
     'show_devices_page',
     'show_my_subscriptions',

@@ -1140,12 +1140,23 @@ async def decrement_subscription_server_counts(
         )
 
 
+_AUTOPAY_PERIOD_UNSET = object()
+
+
 async def update_subscription_autopay(
-    db: AsyncSession, subscription: Subscription, enabled: bool, days_before: int | None = None
+    db: AsyncSession,
+    subscription: Subscription,
+    enabled: bool,
+    days_before: int | None = None,
+    period_days: int | None | object = _AUTOPAY_PERIOD_UNSET,
 ) -> Subscription:
     subscription.autopay_enabled = enabled
     if days_before is not None:
         subscription.autopay_days_before = days_before
+    # Sentinel lets callers distinguish "don't touch" (default) from
+    # "clear to NULL/default" (explicit None).
+    if period_days is not _AUTOPAY_PERIOD_UNSET:
+        subscription.autopay_period_days = period_days  # type: ignore[assignment]
     subscription.updated_at = datetime.now(UTC)
 
     await db.commit()

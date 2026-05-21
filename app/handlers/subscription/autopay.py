@@ -14,6 +14,7 @@ from app.keyboards.inline import (
     _get_payment_method_display_name,
     get_autopay_days_keyboard,
     get_autopay_keyboard,
+    get_autopay_period_keyboard,
     get_confirm_unlink_keyboard,
     get_countries_keyboard,
     get_devices_keyboard,
@@ -76,15 +77,22 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
     )
     days = subscription.autopay_days_before
 
+    period_value = getattr(subscription, 'autopay_period_days', None)
+    if period_value:
+        period_text = texts.t('AUTOPAY_PERIOD_VALUE', '{days} дн.').format(days=period_value)
+    else:
+        period_text = texts.t('AUTOPAY_PERIOD_DEFAULT_VALUE', 'по умолчанию (самый дешёвый период тарифа)')
+
     text = texts.t(
         'AUTOPAY_MENU_TEXT',
         (
             '💳 <b>Автоплатеж</b>\n\n'
             '📊 <b>Статус:</b> {status}\n'
-            '⏰ <b>Списание за:</b> {days} дн. до окончания\n\n'
+            '⏰ <b>Списание за:</b> {days} дн. до окончания\n'
+            '📅 <b>Период продления:</b> {period}\n\n'
             'Выберите действие:'
         ),
-    ).format(status=status, days=days)
+    ).format(status=status, days=days, period=period_text)
 
     await callback.message.edit_text(
         text,
@@ -181,6 +189,85 @@ async def set_autopay_days(callback: types.CallbackQuery, db_user: User, db: Asy
 
     texts = get_texts(db_user.language)
     await callback.answer(texts.t('AUTOPAY_DAYS_SET', '✅ Установлено {days} дней!').format(days=days))
+
+    await handle_autopay_menu(callback, db_user, db)
+
+
+def _get_subscription_renewal_periods(subscription) -> list[int]:
+    """Available renewal periods for a subscription: tariff periods (preferred) or global env list."""
+    tariff = getattr(subscription, 'tariff', None)
+    if tariff:
+        periods = tariff.get_available_periods() or []
+        if periods:
+            return sorted(periods)
+    return sorted(settings.get_available_renewal_periods())
+
+
+async def show_autopay_period(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
+    """Period picker UI for autopay."""
+    texts = get_texts(db_user.language)
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
+
+    try:
+        await db.refresh(subscription, ['tariff'])
+    except Exception:
+        pass
+
+    periods = _get_subscription_renewal_periods(subscription)
+    current = getattr(subscription, 'autopay_period_days', None)
+
+    await callback.message.edit_text(
+        texts.t(
+            'AUTOPAY_SELECT_PERIOD_PROMPT',
+            '📅 Выберите период, на который автоплатёж будет продлевать подписку:',
+        ),
+        reply_markup=get_autopay_period_keyboard(periods, current, db_user.language),
+    )
+    await callback.answer()
+
+
+async def set_autopay_period(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
+    """Handle period selection (autopay_period_<N> or autopay_period_default)."""
+    from app.database.crud.subscription import update_subscription_autopay as _update_autopay
+
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
+
+    raw = callback.data.split(':')[0]
+    suffix = raw[len('autopay_period_') :] if raw.startswith('autopay_period_') else ''
+    texts = get_texts(db_user.language)
+
+    if suffix == 'default':
+        await _update_autopay(db, subscription, subscription.autopay_enabled, period_days=None)
+        await callback.answer(texts.t('AUTOPAY_PERIOD_SET_DEFAULT', '✅ Используется период по умолчанию.'))
+    else:
+        try:
+            days = int(suffix)
+        except ValueError:
+            await callback.answer(texts.t('INVALID_REQUEST', 'Invalid request'), show_alert=True)
+            return
+
+        try:
+            await db.refresh(subscription, ['tariff'])
+        except Exception:
+            pass
+
+        available = _get_subscription_renewal_periods(subscription)
+        if days not in available:
+            await callback.answer(
+                texts.t(
+                    'AUTOPAY_PERIOD_NOT_AVAILABLE',
+                    '❌ Этот период недоступен для данной подписки.',
+                ),
+                show_alert=True,
+            )
+            return
+
+        await _update_autopay(db, subscription, subscription.autopay_enabled, period_days=days)
+        await callback.answer(texts.t('AUTOPAY_PERIOD_SET', '✅ Период автоплатежа: {days} дн.').format(days=days))
 
     await handle_autopay_menu(callback, db_user, db)
 

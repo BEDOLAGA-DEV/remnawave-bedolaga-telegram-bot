@@ -353,6 +353,10 @@ class Settings(BaseSettings):
 
     DEFAULT_AUTOPAY_ENABLED: bool = False
     DEFAULT_AUTOPAY_DAYS_BEFORE: int = 3
+    # 0 → use the tariff's shortest (cheapest) period, as before.
+    # >0 → autopay charges this many days each cycle by default (must be present in tariff/renewal periods).
+    # Per-subscription override lives in Subscription.autopay_period_days.
+    DEFAULT_AUTOPAY_PERIOD_DAYS: int = 0
     MIN_BALANCE_FOR_AUTOPAY_KOPEKS: int = 10000
     SUBSCRIPTION_RENEWAL_BALANCE_THRESHOLD_KOPEKS: int = 20000
 
