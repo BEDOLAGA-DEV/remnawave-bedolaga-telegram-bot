@@ -95,9 +95,18 @@ class RemnaWaveRetryQueue:
                         continue
 
                     if item.action == 'create':
-                        await service.create_remnawave_user(db, sub)
+                        result = await service.create_remnawave_user(db, sub)
                     else:
-                        await service.update_remnawave_user(db, sub)
+                        result = await service.update_remnawave_user(db, sub)
+
+                    # create_remnawave_user / update_remnawave_user проглатывают
+                    # RemnaWaveAPIError внутри себя и возвращают None (не
+                    # пробрасывают). Без проверки результата воркер счёл бы
+                    # провал успехом и выбросил бы элемент из очереди после
+                    # первого тика — подписка осталась бы без юзера в панели.
+                    if result is None:
+                        self._requeue(item, f'{item.action}_remnawave_user returned None')
+                        continue
 
                     logger.info(
                         'Retry succeeded',
