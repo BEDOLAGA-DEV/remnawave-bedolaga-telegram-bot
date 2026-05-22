@@ -101,6 +101,18 @@ async def toggle_autopay(callback: types.CallbackQuery, db_user: User, db: Async
     enable = callback.data.startswith('autopay_enable')
 
     if enable:
+        # Trial subscriptions cannot use autopay
+        if subscription.is_trial or subscription.is_trial is None:
+            texts = get_texts(db_user.language)
+            await callback.answer(
+                texts.t(
+                    'AUTOPAY_NOT_AVAILABLE_TRIAL',
+                    'Автоплатеж недоступен для пробных подписок.',
+                ),
+                show_alert=True,
+            )
+            return
+
         # Classic subscriptions cannot use autopay when tariff mode is enabled
         if settings.is_tariffs_mode() and not subscription.tariff_id:
             texts = get_texts(db_user.language)

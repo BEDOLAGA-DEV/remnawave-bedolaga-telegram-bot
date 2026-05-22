@@ -42,9 +42,9 @@ router = APIRouter(prefix='/admin/menu-layout', tags=['Admin Menu Layout'])
 # ---- Constants ---------------------------------------------------------------
 
 MAX_ROWS = 20
-MAX_BUTTONS_PER_ROW = 3
+MAX_BUTTONS_PER_ROW = 8  # Telegram inline keyboard limit
 MAX_LABEL_LENGTH = 100
-URL_PATTERN = re.compile(r'^https?://')
+URL_PATTERN = re.compile(r'^(https?://|tg://)')
 
 
 # ---- Schemas -----------------------------------------------------------------
@@ -275,7 +275,7 @@ def _validate_update_payload(rows: list[RowConfig]) -> None:
                 if not btn.url or not URL_PATTERN.match(btn.url):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f'Custom button "{btn.id}" must have a URL starting with http:// or https://.',
+                        detail=f'Custom button "{btn.id}" must have a URL starting with http://, https://, or tg://.',
                     )
                 if btn.open_in == 'webapp' and not btn.url.startswith('https://'):
                     raise HTTPException(

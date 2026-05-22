@@ -1,6 +1,6 @@
 import structlog
 from aiogram import Dispatcher, F, types
-from sqlalchemy import func, select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -10,9 +10,18 @@ from app.database.crud.subscription import (
     get_expiring_subscriptions,
     get_subscriptions_statistics,
 )
-from app.database.models import User
+from app.database.models import (
+    ServerSquad,
+    Subscription,
+    SubscriptionServer,
+    SubscriptionStatus,
+    User,
+)
 from app.utils.decorators import admin_required, error_handler
 from app.utils.formatters import format_datetime
+
+
+logger = structlog.get_logger(__name__)
 
 
 def get_country_flag(country_name: str) -> str:
@@ -44,25 +53,34 @@ def get_country_flag(country_name: str) -> str:
 
 
 async def get_users_by_countries(db: AsyncSession) -> dict:
+    """Распределение активных пользователей по странам подключённых серверов.
+
+    Один user может быть посчитан в нескольких странах, если у активной подписки
+    подключены squad'ы из разных регионов — это ожидаемое поведение для географии.
+    """
     try:
         result = await db.execute(
-            select(User.preferred_location, func.count(User.id))
-            .where(User.preferred_location.isnot(None))
-            .group_by(User.preferred_location)
+            select(
+                ServerSquad.country_code,
+                func.count(distinct(Subscription.user_id)),
+            )
+            .select_from(Subscription)
+            .join(SubscriptionServer, SubscriptionServer.subscription_id == Subscription.id)
+            .join(ServerSquad, SubscriptionServer.server_squad_id == ServerSquad.id)
+            .where(Subscription.status == SubscriptionStatus.ACTIVE.value)
+            .where(ServerSquad.country_code.isnot(None))
+            .group_by(ServerSquad.country_code)
         )
 
         stats = {}
-        for location, count in result.fetchall():
-            if location:
-                stats[location] = count
+        for country_code, count in result.fetchall():
+            if country_code:
+                stats[country_code] = count
 
         return stats
-    except Exception as e:
-        logger.error('Ошибка получения статистики по странам', error=e)
+    except Exception as error:
+        logger.error('Ошибка получения статистики по странам', error=str(error), exc_info=True)
         return {}
-
-
-logger = structlog.get_logger(__name__)
 
 
 @admin_required

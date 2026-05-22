@@ -10,6 +10,7 @@ from .devices import router as devices_router
 from .multi_tariff import router as multi_tariff_router
 from .purchase import router as purchase_router
 from .renewal import router as renewal_router
+from .revoke import router as revoke_router
 from .servers import router as servers_router
 from .status import router as status_router
 from .tariff_switch import router as tariff_switch_router
@@ -23,6 +24,7 @@ __all__ = [
     'multi_tariff_router',
     'purchase_router',
     'renewal_router',
+    'revoke_router',
     'servers_router',
     'status_router',
     'tariff_switch_router',

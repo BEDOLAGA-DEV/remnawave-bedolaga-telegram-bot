@@ -118,12 +118,23 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_cancel, F.data.in_(['cancel', 'subscription_cancel']))
 
     # Самый последний: ловим любые неизвестные текстовые сообщения
-    # Исключаем специальные сервисные события (например, успешные платежи),
-    # чтобы их обработка не прерывалась общим хендлером неизвестных сообщений
+    # Исключаем специальные сервисные события (например, успешные платежи)
+    # и сообщения от самого бота (например, фото главного меню)
     dp.message.register(
         handle_unknown_message,
         StateFilter(None),
+        F.from_user.is_bot.is_(False),
         F.successful_payment.is_(None),
         F.text.is_not(None),
         ~F.text.startswith('/'),
+    )
+
+    # Ловим медиа-сообщения (фото, видео, документы, стикеры и т.д.)
+    # без активного состояния — чтобы пользователь знал, что бот не принял медиа
+    dp.message.register(
+        handle_unknown_message,
+        StateFilter(None),
+        F.from_user.is_bot.is_(False),
+        F.successful_payment.is_(None),
+        F.text.is_(None),
     )

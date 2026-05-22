@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,6 +14,126 @@ from app.config import settings
 
 
 logger = structlog.get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# YooKassa SDK hardening: socket timeout + isolated thread pool.
+#
+# Root-cause incident: yookassa==3.x's ``ApiClient.execute`` calls
+# ``requests.Session.request(...)`` WITHOUT a timeout. When the YooKassa
+# API hangs (degradation, network drop), the synchronous call blocks on
+# ``socket.recv()`` for hours until TCP keep-alive eventually kills it.
+#
+# We invoke the SDK via ``loop.run_in_executor(None, ...)`` which uses
+# the default process-wide ``ThreadPoolExecutor`` (cap 8-12 threads).
+# A wave of slow/dead YK requests fills every slot, the event loop
+# starves on every subsequent ``run_in_executor`` (DNS, TCP-connect),
+# and the bot effectively freezes — aiogram handlers stop replying
+# ('query is too old'), aiohttp to RemnaWave reports
+# ``ConnectionTimeoutError`` (event loop starvation, not RemnaWave).
+#
+# Two defences applied at module import:
+#
+#   1. **Monkey-patch ``ApiClient.execute``** to pass
+#      ``timeout=(connect, read)``. The thread is guaranteed to exit
+#      within ``read`` seconds even if the API is dead. ``asyncio.timeout``
+#      around the executor call (which we keep for belt-and-suspenders)
+#      cancels the coroutine but DOES NOT kill the underlying thread —
+#      only the socket timeout does.
+#
+#   2. **Dedicated ``ThreadPoolExecutor``** with a small bounded size
+#      (``max_workers=4``). If all 4 slots fill with stuck YK calls,
+#      everything else (RemnaWave, DB sync ops, etc.) keeps running on
+#      the default executor. The bot degrades gracefully instead of
+#      freezing entirely.
+# ---------------------------------------------------------------------------
+
+
+def _patch_yookassa_timeout() -> None:
+    """Add a socket-level timeout to ``yookassa.client.ApiClient.execute``.
+
+    Idempotent — checks a ``_timeout_patched`` flag so a hot-reload of
+    the module does not double-wrap. Mirrors the upstream method signature
+    exactly so we can drop in our own ``session.request`` call with
+    the timeout argument added.
+
+    (connect=5s, read=15s) — operators with consistently slow YK can
+    bump these via ``YOOKASSA_HTTP_CONNECT_TIMEOUT`` /
+    ``YOOKASSA_HTTP_READ_TIMEOUT`` env vars.
+    """
+    try:
+        from yookassa.client import ApiClient
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning('Could not import yookassa.client.ApiClient for timeout patch', error=str(exc))
+        return
+
+    if getattr(ApiClient, '_timeout_patched', False):
+        return
+
+    connect_timeout = max(1, int(getattr(settings, 'YOOKASSA_HTTP_CONNECT_TIMEOUT', 5) or 5))
+    read_timeout = max(1, int(getattr(settings, 'YOOKASSA_HTTP_READ_TIMEOUT', 15) or 15))
+
+    def execute_with_timeout(self, body, method, path, query_params, request_headers):
+        session = self.get_session()
+        self.log_request(body, method, path, query_params, request_headers)
+        try:
+            raw_response = session.request(
+                method,
+                self.endpoint + path,
+                params=query_params,
+                headers=request_headers,
+                json=body,
+                verify=self.configuration.verify,
+                timeout=(connect_timeout, read_timeout),
+            )
+        finally:
+            # Match upstream behaviour: close the session even on error.
+            # Without this, requests.Session pooled connections leak.
+            try:
+                session.close()
+            except Exception:
+                pass
+        self.log_response(
+            raw_response.content,
+            self.get_response_info(raw_response),
+            raw_response.headers,
+        )
+        return raw_response
+
+    ApiClient.execute = execute_with_timeout
+    ApiClient._timeout_patched = True
+    logger.info(
+        'YooKassa ApiClient.execute monkey-patched with HTTP timeout',
+        connect_timeout=connect_timeout,
+        read_timeout=read_timeout,
+    )
+
+
+# Dedicated executor for all synchronous YK SDK calls. Bounded so YK
+# slowness can never starve the rest of the bot. ``thread_name_prefix``
+# makes stack traces / py-spy output identifiable.
+#
+# Pool size is operator-tunable via ``settings.YOOKASSA_MAX_CONCURRENT_REQUESTS``
+# (default 4). Floored at 1 so a misconfigured ``0`` doesn't disable
+# YK entirely; the floor matches the same defensive pattern used for
+# the timeout values above.
+def _resolve_max_workers() -> int:
+    raw = getattr(settings, 'YOOKASSA_MAX_CONCURRENT_REQUESTS', 4)
+    try:
+        value = int(raw or 4)
+    except (TypeError, ValueError):
+        value = 4
+    return max(1, value)
+
+
+_yookassa_executor: ThreadPoolExecutor = ThreadPoolExecutor(
+    max_workers=_resolve_max_workers(),
+    thread_name_prefix='yookassa-sdk',
+)
+
+
+# Apply the patch at import time. Idempotent.
+_patch_yookassa_timeout()
 
 
 class YooKassaService:
@@ -135,7 +256,7 @@ class YooKassaService:
             loop = asyncio.get_running_loop()
             async with asyncio.timeout(30):
                 response = await loop.run_in_executor(
-                    None, lambda: YooKassaPayment.create(payment_request, idempotence_key)
+                    _yookassa_executor, lambda: YooKassaPayment.create(payment_request, idempotence_key)
                 )
 
             logger.info(
@@ -244,7 +365,7 @@ class YooKassaService:
             loop = asyncio.get_running_loop()
             async with asyncio.timeout(30):
                 response = await loop.run_in_executor(
-                    None, lambda: YooKassaPayment.create(payment_request, idempotence_key)
+                    _yookassa_executor, lambda: YooKassaPayment.create(payment_request, idempotence_key)
                 )
 
             logger.info(
@@ -292,7 +413,7 @@ class YooKassaService:
             loop = asyncio.get_running_loop()
             async with asyncio.timeout(30):
                 payment_info_yk = await loop.run_in_executor(
-                    None, lambda: YooKassaPayment.find_one(payment_id_in_yookassa)
+                    _yookassa_executor, lambda: YooKassaPayment.find_one(payment_id_in_yookassa)
                 )
 
             if payment_info_yk:
@@ -422,7 +543,7 @@ class YooKassaService:
             loop = asyncio.get_running_loop()
             async with asyncio.timeout(30):
                 response = await loop.run_in_executor(
-                    None, lambda: YooKassaPayment.create(payment_request, idempotence_key)
+                    _yookassa_executor, lambda: YooKassaPayment.create(payment_request, idempotence_key)
                 )
 
             logger.info(

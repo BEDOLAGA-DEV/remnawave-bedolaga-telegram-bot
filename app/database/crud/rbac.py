@@ -219,13 +219,24 @@ class UserRoleCRUD:
         existing = result.scalar_one_or_none()
 
         if existing is not None:
+            previous_revocation_source = existing.revocation_source
             existing.is_active = True
             existing.assigned_by = assigned_by
             existing.assigned_at = datetime.now(UTC)
             existing.expires_at = expires_at
+            # Explicit UI re-assign снимает старый revoke (любого источника).
+            # Без обнуления повторный bootstrap-cycle снова заблокирует роль
+            # как 'ui'-revoked, что нелогично — admin только что её назначил.
+            existing.revocation_source = None
             await db.flush()
             await db.refresh(existing)
-            logger.info('Reactivated user role', user_role_id=existing.id, user_id=user_id, role_id=role_id)
+            logger.info(
+                'Reactivated user role',
+                user_role_id=existing.id,
+                user_id=user_id,
+                role_id=role_id,
+                previous_revocation_source=previous_revocation_source,
+            )
             return existing
 
         user_role = UserRole(

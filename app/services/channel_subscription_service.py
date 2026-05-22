@@ -285,8 +285,27 @@ class ChannelSubscriptionService:
                 return False  # Fail-closed -- bot cannot verify membership
             except TelegramBadRequest as e:
                 err_msg = str(e).lower()
-                if 'user not found' in err_msg or 'participant_id_invalid' in err_msg:
-                    return False  # User never interacted with bot/channel
+                # Expected non-membership signals — обрабатываем тихо. Эти ошибки
+                # означают «юзер просто не подписан»: либо никогда не был в канале,
+                # либо вышел, либо удалил Telegram-аккаунт, либо был забанен в канале.
+                # Раньше 'member not found' проваливался в logger.error и через
+                # TelegramNotifierProcessor шёл в админ-чат каждый polling-cycle
+                # (час) — спамил без причины.
+                if (
+                    'user not found' in err_msg
+                    or 'member not found' in err_msg
+                    or 'participant_id_invalid' in err_msg
+                    or 'chat not found' in err_msg
+                    or 'user is deactivated' in err_msg
+                    or 'user_deactivated' in err_msg
+                ):
+                    logger.debug(
+                        'User not a channel member (expected)',
+                        channel_id=channel_id,
+                        telegram_id=telegram_id,
+                        reason=err_msg[:80],
+                    )
+                    return False
                 logger.error('Bad request checking channel', channel_id=channel_id, error=str(e))
                 return False  # Fail-closed
             except TelegramNetworkError:

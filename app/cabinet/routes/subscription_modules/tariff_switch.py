@@ -119,6 +119,18 @@ async def preview_tariff_switch(
     )
     upgrade_cost = switch_result.upgrade_cost
     is_upgrade = switch_result.is_upgrade
+
+    # Проверяем разрешение на смену в данном направлении
+    if is_upgrade and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Повышение тарифа недоступно',
+        )
+    if not is_upgrade and not settings.TARIFF_SWITCH_DOWNGRADE_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Понижение тарифа недоступно',
+        )
     base_upgrade_cost = switch_result.raw_cost
     discount_value = switch_result.discount_value
     period_discount_percent = switch_result.effective_discount_pct
@@ -137,10 +149,12 @@ async def preview_tariff_switch(
         'upgrade_cost_kopeks': upgrade_cost,
         'upgrade_cost_label': settings.format_price(upgrade_cost) if upgrade_cost > 0 else 'Бесплатно',
         'balance_kopeks': balance,
-        'balance_label': settings.format_price(balance),
+        # Когда есть нехватка <1₽ (FX-rounding), показ копеек обязателен — без него
+        # юзер видит "Баланс 150 ₽, не хватает 0 ₽" и думает что баг.
+        'balance_label': settings.format_price(balance, round_kopeks=False),
         'has_enough_balance': has_enough,
         'missing_amount_kopeks': missing,
-        'missing_amount_label': settings.format_price(missing) if missing > 0 else '',
+        'missing_amount_label': settings.format_price(missing, round_kopeks=False) if missing > 0 else '',
         'is_upgrade': is_upgrade,
     }
 
@@ -263,10 +277,23 @@ async def switch_tariff(
         user=user,
     )
     upgrade_cost = switch_result.upgrade_cost
+    is_upgrade = switch_result.is_upgrade
     base_upgrade_cost = switch_result.raw_cost
     discount_value = switch_result.discount_value
     period_discount_percent = switch_result.effective_discount_pct
     new_period_days = switch_result.new_period_days
+
+    # Проверяем разрешение на смену в данном направлении
+    if is_upgrade and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Повышение тарифа недоступно',
+        )
+    if not is_upgrade and not settings.TARIFF_SWITCH_DOWNGRADE_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Понижение тарифа недоступно',
+        )
 
     # Validate daily price for switching TO daily
     new_is_daily = getattr(new_tariff, 'is_daily', False)
@@ -289,7 +316,7 @@ async def switch_tariff(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     'code': 'insufficient_funds',
-                    'message': f'Insufficient funds. Missing {settings.format_price(missing)}',
+                    'message': f'Insufficient funds. Missing {settings.format_price(missing, round_kopeks=False)}',
                     'missing_amount': missing,
                 },
             )
@@ -428,6 +455,13 @@ async def switch_tariff(
             )
     except Exception as e:
         logger.error('Failed to sync tariff switch with RemnaWave', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        remnawave_retry_queue.enqueue(
+            subscription_id=subscription.id,
+            user_id=user.id,
+            action='update' if _has_panel else 'create',
+        )
 
     # Reset all devices on tariff switch
     devices_reset = False

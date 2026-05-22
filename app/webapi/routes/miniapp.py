@@ -3834,9 +3834,11 @@ async def activate_subscription_trial_endpoint(
                     trial_tariff = await get_tariff_by_id(db, trial_tariff_id)
 
             if trial_tariff:
+                from app.database.crud.server_squad import get_effective_tariff_squad_uuids
+
                 trial_traffic_limit = trial_tariff.traffic_limit_gb
                 trial_device_limit = trial_tariff.device_limit
-                trial_squads = trial_tariff.allowed_squads or []
+                trial_squads = await get_effective_tariff_squad_uuids(db, trial_tariff.allowed_squads)
                 tariff_id_for_trial = trial_tariff.id
                 tariff_trial_days = getattr(trial_tariff, 'trial_duration_days', None)
                 if tariff_trial_days:
@@ -5753,7 +5755,7 @@ async def update_subscription_servers_endpoint(
             subscription.end_date,
         )
     else:
-        charged_days = max(1, (subscription.end_date - datetime.now(UTC)).days)
+        charged_days = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
 
     added_server_ids = [catalog[uuid].get('server_id') for uuid in added if catalog[uuid].get('server_id') is not None]
     added_server_prices = [
@@ -5768,7 +5770,9 @@ async def update_subscription_servers_endpoint(
             status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 'code': 'insufficient_funds',
-                'message': (f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing)}'),
+                'message': (
+                    f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing, round_kopeks=False)}'
+                ),
             },
         )
 
@@ -5931,7 +5935,7 @@ async def update_subscription_traffic_endpoint(
             },
         )
 
-    days_remaining = max(1, (subscription.end_date - datetime.now(UTC)).days)
+    days_remaining = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
     period_hint_days = days_remaining
 
     # Lock user BEFORE discount computation to prevent TOCTOU on promo group
@@ -5957,7 +5961,9 @@ async def update_subscription_traffic_endpoint(
                 status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     'code': 'insufficient_funds',
-                    'message': (f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing)}'),
+                    'message': (
+                        f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing, round_kopeks=False)}'
+                    ),
                 },
             )
 
@@ -6109,7 +6115,7 @@ async def update_subscription_devices_endpoint(
         chargeable_diff = new_chargeable - current_chargeable
 
         price_per_month = chargeable_diff * tariff_device_price
-        days_remaining = max(1, (subscription.end_date - datetime.now(UTC)).days)
+        days_remaining = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
         period_hint_days = days_remaining
 
         # Lock user BEFORE price computation to prevent TOCTOU on promo discount
@@ -6131,7 +6137,9 @@ async def update_subscription_devices_endpoint(
             status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 'code': 'insufficient_funds',
-                'message': (f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing)}'),
+                'message': (
+                    f'Недостаточно средств на балансе. Не хватает {settings.format_price(missing, round_kopeks=False)}'
+                ),
             },
         )
 
@@ -6157,7 +6165,7 @@ async def update_subscription_devices_endpoint(
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=price_to_charge,
-            description=f'{description} за {charged_days or max(1, (subscription.end_date - datetime.now(UTC)).days)} дн.',
+            description=f'{description} за {charged_days or max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))} дн.',
         )
 
     if price_to_charge > 0:
@@ -6572,7 +6580,7 @@ async def purchase_tariff_endpoint(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 'code': 'insufficient_funds',
-                'message': f'Недостаточно средств. Не хватает {settings.format_price(missing)}',
+                'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
                 'missing_amount': missing,
             },
         )
@@ -6814,10 +6822,13 @@ async def preview_tariff_switch_endpoint(
         upgrade_cost_kopeks=upgrade_cost,
         upgrade_cost_label=settings.format_price(upgrade_cost) if upgrade_cost > 0 else 'Бесплатно',
         balance_kopeks=balance,
-        balance_label=settings.format_price(balance),
+        # Когда показываем missing_amount_label с копейками (round_kopeks=False),
+        # balance_label тоже должен быть с копейками — иначе пары "Баланс 150 ₽,
+        # не хватает 0.40 ₽" выглядит противоречиво ("150 ₽ это > 150 ₽? зачем не хватает?").
+        balance_label=settings.format_price(balance, round_kopeks=False),
         has_enough_balance=has_enough,
         missing_amount_kopeks=missing,
-        missing_amount_label=settings.format_price(missing) if missing > 0 else '',
+        missing_amount_label=settings.format_price(missing, round_kopeks=False) if missing > 0 else '',
         is_upgrade=is_upgrade,
         message=None,
     )
@@ -6917,7 +6928,7 @@ async def switch_tariff_endpoint(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     'code': 'insufficient_funds',
-                    'message': f'Недостаточно средств. Не хватает {settings.format_price(missing)}',
+                    'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
                     'missing_amount': missing,
                 },
             )
@@ -7055,6 +7066,14 @@ async def switch_tariff_endpoint(
         )
     except Exception as e:
         logger.error('Ошибка синхронизации с RemnaWave при смене тарифа', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                action='update',
+            )
 
     lang = getattr(user, 'language', settings.DEFAULT_LANGUAGE)
     if upgrade_cost > 0:
@@ -7245,6 +7264,14 @@ async def purchase_traffic_topup_endpoint(
             await service.enable_remnawave_user(_en_uuid)
     except Exception as e:
         logger.error('Ошибка синхронизации с RemnaWave при докупке трафика', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                action='update',
+            )
 
     # Создаем транзакцию
     await create_transaction(
@@ -7484,6 +7511,14 @@ async def toggle_daily_subscription_pause_endpoint(
                         logger.warning('Failed to sync squads after user creation (miniapp)', error=squad_err)
         except Exception as e:
             logger.error('Ошибка синхронизации с RemnaWave при возобновлении', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+                remnawave_retry_queue.enqueue(
+                    subscription_id=subscription.id,
+                    user_id=subscription.user_id,
+                    action='update',
+                )
 
         # Send admin notification about daily subscription resume
         if resume_transaction is not None:

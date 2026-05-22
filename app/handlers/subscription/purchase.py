@@ -922,9 +922,11 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                         trial_tariff = await get_tariff_by_id(db, trial_tariff_id)
 
                 if trial_tariff:
+                    from app.database.crud.server_squad import get_effective_tariff_squad_uuids
+
                     trial_traffic_limit = trial_tariff.traffic_limit_gb
                     trial_device_limit = trial_tariff.device_limit
-                    trial_squads = trial_tariff.allowed_squads or []
+                    trial_squads = await get_effective_tariff_squad_uuids(db, trial_tariff.allowed_squads)
                     tariff_id_for_trial = trial_tariff.id
                     tariff_trial_days = getattr(trial_tariff, 'trial_duration_days', None)
                     if tariff_trial_days:
@@ -936,6 +938,13 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                     )
             except Exception as e:
                 logger.error('Ошибка получения триального тарифа', error=e)
+
+        # No trial tariff configured, use the legacy random trial squad fallback.
+        if not trial_squads:
+            from app.database.crud.server_squad import get_random_trial_squad_uuid
+
+            trial_squad_uuid = await get_random_trial_squad_uuid(db)
+            trial_squads = [trial_squad_uuid] if trial_squad_uuid else []
 
         subscription = await create_trial_subscription(
             db,
@@ -971,9 +980,10 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
             logger.error(
                 'Insufficient funds detected after trial creation for user', db_user_id=db_user.id, error=error
             )
-            required_label = settings.format_price(error.required_amount)
-            balance_label = settings.format_price(error.balance_amount)
-            missing_label = settings.format_price(error.missing_amount)
+            # Без округления — копейки критичны, чтобы юзер понял что именно не хватает.
+            required_label = settings.format_price(error.required_amount, round_kopeks=False)
+            balance_label = settings.format_price(error.balance_amount, round_kopeks=False)
+            missing_label = settings.format_price(error.missing_amount, round_kopeks=False)
             message = texts.t(
                 'TRIAL_PAYMENT_INSUFFICIENT_FUNDS',
                 '⚠️ Недостаточно средств для активации триала.\n'
@@ -1428,8 +1438,8 @@ async def save_cart_and_redirect_to_topup(
 
     await callback.message.edit_text(
         f'💰 Недостаточно средств для оформления подписки\n\n'
-        f'Требуется: {texts.format_price(missing_amount)}\n'
-        f'У вас: {texts.format_price(db_user.balance_kopeks)}\n\n'
+        f'Требуется: {texts.format_price(missing_amount, round_kopeks=False)}\n'
+        f'У вас: {texts.format_price(db_user.balance_kopeks, round_kopeks=False)}\n\n'
         f'🛒 Ваша корзина сохранена!\n'
         f'После пополнения баланса вы сможете вернуться к оформлению подписки.\n\n'
         f'Выберите способ пополнения:',
@@ -1545,9 +1555,9 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
         )
         insufficient_text = (
             f'❌ Все еще недостаточно средств\n\n'
-            f'Требуется: {texts.format_price(total_price)}\n'
-            f'У вас: {texts.format_price(db_user.balance_kopeks)}\n'
-            f'Не хватает: {texts.format_price(missing_amount)}'
+            f'Требуется: {texts.format_price(total_price, round_kopeks=False)}\n'
+            f'У вас: {texts.format_price(db_user.balance_kopeks, round_kopeks=False)}\n'
+            f'Не хватает: {texts.format_price(missing_amount, round_kopeks=False)}'
         )
 
         if _message_needs_update(callback.message, insufficient_text, insufficient_keyboard):
@@ -1573,10 +1583,14 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
     if settings.is_traffic_fixed():
         traffic_value = prepared_cart_data.get('traffic_gb')
         if traffic_value is None:
+            traffic_value = prepared_cart_data.get('traffic_limit_gb')
+        if traffic_value is None:
             traffic_value = settings.get_fixed_traffic_limit()
         traffic_display = 'Безлимитный' if traffic_value == 0 else f'{traffic_value} ГБ'
     else:
-        traffic_value = prepared_cart_data.get('traffic_gb', 0) or 0
+        traffic_value = prepared_cart_data.get('traffic_gb')
+        if traffic_value is None:
+            traffic_value = prepared_cart_data.get('traffic_limit_gb', 0)
         traffic_display = 'Безлимитный' if traffic_value == 0 else f'{traffic_value} ГБ'
 
     summary_lines = [
@@ -1589,6 +1603,8 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
 
     if settings.is_devices_selection_enabled():
         devices_value = prepared_cart_data.get('devices')
+        if devices_value is None:
+            devices_value = prepared_cart_data.get('device_limit')
         if devices_value is not None:
             summary_lines.append(f'📱 Устройства: {devices_value}')
 
@@ -1946,8 +1962,8 @@ async def confirm_extend_subscription(
             ),
         ).format(
             required=required_text,
-            balance=texts.format_price(db_user.balance_kopeks),
-            missing=texts.format_price(missing_kopeks),
+            balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
+            missing=texts.format_price(missing_kopeks, round_kopeks=False),
         )
 
         # Подготовим данные для сохранения в корзину
@@ -1963,7 +1979,10 @@ async def confirm_extend_subscription(
             'description': f'Продление подписки на {days} дней',
             'consume_promo_offer': bool(promo_offer_discount > 0),
             'device_limit': device_limit,
+            'devices': device_limit,
             'traffic_limit_gb': renewal_traffic_gb,
+            'traffic_gb': renewal_traffic_gb,
+            'countries': list(subscription.connected_squads or []),
         }
 
         await user_cart_service.save_user_cart(db_user.id, cart_data)
@@ -2218,7 +2237,12 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
     devices_selection_enabled = settings.is_devices_selection_enabled()
     forced_disabled_limit: int | None = None
     if devices_selection_enabled:
-        devices_selected = data.get('devices', settings.DEFAULT_DEVICE_LIMIT)
+        # Для extend-корзины ключ может быть 'device_limit' вместо 'devices'
+        devices_selected = data.get('devices')
+        if devices_selected is None:
+            devices_selected = data.get('device_limit')
+        if devices_selected is None:
+            devices_selected = settings.DEFAULT_DEVICE_LIMIT
     else:
         forced_disabled_limit = settings.get_disabled_mode_device_limit()
         if forced_disabled_limit is None:
@@ -2352,9 +2376,9 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 'Выберите способ пополнения. Сумма подставится автоматически.'
             ),
         ).format(
-            required=texts.format_price(final_price),
-            balance=texts.format_price(db_user.balance_kopeks),
-            missing=texts.format_price(missing_kopeks),
+            required=texts.format_price(final_price, round_kopeks=False),
+            balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
+            missing=texts.format_price(missing_kopeks, round_kopeks=False),
         )
 
         # Сохраняем данные корзины в Redis перед переходом к пополнению
@@ -2405,9 +2429,9 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                     'Выберите способ пополнения. Сумма подставится автоматически.'
                 ),
             ).format(
-                required=texts.format_price(final_price),
-                balance=texts.format_price(db_user.balance_kopeks),
-                missing=texts.format_price(missing_kopeks),
+                required=texts.format_price(final_price, round_kopeks=False),
+                balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
+                missing=texts.format_price(missing_kopeks, round_kopeks=False),
             )
 
             await callback.message.edit_text(
@@ -2579,17 +2603,19 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
 
         subscription_service = SubscriptionService()
         # При покупке подписки ВСЕГДА сбрасываем трафик в панели
-        _purchase_uuid = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else db_user.remnawave_uuid
-        )
-        if settings.is_multi_tariff_enabled() and not getattr(subscription, 'remnawave_uuid', None):
-            logger.warning(
-                'Multi-tariff: subscription missing remnawave_uuid, using user fallback',
-                subscription_id=getattr(subscription, 'id', None),
+        if settings.is_multi_tariff_enabled():
+            _should_create = not subscription.remnawave_uuid
+        else:
+            _should_create = not getattr(db_user, 'remnawave_uuid', None)
+
+        if _should_create:
+            remnawave_user = await subscription_service.create_remnawave_user(
+                db,
+                subscription,
+                reset_traffic=True,
+                reset_reason='покупка подписки',
             )
-        if _purchase_uuid:
+        else:
             remnawave_user = await subscription_service.update_remnawave_user(
                 db,
                 subscription,
@@ -2597,22 +2623,25 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 reset_reason='покупка подписки',
                 sync_squads=True,
             )
-        else:
-            remnawave_user = await subscription_service.create_remnawave_user(
-                db,
-                subscription,
-                reset_traffic=True,
-                reset_reason='покупка подписки',
-            )
 
         if not remnawave_user:
-            logger.error('Не удалось создать/обновить RemnaWave пользователя для', telegram_id=db_user.telegram_id)
-            remnawave_user = await subscription_service.create_remnawave_user(
-                db,
-                subscription,
-                reset_traffic=True,
-                reset_reason='покупка подписки (повторная попытка)',
-            )
+            logger.error('Не удалось создать/обновить RemnaWave пользователя', telegram_id=db_user.telegram_id)
+            try:
+                remnawave_user = await subscription_service.create_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=True,
+                    reset_reason='покупка подписки (повторная попытка)',
+                )
+            except Exception as retry_error:
+                logger.error('Повторная попытка создания RemnaWave пользователя не удалась', error=retry_error)
+                from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                remnawave_retry_queue.enqueue(
+                    subscription_id=subscription.id,
+                    user_id=db_user.id,
+                    action='create',
+                )
 
         transaction = await create_transaction(
             db=db,
@@ -3162,6 +3191,13 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
             )
         except Exception as e:
             logger.error('Ошибка синхронизации с Remnawave при возобновлении', error=e)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=db_user.id,
+                action='update',
+            )
 
         # Отправляем уведомление администраторам о возобновлении суточной подписки
         if resume_transaction is not None:
@@ -3288,9 +3324,11 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
                     if trial_tariff_id > 0:
                         trial_tariff = await _get_tariff(db, trial_tariff_id)
                 if trial_tariff:
+                    from app.database.crud.server_squad import get_effective_tariff_squad_uuids
+
                     trial_traffic_limit = trial_tariff.traffic_limit_gb
                     trial_device_limit = trial_tariff.device_limit
-                    trial_squads = trial_tariff.allowed_squads or []
+                    trial_squads = await get_effective_tariff_squad_uuids(db, trial_tariff.allowed_squads)
                     tariff_id_for_trial = trial_tariff.id
                     tariff_trial_days = getattr(trial_tariff, 'trial_duration_days', None)
                     if tariff_trial_days:
@@ -3302,6 +3340,13 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
                     )
             except Exception as e:
                 logger.error('Ошибка получения триального тарифа для платного триала', error=e)
+
+        # No trial tariff configured, use the legacy random trial squad fallback.
+        if not trial_squads:
+            from app.database.crud.server_squad import get_random_trial_squad_uuid
+
+            trial_squad_uuid = await get_random_trial_squad_uuid(db)
+            trial_squads = [trial_squad_uuid] if trial_squad_uuid else []
 
         subscription = await create_trial_subscription(
             db,
@@ -3647,9 +3692,11 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                     if trial_tariff_id > 0:
                         trial_tariff = await _get_tariff(db, trial_tariff_id)
                 if trial_tariff:
+                    from app.database.crud.server_squad import get_effective_tariff_squad_uuids
+
                     trial_traffic = trial_tariff.traffic_limit_gb
                     trial_devices = trial_tariff.device_limit
-                    trial_squads_list = trial_tariff.allowed_squads or []
+                    trial_squads_list = await get_effective_tariff_squad_uuids(db, trial_tariff.allowed_squads)
                     tariff_id_for_trial = trial_tariff.id
                     tariff_trial_days = getattr(trial_tariff, 'trial_duration_days', None)
                     if tariff_trial_days:
@@ -3662,7 +3709,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
             except Exception as e:
                 logger.error('Ошибка получения триального тарифа для платного триала', error=e)
 
-        # Если тариф не задал серверы, получаем случайный сквад
+        # Если триальный тариф не найден, используем legacy fallback со случайным сквадом.
         if not trial_squads_list:
             from app.database.crud.server_squad import get_random_trial_squad_uuid
 
@@ -4095,6 +4142,17 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_change_devices_menu, F.data.startswith('change_devices_menu:'))
     dp.callback_query.register(handle_device_management_menu, F.data.startswith('device_management:'))
 
+    # Subscription revoke (reissue)
+    from app.handlers.subscription.revoke import (
+        confirm_subscription_revoke,
+        start_multi_revoke,
+        start_subscription_revoke,
+    )
+
+    dp.callback_query.register(start_subscription_revoke, F.data == 'subscription_revoke')
+    dp.callback_query.register(confirm_subscription_revoke, F.data == 'subscription_revoke_confirm')
+    dp.callback_query.register(start_multi_revoke, F.data.startswith('sr:'))
+
     dp.callback_query.register(show_trial_offer, F.data == 'menu_trial')
 
     dp.callback_query.register(activate_trial, F.data == 'trial_activate')
@@ -4236,6 +4294,18 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_devices_page, F.data.startswith('devices_page_'))
 
     dp.callback_query.register(handle_single_device_reset, F.data.regexp(r'^reset_device_\d+_\d+$'))
+
+    # Локальное переименование устройства (alias). Callback пускает FSM-prompt,
+    # текстовый handler ловит ответ юзера (см. process_device_rename ниже).
+    # NB: `SubscriptionStates` уже импортирован на уровне модуля (строка 107) —
+    # повторный локальный `from app.states import …` превратил бы имя в local
+    # и сломал бы строку 4197 с UnboundLocalError на старте.
+    from app.handlers.subscription.devices import process_device_rename, start_device_rename
+
+    dp.callback_query.register(start_device_rename, F.data.regexp(r'^device_rename_\d+_\d+$'))
+    # F.text — игнорируем стикеры/фото/voice пока юзер в FSM, иначе
+    # message.text==None трактуется как пустая строка и очищает alias.
+    dp.message.register(process_device_rename, SubscriptionStates.renaming_device, F.text)
 
     dp.callback_query.register(handle_all_devices_reset_from_management, F.data == 'reset_all_devices')
 
@@ -4461,9 +4531,9 @@ async def _extend_existing_subscription(
                 'Выберите способ пополнения. Сумма подставится автоматически.'
             ),
         ).format(
-            required=texts.format_price(price_kopeks),
-            balance=texts.format_price(db_user.balance_kopeks),
-            missing=texts.format_price(missing_kopeks),
+            required=texts.format_price(price_kopeks, round_kopeks=False),
+            balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
+            missing=texts.format_price(missing_kopeks, round_kopeks=False),
         )
 
         # Подготовим данные для сохранения в корзину
@@ -4480,8 +4550,11 @@ async def _extend_existing_subscription(
             'return_to_cart': True,
             'description': f'Продление подписки на {period_days} дней',
             'device_limit': device_limit,
+            'devices': device_limit,
             'traffic_limit_gb': traffic_limit_gb,
+            'traffic_gb': traffic_limit_gb,
             'squad_uuid': squad_uuid,
+            'countries': [squad_uuid] if squad_uuid else [],
             'consume_promo_offer': consume_promo,
         }
 
@@ -4594,6 +4667,13 @@ async def _extend_existing_subscription(
             logger.error('⚠ ОШИБКА ОБНОВЛЕНИЯ REMNAWAVE')
     except Exception as e:
         logger.error('⚠ ИСКЛЮЧЕНИЕ ПРИ ОБНОВЛЕНИИ REMNAWAVE', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        remnawave_retry_queue.enqueue(
+            subscription_id=current_subscription.id,
+            user_id=db_user.id,
+            action='update',
+        )
 
     # Создаём транзакцию
     transaction = await create_transaction(

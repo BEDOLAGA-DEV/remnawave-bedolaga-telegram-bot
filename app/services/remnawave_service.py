@@ -1516,6 +1516,9 @@ class RemnaWaveService:
                     for telegram_id, db_user in bot_users_by_telegram_id.items()
                     if telegram_id not in panel_telegram_ids
                     and any(True for _ in (getattr(db_user, 'subscriptions', None) or []))
+                    # BUG-6 fix: Skip users who have a remnawave_uuid — they exist in panel
+                    # but may not have telegram_id set there (OAuth users who linked TG later)
+                    and not getattr(db_user, 'remnawave_uuid', None)
                 ]
 
                 if users_to_deactivate:
@@ -1878,6 +1881,20 @@ class RemnaWaveService:
 
                         _short_id = await generate_unique_short_id(db)
 
+                        # Attempt to match tariff by allowed_squads
+                        _matched_tariff_id = None
+                        if _squad_uuids:
+                            try:
+                                from app.database.crud.tariff import get_all_active_tariffs
+
+                                _all_tariffs = await get_all_active_tariffs(db)
+                                for _t in _all_tariffs:
+                                    if _t.allowed_squads and set(_squad_uuids).issubset(set(_t.allowed_squads)):
+                                        _matched_tariff_id = _t.id
+                                        break
+                            except Exception:
+                                pass
+
                         new_sub = Subscription(
                             user_id=_bot_user.id,
                             status=_sub_status.value,
@@ -1892,6 +1909,7 @@ class RemnaWaveService:
                             remnawave_short_uuid=panel_user.get('shortUuid'),
                             subscription_url=panel_user.get('subscriptionUrl', ''),
                             subscription_crypto_link=panel_user.get('subscriptionCryptoLink', ''),
+                            tariff_id=_matched_tariff_id,
                         )
                         db.add(new_sub)
                         subs_by_uuid[panel_uuid] = new_sub
@@ -1930,6 +1948,18 @@ class RemnaWaveService:
                     crypto_link = panel_user.get('subscriptionCryptoLink')
                     if crypto_link and subscription.subscription_crypto_link != crypto_link:
                         subscription.subscription_crypto_link = crypto_link
+
+                    # Update squads from panel
+                    _panel_squads = panel_user.get('activeInternalSquads', []) or []
+                    _squad_uuids = []
+                    if isinstance(_panel_squads, list):
+                        for _sq in _panel_squads:
+                            if isinstance(_sq, dict) and 'uuid' in _sq:
+                                _squad_uuids.append(_sq['uuid'])
+                            elif isinstance(_sq, str):
+                                _squad_uuids.append(_sq)
+                    if _squad_uuids and set(_squad_uuids) != set(subscription.connected_squads or []):
+                        subscription.connected_squads = _squad_uuids
 
                     stats['updated'] += 1
                 except Exception as e:
@@ -2146,6 +2176,24 @@ class RemnaWaveService:
 
             # traffic_limit_gb, device_limit: bot is source of truth, do not overwrite from panel
 
+            # Update connected_squads from panel (panel is source of truth for squad assignments)
+            active_squads = panel_user.get('activeInternalSquads', [])
+            panel_squad_uuids = []
+            if isinstance(active_squads, list):
+                for squad in active_squads:
+                    if isinstance(squad, dict) and 'uuid' in squad:
+                        panel_squad_uuids.append(squad['uuid'])
+                    elif isinstance(squad, str):
+                        panel_squad_uuids.append(squad)
+
+            if panel_squad_uuids and set(panel_squad_uuids) != set(subscription.connected_squads or []):
+                subscription.connected_squads = panel_squad_uuids
+                logger.info(
+                    'Обновлены connected_squads из панели',
+                    user_telegram_id=getattr(user, 'telegram_id', '?'),
+                    new_squads=panel_squad_uuids,
+                )
+
             new_short_uuid = panel_user.get('shortUuid')
             if new_short_uuid and subscription.remnawave_short_uuid != new_short_uuid:
                 old_short_uuid = subscription.remnawave_short_uuid
@@ -2222,16 +2270,22 @@ class RemnaWaveService:
                                 ) and sub.end_date > datetime.now(UTC)
                                 status = UserStatus.ACTIVE if is_subscription_active else UserStatus.DISABLED
 
-                                username = settings.format_remnawave_username(
+                                # multi-tariff create-path в bulk-sync приклеивает
+                                # `_<remnawave_short_id>` — helper резервирует под него
+                                # место и гарантирует ≤ REMNAWAVE_USERNAME_MAX_LENGTH.
+                                username_suffix = (
+                                    f'_{sub.remnawave_short_id}'
+                                    if (settings.is_multi_tariff_enabled() and sub.remnawave_short_id)
+                                    else ''
+                                )
+                                username = settings.build_remnawave_subscription_username(
                                     full_name=user.full_name,
                                     username=user.username,
                                     telegram_id=user.telegram_id,
                                     email=user.email,
                                     user_id=user.id,
+                                    suffix=username_suffix,
                                 )
-                                # Append permanent short_id suffix in multi-tariff mode
-                                if settings.is_multi_tariff_enabled() and sub.remnawave_short_id:
-                                    username = f'{username}_{sub.remnawave_short_id}'
 
                                 create_kwargs = dict(
                                     username=username,
@@ -2349,7 +2403,9 @@ class RemnaWaveService:
                                             user.remnawave_uuid = panel_uuid
                                         return ('updated', sub, None)
                                     except RemnaWaveAPIError as api_error:
-                                        if api_error.status_code == 404:
+                                        # A018 = "user not found" in some RemnaWave versions (may return 400 or 404)
+                                        error_code = (api_error.response_data or {}).get('errorCode', '')
+                                        if api_error.status_code == 404 or error_code == 'A018':
                                             new_user = await api.create_user(**create_kwargs)
                                             return ('created', sub, new_user)
                                         raise

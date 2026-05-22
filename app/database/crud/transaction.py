@@ -27,6 +27,13 @@ REAL_PAYMENT_METHODS = [
     PaymentMethod.KASSA_AI.value,
     PaymentMethod.RIOPAY.value,
     PaymentMethod.SEVERPAY.value,
+    PaymentMethod.APPLE_IAP.value,
+    PaymentMethod.ROLLYPAY.value,
+    PaymentMethod.PAYPEAR.value,
+    PaymentMethod.OVERPAY.value,
+    PaymentMethod.AURAPAY.value,
+    PaymentMethod.ETOPLATEZHI.value,
+    PaymentMethod.ANTILOPAY.value,
 ]
 
 
@@ -230,17 +237,17 @@ async def get_user_transactions_count(
 
 
 async def get_user_total_spent_kopeks(db: AsyncSession, user_id: int) -> int:
+    """Sum of personal spending for promo group auto-assignment.
+
+    Only counts SUBSCRIPTION_PAYMENT (user's own subscriptions).
+    GIFT_PAYMENT is excluded — buying a gift for someone else is not personal spending.
+    """
     result = await db.execute(
         select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
             and_(
                 Transaction.user_id == user_id,
                 Transaction.is_completed.is_(True),
-                Transaction.type.in_(
-                    [
-                        TransactionType.SUBSCRIPTION_PAYMENT.value,
-                        TransactionType.GIFT_PAYMENT.value,
-                    ]
-                ),
+                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
             )
         )
     )

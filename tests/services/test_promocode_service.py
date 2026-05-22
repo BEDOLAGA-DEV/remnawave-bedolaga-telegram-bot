@@ -2,8 +2,10 @@
 Tests for PromoCodeService - focus on promo group integration
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from app.database.models import PromoCodeType
 from app.services.promocode_service import PromoCodeService
 
 
@@ -382,3 +384,90 @@ async def test_promocode_data_includes_promo_group_id(
     assert 'promocode' in result
     assert 'promo_group_id' in result['promocode']
     assert result['promocode']['promo_group_id'] == sample_promo_group.id
+
+
+async def test_activate_trial_promocode_uses_all_available_squads_when_tariff_has_no_restrictions(
+    monkeypatch,
+):
+    sample_user = SimpleNamespace(
+        id=1,
+        telegram_id=123456789,
+        username='testuser',
+        full_name='Test User',
+        balance_kopeks=0,
+        language='ru',
+        has_had_paid_subscription=False,
+        total_spent_kopeks=0,
+    )
+    mock_db_session = AsyncMock()
+    mock_db_session.commit = AsyncMock()
+    mock_db_session.rollback = AsyncMock()
+    mock_db_session.refresh = AsyncMock()
+    mock_db_session.delete = AsyncMock()
+
+    promocode = SimpleNamespace(
+        id=10,
+        code='KRTN14',
+        type=PromoCodeType.TRIAL_SUBSCRIPTION.value,
+        balance_bonus_kopeks=0,
+        subscription_days=14,
+        tariff_id=7,
+        promo_group_id=None,
+        promo_group=None,
+        first_purchase_only=False,
+        max_uses=20,
+        current_uses=0,
+        is_active=True,
+        is_valid=True,
+        valid_until=None,
+    )
+    trial_tariff = SimpleNamespace(
+        id=7,
+        name='Trial',
+        traffic_limit_gb=100,
+        device_limit=5,
+        allowed_squads=[],
+        trial_duration_days=14,
+    )
+    created_subscription = SimpleNamespace(id=99)
+
+    monkeypatch.setattr('app.services.promocode_service.RemnaWaveService', lambda: SimpleNamespace())
+    create_remnawave_user_mock = AsyncMock()
+    monkeypatch.setattr(
+        'app.services.promocode_service.SubscriptionService',
+        lambda: SimpleNamespace(create_remnawave_user=create_remnawave_user_mock),
+    )
+    monkeypatch.setattr('app.services.promocode_service.get_user_by_id', AsyncMock(return_value=sample_user))
+    monkeypatch.setattr('app.services.promocode_service.get_promocode_by_code', AsyncMock(return_value=promocode))
+    monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.database.crud.promocode.count_user_recent_activations', AsyncMock(return_value=0))
+    monkeypatch.setattr('app.services.promocode_service.get_subscription_by_user_id', AsyncMock(return_value=None))
+    monkeypatch.setattr('app.services.promocode_service.create_promocode_use', AsyncMock(return_value=object()))
+    monkeypatch.setattr('app.database.crud.tariff.get_tariff_by_id', AsyncMock(return_value=trial_tariff))
+    monkeypatch.setattr('app.database.crud.tariff.get_trial_tariff', AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        'app.database.crud.server_squad.get_available_server_squads',
+        AsyncMock(
+            return_value=[
+                SimpleNamespace(squad_uuid='fi-uuid'),
+                SimpleNamespace(squad_uuid='ru-uuid'),
+            ]
+        ),
+    )
+    create_trial_subscription_mock = AsyncMock(return_value=created_subscription)
+    monkeypatch.setattr('app.database.crud.subscription.create_trial_subscription', create_trial_subscription_mock)
+
+    service = PromoCodeService()
+    result = await service.activate_promocode(mock_db_session, sample_user.id, promocode.code)
+
+    assert result['success'] is True
+    create_trial_subscription_mock.assert_awaited_once_with(
+        mock_db_session,
+        sample_user.id,
+        duration_days=14,
+        traffic_limit_gb=100,
+        device_limit=5,
+        connected_squads=['fi-uuid', 'ru-uuid'],
+        tariff_id=7,
+    )
+    create_remnawave_user_mock.assert_awaited_once_with(mock_db_session, created_subscription)

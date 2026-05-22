@@ -42,6 +42,7 @@ async def _prompt_amount(
         # Если сумма уже известна (например, после быстрого выбора),
         # сразу создаём платеж и сбрасываем временное значение.
         await state.update_data(platega_pending_amount=None)
+        await state.set_state(BalanceStates.waiting_for_amount)
 
         from app.database.database import AsyncSessionLocal
 
@@ -294,8 +295,9 @@ async def process_platega_payment_amount(
                 'PLATEGA_AMOUNT_TOO_LOW',
                 'Минимальная сумма для оплаты через Platega: {amount}',
             ).format(amount=settings.format_price(settings.PLATEGA_MIN_AMOUNT_KOPEKS)),
-            reply_markup=get_back_keyboard(db_user.language),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
+        await state.set_state(BalanceStates.waiting_for_amount)
         return
 
     if amount_kopeks > settings.PLATEGA_MAX_AMOUNT_KOPEKS:
@@ -304,8 +306,9 @@ async def process_platega_payment_amount(
                 'PLATEGA_AMOUNT_TOO_HIGH',
                 'Максимальная сумма для оплаты через Platega: {amount}',
             ).format(amount=settings.format_price(settings.PLATEGA_MAX_AMOUNT_KOPEKS)),
-            reply_markup=get_back_keyboard(db_user.language),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
+        await state.set_state(BalanceStates.waiting_for_amount)
         return
 
     try:

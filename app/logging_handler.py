@@ -48,6 +48,11 @@ IGNORED_LOGGER_PREFIXES: Final[tuple[str, ...]] = (
     'uvicorn.protocols',
     'websockets',
     'asyncio',
+    # Сам сервис админ-уведомлений: если он логирует error при ошибке отправки
+    # в админ-чат, нельзя пересылать эту ошибку обратно в тот же чат — иначе
+    # на каждом флуд-контроле получаем петлю усиления. Сервис уже использует
+    # logger.warning для транзиентных ошибок, этот фильтр — belt-and-suspenders.
+    'app.services.admin_notification_service',
     # Payment modules — isolated to payments.log, must not leak to Telegram
     'app.payments',
     'app.services.payment',
@@ -129,13 +134,28 @@ class TelegramNotifierProcessor:
         if any(logger_name.startswith(prefix) for prefix in IGNORED_LOGGER_PREFIXES):
             return event_dict
 
-        # 4. Resolve exc_info=True to actual tuple while still in except block.
+        # 4. Resolve exc_info into actual tuple while still in except block.
         # logger.exception() sets exc_info=True (bool); we need the tuple for
         # traceback extraction. sys.exc_info() works because the processor runs
         # synchronously inside the except clause.
+        #
+        # If exc_info is not passed at all, auto-capture traceback from:
+        #   (a) sys.exc_info() — works when logger.error is called inside except
+        #   (b) error/exc/exception kwargs if they carry __traceback__
+        # This avoids having to pass exc_info=True at every logger.error site.
         exc_info = event_dict.get('exc_info')
         if exc_info is True:
             event_dict['exc_info'] = sys.exc_info()
+        elif not exc_info:
+            current = sys.exc_info()
+            if current[1] is not None:
+                event_dict['exc_info'] = current
+            else:
+                for key in ('error', 'exc', 'exception', 'e', 'err'):
+                    candidate = event_dict.get(key)
+                    if isinstance(candidate, BaseException) and candidate.__traceback__ is not None:
+                        event_dict['exc_info'] = (type(candidate), candidate, candidate.__traceback__)
+                        break
 
         # 5. Bot not initialized yet — skip
         bot = self._bot
@@ -226,6 +246,12 @@ class TelegramNotifierProcessor:
             # Lazy import to avoid circular dependencies at startup
             from app.middlewares.global_error import send_error_to_admin_chat
 
+            # Defense-in-depth: на случай, если когда-то aiogram/httpx
+            # начнёт включать URL `https://api.telegram.org/bot<TOKEN>/...`
+            # в str(exc) (сейчас 3.x не включает), redact на финальной точке
+            # перед отправкой в админ-чат.
+            from app.services.admin_notification_service import _redact_telegram_secrets
+
             # Build a pseudo-Exception from the event_dict
             error = _make_event_dict_error(event_dict)
 
@@ -242,13 +268,17 @@ class TelegramNotifierProcessor:
                     user_str += f' (@{username})'
                 context_parts.append(user_str)
 
-            context = '\n'.join(context_parts)
+            context = _redact_telegram_secrets('\n'.join(context_parts))
 
             # Extract traceback from exc_info if present
             tb_override: str | None = None
             exc_info = event_dict.get('exc_info')
             if exc_info and isinstance(exc_info, tuple) and exc_info[2] is not None:
-                tb_override = ''.join(traceback.format_exception(*exc_info))
+                tb_override = _redact_telegram_secrets(''.join(traceback.format_exception(*exc_info)))
+
+            # Также redact в самом сообщении ошибки (event string).
+            if error.args:
+                error.args = tuple(_redact_telegram_secrets(arg) if isinstance(arg, str) else arg for arg in error.args)
 
             await send_error_to_admin_chat(bot, error, context, tb_override=tb_override)
 

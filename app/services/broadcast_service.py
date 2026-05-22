@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING
 
 import structlog
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+    TelegramServerError,
+)
 from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy import select
 from sqlalchemy.exc import InterfaceError, SQLAlchemyError
@@ -62,6 +68,7 @@ class BroadcastConfig:
     media: BroadcastMediaConfig | None = None
     initiator_name: str | None = None
     custom_buttons: list[dict] | None = None
+    category: str = 'system'  # system|news|promo
 
 
 @dataclass
@@ -160,7 +167,7 @@ class BroadcastService:
                 await session.commit()
 
             # _fetch_recipients теперь возвращает list[int] (telegram_id), а не ORM-объекты
-            recipient_ids: list[int] = await self._fetch_recipients(config.target)
+            recipient_ids: list[int] = await self._fetch_recipients(config.target, config.category)
 
             async with AsyncSessionLocal() as session:
                 broadcast = await session.get(BroadcastHistory, broadcast_id)
@@ -226,14 +233,30 @@ class BroadcastService:
             logger.exception('Критическая ошибка при выполнении рассылки', broadcast_id=broadcast_id, exc=exc)
             await self._mark_failed(broadcast_id, sent_count, failed_count, blocked_count)
 
-    async def _fetch_recipients(self, target: str) -> list[int]:
-        """Загружает получателей и возвращает список telegram_id (скаляры, не ORM-объекты)."""
+    async def _fetch_recipients(self, target: str, category: str = 'system') -> list[int]:
+        """Загружает получателей и возвращает список telegram_id (скаляры, не ORM-объекты).
+
+        Filters out users who disabled the given broadcast category in their
+        notification preferences (news_enabled, promo_offers_enabled).
+        Category 'system' is never filtered — system notifications reach everyone.
+        """
         async with AsyncSessionLocal() as session:
             if target.startswith('custom_'):
                 criteria = target[len('custom_') :]
                 users_orm = await get_custom_users(session, criteria)
             else:
                 users_orm = await get_target_users(session, target)
+
+            # Filter by user notification preferences based on broadcast category
+            if category == 'news':
+                from app.utils.notification_prefs import is_news_enabled
+
+                users_orm = [u for u in users_orm if is_news_enabled(u)]
+            elif category == 'promo':
+                from app.utils.notification_prefs import is_promo_offers_enabled
+
+                users_orm = [u for u in users_orm if is_promo_offers_enabled(u)]
+            # category == 'system' → no filtering, sent to everyone
 
             # Извлекаем telegram_id сразу, пока сессия жива.
             # После выхода из блока ORM-объекты станут detached.
@@ -304,6 +327,21 @@ class BroadcastService:
                     if 'bot was blocked' in err or 'user is deactivated' in err or 'chat not found' in err:
                         return 'blocked'
                     return 'failed'
+
+                except (TelegramNetworkError, TelegramServerError) as exc:
+                    # Транзиентные сетевые/5xx — warning, не error (иначе спам в админ-чат
+                    # через TelegramNotifierProcessor при каждом ConnectionReset).
+                    logger.warning(
+                        'Транзиентная сетевая ошибка рассылки (retry)',
+                        broadcast_id=broadcast_id,
+                        telegram_id=telegram_id,
+                        attempt=attempt + 1,
+                        TG_MAX_RETRIES=_TG_MAX_RETRIES,
+                        error=str(exc)[:200],
+                        error_type=type(exc).__name__,
+                    )
+                    if attempt < _TG_MAX_RETRIES - 1:
+                        await asyncio.sleep(0.5 * (attempt + 1))
 
                 except Exception as exc:
                     logger.error(

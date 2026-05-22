@@ -549,6 +549,14 @@ async def handle_simple_subscription_pay_with_balance(
                 sync_error=sync_error,
                 exc_info=True,
             )
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+                remnawave_retry_queue.enqueue(
+                    subscription_id=subscription.id,
+                    user_id=subscription.user_id,
+                    action='create',
+                )
 
         # Отправляем уведомление об успешной покупке
         server_label = _get_simple_subscription_server_label(
@@ -2289,6 +2297,14 @@ async def confirm_simple_subscription_purchase(
                 sync_error=sync_error,
                 exc_info=True,
             )
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+                remnawave_retry_queue.enqueue(
+                    subscription_id=subscription.id,
+                    user_id=subscription.user_id,
+                    action='create',
+                )
 
         # Отправляем уведомление об успешной покупке
         server_label = _get_simple_subscription_server_label(

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from importlib import import_module
@@ -680,6 +681,13 @@ class YooKassaPaymentMixin:
                                     await subscription_service.create_remnawave_user(db, subscription)
                                 except Exception as rw_error:
                                     logger.error('Ошибка создания RemnaWave для триала', rw_error=rw_error)
+                                    from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                                    remnawave_retry_queue.enqueue(
+                                        subscription_id=subscription.id,
+                                        user_id=subscription.user_id,
+                                        action='create',
+                                    )
 
                                 # Уведомление админам
                                 if getattr(self, 'bot', None):
@@ -990,6 +998,13 @@ class YooKassaPaymentMixin:
                                     user_id=user.id,
                                     sync_error=sync_error,
                                     exc_info=True,
+                                )
+                                from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                                remnawave_retry_queue.enqueue(
+                                    subscription_id=subscription.id,
+                                    user_id=subscription.user_id,
+                                    action='create',
                                 )
 
                             # Отправляем уведомление пользователю об активации подписки (только Telegram)
@@ -1359,11 +1374,34 @@ class YooKassaPaymentMixin:
             logger.warning('Webhook без payment id', event=event)
             return False
 
+        # The remote API call is a defence-in-depth cross-check of the
+        # webhook payload — the payload itself already carries ``status``
+        # and ``paid``. During YK-side degradation we used to wait up to
+        # 30s (asyncio.timeout in yookassa_service.get_payment_info)
+        # which, combined with the now-fixed SDK thread leak, would
+        # serialize webhook processing on the YK executor.
+        #
+        # Tight 8s budget here: if the API confirms within that window
+        # we use it (catches webhook-replay edge cases); otherwise we
+        # fall back to the payload's status. The webhook signature is
+        # already verified upstream, so the payload is trusted enough
+        # for the routine "succeeded → mark paid" path. Tighter cap is
+        # safe because the SDK monkey-patch in yookassa_service.py
+        # guarantees the thread itself unblocks within ~15s socket-read.
         remote_data: dict[str, Any] | None = None
         if getattr(self, 'yookassa_service', None):
             try:
-                remote_data = await self.yookassa_service.get_payment_info(  # type: ignore[union-attr]
-                    yookassa_payment_id
+                remote_data = await asyncio.wait_for(
+                    self.yookassa_service.get_payment_info(  # type: ignore[union-attr]
+                        yookassa_payment_id
+                    ),
+                    timeout=8,
+                )
+            except TimeoutError:
+                logger.warning(
+                    'YooKassa API не ответил за 8с при cross-check webhook — используем payload без подтверждения',
+                    yookassa_payment_id=yookassa_payment_id,
+                    payload_status=event_object.get('status'),
                 )
             except Exception as error:  # pragma: no cover - диагностический лог
                 logger.warning(

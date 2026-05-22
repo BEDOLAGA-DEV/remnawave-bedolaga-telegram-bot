@@ -1,6 +1,6 @@
 [project]
 name = 'remnawave-bedolaga-telegram-bot'
-version = "3.45.1"
+version = "3.54.0"
 description = 'Telegram bot for RemnaWave VPN service'
 readme = 'README.md'
 license = { text = 'MIT' }
@@ -26,6 +26,8 @@ dependencies = [
     'rich>=14.0',
     'aiohttp-socks>=0.10.1',
     'httpx[socks]>=0.27.0',
+    'pycryptodome>=3.21.0',
+    "app-store-server-library[async]>=3.1.1",
 ]
 
 [dependency-groups]

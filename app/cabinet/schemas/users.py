@@ -82,6 +82,21 @@ class UserPromoGroupInfo(BaseModel):
 # === User List ===
 
 
+class SubscriptionListItem(BaseModel):
+    """Compact subscription info for user list (multi-tariff mode)."""
+
+    id: int
+    tariff_id: int | None = None
+    tariff_name: str | None = None
+    status: str
+    is_trial: bool = False
+    end_date: datetime | None = None
+    days_remaining: int = 0
+    traffic_used_gb: float = 0
+    traffic_limit_gb: int = 0
+    device_limit: int = 0
+
+
 class UserListItem(BaseModel):
     """User item in list."""
 
@@ -102,6 +117,15 @@ class UserListItem(BaseModel):
     subscription_status: str | None = None
     subscription_is_trial: bool = False
     subscription_end_date: datetime | None = None
+    tariff_id: int | None = None
+    tariff_name: str | None = None
+    traffic_used_gb: float = 0
+    traffic_limit_gb: int = 0
+    device_limit: int = 0
+    days_remaining: int = 0
+
+    # All subscriptions (multi-tariff)
+    subscriptions: list[SubscriptionListItem] = []
 
     # Promo group
     promo_group_id: int | None = None
@@ -431,6 +455,9 @@ class DeviceInfo(BaseModel):
     platform: str = ''
     device_model: str = ''
     created_at: str | None = None
+    # User-set local alias (per `user_device_aliases`). None when the user
+    # hasn't renamed this device — clients fall back to platform/device_model.
+    local_name: str | None = None
 
 
 class UserDevicesResponse(BaseModel):
@@ -447,6 +474,19 @@ class DeleteDeviceResponse(BaseModel):
     success: bool
     message: str
     deleted_hwid: str | None = None
+
+
+class RenameDeviceRequest(BaseModel):
+    """Admin payload for `PATCH /admin/users/{user_id}/devices/{hwid}/name`."""
+
+    name: str | None = None
+
+
+class RenameDeviceResponse(BaseModel):
+    """Result of a device-rename operation. `local_name` is None when cleared."""
+
+    hwid: str
+    local_name: str | None = None
 
 
 class ResetDevicesResponse(BaseModel):

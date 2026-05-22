@@ -146,6 +146,100 @@ def _get_method_defaults() -> dict:
             'default_max': settings.SEVERPAY_MAX_AMOUNT_KOPEKS,
             'available_sub_options': None,
         },
+        'paypear': {
+            'default_display_name': settings.get_paypear_display_name(),
+            'is_configured': settings.is_paypear_enabled(),
+            'default_min': settings.PAYPEAR_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.PAYPEAR_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'bank_card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+                {'id': 'sberpay', 'name': 'SberPay'},
+                {'id': 'tpay', 'name': 'T-Pay'},
+            ],
+        },
+        'rollypay': {
+            'default_display_name': settings.get_rollypay_display_name(),
+            'is_configured': settings.is_rollypay_enabled(),
+            'default_min': settings.ROLLYPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.ROLLYPAY_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'sbp', 'name': 'СБП'},
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'crypto', 'name': 'Криптовалюта'},
+            ],
+        },
+        'overpay': {
+            'default_display_name': settings.get_overpay_display_name(),
+            'is_configured': settings.is_overpay_enabled(),
+            'default_min': settings.OVERPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.OVERPAY_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'fps', 'name': 'СБП'},
+            ],
+        },
+        'aurapay': {
+            'default_display_name': settings.get_aurapay_display_name(),
+            'is_configured': settings.is_aurapay_enabled(),
+            'default_min': settings.AURAPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.AURAPAY_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+            ],
+        },
+        'etoplatezhi': {
+            'default_display_name': settings.get_etoplatezhi_display_name(),
+            'is_configured': settings.is_etoplatezhi_enabled(),
+            'default_min': settings.ETOPLATEZHI_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.ETOPLATEZHI_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+            ],
+        },
+        'antilopay': {
+            'default_display_name': settings.get_antilopay_display_name(),
+            'is_configured': settings.is_antilopay_enabled(),
+            'default_min': settings.ANTILOPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.ANTILOPAY_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+                {'id': 'sberpay', 'name': 'SberPay'},
+            ],
+        },
+        'jupiter': {
+            'default_display_name': settings.get_jupiter_display_name(),
+            'is_configured': settings.is_jupiter_enabled(),
+            'default_min': settings.JUPITER_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.JUPITER_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'sbp', 'name': 'СБП'},
+            ],
+        },
+        'donut': {
+            'default_display_name': settings.get_donut_display_name(),
+            'is_configured': settings.is_donut_enabled(),
+            'default_min': settings.DONUT_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.DONUT_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+                {'id': 'sbp_qr', 'name': 'СБП QR'},
+            ],
+        },
+        'lava': {
+            'default_display_name': settings.get_lava_display_name(),
+            'is_configured': settings.is_lava_enabled(),
+            'default_min': settings.LAVA_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.LAVA_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+            ],
+        },
     }
 
 
@@ -188,6 +282,15 @@ DEFAULT_METHOD_ORDER = [
     'kassa_ai',
     'riopay',
     'severpay',
+    'paypear',
+    'rollypay',
+    'overpay',
+    'aurapay',
+    'etoplatezhi',
+    'antilopay',
+    'jupiter',
+    'donut',
+    'lava',
 ]
 
 
@@ -319,6 +422,7 @@ async def update_config(
         'user_type_filter',
         'first_topup_filter',
         'promo_group_filter_mode',
+        'open_url_direct',
     )
     for key in updatable_fields:
         if key in data:
@@ -411,11 +515,18 @@ async def get_enabled_methods_for_user(
         if config.promo_group_filter_mode == 'selected' and user:
             allowed_group_ids = {pg.id for pg in config.allowed_promo_groups}
             if allowed_group_ids:
-                # Get user's promo groups
+                # Собираем ВСЕ промогруппы юзера — из M2M `user_promo_groups` (новая
+                # система) И из legacy `user.promo_group_id` (одна группа на юзера,
+                # для бэк-совместимости со старыми записями). Без учёта legacy юзеры,
+                # созданные до миграции на M2M, "теряют" фильтрованные методы оплаты —
+                # их фактическая промогруппа невидима фильтру (issue #422).
                 user_groups_result = await db.execute(
                     select(UserPromoGroup.promo_group_id).where(UserPromoGroup.user_id == user.id)
                 )
                 user_group_ids = set(user_groups_result.scalars().all())
+                legacy_group_id = getattr(user, 'promo_group_id', None)
+                if legacy_group_id is not None:
+                    user_group_ids.add(legacy_group_id)
 
                 # Check if user has at least one allowed group
                 if not user_group_ids.intersection(allowed_group_ids):
@@ -454,6 +565,9 @@ async def get_enabled_methods_for_user(
                 'max_amount_kopeks': max_amount,
                 'options': options,
                 'sort_order': config.sort_order,
+                # Если True — кабинет, получив payment_url, делает
+                # window.location.href сразу вместо показа панели с ссылкой.
+                'open_url_direct': bool(getattr(config, 'open_url_direct', False)),
             }
         )
 

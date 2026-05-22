@@ -26,7 +26,7 @@ from app.services.subscription_checkout_service import (
     should_offer_checkout_resume,
 )
 from app.services.user_cart_service import user_cart_service
-from app.utils.miniapp_buttons import build_miniapp_or_callback_button
+from app.utils.miniapp_buttons import build_main_menu_button, build_miniapp_or_callback_button
 from app.utils.payment_logger import payment_logger as logger
 
 
@@ -128,23 +128,26 @@ class PaymentCommonMixin:
                         ]
                     )
 
-        # Стандартные кнопки быстрого доступа к балансу и главному меню.
+        # «Мой баланс» направляется в соответствующий раздел кабинета
+        # в MAIN_MENU_MODE=cabinet (через build_miniapp_or_callback_button),
+        # потому что баланс — это контентная страница, и юзер ожидает
+        # увидеть детали в том же режиме интерфейса, в котором он
+        # запустил пополнение.
         keyboard_rows.append(
             [
                 build_miniapp_or_callback_button(
-                    text='💰 Мой баланс',
+                    text=texts.MY_BALANCE_BUTTON,
                     callback_data='menu_balance',
                 )
             ]
         )
-        keyboard_rows.append(
-            [
-                InlineKeyboardButton(
-                    text='🏠 Главное меню',
-                    callback_data='back_to_menu',
-                )
-            ]
-        )
+        # «Главное меню» — ВСЕГДА callback на bot-handler back_to_menu,
+        # независимо от MAIN_MENU_MODE. Если эта кнопка будет открывать
+        # кабинет (через build_miniapp_or_callback_button), юзер окажется
+        # в бесконечном цикле «хочу в бот → попадаю в кабинет → тапаю
+        # главное меню → снова кабинет». build_main_menu_button фиксирует
+        # это инвариантом на уровне типа.
+        keyboard_rows.append([build_main_menu_button(texts.MAIN_MENU_BUTTON)])
 
         return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
@@ -213,7 +216,19 @@ class PaymentCommonMixin:
                 reply_markup=keyboard,
             )
         except Exception as error:
-            logger.error('Ошибка отправки уведомления пользователю', telegram_id=telegram_id, error=error)
+            from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramServerError
+
+            # Транзиентные сетевые / forbidden — warning. Платёж уже зачислен,
+            # уведомление пользователя — best-effort, не должно спамить админ-чат.
+            if isinstance(error, (TelegramNetworkError, TelegramServerError, TelegramForbiddenError)):
+                logger.warning(
+                    'Не доставлено уведомление об оплате (транзиент)',
+                    telegram_id=telegram_id,
+                    error=str(error)[:200],
+                    error_type=type(error).__name__,
+                )
+            else:
+                logger.error('Ошибка отправки уведомления пользователю', telegram_id=telegram_id, error=error)
 
     async def _ensure_user_snapshot(
         self,
@@ -309,13 +324,14 @@ async def send_cart_notification_after_topup(
     db: AsyncSession,
     bot: Any | None,
 ) -> bool:
-    """Handle saved cart after balance top-up: try auto-purchase, then send notification.
+    """Run post-topup side-effects: resume daily / auto-purchase saved cart / auto-extend.
 
-    Returns True if a cart notification was sent.
+    Возвращает False всегда (имя оставлено ради 19+ существующих вызовов).
+    Само сообщение «Баланс пополнен…» больше не шлётся — оно дублировало
+    основное «Пополнение успешно!» и ломало MAIN_MENU_MODE=cabinet.
     """
-    from aiogram import types
+    del amount_kopeks  # больше не используется после удаления второго сообщения
 
-    from app.database.crud.user import get_user_by_id
     from app.services.subscription_auto_purchase_service import (
         auto_purchase_saved_cart_after_topup,
         try_auto_extend_expired_after_topup,
@@ -348,10 +364,13 @@ async def send_cart_notification_after_topup(
             )
             return False
 
-        # Try auto-purchase first
-        auto_purchase_success = False
+        # Пробуем сразу оформить подписку из корзины. Если успешно — внутри сервиса
+        # отдельно полетит уведомление пользователю.
+        # Само сообщение «Баланс пополнен…» с отдельной клавиатурой больше не шлётся:
+        # оно дублировало «Пополнение успешно!», а его клавиатура не учитывала
+        # MAIN_MENU_MODE=cabinet и уводила из миниаппа в полное меню бота.
         try:
-            auto_purchase_success = await auto_purchase_saved_cart_after_topup(db, user, bot=bot)
+            await auto_purchase_saved_cart_after_topup(db, user, bot=bot)
         except Exception as auto_error:
             logger.error(
                 'Ошибка автоматической покупки подписки для пользователя',
@@ -359,85 +378,7 @@ async def send_cart_notification_after_topup(
                 auto_error=auto_error,
                 exc_info=True,
             )
-
-        if auto_purchase_success:
-            return False
-
-        if not bot or not getattr(user, 'telegram_id', None):
-            return False
-
-        # Refresh balance from DB to account for any changes during auto-purchase attempt
-        refreshed_user = await get_user_by_id(db, user.id)
-        balance = getattr(refreshed_user or user, 'balance_kopeks', 0)
-
-        texts = get_texts(getattr(user, 'language', 'ru'))
-
-        # Build message based on whether balance is sufficient
-        fmt = settings.format_price
-        cart_total_formatted = fmt(cart_total)
-        if balance >= cart_total:
-            template = texts.get('BALANCE_TOPPED_UP_CART_SUFFICIENT', '')
-            message_text = template.format(
-                amount=fmt(amount_kopeks),
-                balance=fmt(balance),
-                cart_total=cart_total_formatted,
-                total_amount=cart_total_formatted,
-            )
-        else:
-            missing = cart_total - balance
-            template = texts.get('BALANCE_TOPPED_UP_CART_INSUFFICIENT', '')
-            message_text = template.format(
-                amount=fmt(amount_kopeks),
-                balance=fmt(balance),
-                cart_total=cart_total_formatted,
-                total_amount=cart_total_formatted,
-                missing=fmt(missing),
-            )
-
-        if not message_text:
-            logger.warning('Missing cart notification template', language=getattr(user, 'language', 'ru'))
-            return False
-
-        sent = False
-        try:
-            keyboard = types.InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        types.InlineKeyboardButton(
-                            text=texts.get('RETURN_TO_SUBSCRIPTION_CHECKOUT', '⬅️ Checkout'),
-                            callback_data='return_to_saved_cart',
-                        )
-                    ],
-                    [
-                        types.InlineKeyboardButton(
-                            text=texts.get('MY_BALANCE_BUTTON', '💰 Balance'),
-                            callback_data='menu_balance',
-                        )
-                    ],
-                    [
-                        types.InlineKeyboardButton(
-                            text=texts.get('MAIN_MENU_BUTTON', '🏠 Menu'),
-                            callback_data='back_to_menu',
-                        )
-                    ],
-                ]
-            )
-            await bot.send_message(
-                chat_id=user.telegram_id,
-                text=message_text,
-                reply_markup=keyboard,
-                parse_mode='HTML',
-            )
-            sent = True
-            logger.info('Sent cart notification to user', user_id=user.id)
-        except Exception as send_error:
-            logger.error(
-                'Failed to send cart notification to user',
-                user_id=user.id,
-                error=send_error,
-            )
-
-        return sent
+        return False
 
     # Try to auto-extend expired subscription only when there is no saved cart.
     try:

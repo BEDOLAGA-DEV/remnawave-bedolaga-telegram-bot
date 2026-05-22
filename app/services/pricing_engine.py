@@ -202,16 +202,20 @@ class PricingEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def get_tariff_daily_rate_fraction(tariff: Tariff, target_days: int) -> tuple[int, int]:
+    def get_tariff_daily_rate_fraction(tariff: Tariff) -> tuple[int, int]:
         """Дневная ставка тарифа как (price, period_days) для целочисленных вычислений.
 
         Возвращает числитель и знаменатель дроби price/period_days,
         чтобы избежать float-ошибок в финансовых расчётах.
+
+        Всегда использует кратчайший доступный период тарифа, чтобы
+        гарантировать корректное сравнение дневных ставок при смене
+        тарифов с разными наборами периодов.
         """
         periods = tariff.get_available_periods()
         if not periods:
             return 0, 1
-        best_period = min(periods, key=lambda p: abs(p - target_days))
+        best_period = min(periods)
         price = tariff.get_price_for_period(best_period)
         if not price or best_period <= 0:
             return 0, 1
@@ -270,8 +274,8 @@ class PricingEngine:
         # raw_cost = (new_p/new_d - cur_p/cur_d) * remaining
         #          = (new_p * cur_d - cur_p * new_d) * remaining / (new_d * cur_d)
         # Floor division (//) округляет дробные копейки вниз — в пользу пользователя.
-        cur_price, cur_period = self.get_tariff_daily_rate_fraction(current_tariff, remaining_days)
-        new_price, new_period = self.get_tariff_daily_rate_fraction(new_tariff, remaining_days)
+        cur_price, cur_period = self.get_tariff_daily_rate_fraction(current_tariff)
+        new_price, new_period = self.get_tariff_daily_rate_fraction(new_tariff)
 
         numerator = (new_price * cur_period - cur_price * new_period) * remaining_days
         denominator = new_period * cur_period
@@ -599,6 +603,9 @@ class PricingEngine:
         period_pct = 0
         devices_pct = 0
         promo_group = self.resolve_promo_group(user)
+        # Only apply promo group discount if the tariff is available for this group
+        if promo_group is not None and not tariff.is_available_for_promo_group(promo_group.id):
+            promo_group = None
         if promo_group is not None:
             period_pct = promo_group.get_discount_percent('period', period_days)
             devices_pct = promo_group.get_discount_percent('devices', period_days)
@@ -608,9 +615,9 @@ class PricingEngine:
         discounted_base = self.apply_discount(base_price, period_pct)
         discounted_devices = self.apply_discount(devices_price, devices_pct)
 
-        # Traffic uses addon discount (checks apply_discounts_to_addons flag)
+        # Traffic uses addon discount — but only if promo_group passed the tariff availability check
         discounted_traffic = traffic_price
-        if traffic_price > 0 and user:
+        if traffic_price > 0 and user and promo_group is not None:
             discounted_traffic, _, _ = self.calculate_traffic_discount(traffic_price, user)
 
         base_group_disc = base_price - discounted_base

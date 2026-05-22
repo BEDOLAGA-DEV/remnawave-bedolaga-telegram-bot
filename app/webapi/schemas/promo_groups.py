@@ -18,7 +18,9 @@ def _normalize_period_discounts(value: dict[object, object] | None) -> dict[int,
             except (TypeError, ValueError):
                 continue
 
-    return normalized or None
+    # Return empty dict (not None) so the backend can distinguish
+    # "clear all discounts" ({}) from "don't touch discounts" (None/absent).
+    return normalized
 
 
 class PromoGroupResponse(BaseModel):

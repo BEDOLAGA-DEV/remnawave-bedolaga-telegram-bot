@@ -25,6 +25,7 @@ from app.database.crud.subscription import (
     create_trial_subscription,
     decrement_subscription_server_counts,
     extend_subscription,
+    get_subscription_by_id_for_user,
     get_subscription_by_user_id,
 )
 from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
@@ -353,6 +354,9 @@ async def get_purchase_options(
                 'all_tariffs_purchased': len(purchased_tariff_ids) >= len(tariffs)
                 if settings.is_multi_tariff_enabled()
                 else False,
+                # Направления смены тарифа
+                'tariff_switch_upgrade_enabled': settings.TARIFF_SWITCH_UPGRADE_ENABLED,
+                'tariff_switch_downgrade_enabled': settings.TARIFF_SWITCH_DOWNGRADE_ENABLED,
             }
 
         # Classic mode - return periods
@@ -645,11 +649,39 @@ async def purchase_tariff(
             custom_traffic_gb = request.traffic_gb
             traffic_limit_gb = request.traffic_gb
 
-        # Determine device_limit for renewal pricing
+        # Determine device_limit for renewal pricing.
+        #
+        # When the frontend passes an explicit ``subscription_id`` (the
+        # user clicked "Renew this subscription" rather than a fresh
+        # catalog buy), use it via the ownership-checked lookup. This
+        # is race-resistant: even if a concurrent panel webhook briefly
+        # flips the target sub's status between request arrival and
+        # this query, the ID-based lookup still finds the right row.
+        # Without this pin, the bot was hitting the partial UNIQUE
+        # ``uq_subscriptions_user_tariff_active`` on confirm and
+        # logging "Тариф уже активен" — the exact production scenario
+        # the bot-side fix already closed (commit 5cd53e4c).
+        existing_subscription = None
         if settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+            if request.subscription_id is not None:
+                existing_subscription = await get_subscription_by_id_for_user(db, request.subscription_id, user.id)
+                # If the pinned sub points to a different tariff than
+                # the request carries (admin swap, stale client state),
+                # ignore it and fall back to tariff-level lookup so the
+                # purchase doesn't extend a sub of the wrong tariff.
+                if existing_subscription and existing_subscription.tariff_id != tariff.id:
+                    logger.warning(
+                        'Cabinet purchase: explicit subscription_id has divergent tariff_id; falling back',
+                        request_subscription_id=request.subscription_id,
+                        pinned_tariff_id=existing_subscription.tariff_id,
+                        request_tariff_id=tariff.id,
+                        user_id=user.id,
+                    )
+                    existing_subscription = None
+            if existing_subscription is None:
+                from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-            existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
+                existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
         device_limit = None
@@ -739,7 +771,7 @@ async def purchase_tariff(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     'code': 'insufficient_funds',
-                    'message': f'Недостаточно средств. Не хватает {settings.format_price(missing)}',
+                    'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
                     'missing_amount': missing,
                     'cart_saved': True,
                     'cart_mode': cart_data['cart_mode'],
@@ -892,8 +924,14 @@ async def purchase_tariff(
             except Exception as trial_err:
                 logger.warning('Failed to disable trial on RemnaWave', error=trial_err, trial_id=trial_sub.id)
         try:
-            if subscription.remnawave_uuid:
-                # Existing subscription with Remnawave user — update it
+            # Mirror the bot handler logic: in single-tariff mode, check user.remnawave_uuid
+            # (webhook clears it on panel deletion), not subscription.remnawave_uuid
+            if settings.is_multi_tariff_enabled():
+                _should_create = not subscription.remnawave_uuid
+            else:
+                _should_create = not getattr(user, 'remnawave_uuid', None)
+
+            if not _should_create:
                 await service.update_remnawave_user(
                     db,
                     subscription,
@@ -902,7 +940,6 @@ async def purchase_tariff(
                     sync_squads=True,
                 )
             else:
-                # New subscription — create new Remnawave user
                 await service.create_remnawave_user(
                     db,
                     subscription,
@@ -911,6 +948,13 @@ async def purchase_tariff(
                 )
         except Exception as remnawave_error:
             logger.error('Failed to sync subscription with RemnaWave', remnawave_error=remnawave_error)
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=user.id,
+                action='create' if _should_create else 'update',
+            )
 
         # Save cart for auto-renewal (not for daily tariffs - they have their own charging)
         if not is_daily_tariff:
@@ -1212,9 +1256,11 @@ async def activate_trial(
                     trial_tariff = None
 
         if trial_tariff:
+            from app.database.crud.server_squad import get_effective_tariff_squad_uuids
+
             trial_traffic_limit = trial_tariff.traffic_limit_gb
             trial_device_limit = trial_tariff.device_limit
-            trial_squads = trial_tariff.allowed_squads or []
+            trial_squads = await get_effective_tariff_squad_uuids(db, trial_tariff.allowed_squads)
             tariff_id_for_trial = trial_tariff.id
             tariff_trial_days = getattr(trial_tariff, 'trial_duration_days', None)
             if tariff_trial_days:
@@ -1227,6 +1273,13 @@ async def activate_trial(
             )
     except Exception as e:
         logger.error('Error getting trial tariff', error=e)
+
+    # No trial tariff configured, use the legacy random trial squad fallback.
+    if not trial_squads:
+        from app.database.crud.server_squad import get_random_trial_squad_uuid
+
+        trial_squad_uuid = await get_random_trial_squad_uuid(db)
+        trial_squads = [trial_squad_uuid] if trial_squad_uuid else []
 
     # Create trial subscription
     subscription = await create_trial_subscription(
@@ -1249,6 +1302,13 @@ async def activate_trial(
             await db.refresh(subscription)
     except Exception as e:
         logger.error('Failed to create RemnaWave user for trial', error=e)
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        remnawave_retry_queue.enqueue(
+            subscription_id=subscription.id,
+            user_id=user.id,
+            action='create',
+        )
 
     # Send admin notification about trial activation
     try:

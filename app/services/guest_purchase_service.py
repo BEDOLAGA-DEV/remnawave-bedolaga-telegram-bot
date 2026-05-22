@@ -145,6 +145,8 @@ async def create_purchase(
     gift_recipient_value: str | None = None,
     gift_message: str | None = None,
     source: str = 'landing',
+    subid: str | None = None,
+    referrer: str | None = None,
     buyer_user_id: int | None = None,
     commit: bool = True,
 ) -> GuestPurchase:
@@ -152,6 +154,8 @@ async def create_purchase(
     purchase = await create_guest_purchase(
         db,
         commit=commit,
+        subid=subid,
+        referrer=referrer,
         landing_id=landing.id if landing else None,
         tariff_id=tariff.id,
         period_days=period_days,
@@ -438,28 +442,93 @@ async def fulfill_purchase(
         purchase.status = GuestPurchaseStatus.DELIVERED.value
         purchase.user_id = user.id
         purchase.delivered_at = datetime.now(UTC)
+
+        # Extract subid from Redis cache (saved at purchase creation)
+        try:
+            from app.utils.cache import cache
+
+            _cached_subid = await cache.get(f'subid:purchase:{purchase.token}')
+            if _cached_subid:
+                purchase.subid = _cached_subid if isinstance(_cached_subid, str) else _cached_subid.decode()
+                from app.database.crud.yandex_client_id import upsert_subid
+
+                await upsert_subid(db, user.id, purchase.subid, source='landing')
+        except Exception:
+            pass
+
         if recipient_type == 'email' and not purchase.is_gift and is_new_account:
             purchase.auto_login_token = create_auto_login_token(user.id)
 
         await db.commit()
         await db.refresh(purchase, attribute_names=['landing', 'user', 'buyer'])
 
-        # Create transaction so promo group auto-assignment and contest tracking work
+        # Create transaction so promo group auto-assignment and contest tracking work.
+        # Skip for gift recipients — they didn't pay, so their spending shouldn't be inflated.
         transaction = None
+        if not purchase.is_gift:
+            try:
+                payment_method_enum = _resolve_payment_method(purchase.payment_method)
+                transaction = await create_transaction(
+                    db=db,
+                    user_id=user.id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    amount_kopeks=purchase.amount_kopeks,
+                    description=f'Покупка подписки через лендинг ({notification_tariff_name}, {purchase.period_days} дн.)',
+                    payment_method=payment_method_enum,
+                    external_id=purchase.payment_id,
+                    is_completed=True,
+                )
+            except Exception:
+                logger.exception('Failed to create transaction for guest purchase', purchase_id=purchase.id)
+
+        # Save Yandex CID from Redis → DB (enables on_registration/on_purchase to use it)
         try:
-            payment_method_enum = _resolve_payment_method(purchase.payment_method)
-            transaction = await create_transaction(
-                db=db,
-                user_id=user.id,
-                type=TransactionType.SUBSCRIPTION_PAYMENT,
-                amount_kopeks=purchase.amount_kopeks,
-                description=f'Покупка подписки через лендинг ({notification_tariff_name}, {purchase.period_days} дн.)',
-                payment_method=payment_method_enum,
-                external_id=purchase.payment_id,
-                is_completed=True,
-            )
+            from app.services import yandex_offline_conv_service as yandex_conv
+            from app.utils.cache import cache
+
+            _cached_cid = await cache.get(f'yacid:purchase:{purchase.token}')
+            if _cached_cid:
+                await yandex_conv.store_cid(db, user.id, _cached_cid, source='landing')
+                await db.commit()
         except Exception:
-            logger.exception('Failed to create transaction for guest purchase', purchase_id=purchase.id)
+            logger.debug('Failed to save CID from Redis')
+
+        # Registration event (new accounts only) + S2S postback
+        if is_new_account:
+            try:
+                from app.services import yandex_offline_conv_service as yandex_conv
+
+                await yandex_conv.on_registration(db, user.id)
+            except Exception:
+                logger.debug('Yandex on_registration hook error')
+
+            try:
+                from app.database.crud.yandex_client_id import get_subid
+                from app.services.s2s_postback_service import send_postback
+
+                _subid = purchase.subid or await get_subid(db, user.id)
+                if _subid:
+                    await send_postback('registration', _subid, user_id=user.id)
+            except Exception:
+                logger.debug('S2S postback registration hook error')
+
+        # Purchase event + S2S postback (always for paid purchases)
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            await yandex_conv.on_purchase(db, user.id, purchase.amount_kopeks)
+        except Exception:
+            logger.debug('Yandex on_purchase hook error')
+
+        try:
+            from app.database.crud.yandex_client_id import get_subid
+            from app.services.s2s_postback_service import send_postback
+
+            _subid = purchase.subid or await get_subid(db, user.id)
+            if _subid:
+                await send_postback('purchase', _subid, amount=purchase.amount_kopeks / 100, user_id=user.id)
+        except Exception:
+            logger.debug('S2S postback purchase hook error')
 
         try:
             await send_guest_notification(
@@ -1147,21 +1216,23 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
         await db.commit()
         await db.refresh(purchase, attribute_names=['landing', 'user', 'buyer'])
 
-        # Create transaction so promo group auto-assignment and contest tracking work
-        try:
-            payment_method_enum = _resolve_payment_method(purchase.payment_method)
-            await create_transaction(
-                db=db,
-                user_id=user.id,
-                type=TransactionType.SUBSCRIPTION_PAYMENT,
-                amount_kopeks=purchase.amount_kopeks,
-                description=f'Покупка подписки через лендинг ({notification_tariff_name}, {purchase.period_days} дн.)',
-                payment_method=payment_method_enum,
-                external_id=purchase.payment_id,
-                is_completed=True,
-            )
-        except Exception:
-            logger.exception('Failed to create transaction for activated purchase', purchase_id=purchase.id)
+        # Create transaction so promo group auto-assignment and contest tracking work.
+        # Skip for gift recipients — they didn't pay, so their spending shouldn't be inflated.
+        if not purchase.is_gift:
+            try:
+                payment_method_enum = _resolve_payment_method(purchase.payment_method)
+                await create_transaction(
+                    db=db,
+                    user_id=user.id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    amount_kopeks=purchase.amount_kopeks,
+                    description=f'Покупка подписки через лендинг ({notification_tariff_name}, {purchase.period_days} дн.)',
+                    payment_method=payment_method_enum,
+                    external_id=purchase.payment_id,
+                    is_completed=True,
+                )
+            except Exception:
+                logger.exception('Failed to create transaction for activated purchase', purchase_id=purchase.id)
 
         if not skip_notification:
             try:
@@ -1635,12 +1706,11 @@ async def _check_and_recover_pending_purchase(
 
     match = await _find_succeeded_provider_payment(db, base_method, purchase_token)
     if match is None:
-        if base_method:
-            logger.debug(
-                'No succeeded provider payment found for PENDING purchase',
-                token_prefix=purchase_token[:5],
-                payment_method=payment_method,
-            )
+        # Это нормальный путь — гость нажал «Оплатить», но ещё не завершил оплату
+        # у провайдера. Polling задача проверяет каждые N секунд для каждой PENDING
+        # покупки, поэтому раньше этот debug-лог спамил в LOG_LEVEL=DEBUG режиме
+        # без полезной diagnostic info. Реальные ошибки (amount mismatch и т.д.)
+        # логируются на уровне ERROR ниже.
         return False
 
     provider_payment_id, provider_amount_kopeks = match

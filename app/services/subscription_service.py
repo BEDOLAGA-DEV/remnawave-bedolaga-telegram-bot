@@ -292,16 +292,18 @@ class SubscriptionService:
                     remnawave_uuid=subscription.remnawave_uuid,
                 )
 
-        # New subscription — create a NEW Remnawave user
-        base_username = settings.format_remnawave_username(
+        # New subscription — create a NEW Remnawave user.
+        # short_id (6 hex chars) приклеивается к base; helper гарантирует, что
+        # итоговая длина ≤ REMNAWAVE_USERNAME_MAX_LENGTH (исторический баг с
+        # `didykmarin_email_didykmarin_703_49883b` — 38 chars вместо 36).
+        username = settings.build_remnawave_subscription_username(
             full_name=user.full_name,
             username=user.username,
             telegram_id=user.telegram_id,
             email=user.email,
             user_id=user.id,
+            suffix=f'_{subscription.remnawave_short_id}',
         )
-        # Use permanent short_id from subscription (generated at creation time)
-        username = f'{base_username}_{subscription.remnawave_short_id}'
 
         updated_user = await api.create_user(username=username, **common_kwargs)
         if reset_traffic:
@@ -403,7 +405,7 @@ class SubscriptionService:
         *,
         reset_traffic: bool = False,
         reset_reason: str | None = None,
-        sync_squads: bool = False,
+        sync_squads: bool = True,
     ) -> RemnaWaveUser | None:
         try:
             user = await get_user_by_id(db, subscription.user_id)

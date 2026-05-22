@@ -280,12 +280,28 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
         except Exception as e:
             logger.warning('Failed to load menu layout cache', error=e)
 
+    try:
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        await remnawave_retry_queue.start()
+        logger.info('RemnaWave retry queue запущен')
+    except Exception as e:
+        logger.error('Ошибка запуска RemnaWave retry queue', error=e)
+
     logger.info('Бот успешно настроен')
 
     return bot, dp
 
 
 async def shutdown_bot():
+    try:
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        await remnawave_retry_queue.stop()
+        logger.info('RemnaWave retry queue остановлен')
+    except Exception as e:
+        logger.error('Ошибка остановки RemnaWave retry queue', error=e)
+
     try:
         await maintenance_service.stop_monitoring()
         logger.info('Мониторинг техработ остановлен')

@@ -165,3 +165,14 @@ class TariffPurchaseRequest(BaseModel):
     traffic_gb: int | None = Field(
         None, ge=0, le=100_000, description='Custom traffic in GB (for custom_traffic_enabled tariffs)'
     )
+    # When the user is renewing an EXISTING subscription (multi-tariff
+    # mode), the frontend passes the explicit subscription_id so the
+    # backend can resolve the target row by ID instead of doing a
+    # race-vulnerable (user_id, tariff_id) re-lookup at confirm time.
+    # Optional — None means "no existing sub to extend, treat as fresh
+    # purchase" which is the correct semantics for catalog-browse flows.
+    subscription_id: int | None = Field(
+        None,
+        ge=1,
+        description='Existing subscription_id when renewing (multi-tariff). Resolves race with concurrent panel webhooks.',
+    )

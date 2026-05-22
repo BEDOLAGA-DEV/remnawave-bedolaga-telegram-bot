@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -32,7 +33,7 @@ from app.services.subscription_purchase_service import (
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 from app.utils.pricing_utils import format_period_description
-from app.utils.timezone import format_local_datetime
+from app.utils.timezone import format_email_datetime, format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -575,7 +576,7 @@ async def _auto_extend_subscription(
             updated_subscription,
             reset_traffic=should_reset_traffic,
             reset_reason='смена тарифа' if is_tariff_change else 'продление подписки',
-            sync_squads=is_tariff_change,
+            sync_squads=True,
         )
     except Exception as error:  # pragma: no cover - defensive logging
         logger.error(
@@ -583,6 +584,14 @@ async def _auto_extend_subscription(
             format_user_id=_format_user_id(user),
             error=error,
         )
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(updated_subscription, 'id') and hasattr(updated_subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=updated_subscription.id,
+                user_id=updated_subscription.user_id,
+                action='update',
+            )
 
     await _delete_cart_for_subscription(user.id, cart_data)
     await clear_subscription_checkout_draft(user.id)
@@ -681,7 +690,7 @@ async def _auto_extend_subscription(
         await notify_user_subscription_renewed(
             user_id=user.id,
             subscription_id=subscription.id if subscription else None,
-            new_expires_at=new_end_date.isoformat() if new_end_date else '',
+            new_expires_at=format_email_datetime(new_end_date),
             amount_kopeks=prepared.price_kopeks,
         )
     except Exception as ws_error:
@@ -953,6 +962,14 @@ async def _auto_purchase_tariff(
             format_user_id=_format_user_id(user),
             error=error,
         )
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                action='create',
+            )
 
     # Очищаем корзину (per-subscription if subscription_id is in cart)
     await _delete_cart_for_subscription(user.id, cart_data)
@@ -1042,7 +1059,7 @@ async def _auto_purchase_tariff(
             await notify_user_subscription_renewed(
                 user_id=user.id,
                 subscription_id=subscription.id if subscription else None,
-                new_expires_at=subscription.end_date.isoformat() if subscription.end_date else '',
+                new_expires_at=format_email_datetime(subscription.end_date),
                 amount_kopeks=final_price,
             )
         else:
@@ -1050,7 +1067,7 @@ async def _auto_purchase_tariff(
             await notify_user_subscription_activated(
                 user_id=user.id,
                 subscription_id=subscription.id if subscription else None,
-                expires_at=subscription.end_date.isoformat() if subscription.end_date else '',
+                expires_at=format_email_datetime(subscription.end_date),
                 tariff_name=tariff.name,
             )
     except Exception as ws_error:
@@ -1303,6 +1320,14 @@ async def _auto_purchase_daily_tariff(
             format_user_id=_format_user_id(user),
             error=error,
         )
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                action='create',
+            )
 
     # Очищаем корзину (per-subscription if subscription_id is in cart)
     await _delete_cart_for_subscription(user.id, cart_data)
@@ -1385,7 +1410,7 @@ async def _auto_purchase_daily_tariff(
             await notify_user_subscription_renewed(
                 user_id=user.id,
                 subscription_id=subscription.id if subscription else None,
-                new_expires_at=subscription.end_date.isoformat() if subscription.end_date else '',
+                new_expires_at=format_email_datetime(subscription.end_date),
                 amount_kopeks=final_price,
             )
         else:
@@ -1393,7 +1418,7 @@ async def _auto_purchase_daily_tariff(
             await notify_user_subscription_activated(
                 user_id=user.id,
                 subscription_id=subscription.id if subscription else None,
-                expires_at=subscription.end_date.isoformat() if subscription.end_date else '',
+                expires_at=format_email_datetime(subscription.end_date),
                 tariff_name=tariff.name,
             )
     except Exception as ws_error:
@@ -1509,7 +1534,7 @@ async def _auto_add_devices(
 
     # Recompute price fresh under lock (pricing config may have changed since cart was saved)
     devices_price_per_month = devices_to_add * tariff_device_price
-    days_left = max(1, (subscription.end_date - datetime.now(UTC)).days)
+    days_left = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
     devices_discount_percent = PricingEngine.get_addon_discount_percent(
         user,
         'devices',
@@ -1634,6 +1659,14 @@ async def _auto_add_devices(
             format_user_id=_format_user_id(user),
             error=error,
         )
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                action='update',
+            )
 
     # Очищаем корзину (транзакция уже создана в subtract_user_balance)
     await _delete_cart_for_subscription(user.id, cart_data)
@@ -1982,6 +2015,14 @@ async def _auto_add_traffic(
             format_user_id=_format_user_id(user),
             error=error,
         )
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                action='update',
+            )
 
     # Clear cart (transaction already created in subtract_user_balance)
     await _delete_cart_for_subscription(user.id, cart_data)
@@ -2097,7 +2138,7 @@ async def try_auto_extend_expired_after_topup(
         from app.database.crud.subscription import get_all_subscriptions_by_user_id
 
         all_subs = await get_all_subscriptions_by_user_id(db, user.id)
-        expired_subs = [s for s in all_subs if s.status == SubscriptionStatus.EXPIRED.value and not s.is_trial]
+        expired_subs = [s for s in all_subs if s.status == SubscriptionStatus.EXPIRED.value and s.is_trial is False]
         if not expired_subs:
             subscription = None
         else:
@@ -2113,9 +2154,10 @@ async def try_auto_extend_expired_after_topup(
         return False
 
     # Only process expired subscriptions (not trial, not disabled)
+    # NULL-safe: is_trial can be None in legacy rows — treat as trial
     if subscription.status != SubscriptionStatus.EXPIRED.value:
         return False
-    if subscription.is_trial:
+    if subscription.is_trial is not False:
         return False
 
     # Only process subscriptions expired within the last 30 days
@@ -2333,6 +2375,14 @@ async def try_auto_extend_expired_after_topup(
             format_user_id=_format_user_id(user),
             error=error,
         )
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(updated_subscription, 'id') and hasattr(updated_subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=updated_subscription.id,
+                user_id=updated_subscription.user_id,
+                action='update',
+            )
 
     texts = get_texts(getattr(user, 'language', 'ru'))
     period_label = format_period_description(period_days, getattr(user, 'language', 'ru'))
@@ -2426,7 +2476,7 @@ async def try_auto_extend_expired_after_topup(
         await notify_user_subscription_renewed(
             user_id=user.id,
             subscription_id=subscription.id if subscription else None,
-            new_expires_at=new_end_date.isoformat() if new_end_date else '',
+            new_expires_at=format_email_datetime(new_end_date),
             amount_kopeks=renewal_cost,
         )
     except Exception as ws_error:
@@ -2713,6 +2763,14 @@ async def try_resume_disabled_daily_after_topup(
             format_user_id=_format_user_id(user),
             error=error,
         )
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                action='update',
+            )
 
     # Admin notification
     try:
@@ -2796,7 +2854,7 @@ async def try_resume_disabled_daily_after_topup(
         await notify_user_subscription_renewed(
             user_id=user.id,
             subscription_id=subscription.id if subscription else None,
-            new_expires_at=subscription.end_date.isoformat() if subscription.end_date else '',
+            new_expires_at=format_email_datetime(subscription.end_date),
             amount_kopeks=daily_price,
         )
     except Exception as ws_error:
@@ -3186,7 +3244,7 @@ async def _process_legacy_generic_cart(
             await notify_user_subscription_activated(
                 user_id=user.id,
                 subscription_id=subscription.id if subscription else None,
-                expires_at=subscription.end_date.isoformat() if subscription and subscription.end_date else '',
+                expires_at=format_email_datetime(subscription.end_date if subscription else None),
                 tariff_name='',
             )
         else:
@@ -3194,7 +3252,7 @@ async def _process_legacy_generic_cart(
             await notify_user_subscription_renewed(
                 user_id=user.id,
                 subscription_id=subscription.id if subscription else None,
-                new_expires_at=subscription.end_date.isoformat() if subscription and subscription.end_date else '',
+                new_expires_at=format_email_datetime(subscription.end_date if subscription else None),
                 amount_kopeks=pricing.final_total,
             )
     except Exception as ws_error:

@@ -313,7 +313,7 @@ async def restore_backup_start(callback: types.CallbackQuery, db_user: User, db:
     else:
         text = """📥 <b>Восстановление из бекапа</b>
 
-📎 Отправьте файл бекапа (.json или .json.gz)
+📎 Отправьте файл бекапа (.json, .json.gz или .tar.gz)
 
 ⚠️ <b>ВАЖНО:</b>
 • Файл должен быть создан этой системой бекапов
@@ -383,7 +383,7 @@ async def restore_backup_execute(callback: types.CallbackQuery, db_user: User, d
 async def handle_backup_file_upload(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
     if not message.document:
         await message.answer(
-            '❌ Пожалуйста, отправьте файл бекапа (.json или .json.gz)',
+            '❌ Пожалуйста, отправьте файл бекапа (.json, .json.gz или .tar.gz)',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text='◀️ Отмена', callback_data='backup_panel')]]
             ),
@@ -391,10 +391,11 @@ async def handle_backup_file_upload(message: types.Message, db_user: User, db: A
         return
 
     document = message.document
+    allowed_extensions = ('.json', '.json.gz', '.tar.gz', '.tar')
 
-    if not (document.file_name.endswith('.json') or document.file_name.endswith('.json.gz')):
+    if not document.file_name or not any(document.file_name.endswith(ext) for ext in allowed_extensions):
         await message.answer(
-            '❌ Неподдерживаемый формат файла. Загрузите .json или .json.gz файл',
+            '❌ Неподдерживаемый формат файла. Загрузите .json, .json.gz или .tar.gz файл',
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text='◀️ Отмена', callback_data='backup_panel')]]
             ),

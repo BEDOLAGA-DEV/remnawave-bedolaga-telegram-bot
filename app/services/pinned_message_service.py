@@ -205,11 +205,13 @@ async def unpin_active_pinned_message(
     """
     Открепляет активное сообщение у всех пользователей.
 
-    ВАЖНО: Извлекаем telegram_id в список ДО начала долгой операции,
+    ВАЖНО: Деактивация в БД происходит ПОСЛЕ откреплений в Telegram,
+    чтобы при сбое можно было повторить операцию.
+    Извлекаем telegram_id в список ДО начала долгой операции,
     чтобы избежать обращения к ORM-объектам после истечения таймаута
     соединения с БД.
     """
-    pinned_message = await deactivate_active_pinned_message(db)
+    pinned_message = await get_active_pinned_message(db)
     if not pinned_message:
         return 0, 0, False
 
@@ -259,6 +261,11 @@ async def unpin_active_pinned_message(
         tasks = [unpin_for_telegram_id(tid) for tid in batch]
         await asyncio.gather(*tasks)
         await asyncio.sleep(0.05)
+
+    # Деактивируем ПОСЛЕ откреплений через fresh session —
+    # исходная сессия может протухнуть за время долгого цикла Telegram API
+    async with AsyncSessionLocal() as fresh_db:
+        await deactivate_active_pinned_message(fresh_db)
 
     return unpinned_count, failed_count, True
 

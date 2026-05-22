@@ -26,36 +26,38 @@ jobs:
     - name: Get version info
       id: version
       run: |
-        echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-        
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
         echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
-        
-        # Определяем версию и теги
+
+        # Read base version from release-please manifest (single source of truth)
+        BASE_VERSION=$(jq -r '."."' .release-please-manifest.json)
+
         if [[ $GITHUB_REF == refs/tags/* ]]; then
           VERSION=${GITHUB_REF#refs/tags/}
           TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:latest,fr1ngg/remnawave-bedolaga-telegram-bot:${VERSION}"
           echo "🏷️ Собираем релизную версию: $VERSION"
         elif [[ $GITHUB_REF == refs/heads/main ]]; then
-          VERSION="v3.7.0-$(git rev-parse --short HEAD)" # x-release-please-version
+          VERSION="v${BASE_VERSION}-${SHORT_SHA}"
           TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:latest,fr1ngg/remnawave-bedolaga-telegram-bot:${VERSION}"
           echo "🚀 Собираем версию из main: $VERSION"
         elif [[ $GITHUB_REF == refs/heads/dev ]]; then
-          VERSION="v3.7.0-dev-$(git rev-parse --short HEAD)" # x-release-please-version
+          VERSION="v${BASE_VERSION}-dev-${SHORT_SHA}"
           TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:dev,fr1ngg/remnawave-bedolaga-telegram-bot:${VERSION}"
           echo "🧪 Собираем dev версию: $VERSION"
         else
-          VERSION="v3.7.0-pr-$(git rev-parse --short HEAD)" # x-release-please-version
-          TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:pr-$(git rev-parse --short HEAD)"
+          VERSION="v${BASE_VERSION}-pr-${SHORT_SHA}"
+          TAGS="fr1ngg/remnawave-bedolaga-telegram-bot:pr-${SHORT_SHA}"
           echo "🔀 Собираем PR версию: $VERSION"
         fi
-        
+
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "tags=$TAGS" >> $GITHUB_OUTPUT
         echo "should_push=${{ github.event_name != 'pull_request' }}" >> $GITHUB_OUTPUT
-        
+
         echo "=== Информация о сборке ==="
         echo "Версия: $VERSION"
-        echo "Коммит: $(git rev-parse --short HEAD)"
+        echo "Коммит: $SHORT_SHA"
         echo "Теги: $TAGS"
         echo "Push: ${{ github.event_name != 'pull_request' }}"
         echo "==========================="

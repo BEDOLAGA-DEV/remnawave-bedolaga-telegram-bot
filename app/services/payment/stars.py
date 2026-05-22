@@ -83,10 +83,41 @@ class TelegramStarsMixin:
         payload: str,
         telegram_payment_charge_id: str,
     ) -> bool:
-        """Финализирует платеж, пришедший из Telegram Stars, и обновляет баланс пользователя."""
+        """Финализирует платеж, пришедший из Telegram Stars, и обновляет баланс пользователя.
+
+        Credit derivation order:
+          1. If payload encodes the originally-requested ``amount_kopeks``
+             (every balance-topup flow does this), credit that exact
+             amount. This is what the user actually asked for; the
+             stars-to-rubles back-conversion can drift by sub-ruble
+             fractions (banker's rounding at quote time, non-1.0
+             operator rates).
+          2. Otherwise fall back to ``stars × current_rate`` — best-effort
+             for old payloads or paths we haven't catalogued.
+
+        Telegram passes the payload back byte-for-byte from the
+        ``create_invoice_link`` call, so payload trust is fine; the
+        sanity bound below catches obviously-bogus encodings.
+        """
         try:
             rubles_amount = TelegramStarsService.calculate_rubles_from_stars(stars_amount)
-            amount_kopeks = int((rubles_amount * Decimal(100)).to_integral_value(rounding=ROUND_HALF_UP))
+            reconstructed_kopeks = int((rubles_amount * Decimal(100)).to_integral_value(rounding=ROUND_HALF_UP))
+
+            payload_kopeks = self._parse_balance_topup_kopeks(payload)
+            if payload_kopeks is not None and self._is_payload_amount_plausible(
+                payload_kopeks=payload_kopeks,
+                reconstructed_kopeks=reconstructed_kopeks,
+            ):
+                amount_kopeks = payload_kopeks
+            else:
+                if payload_kopeks is not None:
+                    logger.warning(
+                        'Stars payload amount diverged from stars×rate; using reconstructed amount',
+                        payload_kopeks=payload_kopeks,
+                        reconstructed_kopeks=reconstructed_kopeks,
+                        stars_amount=stars_amount,
+                    )
+                amount_kopeks = reconstructed_kopeks
 
             simple_payload = self._parse_simple_subscription_payload(
                 payload,
@@ -139,6 +170,70 @@ class TelegramStarsMixin:
         except Exception as error:
             logger.error('Ошибка обработки Stars платежа', error=error, exc_info=True)
             return False
+
+    @staticmethod
+    def _parse_balance_topup_kopeks(payload: str) -> int | None:
+        """Extract the original ``amount_kopeks`` from a balance-topup payload.
+
+        Known producers (and the slot where amount_kopeks lives):
+          * ``balance_topup_{kopeks}``                           — bot, services/payment/stars.py
+          * ``balance_{user_id}_{kopeks}``                       — miniapp.py
+          * ``balance_{user_id}_{kopeks}_{suffix}``              — miniapp variant
+          * ``balance_topup_{user_id}_{kopeks}_{ts}``            — cabinet/routes/balance.py
+
+        Returns ``None`` for any payload that doesn't match a known
+        balance-topup shape (including subscription-payment payloads
+        that start with ``simple_sub_``). Callers should handle that
+        case by falling back to the stars-to-rubles back-conversion.
+        """
+        if not payload or not payload.startswith('balance'):
+            return None
+
+        parts = payload.split('_')
+        # parts[0] == 'balance' guaranteed by the prefix check above.
+
+        candidate: str | None = None
+        if len(parts) >= 2 and parts[1] == 'topup':
+            # `balance_topup_{kopeks}`               → kopeks at index 2
+            # `balance_topup_{uid}_{kopeks}_{ts}`    → kopeks at index 3
+            if len(parts) == 3:
+                candidate = parts[2]
+            elif len(parts) >= 4:
+                candidate = parts[3]
+        elif len(parts) >= 3:
+            # `balance_{uid}_{kopeks}[_suffix]`      → kopeks at index 2
+            candidate = parts[2]
+
+        if candidate is None:
+            return None
+        try:
+            kopeks = int(candidate)
+        except ValueError:
+            return None
+        return kopeks if kopeks > 0 else None
+
+    @staticmethod
+    def _is_payload_amount_plausible(
+        *,
+        payload_kopeks: int,
+        reconstructed_kopeks: int,
+    ) -> bool:
+        """Sanity bound: payload amount must be in the same ballpark as stars×rate.
+
+        Rejects pathological payloads that would massively over-credit
+        the user. The bound is intentionally generous (20% or 100
+        kopeks, whichever is larger) so legitimate rate changes between
+        invoice creation and payment, or precision quirks at fractional
+        rubles, don't trip it.
+
+        Telegram passes the payload back verbatim from ``create_invoice_link``
+        so external tampering is not the threat model — this is a bug
+        catcher for misconfigured callers, not a security boundary.
+        """
+        if payload_kopeks <= 0 or reconstructed_kopeks <= 0:
+            return False
+        tolerance = max(int(reconstructed_kopeks * 0.20), 100)
+        return abs(payload_kopeks - reconstructed_kopeks) <= tolerance
 
     @staticmethod
     def _parse_simple_subscription_payload(
@@ -286,6 +381,13 @@ class TelegramStarsMixin:
                 sync_error=sync_error,
                 exc_info=True,
             )
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                action='create',
+            )
 
         period_display = period_days
         if not period_display and getattr(subscription, 'start_date', None) and getattr(subscription, 'end_date', None):
@@ -351,7 +453,19 @@ class TelegramStarsMixin:
                     '✅ Пользователь получил уведомление об оплате подписки через Stars', telegram_id=user.telegram_id
                 )
             except Exception as error:  # pragma: no cover - диагностический лог
-                logger.error('Ошибка отправки уведомления о подписке через Stars', error=error, exc_info=True)
+                from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramServerError
+
+                # Подписка уже активирована, уведомление — best-effort.
+                # Транзиентные сетевые ошибки не должны попадать в админ-чат.
+                if isinstance(error, (TelegramNetworkError, TelegramServerError, TelegramForbiddenError)):
+                    logger.warning(
+                        'Не доставлено Stars-уведомление о подписке (транзиент)',
+                        telegram_id=user.telegram_id,
+                        error=str(error)[:200],
+                        error_type=type(error).__name__,
+                    )
+                else:
+                    logger.error('Ошибка отправки уведомления о подписке через Stars', error=error, exc_info=True)
 
         if getattr(self, 'bot', None):
             try:
