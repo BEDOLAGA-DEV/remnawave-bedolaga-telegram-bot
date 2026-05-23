@@ -2470,3 +2470,48 @@ async def get_all_subscriptions_by_user_id(db: AsyncSession, user_id: int) -> li
         )
     )
     return list(result.scalars().all())
+
+
+async def convert_trial_to_paid_in_db(
+    db: AsyncSession,
+    subscription_id: int,
+    period_days: int = 30,
+) -> Subscription | None:
+    """Atomically convert a trial subscription to paid.
+
+    Behavior:
+        * is_trial → False
+        * status → ACTIVE
+        * end_date → max(now, end_date) + period_days
+        * If sub is_trial=False already → noop, return sub
+        * If sub not found → None
+    """
+    sub = await db.get(Subscription, subscription_id)
+    if not sub:
+        logger.warning('convert_trial_to_paid_in_db: subscription not found', subscription_id=subscription_id)
+        return None
+
+    if not sub.is_trial:
+        logger.info(
+            'convert_trial_to_paid_in_db: already paid, noop',
+            subscription_id=subscription_id,
+        )
+        return sub
+
+    now = datetime.now(UTC)
+    base_end = sub.end_date if sub.end_date and sub.end_date > now else now
+    new_end = base_end + timedelta(days=period_days)
+
+    sub.is_trial = False
+    sub.status = SubscriptionStatus.ACTIVE.value
+    sub.end_date = new_end
+    sub.updated_at = now
+    await db.flush()
+
+    logger.info(
+        'convert_trial_to_paid_in_db: success',
+        subscription_id=subscription_id,
+        new_end_date=new_end.isoformat(),
+        period_days=period_days,
+    )
+    return sub

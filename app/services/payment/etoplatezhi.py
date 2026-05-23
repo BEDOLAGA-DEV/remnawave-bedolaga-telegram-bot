@@ -221,6 +221,42 @@ class EtoplatezhiPaymentMixin:
             # Определяем is_paid по статусу
             is_confirmed = etoplatezhi_status == 'success'
 
+            # Trial → paid auto-conversion: payment_id с префиксом trial_convert_
+            # не имеет row в etoplatezhi_payments (charge инициируется через COF
+            # endpoint, минуя Payment Page). Роутим в trial_conversion_service.
+            from app.services.trial_conversion_service import (
+                TRIAL_CONVERT_PAYMENT_PREFIX,
+                convert_trial_to_paid_from_callback,
+                parse_subscription_id,
+            )
+            if our_payment_id.startswith(TRIAL_CONVERT_PAYMENT_PREFIX):
+                subscription_id = parse_subscription_id(our_payment_id)
+                if not subscription_id:
+                    logger.warning(
+                        'Etoplatezhi trial_convert: невалидный payment_id',
+                        payment_id=our_payment_id,
+                    )
+                    return False
+                if not is_confirmed:
+                    logger.info(
+                        'Etoplatezhi trial_convert: статус не success, skip',
+                        payment_id=our_payment_id,
+                        status=etoplatezhi_status,
+                    )
+                    return True
+                sum_data = payment_data.get('sum', {}) or {}
+                amount_kopeks = int(sum_data.get('amount') or 0) or None
+                ok = await convert_trial_to_paid_from_callback(
+                    db,
+                    subscription_id=subscription_id,
+                    amount_kopeks=amount_kopeks,
+                    provider='etoplatezhi',
+                    provider_payment_id=str(etoplatezhi_payment_id),
+                )
+                if ok:
+                    await db.commit()
+                return ok
+
             # Ищем платеж по order_id (наш payment_id = order_id)
             etoplatezhi_crud = import_module('app.database.crud.etoplatezhi')
             payment = await etoplatezhi_crud.get_etoplatezhi_payment_by_order_id(db, our_payment_id)
