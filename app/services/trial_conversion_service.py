@@ -32,12 +32,10 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
 from app.database.models import (
     SavedPaymentMethod,
     Subscription,
     SubscriptionStatus,
-    User,
 )
 
 
@@ -57,7 +55,7 @@ def parse_subscription_id(payment_id: str) -> int | None:
     """Extract subscription_id from ``trial_convert_<sub_id>_<date>``."""
     if not payment_id or not payment_id.startswith(TRIAL_CONVERT_PAYMENT_PREFIX):
         return None
-    rest = payment_id[len(TRIAL_CONVERT_PAYMENT_PREFIX):]
+    rest = payment_id[len(TRIAL_CONVERT_PAYMENT_PREFIX) :]
     parts = rest.split('_', 1)
     if not parts or not parts[0].isdigit():
         return None
@@ -146,10 +144,12 @@ async def _find_trials_for_conversion(db: AsyncSession) -> list[Subscription]:
             and_(
                 Subscription.is_trial == True,
                 Subscription.autopay_enabled == True,
-                Subscription.status.in_([
-                    SubscriptionStatus.ACTIVE.value,
-                    SubscriptionStatus.TRIAL.value,
-                ]),
+                Subscription.status.in_(
+                    [
+                        SubscriptionStatus.ACTIVE.value,
+                        SubscriptionStatus.TRIAL.value,
+                    ]
+                ),
                 Subscription.end_date >= now,
                 Subscription.end_date <= horizon,
             )
@@ -161,9 +161,7 @@ async def _find_trials_for_conversion(db: AsyncSession) -> list[Subscription]:
     return list(result.scalars().all())
 
 
-async def _reload_subscription_with_relations(
-    db: AsyncSession, subscription_id: int
-) -> Subscription | None:
+async def _reload_subscription_with_relations(db: AsyncSession, subscription_id: int) -> Subscription | None:
     """Eager-load sub + user + tariff. Защита от MissingGreenlet после
     flush'ей внутри _process_single_trial."""
     q = (
@@ -298,11 +296,7 @@ async def convert_trial_to_paid_from_callback(
     """
     from app.services.subscription_service import SubscriptionService
 
-    q = (
-        select(Subscription)
-        .options(selectinload(Subscription.tariff))
-        .where(Subscription.id == subscription_id)
-    )
+    q = select(Subscription).options(selectinload(Subscription.tariff)).where(Subscription.id == subscription_id)
     sub = (await db.execute(q)).scalar_one_or_none()
     if not sub:
         logger.warning(

@@ -2496,9 +2496,7 @@ async def convert_trial_to_paid_in_db(
         return None
 
     # Lock row + refresh is_trial/status/end_date AFTER lock — иначе TOCTOU.
-    await db.execute(
-        select(Subscription.id).where(Subscription.id == subscription_id).with_for_update()
-    )
+    await db.execute(select(Subscription.id).where(Subscription.id == subscription_id).with_for_update())
     await db.refresh(sub, ['is_trial', 'status', 'end_date'])
 
     if not sub.is_trial:

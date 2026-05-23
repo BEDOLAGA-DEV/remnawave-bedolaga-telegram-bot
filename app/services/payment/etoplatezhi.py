@@ -229,6 +229,7 @@ class EtoplatezhiPaymentMixin:
                 convert_trial_to_paid_from_callback,
                 parse_subscription_id,
             )
+
             if our_payment_id.startswith(TRIAL_CONVERT_PAYMENT_PREFIX):
                 subscription_id = parse_subscription_id(our_payment_id)
                 if not subscription_id:
