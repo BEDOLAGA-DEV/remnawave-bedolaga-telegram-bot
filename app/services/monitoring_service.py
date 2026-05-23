@@ -228,12 +228,16 @@ class MonitoringService:
                 # экспайрятся до того, как autopay успеет их продлить
                 # Продление с баланса работает всегда, если у подписки autopay_enabled=True
                 await self._process_autopayments(db)
-                # Рекуррентные автоплатежи с карты: требуют ENABLE_AUTOPAY + YOOKASSA_RECURRENT_ENABLED
-                if settings.ENABLE_AUTOPAY and settings.YOOKASSA_RECURRENT_ENABLED:
+                # Рекуррентные автоплатежи с карты: ENABLE_AUTOPAY + любой включённый provider
+                # (YooKassa, EtoPlatezhi, …). Внутренний gate в process_recurrent_payments
+                # вернёт skip если ни один провайдер не активен.
+                if settings.ENABLE_AUTOPAY:
                     try:
+                        from app.services.payment.recurring import is_any_recurring_enabled
                         from app.services.recurrent_payment_service import process_recurrent_payments
 
-                        await process_recurrent_payments(db=db, bot=self.bot)
+                        if is_any_recurring_enabled():
+                            await process_recurrent_payments(db=db, bot=self.bot)
                     except Exception as recurrent_error:
                         logger.error(
                             'Ошибка рекуррентных автоплатежей',

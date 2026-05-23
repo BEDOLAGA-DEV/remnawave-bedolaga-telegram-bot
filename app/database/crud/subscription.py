@@ -2485,11 +2485,21 @@ async def convert_trial_to_paid_in_db(
         * end_date → max(now, end_date) + period_days
         * If sub is_trial=False already → noop, return sub
         * If sub not found → None
+
+    Concurrency: берёт `SELECT ... FOR UPDATE` lock на Subscription row перед
+    проверкой `is_trial`. Защищает от двойного продления end_date при at-least-once
+    webhook delivery (EtoPlatezhi/YooKassa могут ретраить callback при таймауте).
     """
     sub = await db.get(Subscription, subscription_id)
     if not sub:
         logger.warning('convert_trial_to_paid_in_db: subscription not found', subscription_id=subscription_id)
         return None
+
+    # Lock row + refresh is_trial/status/end_date AFTER lock — иначе TOCTOU.
+    await db.execute(
+        select(Subscription.id).where(Subscription.id == subscription_id).with_for_update()
+    )
+    await db.refresh(sub, ['is_trial', 'status', 'end_date'])
 
     if not sub.is_trial:
         logger.info(
