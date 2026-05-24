@@ -317,7 +317,12 @@ class PromoCodeService:
                 # Need user to choose — raise with eligible subscriptions list
                 raise _SelectSubscriptionRequired(
                     eligible_subscriptions=[
-                        {'id': s.id, 'tariff_name': s.tariff.name if s.tariff else f'#{s.id}', 'days_left': s.days_left}
+                        {
+                            'id': s.id,
+                            'tariff_name': s.tariff.name if s.tariff else f'#{s.id}',
+                            'days_left': s.days_left,
+                            'status': s.status,
+                        }
                         for s in eligible
                     ],
                     code=promocode.code,
