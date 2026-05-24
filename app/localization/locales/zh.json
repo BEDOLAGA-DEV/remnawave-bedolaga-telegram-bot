@@ -1192,6 +1192,7 @@
   "PROMOCODE_INVALID": "❌优惠码无效",
   "PROMOCODE_SUCCESS": "🎉优惠码已激活！{description}",
   "PROMOCODE_USED": "❌优惠码已被使用",
+  "PROMO_PICKER_EXPIRED": "已过期",
   "PROMOCODE_ACTIVE_DISCOUNT_EXISTS": "❌您已有活动折扣。请先使用后再激活新折扣。",
   "PROMO_GROUPS_INFO_CURRENT_LEVEL": "🏆当前等级：{name}",
   "PROMO_GROUPS_INFO_EMPTY": "尚未设置带自动分配的促销组。",

@@ -171,10 +171,15 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
         for sub in eligible:
             name = sub.get('tariff_name', f'#{sub["id"]}')
             days = sub.get('days_left', 0)
+            status = sub.get('status')
+            if status == 'expired':
+                label = f'{name} — {texts.t("PROMO_PICKER_EXPIRED", "истекла")}'
+            else:
+                label = f'{name} ({days} дн.)'
             buttons.append(
                 [
                     types.InlineKeyboardButton(
-                        text=f'{name} ({days} дн.)',
+                        text=label,
                         callback_data=f'promo_sub:{sub["id"]}:{promo_code}',
                     )
                 ]
