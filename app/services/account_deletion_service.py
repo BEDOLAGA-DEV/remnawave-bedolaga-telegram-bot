@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import structlog
-from sqlalchemy import or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.crud.subscription import decrement_subscription_server_counts, get_all_subscriptions_by_user_id
+from app.database.crud.subscription import decrement_subscription_server_counts
 from app.database.models import (
     AccountDeletionRequest,
     AccountDeletionRequestStatus,
@@ -37,14 +38,17 @@ _SERVER_COUNTED_STATUSES = {
     SubscriptionStatus.TRIAL.value,
     SubscriptionStatus.LIMITED.value,
 }
+_CLEANUP_CLAIM_LEASE = timedelta(minutes=15)
+_STALE_PROCESSING_RECOVERY_DELAY = timedelta(hours=6)
+_STALE_PROCESSING_ERROR = (
+    'Account deletion cleanup claim expired before finalization; manual RemnaWave state verification required'
+)
 
 
 @dataclass(frozen=True)
 class AccountDeletionResult:
     user_id: int
     subscriptions_disabled: int = 0
-    panel_users_deleted: int = 0
-    panel_users_disabled: int = 0
     refresh_tokens_revoked: int = 0
     saved_payment_methods_deactivated: int = 0
     cleanup_request_id: int | None = None
@@ -60,6 +64,14 @@ class AccountDeletionCleanupStats:
     failed_request_ids: tuple[int, ...] = ()
 
 
+@dataclass(frozen=True)
+class ClaimedAccountDeletionCleanup:
+    request_id: int
+    panel_uuids: tuple[str, ...]
+    telegram_id: int | None
+    claim_token: str
+
+
 class AccountDeletionPanelError(RuntimeError):
     def __init__(self, failed_panel_uuids: list[str]) -> None:
         failed = ', '.join(failed_panel_uuids) or 'unknown'
@@ -72,9 +84,16 @@ class AccountDeletionService:
         """Deactivate a user's account while preserving audit/finance rows."""
         now = datetime.now(UTC)
         user_id = user.id
-        telegram_id = int(user.telegram_id) if user.telegram_id is not None else None
-        subscriptions = await get_all_subscriptions_by_user_id(db, user_id)
-        panel_uuids = self._collect_panel_uuids(user, subscriptions)
+
+        locked_user = await self._load_user_for_deletion(db, user_id)
+        if locked_user is None:
+            raise ValueError(f'User {user_id} not found for account deletion')
+        if locked_user.status == UserStatus.DELETED.value:
+            return AccountDeletionResult(user_id=user_id)
+
+        telegram_id = int(locked_user.telegram_id) if locked_user.telegram_id is not None else None
+        subscriptions = await self._load_subscriptions_for_deletion(db, user_id)
+        panel_uuids = self._collect_panel_uuids(locked_user, subscriptions)
 
         subscriptions_disabled = await self._disable_subscriptions(db, subscriptions, now)
         refresh_tokens_revoked = await self._revoke_refresh_tokens(db, user_id, now)
@@ -82,7 +101,7 @@ class AccountDeletionService:
         await self._unlink_referrals(db, user_id)
         cleanup_request = self._create_cleanup_request(user_id, panel_uuids, telegram_id, now)
         db.add(cleanup_request)
-        self._anonymize_user(user, now)
+        self._anonymize_user(locked_user, now)
         await db.flush()
 
         await db.commit()
@@ -108,6 +127,25 @@ class AccountDeletionService:
             cleanup_request_id=cleanup_request.id,
             cart_deleted=cart_deleted,
         )
+
+    async def _load_user_for_deletion(self, db: AsyncSession, user_id: int) -> User | None:
+        result = await db.execute(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def _load_subscriptions_for_deletion(self, db: AsyncSession, user_id: int) -> list[Subscription]:
+        result = await db.execute(
+            select(Subscription)
+            .where(Subscription.user_id == user_id)
+            .order_by(Subscription.created_at.desc())
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return list(result.scalars().all())
 
     @staticmethod
     def _collect_panel_uuids(user: User, subscriptions: list[Subscription]) -> list[str]:
@@ -179,83 +217,207 @@ class AccountDeletionService:
         limit: int = 10,
     ) -> AccountDeletionCleanupStats:
         now = datetime.now(UTC)
+        stats = await self._fail_stale_processing_cleanup_requests(db, limit=limit, now=now)
+        claims = await self._claim_pending_cleanup_requests(db, limit=limit, now=now)
+
+        for claim in claims:
+            try:
+                await self._remove_panel_users(list(claim.panel_uuids), telegram_id=claim.telegram_id)
+            except Exception as error:
+                stats = await self._finalize_cleanup_request(
+                    db,
+                    claim.request_id,
+                    stats,
+                    datetime.now(UTC),
+                    claim_token=claim.claim_token,
+                    error=error,
+                )
+                continue
+
+            stats = await self._finalize_cleanup_request(
+                db,
+                claim.request_id,
+                stats,
+                datetime.now(UTC),
+                claim_token=claim.claim_token,
+            )
+
+        return stats
+
+    async def _claim_pending_cleanup_requests(
+        self,
+        db: AsyncSession,
+        *,
+        limit: int,
+        now: datetime,
+    ) -> list[ClaimedAccountDeletionCleanup]:
         result = await db.execute(
             select(AccountDeletionRequest)
             .where(
-                AccountDeletionRequest.status.in_(
-                    [
-                        AccountDeletionRequestStatus.PENDING.value,
-                        AccountDeletionRequestStatus.PROCESSING.value,
-                    ]
-                ),
-                or_(
-                    AccountDeletionRequest.next_retry_at.is_(None),
-                    AccountDeletionRequest.next_retry_at <= now,
-                ),
+                AccountDeletionRequest.status == AccountDeletionRequestStatus.PENDING.value,
+                AccountDeletionRequest.next_retry_at <= now,
             )
             .order_by(AccountDeletionRequest.created_at.asc())
             .limit(limit)
             .with_for_update(skip_locked=True)
         )
         requests = list(result.scalars().all())
-        stats = AccountDeletionCleanupStats()
-
+        lease_expires_at = now + _CLEANUP_CLAIM_LEASE
         for deletion_request in requests:
-            stats = await self._process_cleanup_request(db, deletion_request, stats, now)
+            deletion_request.status = AccountDeletionRequestStatus.PROCESSING.value
+            deletion_request.updated_at = now
+            deletion_request.next_retry_at = lease_expires_at
+            deletion_request.claim_token = uuid4().hex
 
-        return stats
+        await db.flush()
+        claims = [
+            ClaimedAccountDeletionCleanup(
+                request_id=deletion_request.id,
+                panel_uuids=tuple(deletion_request.panel_uuids or ()),
+                telegram_id=deletion_request.telegram_id,
+                claim_token=deletion_request.claim_token,
+            )
+            for deletion_request in requests
+            if deletion_request.id is not None and deletion_request.claim_token
+        ]
+        await db.commit()
+        return claims
 
-    async def _process_cleanup_request(
+    async def _fail_stale_processing_cleanup_requests(
         self,
         db: AsyncSession,
-        deletion_request: AccountDeletionRequest,
-        stats: AccountDeletionCleanupStats,
+        *,
+        limit: int,
         now: datetime,
     ) -> AccountDeletionCleanupStats:
-        deletion_request.status = AccountDeletionRequestStatus.PROCESSING.value
-        deletion_request.updated_at = now
-        await db.flush()
-
-        try:
-            panel_uuids = list(deletion_request.panel_uuids or [])
-            await self._remove_panel_users(panel_uuids, telegram_id=deletion_request.telegram_id)
-        except Exception as error:
-            exhausted = self._schedule_cleanup_retry(deletion_request, error, now)
-            logger.warning(
-                'Account deletion panel cleanup retry scheduled'
-                if not exhausted
-                else 'Account deletion panel cleanup failed',
-                deletion_request_id=deletion_request.id,
-                attempt_count=deletion_request.attempt_count,
-                max_attempts=deletion_request.max_attempts,
-                next_retry_at=deletion_request.next_retry_at,
-                error=error,
+        result = await db.execute(
+            select(AccountDeletionRequest)
+            .where(
+                AccountDeletionRequest.status == AccountDeletionRequestStatus.PROCESSING.value,
+                AccountDeletionRequest.next_retry_at <= now - _STALE_PROCESSING_RECOVERY_DELAY,
             )
+            .order_by(AccountDeletionRequest.next_retry_at.asc())
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        stale_requests = list(result.scalars().all())
+        if not stale_requests:
+            return AccountDeletionCleanupStats()
+
+        failed_request_ids: list[int] = []
+        for deletion_request in stale_requests:
+            deletion_request.status = AccountDeletionRequestStatus.FAILED.value
+            deletion_request.last_error = _STALE_PROCESSING_ERROR
+            deletion_request.updated_at = now
+            deletion_request.next_retry_at = now
+            deletion_request.claim_token = None
+            if deletion_request.id is not None:
+                failed_request_ids.append(deletion_request.id)
+
+        await db.flush()
+        await db.commit()
+        logger.warning(
+            'Marked stale account deletion cleanup claims failed',
+            failed_request_ids=failed_request_ids,
+        )
+
+        return AccountDeletionCleanupStats(
+            processed=len(stale_requests),
+            failed=len(stale_requests),
+            failed_request_ids=tuple(failed_request_ids),
+        )
+
+    async def _finalize_cleanup_request(
+        self,
+        db: AsyncSession,
+        request_id: int,
+        stats: AccountDeletionCleanupStats,
+        now: datetime,
+        *,
+        claim_token: str,
+        error: Exception | None = None,
+    ) -> AccountDeletionCleanupStats:
+        try:
+            result = await db.execute(
+                select(AccountDeletionRequest)
+                .where(AccountDeletionRequest.id == request_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            deletion_request = result.scalar_one_or_none()
+            if deletion_request is None:
+                logger.warning('Account deletion cleanup request disappeared', deletion_request_id=request_id)
+                await db.rollback()
+                return AccountDeletionCleanupStats(
+                    processed=stats.processed + 1,
+                    completed=stats.completed,
+                    retried=stats.retried,
+                    failed=stats.failed + 1,
+                    failed_request_ids=(*stats.failed_request_ids, request_id),
+                )
+
+            if (
+                deletion_request.status != AccountDeletionRequestStatus.PROCESSING.value
+                or deletion_request.claim_token != claim_token
+            ):
+                logger.info(
+                    'Skipping stale account deletion cleanup finalization',
+                    deletion_request_id=request_id,
+                    status=deletion_request.status,
+                )
+                await db.rollback()
+                return stats
+
+            if error is not None:
+                exhausted = self._schedule_cleanup_retry(deletion_request, error, now)
+                await db.commit()
+                logger.warning(
+                    'Account deletion panel cleanup retry scheduled'
+                    if not exhausted
+                    else 'Account deletion panel cleanup failed',
+                    deletion_request_id=deletion_request.id,
+                    attempt_count=deletion_request.attempt_count,
+                    max_attempts=deletion_request.max_attempts,
+                    next_retry_at=deletion_request.next_retry_at,
+                    error=error,
+                )
+                return AccountDeletionCleanupStats(
+                    processed=stats.processed + 1,
+                    completed=stats.completed,
+                    retried=stats.retried + (0 if exhausted else 1),
+                    failed=stats.failed + (1 if exhausted else 0),
+                    failed_request_ids=(
+                        (*stats.failed_request_ids, deletion_request.id)
+                        if exhausted and deletion_request.id is not None
+                        else stats.failed_request_ids
+                    ),
+                )
+
+            deletion_request.status = AccountDeletionRequestStatus.COMPLETED.value
+            deletion_request.completed_at = now
+            deletion_request.updated_at = now
+            deletion_request.last_error = None
+            deletion_request.claim_token = None
+            await db.commit()
+            logger.info('Account deletion panel cleanup completed', deletion_request_id=deletion_request.id)
+
+            return AccountDeletionCleanupStats(
+                processed=stats.processed + 1,
+                completed=stats.completed + 1,
+                retried=stats.retried,
+                failed=stats.failed,
+                failed_request_ids=stats.failed_request_ids,
+            )
+        except Exception:
+            await db.rollback()
+            logger.error('Failed to finalize account deletion cleanup request', deletion_request_id=request_id)
             return AccountDeletionCleanupStats(
                 processed=stats.processed + 1,
                 completed=stats.completed,
-                retried=stats.retried + (0 if exhausted else 1),
-                failed=stats.failed + (1 if exhausted else 0),
-                failed_request_ids=(
-                    (*stats.failed_request_ids, deletion_request.id)
-                    if exhausted and deletion_request.id is not None
-                    else stats.failed_request_ids
-                ),
+                retried=stats.retried,
+                failed=stats.failed + 1,
+                failed_request_ids=(*stats.failed_request_ids, request_id),
             )
-
-        deletion_request.status = AccountDeletionRequestStatus.COMPLETED.value
-        deletion_request.completed_at = now
-        deletion_request.updated_at = now
-        deletion_request.last_error = None
-        logger.info('Account deletion panel cleanup completed', deletion_request_id=deletion_request.id)
-
-        return AccountDeletionCleanupStats(
-            processed=stats.processed + 1,
-            completed=stats.completed + 1,
-            retried=stats.retried,
-            failed=stats.failed,
-            failed_request_ids=stats.failed_request_ids,
-        )
 
     def _schedule_cleanup_retry(
         self,
@@ -270,11 +432,13 @@ class AccountDeletionService:
         if deletion_request.attempt_count >= deletion_request.max_attempts:
             deletion_request.status = AccountDeletionRequestStatus.FAILED.value
             deletion_request.next_retry_at = now
+            deletion_request.claim_token = None
             return True
 
         deletion_request.status = AccountDeletionRequestStatus.PENDING.value
         backoff_seconds = min(60 * (2 ** (deletion_request.attempt_count - 1)), 3600)
         deletion_request.next_retry_at = now + timedelta(seconds=backoff_seconds)
+        deletion_request.claim_token = None
         return False
 
     async def _disable_subscriptions(

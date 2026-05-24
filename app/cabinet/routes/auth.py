@@ -1863,13 +1863,14 @@ def _verify_account_delete_proof(user: User, request: AccountDeleteRequest) -> N
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail='Account ownership cannot be verified',
+        detail='Account deletion requires password or Telegram confirmation',
     )
 
 
 @router.post('/me/delete', response_model=AccountDeleteResponse)
 async def delete_current_account(
     request: AccountDeleteRequest,
+    raw_request: Request,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -1881,6 +1882,20 @@ async def delete_current_account(
     - otherwise send `telegram_init_data` for Telegram-only accounts;
     - clear local access/refresh tokens after a successful response.
     """
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'account_delete', limit=10, window=300, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '300'},
+        )
+    if await RateLimitCache.is_rate_limited(user.id, 'account_delete', limit=5, window=300):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '300'},
+        )
+
     _verify_account_delete_proof(user, request)
 
     try:

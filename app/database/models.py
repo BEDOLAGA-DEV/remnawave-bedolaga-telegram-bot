@@ -3570,6 +3570,12 @@ class AccountDeletionRequest(Base):
     __table_args__ = (
         Index('ix_account_deletion_requests_status_next_retry', 'status', 'next_retry_at'),
         Index('ix_account_deletion_requests_user_status', 'user_id', 'status'),
+        Index(
+            'uq_account_deletion_requests_user_active',
+            'user_id',
+            unique=True,
+            postgresql_where=text("user_id IS NOT NULL AND status IN ('pending', 'processing')"),
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -3577,6 +3583,7 @@ class AccountDeletionRequest(Base):
     status = Column(String(20), default=AccountDeletionRequestStatus.PENDING.value, nullable=False, index=True)
     panel_uuids = Column(JSON, nullable=False, default=list)
     telegram_id = Column(BigInteger, nullable=True)
+    claim_token = Column(String(64), nullable=True)
     attempt_count = Column(Integer, default=0, nullable=False)
     max_attempts = Column(Integer, default=10, nullable=False)
     next_retry_at = Column(AwareDateTime(), default=func.now(), nullable=False)

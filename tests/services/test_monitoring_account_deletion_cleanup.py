@@ -23,7 +23,7 @@ async def test_retry_pending_account_deletions_uses_independent_transaction() ->
         await MonitoringService(bot=None)._retry_pending_account_deletions()
 
     process_cleanup.assert_awaited_once_with(session, limit=10)
-    session.commit.assert_awaited_once()
+    session.commit.assert_not_awaited()
     session.rollback.assert_not_awaited()
     session.close.assert_awaited_once()
 
@@ -49,9 +49,11 @@ async def test_retry_pending_account_deletions_notifies_admin_on_failed_jobs() -
     ):
         await MonitoringService(bot=bot)._retry_pending_account_deletions()
 
-    session.commit.assert_awaited_once()
+    session.commit.assert_not_awaited()
     notification_cls.assert_called_once_with(bot)
     notification_service.send_admin_notification.assert_awaited_once()
     message = notification_service.send_admin_notification.await_args.args[0]
     assert 'Account deletion cleanup failed' in message
+    assert 'manual verification' in message
+    assert 'exhausted all retry attempts' not in message
     assert '42' in message

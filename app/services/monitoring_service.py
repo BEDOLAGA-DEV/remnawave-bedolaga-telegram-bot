@@ -2121,7 +2121,6 @@ class MonitoringService:
 
             cleanup_db = AsyncSessionLocal()
             stats = await account_deletion_service.process_pending_panel_cleanup(cleanup_db, limit=10)
-            await cleanup_db.commit()
             if stats.processed:
                 logger.info(
                     'Processed pending account deletion panel cleanup',
@@ -2150,7 +2149,7 @@ class MonitoringService:
             request_ids = ', '.join(str(request_id) for request_id in failed_request_ids) or 'unknown'
             text = (
                 '<b>Account deletion cleanup failed</b>\n\n'
-                'RemnaWave panel cleanup exhausted all retry attempts.\n'
+                'RemnaWave panel cleanup requires manual verification.\n'
                 f'Request IDs: <code>{html.escape(request_ids)}</code>\n'
                 'Check <code>account_deletion_requests</code> for details.'
             )
