@@ -79,27 +79,43 @@ async def upsert_subid(
     subid: str,
     source: str = 'web',
 ) -> None:
-    """Save subid for a user. Updates existing record or creates with placeholder CID."""
+    """Save subid for a user — first-writer-wins.
+
+    If a subid is already attributed to the user it is kept intact; this blocks
+    affiliate-revenue hijack via attacker-controlled deep-link `?start=foo_clk_<their_subid>`
+    or repeated cabinet `POST /partner-click-id` calls overwriting the original.
+    """
     if not subid or len(subid) > 255:
         return
     now = datetime.now(UTC)
-    # Try update first (don't create empty CID records)
+    # Update only rows where subid IS NULL — never overwrite an existing attribution.
     result = await db.execute(
-        update(YandexClientIdMap).where(YandexClientIdMap.user_id == user_id).values(subid=subid, updated_at=now)
+        update(YandexClientIdMap)
+        .where(YandexClientIdMap.user_id == user_id, YandexClientIdMap.subid.is_(None))
+        .values(subid=subid, updated_at=now)
     )
     if result.rowcount == 0:
-        # No existing record — create with placeholder
-        stmt = (
-            pg_insert(YandexClientIdMap)
-            .values(user_id=user_id, yandex_cid='_subid_only', source=source, subid=subid)
-            .on_conflict_do_update(
-                index_elements=['user_id'],
-                set_={'subid': subid, 'updated_at': now},
-            )
+        # Either no row yet, or row exists with a non-null subid. Insert-or-keep
+        # via ON CONFLICT DO UPDATE that only writes subid when current value IS NULL.
+        stmt = pg_insert(YandexClientIdMap).values(
+            user_id=user_id,
+            yandex_cid='_subid_only',
+            source=source,
+            subid=subid,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['user_id'],
+            set_={'subid': stmt.excluded.subid, 'updated_at': now},
+            where=YandexClientIdMap.subid.is_(None),
         )
         await db.execute(stmt)
     await db.flush()
-    logger.info('Subid saved', user_id=user_id, subid=subid, source=source)
+    logger.info(
+        'subid_saved',
+        user_id=user_id,
+        subid_prefix=subid[:8],
+        source=source,
+    )
 
 
 async def get_subid(db: AsyncSession, user_id: int) -> str | None:

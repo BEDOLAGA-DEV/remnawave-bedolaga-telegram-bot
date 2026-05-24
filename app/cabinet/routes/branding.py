@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.system_setting import get_setting_value
 from app.database.models import SystemSetting, User
+from app.utils.cache import RateLimitCache
+from app.utils.partner_click import CLICK_ID_PATTERN
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user, require_permission
 
@@ -1043,6 +1045,50 @@ async def store_yandex_cid(
             await db.rollback()
         except Exception:
             pass
+
+
+# ============ Partner Click ID Sync ============
+
+
+class PartnerClickIdRequest(BaseModel):
+    click_id: str = Field(max_length=128, pattern=CLICK_ID_PATTERN)
+
+
+@router.post('/analytics/partner-click-id', status_code=204)
+async def store_partner_click_id(
+    body: PartnerClickIdRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Store partner/affiliate click_id (Keitaro etc.) for the authenticated user.
+
+    Saved into ``yandex_client_id_map.subid`` so the central S2S postback
+    listener picks it up and reports every subsequent deposit.
+
+    First-writer-wins (see ``upsert_subid``) — a user's first attribution is
+    locked and cannot be overwritten by repeated calls, blocking subid hijack.
+    Rate-limited per user to keep log noise and DB chatter bounded under abuse.
+    """
+    if await RateLimitCache.is_rate_limited(user.id, 'partner_click_id', limit=5, window=300):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+        )
+    try:
+        from app.database.crud.yandex_client_id import upsert_subid
+
+        await upsert_subid(db, user.id, body.click_id, source='cabinet')
+        await db.commit()
+    except Exception as exc:
+        logger.exception('store_partner_click_id_failed', user_id=user.id)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to store partner click_id',
+        ) from exc
 
 
 # ============ Lite Mode Routes ============
