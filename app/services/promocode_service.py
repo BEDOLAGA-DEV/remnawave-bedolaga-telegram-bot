@@ -293,9 +293,9 @@ class PromoCodeService:
 
         if promocode.type == PromoCodeType.SUBSCRIPTION_DAYS.value and promocode.subscription_days > 0:
             if settings.is_multi_tariff_enabled():
-                from app.database.crud.subscription import get_active_subscriptions_by_user_id
+                from app.database.crud.subscription import get_extendable_subscriptions_by_user_id
 
-                active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+                active_subs = await get_extendable_subscriptions_by_user_id(db, user.id)
             else:
                 single_sub = await get_subscription_by_user_id(db, user.id)
                 active_subs = [single_sub] if single_sub else []
