@@ -150,7 +150,7 @@ async def toggle_autopay(callback: types.CallbackQuery, db_user: User, db: Async
     await callback.answer(texts.t('AUTOPAY_TOGGLE_SUCCESS', '✅ Автоплатеж {status}!').format(status=status))
 
     try:
-        await handle_autopay_menu(callback, db_user, db)
+        await handle_autopay_menu(callback, db_user, db, state)
     except TelegramBadRequest as e:
         if 'message is not modified' in str(e):
             pass
@@ -182,7 +182,7 @@ async def set_autopay_days(callback: types.CallbackQuery, db_user: User, db: Asy
     texts = get_texts(db_user.language)
     await callback.answer(texts.t('AUTOPAY_DAYS_SET', '✅ Установлено {days} дней!').format(days=days))
 
-    await handle_autopay_menu(callback, db_user, db)
+    await handle_autopay_menu(callback, db_user, db, state)
 
 
 async def handle_saved_cards_list(callback: types.CallbackQuery, db_user: User, db: AsyncSession):

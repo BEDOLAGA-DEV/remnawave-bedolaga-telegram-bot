@@ -126,6 +126,9 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
     buttons.append([types.InlineKeyboardButton(text='🔄 Продлить', callback_data=f'se:{sub_id}')])
 
     if not is_inactive:
+        buttons.append(
+            [types.InlineKeyboardButton(text='💳 Автоплатеж', callback_data='subscription_autopay')]
+        )
         buttons.append([types.InlineKeyboardButton(text='📊 Трафик', callback_data=f'st:{sub_id}')])
         buttons.append([types.InlineKeyboardButton(text='📱 Устройства', callback_data=f'sd:{sub_id}')])
 
@@ -199,6 +202,10 @@ async def show_subscription_detail(
     if not subscription:
         await callback.answer('Подписка не найдена', show_alert=True)
         return
+
+    # Persist active sub_id so downstream handlers without sub_id in callback_data
+    # (e.g. 'subscription_autopay') can resolve the right subscription via FSM.
+    await state.update_data(active_subscription_id=sub_id)
 
     tariff_name = subscription.tariff.name if subscription.tariff else 'Подписка'
 
