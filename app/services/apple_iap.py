@@ -110,6 +110,15 @@ def _transaction_fields(txn_info: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _should_credit_sandbox_on_production(configured_environment: str, actual_environment: str) -> bool:
+    return (
+        configured_environment == 'Production'
+        and actual_environment == 'Sandbox'
+        and settings.APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION
+        and settings.APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION
+    )
+
+
 class AppleIAPFulfillmentService:
     def __init__(self, apple_service: AppleIAPService | None = None, bot: Any = None):
         self.apple_service = apple_service or AppleIAPService()
@@ -221,11 +230,16 @@ class AppleIAPFulfillmentService:
 
         configured_environment = settings.get_apple_iap_environment()
         actual_environment = str(txn_info.get('environment') or configured_environment)
+        credit_sandbox_on_production = _should_credit_sandbox_on_production(
+            configured_environment,
+            actual_environment,
+        )
         if actual_environment != configured_environment:
             if (
                 actual_environment == 'Sandbox'
                 and configured_environment == 'Production'
                 and settings.APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION
+                and not credit_sandbox_on_production
             ):
                 return await self._record_sandbox_on_production(
                     db,
@@ -234,18 +248,19 @@ class AppleIAPFulfillmentService:
                     amount_kopeks=amount_kopeks,
                     txn_info=txn_info,
                 )
-            await create_apple_abuse_event(
-                db,
-                'transaction_environment_mismatch',
-                user_id=user_id,
-                severity='critical',
-                transaction_id=transaction_id,
-                product_id=product_id,
-                ip_address=ip_address,
-                details_json={'configured': configured_environment, 'actual': actual_environment},
-            )
-            await db.commit()
-            return AppleFulfillmentResult(False, 'environment_mismatch')
+            if not credit_sandbox_on_production:
+                await create_apple_abuse_event(
+                    db,
+                    'transaction_environment_mismatch',
+                    user_id=user_id,
+                    severity='critical',
+                    transaction_id=transaction_id,
+                    product_id=product_id,
+                    ip_address=ip_address,
+                    details_json={'configured': configured_environment, 'actual': actual_environment},
+                )
+                await db.commit()
+                return AppleFulfillmentResult(False, 'environment_mismatch')
 
         existing = await get_apple_transaction_by_transaction_id(db, transaction_id)
         if existing:
@@ -270,6 +285,11 @@ class AppleIAPFulfillmentService:
             return AppleFulfillmentResult(False, 'owner_mismatch')
 
         fields = _transaction_fields(txn_info)
+        if credit_sandbox_on_production:
+            metadata = dict(fields.get('metadata_json') or {})
+            metadata['credited_on_production'] = True
+            fields['metadata_json'] = metadata
+
         web_order_line_item_id = fields.get('web_order_line_item_id')
         if web_order_line_item_id:
             existing = await get_apple_transaction_by_web_order_line_item_id(db, web_order_line_item_id)
@@ -310,7 +330,7 @@ class AppleIAPFulfillmentService:
                     product_id=product_id,
                     amount_kopeks=amount_kopeks,
                     status='verified',
-                    is_paid=True,
+                    is_paid=not credit_sandbox_on_production,
                     **fields,
                 )
         except IntegrityError:

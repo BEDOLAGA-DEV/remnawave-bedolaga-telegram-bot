@@ -138,6 +138,80 @@ async def test_fulfill_verified_transaction_happy_path_credits_balance_after_use
 
 
 @pytest.mark.anyio('asyncio')
+async def test_fulfill_verified_transaction_credits_sandbox_on_production_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _enable_apple_iap(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', True, raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION', True, raising=False)
+
+    db = _FakeDB()
+    events: list[str] = []
+    captured_apple_kwargs: dict[str, object] = {}
+    user = SimpleNamespace(
+        id=1,
+        balance_kopeks=1_000,
+        has_made_first_topup=True,
+        referred_by_id=None,
+        subscription=None,
+        get_primary_promo_group=lambda: None,
+    )
+    apple_txn = SimpleNamespace(
+        transaction_id='2000000123456789',
+        transaction_id_fk=None,
+        status='verified',
+        credited_at=None,
+        updated_at=None,
+        metadata_json=None,
+    )
+    transaction = SimpleNamespace(id=42)
+
+    async def create_apple_transaction(**kwargs):
+        events.append('create_apple_transaction')
+        captured_apple_kwargs.update(kwargs)
+        return apple_txn
+
+    async def create_transaction(**kwargs):
+        events.append('create_transaction')
+        assert kwargs['commit'] is False
+        return transaction
+
+    service = AppleIAPFulfillmentService()
+    side_effects = AsyncMock()
+    service._emit_credit_side_effects = side_effects  # type: ignore[method-assign]
+    monkeypatch.setattr(apple_iap_module, 'get_apple_transaction_by_transaction_id', AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        apple_iap_module,
+        'get_apple_transaction_by_web_order_line_item_id',
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(apple_iap_module, 'lock_user_for_update', AsyncMock(return_value=user))
+    monkeypatch.setattr(apple_iap_module, 'create_apple_transaction', create_apple_transaction)
+    monkeypatch.setattr(apple_iap_module, 'create_transaction', create_transaction)
+
+    result = await service.fulfill_verified_transaction(
+        db,
+        user_id=1,
+        product_id='com.bitnet.vpnclient.topup.100',
+        txn_info=_txn_info(),
+        expected_app_account_token='account-token',
+    )
+
+    assert result == AppleFulfillmentResult(True, 'credited', apple_txn, transaction)
+    assert events == ['create_apple_transaction', 'create_transaction']
+    assert user.balance_kopeks == 11_000
+    assert captured_apple_kwargs['environment'] == 'Sandbox'
+    assert captured_apple_kwargs['status'] == 'verified'
+    assert captured_apple_kwargs['is_paid'] is False
+    assert captured_apple_kwargs['metadata_json']['credited_on_production'] is True
+    assert apple_txn.status == 'credited'
+    db.commit.assert_awaited_once()
+    side_effects.assert_awaited_once()
+
+
+@pytest.mark.anyio('asyncio')
 async def test_fulfill_verified_transaction_rollback_when_financial_transaction_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
