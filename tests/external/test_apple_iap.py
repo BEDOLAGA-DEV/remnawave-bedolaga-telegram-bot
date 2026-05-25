@@ -88,9 +88,7 @@ class TestSettings:
         monkeypatch.setattr(settings, 'APPLE_IAP_ROOT_CERTS_PATHS', '', raising=False)
         assert settings.is_apple_iap_enabled() is False
 
-    def test_invalid_apple_iap_environment_disables_iap(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_invalid_apple_iap_environment_disables_iap(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         _enable_apple_iap(monkeypatch, tmp_path)
         monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Staging', raising=False)
 
@@ -102,9 +100,7 @@ class TestSettings:
 
         assert settings.is_apple_iap_enabled() is False
 
-    def test_unreadable_apple_iap_root_cert_disables_iap(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_unreadable_apple_iap_root_cert_disables_iap(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         _enable_apple_iap(monkeypatch, tmp_path)
         monkeypatch.setattr(settings, 'APPLE_IAP_ROOT_CERTS_PATHS', str(tmp_path / 'missing.cer'), raising=False)
 
