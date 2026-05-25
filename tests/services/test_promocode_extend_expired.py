@@ -180,6 +180,33 @@ async def test_active_plus_expired_triggers_picker_with_status(monkeypatch, patc
     }
 
 
+async def test_active_plus_disabled_triggers_picker(monkeypatch, patched_service):
+    """1 ACTIVE + 1 DISABLED → picker.
+
+    DISABLED is reachable from user-facing flows (deactivate via cabinet,
+    daily insufficient balance, panel webhook), so the promocode picker
+    must offer it as a revival target — not silently apply to the active
+    one only. This matches the bug report from manual testing.
+    """
+    subs = [
+        _make_sub(1, SubscriptionStatus.ACTIVE.value, days_left=5),
+        _make_sub(2, SubscriptionStatus.DISABLED.value, days_left=0),
+    ]
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_extendable_subscriptions_by_user_id',
+        AsyncMock(return_value=subs),
+    )
+
+    result = await patched_service.activate_promocode(_db_mock(), user_id=42, code='TESTSUB')
+
+    assert result['success'] is False
+    assert result['error'] == 'select_subscription'
+    assert {p['status'] for p in result['eligible_subscriptions']} == {
+        SubscriptionStatus.ACTIVE.value,
+        SubscriptionStatus.DISABLED.value,
+    }
+
+
 async def test_two_active_still_triggers_picker(monkeypatch, patched_service):
     """2 ACTIVE → picker (preserves existing behavior)."""
     subs = [

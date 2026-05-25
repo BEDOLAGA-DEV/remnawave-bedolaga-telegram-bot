@@ -2345,9 +2345,14 @@ async def get_active_subscriptions_by_user_id(db: AsyncSession, user_id: int) ->
 async def get_extendable_subscriptions_by_user_id(db: AsyncSession, user_id: int) -> list[Subscription]:
     """Subscriptions eligible for promocode-driven extension.
 
-    Includes ACTIVE, TRIAL, LIMITED, EXPIRED. Excludes DISABLED (admin
-    intervention surface) and PENDING (unpaid). Ordering: ACTIVE, then
-    TRIAL, then LIMITED, then EXPIRED; secondary order is created_at desc.
+    Includes ACTIVE, TRIAL, LIMITED, EXPIRED, DISABLED. Only PENDING is
+    excluded (unpaid). DISABLED is included because the status is set by
+    several user-facing flows (deactivate via cabinet, daily insufficient
+    balance, remnawave webhook), not just by admins — promocode should
+    be able to revive those.
+
+    Ordering: ACTIVE, then TRIAL, then LIMITED, then EXPIRED, then DISABLED;
+    secondary order is created_at desc.
     """
     result = await db.execute(
         select(Subscription)
@@ -2363,6 +2368,7 @@ async def get_extendable_subscriptions_by_user_id(db: AsyncSession, user_id: int
                     SubscriptionStatus.TRIAL.value,
                     SubscriptionStatus.LIMITED.value,
                     SubscriptionStatus.EXPIRED.value,
+                    SubscriptionStatus.DISABLED.value,
                 ]
             ),
         )
@@ -2371,7 +2377,8 @@ async def get_extendable_subscriptions_by_user_id(db: AsyncSession, user_id: int
                 (Subscription.status == SubscriptionStatus.ACTIVE.value, 0),
                 (Subscription.status == SubscriptionStatus.TRIAL.value, 1),
                 (Subscription.status == SubscriptionStatus.LIMITED.value, 2),
-                else_=3,
+                (Subscription.status == SubscriptionStatus.EXPIRED.value, 3),
+                else_=4,
             ),
             Subscription.created_at.desc(),
         )

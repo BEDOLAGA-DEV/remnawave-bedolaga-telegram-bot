@@ -23,24 +23,25 @@ def _make_db_returning(subscriptions):
     return db
 
 
-async def test_returns_active_trial_limited_expired():
-    """Helper returns subs in all four promocode-extension-eligible statuses."""
+async def test_returns_active_trial_limited_expired_disabled():
+    """Helper returns subs in all five promocode-extension-eligible statuses."""
     subs = [
         SimpleNamespace(id=1, status=SubscriptionStatus.ACTIVE.value),
         SimpleNamespace(id=2, status=SubscriptionStatus.TRIAL.value),
         SimpleNamespace(id=3, status=SubscriptionStatus.LIMITED.value),
         SimpleNamespace(id=4, status=SubscriptionStatus.EXPIRED.value),
+        SimpleNamespace(id=5, status=SubscriptionStatus.DISABLED.value),
     ]
     db = _make_db_returning(subs)
 
     result = await get_extendable_subscriptions_by_user_id(db, user_id=42)
 
-    assert [s.id for s in result] == [1, 2, 3, 4]
+    assert [s.id for s in result] == [1, 2, 3, 4, 5]
     db.execute.assert_awaited_once()
 
 
 async def test_query_filters_statuses_correctly():
-    """The SQL where-clause restricts to the four allowed statuses."""
+    """The SQL where-clause restricts to the five allowed statuses; PENDING excluded."""
     db = _make_db_returning([])
 
     await get_extendable_subscriptions_by_user_id(db, user_id=42)
@@ -52,7 +53,7 @@ async def test_query_filters_statuses_correctly():
     assert SubscriptionStatus.TRIAL.value in compiled
     assert SubscriptionStatus.LIMITED.value in compiled
     assert SubscriptionStatus.EXPIRED.value in compiled
-    assert SubscriptionStatus.DISABLED.value not in compiled
+    assert SubscriptionStatus.DISABLED.value in compiled
     assert SubscriptionStatus.PENDING.value not in compiled
 
 

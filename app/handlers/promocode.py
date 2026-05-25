@@ -174,6 +174,8 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
             status = sub.get('status')
             if status == 'expired':
                 label = f'{name} — {texts.t("PROMO_PICKER_EXPIRED", "истекла")}'
+            elif status == 'disabled':
+                label = f'{name} — {texts.t("PROMO_PICKER_DISABLED", "отключена")}'
             else:
                 label = f'{name} ({days} дн.)'
             buttons.append(

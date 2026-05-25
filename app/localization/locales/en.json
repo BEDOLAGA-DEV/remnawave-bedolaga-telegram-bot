@@ -1257,6 +1257,7 @@
   "PROMOCODE_SUCCESS": "🎉 Promo code applied!",
   "PROMOCODE_USED": "ℹ️ Promo code has already been used",
   "PROMO_PICKER_EXPIRED": "expired",
+  "PROMO_PICKER_DISABLED": "disabled",
   "PROMOCODE_ACTIVE_DISCOUNT_EXISTS": "❌ You already have an active discount. Use it before activating a new one.",
   "PROMO_GROUPS_INFO_CURRENT_LEVEL": "🏆 Current level: {name}",
   "PROMO_GROUPS_INFO_EMPTY": "Auto-assigned promo groups are not configured yet.",

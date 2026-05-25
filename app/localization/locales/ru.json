@@ -1278,6 +1278,7 @@
   "PROMOCODE_SUCCESS": "🎉 Промокод активирован! {description}",
   "PROMOCODE_USED": "❌ Промокод уже использован",
   "PROMO_PICKER_EXPIRED": "истекла",
+  "PROMO_PICKER_DISABLED": "отключена",
   "PROMOCODE_ACTIVE_DISCOUNT_EXISTS": "❌ У вас уже есть активная скидка. Используйте её перед активацией новой.",
   "PROMO_GROUPS_INFO_CURRENT_LEVEL": "🏆 Текущий уровень: {name}",
   "PROMO_GROUPS_INFO_EMPTY": "Промогруппы с автовыдачей ещё не настроены.",

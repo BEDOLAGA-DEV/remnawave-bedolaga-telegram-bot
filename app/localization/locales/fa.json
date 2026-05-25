@@ -1278,6 +1278,7 @@
   "PROMOCODE_SUCCESS": "🎉 کد تخفیف فعال شد! {description}",
   "PROMOCODE_USED": "❌ کد تخفیف قبلاً استفاده شده",
   "PROMO_PICKER_EXPIRED": "منقضی شده",
+  "PROMO_PICKER_DISABLED": "غیرفعال",
   "PROMOCODE_ACTIVE_DISCOUNT_EXISTS": "❌ شما قبلاً تخفیف فعال دارید. ابتدا آن را استفاده کنید.",
   "PROMO_GROUPS_INFO_CURRENT_LEVEL": "🏆 سطح فعلی: {name}",
   "PROMO_GROUPS_INFO_EMPTY": "گروه‌های تخفیف خودکار هنوز تنظیم نشده.",
