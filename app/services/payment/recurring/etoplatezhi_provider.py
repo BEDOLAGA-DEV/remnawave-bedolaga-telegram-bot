@@ -27,20 +27,23 @@ logger = structlog.get_logger(__name__)
 
 
 GATE_BASE_URL = 'https://api.etoplatezhi.ru'
-# Default method code if a saved card has no method_code recorded (old rows
+# Default method code when a saved card has no method_code recorded (old rows
 # created before backfill, or unexpected providers): card-partner is the
 # historical default since it was the only recurring channel originally enabled.
 DEFAULT_METHOD_CODE = 'card-partner'
-# Supported method codes → URL path segment after /v2/payment/{...}/recurring.
-# Method codes match EtoPlatezhi's terminal.method_code values.
-_SUPPORTED_METHOD_CODES = {'card-partner', 'sberpay', 'yoomoney-wallet'}
+# Explicit mapping method_code → endpoint URL. Per EtoPlatezhi support docs
+# (2026-05-25), the paths are NOT uniform — yoomoney uses /wallet/yoomoney/
+# rather than the method-code segment that card-partner/sberpay follow.
+_METHOD_ENDPOINTS: dict[str, str] = {
+    'card-partner': '/v2/payment/card-partner/recurring',
+    'sberpay': '/v2/payment/sberpay/recurring',
+    'yoomoney-wallet': '/v2/payment/wallet/yoomoney/recurring',
+}
 
 
 def _build_recurring_endpoint(method_code: str | None) -> str:
     code = (method_code or DEFAULT_METHOD_CODE).strip()
-    if code not in _SUPPORTED_METHOD_CODES:
-        code = DEFAULT_METHOD_CODE
-    return f'/v2/payment/{code}/recurring'
+    return _METHOD_ENDPOINTS.get(code, _METHOD_ENDPOINTS[DEFAULT_METHOD_CODE])
 
 # Statuses returned by EtoPlatezhi for a successful charge initiation.
 # (The actual settlement happens asynchronously via webhook.)
