@@ -234,6 +234,30 @@ class TestSchemas:
         with pytest.raises(ValidationError):
             ApplePurchaseRequest(product_id='com.bitnet.vpnclient.topup.100', transaction_id='')
 
+    def test_purchase_request_forbids_extra_client_fields(self) -> None:
+        forbidden_fields = {
+            'amount': 10_000,
+            'currency': 'RUB',
+            'signed_payload': 'raw-jws',
+            'receipt': 'receipt-blob',
+            'user_id': 1,
+            'environment': 'Sandbox',
+            'app_account_token': '123e4567-e89b-12d3-a456-426614174000',
+        }
+
+        for field_name, value in forbidden_fields.items():
+            with pytest.raises(ValidationError) as exc_info:
+                ApplePurchaseRequest(
+                    product_id='com.bitnet.vpnclient.topup.100',
+                    transaction_id='2000000123456789',
+                    **{field_name: value},
+                )
+            assert 'extra_forbidden' in str(exc_info.value)
+
+    def test_purchase_request_rejects_too_long_product_id(self) -> None:
+        with pytest.raises(ValidationError):
+            ApplePurchaseRequest(product_id='x' * 129, transaction_id='2000000123456789')
+
     def test_account_token_response(self) -> None:
         response = AppleAccountTokenResponse(app_account_token='123e4567-e89b-12d3-a456-426614174000')
         assert response.app_account_token.endswith('4000')
