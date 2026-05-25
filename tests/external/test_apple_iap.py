@@ -628,6 +628,7 @@ class TestFulfillmentService:
         _enable_apple_iap(monkeypatch, tmp_path)
         monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
         monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', True, raising=False)
+        monkeypatch.setattr(settings, 'APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION', False, raising=False)
         service = AppleIAPFulfillmentService()
         record_sandbox = AsyncMock(return_value=AppleFulfillmentResult(True, 'sandbox_recorded'))
         monkeypatch.setattr(service, '_record_sandbox_on_production', record_sandbox)

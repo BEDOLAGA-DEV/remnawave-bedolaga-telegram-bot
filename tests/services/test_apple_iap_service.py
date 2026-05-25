@@ -212,6 +212,75 @@ async def test_fulfill_verified_transaction_credits_sandbox_on_production_when_e
 
 
 @pytest.mark.anyio('asyncio')
+async def test_credit_sandbox_on_production_requires_sandbox_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _enable_apple_iap(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', False, raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION', True, raising=False)
+
+    create_transaction = AsyncMock()
+    abuse_event = AsyncMock()
+    monkeypatch.setattr(apple_iap_module, 'create_transaction', create_transaction)
+    monkeypatch.setattr(apple_iap_module, 'create_apple_abuse_event', abuse_event)
+
+    result = await AppleIAPFulfillmentService().fulfill_verified_transaction(
+        _FakeDB(),
+        user_id=1,
+        product_id='com.bitnet.vpnclient.topup.100',
+        txn_info=_txn_info(),
+        expected_app_account_token='account-token',
+    )
+
+    assert result.success is False
+    assert result.reason == 'environment_mismatch'
+    create_transaction.assert_not_awaited()
+    abuse_event.assert_awaited_once()
+
+
+@pytest.mark.anyio('asyncio')
+async def test_credit_sandbox_on_production_duplicate_delivery_does_not_double_credit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _enable_apple_iap(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', True, raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION', True, raising=False)
+
+    db = _FakeDB()
+    existing = SimpleNamespace(
+        user_id=1,
+        status='credited',
+        transaction_id='2000000123456789',
+        environment='Sandbox',
+    )
+    create_transaction = AsyncMock()
+    monkeypatch.setattr(
+        apple_iap_module,
+        'get_apple_transaction_by_transaction_id',
+        AsyncMock(return_value=existing),
+    )
+    monkeypatch.setattr(apple_iap_module, 'create_transaction', create_transaction)
+
+    result = await AppleIAPFulfillmentService().fulfill_verified_transaction(
+        db,
+        user_id=1,
+        product_id='com.bitnet.vpnclient.topup.100',
+        txn_info=_txn_info(),
+        expected_app_account_token='account-token',
+    )
+
+    assert result.success is True
+    assert result.reason == 'already_processed'
+    assert result.apple_transaction is existing
+    create_transaction.assert_not_awaited()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.anyio('asyncio')
 async def test_fulfill_verified_transaction_rollback_when_financial_transaction_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
