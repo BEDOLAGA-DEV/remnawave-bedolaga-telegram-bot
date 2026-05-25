@@ -2342,6 +2342,50 @@ async def get_active_subscriptions_by_user_id(db: AsyncSession, user_id: int) ->
     return list(result.scalars().all())
 
 
+async def get_extendable_subscriptions_by_user_id(db: AsyncSession, user_id: int) -> list[Subscription]:
+    """Subscriptions eligible for promocode-driven extension.
+
+    Includes ACTIVE, TRIAL, LIMITED, EXPIRED, DISABLED. Only PENDING is
+    excluded (unpaid). DISABLED is included because the status is set by
+    several user-facing flows (deactivate via cabinet, daily insufficient
+    balance, remnawave webhook), not just by admins — promocode should
+    be able to revive those.
+
+    Ordering: ACTIVE, then TRIAL, then LIMITED, then EXPIRED, then DISABLED;
+    secondary order is created_at desc.
+    """
+    result = await db.execute(
+        select(Subscription)
+        .options(
+            selectinload(Subscription.user),
+            selectinload(Subscription.tariff),
+        )
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.status.in_(
+                [
+                    SubscriptionStatus.ACTIVE.value,
+                    SubscriptionStatus.TRIAL.value,
+                    SubscriptionStatus.LIMITED.value,
+                    SubscriptionStatus.EXPIRED.value,
+                    SubscriptionStatus.DISABLED.value,
+                ]
+            ),
+        )
+        .order_by(
+            case(
+                (Subscription.status == SubscriptionStatus.ACTIVE.value, 0),
+                (Subscription.status == SubscriptionStatus.TRIAL.value, 1),
+                (Subscription.status == SubscriptionStatus.LIMITED.value, 2),
+                (Subscription.status == SubscriptionStatus.EXPIRED.value, 3),
+                else_=4,
+            ),
+            Subscription.created_at.desc(),
+        )
+    )
+    return list(result.scalars().all())
+
+
 async def get_subscription_by_id_for_user(db: AsyncSession, subscription_id: int, user_id: int) -> Subscription | None:
     """Get subscription by ID with ownership check (IDOR protection)."""
     result = await db.execute(

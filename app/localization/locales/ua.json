@@ -1194,6 +1194,8 @@
   "PROMOCODE_INVALID": "❌ Невірний промокод",
   "PROMOCODE_SUCCESS": "🎉 Промокод активовано! {description}",
   "PROMOCODE_USED": "❌ Промокод вже використано",
+  "PROMO_PICKER_EXPIRED": "закінчилась",
+  "PROMO_PICKER_DISABLED": "вимкнена",
   "PROMOCODE_ACTIVE_DISCOUNT_EXISTS": "❌ У вас вже є активна знижка. Використайте її перед активацією нової.",
   "PROMO_GROUPS_INFO_CURRENT_LEVEL": "🏆 Поточний рівень: {name}",
   "PROMO_GROUPS_INFO_EMPTY": "Промогрупи з автовидачею ще не налаштовані.",

@@ -293,9 +293,9 @@ class PromoCodeService:
 
         if promocode.type == PromoCodeType.SUBSCRIPTION_DAYS.value and promocode.subscription_days > 0:
             if settings.is_multi_tariff_enabled():
-                from app.database.crud.subscription import get_active_subscriptions_by_user_id
+                from app.database.crud.subscription import get_extendable_subscriptions_by_user_id
 
-                active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+                active_subs = await get_extendable_subscriptions_by_user_id(db, user.id)
             else:
                 single_sub = await get_subscription_by_user_id(db, user.id)
                 active_subs = [single_sub] if single_sub else []
@@ -317,7 +317,12 @@ class PromoCodeService:
                 # Need user to choose — raise with eligible subscriptions list
                 raise _SelectSubscriptionRequired(
                     eligible_subscriptions=[
-                        {'id': s.id, 'tariff_name': s.tariff.name if s.tariff else f'#{s.id}', 'days_left': s.days_left}
+                        {
+                            'id': s.id,
+                            'tariff_name': s.tariff.name if s.tariff else f'#{s.id}',
+                            'days_left': s.days_left,
+                            'status': s.status,
+                        }
                         for s in eligible
                     ],
                     code=promocode.code,
