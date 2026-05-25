@@ -244,6 +244,21 @@ class MonitoringService:
                             error=recurrent_error,
                             exc_info=True,
                         )
+                # Trial → paid auto-conversion. Тикает кандидатов в окне T-12h..T+0
+                # и делегирует charge через recurring abstraction. process_trial_conversions
+                # сам gate'ится: skip если recurring abstraction недоступна или нет
+                # включённых провайдеров.
+                if settings.ENABLE_AUTOPAY:
+                    try:
+                        from app.services.trial_conversion_service import process_trial_conversions
+
+                        await process_trial_conversions(db)
+                    except Exception as trial_conv_error:
+                        logger.error(
+                            'Ошибка автоконверсии триалов',
+                            error=trial_conv_error,
+                            exc_info=True,
+                        )
 
                 # Trial → paid auto-conversion (multi-provider через recurring/)
                 if settings.ENABLE_AUTOPAY:
