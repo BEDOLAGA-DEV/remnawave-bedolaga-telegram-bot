@@ -65,6 +65,24 @@ def test_apple_iap_webhook_maps_configuration_error_to_503(monkeypatch) -> None:
     assert response.json() == {'status': 'error', 'reason': 'configuration_error'}
 
 
+def test_apple_iap_webhook_maps_missing_notification_uuid_to_400(monkeypatch) -> None:
+    client = _client_for_service_result(monkeypatch, (False, 'missing_notification_uuid'))
+
+    response = client.post(settings.APPLE_IAP_WEBHOOK_PATH, json={'signedPayload': 'signed.payload'})
+
+    assert response.status_code == 400
+    assert response.json() == {'status': 'error', 'reason': 'missing_notification_uuid'}
+
+
+def test_apple_iap_webhook_maps_signed_transaction_verification_failed_to_400(monkeypatch) -> None:
+    client = _client_for_service_result(monkeypatch, (False, 'signed_transaction_verification_failed'))
+
+    response = client.post(settings.APPLE_IAP_WEBHOOK_PATH, json={'signedPayload': 'signed.payload'})
+
+    assert response.status_code == 400
+    assert response.json() == {'status': 'error', 'reason': 'signed_transaction_verification_failed'}
+
+
 def test_apple_iap_webhook_returns_ok_for_processed_notification(monkeypatch) -> None:
     client = _client_for_service_result(monkeypatch, (True, 'processed'))
 
@@ -72,3 +90,16 @@ def test_apple_iap_webhook_returns_ok_for_processed_notification(monkeypatch) ->
 
     assert response.status_code == 200
     assert response.json() == {'status': 'ok', 'reason': 'processed'}
+
+
+def test_apple_iap_health_returns_503_when_feature_enabled_but_not_configured(monkeypatch) -> None:
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENABLED', True, raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ROOT_CERTS_PATHS', '', raising=False)
+
+    app = FastAPI()
+    app.include_router(apple_iap_webserver.create_apple_iap_router())
+    response = TestClient(app).get('/health/apple-iap')
+
+    assert response.status_code == 503
+    assert response.json()['status'] == 'configuration_error'
+    assert response.json()['enabled'] is False
