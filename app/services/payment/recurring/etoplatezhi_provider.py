@@ -1,8 +1,8 @@
 """EtoPlatezhi adapter for the recurring-provider abstraction.
 
 Charges saved cards via the EtoPlatezhi Gate API endpoint
-``POST /v2/payment/card/recurring``. The card-on-file is identified by
-``recurring.id``, obtained when the initial Payment Page transaction was
+``POST /v2/payment/card-partner/recurring``. The card-on-file is identified
+by ``recurring.id``, obtained when the initial Payment Page transaction was
 registered with ``stored_card_type = 3`` (registration of automatic
 charges).
 
@@ -27,7 +27,7 @@ logger = structlog.get_logger(__name__)
 
 
 GATE_BASE_URL = 'https://api.etoplatezhi.ru'
-RECURRING_ENDPOINT = '/v2/payment/card/recurring'
+RECURRING_ENDPOINT = '/v2/payment/card-partner/recurring'
 
 # Statuses returned by EtoPlatezhi for a successful charge initiation.
 # (The actual settlement happens asynchronously via webhook.)
