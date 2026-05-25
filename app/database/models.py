@@ -119,6 +119,13 @@ class UserStatus(Enum):
     DELETED = 'deleted'
 
 
+class AccountDeletionRequestStatus(Enum):
+    PENDING = 'pending'
+    PROCESSING = 'processing'
+    COMPLETED = 'completed'
+    FAILED = 'failed'
+
+
 class SubscriptionStatus(Enum):
     TRIAL = 'trial'
     ACTIVE = 'active'
@@ -1879,7 +1886,7 @@ class User(Base):
     email_verified = Column(Boolean, default=False, nullable=False)
     email_verified_at = Column(AwareDateTime(), nullable=True)
     # Источник верификации email — используется как trust signal для admin escalation.
-    # 'cabinet'/'oauth_google'/'oauth_discord' доверяем (real ownership proof);
+    # 'cabinet'/'oauth_google'/'oauth_discord'/'oauth_apple' доверяем (real ownership proof);
     # 'oauth_vk'/'oauth_yandex' — email используется, но НЕ trusted для ADMIN_EMAILS match.
     # NULL для legacy строк до миграции 0079 (трактуется так же, как 'cabinet' для
     # bootstrap-compat — см. is_user_admin_by_env).
@@ -1901,6 +1908,7 @@ class User(Base):
     yandex_id = Column(String(255), unique=True, nullable=True, index=True)
     discord_id = Column(String(255), unique=True, nullable=True, index=True)
     vk_id = Column(BigInteger, unique=True, nullable=True, index=True)
+    apple_id = Column(String(255), unique=True, nullable=True, index=True)
     broadcasts = relationship('BroadcastHistory', back_populates='admin')
     referrals = relationship(
         'User', backref='referrer', remote_side=[id], foreign_keys='User.referred_by_id', post_update=True
@@ -3553,6 +3561,77 @@ class CabinetRefreshToken(Base):
     def __repr__(self) -> str:
         status = 'valid' if self.is_valid else ('revoked' if self.is_revoked else 'expired')
         return f'<CabinetRefreshToken id={self.id} user_id={self.user_id} status={status}>'
+
+
+class AccountDeletionRequest(Base):
+    """Durable cleanup job for user-initiated account deletion."""
+
+    __tablename__ = 'account_deletion_requests'
+    __table_args__ = (
+        Index('ix_account_deletion_requests_status_next_retry', 'status', 'next_retry_at'),
+        Index('ix_account_deletion_requests_user_status', 'user_id', 'status'),
+        Index(
+            'uq_account_deletion_requests_user_active',
+            'user_id',
+            unique=True,
+            postgresql_where=text("user_id IS NOT NULL AND status IN ('pending', 'processing')"),
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    status = Column(String(20), default=AccountDeletionRequestStatus.PENDING.value, nullable=False, index=True)
+    panel_uuids = Column(JSON, nullable=False, default=list)
+    oauth_revocation_event_ids = Column(JSON, nullable=False, default=list)
+    telegram_id = Column(BigInteger, nullable=True)
+    claim_token = Column(String(64), nullable=True)
+    attempt_count = Column(Integer, default=0, nullable=False)
+    max_attempts = Column(Integer, default=10, nullable=False)
+    next_retry_at = Column(AwareDateTime(), default=func.now(), nullable=False)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+    completed_at = Column(AwareDateTime(), nullable=True)
+
+    user = relationship('User', backref='account_deletion_requests')
+
+    def __repr__(self) -> str:
+        return f"<AccountDeletionRequest id={self.id} user_id={self.user_id} status='{self.status}'>"
+
+
+class OAuthProviderRevocationEvent(Base):
+    """Audit trail for Google/Apple provider revocation attempts.
+
+    Raw provider tokens are intentionally never stored here.
+    """
+
+    __tablename__ = 'oauth_provider_revocation_events'
+    __table_args__ = (
+        Index('ix_oauth_provider_revocation_events_user', 'user_id'),
+        Index('ix_oauth_provider_revocation_events_provider_status', 'provider', 'status'),
+        CheckConstraint("provider IN ('google', 'apple')", name='ck_oauth_provider_revocation_events_provider'),
+        CheckConstraint("purpose IN ('unlink', 'delete')", name='ck_oauth_provider_revocation_events_purpose'),
+        CheckConstraint("status IN ('pending', 'succeeded', 'failed')", name='ck_oauth_provider_revocation_events_status'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    provider = Column(String(32), nullable=False)
+    provider_id = Column(String(255), nullable=False)
+    purpose = Column(String(16), nullable=False)
+    token_type = Column(String(32), nullable=True)
+    status = Column(String(32), nullable=False)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now(), nullable=False)
+    completed_at = Column(AwareDateTime(), nullable=True)
+
+    user = relationship('User', backref='oauth_provider_revocation_events')
+
+    def __repr__(self) -> str:
+        return (
+            f"<OAuthProviderRevocationEvent id={self.id} "
+            f"user_id={self.user_id} provider='{self.provider}' status='{self.status}'>"
+        )
 
 
 # ==================== FORTUNE WHEEL ====================

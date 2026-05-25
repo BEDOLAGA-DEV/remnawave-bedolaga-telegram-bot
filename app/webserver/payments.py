@@ -178,7 +178,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
     router = APIRouter()
     routes_registered = False
 
-    if settings.is_apple_iap_enabled():
+    if settings.should_mount_apple_iap_routes():
         from app.webserver.apple_iap import create_apple_iap_router
 
         router.include_router(create_apple_iap_router(bot))

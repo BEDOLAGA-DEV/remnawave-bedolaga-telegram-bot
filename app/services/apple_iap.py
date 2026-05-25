@@ -110,6 +110,24 @@ def _transaction_fields(txn_info: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _should_credit_sandbox_on_production(configured_environment: str, actual_environment: str) -> bool:
+    return (
+        configured_environment == 'Production'
+        and actual_environment == 'Sandbox'
+        and settings.APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION
+        and settings.APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION
+    )
+
+
+def _should_ignore_sandbox_transaction_on_production(apple_txn: AppleTransaction) -> bool:
+    if apple_txn.environment != 'Sandbox' or settings.get_apple_iap_environment() != 'Production':
+        return False
+    if apple_txn.status == 'sandbox_recorded':
+        return True
+    metadata = apple_txn.metadata_json or {}
+    return metadata.get('credited_on_production') is not True
+
+
 class AppleIAPFulfillmentService:
     def __init__(self, apple_service: AppleIAPService | None = None, bot: Any = None):
         self.apple_service = apple_service or AppleIAPService()
@@ -221,11 +239,16 @@ class AppleIAPFulfillmentService:
 
         configured_environment = settings.get_apple_iap_environment()
         actual_environment = str(txn_info.get('environment') or configured_environment)
+        credit_sandbox_on_production = _should_credit_sandbox_on_production(
+            configured_environment,
+            actual_environment,
+        )
         if actual_environment != configured_environment:
             if (
                 actual_environment == 'Sandbox'
                 and configured_environment == 'Production'
                 and settings.APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION
+                and not credit_sandbox_on_production
             ):
                 return await self._record_sandbox_on_production(
                     db,
@@ -234,18 +257,19 @@ class AppleIAPFulfillmentService:
                     amount_kopeks=amount_kopeks,
                     txn_info=txn_info,
                 )
-            await create_apple_abuse_event(
-                db,
-                'transaction_environment_mismatch',
-                user_id=user_id,
-                severity='critical',
-                transaction_id=transaction_id,
-                product_id=product_id,
-                ip_address=ip_address,
-                details_json={'configured': configured_environment, 'actual': actual_environment},
-            )
-            await db.commit()
-            return AppleFulfillmentResult(False, 'environment_mismatch')
+            if not credit_sandbox_on_production:
+                await create_apple_abuse_event(
+                    db,
+                    'transaction_environment_mismatch',
+                    user_id=user_id,
+                    severity='critical',
+                    transaction_id=transaction_id,
+                    product_id=product_id,
+                    ip_address=ip_address,
+                    details_json={'configured': configured_environment, 'actual': actual_environment},
+                )
+                await db.commit()
+                return AppleFulfillmentResult(False, 'environment_mismatch')
 
         existing = await get_apple_transaction_by_transaction_id(db, transaction_id)
         if existing:
@@ -270,6 +294,11 @@ class AppleIAPFulfillmentService:
             return AppleFulfillmentResult(False, 'owner_mismatch')
 
         fields = _transaction_fields(txn_info)
+        if credit_sandbox_on_production:
+            metadata = dict(fields.get('metadata_json') or {})
+            metadata['credited_on_production'] = True
+            fields['metadata_json'] = metadata
+
         web_order_line_item_id = fields.get('web_order_line_item_id')
         if web_order_line_item_id:
             existing = await get_apple_transaction_by_web_order_line_item_id(db, web_order_line_item_id)
@@ -310,7 +339,7 @@ class AppleIAPFulfillmentService:
                     product_id=product_id,
                     amount_kopeks=amount_kopeks,
                     status='verified',
-                    is_paid=True,
+                    is_paid=not credit_sandbox_on_production,
                     **fields,
                 )
         except IntegrityError:
@@ -355,33 +384,43 @@ class AppleIAPFulfillmentService:
             await db.commit()
             return AppleFulfillmentResult(False, 'duplicate_conflict')
 
-        transaction = await create_transaction(
-            db=db,
-            user_id=user_id,
-            type=TransactionType.DEPOSIT,
-            amount_kopeks=amount_kopeks,
-            description=f'Пополнение через Apple IAP: {product_id}',
-            payment_method=PaymentMethod.APPLE_IAP,
-            external_id=transaction_id,
-            is_completed=True,
-            commit=False,
-        )
+        try:
+            transaction = await create_transaction(
+                db=db,
+                user_id=user_id,
+                type=TransactionType.DEPOSIT,
+                amount_kopeks=amount_kopeks,
+                description=f'Пополнение через Apple IAP: {product_id}',
+                payment_method=PaymentMethod.APPLE_IAP,
+                external_id=transaction_id,
+                is_completed=True,
+                commit=False,
+            )
 
-        if apple_txn:
-            apple_txn.transaction_id_fk = transaction.id
-            apple_txn.status = 'credited'
-            apple_txn.credited_at = datetime.now(UTC)
-            apple_txn.updated_at = datetime.now(UTC)
+            if apple_txn:
+                apple_txn.transaction_id_fk = transaction.id
+                apple_txn.status = 'credited'
+                apple_txn.credited_at = datetime.now(UTC)
+                apple_txn.updated_at = datetime.now(UTC)
 
-        user.balance_kopeks += amount_kopeks
-        user.updated_at = datetime.now(UTC)
+            user.balance_kopeks += amount_kopeks
+            user.updated_at = datetime.now(UTC)
 
-        promo_group = user.get_primary_promo_group()
-        subscription = getattr(user, 'subscription', None)
-        referrer_info = format_referrer_info(user)
-        topup_status = 'Первое пополнение' if was_first_topup else 'Пополнение'
+            promo_group = user.get_primary_promo_group()
+            subscription = getattr(user, 'subscription', None)
+            referrer_info = format_referrer_info(user)
+            topup_status = 'Первое пополнение' if was_first_topup else 'Пополнение'
 
-        await db.commit()
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.error(
+                'Apple IAP purchase credit failed before commit',
+                transaction_id=transaction_id,
+                user_id=user_id,
+                exc_info=True,
+            )
+            raise
 
         await self._emit_credit_side_effects(
             db,
@@ -530,7 +569,9 @@ class AppleIAPNotificationService:
 
         data = notification.get('data') or {}
         environment = str(data.get('environment') or '')
-        if not self._environment_allowed(environment):
+        if not self._environment_allowed(environment) and not self._should_route_sandbox_refund_on_production(
+            notification_type, environment
+        ):
             logger.warning('Apple notification environment ignored', environment=environment)
             return True, 'environment_ignored'
 
@@ -625,6 +666,13 @@ class AppleIAPNotificationService:
                 else environment in {'', 'Production'}
             )
         return environment in {'', 'Sandbox'}
+
+    def _should_route_sandbox_refund_on_production(self, notification_type: str, environment: str) -> bool:
+        return (
+            settings.get_apple_iap_environment() == 'Production'
+            and environment == 'Sandbox'
+            and notification_type in {'REFUND', 'REFUND_REVERSED'}
+        )
 
     async def _dispatch(
         self,
@@ -798,7 +846,7 @@ class AppleIAPNotificationService:
             return f'refund_{validation_error}'
         if apple_txn.status == 'refunded':
             return 'already_refunded'
-        if apple_txn.environment == 'Sandbox' and settings.get_apple_iap_environment() == 'Production':
+        if _should_ignore_sandbox_transaction_on_production(apple_txn):
             return 'sandbox_ignored'
 
         user = await lock_user_for_pricing(db, apple_txn.user_id)
@@ -858,7 +906,7 @@ class AppleIAPNotificationService:
             return f'refund_reversed_{validation_error}'
         if apple_txn.status != 'refunded':
             return 'not_refunded'
-        if apple_txn.environment == 'Sandbox' and settings.get_apple_iap_environment() == 'Production':
+        if _should_ignore_sandbox_transaction_on_production(apple_txn):
             return 'sandbox_ignored'
 
         from app.database.crud.user import add_user_balance, get_user_by_id

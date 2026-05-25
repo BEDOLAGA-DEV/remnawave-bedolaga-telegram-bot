@@ -88,6 +88,24 @@ class TestSettings:
         monkeypatch.setattr(settings, 'APPLE_IAP_ROOT_CERTS_PATHS', '', raising=False)
         assert settings.is_apple_iap_enabled() is False
 
+    def test_invalid_apple_iap_environment_disables_iap(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        _enable_apple_iap(monkeypatch, tmp_path)
+        monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Staging', raising=False)
+
+        assert settings.is_apple_iap_enabled() is False
+
+    def test_empty_apple_iap_products_disables_iap(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        _enable_apple_iap(monkeypatch, tmp_path)
+        monkeypatch.setattr(settings, 'APPLE_IAP_PRODUCTS', '{}', raising=False)
+
+        assert settings.is_apple_iap_enabled() is False
+
+    def test_unreadable_apple_iap_root_cert_disables_iap(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        _enable_apple_iap(monkeypatch, tmp_path)
+        monkeypatch.setattr(settings, 'APPLE_IAP_ROOT_CERTS_PATHS', str(tmp_path / 'missing.cer'), raising=False)
+
+        assert settings.is_apple_iap_enabled() is False
+
     def test_blank_key_metadata_disables(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         _enable_apple_iap(monkeypatch, tmp_path)
         monkeypatch.setattr(settings, 'APPLE_IAP_KEY_ID', ' ', raising=False)
@@ -125,6 +143,9 @@ class TestSettings:
     def test_environment_defaults_to_production(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'invalid', raising=False)
         assert settings.get_apple_iap_environment() == 'Production'
+
+    def test_credit_sandbox_on_production_defaults_to_disabled(self) -> None:
+        assert settings.APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION is False
 
 
 class TestTransactionValidation:
@@ -233,6 +254,30 @@ class TestSchemas:
     def test_rejects_empty_transaction_id(self) -> None:
         with pytest.raises(ValidationError):
             ApplePurchaseRequest(product_id='com.bitnet.vpnclient.topup.100', transaction_id='')
+
+    def test_purchase_request_forbids_extra_client_fields(self) -> None:
+        forbidden_fields = {
+            'amount': 10_000,
+            'currency': 'RUB',
+            'signed_payload': 'raw-jws',
+            'receipt': 'receipt-blob',
+            'user_id': 1,
+            'environment': 'Sandbox',
+            'app_account_token': '123e4567-e89b-12d3-a456-426614174000',
+        }
+
+        for field_name, value in forbidden_fields.items():
+            with pytest.raises(ValidationError) as exc_info:
+                ApplePurchaseRequest(
+                    product_id='com.bitnet.vpnclient.topup.100',
+                    transaction_id='2000000123456789',
+                    **{field_name: value},
+                )
+            assert 'extra_forbidden' in str(exc_info.value)
+
+    def test_purchase_request_rejects_too_long_product_id(self) -> None:
+        with pytest.raises(ValidationError):
+            ApplePurchaseRequest(product_id='x' * 129, transaction_id='2000000123456789')
 
     def test_account_token_response(self) -> None:
         response = AppleAccountTokenResponse(app_account_token='123e4567-e89b-12d3-a456-426614174000')
@@ -380,6 +425,98 @@ class TestCabinetAppleIAPRoutes:
         ]
 
     @pytest.mark.anyio('asyncio')
+    async def test_apple_purchase_maps_account_token_mismatch_to_conflict(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from fastapi import HTTPException
+
+        from app.cabinet.apple_iap import apple_purchase
+
+        _enable_apple_iap(monkeypatch, tmp_path)
+
+        class FakeRequest:
+            headers = {}
+            client = SimpleNamespace(host='203.0.113.10')
+
+        class FakeRedis:
+            async def get(self, key: str) -> None:
+                return None
+
+            async def set(self, key: str, value: int, *, ex: int, nx: bool) -> bool:
+                return True
+
+            async def incr(self, key: str) -> int:
+                return 1
+
+        service = SimpleNamespace(
+            verify_and_fulfill_purchase=AsyncMock(return_value=AppleFulfillmentResult(False, 'account_token_mismatch'))
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await apple_purchase(
+                request=ApplePurchaseRequest(
+                    product_id='com.bitnet.vpnclient.topup.100',
+                    transaction_id='2000000123456789',
+                ),
+                http_request=FakeRequest(),
+                user=SimpleNamespace(id=1),
+                db=_FakeDB(),
+                fulfillment_service=service,
+                redis_client=FakeRedis(),
+            )
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == 'account_token_mismatch'
+
+    @pytest.mark.anyio('asyncio')
+    async def test_apple_purchase_maps_unknown_product_to_bad_request(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from fastapi import HTTPException
+
+        from app.cabinet.apple_iap import apple_purchase
+
+        _enable_apple_iap(monkeypatch, tmp_path)
+
+        class FakeRequest:
+            headers = {}
+            client = SimpleNamespace(host='203.0.113.10')
+
+        class FakeRedis:
+            async def get(self, key: str) -> None:
+                return None
+
+            async def set(self, key: str, value: int, *, ex: int, nx: bool) -> bool:
+                return True
+
+            async def incr(self, key: str) -> int:
+                return 1
+
+        service = SimpleNamespace(
+            verify_and_fulfill_purchase=AsyncMock(return_value=AppleFulfillmentResult(False, 'unknown_product'))
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await apple_purchase(
+                request=ApplePurchaseRequest(
+                    product_id='com.bitnet.vpnclient.topup.100',
+                    transaction_id='2000000123456789',
+                ),
+                http_request=FakeRequest(),
+                user=SimpleNamespace(id=1),
+                db=_FakeDB(),
+                fulfillment_service=service,
+                redis_client=FakeRedis(),
+            )
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == 'unknown_product'
+
+    @pytest.mark.anyio('asyncio')
     async def test_apple_iap_redis_client_uses_lifespan_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from fastapi import FastAPI
 
@@ -445,7 +582,7 @@ class TestCabinetAppleIAPRoutes:
                 fulfillment_service=SimpleNamespace(get_account_token=get_account_token),
             )
 
-        assert exc_info.value.status_code == 400
+        assert exc_info.value.status_code == 503
         assert 'not fully configured' in exc_info.value.detail
         get_account_token.assert_not_awaited()
 
@@ -491,6 +628,7 @@ class TestFulfillmentService:
         _enable_apple_iap(monkeypatch, tmp_path)
         monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
         monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', True, raising=False)
+        monkeypatch.setattr(settings, 'APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION', False, raising=False)
         service = AppleIAPFulfillmentService()
         record_sandbox = AsyncMock(return_value=AppleFulfillmentResult(True, 'sandbox_recorded'))
         monkeypatch.setattr(service, '_record_sandbox_on_production', record_sandbox)
@@ -1079,3 +1217,17 @@ class TestAppleIAPRouting:
         assert '/cabinet/apple-purchase' in paths
         assert not any(path.startswith('/cabinet/subscription') for path in paths)
         assert not any(path.startswith('/cabinet/balance') for path in paths)
+
+    def test_apple_iap_routes_mount_when_feature_enabled_but_misconfigured(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, 'APPLE_IAP_ENABLED', True, raising=False)
+        monkeypatch.setattr(settings, 'APPLE_IAP_ROOT_CERTS_PATHS', '', raising=False)
+
+        from app.webapi.app import create_web_api_app
+
+        app = create_web_api_app()
+        paths = {route.path for route in app.routes}
+
+        assert '/cabinet/apple-iap/account-token' in paths
+        assert '/cabinet/apple-purchase' in paths

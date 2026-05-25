@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import structlog
@@ -29,6 +30,7 @@ from app.database.crud.user import (
     verify_and_apply_email_change,
 )
 from app.database.models import CabinetRefreshToken, User, UserStatus
+from app.services.account_deletion_service import AccountDeletionPanelError, account_deletion_service
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
 from app.services.rbac_bootstrap_service import (
@@ -55,6 +57,7 @@ from ..auth import (
     validate_telegram_oidc_token,
     verify_password,
 )
+from ..auth.oauth_revocation_proofs import consume_oauth_revocation_proof, get_oauth_revocation_proof
 from ..auth.email_verification import (
     generate_email_change_code,
     generate_password_reset_token,
@@ -69,6 +72,8 @@ from ..auth.merge_service import create_merge_token
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 from ..ip_utils import get_client_ip
 from ..schemas.auth import (
+    AccountDeleteRequest,
+    AccountDeleteResponse,
     AuthResponse,
     AutoLoginRequest,
     CampaignBonusInfo,
@@ -1823,6 +1828,197 @@ async def get_current_user(
 ):
     """Get current authenticated user info."""
     return _user_to_response(user)
+
+
+def _linked_google_apple_providers(user: User) -> dict[str, str]:
+    return {
+        provider: provider_id
+        for provider, provider_id in {
+            'google': getattr(user, 'google_id', None),
+            'apple': getattr(user, 'apple_id', None),
+        }.items()
+        if provider_id
+    }
+
+
+@dataclass(frozen=True)
+class OAuthDeleteProofValidation:
+    event_ids: list[int]
+    tokens_to_consume: list[str]
+
+
+async def _validate_oauth_delete_proofs(
+    user: User,
+    request: AccountDeleteRequest,
+    linked_oauth_providers: dict[str, str],
+    *,
+    require_all_linked: bool,
+) -> OAuthDeleteProofValidation:
+    if not linked_oauth_providers or not request.oauth_revocation_proofs:
+        if require_all_linked and linked_oauth_providers:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='OAuth provider revocation proof is required',
+            )
+        return OAuthDeleteProofValidation(event_ids=[], tokens_to_consume=[])
+
+    valid_proofs: set[str] = set()
+    revocation_event_ids: list[int] = []
+    tokens_to_consume: list[str] = []
+    for proof_token in request.oauth_revocation_proofs:
+        proof = await get_oauth_revocation_proof(proof_token)
+        if not proof:
+            continue
+        provider = proof.get('provider')
+        if (
+            proof.get('purpose') == 'delete'
+            and proof.get('user_id') == user.id
+            and provider in linked_oauth_providers
+            and str(proof.get('provider_id')) == str(linked_oauth_providers[provider])
+        ):
+            valid_proofs.add(str(provider))
+            tokens_to_consume.append(proof_token)
+            event_id = proof.get('event_id')
+            if isinstance(event_id, int):
+                revocation_event_ids.append(event_id)
+
+    if require_all_linked and not set(linked_oauth_providers) <= valid_proofs:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='OAuth provider revocation proof is required',
+        )
+    return OAuthDeleteProofValidation(event_ids=revocation_event_ids, tokens_to_consume=tokens_to_consume)
+
+
+async def _verify_account_delete_proof(user: User, request: AccountDeleteRequest) -> OAuthDeleteProofValidation:
+    linked_oauth_providers = _linked_google_apple_providers(user)
+
+    if user.password_hash:
+        if not request.password:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='Current password is required',
+            )
+        if not verify_password(request.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='Invalid current password',
+            )
+        return await _validate_oauth_delete_proofs(
+            user,
+            request,
+            linked_oauth_providers,
+            require_all_linked=False,
+        )
+
+    if linked_oauth_providers and request.oauth_revocation_proofs:
+        return await _validate_oauth_delete_proofs(
+            user,
+            request,
+            linked_oauth_providers,
+            require_all_linked=True,
+        )
+
+    if user.telegram_id is not None:
+        if not request.telegram_init_data:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='Telegram confirmation is required',
+            )
+
+        user_data = validate_telegram_init_data(request.telegram_init_data)
+        try:
+            telegram_id = int(user_data.get('id')) if user_data else None
+        except (TypeError, ValueError):
+            telegram_id = None
+        if telegram_id != user.telegram_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='Invalid Telegram confirmation',
+            )
+        return await _validate_oauth_delete_proofs(
+            user,
+            request,
+            linked_oauth_providers,
+            require_all_linked=False,
+        )
+
+    if linked_oauth_providers:
+        return await _validate_oauth_delete_proofs(
+            user,
+            request,
+            linked_oauth_providers,
+            require_all_linked=True,
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail='Account deletion requires password or Telegram confirmation',
+    )
+
+
+@router.post('/me/delete', response_model=AccountDeleteResponse)
+async def delete_current_account(
+    request: AccountDeleteRequest,
+    raw_request: Request,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Delete the current user's account while preserving audit records.
+
+    Frontend contract:
+    - send `confirmation="DELETE"` for every request;
+    - send `password` for accounts with a password;
+    - otherwise send `telegram_init_data` for Telegram-only accounts;
+    - clear local access/refresh tokens after a successful response.
+    """
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'account_delete', limit=10, window=300, fail_closed=True):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '300'},
+        )
+    if await RateLimitCache.is_rate_limited(user.id, 'account_delete', limit=5, window=300):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Too many requests',
+            headers={'Retry-After': '300'},
+        )
+
+    oauth_delete_proofs = await _verify_account_delete_proof(user, request)
+
+    try:
+        if oauth_delete_proofs.event_ids:
+            await account_deletion_service.delete_own_account(
+                db,
+                user,
+                oauth_revocation_event_ids=oauth_delete_proofs.event_ids,
+            )
+        else:
+            await account_deletion_service.delete_own_account(db, user)
+    except AccountDeletionPanelError as error:
+        await db.rollback()
+        logger.error('Failed to disable VPN access during cabinet account deletion', user_id=user.id, error=error)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail='Failed to disable VPN access',
+        ) from error
+    except Exception as error:
+        await db.rollback()
+        logger.error('Failed to self-delete cabinet account', user_id=user.id, error=error)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to delete account',
+        ) from error
+
+    for proof_token in oauth_delete_proofs.tokens_to_consume:
+        try:
+            await consume_oauth_revocation_proof(proof_token)
+        except Exception as error:
+            logger.warning('Failed to consume OAuth revocation proof after account deletion', user_id=user.id, error=error)
+
+    return AccountDeleteResponse(message='Account deletion requested')
 
 
 @router.get('/me/permissions')

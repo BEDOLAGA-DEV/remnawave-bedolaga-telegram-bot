@@ -67,7 +67,7 @@ def _create_base_app(lifespan: Any = None) -> FastAPI:
         )
 
         # Add cabinet routes even when web API is disabled
-        if settings.is_cabinet_enabled() or settings.is_apple_iap_enabled():
+        if settings.is_cabinet_enabled() or settings.should_mount_apple_iap_routes():
             from fastapi.middleware.cors import CORSMiddleware
 
             cabinet_origins = settings.get_cabinet_allowed_origins()

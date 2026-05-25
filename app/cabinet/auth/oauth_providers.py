@@ -1,12 +1,16 @@
 """OAuth 2.0 provider implementations for cabinet authentication."""
 
+import asyncio
 import base64
 import hashlib
+import json
 import secrets
 from abc import ABC, abstractmethod
-from typing import Any, TypedDict
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal, TypedDict
 
 import httpx
+import jwt as pyjwt
 import structlog
 from pydantic import BaseModel
 
@@ -17,6 +21,38 @@ from app.utils.cache import cache, cache_key
 logger = structlog.get_logger(__name__)
 
 STATE_TTL_SECONDS = 600  # 10 minutes
+GOOGLE_ISSUERS = {'accounts.google.com', 'https://accounts.google.com'}
+GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs'
+APPLE_ISSUER = 'https://appleid.apple.com'
+APPLE_JWKS_URL = 'https://appleid.apple.com/auth/keys'
+APPLE_CLIENT_SECRET_TTL = timedelta(days=180)
+GoogleClientType = Literal['web', 'ios', 'android']
+AppleClientType = Literal['web', 'ios']
+
+_google_jwks_cache: dict[str, Any] = {}
+_google_jwks_cache_expiry: datetime | None = None
+_GOOGLE_JWKS_CACHE_TTL_SECONDS = 3600
+_google_jwks_lock = asyncio.Lock()
+_google_jwks_last_force_refresh: datetime | None = None
+_GOOGLE_JWKS_FORCE_REFRESH_COOLDOWN_SECONDS = 30
+
+_apple_jwks_cache: dict[str, Any] = {}
+_apple_jwks_cache_expiry: datetime | None = None
+_APPLE_JWKS_CACHE_TTL_SECONDS = 3600
+_apple_jwks_lock = asyncio.Lock()
+_apple_jwks_last_force_refresh: datetime | None = None
+_APPLE_JWKS_FORCE_REFRESH_COOLDOWN_SECONDS = 30
+
+_JWK_KTY_TO_ALGORITHM_CLASS: dict[str, Any] = {
+    'RSA': pyjwt.algorithms.RSAAlgorithm,
+    'EC': pyjwt.algorithms.ECAlgorithm,
+    'OKP': pyjwt.algorithms.OKPAlgorithm,
+}
+_JWK_KTY_DEFAULT_ALG: dict[str, str] = {
+    'RSA': 'RS256',
+    'EC': 'ES256',
+    'OKP': 'EdDSA',
+}
 
 
 # --- Typed dicts for provider API responses ---
@@ -27,6 +63,12 @@ class OAuthProviderConfig(TypedDict):
     client_secret: str
     enabled: bool
     display_name: str
+    team_id: str
+    key_id: str
+    private_key: str
+    web_client_id: str
+    ios_client_id: str
+    android_client_id: str
 
 
 class OAuthTokenResponse(TypedDict, total=False):
@@ -38,6 +80,12 @@ class OAuthTokenResponse(TypedDict, total=False):
     # Provider-specific extra fields (optional)
     email: str
     user_id: int
+    id_token: str
+    _google_client_type: GoogleClientType
+    _google_nonce: str
+    _apple_nonce: str
+    _apple_user: Any
+    _apple_client_type: AppleClientType
 
 
 class GoogleUserInfoResponse(TypedDict, total=False):
@@ -82,6 +130,16 @@ class VKIDUserData(TypedDict, total=False):
 
 class VKIDUserInfoResponse(TypedDict, total=False):
     user: VKIDUserData
+
+
+class AppleUserName(TypedDict, total=False):
+    firstName: str
+    lastName: str
+
+
+class AppleUserPayload(TypedDict, total=False):
+    name: AppleUserName
+    email: str
 
 
 # --- Models ---
@@ -194,6 +252,20 @@ class GoogleProvider(OAuthProvider):
     TOKEN_URL = 'https://oauth2.googleapis.com/token'
     USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo'
 
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        redirect_uri: str,
+        *,
+        ios_client_id: str = '',
+        android_client_id: str = '',
+    ) -> None:
+        super().__init__(client_id, client_secret, redirect_uri)
+        self.web_client_id = client_id
+        self.ios_client_id = ios_client_id
+        self.android_client_id = android_client_id
+
     def get_authorization_url(self, state: str, **kwargs: Any) -> str:
         params: dict[str, str] = {
             'client_id': self.client_id,
@@ -207,7 +279,39 @@ class GoogleProvider(OAuthProvider):
         request = httpx.Request('GET', self.AUTHORIZE_URL, params=params)
         return str(request.url)
 
+    def _client_id_for(self, client_type: str | None) -> str:
+        if client_type == 'ios':
+            if not self.ios_client_id:
+                raise ValueError('Google iOS client ID is not configured')
+            return self.ios_client_id
+        if client_type == 'android':
+            if not self.android_client_id:
+                raise ValueError('Google Android client ID is not configured')
+            return self.android_client_id
+        if client_type == 'web':
+            if not self.web_client_id:
+                raise ValueError('Google web client ID is not configured')
+            return self.web_client_id
+        raise ValueError('Unsupported Google client type')
+
+    def ensure_client_type_configured(self, client_type: str | None) -> None:
+        self._client_id_for(client_type)
+
     async def exchange_code(self, code: str, **kwargs: Any) -> OAuthTokenResponse:
+        id_token = kwargs.get('id_token')
+        if id_token:
+            client_type: GoogleClientType = kwargs.get('client_type', 'web')
+            self._client_id_for(client_type)
+            data: OAuthTokenResponse = {
+                'id_token': id_token,
+                '_google_client_type': client_type,
+            }
+            if kwargs.get('nonce'):
+                data['_google_nonce'] = kwargs['nonce']
+            return data
+        if not code:
+            raise ValueError('Authorization code is required for Google web OAuth')
+
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(
                 self.TOKEN_URL,
@@ -224,7 +328,33 @@ class GoogleProvider(OAuthProvider):
             return data
 
     async def get_user_info(self, token_data: OAuthTokenResponse) -> OAuthUserInfo:
-        access_token = token_data['access_token']
+        access_token = token_data.get('access_token')
+        if not access_token:
+            id_token = token_data.get('id_token')
+            if not id_token:
+                raise ValueError('Google token response missing access_token or id_token')
+
+            client_id = self._client_id_for(token_data.get('_google_client_type', 'web'))
+            claims = await validate_google_id_token(id_token, client_id, token_data.get('_google_nonce'))
+            if not claims:
+                raise ValueError('Google id_token validation failed')
+
+            provider_id = claims.get('sub')
+            if not provider_id:
+                raise ValueError('Google id_token missing sub')
+
+            email_claim = claims.get('email')
+            email = email_claim.strip() if isinstance(email_claim, str) and email_claim.strip() else None
+            return OAuthUserInfo(
+                provider='google',
+                provider_id=str(provider_id),
+                email=email,
+                email_verified=bool(email and _truthy_claim(claims.get('email_verified'))),
+                first_name=claims.get('given_name'),
+                last_name=claims.get('family_name'),
+                avatar_url=claims.get('picture'),
+            )
+
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(
                 self.USERINFO_URL,
@@ -491,6 +621,374 @@ class VKProvider(OAuthProvider):
         )
 
 
+def _build_jwks_public_keys(jwks_data: dict[str, Any], *, log_context: str) -> dict[str, tuple[Any, str]]:
+    """Build {kid: (public_key, alg)} mapping from a JWKS document."""
+    public_keys: dict[str, tuple[Any, str]] = {}
+    for key_data in jwks_data.get('keys', []):
+        kid = key_data.get('kid')
+        if not kid:
+            continue
+        kty = key_data.get('kty')
+        algorithm_cls = _JWK_KTY_TO_ALGORITHM_CLASS.get(kty)
+        if algorithm_cls is None:
+            logger.debug('OAuth JWKS: skipping JWK with unsupported kty', provider=log_context, kid=kid, kty=kty)
+            continue
+        try:
+            public_key = algorithm_cls.from_jwk(key_data)
+        except Exception as exc:
+            logger.warning(
+                'OAuth JWKS: failed to load JWK', provider=log_context, kid=kid, kty=kty, error=str(exc)[:200]
+            )
+            continue
+        alg = key_data.get('alg') or _JWK_KTY_DEFAULT_ALG.get(kty, '')
+        public_keys[kid] = (public_key, alg)
+    return public_keys
+
+
+async def _get_google_jwks(force: bool = False) -> dict[str, Any]:
+    """Fetch and cache Google's JWKS for Google Sign-In id_token verification."""
+    global _google_jwks_cache, _google_jwks_cache_expiry
+
+    now = datetime.now(UTC)
+    if not force and _google_jwks_cache and _google_jwks_cache_expiry and now < _google_jwks_cache_expiry:
+        return _google_jwks_cache
+
+    async with _google_jwks_lock:
+        now = datetime.now(UTC)
+        if not force and _google_jwks_cache and _google_jwks_cache_expiry and now < _google_jwks_cache_expiry:
+            return _google_jwks_cache
+
+        proxy = settings.PROXY_URL if hasattr(settings, 'PROXY_URL') and settings.PROXY_URL else None
+        async with httpx.AsyncClient(timeout=10, proxy=proxy) as client:
+            response = await client.get(GOOGLE_JWKS_URL)
+            response.raise_for_status()
+            _google_jwks_cache = response.json()
+            _google_jwks_cache_expiry = now + timedelta(seconds=_GOOGLE_JWKS_CACHE_TTL_SECONDS)
+            return _google_jwks_cache
+
+
+async def _force_refresh_google_jwks(kid: str) -> dict[str, Any] | None:
+    """Refresh Google's JWKS with cooldown protection for key rotation."""
+    global _google_jwks_cache_expiry, _google_jwks_last_force_refresh
+
+    async with _google_jwks_lock:
+        now = datetime.now(UTC)
+        if (
+            _google_jwks_last_force_refresh
+            and (now - _google_jwks_last_force_refresh).total_seconds() < _GOOGLE_JWKS_FORCE_REFRESH_COOLDOWN_SECONDS
+        ):
+            logger.warning('Google OAuth: JWKS force refresh on cooldown', kid=kid)
+            return None
+        _google_jwks_last_force_refresh = now
+        _google_jwks_cache_expiry = None
+
+    return await _get_google_jwks(force=True)
+
+
+async def _get_apple_jwks(force: bool = False) -> dict[str, Any]:
+    """Fetch and cache Apple's JWKS for Sign in with Apple id_token verification."""
+    global _apple_jwks_cache, _apple_jwks_cache_expiry
+
+    now = datetime.now(UTC)
+    if not force and _apple_jwks_cache and _apple_jwks_cache_expiry and now < _apple_jwks_cache_expiry:
+        return _apple_jwks_cache
+
+    async with _apple_jwks_lock:
+        now = datetime.now(UTC)
+        if not force and _apple_jwks_cache and _apple_jwks_cache_expiry and now < _apple_jwks_cache_expiry:
+            return _apple_jwks_cache
+
+        proxy = settings.PROXY_URL if hasattr(settings, 'PROXY_URL') and settings.PROXY_URL else None
+        async with httpx.AsyncClient(timeout=10, proxy=proxy) as client:
+            response = await client.get(APPLE_JWKS_URL)
+            response.raise_for_status()
+            _apple_jwks_cache = response.json()
+            _apple_jwks_cache_expiry = now + timedelta(seconds=_APPLE_JWKS_CACHE_TTL_SECONDS)
+            return _apple_jwks_cache
+
+
+async def _force_refresh_apple_jwks(kid: str) -> dict[str, Any] | None:
+    """Refresh Apple's JWKS with cooldown protection for key rotation."""
+    global _apple_jwks_cache_expiry, _apple_jwks_last_force_refresh
+
+    async with _apple_jwks_lock:
+        now = datetime.now(UTC)
+        if (
+            _apple_jwks_last_force_refresh
+            and (now - _apple_jwks_last_force_refresh).total_seconds() < _APPLE_JWKS_FORCE_REFRESH_COOLDOWN_SECONDS
+        ):
+            logger.warning('Apple OAuth: JWKS force refresh on cooldown', kid=kid)
+            return None
+        _apple_jwks_last_force_refresh = now
+        _apple_jwks_cache_expiry = None
+
+    return await _get_apple_jwks(force=True)
+
+
+def _sha256_urlsafe(value: str) -> str:
+    digest = hashlib.sha256(value.encode('utf-8')).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b'=').decode('ascii')
+
+
+def _truthy_claim(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in {'true', '1'}
+    return bool(value)
+
+
+def _parse_apple_user_payload(value: Any) -> AppleUserPayload:
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    elif isinstance(value, dict):
+        parsed = value
+    else:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return parsed
+
+
+async def validate_google_id_token(id_token: str, client_id: str, nonce: str | None = None) -> dict[str, Any] | None:
+    """Validate a Google Sign-In id_token for the expected OAuth client ID and nonce."""
+    try:
+        jwks_data = await _get_google_jwks()
+        public_keys = _build_jwks_public_keys(jwks_data, log_context='Google OAuth')
+
+        unverified_header = pyjwt.get_unverified_header(id_token)
+        kid = unverified_header.get('kid')
+        if kid and kid not in public_keys:
+            refreshed = await _force_refresh_google_jwks(kid)
+            if refreshed:
+                public_keys = _build_jwks_public_keys(refreshed, log_context='Google OAuth')
+
+        if not kid or kid not in public_keys:
+            logger.warning('Google OAuth: unknown kid in id_token', kid=kid)
+            return None
+
+        public_key, key_alg = public_keys[kid]
+        claims = pyjwt.decode(
+            id_token,
+            key=public_key,
+            algorithms=[key_alg],
+            audience=client_id,
+            options={'require': ['exp', 'iat', 'iss', 'aud', 'sub']},
+        )
+
+        if claims.get('iss') not in GOOGLE_ISSUERS:
+            logger.warning('Google OAuth: invalid issuer in id_token', issuer=claims.get('iss'))
+            return None
+
+        if nonce:
+            token_nonce = claims.get('nonce')
+            if token_nonce not in {nonce, _sha256_urlsafe(nonce)}:
+                logger.warning('Google OAuth: nonce mismatch in id_token')
+                return None
+
+        return claims
+    except pyjwt.ExpiredSignatureError:
+        logger.warning('Google OAuth: id_token expired')
+        return None
+    except pyjwt.InvalidTokenError as exc:
+        logger.warning('Google OAuth: invalid id_token', error=str(exc))
+        return None
+    except httpx.HTTPError as exc:
+        logger.error('Google OAuth: failed to fetch JWKS', error=str(exc))
+        return None
+
+
+async def validate_apple_id_token(id_token: str, client_id: str, nonce: str | None = None) -> dict[str, Any] | None:
+    """Validate a Sign in with Apple id_token and optional nonce."""
+    try:
+        jwks_data = await _get_apple_jwks()
+        public_keys = _build_jwks_public_keys(jwks_data, log_context='Apple OAuth')
+
+        unverified_header = pyjwt.get_unverified_header(id_token)
+        kid = unverified_header.get('kid')
+        if kid and kid not in public_keys:
+            refreshed = await _force_refresh_apple_jwks(kid)
+            if refreshed:
+                public_keys = _build_jwks_public_keys(refreshed, log_context='Apple OAuth')
+
+        if not kid or kid not in public_keys:
+            logger.warning('Apple OAuth: unknown kid in id_token', kid=kid)
+            return None
+
+        public_key, key_alg = public_keys[kid]
+        claims = pyjwt.decode(
+            id_token,
+            key=public_key,
+            algorithms=[key_alg],
+            audience=client_id,
+            issuer=APPLE_ISSUER,
+            options={'require': ['exp', 'iat', 'iss', 'aud', 'sub']},
+        )
+
+        if nonce:
+            token_nonce = claims.get('nonce')
+            # Web flows use the raw nonce; native iOS best practice sends SHA-256(raw_nonce).
+            if token_nonce not in {nonce, _sha256_urlsafe(nonce)}:
+                logger.warning('Apple OAuth: nonce mismatch in id_token')
+                return None
+
+        return claims
+    except pyjwt.ExpiredSignatureError:
+        logger.warning('Apple OAuth: id_token expired')
+        return None
+    except pyjwt.InvalidTokenError as exc:
+        logger.warning('Apple OAuth: invalid id_token', error=str(exc))
+        return None
+    except httpx.HTTPError as exc:
+        logger.error('Apple OAuth: failed to fetch JWKS', error=str(exc))
+        return None
+
+
+class AppleProvider(OAuthProvider):
+    """Sign in with Apple provider using Apple's REST/OIDC endpoints."""
+
+    name = 'apple'
+    display_name = 'Apple'
+
+    AUTHORIZE_URL = 'https://appleid.apple.com/auth/authorize'
+    TOKEN_URL = 'https://appleid.apple.com/auth/token'
+
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        redirect_uri: str,
+        *,
+        web_client_id: str,
+        ios_client_id: str,
+        team_id: str,
+        key_id: str,
+        private_key: str,
+    ) -> None:
+        super().__init__(client_id, client_secret, redirect_uri)
+        self.web_client_id = web_client_id
+        self.ios_client_id = ios_client_id
+        self.team_id = team_id
+        self.key_id = key_id
+        self.private_key = private_key
+
+    def prepare_auth_state(self) -> dict[str, str]:
+        nonce = secrets.token_urlsafe(32)
+        return {
+            'nonce': nonce,
+            '_nonce': nonce,
+        }
+
+    def get_authorization_url(self, state: str, **kwargs: Any) -> str:
+        nonce: str = kwargs.get('_nonce', '')
+        client_type: AppleClientType = kwargs.get('_client_type', 'web')
+        params: dict[str, str] = {
+            'client_id': self._client_id_for(client_type),
+            'redirect_uri': self.redirect_uri,
+            'response_type': 'code id_token',
+            'scope': 'name email',
+            'response_mode': 'form_post',
+            'state': state,
+            'nonce': nonce,
+        }
+        request = httpx.Request('GET', self.AUTHORIZE_URL, params=params)
+        return str(request.url)
+
+    def _client_id_for(self, client_type: str | None) -> str:
+        if client_type == 'ios':
+            if not self.ios_client_id:
+                raise ValueError('Apple iOS client ID is not configured')
+            return self.ios_client_id
+        if client_type == 'web':
+            if not self.web_client_id:
+                raise ValueError('Apple web client ID is not configured')
+            return self.web_client_id
+        raise ValueError('Unsupported Apple client type')
+
+    def create_client_secret(self, client_type: AppleClientType = 'web', now: datetime | None = None) -> str:
+        client_id = self._client_id_for(client_type)
+        issued_at = now or datetime.now(UTC)
+        expires_at = issued_at + APPLE_CLIENT_SECRET_TTL
+        return pyjwt.encode(
+            {
+                'iss': self.team_id,
+                'iat': int(issued_at.timestamp()),
+                'exp': int(expires_at.timestamp()),
+                'aud': APPLE_ISSUER,
+                'sub': client_id,
+            },
+            self.private_key,
+            algorithm='ES256',
+            headers={'kid': self.key_id},
+        )
+
+    async def exchange_code(self, code: str, **kwargs: Any) -> OAuthTokenResponse:
+        if not self.team_id or not self.key_id or not self.private_key:
+            raise ValueError('Apple Sign in is missing team_id, key_id, or private_key')
+
+        client_type: AppleClientType = kwargs.get('client_type', 'web')
+        client_id = self._client_id_for(client_type)
+        token_request_data = {
+            'client_id': client_id,
+            'client_secret': self.create_client_secret(client_type=client_type),
+            'code': code,
+            'grant_type': 'authorization_code',
+        }
+        if client_type == 'web':
+            token_request_data['redirect_uri'] = self.redirect_uri
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                self.TOKEN_URL,
+                data=token_request_data,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'},
+            )
+            response.raise_for_status()
+            data: OAuthTokenResponse = response.json()
+
+        if not data.get('id_token'):
+            raise ValueError('Apple token response missing id_token')
+        if kwargs.get('nonce'):
+            data['_apple_nonce'] = kwargs['nonce']
+        if kwargs.get('user') is not None:
+            data['_apple_user'] = kwargs['user']
+        data['_apple_client_type'] = client_type
+        return data
+
+    async def get_user_info(self, token_data: OAuthTokenResponse) -> OAuthUserInfo:
+        id_token = token_data.get('id_token')
+        if not id_token:
+            raise ValueError('Apple token response missing id_token')
+
+        client_id = self._client_id_for(token_data.get('_apple_client_type', 'web'))
+        claims = await validate_apple_id_token(id_token, client_id, token_data.get('_apple_nonce'))
+        if not claims:
+            raise ValueError('Apple id_token validation failed')
+
+        provider_id = claims.get('sub')
+        if not provider_id:
+            raise ValueError('Apple id_token missing sub')
+
+        apple_user = _parse_apple_user_payload(token_data.get('_apple_user'))
+        name = apple_user.get('name') or {}
+        email_claim = claims.get('email')
+        email = email_claim.strip() if isinstance(email_claim, str) and email_claim.strip() else None
+
+        return OAuthUserInfo(
+            provider='apple',
+            provider_id=str(provider_id),
+            email=email,
+            email_verified=bool(email and _truthy_claim(claims.get('email_verified'))),
+            first_name=name.get('firstName') if isinstance(name, dict) else None,
+            last_name=name.get('lastName') if isinstance(name, dict) else None,
+        )
+
+
 # --- Provider factory ---
 
 _PROVIDERS: dict[str, type[OAuthProvider]] = {
@@ -498,6 +996,7 @@ _PROVIDERS: dict[str, type[OAuthProvider]] = {
     'yandex': YandexProvider,
     'discord': DiscordProvider,
     'vk': VKProvider,
+    'apple': AppleProvider,
 }
 
 
@@ -516,6 +1015,27 @@ def get_provider(name: str) -> OAuthProvider | None:
         return None
 
     redirect_uri = f'{settings.CABINET_URL}/auth/oauth/callback'
+
+    if provider_class is AppleProvider:
+        return provider_class(
+            client_id=config['client_id'],
+            client_secret=config['client_secret'],
+            redirect_uri=redirect_uri,
+            web_client_id=config['web_client_id'],
+            ios_client_id=config['ios_client_id'],
+            team_id=config['team_id'],
+            key_id=config['key_id'],
+            private_key=config['private_key'],
+        )
+
+    if provider_class is GoogleProvider:
+        return provider_class(
+            client_id=config['client_id'],
+            client_secret=config['client_secret'],
+            redirect_uri=redirect_uri,
+            ios_client_id=config['ios_client_id'],
+            android_client_id=config['android_client_id'],
+        )
 
     return provider_class(
         client_id=config['client_id'],

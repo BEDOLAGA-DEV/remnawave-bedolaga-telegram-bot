@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
-from app.services.apple_iap import AppleIAPFulfillmentService, apple_iap_fulfillment_service
+from app.services.apple_iap import AppleFulfillmentResult, AppleIAPFulfillmentService, apple_iap_fulfillment_service
 from app.services.apple_iap_reconciliation_service import apple_iap_reconciliation_service
 
 from .dependencies import get_cabinet_db, get_current_admin_user, get_current_cabinet_user
@@ -78,6 +78,29 @@ def _rate_limit_error_allows_request() -> bool:
     return settings.APPLE_IAP_RATE_LIMIT_FAIL_OPEN
 
 
+_PURCHASE_FAILURE_STATUS_BY_REASON = {
+    'disabled': status.HTTP_503_SERVICE_UNAVAILABLE,
+    'unknown_product': status.HTTP_400_BAD_REQUEST,
+    'verification_failed': status.HTTP_400_BAD_REQUEST,
+    'invalid_transaction': status.HTTP_400_BAD_REQUEST,
+    'validation_failed': status.HTTP_400_BAD_REQUEST,
+    'environment_mismatch': status.HTTP_400_BAD_REQUEST,
+    'account_token_mismatch': status.HTTP_409_CONFLICT,
+    'owner_mismatch': status.HTTP_409_CONFLICT,
+    'duplicate_conflict': status.HTTP_409_CONFLICT,
+}
+
+
+def _raise_purchase_failure(result: AppleFulfillmentResult) -> None:
+    raise HTTPException(
+        status_code=_PURCHASE_FAILURE_STATUS_BY_REASON.get(
+            result.reason,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        ),
+        detail=result.reason,
+    )
+
+
 async def _check_purchase_rate_limit(client: redis.Redis | None, user_id: int, ip_address: str | None) -> bool:
     if client is None:
         allow_request = _rate_limit_error_allows_request()
@@ -135,7 +158,7 @@ async def apple_iap_account_token(
     """Return the stable StoreKit appAccountToken UUID for the authenticated user."""
     if not settings.is_apple_iap_enabled():
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail='Apple In-App Purchase is not enabled or not fully configured',
         )
     token = await fulfillment_service.get_account_token(db, user.id)
@@ -154,7 +177,7 @@ async def apple_purchase(
     """Verify an Apple consumable transaction and credit the user's internal balance."""
     if not settings.is_apple_iap_enabled():
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail='Apple In-App Purchase is not enabled or not fully configured',
         )
 
@@ -174,7 +197,8 @@ async def apple_purchase(
     )
     if not result.success:
         await _record_purchase_failure(redis_client, user.id)
-    return ApplePurchaseResponse(success=result.success)
+        _raise_purchase_failure(result)
+    return ApplePurchaseResponse(success=True)
 
 
 @router.get('/admin/apple-iap/transactions')

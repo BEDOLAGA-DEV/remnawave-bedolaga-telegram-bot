@@ -248,6 +248,7 @@ class MonitoringService:
                 await self._check_traffic_warnings(db)
                 await self._check_low_balance_alerts(db)
                 await self._retry_stuck_guest_purchases(db)
+                await self._retry_pending_account_deletions()
                 await self._cleanup_expired_refresh_tokens(db)
                 await self._cleanup_inactive_users(db)
                 await self._sync_with_remnawave(db)
@@ -2112,6 +2113,50 @@ class MonitoringService:
                 logger.info('Retried stuck pending_activation purchases', retried=retried_pa)
         except Exception:
             logger.error('Error retrying stuck PENDING_ACTIVATION guest purchases', exc_info=True)
+
+    async def _retry_pending_account_deletions(self):
+        cleanup_db: AsyncSession | None = None
+        try:
+            from app.services.account_deletion_service import account_deletion_service
+
+            cleanup_db = AsyncSessionLocal()
+            stats = await account_deletion_service.process_pending_panel_cleanup(cleanup_db, limit=10)
+            if stats.processed:
+                logger.info(
+                    'Processed pending account deletion panel cleanup',
+                    processed=stats.processed,
+                    completed=stats.completed,
+                    retried=stats.retried,
+                    failed=stats.failed,
+                )
+            if stats.failed:
+                await self._notify_account_deletion_cleanup_failed(stats.failed_request_ids)
+        except Exception:
+            if cleanup_db is not None:
+                await cleanup_db.rollback()
+            logger.error('Error retrying pending account deletion cleanup', exc_info=True)
+        finally:
+            if cleanup_db is not None:
+                await cleanup_db.close()
+
+    async def _notify_account_deletion_cleanup_failed(self, failed_request_ids: tuple[int, ...]) -> None:
+        if not self.bot:
+            return
+
+        try:
+            from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
+
+            request_ids = ', '.join(str(request_id) for request_id in failed_request_ids) or 'unknown'
+            text = (
+                '<b>Account deletion cleanup failed</b>\n\n'
+                'RemnaWave panel cleanup requires manual verification.\n'
+                f'Request IDs: <code>{html.escape(request_ids)}</code>\n'
+                'Check <code>account_deletion_requests</code> for details.'
+            )
+            service = AdminNotificationService(self.bot)
+            await service.send_admin_notification(text, category=NotificationCategory.ERRORS)
+        except Exception:
+            logger.error('Failed to send account deletion cleanup failure notification', exc_info=True)
 
     async def _check_traffic_warnings(self, db: AsyncSession):
         """Check subscriptions approaching traffic limit and notify users."""

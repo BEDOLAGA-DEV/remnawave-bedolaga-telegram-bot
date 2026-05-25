@@ -650,6 +650,7 @@ class Settings(BaseSettings):
     APPLE_IAP_ROOT_CERTS_PATHS: str = ''  # Comma-separated Apple root certificate files for SignedDataVerifier
     APPLE_IAP_ENABLE_ONLINE_CERT_CHECKS: bool = True
     APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION: bool = False
+    APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION: bool = False
     APPLE_IAP_PURCHASE_RATE_LIMIT_PER_MINUTE: int = 10
     APPLE_IAP_PURCHASE_FAILURE_LIMIT_PER_HOUR: int = 20
     APPLE_IAP_RATE_LIMIT_FAIL_OPEN: bool = False
@@ -1024,6 +1025,8 @@ class Settings(BaseSettings):
     # OAuth 2.0 provider settings for cabinet
     OAUTH_GOOGLE_CLIENT_ID: str = ''
     OAUTH_GOOGLE_CLIENT_SECRET: str = ''
+    OAUTH_GOOGLE_IOS_CLIENT_ID: str = ''
+    OAUTH_GOOGLE_ANDROID_CLIENT_ID: str = ''
     OAUTH_GOOGLE_ENABLED: bool = False
 
     OAUTH_YANDEX_CLIENT_ID: str = ''
@@ -1037,6 +1040,14 @@ class Settings(BaseSettings):
     OAUTH_VK_CLIENT_ID: str = ''
     OAUTH_VK_CLIENT_SECRET: str = ''
     OAUTH_VK_ENABLED: bool = False
+
+    OAUTH_APPLE_WEB_CLIENT_ID: str = ''
+    OAUTH_APPLE_IOS_CLIENT_ID: str = ''
+    OAUTH_APPLE_TEAM_ID: str = ''
+    OAUTH_APPLE_KEY_ID: str = ''
+    OAUTH_APPLE_PRIVATE_KEY: str = ''
+    OAUTH_APPLE_PRIVATE_KEY_PATH: str = ''
+    OAUTH_APPLE_ENABLED: bool = False
 
     # SMTP settings for cabinet email
     SMTP_HOST: str | None = None
@@ -2245,14 +2256,23 @@ class Settings(BaseSettings):
         environment = self.get_apple_iap_environment()
         return (
             self.APPLE_IAP_ENABLED
+            and self.is_apple_iap_environment_valid()
             and bool((self.APPLE_IAP_KEY_ID or '').strip())
             and bool((self.APPLE_IAP_ISSUER_ID or '').strip())
             and bool((self.APPLE_IAP_BUNDLE_ID or '').strip())
             and environment in {'Sandbox', 'Production'}
             and (environment != 'Production' or self.APPLE_IAP_APP_APPLE_ID is not None)
             and bool(self.get_apple_iap_root_cert_paths())
+            and not self.get_unreadable_apple_iap_root_cert_paths()
             and bool(self.get_apple_iap_private_key())
+            and bool(self.get_apple_iap_products())
         )
+
+    def is_apple_iap_environment_valid(self) -> bool:
+        return (self.APPLE_IAP_ENVIRONMENT or '').strip() in {'Sandbox', 'Production'}
+
+    def should_mount_apple_iap_routes(self) -> bool:
+        return bool(self.APPLE_IAP_ENABLED)
 
     def get_apple_iap_environment(self) -> Literal['Sandbox', 'Production']:
         environment = (self.APPLE_IAP_ENVIRONMENT or '').strip()
@@ -2262,6 +2282,9 @@ class Settings(BaseSettings):
 
     def get_apple_iap_root_cert_paths(self) -> list[Path]:
         return [Path(path.strip()) for path in (self.APPLE_IAP_ROOT_CERTS_PATHS or '').split(',') if path.strip()]
+
+    def get_unreadable_apple_iap_root_cert_paths(self) -> list[Path]:
+        return [path for path in self.get_apple_iap_root_cert_paths() if not path.is_file()]
 
     def get_apple_iap_products(self) -> dict[str, int]:
         """Return mapping of Apple product ID -> kopeks amount."""
@@ -2301,6 +2324,23 @@ class Settings(BaseSettings):
                 )
                 return None
         return None
+
+    def get_oauth_apple_private_key(self) -> str:
+        """Return Sign in with Apple .p8 private key contents."""
+        if self.OAUTH_APPLE_PRIVATE_KEY:
+            return self.OAUTH_APPLE_PRIVATE_KEY
+        if self.OAUTH_APPLE_PRIVATE_KEY_PATH:
+            key_path = Path(self.OAUTH_APPLE_PRIVATE_KEY_PATH)
+            try:
+                return key_path.read_text().strip()
+            except (OSError, UnicodeDecodeError) as error:
+                logger.error(
+                    'Failed to load Apple OAuth private key file',
+                    path=str(key_path),
+                    error=str(error),
+                    exc_info=True,
+                )
+        return ''
 
     def is_paypear_enabled(self) -> bool:
         return self.PAYPEAR_ENABLED and self.PAYPEAR_SHOP_ID is not None and self.PAYPEAR_SECRET_KEY is not None
@@ -3320,6 +3360,9 @@ class Settings(BaseSettings):
                 'client_secret': self.OAUTH_GOOGLE_CLIENT_SECRET,
                 'enabled': self.OAUTH_GOOGLE_ENABLED,
                 'display_name': 'Google',
+                'web_client_id': self.OAUTH_GOOGLE_CLIENT_ID,
+                'ios_client_id': self.OAUTH_GOOGLE_IOS_CLIENT_ID,
+                'android_client_id': self.OAUTH_GOOGLE_ANDROID_CLIENT_ID,
             },
             'yandex': {
                 'client_id': self.OAUTH_YANDEX_CLIENT_ID,
@@ -3338,6 +3381,25 @@ class Settings(BaseSettings):
                 'client_secret': self.OAUTH_VK_CLIENT_SECRET,
                 'enabled': self.OAUTH_VK_ENABLED,
                 'display_name': 'VK',
+            },
+            'apple': {
+                # Web is the default client for authorize_url/backwards-compatible provider metadata.
+                'client_id': self.OAUTH_APPLE_WEB_CLIENT_ID,
+                'client_secret': '',
+                'enabled': (
+                    self.OAUTH_APPLE_ENABLED
+                    and bool(self.OAUTH_APPLE_WEB_CLIENT_ID)
+                    and bool(self.OAUTH_APPLE_IOS_CLIENT_ID)
+                    and bool(self.OAUTH_APPLE_TEAM_ID)
+                    and bool(self.OAUTH_APPLE_KEY_ID)
+                    and bool(self.get_oauth_apple_private_key())
+                ),
+                'display_name': 'Apple',
+                'web_client_id': self.OAUTH_APPLE_WEB_CLIENT_ID,
+                'ios_client_id': self.OAUTH_APPLE_IOS_CLIENT_ID,
+                'team_id': self.OAUTH_APPLE_TEAM_ID,
+                'key_id': self.OAUTH_APPLE_KEY_ID,
+                'private_key': self.get_oauth_apple_private_key(),
             },
         }
 

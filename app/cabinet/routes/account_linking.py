@@ -6,8 +6,9 @@ Router 2 (`merge_router`): Public endpoints for merge preview and execution.
 """
 
 import hashlib
+import secrets
 from datetime import UTC, datetime
-from typing import Literal, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
@@ -25,7 +26,15 @@ from app.database.crud.user import (
     get_user_by_telegram_id,
     set_user_oauth_provider_id,
 )
-from app.database.models import User
+from app.database.models import OAuthProviderRevocationEvent, User
+from app.cabinet.auth.oauth_revocation_proofs import (
+    consume_oauth_revocation_proof,
+    create_oauth_revocation_proof,
+)
+from app.services.oauth_provider_revocation_service import (
+    OAuthProviderRevocationResult,
+    oauth_provider_revocation_service,
+)
 from app.services.account_merge_service import compute_auth_methods, execute_merge, get_merge_preview
 from app.utils.cache import RateLimitCache, TokenReplayCache
 
@@ -55,10 +64,37 @@ from .auth import _create_auth_response, _store_refresh_token, _user_to_response
 logger = structlog.get_logger(__name__)
 
 
-OAuthProviderName = Literal['google', 'yandex', 'discord', 'vk']
+OAuthProviderName = Literal['google', 'yandex', 'discord', 'vk', 'apple']
+OAuthRevocationProviderName = Literal['google', 'apple']
+OAuthRevocationPurpose = Literal['unlink', 'delete']
+OAuthClientType = Literal['web', 'ios', 'android']
+_GOOGLE_NATIVE_CLIENT_TYPES = {'ios', 'android'}
+
+
+def _should_skip_authorize_url(provider: str, client_type: str) -> bool:
+    return (provider == 'apple' and client_type == 'ios') or (
+        provider == 'google' and client_type in _GOOGLE_NATIVE_CLIENT_TYPES
+    )
+
+
+def _is_google_native_token_flow(provider: str, client_type: str | None) -> bool:
+    return provider == 'google' and client_type in _GOOGLE_NATIVE_CLIENT_TYPES
+
+
+def _ensure_client_type_configured(oauth_provider: Any, provider: str, client_type: str) -> None:
+    if not _is_google_native_token_flow(provider, client_type):
+        return
+    try:
+        oauth_provider.ensure_client_type_configured(client_type)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
 
 # Ensure OAuthProviderName Literal stays in sync with OAUTH_PROVIDER_COLUMNS
-_EXPECTED_PROVIDERS = {'google', 'yandex', 'discord', 'vk'}
+_EXPECTED_PROVIDERS = {'google', 'yandex', 'discord', 'vk', 'apple'}
 if set(OAUTH_PROVIDER_COLUMNS.keys()) != _EXPECTED_PROVIDERS:
     raise RuntimeError(
         f'OAuthProviderName Literal is out of sync with OAUTH_PROVIDER_COLUMNS: '
@@ -73,6 +109,8 @@ class OAuthStateData(TypedDict):
     linking: NotRequired[str]  # 'true' if account linking flow
     user_id: NotRequired[str]  # ID of user who initiated linking
     code_verifier: NotRequired[str]  # PKCE code verifier (VK)
+    nonce: NotRequired[str]  # OIDC nonce (Apple)
+    client_type: NotRequired[str]  # OAuth client type: web, ios, or android
 
 
 def _get_active_providers() -> list[str]:
@@ -100,14 +138,24 @@ class LinkedProvidersResponse(BaseModel):
 
 
 class LinkInitResponse(BaseModel):
-    authorize_url: str
+    authorize_url: str | None = None
     state: str
+    nonce: str | None = None
+    client_type: str | None = None
 
 
 class LinkCallbackRequest(BaseModel):
-    code: str = Field(..., min_length=1, max_length=2048, description='Authorization code from provider')
+    code: str | None = Field(None, min_length=1, max_length=2048, description='Authorization code from provider')
     state: str = Field(..., min_length=1, max_length=128, description='CSRF state token')
     device_id: str | None = Field(None, max_length=256, description='Device ID from VK ID callback')
+    id_token: str | None = Field(None, max_length=4096, description='OIDC identity token from provider')
+    user: dict[str, Any] | str | None = Field(None, description='First-login user payload from Apple')
+
+    @model_validator(mode='after')
+    def require_code_or_id_token(self) -> 'LinkCallbackRequest':
+        if not self.code and not self.id_token:
+            raise ValueError('Provide either authorization code or id_token')
+        return self
 
 
 class LinkCallbackResponse(BaseModel):
@@ -119,6 +167,29 @@ class LinkCallbackResponse(BaseModel):
 
 class UnlinkResponse(BaseModel):
     success: bool
+
+
+_REVOKE_REQUIRED_PROVIDERS = {'google', 'apple'}
+
+
+class RevokeProviderInitResponse(BaseModel):
+    authorize_url: str | None = None
+    state: str
+    nonce: str | None = None
+    client_type: str | None = None
+
+
+class RevokeProviderCallbackRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=2048, description='Fresh provider authorization code')
+    state: str = Field(..., min_length=1, max_length=128, description='CSRF state token')
+    user: dict[str, Any] | str | None = Field(None, description='First-login user payload from Apple')
+
+
+class RevokeProviderCallbackResponse(BaseModel):
+    success: bool
+    provider: str
+    message: str
+    proof_token: str | None = None
 
 
 class LinkTelegramRequest(BaseModel):
@@ -216,16 +287,48 @@ def _count_auth_methods(user: User) -> int:
     return len(compute_auth_methods(user))
 
 
+def _should_skip_revoke_authorize_url(provider: str, client_type: str) -> bool:
+    return provider == 'apple' and client_type == 'ios'
+
+
+async def _record_oauth_provider_revocation_event(
+    db: AsyncSession,
+    *,
+    user: User,
+    provider: str,
+    provider_id: str,
+    purpose: str,
+    status_value: str,
+    result: OAuthProviderRevocationResult | None = None,
+    error_message: str | None = None,
+) -> OAuthProviderRevocationEvent:
+    event = OAuthProviderRevocationEvent(
+        user_id=user.id,
+        provider=provider,
+        provider_id=provider_id,
+        purpose=purpose,
+        token_type=result.token_type if result else None,
+        status=status_value,
+        error_message=error_message,
+        completed_at=None if status_value == 'pending' else datetime.now(UTC),
+    )
+    db.add(event)
+    await db.flush()
+    return event
+
+
 async def _exchange_and_link_oauth(
     *,
     db: AsyncSession,
     user: User,
     provider: str,
-    code: str,
+    code: str | None,
     state: str,
     state_data: OAuthStateData,
     device_id: str | None,
     log_context: str,
+    user_payload: dict[str, Any] | str | None = None,
+    id_token: str | None = None,
 ) -> LinkCallbackResponse:
     """Shared OAuth linking logic: exchange code, fetch user info, link or merge.
 
@@ -238,16 +341,43 @@ async def _exchange_and_link_oauth(
             detail='Requested OAuth provider is not available',
         )
 
-    # Exchange code for tokens
-    exchange_kwargs: dict[str, str] = {'state': state}
+    client_type = state_data.get('client_type') or 'web'
+    if _is_google_native_token_flow(provider, client_type):
+        if not state_data.get('nonce'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Invalid Google native OAuth state',
+            )
+        if not id_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='id_token is required for Google native authentication',
+            )
+    elif not code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Authorization code is required for this OAuth flow',
+        )
+
+    # Exchange code or native id_token for provider tokens/user info
+    exchange_kwargs: dict[str, Any] = {'state': state}
     code_verifier = state_data.get('code_verifier')
     if code_verifier:
         exchange_kwargs['code_verifier'] = code_verifier
+    nonce = state_data.get('nonce')
+    if nonce:
+        exchange_kwargs['nonce'] = nonce
+    if client_type:
+        exchange_kwargs['client_type'] = client_type
     if device_id:
         exchange_kwargs['device_id'] = device_id
+    if user_payload is not None:
+        exchange_kwargs['user'] = user_payload
+    if id_token and _is_google_native_token_flow(provider, client_type):
+        exchange_kwargs['id_token'] = id_token
 
     try:
-        token_data = await oauth_provider.exchange_code(code, **exchange_kwargs)
+        token_data = await oauth_provider.exchange_code(code or '', **exchange_kwargs)
     except Exception as exc:
         logger.error('OAuth code exchange failed', context=log_context, provider=provider, exc_info=True)
         raise HTTPException(
@@ -343,9 +473,15 @@ async def get_linked_providers(
 @router.get('/link/{provider}/init', response_model=LinkInitResponse)
 async def link_provider_init(
     provider: OAuthProviderName,
+    client_type: OAuthClientType = 'web',
     user: User = Depends(get_current_cabinet_user),
 ) -> LinkInitResponse:
     """Start OAuth flow for linking a new provider to the current account."""
+    if provider == 'apple' and client_type == 'android':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Apple OAuth does not support Android client_type',
+        )
 
     # Check if already linked
     column = OAUTH_PROVIDER_COLUMNS[provider]
@@ -361,6 +497,7 @@ async def link_provider_init(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Requested OAuth provider is not available',
         )
+    _ensure_client_type_configured(oauth_provider, provider, client_type)
 
     # Generate PKCE data for VK (and potentially future providers)
     auth_extra = oauth_provider.prepare_auth_state()
@@ -370,13 +507,30 @@ async def link_provider_init(
     }
     if auth_extra:
         extra_data.update(auth_extra)
+    if provider == 'apple':
+        extra_data['client_type'] = client_type
+        auth_extra['_client_type'] = client_type
+    if provider == 'google' and client_type in _GOOGLE_NATIVE_CLIENT_TYPES:
+        extra_data['client_type'] = client_type
+        nonce = secrets.token_urlsafe(32)
+        extra_data['nonce'] = nonce
+        auth_extra['nonce'] = nonce
+        auth_extra['_nonce'] = nonce
 
     state = await generate_oauth_state(provider, extra_data=extra_data)
-    # Only pass URL-safe params (prefixed with _) to authorize URL; exclude secrets like code_verifier
-    url_params = {k: v for k, v in auth_extra.items() if k.startswith('_')} if auth_extra else {}
-    authorize_url = oauth_provider.get_authorization_url(state, **url_params)
+    authorize_url: str | None = None
+    if not _should_skip_authorize_url(provider, client_type):
+        # Only pass URL-safe params (prefixed with _) to authorize URL; exclude secrets like code_verifier
+        url_params = {k: v for k, v in auth_extra.items() if k.startswith('_')} if auth_extra else {}
+        authorize_url = oauth_provider.get_authorization_url(state, **url_params)
 
-    return LinkInitResponse(authorize_url=authorize_url, state=state)
+    nonce = auth_extra.get('nonce') if auth_extra else None
+    return LinkInitResponse(
+        authorize_url=authorize_url,
+        state=state,
+        nonce=nonce,
+        client_type=extra_data.get('client_type'),
+    )
 
 
 @router.post('/link/{provider}/callback', response_model=LinkCallbackResponse)
@@ -425,7 +579,211 @@ async def link_provider_callback(
         state=request.state,
         state_data=state_data,
         device_id=request.device_id,
+        user_payload=request.user,
+        id_token=request.id_token,
         log_context='link-callback',
+    )
+
+
+@router.get('/revoke/{provider}/init', response_model=RevokeProviderInitResponse)
+async def revoke_provider_init(
+    provider: OAuthRevocationProviderName,
+    purpose: OAuthRevocationPurpose,
+    client_type: OAuthClientType = 'web',
+    user: User = Depends(get_current_cabinet_user),
+) -> RevokeProviderInitResponse:
+    """Start a fresh OAuth flow that can revoke a linked Google/Apple authorization."""
+    if provider == 'apple' and client_type == 'android':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Apple OAuth does not support Android client_type',
+        )
+
+    provider_id = _get_provider_identifier(user, provider)
+    if not provider_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Provider is not linked to your account',
+        )
+
+    oauth_provider = get_provider(provider)
+    if not oauth_provider:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Requested OAuth provider is not available',
+        )
+    _ensure_client_type_configured(oauth_provider, provider, client_type)
+
+    auth_extra = oauth_provider.prepare_auth_state()
+    extra_data: dict[str, str] = {
+        'revoking': 'true',
+        'purpose': purpose,
+        'user_id': str(user.id),
+        'client_type': client_type,
+    }
+    if auth_extra:
+        extra_data.update(auth_extra)
+    if provider == 'apple':
+        auth_extra['_client_type'] = client_type
+
+    state = await generate_oauth_state(provider, extra_data=extra_data)
+    authorize_url: str | None = None
+    if not _should_skip_revoke_authorize_url(provider, client_type):
+        url_params = {k: v for k, v in auth_extra.items() if k.startswith('_')} if auth_extra else {}
+        authorize_url = oauth_provider.get_authorization_url(state, **url_params)
+
+    return RevokeProviderInitResponse(
+        authorize_url=authorize_url,
+        state=state,
+        nonce=auth_extra.get('nonce') if auth_extra else None,
+        client_type=client_type,
+    )
+
+
+@router.post('/revoke/{provider}/callback', response_model=RevokeProviderCallbackResponse)
+async def revoke_provider_callback(
+    provider: OAuthRevocationProviderName,
+    request: RevokeProviderCallbackRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> RevokeProviderCallbackResponse:
+    """Complete provider revocation and either unlink locally or return a delete proof."""
+    state_data = await validate_oauth_state(request.state, provider)
+    if not state_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Invalid or expired OAuth state',
+        )
+    if state_data.get('revoking') != 'true' or not state_data.get('user_id'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='OAuth state was not initiated for provider revocation',
+        )
+    if str(user.id) != state_data['user_id']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='OAuth state was initiated by a different user',
+        )
+
+    purpose = state_data.get('purpose')
+    if purpose not in {'unlink', 'delete'}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Invalid provider revocation purpose',
+        )
+
+    provider_id = _get_provider_identifier(user, provider)
+    if not provider_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Provider is not linked to your account',
+        )
+    if purpose == 'unlink' and _count_auth_methods(user) <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Cannot unlink last authentication method',
+        )
+
+    oauth_provider = get_provider(provider)
+    if not oauth_provider:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Requested OAuth provider is not available',
+        )
+
+    client_type = state_data.get('client_type') or 'web'
+    exchange_kwargs: dict[str, Any] = {'state': request.state}
+    if state_data.get('nonce'):
+        exchange_kwargs['nonce'] = state_data['nonce']
+    if request.user is not None:
+        exchange_kwargs['user'] = request.user
+
+    event: OAuthProviderRevocationEvent | None = None
+    proof_token: str | None = None
+    if purpose == 'delete':
+        event = await _record_oauth_provider_revocation_event(
+            db,
+            user=user,
+            provider=provider,
+            provider_id=provider_id,
+            purpose=purpose,
+            status_value='pending',
+        )
+        try:
+            proof_token = await create_oauth_revocation_proof(
+                user_id=user.id,
+                provider=provider,
+                provider_id=provider_id,
+                purpose='delete',
+                event_id=event.id,
+            )
+        except Exception as exc:
+            event.status = 'failed'
+            event.error_message = 'Failed to store OAuth revocation proof'
+            event.completed_at = datetime.now(UTC)
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail='Failed to prepare OAuth revocation proof',
+            ) from exc
+        await db.commit()
+
+    try:
+        result = await oauth_provider_revocation_service.revoke_authorization_code(
+            provider_name=provider,
+            oauth_provider=oauth_provider,
+            code=request.code,
+            expected_provider_id=provider_id,
+            client_type=client_type,
+            exchange_kwargs=exchange_kwargs,
+        )
+    except ValueError as exc:
+        if proof_token:
+            await consume_oauth_revocation_proof(proof_token)
+        if event is None:
+            event = await _record_oauth_provider_revocation_event(
+                db,
+                user=user,
+                provider=provider,
+                provider_id=provider_id,
+                purpose=purpose,
+                status_value='failed',
+                error_message=str(exc),
+            )
+        else:
+            event.status = 'failed'
+            event.error_message = str(exc)
+            event.completed_at = datetime.now(UTC)
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    if event is None:
+        event = await _record_oauth_provider_revocation_event(
+            db,
+            user=user,
+            provider=provider,
+            provider_id=provider_id,
+            purpose=purpose,
+            status_value='succeeded',
+            result=result,
+        )
+    else:
+        event.status = 'succeeded'
+        event.token_type = result.token_type
+        event.completed_at = datetime.now(UTC)
+
+    if purpose == 'unlink':
+        await clear_user_oauth_provider_id(db, user, provider)
+        message = 'revoked_and_unlinked'
+    else:
+        message = 'revoked'
+
+    await db.commit()
+    return RevokeProviderCallbackResponse(
+        success=True,
+        provider=provider,
+        message=message,
+        proof_token=proof_token,
     )
 
 
@@ -436,6 +794,12 @@ async def unlink_provider(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> UnlinkResponse:
     """Unlink an OAuth provider from the current account."""
+    if provider in _REVOKE_REQUIRED_PROVIDERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Provider revocation is required before unlinking this provider',
+        )
+
     column = OAUTH_PROVIDER_COLUMNS[provider]
     if not getattr(user, column, None):
         raise HTTPException(
@@ -650,10 +1014,18 @@ async def link_telegram(
 
 
 class ServerCompleteRequest(BaseModel):
-    code: str = Field(..., min_length=1, max_length=2048, description='Authorization code from provider')
+    code: str | None = Field(None, min_length=1, max_length=2048, description='Authorization code from provider')
     state: str = Field(..., min_length=1, max_length=128, description='CSRF state token')
     provider: OAuthProviderName | None = Field(None, description='OAuth provider name (resolved from state if omitted)')
     device_id: str | None = Field(None, max_length=256, description='Device ID from VK ID callback')
+    id_token: str | None = Field(None, max_length=4096, description='OIDC identity token from provider')
+    user: dict[str, Any] | str | None = Field(None, description='First-login user payload from Apple')
+
+    @model_validator(mode='after')
+    def require_code_or_id_token(self) -> 'ServerCompleteRequest':
+        if not self.code and not self.id_token:
+            raise ValueError('Provide either authorization code or id_token')
+        return self
 
 
 class ServerCompleteResponse(LinkCallbackResponse):
@@ -742,6 +1114,8 @@ async def link_server_complete(
         state=request.state,
         state_data=state_data,
         device_id=request.device_id,
+        user_payload=request.user,
+        id_token=request.id_token,
         log_context='server-complete',
     )
 
