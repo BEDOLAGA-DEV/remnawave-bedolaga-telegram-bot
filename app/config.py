@@ -2255,14 +2255,23 @@ class Settings(BaseSettings):
         environment = self.get_apple_iap_environment()
         return (
             self.APPLE_IAP_ENABLED
+            and self.is_apple_iap_environment_valid()
             and bool((self.APPLE_IAP_KEY_ID or '').strip())
             and bool((self.APPLE_IAP_ISSUER_ID or '').strip())
             and bool((self.APPLE_IAP_BUNDLE_ID or '').strip())
             and environment in {'Sandbox', 'Production'}
             and (environment != 'Production' or self.APPLE_IAP_APP_APPLE_ID is not None)
             and bool(self.get_apple_iap_root_cert_paths())
+            and not self.get_unreadable_apple_iap_root_cert_paths()
             and bool(self.get_apple_iap_private_key())
+            and bool(self.get_apple_iap_products())
         )
+
+    def is_apple_iap_environment_valid(self) -> bool:
+        return (self.APPLE_IAP_ENVIRONMENT or '').strip() in {'Sandbox', 'Production'}
+
+    def should_mount_apple_iap_routes(self) -> bool:
+        return bool(self.APPLE_IAP_ENABLED)
 
     def get_apple_iap_environment(self) -> Literal['Sandbox', 'Production']:
         environment = (self.APPLE_IAP_ENVIRONMENT or '').strip()
@@ -2272,6 +2281,9 @@ class Settings(BaseSettings):
 
     def get_apple_iap_root_cert_paths(self) -> list[Path]:
         return [Path(path.strip()) for path in (self.APPLE_IAP_ROOT_CERTS_PATHS or '').split(',') if path.strip()]
+
+    def get_unreadable_apple_iap_root_cert_paths(self) -> list[Path]:
+        return [path for path in self.get_apple_iap_root_cert_paths() if not path.is_file()]
 
     def get_apple_iap_products(self) -> dict[str, int]:
         """Return mapping of Apple product ID -> kopeks amount."""

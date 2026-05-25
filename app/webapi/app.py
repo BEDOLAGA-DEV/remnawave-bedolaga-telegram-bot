@@ -284,7 +284,7 @@ def create_web_api_app(lifespan: Any = None) -> FastAPI:
         from app.cabinet.routes import router as cabinet_router
 
         app.include_router(cabinet_router)
-    elif settings.is_apple_iap_enabled():
+    elif settings.should_mount_apple_iap_routes():
         app.include_router(apple_iap_only_router)
 
     return app

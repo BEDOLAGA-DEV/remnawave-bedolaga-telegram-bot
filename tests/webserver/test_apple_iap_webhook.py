@@ -103,3 +103,19 @@ def test_apple_iap_health_returns_503_when_feature_enabled_but_not_configured(mo
     assert response.status_code == 503
     assert response.json()['status'] == 'configuration_error'
     assert response.json()['enabled'] is False
+
+
+def test_payment_router_mounts_apple_webhook_when_enabled_but_misconfigured(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    from app.webserver.payments import create_payment_router
+
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENABLED', True, raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ROOT_CERTS_PATHS', '', raising=False)
+
+    router = create_payment_router(MagicMock(), MagicMock())
+
+    assert router is not None
+    paths = {route.path for route in router.routes}
+    assert settings.APPLE_IAP_WEBHOOK_PATH in paths
+    assert '/health/apple-iap' in paths

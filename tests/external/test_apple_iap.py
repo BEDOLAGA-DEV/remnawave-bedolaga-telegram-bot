@@ -88,6 +88,28 @@ class TestSettings:
         monkeypatch.setattr(settings, 'APPLE_IAP_ROOT_CERTS_PATHS', '', raising=False)
         assert settings.is_apple_iap_enabled() is False
 
+    def test_invalid_apple_iap_environment_disables_iap(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _enable_apple_iap(monkeypatch, tmp_path)
+        monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Staging', raising=False)
+
+        assert settings.is_apple_iap_enabled() is False
+
+    def test_empty_apple_iap_products_disables_iap(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        _enable_apple_iap(monkeypatch, tmp_path)
+        monkeypatch.setattr(settings, 'APPLE_IAP_PRODUCTS', '{}', raising=False)
+
+        assert settings.is_apple_iap_enabled() is False
+
+    def test_unreadable_apple_iap_root_cert_disables_iap(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _enable_apple_iap(monkeypatch, tmp_path)
+        monkeypatch.setattr(settings, 'APPLE_IAP_ROOT_CERTS_PATHS', str(tmp_path / 'missing.cer'), raising=False)
+
+        assert settings.is_apple_iap_enabled() is False
+
     def test_blank_key_metadata_disables(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         _enable_apple_iap(monkeypatch, tmp_path)
         monkeypatch.setattr(settings, 'APPLE_IAP_KEY_ID', ' ', raising=False)
@@ -1195,3 +1217,17 @@ class TestAppleIAPRouting:
         assert '/cabinet/apple-purchase' in paths
         assert not any(path.startswith('/cabinet/subscription') for path in paths)
         assert not any(path.startswith('/cabinet/balance') for path in paths)
+
+    def test_apple_iap_routes_mount_when_feature_enabled_but_misconfigured(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, 'APPLE_IAP_ENABLED', True, raising=False)
+        monkeypatch.setattr(settings, 'APPLE_IAP_ROOT_CERTS_PATHS', '', raising=False)
+
+        from app.webapi.app import create_web_api_app
+
+        app = create_web_api_app()
+        paths = {route.path for route in app.routes}
+
+        assert '/cabinet/apple-iap/account-token' in paths
+        assert '/cabinet/apple-purchase' in paths
