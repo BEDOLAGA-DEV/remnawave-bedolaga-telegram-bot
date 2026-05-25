@@ -144,6 +144,9 @@ class TestSettings:
         monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'invalid', raising=False)
         assert settings.get_apple_iap_environment() == 'Production'
 
+    def test_credit_sandbox_on_production_defaults_to_disabled(self) -> None:
+        assert settings.APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION is False
+
 
 class TestTransactionValidation:
     def test_valid_transaction(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -650,6 +650,7 @@ class Settings(BaseSettings):
     APPLE_IAP_ROOT_CERTS_PATHS: str = ''  # Comma-separated Apple root certificate files for SignedDataVerifier
     APPLE_IAP_ENABLE_ONLINE_CERT_CHECKS: bool = True
     APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION: bool = False
+    APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION: bool = False
     APPLE_IAP_PURCHASE_RATE_LIMIT_PER_MINUTE: int = 10
     APPLE_IAP_PURCHASE_FAILURE_LIMIT_PER_HOUR: int = 20
     APPLE_IAP_RATE_LIMIT_FAIL_OPEN: bool = False
