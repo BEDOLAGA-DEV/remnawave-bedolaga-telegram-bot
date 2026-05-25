@@ -369,7 +369,8 @@ async def _process_single_subscription(
 
         result = charge.raw or {}
 
-        # Успешно — сохраняем локальную запись (пока только для YooKassa).
+        # Успешно — сохраняем локальную запись чтобы webhook callback мог найти
+        # платёж по order_id и применить пополнение баланса.
         if provider_name == 'yookassa':
             try:
                 from app.database.crud.yookassa import create_yookassa_payment
@@ -404,6 +405,38 @@ async def _process_single_subscription(
                     )
             except Exception as e:
                 logger.warning('Ошибка создания локальной записи рекуррентного платежа', error=e)
+        elif provider_name == 'etoplatezhi':
+            # EtoPlatezhi webhook handler looks up the payment in
+            # ``etoplatezhi_payments`` by order_id. Without a row the callback
+            # logs "платёж не найден" and the topup is silently dropped.
+            try:
+                from app.database.crud.etoplatezhi import create_etoplatezhi_payment
+
+                await create_etoplatezhi_payment(
+                    db=db,
+                    user_id=user.id,
+                    order_id=idem_key,
+                    amount_kopeks=topup_amount_kopeks,
+                    currency='RUB',
+                    description=description,
+                    payment_method='card-partner',
+                    etoplatezhi_payment_id=charge.provider_payment_id,
+                    metadata_json=per_card_meta,
+                )
+                logger.info(
+                    'Рекуррентный автоплатёж создан',
+                    user_id=user.id,
+                    subscription_id=subscription.id,
+                    provider=provider_name,
+                    amount_kopeks=topup_amount_kopeks,
+                    provider_payment_id=charge.provider_payment_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    'Ошибка создания локальной записи рекуррентного платежа',
+                    provider=provider_name,
+                    error=e,
+                )
         else:
             logger.info(
                 'Рекуррентный автоплатёж создан',
