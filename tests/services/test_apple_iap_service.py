@@ -50,6 +50,7 @@ class _AsyncContext:
 class _FakeDB:
     def __init__(self):
         self.commit = AsyncMock()
+        self.rollback = AsyncMock()
         self.flush = AsyncMock()
         self.refresh = AsyncMock()
 
@@ -134,6 +135,53 @@ async def test_fulfill_verified_transaction_happy_path_credits_balance_after_use
     assert user.balance_kopeks == 11_000
     db.commit.assert_awaited_once()
     side_effects.assert_awaited_once()
+
+
+@pytest.mark.anyio('asyncio')
+async def test_fulfill_verified_transaction_rollback_when_financial_transaction_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _enable_apple_iap(monkeypatch, tmp_path)
+    db = _FakeDB()
+    user = SimpleNamespace(
+        id=1,
+        balance_kopeks=1_000,
+        has_made_first_topup=True,
+        referred_by_id=None,
+        subscription=None,
+        get_primary_promo_group=lambda: None,
+    )
+    apple_txn = SimpleNamespace(
+        transaction_id='2000000123456789',
+        transaction_id_fk=None,
+        status='verified',
+        credited_at=None,
+        updated_at=None,
+    )
+
+    monkeypatch.setattr(apple_iap_module, 'get_apple_transaction_by_transaction_id', AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        apple_iap_module,
+        'get_apple_transaction_by_web_order_line_item_id',
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(apple_iap_module, 'lock_user_for_update', AsyncMock(return_value=user))
+    monkeypatch.setattr(apple_iap_module, 'create_apple_transaction', AsyncMock(return_value=apple_txn))
+    monkeypatch.setattr(apple_iap_module, 'create_transaction', AsyncMock(side_effect=RuntimeError('db write failed')))
+
+    with pytest.raises(RuntimeError, match='db write failed'):
+        await AppleIAPFulfillmentService().fulfill_verified_transaction(
+            db,
+            user_id=1,
+            product_id='com.bitnet.vpnclient.topup.100',
+            txn_info=_txn_info(),
+            expected_app_account_token='account-token',
+        )
+
+    assert user.balance_kopeks == 1_000
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.anyio('asyncio')

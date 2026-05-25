@@ -355,33 +355,43 @@ class AppleIAPFulfillmentService:
             await db.commit()
             return AppleFulfillmentResult(False, 'duplicate_conflict')
 
-        transaction = await create_transaction(
-            db=db,
-            user_id=user_id,
-            type=TransactionType.DEPOSIT,
-            amount_kopeks=amount_kopeks,
-            description=f'Пополнение через Apple IAP: {product_id}',
-            payment_method=PaymentMethod.APPLE_IAP,
-            external_id=transaction_id,
-            is_completed=True,
-            commit=False,
-        )
+        try:
+            transaction = await create_transaction(
+                db=db,
+                user_id=user_id,
+                type=TransactionType.DEPOSIT,
+                amount_kopeks=amount_kopeks,
+                description=f'Пополнение через Apple IAP: {product_id}',
+                payment_method=PaymentMethod.APPLE_IAP,
+                external_id=transaction_id,
+                is_completed=True,
+                commit=False,
+            )
 
-        if apple_txn:
-            apple_txn.transaction_id_fk = transaction.id
-            apple_txn.status = 'credited'
-            apple_txn.credited_at = datetime.now(UTC)
-            apple_txn.updated_at = datetime.now(UTC)
+            if apple_txn:
+                apple_txn.transaction_id_fk = transaction.id
+                apple_txn.status = 'credited'
+                apple_txn.credited_at = datetime.now(UTC)
+                apple_txn.updated_at = datetime.now(UTC)
 
-        user.balance_kopeks += amount_kopeks
-        user.updated_at = datetime.now(UTC)
+            user.balance_kopeks += amount_kopeks
+            user.updated_at = datetime.now(UTC)
 
-        promo_group = user.get_primary_promo_group()
-        subscription = getattr(user, 'subscription', None)
-        referrer_info = format_referrer_info(user)
-        topup_status = 'Первое пополнение' if was_first_topup else 'Пополнение'
+            promo_group = user.get_primary_promo_group()
+            subscription = getattr(user, 'subscription', None)
+            referrer_info = format_referrer_info(user)
+            topup_status = 'Первое пополнение' if was_first_topup else 'Пополнение'
 
-        await db.commit()
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.error(
+                'Apple IAP purchase credit failed before commit',
+                transaction_id=transaction_id,
+                user_id=user_id,
+                exc_info=True,
+            )
+            raise
 
         await self._emit_credit_side_effects(
             db,
