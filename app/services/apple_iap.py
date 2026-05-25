@@ -569,7 +569,9 @@ class AppleIAPNotificationService:
 
         data = notification.get('data') or {}
         environment = str(data.get('environment') or '')
-        if not self._environment_allowed(environment):
+        if not self._environment_allowed(environment) and not self._should_route_sandbox_refund_on_production(
+            notification_type, environment
+        ):
             logger.warning('Apple notification environment ignored', environment=environment)
             return True, 'environment_ignored'
 
@@ -664,6 +666,13 @@ class AppleIAPNotificationService:
                 else environment in {'', 'Production'}
             )
         return environment in {'', 'Sandbox'}
+
+    def _should_route_sandbox_refund_on_production(self, notification_type: str, environment: str) -> bool:
+        return (
+            settings.get_apple_iap_environment() == 'Production'
+            and environment == 'Sandbox'
+            and notification_type in {'REFUND', 'REFUND_REVERSED'}
+        )
 
     async def _dispatch(
         self,

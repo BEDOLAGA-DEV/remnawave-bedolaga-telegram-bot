@@ -520,6 +520,202 @@ async def test_refund_reversed_recredits_sandbox_transaction_credited_on_product
 
 
 @pytest.mark.anyio('asyncio')
+async def test_process_signed_payload_routes_production_sandbox_refund_to_marked_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _enable_apple_iap(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', False, raising=False)
+
+    db = _FakeDB()
+    user = SimpleNamespace(id=1, balance_kopeks=20_000)
+    apple_notification = SimpleNamespace(notification_uuid='refund-notification-uuid')
+    apple_txn = SimpleNamespace(
+        transaction_id='2000000123456789',
+        original_transaction_id='2000000123456789',
+        status='credited',
+        environment='Sandbox',
+        user_id=1,
+        amount_kopeks=10_000,
+        product_id='com.bitnet.vpnclient.topup.100',
+        bundle_id='com.bitnet.vpnclient',
+        app_account_token='account-token',
+        metadata_json={'credited_on_production': True},
+    )
+
+    class FakeAppleService:
+        def verify_notification(self, signed_payload: str):
+            assert signed_payload == 'signed.payload'
+            return {
+                'notificationUUID': 'refund-notification-uuid',
+                'notificationType': 'REFUND',
+                'data': {'environment': 'Sandbox', 'signedTransactionInfo': 'signed.txn'},
+            }
+
+        def verify_signed_transaction_info(self, signed_txn: str, environment: str):
+            assert signed_txn == 'signed.txn'
+            assert environment == 'Sandbox'
+            return _txn_info()
+
+    subtract_balance = AsyncMock()
+    mark_refunded = AsyncMock()
+    mark_processed = AsyncMock()
+    monkeypatch.setattr(apple_iap_module, 'AsyncSessionLocal', lambda: _AsyncContextWithValue(db))
+    monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_uuid', AsyncMock(return_value=None))
+    monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_payload_hash', AsyncMock(return_value=None))
+    monkeypatch.setattr(apple_iap_module, 'create_apple_notification', AsyncMock(return_value=apple_notification))
+    monkeypatch.setattr(apple_iap_module, 'mark_apple_notification_processed', mark_processed)
+    monkeypatch.setattr(
+        apple_iap_module, 'get_apple_transaction_by_transaction_id_for_update', AsyncMock(return_value=apple_txn)
+    )
+    monkeypatch.setattr(apple_iap_module, 'lock_user_for_pricing', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.user.subtract_user_balance', subtract_balance)
+    monkeypatch.setattr(apple_iap_module, 'mark_apple_transaction_refunded', mark_refunded)
+
+    ok, reason = await AppleIAPNotificationService(FakeAppleService()).process_signed_payload(
+        'signed.payload',
+        b'{"signedPayload":"signed.payload"}',
+    )
+
+    assert (ok, reason) == (True, 'refunded')
+    subtract_balance.assert_awaited_once()
+    mark_refunded.assert_awaited_once_with(db, '2000000123456789')
+    mark_processed.assert_awaited_once_with(db, apple_notification, status='processed')
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.anyio('asyncio')
+async def test_process_signed_payload_routes_production_sandbox_refund_reversed_to_marked_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _enable_apple_iap(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', False, raising=False)
+
+    db = _FakeDB()
+    user = SimpleNamespace(id=1, balance_kopeks=10_000)
+    apple_notification = SimpleNamespace(notification_uuid='refund-reversed-notification-uuid')
+    apple_txn = SimpleNamespace(
+        transaction_id='2000000123456789',
+        original_transaction_id='2000000123456789',
+        status='refunded',
+        environment='Sandbox',
+        user_id=1,
+        amount_kopeks=10_000,
+        product_id='com.bitnet.vpnclient.topup.100',
+        bundle_id='com.bitnet.vpnclient',
+        app_account_token='account-token',
+        metadata_json={'credited_on_production': True},
+        refunded_at=object(),
+        refund_reversed_at=None,
+    )
+
+    class FakeAppleService:
+        def verify_notification(self, signed_payload: str):
+            assert signed_payload == 'signed.payload'
+            return {
+                'notificationUUID': 'refund-reversed-notification-uuid',
+                'notificationType': 'REFUND_REVERSED',
+                'data': {'environment': 'Sandbox', 'signedTransactionInfo': 'signed.txn'},
+            }
+
+        def verify_signed_transaction_info(self, signed_txn: str, environment: str):
+            assert signed_txn == 'signed.txn'
+            assert environment == 'Sandbox'
+            return _txn_info()
+
+    add_balance = AsyncMock(return_value=True)
+    mark_processed = AsyncMock()
+    monkeypatch.setattr(apple_iap_module, 'AsyncSessionLocal', lambda: _AsyncContextWithValue(db))
+    monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_uuid', AsyncMock(return_value=None))
+    monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_payload_hash', AsyncMock(return_value=None))
+    monkeypatch.setattr(apple_iap_module, 'create_apple_notification', AsyncMock(return_value=apple_notification))
+    monkeypatch.setattr(apple_iap_module, 'mark_apple_notification_processed', mark_processed)
+    monkeypatch.setattr(
+        apple_iap_module, 'get_apple_transaction_by_transaction_id_for_update', AsyncMock(return_value=apple_txn)
+    )
+    monkeypatch.setattr('app.database.crud.user.get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.user.add_user_balance', add_balance)
+
+    ok, reason = await AppleIAPNotificationService(FakeAppleService()).process_signed_payload(
+        'signed.payload',
+        b'{"signedPayload":"signed.payload"}',
+    )
+
+    assert (ok, reason) == (True, 'refund_reversed')
+    add_balance.assert_awaited_once()
+    assert apple_txn.status == 'credited'
+    mark_processed.assert_awaited_once_with(db, apple_notification, status='processed')
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.anyio('asyncio')
+async def test_process_signed_payload_still_ignores_generic_sandbox_notification_on_production(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _enable_apple_iap(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', False, raising=False)
+
+    class FakeAppleService:
+        def verify_notification(self, signed_payload: str):
+            return {
+                'notificationUUID': 'test-notification-uuid',
+                'notificationType': 'TEST',
+                'data': {'environment': 'Sandbox'},
+            }
+
+        def verify_signed_transaction_info(self, signed_txn: str, environment: str):
+            raise AssertionError('generic sandbox notification should be ignored before transaction verification')
+
+    ok, reason = await AppleIAPNotificationService(FakeAppleService()).process_signed_payload(
+        'signed.payload',
+        b'{"signedPayload":"signed.payload"}',
+    )
+
+    assert (ok, reason) == (True, 'environment_ignored')
+
+
+@pytest.mark.anyio('asyncio')
+async def test_refund_ignores_unmarked_sandbox_transaction_on_production(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _enable_apple_iap(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
+
+    db = _FakeDB()
+    apple_txn = SimpleNamespace(
+        transaction_id='2000000123456789',
+        original_transaction_id='2000000123456789',
+        status='credited',
+        environment='Sandbox',
+        user_id=1,
+        amount_kopeks=10_000,
+        product_id='com.bitnet.vpnclient.topup.100',
+        bundle_id='com.bitnet.vpnclient',
+        app_account_token='account-token',
+        metadata_json={},
+    )
+    subtract_balance = AsyncMock()
+    mark_refunded = AsyncMock()
+    monkeypatch.setattr(
+        apple_iap_module, 'get_apple_transaction_by_transaction_id_for_update', AsyncMock(return_value=apple_txn)
+    )
+    monkeypatch.setattr('app.database.crud.user.subtract_user_balance', subtract_balance)
+    monkeypatch.setattr(apple_iap_module, 'mark_apple_transaction_refunded', mark_refunded)
+
+    reason = await AppleIAPNotificationService()._handle_refund(db, _txn_info())
+
+    assert reason == 'sandbox_ignored'
+    subtract_balance.assert_not_awaited()
+    mark_refunded.assert_not_awaited()
+
+
+@pytest.mark.anyio('asyncio')
 async def test_consumption_request_requires_recorded_user_consent() -> None:
     reason = await AppleIAPNotificationService()._handle_consumption_request(_txn_info())
 
