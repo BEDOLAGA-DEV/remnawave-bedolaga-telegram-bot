@@ -436,6 +436,90 @@ async def test_refund_success_debits_balance_and_marks_transaction_refunded(
 
 
 @pytest.mark.anyio('asyncio')
+async def test_refund_debits_sandbox_transaction_credited_on_production(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _enable_apple_iap(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', True, raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION', True, raising=False)
+
+    db = _FakeDB()
+    user = SimpleNamespace(id=1, balance_kopeks=20_000)
+    apple_txn = SimpleNamespace(
+        transaction_id='2000000123456789',
+        original_transaction_id='2000000123456789',
+        status='credited',
+        environment='Sandbox',
+        user_id=1,
+        amount_kopeks=10_000,
+        product_id='com.bitnet.vpnclient.topup.100',
+        bundle_id='com.bitnet.vpnclient',
+        app_account_token='account-token',
+        metadata_json={'credited_on_production': True},
+    )
+    subtract_balance = AsyncMock()
+    mark_refunded = AsyncMock()
+    monkeypatch.setattr(
+        apple_iap_module, 'get_apple_transaction_by_transaction_id_for_update', AsyncMock(return_value=apple_txn)
+    )
+    monkeypatch.setattr(apple_iap_module, 'lock_user_for_pricing', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.user.subtract_user_balance', subtract_balance)
+    monkeypatch.setattr(apple_iap_module, 'mark_apple_transaction_refunded', mark_refunded)
+
+    reason = await AppleIAPNotificationService()._handle_refund(db, _txn_info())
+
+    assert reason == 'refunded'
+    subtract_balance.assert_awaited_once()
+    assert subtract_balance.await_args.kwargs['amount_kopeks'] == 10_000
+    mark_refunded.assert_awaited_once_with(db, '2000000123456789')
+
+
+@pytest.mark.anyio('asyncio')
+async def test_refund_reversed_recredits_sandbox_transaction_credited_on_production(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _enable_apple_iap(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', True, raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_CREDIT_SANDBOX_ON_PRODUCTION', True, raising=False)
+
+    db = _FakeDB()
+    user = SimpleNamespace(id=1, balance_kopeks=10_000)
+    apple_txn = SimpleNamespace(
+        transaction_id='2000000123456789',
+        original_transaction_id='2000000123456789',
+        status='refunded',
+        environment='Sandbox',
+        user_id=1,
+        amount_kopeks=10_000,
+        product_id='com.bitnet.vpnclient.topup.100',
+        bundle_id='com.bitnet.vpnclient',
+        app_account_token='account-token',
+        metadata_json={'credited_on_production': True},
+        refunded_at=object(),
+        refund_reversed_at=None,
+    )
+    add_balance = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        apple_iap_module, 'get_apple_transaction_by_transaction_id_for_update', AsyncMock(return_value=apple_txn)
+    )
+    monkeypatch.setattr('app.database.crud.user.get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.user.add_user_balance', add_balance)
+
+    reason = await AppleIAPNotificationService()._handle_refund_reversed(db, _txn_info())
+
+    assert reason == 'refund_reversed'
+    add_balance.assert_awaited_once()
+    assert add_balance.await_args.kwargs['amount_kopeks'] == 10_000
+    assert apple_txn.status == 'credited'
+    assert apple_txn.refunded_at is None
+    db.flush.assert_awaited_once()
+
+
+@pytest.mark.anyio('asyncio')
 async def test_consumption_request_requires_recorded_user_consent() -> None:
     reason = await AppleIAPNotificationService()._handle_consumption_request(_txn_info())
 

@@ -119,6 +119,15 @@ def _should_credit_sandbox_on_production(configured_environment: str, actual_env
     )
 
 
+def _should_ignore_sandbox_transaction_on_production(apple_txn: AppleTransaction) -> bool:
+    if apple_txn.environment != 'Sandbox' or settings.get_apple_iap_environment() != 'Production':
+        return False
+    if apple_txn.status == 'sandbox_recorded':
+        return True
+    metadata = apple_txn.metadata_json or {}
+    return metadata.get('credited_on_production') is not True
+
+
 class AppleIAPFulfillmentService:
     def __init__(self, apple_service: AppleIAPService | None = None, bot: Any = None):
         self.apple_service = apple_service or AppleIAPService()
@@ -828,7 +837,7 @@ class AppleIAPNotificationService:
             return f'refund_{validation_error}'
         if apple_txn.status == 'refunded':
             return 'already_refunded'
-        if apple_txn.environment == 'Sandbox' and settings.get_apple_iap_environment() == 'Production':
+        if _should_ignore_sandbox_transaction_on_production(apple_txn):
             return 'sandbox_ignored'
 
         user = await lock_user_for_pricing(db, apple_txn.user_id)
@@ -888,7 +897,7 @@ class AppleIAPNotificationService:
             return f'refund_reversed_{validation_error}'
         if apple_txn.status != 'refunded':
             return 'not_refunded'
-        if apple_txn.environment == 'Sandbox' and settings.get_apple_iap_environment() == 'Production':
+        if _should_ignore_sandbox_transaction_on_production(apple_txn):
             return 'sandbox_ignored'
 
         from app.database.crud.user import add_user_balance, get_user_by_id
