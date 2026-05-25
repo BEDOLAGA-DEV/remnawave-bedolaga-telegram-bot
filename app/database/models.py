@@ -275,6 +275,10 @@ class SavedPaymentMethod(Base):
     provider_token = Column(String(255), nullable=True)
     # Provider-side expiry of the saved-card record (NULL if provider does not expose it)
     valid_thru = Column(AwareDateTime(), nullable=True)
+    # Provider-specific method code used to select the recurring endpoint
+    # (EtoPlatezhi: 'card-partner' | 'sberpay' | 'yoomoney-wallet'). NULL for
+    # providers that route all recurring charges through one endpoint.
+    method_code = Column(String(64), nullable=True)
 
     # YooKassa payment_method.id — legacy alias for provider_token when provider='yookassa'.
     # Kept for backward compatibility with existing callers; will be dropped in a follow-up release.

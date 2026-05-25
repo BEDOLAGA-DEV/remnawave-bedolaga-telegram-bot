@@ -47,6 +47,7 @@ async def create_saved_payment_method(
     card_expiry_year: str | None = None,
     title: str | None = None,
     valid_thru: datetime | None = None,
+    method_code: str | None = None,
     commit: bool = True,
 ) -> SavedPaymentMethod | None:
     """Создаёт или реактивирует сохранённый метод оплаты.
@@ -72,6 +73,8 @@ async def create_saved_payment_method(
         'valid_thru': valid_thru,
         'updated_at': datetime.now(UTC),
     }
+    if method_code is not None:
+        update_values['method_code'] = method_code
     if provider_name == DEFAULT_PROVIDER:
         # keep legacy column in sync for callers that still read it
         update_values['yookassa_payment_method_id'] = token
@@ -118,6 +121,7 @@ async def create_saved_payment_method(
         card_expiry_year=card_expiry_year,
         title=title,
         valid_thru=valid_thru,
+        method_code=method_code,
     )
 
     db.add(method)

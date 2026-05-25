@@ -341,11 +341,15 @@ async def _process_single_subscription(
 
         # Детерминированный ключ: при рестарте/повторе платформа вернёт тот же платёж
         idem_key = f'recurrent_{subscription.id}_{saved_method.id}_{today}'
+        # Per-card method_code so providers with method-specific endpoints
+        # (EtoPlatezhi card-partner/sberpay/yoomoney-wallet) route correctly.
+        per_card_meta = dict(metadata)
+        per_card_meta['method_code'] = getattr(saved_method, 'method_code', None)
         charge = await provider.charge(
             provider_token=provider_token,
             amount_kopeks=topup_amount_kopeks,
             description=description,
-            metadata=metadata,
+            metadata=per_card_meta,
             idempotency_key=idem_key,
             user_id=user.id,
         )

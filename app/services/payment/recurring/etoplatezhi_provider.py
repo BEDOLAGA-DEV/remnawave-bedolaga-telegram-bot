@@ -27,7 +27,20 @@ logger = structlog.get_logger(__name__)
 
 
 GATE_BASE_URL = 'https://api.etoplatezhi.ru'
-RECURRING_ENDPOINT = '/v2/payment/card-partner/recurring'
+# Default method code if a saved card has no method_code recorded (old rows
+# created before backfill, or unexpected providers): card-partner is the
+# historical default since it was the only recurring channel originally enabled.
+DEFAULT_METHOD_CODE = 'card-partner'
+# Supported method codes → URL path segment after /v2/payment/{...}/recurring.
+# Method codes match EtoPlatezhi's terminal.method_code values.
+_SUPPORTED_METHOD_CODES = {'card-partner', 'sberpay', 'yoomoney-wallet'}
+
+
+def _build_recurring_endpoint(method_code: str | None) -> str:
+    code = (method_code or DEFAULT_METHOD_CODE).strip()
+    if code not in _SUPPORTED_METHOD_CODES:
+        code = DEFAULT_METHOD_CODE
+    return f'/v2/payment/{code}/recurring'
 
 # Statuses returned by EtoPlatezhi for a successful charge initiation.
 # (The actual settlement happens asynchronously via webhook.)
@@ -91,7 +104,12 @@ class EtoPlatezhiRecurringProvider(RecurringProvider):
         }
         payload['general']['signature'] = etoplatezhi_service._sign(payload)
 
-        url = f'{GATE_BASE_URL}{RECURRING_ENDPOINT}'
+        # EtoPlatezhi exposes a distinct recurring endpoint per payment method
+        # (card-partner / sberpay / yoomoney-wallet). Resolve from metadata —
+        # callers should pass the saved card's method_code; missing values
+        # fall back to card-partner (historical default).
+        endpoint = _build_recurring_endpoint(metadata.get('method_code'))
+        url = f'{GATE_BASE_URL}{endpoint}'
         try:
             async with httpx.AsyncClient(timeout=self._http_timeout) as client:
                 response = await client.post(

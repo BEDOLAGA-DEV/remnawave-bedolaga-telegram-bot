@@ -414,6 +414,14 @@ class EtoplatezhiPaymentMixin:
         if not isinstance(account, dict):
             account = {}
 
+        # EtoPlatezhi has distinct recurring endpoints per payment method —
+        # capture terminal.method_code so the recurring provider can route
+        # charges correctly (card-partner / sberpay / yoomoney-wallet).
+        terminal = payload.get('terminal') if isinstance(payload, dict) else None
+        method_code = None
+        if isinstance(terminal, dict):
+            method_code = terminal.get('method_code') or None
+
         number = account.get('number') or ''
         card_first6 = number[:6] if len(number) >= 6 else None
         card_last4 = number[-4:] if len(number) >= 4 else None
@@ -457,6 +465,7 @@ class EtoplatezhiPaymentMixin:
                 card_expiry_year=str(expiry_year) if expiry_year is not None else None,
                 title=title,
                 valid_thru=valid_thru,
+                method_code=method_code,
                 commit=False,
             )
             if saved:

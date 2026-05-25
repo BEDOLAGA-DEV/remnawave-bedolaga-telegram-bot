@@ -211,6 +211,9 @@ async def _process_single_trial(db: AsyncSession, subscription: Subscription, ge
         'tariff_id': tariff.id,
         'period_days': period_days,
         'purpose': 'trial_conversion',
+        # Provider-specific routing hint — EtoPlatezhi uses distinct recurring
+        # endpoints per saved card's payment method (card-partner/sberpay/...)
+        'method_code': getattr(saved, 'method_code', None),
     }
     description = f'Конверсия триала в подписку ({period_days} дн.)'
 
