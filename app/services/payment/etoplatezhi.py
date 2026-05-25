@@ -81,8 +81,11 @@ class EtoplatezhiPaymentMixin:
             user = await payment_module.get_user_by_id(db, user_id)
             tg_id = user.telegram_id if user else user_id
         else:
+            # EtoPlatezhi anti-fraud declines transactions when customer_id
+            # repeats across distinct guest payments. Generate a unique guest
+            # tag per session so each cart-payment looks like a distinct buyer.
             user = None
-            tg_id = 'guest'
+            tg_id = f'guest{uuid.uuid4().hex[:10]}'
 
         # Генерируем уникальный order_id с telegram_id для удобного поиска
         order_id = f'etp{tg_id}_{uuid.uuid4().hex[:6]}'
