@@ -713,7 +713,7 @@ class SubscriptionService:
                 await create_transaction(
                     db=db,
                     user_id=updated.user_id,
-                    type=TransactionType.SUBSCRIPTION_PAYMENT.value,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
                     amount_kopeks=-amount_kopeks,
                     description=' | '.join(description_parts),
                 )
