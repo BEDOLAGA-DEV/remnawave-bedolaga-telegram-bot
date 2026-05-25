@@ -2493,8 +2493,11 @@ async def convert_trial_to_paid_in_db(
     # Single SELECT ... FOR UPDATE: acquires row lock and loads fresh state in
     # one round-trip. Replaces previous get + lock-only-select + refresh trio
     # (3 queries → 1) and protects against double-extension on webhook retries.
+    # selectinload(tariff) — нужен ниже для upgrade лимитов; lazy-load после
+    # FOR UPDATE триггерит MissingGreenlet в async-сессии.
     result = await db.execute(
         select(Subscription)
+        .options(selectinload(Subscription.tariff))
         .where(Subscription.id == subscription_id)
         .with_for_update()
         .execution_options(populate_existing=True)
@@ -2519,6 +2522,19 @@ async def convert_trial_to_paid_in_db(
     sub.status = SubscriptionStatus.ACTIVE.value
     sub.end_date = new_end
     sub.updated_at = now
+
+    # Upgrade traffic/device лимитов с триальных (settings.TRIAL_*) на лимиты
+    # paid-тарифа. Триал на guest_purchase создаётся с tariff_id уже paid, но
+    # traffic_limit_gb/device_limit оверрайдятся из TRIAL_TRAFFIC_LIMIT_GB и
+    # TRIAL_DEVICE_LIMIT (см. guest_purchase_service._fulfill_purchase).
+    # connected_squads не трогаем — они уже = tariff.allowed_squads на момент
+    # создания, менять их = риск оторвать юзера от сервера.
+    # purchased_traffic_gb / traffic_used_gb / subscription_url сохраняем.
+    tariff = sub.tariff
+    if tariff is not None:
+        sub.traffic_limit_gb = tariff.traffic_limit_gb
+        sub.device_limit = tariff.device_limit
+
     await db.flush()
 
     logger.info(
@@ -2526,5 +2542,8 @@ async def convert_trial_to_paid_in_db(
         subscription_id=subscription_id,
         new_end_date=new_end.isoformat(),
         period_days=period_days,
+        tariff_id=tariff.id if tariff else None,
+        traffic_limit_gb=sub.traffic_limit_gb,
+        device_limit=sub.device_limit,
     )
     return sub
