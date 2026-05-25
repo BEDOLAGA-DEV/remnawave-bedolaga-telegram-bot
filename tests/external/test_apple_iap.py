@@ -404,6 +404,98 @@ class TestCabinetAppleIAPRoutes:
         ]
 
     @pytest.mark.anyio('asyncio')
+    async def test_apple_purchase_maps_account_token_mismatch_to_conflict(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from fastapi import HTTPException
+
+        from app.cabinet.apple_iap import apple_purchase
+
+        _enable_apple_iap(monkeypatch, tmp_path)
+
+        class FakeRequest:
+            headers = {}
+            client = SimpleNamespace(host='203.0.113.10')
+
+        class FakeRedis:
+            async def get(self, key: str) -> None:
+                return None
+
+            async def set(self, key: str, value: int, *, ex: int, nx: bool) -> bool:
+                return True
+
+            async def incr(self, key: str) -> int:
+                return 1
+
+        service = SimpleNamespace(
+            verify_and_fulfill_purchase=AsyncMock(return_value=AppleFulfillmentResult(False, 'account_token_mismatch'))
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await apple_purchase(
+                request=ApplePurchaseRequest(
+                    product_id='com.bitnet.vpnclient.topup.100',
+                    transaction_id='2000000123456789',
+                ),
+                http_request=FakeRequest(),
+                user=SimpleNamespace(id=1),
+                db=_FakeDB(),
+                fulfillment_service=service,
+                redis_client=FakeRedis(),
+            )
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == 'account_token_mismatch'
+
+    @pytest.mark.anyio('asyncio')
+    async def test_apple_purchase_maps_unknown_product_to_bad_request(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from fastapi import HTTPException
+
+        from app.cabinet.apple_iap import apple_purchase
+
+        _enable_apple_iap(monkeypatch, tmp_path)
+
+        class FakeRequest:
+            headers = {}
+            client = SimpleNamespace(host='203.0.113.10')
+
+        class FakeRedis:
+            async def get(self, key: str) -> None:
+                return None
+
+            async def set(self, key: str, value: int, *, ex: int, nx: bool) -> bool:
+                return True
+
+            async def incr(self, key: str) -> int:
+                return 1
+
+        service = SimpleNamespace(
+            verify_and_fulfill_purchase=AsyncMock(return_value=AppleFulfillmentResult(False, 'unknown_product'))
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await apple_purchase(
+                request=ApplePurchaseRequest(
+                    product_id='com.bitnet.vpnclient.topup.100',
+                    transaction_id='2000000123456789',
+                ),
+                http_request=FakeRequest(),
+                user=SimpleNamespace(id=1),
+                db=_FakeDB(),
+                fulfillment_service=service,
+                redis_client=FakeRedis(),
+            )
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == 'unknown_product'
+
+    @pytest.mark.anyio('asyncio')
     async def test_apple_iap_redis_client_uses_lifespan_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from fastapi import FastAPI
 
@@ -469,7 +561,7 @@ class TestCabinetAppleIAPRoutes:
                 fulfillment_service=SimpleNamespace(get_account_token=get_account_token),
             )
 
-        assert exc_info.value.status_code == 400
+        assert exc_info.value.status_code == 503
         assert 'not fully configured' in exc_info.value.detail
         get_account_token.assert_not_awaited()
 
