@@ -25,8 +25,14 @@ async def create_etoplatezhi_payment(
     etoplatezhi_payment_id: str | None = None,
     expires_at: datetime | None = None,
     metadata_json: dict | None = None,
+    commit: bool = True,
 ) -> EtoplatezhiPayment:
-    """Создает запись о платеже Etoplatezhi."""
+    """Создает запись о платеже Etoplatezhi.
+
+    Pass ``commit=False`` to keep the row inside the caller's transaction
+    (e.g. when called from a webhook handler that already holds a FOR UPDATE
+    lock or from a loop that batches multiple inserts).
+    """
     payment = EtoplatezhiPayment(
         user_id=user_id,
         order_id=order_id,
@@ -42,8 +48,12 @@ async def create_etoplatezhi_payment(
         is_paid=False,
     )
     db.add(payment)
-    await db.commit()
-    await db.refresh(payment)
+    if commit:
+        await db.commit()
+        await db.refresh(payment)
+    else:
+        await db.flush()
+        await db.refresh(payment)
     logger.info('Создан платеж Etoplatezhi', order_id=order_id, user_id=user_id)
     return payment
 

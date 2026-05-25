@@ -266,6 +266,7 @@ async def _maybe_save_etoplatezhi_card_from_guest_payment(
 
         from app.database.crud.saved_payment_method import create_saved_payment_method
 
+        method_code = metadata.get('method_code') if isinstance(metadata, dict) else None
         saved = await create_saved_payment_method(
             db=db,
             user_id=user.id,
@@ -279,6 +280,7 @@ async def _maybe_save_etoplatezhi_card_from_guest_payment(
             card_expiry_year=str(expiry_year) if expiry_year is not None else None,
             title=title,
             valid_thru=valid_thru,
+            method_code=method_code,
             commit=False,
         )
         if saved:

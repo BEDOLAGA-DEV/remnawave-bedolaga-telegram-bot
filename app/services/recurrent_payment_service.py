@@ -422,6 +422,7 @@ async def _process_single_subscription(
                     payment_method=getattr(saved_method, 'method_code', None) or 'card-partner',
                     etoplatezhi_payment_id=charge.provider_payment_id,
                     metadata_json=per_card_meta,
+                    commit=False,
                 )
                 logger.info(
                     'Рекуррентный автоплатёж создан',

@@ -392,6 +392,11 @@ class EtoplatezhiPaymentMixin:
                     existing_metadata = {}
                 existing_metadata['recurring'] = recurring
                 existing_metadata['account'] = payload.get('account') if isinstance(payload, dict) else None
+                # Capture terminal.method_code too — guest fulfillment uses it to
+                # pick the correct recurring endpoint (card-partner/sberpay/yoomoney).
+                terminal_stash = payload.get('terminal') if isinstance(payload, dict) else None
+                if isinstance(terminal_stash, dict) and terminal_stash.get('method_code'):
+                    existing_metadata['method_code'] = terminal_stash.get('method_code')
                 payment.metadata_json = existing_metadata
                 # Explicit flush — AsyncSessionLocal uses autoflush=False, so
                 # the subsequent SELECT in _maybe_save_etoplatezhi_card_from_guest_payment
