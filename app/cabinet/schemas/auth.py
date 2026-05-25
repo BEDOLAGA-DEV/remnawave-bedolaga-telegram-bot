@@ -1,9 +1,9 @@
 """Authentication schemas for cabinet."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, StringConstraints
 
 
 class TelegramAuthRequest(BaseModel):
@@ -129,6 +129,9 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
+OAuthRevocationProofToken = Annotated[str, StringConstraints(min_length=32, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')]
+
+
 class AccountDeleteRequest(BaseModel):
     """Request to self-delete the current cabinet account."""
 
@@ -140,6 +143,11 @@ class AccountDeleteRequest(BaseModel):
         None,
         max_length=4096,
         description='Telegram WebApp initData for Telegram-only accounts',
+    )
+    oauth_revocation_proofs: list[OAuthRevocationProofToken] = Field(
+        default_factory=list,
+        max_length=5,
+        description='Short-lived OAuth revocation proof tokens for Google/Apple-only accounts',
     )
 
 

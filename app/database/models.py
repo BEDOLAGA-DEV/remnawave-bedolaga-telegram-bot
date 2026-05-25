@@ -3582,6 +3582,7 @@ class AccountDeletionRequest(Base):
     user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
     status = Column(String(20), default=AccountDeletionRequestStatus.PENDING.value, nullable=False, index=True)
     panel_uuids = Column(JSON, nullable=False, default=list)
+    oauth_revocation_event_ids = Column(JSON, nullable=False, default=list)
     telegram_id = Column(BigInteger, nullable=True)
     claim_token = Column(String(64), nullable=True)
     attempt_count = Column(Integer, default=0, nullable=False)
@@ -3596,6 +3597,41 @@ class AccountDeletionRequest(Base):
 
     def __repr__(self) -> str:
         return f"<AccountDeletionRequest id={self.id} user_id={self.user_id} status='{self.status}'>"
+
+
+class OAuthProviderRevocationEvent(Base):
+    """Audit trail for Google/Apple provider revocation attempts.
+
+    Raw provider tokens are intentionally never stored here.
+    """
+
+    __tablename__ = 'oauth_provider_revocation_events'
+    __table_args__ = (
+        Index('ix_oauth_provider_revocation_events_user', 'user_id'),
+        Index('ix_oauth_provider_revocation_events_provider_status', 'provider', 'status'),
+        CheckConstraint("provider IN ('google', 'apple')", name='ck_oauth_provider_revocation_events_provider'),
+        CheckConstraint("purpose IN ('unlink', 'delete')", name='ck_oauth_provider_revocation_events_purpose'),
+        CheckConstraint("status IN ('pending', 'succeeded', 'failed')", name='ck_oauth_provider_revocation_events_status'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    provider = Column(String(32), nullable=False)
+    provider_id = Column(String(255), nullable=False)
+    purpose = Column(String(16), nullable=False)
+    token_type = Column(String(32), nullable=True)
+    status = Column(String(32), nullable=False)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now(), nullable=False)
+    completed_at = Column(AwareDateTime(), nullable=True)
+
+    user = relationship('User', backref='oauth_provider_revocation_events')
+
+    def __repr__(self) -> str:
+        return (
+            f"<OAuthProviderRevocationEvent id={self.id} "
+            f"user_id={self.user_id} provider='{self.provider}' status='{self.status}'>"
+        )
 
 
 # ==================== FORTUNE WHEEL ====================

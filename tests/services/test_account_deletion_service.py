@@ -7,9 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.database.models import AccountDeletionRequest, AccountDeletionRequestStatus, SubscriptionStatus, UserStatus
+from app.database.models import (
+    AccountDeletionRequest,
+    AccountDeletionRequestStatus,
+    OAuthProviderRevocationEvent,
+    SubscriptionStatus,
+    UserStatus,
+)
 from app.services.account_deletion_service import (
     AccountDeletionCleanupStats,
+    AccountDeletionPanelError,
     AccountDeletionResult,
     AccountDeletionService,
 )
@@ -76,6 +83,14 @@ def test_account_deletion_migration_preserves_processing_before_pending_duplicat
     assert "CASE WHEN status = 'processing' THEN 0 ELSE 1 END" in migration
 
 
+def test_oauth_revocation_event_model_declares_audit_check_constraints() -> None:
+    constraint_names = {constraint.name for constraint in OAuthProviderRevocationEvent.__table__.constraints}
+
+    assert 'ck_oauth_provider_revocation_events_provider' in constraint_names
+    assert 'ck_oauth_provider_revocation_events_purpose' in constraint_names
+    assert 'ck_oauth_provider_revocation_events_status' in constraint_names
+
+
 class _ScalarResult:
     def __init__(self, items: list):
         self._items = items
@@ -118,9 +133,12 @@ async def test_delete_own_account_creates_cleanup_request_and_anonymizes_user() 
 
     cart_service = MagicMock()
     cart_service.delete_user_cart = AsyncMock(return_value=True)
+    subscription_service = MagicMock()
+    subscription_service.delete_remnawave_user = AsyncMock(return_value=True)
+    subscription_service.disable_remnawave_user = AsyncMock(return_value=True)
 
     with (
-        patch('app.services.account_deletion_service.SubscriptionService') as subscription_service_cls,
+        patch('app.services.account_deletion_service.SubscriptionService', return_value=subscription_service) as subscription_service_cls,
         patch(
             'app.services.account_deletion_service.decrement_subscription_server_counts',
             AsyncMock(),
@@ -129,7 +147,10 @@ async def test_delete_own_account_creates_cleanup_request_and_anonymizes_user() 
     ):
         result = await AccountDeletionService().delete_own_account(db, user)
 
-    subscription_service_cls.assert_not_called()
+    subscription_service_cls.assert_called_once()
+    subscription_service.delete_remnawave_user.assert_any_await('user-panel-uuid')
+    subscription_service.delete_remnawave_user.assert_any_await('subscription-panel-uuid')
+    subscription_service.disable_remnawave_user.assert_not_awaited()
     decrement_counts.assert_awaited_once_with(db, subscription)
 
     assert subscription.status == SubscriptionStatus.DISABLED.value
@@ -151,12 +172,82 @@ async def test_delete_own_account_creates_cleanup_request_and_anonymizes_user() 
     assert result.cart_deleted is True
     cleanup_request = db.add.call_args.args[0]
     assert cleanup_request.user_id == user.id
-    assert cleanup_request.status == AccountDeletionRequestStatus.PENDING.value
+    assert cleanup_request.status == AccountDeletionRequestStatus.COMPLETED.value
     assert cleanup_request.panel_uuids == ['user-panel-uuid', 'subscription-panel-uuid']
     assert cleanup_request.telegram_id == 555
+    assert cleanup_request.completed_at is not None
     db.flush.assert_awaited_once()
     db.commit.assert_awaited_once()
     cart_service.delete_user_cart.assert_awaited_once_with(user.id)
+
+
+@pytest.mark.asyncio
+async def test_delete_own_account_does_not_anonymize_or_commit_when_panel_cleanup_fails() -> None:
+    user = _make_user()
+    subscription = _make_subscription()
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.execute = AsyncMock(
+        side_effect=[
+            _ExecuteScalarResult(user),
+            _ExecuteResult([subscription]),
+        ]
+    )
+
+    subscription_service = MagicMock()
+    subscription_service.delete_remnawave_user = AsyncMock(return_value=False)
+    subscription_service.disable_remnawave_user = AsyncMock(return_value=False)
+
+    with (
+        patch('app.services.account_deletion_service.SubscriptionService', return_value=subscription_service),
+        patch('app.services.account_deletion_service.RemnaWaveWebhookService.mark_intentional_panel_deletion'),
+        pytest.raises(AccountDeletionPanelError, match='user-panel-uuid'),
+    ):
+        await AccountDeletionService().delete_own_account(db, user)
+
+    assert user.status == UserStatus.ACTIVE.value
+    assert user.telegram_id == 555
+    assert user.email == 'user@example.com'
+    assert user.remnawave_uuid == 'user-panel-uuid'
+    assert subscription.status == SubscriptionStatus.ACTIVE.value
+    db.add.assert_not_called()
+    db.flush.assert_not_awaited()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_own_account_records_oauth_revocation_event_ids_on_cleanup_request() -> None:
+    user = _make_user()
+    subscription = _make_subscription()
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.execute = AsyncMock(
+        side_effect=[
+            _ExecuteScalarResult(user),
+            _ExecuteResult([subscription]),
+            SimpleNamespace(rowcount=0),
+            SimpleNamespace(rowcount=0),
+            SimpleNamespace(rowcount=0),
+        ]
+    )
+    cart_service = MagicMock()
+    cart_service.delete_user_cart = AsyncMock(return_value=False)
+    subscription_service = MagicMock()
+    subscription_service.delete_remnawave_user = AsyncMock(return_value=True)
+    subscription_service.disable_remnawave_user = AsyncMock(return_value=True)
+
+    with (
+        patch('app.services.account_deletion_service.SubscriptionService', return_value=subscription_service),
+        patch(
+            'app.services.account_deletion_service.decrement_subscription_server_counts',
+            AsyncMock(),
+        ),
+        patch('app.services.account_deletion_service.UserCartService', return_value=cart_service),
+    ):
+        await AccountDeletionService().delete_own_account(db, user, oauth_revocation_event_ids=[77, 78])
+
+    cleanup_request = db.add.call_args.args[0]
+    assert cleanup_request.oauth_revocation_event_ids == [77, 78]
 
 
 @pytest.mark.asyncio
@@ -192,8 +283,12 @@ async def test_delete_own_account_uses_row_locks_before_mutation() -> None:
     db.add = MagicMock()
     cart_service = MagicMock()
     cart_service.delete_user_cart = AsyncMock(return_value=False)
+    subscription_service = MagicMock()
+    subscription_service.delete_remnawave_user = AsyncMock(return_value=True)
+    subscription_service.disable_remnawave_user = AsyncMock(return_value=True)
 
     with (
+        patch('app.services.account_deletion_service.SubscriptionService', return_value=subscription_service),
         patch(
             'app.services.account_deletion_service.decrement_subscription_server_counts',
             AsyncMock(),

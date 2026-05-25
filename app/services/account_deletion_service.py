@@ -80,7 +80,13 @@ class AccountDeletionPanelError(RuntimeError):
 
 
 class AccountDeletionService:
-    async def delete_own_account(self, db: AsyncSession, user: User) -> AccountDeletionResult:
+    async def delete_own_account(
+        self,
+        db: AsyncSession,
+        user: User,
+        *,
+        oauth_revocation_event_ids: list[int] | None = None,
+    ) -> AccountDeletionResult:
         """Deactivate a user's account while preserving audit/finance rows."""
         now = datetime.now(UTC)
         user_id = user.id
@@ -94,12 +100,23 @@ class AccountDeletionService:
         telegram_id = int(locked_user.telegram_id) if locked_user.telegram_id is not None else None
         subscriptions = await self._load_subscriptions_for_deletion(db, user_id)
         panel_uuids = self._collect_panel_uuids(locked_user, subscriptions)
+        panel_cleanup_completed = False
+        if panel_uuids:
+            await self._remove_panel_users(panel_uuids, telegram_id=telegram_id)
+            panel_cleanup_completed = True
 
         subscriptions_disabled = await self._disable_subscriptions(db, subscriptions, now)
         refresh_tokens_revoked = await self._revoke_refresh_tokens(db, user_id, now)
         saved_payment_methods_deactivated = await self._deactivate_saved_payment_methods(db, user_id, now)
         await self._unlink_referrals(db, user_id)
-        cleanup_request = self._create_cleanup_request(user_id, panel_uuids, telegram_id, now)
+        cleanup_request = self._create_cleanup_request(
+            user_id,
+            panel_uuids,
+            telegram_id,
+            now,
+            oauth_revocation_event_ids=oauth_revocation_event_ids,
+            panel_cleanup_completed=panel_cleanup_completed,
+        )
         db.add(cleanup_request)
         self._anonymize_user(locked_user, now)
         await db.flush()
@@ -195,19 +212,23 @@ class AccountDeletionService:
         panel_uuids: list[str],
         telegram_id: int | None,
         now: datetime,
+        *,
+        oauth_revocation_event_ids: list[int] | None = None,
+        panel_cleanup_completed: bool = False,
     ) -> AccountDeletionRequest:
-        has_panel_work = bool(panel_uuids)
+        has_pending_panel_work = bool(panel_uuids) and not panel_cleanup_completed
         return AccountDeletionRequest(
             user_id=user_id,
             status=(
                 AccountDeletionRequestStatus.PENDING.value
-                if has_panel_work
+                if has_pending_panel_work
                 else AccountDeletionRequestStatus.COMPLETED.value
             ),
             panel_uuids=panel_uuids,
+            oauth_revocation_event_ids=oauth_revocation_event_ids or [],
             telegram_id=telegram_id,
             next_retry_at=now,
-            completed_at=None if has_panel_work else now,
+            completed_at=None if has_pending_panel_work else now,
         )
 
     async def process_pending_panel_cleanup(
