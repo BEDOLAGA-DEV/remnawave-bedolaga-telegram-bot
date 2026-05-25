@@ -46,6 +46,7 @@ def _build_recurring_endpoint(method_code: str | None) -> str:
     code = (method_code or DEFAULT_METHOD_CODE).strip()
     return _METHOD_ENDPOINTS.get(code, _METHOD_ENDPOINTS[DEFAULT_METHOD_CODE])
 
+
 # Statuses returned by EtoPlatezhi for a successful charge initiation.
 # (The actual settlement happens asynchronously via webhook.)
 _SUCCESS_STATUSES = {'success', 'awaiting clarification', 'in process', 'in progress'}
