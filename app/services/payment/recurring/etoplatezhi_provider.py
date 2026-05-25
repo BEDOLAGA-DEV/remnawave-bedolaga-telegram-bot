@@ -89,12 +89,40 @@ class EtoPlatezhiRecurringProvider(RecurringProvider):
         # fresh UUID4.
         payment_id = idempotency_key or uuid.uuid4().hex
 
+        # EtoPlatezhi silently discards recurring requests when
+        # ``merchant_callback_url`` or ``customer.ip_address`` are absent — the
+        # initial ack still returns status:success, but no transaction is ever
+        # created and the webhook never fires. Reproduced during integration
+        # testing on 2026-05-25; confirmed by their support that these fields
+        # are mandatory for the card-partner/sberpay/yoomoney-wallet routes.
+        webhook_url = None
+        if getattr(settings, 'WEBHOOK_URL', None):
+            webhook_url = (
+                settings.WEBHOOK_URL.rstrip('/')
+                + getattr(settings, 'ETOPLATEZHI_WEBHOOK_PATH', '/etoplatezhi-webhook')
+            )
+
+        customer_block: dict[str, Any] = {'id': customer_id}
+        customer_ip = metadata.get('customer_ip_address') or metadata.get('ip_address')
+        if customer_ip:
+            customer_block['ip_address'] = str(customer_ip)
+        else:
+            # Use our own service IP as a stable fallback — EtoPlatezhi only
+            # requires the field be present, not that it match the buyer.
+            customer_block['ip_address'] = getattr(
+                settings, 'ETOPLATEZHI_FALLBACK_CUSTOMER_IP', '127.0.0.1'
+            )
+
+        general_block: dict[str, Any] = {
+            'project_id': etoplatezhi_service.project_id,
+            'payment_id': payment_id,
+        }
+        if webhook_url:
+            general_block['merchant_callback_url'] = webhook_url
+
         payload: dict[str, Any] = {
-            'general': {
-                'project_id': etoplatezhi_service.project_id,
-                'payment_id': payment_id,
-            },
-            'customer': {'id': customer_id},
+            'general': general_block,
+            'customer': customer_block,
             'payment': {
                 'amount': amount_kopeks,
                 'currency': getattr(settings, 'ETOPLATEZHI_CURRENCY', 'RUB'),
