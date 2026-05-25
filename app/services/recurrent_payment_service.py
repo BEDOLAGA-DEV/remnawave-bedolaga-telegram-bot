@@ -345,6 +345,39 @@ async def _process_single_subscription(
         # (EtoPlatezhi card-partner/sberpay/yoomoney-wallet) route correctly.
         per_card_meta = dict(metadata)
         per_card_meta['method_code'] = getattr(saved_method, 'method_code', None)
+
+        # EtoPlatezhi: предсоздать pending-запись и закоммитить ДО charge.
+        # Webhook ищет платёж по order_id из новой сессии — row должен быть
+        # видим до того, как провайдер начнёт коллбечить. Иначе callback
+        # вернёт "платёж не найден" и пополнение молча потеряется.
+        if provider_name == 'etoplatezhi':
+            try:
+                from app.database.crud.etoplatezhi import (
+                    create_etoplatezhi_payment,
+                    get_etoplatezhi_payment_by_order_id,
+                )
+
+                existing = await get_etoplatezhi_payment_by_order_id(db, idem_key)
+                if not existing:
+                    await create_etoplatezhi_payment(
+                        db=db,
+                        user_id=user.id,
+                        order_id=idem_key,
+                        amount_kopeks=topup_amount_kopeks,
+                        currency='RUB',
+                        description=description,
+                        payment_method=getattr(saved_method, 'method_code', None) or 'card-partner',
+                        metadata_json=per_card_meta,
+                    )
+            except Exception as e:
+                logger.warning(
+                    'Не удалось предсоздать запись etoplatezhi, пропускаем карту',
+                    user_id=user.id,
+                    subscription_id=subscription.id,
+                    error=e,
+                )
+                continue
+
         charge = await provider.charge(
             provider_token=provider_token,
             amount_kopeks=topup_amount_kopeks,
@@ -365,6 +398,21 @@ async def _process_single_subscription(
                 card_display=card_display,
                 error=charge.error_message,
             )
+            if provider_name == 'etoplatezhi':
+                try:
+                    from app.database.crud.etoplatezhi import (
+                        get_etoplatezhi_payment_by_order_id,
+                        update_etoplatezhi_payment_status,
+                    )
+
+                    pending = await get_etoplatezhi_payment_by_order_id(db, idem_key)
+                    if pending and pending.status == 'pending':
+                        await update_etoplatezhi_payment_status(db, pending, status='failed')
+                except Exception as mark_error:
+                    logger.warning(
+                        'Не удалось пометить etoplatezhi платёж как failed',
+                        error=mark_error,
+                    )
             continue
 
         result = charge.raw or {}
@@ -406,38 +454,37 @@ async def _process_single_subscription(
             except Exception as e:
                 logger.warning('Ошибка создания локальной записи рекуррентного платежа', error=e)
         elif provider_name == 'etoplatezhi':
-            # EtoPlatezhi webhook handler looks up the payment in
-            # ``etoplatezhi_payments`` by order_id. Without a row the callback
-            # logs "платёж не найден" and the topup is silently dropped.
+            # Pending-запись уже создана и закоммичена ДО charge (см. выше).
+            # Здесь только дописываем provider_payment_id чтобы webhook мог
+            # дополнительно сматчиться по нему при необходимости.
             try:
-                from app.database.crud.etoplatezhi import create_etoplatezhi_payment
+                from app.database.crud.etoplatezhi import (
+                    get_etoplatezhi_payment_by_order_id,
+                    update_etoplatezhi_payment_status,
+                )
 
-                await create_etoplatezhi_payment(
-                    db=db,
-                    user_id=user.id,
-                    order_id=idem_key,
-                    amount_kopeks=topup_amount_kopeks,
-                    currency='RUB',
-                    description=description,
-                    payment_method=getattr(saved_method, 'method_code', None) or 'card-partner',
-                    etoplatezhi_payment_id=charge.provider_payment_id,
-                    metadata_json=per_card_meta,
-                    commit=False,
-                )
-                logger.info(
-                    'Рекуррентный автоплатёж создан',
-                    user_id=user.id,
-                    subscription_id=subscription.id,
-                    provider=provider_name,
-                    amount_kopeks=topup_amount_kopeks,
-                    provider_payment_id=charge.provider_payment_id,
-                )
+                pending = await get_etoplatezhi_payment_by_order_id(db, idem_key)
+                if pending and charge.provider_payment_id and not pending.etoplatezhi_payment_id:
+                    await update_etoplatezhi_payment_status(
+                        db,
+                        pending,
+                        status=pending.status,
+                        etoplatezhi_payment_id=charge.provider_payment_id,
+                    )
             except Exception as e:
                 logger.warning(
-                    'Ошибка создания локальной записи рекуррентного платежа',
+                    'Ошибка обновления etoplatezhi_payment_id',
                     provider=provider_name,
                     error=e,
                 )
+            logger.info(
+                'Рекуррентный автоплатёж создан',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                provider=provider_name,
+                amount_kopeks=topup_amount_kopeks,
+                provider_payment_id=charge.provider_payment_id,
+            )
         else:
             logger.info(
                 'Рекуррентный автоплатёж создан',
