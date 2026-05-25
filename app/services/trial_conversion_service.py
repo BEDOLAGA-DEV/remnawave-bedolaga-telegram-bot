@@ -91,15 +91,7 @@ async def process_trial_conversions(db: AsyncSession) -> dict:
         subs = await _find_trials_for_conversion(db)
         stats['checked'] = len(subs)
 
-        # Snapshot ids + re-fetch per iteration. После flush/savepoint в
-        # _process_single_trial ORM атрибуты на старых объектах могут стать
-        # stale (MissingGreenlet при попытке lazy load). Тот же fix применён
-        # в recurrent_payment_service.
-        subscription_ids = [sub.id for sub in subs]
-        for sub_id in subscription_ids:
-            subscription = await _reload_subscription_with_relations(db, sub_id)
-            if not subscription:
-                continue
+        for subscription in subs:
             try:
                 outcome = await _process_single_trial(db, subscription, get_provider)
                 stats[outcome] = stats.get(outcome, 0) + 1
@@ -107,7 +99,7 @@ async def process_trial_conversions(db: AsyncSession) -> dict:
                 stats['errors'] += 1
                 logger.error(
                     'trial_conversion: error processing subscription',
-                    subscription_id=sub_id,
+                    subscription_id=subscription.id,
                     error=str(e),
                     exc_info=True,
                 )
@@ -140,6 +132,10 @@ async def _find_trials_for_conversion(db: AsyncSession) -> list[Subscription]:
 
     q = (
         select(Subscription)
+        .options(
+            selectinload(Subscription.user),
+            selectinload(Subscription.tariff),
+        )
         .where(
             and_(
                 Subscription.is_trial == True,
@@ -159,20 +155,6 @@ async def _find_trials_for_conversion(db: AsyncSession) -> list[Subscription]:
     )
     result = await db.execute(q)
     return list(result.scalars().all())
-
-
-async def _reload_subscription_with_relations(db: AsyncSession, subscription_id: int) -> Subscription | None:
-    """Eager-load sub + user + tariff. Защита от MissingGreenlet после
-    flush'ей внутри _process_single_trial."""
-    q = (
-        select(Subscription)
-        .options(
-            selectinload(Subscription.user),
-            selectinload(Subscription.tariff),
-        )
-        .where(Subscription.id == subscription_id)
-    )
-    return (await db.execute(q)).scalar_one_or_none()
 
 
 async def _process_single_trial(db: AsyncSession, subscription: Subscription, get_provider_fn) -> str:

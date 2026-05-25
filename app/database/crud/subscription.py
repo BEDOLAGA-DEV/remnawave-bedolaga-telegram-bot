@@ -2490,14 +2490,19 @@ async def convert_trial_to_paid_in_db(
     проверкой `is_trial`. Защищает от двойного продления end_date при at-least-once
     webhook delivery (EtoPlatezhi/YooKassa могут ретраить callback при таймауте).
     """
-    sub = await db.get(Subscription, subscription_id)
+    # Single SELECT ... FOR UPDATE: acquires row lock and loads fresh state in
+    # one round-trip. Replaces previous get + lock-only-select + refresh trio
+    # (3 queries → 1) and protects against double-extension on webhook retries.
+    result = await db.execute(
+        select(Subscription)
+        .where(Subscription.id == subscription_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    sub = result.scalar_one_or_none()
     if not sub:
         logger.warning('convert_trial_to_paid_in_db: subscription not found', subscription_id=subscription_id)
         return None
-
-    # Lock row + refresh is_trial/status/end_date AFTER lock — иначе TOCTOU.
-    await db.execute(select(Subscription.id).where(Subscription.id == subscription_id).with_for_update())
-    await db.refresh(sub, ['is_trial', 'status', 'end_date'])
 
     if not sub.is_trial:
         logger.info(

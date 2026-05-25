@@ -20,6 +20,7 @@ import httpx
 import structlog
 
 from app.config import settings
+from app.services.etoplatezhi_service import etoplatezhi_service
 from app.services.payment.recurring.base import ChargeResult, RecurringProvider
 
 
@@ -55,6 +56,21 @@ class EtoPlatezhiRecurringProvider(RecurringProvider):
 
     def __init__(self, *, http_timeout: float = 15.0) -> None:
         self._http_timeout = http_timeout
+        self._client: httpx.AsyncClient | None = None
+
+    def _http_client(self) -> httpx.AsyncClient:
+        # Reuse a single AsyncClient so the TLS connection pool to
+        # api.etoplatezhi.ru survives between charges (~200ms saved per call).
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self._http_timeout)
+        return self._client
+
+    def _resolve_webhook_url(self) -> str | None:
+        base = getattr(settings, 'WEBHOOK_URL', None)
+        if not base:
+            return None
+        path = getattr(settings, 'ETOPLATEZHI_WEBHOOK_PATH', '/etoplatezhi-webhook')
+        return f'{base.rstrip("/")}{path}'
 
     def is_enabled(self) -> bool:
         if not getattr(settings, 'ETOPLATEZHI_ENABLED', False):
@@ -82,8 +98,6 @@ class EtoPlatezhiRecurringProvider(RecurringProvider):
                 error_message=f'EtoPlatezhi recurring_id must be numeric, got: {provider_token!r}',
             )
 
-        from app.services.etoplatezhi_service import etoplatezhi_service
-
         customer_id = str(metadata.get('user_telegram_id') or user_id or '0')
 
         # Use the supplied idempotency key as the EtoPlatezhi `payment_id` so
@@ -93,28 +107,16 @@ class EtoPlatezhiRecurringProvider(RecurringProvider):
         payment_id = idempotency_key or uuid.uuid4().hex
 
         # EtoPlatezhi silently discards recurring requests when
-        # ``merchant_callback_url`` or ``customer.ip_address`` are absent — the
-        # initial ack still returns status:success, but no transaction is ever
-        # created and the webhook never fires. Reproduced during integration
-        # testing on 2026-05-25; confirmed by their support that these fields
-        # are mandatory for the card-partner/sberpay/yoomoney-wallet routes.
-        webhook_url = None
-        if getattr(settings, 'WEBHOOK_URL', None):
-            webhook_url = (
-                settings.WEBHOOK_URL.rstrip('/')
-                + getattr(settings, 'ETOPLATEZHI_WEBHOOK_PATH', '/etoplatezhi-webhook')
-            )
+        # merchant_callback_url or customer.ip_address are missing — the ack
+        # returns status:success but no transaction is ever created.
+        webhook_url = self._resolve_webhook_url()
 
         customer_block: dict[str, Any] = {'id': customer_id}
-        customer_ip = metadata.get('customer_ip_address') or metadata.get('ip_address')
-        if customer_ip:
-            customer_block['ip_address'] = str(customer_ip)
-        else:
-            # Use our own service IP as a stable fallback — EtoPlatezhi only
-            # requires the field be present, not that it match the buyer.
-            customer_block['ip_address'] = getattr(
-                settings, 'ETOPLATEZHI_FALLBACK_CUSTOMER_IP', '127.0.0.1'
-            )
+        customer_block['ip_address'] = str(
+            metadata.get('customer_ip_address')
+            or metadata.get('ip_address')
+            or getattr(settings, 'ETOPLATEZHI_FALLBACK_CUSTOMER_IP', '127.0.0.1')
+        )
 
         general_block: dict[str, Any] = {
             'project_id': etoplatezhi_service.project_id,
@@ -135,19 +137,13 @@ class EtoPlatezhiRecurringProvider(RecurringProvider):
         }
         payload['general']['signature'] = etoplatezhi_service._sign(payload)
 
-        # EtoPlatezhi exposes a distinct recurring endpoint per payment method
-        # (card-partner / sberpay / yoomoney-wallet). Resolve from metadata —
-        # callers should pass the saved card's method_code; missing values
-        # fall back to card-partner (historical default).
-        endpoint = _build_recurring_endpoint(metadata.get('method_code'))
-        url = f'{GATE_BASE_URL}{endpoint}'
+        url = f'{GATE_BASE_URL}{_build_recurring_endpoint(metadata.get("method_code"))}'
         try:
-            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
-                response = await client.post(
-                    url,
-                    json=payload,
-                    headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
-                )
+            response = await self._http_client().post(
+                url,
+                json=payload,
+                headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
+            )
         except Exception as exc:  # pragma: no cover - network errors
             logger.error(
                 'etoplatezhi_recurring_charge_exception',

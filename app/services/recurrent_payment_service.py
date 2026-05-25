@@ -419,7 +419,7 @@ async def _process_single_subscription(
                     amount_kopeks=topup_amount_kopeks,
                     currency='RUB',
                     description=description,
-                    payment_method='card-partner',
+                    payment_method=getattr(saved_method, 'method_code', None) or 'card-partner',
                     etoplatezhi_payment_id=charge.provider_payment_id,
                     metadata_json=per_card_meta,
                 )
