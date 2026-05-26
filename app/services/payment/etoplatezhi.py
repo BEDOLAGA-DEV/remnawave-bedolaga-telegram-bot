@@ -47,6 +47,8 @@ class EtoplatezhiPaymentMixin:
         language: str = 'ru',
         payment_method_type: str | None = None,
         return_url: str | None = None,
+        success_url: str | None = None,
+        fail_url: str | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж Etoplatezhi.
@@ -136,8 +138,8 @@ class EtoplatezhiPaymentMixin:
                 customer_id=str(tg_id),
                 description=description,
                 callback_url=webhook_url,
-                success_url=return_url or settings.ETOPLATEZHI_RETURN_URL,
-                fail_url=return_url or settings.ETOPLATEZHI_RETURN_URL,
+                success_url=success_url or return_url or settings.ETOPLATEZHI_RETURN_URL,
+                fail_url=fail_url or return_url or settings.ETOPLATEZHI_RETURN_URL,
                 force_payment_method=force_method,
                 customer_email=email,
                 language_code=language,

@@ -720,7 +720,8 @@ async def create_topup(
                 email=getattr(user, 'email', None),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_method_type=payment_method_type,
-                return_url=cabinet_success_url,
+                success_url=cabinet_success_url,
+                fail_url=cabinet_failed_url,
             )
 
             if result and result.get('payment_url'):

@@ -203,6 +203,23 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
         }
         return mapping.get(status_str, ('❓', 'Неизвестно'))
 
+    if record.method == PaymentMethod.ETOPLATEZHI:
+        # Статусы Eto согласно их API (см. etoplatezhi_provider._SUCCESS_STATUSES):
+        # 'success', 'awaiting clarification', 'in process', 'in progress' — ack OK.
+        # 'declined' — карта/банк отклонил; 'error' — ошибка интеграции/таймаут.
+        mapping = {
+            'pending': ('⏳', 'Ожидает оплаты'),
+            'in process': ('⌛', 'Обрабатывается'),
+            'in progress': ('⌛', 'Обрабатывается'),
+            'awaiting clarification': ('⌛', 'Ожидает уточнения'),
+            'success': ('✅', 'Оплачено'),
+            'declined': ('❌', 'Отклонено'),
+            'error': ('❌', 'Ошибка'),
+            'canceled': ('❌', 'Отменено'),
+            'failed': ('❌', 'Ошибка'),
+        }
+        return mapping.get(status_str, ('❓', 'Неизвестно'))
+
     return '❓', 'Неизвестно'
 
 
