@@ -1274,8 +1274,6 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
         and purchase.period_days == settings.TRIAL_DURATION_DAYS
     )
     if is_trial_purchase:
-        from app.database.crud.subscription import get_subscription_by_user_id
-
         _existing = await get_subscription_by_user_id(db, user.id)
         _existing_trial_alive = (
             _existing is not None
@@ -1457,8 +1455,9 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
         await db.rollback()
         raise
     except Exception:
+        purchase_id_snapshot = purchase.id
         await db.rollback()
-        logger.exception('Failed to activate purchase', purchase_id=purchase.id)
+        logger.exception('Failed to activate purchase', purchase_id=purchase_id_snapshot)
         raise GuestPurchaseError('Activation failed, please try again', status_code=500)
 
     return purchase
