@@ -1207,6 +1207,15 @@ class MonitoringService:
                         ),
                         Subscription.autopay_enabled == True,
                         Subscription.is_trial == False,
+                        # Layer 2 sanity-guard: подписка должна "пожить" хотя
+                        # бы 12ч до первого balance autopay. Триал-to-paid
+                        # конверсия (trial_conversion_service) уже забирает
+                        # окно T-12h..T+0 для свежих триалов через карту;
+                        # балансовый autopay должен подключаться только когда
+                        # sub реально устоявшаяся. Защищает от кейсов вроде
+                        # user 24513 (триал → дубль → flip is_trial → balance
+                        # autopay сразу +30д через 1 минуту).
+                        Subscription.start_date <= current_time - timedelta(hours=12),
                     )
                 )
             )

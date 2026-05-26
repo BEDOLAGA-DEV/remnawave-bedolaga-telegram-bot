@@ -225,6 +225,15 @@ async def _find_subscriptions_needing_topup(db: AsyncSession) -> list:
                 ),
                 Subscription.autopay_enabled == True,
                 Subscription.is_trial == False,
+                # Layer 2 sanity-guard: подписка должна "пожить" хотя бы 12ч
+                # перед тем как мы начнём списывать через recurring карту.
+                # Защищает от каскада "юзер только что взял триал → дубль →
+                # extend_subscription flip is_trial=False → балансовый autopay
+                # сразу списывает". См. кейс user 24513: 19₽ trial → 7 мин →
+                # 299₽ recurring. Также: trial-to-paid конверсия идёт через
+                # trial_conversion_service (T-12h..T+0), эта таблица —
+                # для полноценных paid subs c длительным периодом.
+                Subscription.start_date <= current_time - timedelta(hours=12),
             )
         )
     )

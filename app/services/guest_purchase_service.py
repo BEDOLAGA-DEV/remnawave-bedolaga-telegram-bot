@@ -1260,6 +1260,38 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
     notification_tariff_name = tariff.name
     notification_language = user.language or 'ru'
 
+    # Layer 1 защита: дубликат trial purchase не должен флипать is_trial живой
+    # триал-подписки. _fulfill_purchase (c50c1813) уже блочит дубль в момент
+    # webhook, отправляя его в PENDING_ACTIVATION. Но retry_stuck_pending_activation
+    # через 10 мин дёргает activate_purchase, который идёт по extend_subscription
+    # (tariff_id передан) → crud/subscription.py:776 flip is_trial=False →
+    # recurrent_payment_service сразу видит "paid sub с end через 24ч" и списывает
+    # с карты. Случай user 24513: 19₽ trial → дубль 19₽ → 299₽ списание через
+    # 7 мин. Оставляем покупку в PENDING_ACTIVATION для админ-refund.
+    is_trial_purchase = (
+        settings.TRIAL_PAYMENT_ENABLED
+        and settings.TRIAL_ACTIVATION_PRICE > 0
+        and purchase.period_days == settings.TRIAL_DURATION_DAYS
+    )
+    if is_trial_purchase:
+        from app.database.crud.subscription import get_subscription_by_user_id
+
+        _existing = await get_subscription_by_user_id(db, user.id)
+        _existing_trial_alive = (
+            _existing is not None
+            and getattr(_existing, 'is_trial', False)
+            and _existing.end_date is not None
+            and _aware(_existing.end_date) > datetime.now(UTC)
+        )
+        if _existing_trial_alive:
+            logger.info(
+                'activate_purchase: blocking duplicate trial activation',
+                purchase_token_prefix=purchase_token[:5],
+                user_id=user.id,
+                existing_subscription_id=_existing.id,
+            )
+            return purchase
+
     try:
         subscription_service = SubscriptionService()
 
