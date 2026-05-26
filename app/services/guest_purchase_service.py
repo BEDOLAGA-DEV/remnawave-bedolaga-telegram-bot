@@ -29,6 +29,7 @@ from app.database.models import (
     GuestPurchaseStatus,
     LandingPage,
     PaymentMethod,
+    SubscriptionStatus,
     Tariff,
     Transaction,
     TransactionType,
@@ -94,6 +95,21 @@ async def validate_and_calculate(
     tariff = await get_tariff_by_id(db, tariff_id)
     if tariff is None or not tariff.is_active:
         raise GuestPurchaseError('Tariff not found or inactive')
+
+    # Trial-as-period: when TRIAL_PAYMENT_ENABLED, the landing exposes a virtual
+    # period with days=TRIAL_DURATION_DAYS / price=TRIAL_ACTIVATION_PRICE. Accept
+    # it for any allowed tariff without checking tariff.period_prices, BUT still
+    # enforce the per-landing allowed_periods override so admins can disable the
+    # trial on a specific landing.
+    if (
+        settings.TRIAL_PAYMENT_ENABLED
+        and settings.TRIAL_ACTIVATION_PRICE > 0
+        and period_days == settings.TRIAL_DURATION_DAYS
+    ):
+        landing_periods_override = (landing.allowed_periods or {}).get(str(tariff_id))
+        if landing_periods_override is not None and period_days not in landing_periods_override:
+            raise GuestPurchaseError('Trial period is disabled for this landing')
+        return tariff, int(settings.TRIAL_ACTIVATION_PRICE)
 
     # Check period against landing-level override (if set)
     allowed_periods = landing.allowed_periods or {}
@@ -185,6 +201,104 @@ async def create_purchase(
     )
 
     return purchase
+
+
+async def _maybe_save_etoplatezhi_card_from_guest_payment(
+    db: AsyncSession,
+    purchase: GuestPurchase,
+    user: User,
+) -> None:
+    """If this guest purchase was paid via EtoPlatezhi with a recurring card,
+    create the saved_payment_methods row now that user_id is known.
+
+    The webhook handler stashes recurring + account data in
+    etoplatezhi_payments.metadata_json when payment.user_id is None
+    (guest flow). We retrieve it here and call create_saved_payment_method.
+    """
+    payment_method = (purchase.payment_method or '').lower()
+    if not payment_method.startswith('etoplatezhi'):
+        return
+    if not settings.ETOPLATEZHI_RECURRENT_ENABLED:
+        return
+
+    try:
+        etoplatezhi_crud = __import__(
+            'app.database.crud.etoplatezhi',
+            fromlist=['get_etoplatezhi_payment_by_order_id'],
+        )
+        eto_payment = await etoplatezhi_crud.get_etoplatezhi_payment_by_order_id(db, purchase.payment_id)
+        if eto_payment is None:
+            return
+
+        metadata = eto_payment.metadata_json or {}
+        if not isinstance(metadata, dict):
+            return
+        recurring = metadata.get('recurring')
+        if not isinstance(recurring, dict):
+            return
+        recurring_id = recurring.get('id')
+        if recurring_id in (None, ''):
+            return
+
+        account = metadata.get('account') if isinstance(metadata.get('account'), dict) else {}
+        number = (account.get('number') if isinstance(account, dict) else '') or ''
+        card_first6 = number[:6] if len(number) >= 6 else None
+        card_last4 = number[-4:] if len(number) >= 4 else None
+        card_type = (account.get('type') if isinstance(account, dict) else '') or ''
+        card_type = card_type.lower() or None
+        expiry_month = account.get('expiry_month') if isinstance(account, dict) else None
+        expiry_year = account.get('expiry_year') if isinstance(account, dict) else None
+        card_holder = account.get('card_holder') if isinstance(account, dict) else None
+
+        title = None
+        if card_last4:
+            type_label = (card_type or 'card').capitalize()
+            title = f'{type_label} *{card_last4}'
+        elif card_holder:
+            title = str(card_holder)
+
+        valid_thru = None
+        valid_thru_raw = recurring.get('valid_thru')
+        if isinstance(valid_thru_raw, str) and valid_thru_raw:
+            try:
+                valid_thru = datetime.fromisoformat(valid_thru_raw.replace('Z', '+00:00'))
+            except ValueError:
+                valid_thru = None
+
+        from app.database.crud.saved_payment_method import create_saved_payment_method
+
+        method_code = metadata.get('method_code') if isinstance(metadata, dict) else None
+        saved = await create_saved_payment_method(
+            db=db,
+            user_id=user.id,
+            provider='etoplatezhi',
+            provider_token=str(recurring_id),
+            method_type='bank_card',
+            card_first6=card_first6,
+            card_last4=card_last4,
+            card_type=card_type,
+            card_expiry_month=str(expiry_month) if expiry_month is not None else None,
+            card_expiry_year=str(expiry_year) if expiry_year is not None else None,
+            title=title,
+            valid_thru=valid_thru,
+            method_code=method_code,
+            commit=False,
+        )
+        if saved:
+            logger.info(
+                'Etoplatezhi: saved card created during guest fulfillment',
+                purchase_id=purchase.id,
+                saved_method_id=saved.id,
+                user_id=user.id,
+                recurring_id=str(recurring_id),
+            )
+    except Exception as e:
+        logger.warning(
+            'Failed to save etoplatezhi card during guest fulfillment',
+            purchase_id=purchase.id,
+            user_id=user.id,
+            error=e,
+        )
 
 
 async def _create_nalogo_receipt_for_purchase(
@@ -333,22 +447,32 @@ async def fulfill_purchase(
         notification_tariff_name = tariff.name
         notification_language = user.language or 'ru'
 
-        # Verify the tariff still has a price configured for this period.
-        # We do NOT re-verify the exact amount because discounts, price changes,
-        # or promo codes may have altered the price at purchase time. The amount
-        # was validated server-side in validate_and_calculate() and the payment
-        # provider confirmed the charged amount.
-        expected_price = tariff.get_price_for_period(purchase.period_days)
-        if expected_price is None:
-            logger.error(
-                'Price no longer configured for period — aborting fulfillment',
-                purchase_id=purchase.id,
-                tariff_id=tariff.id,
-                period_days=purchase.period_days,
-            )
-            purchase.status = GuestPurchaseStatus.FAILED.value
-            await db.commit()
-            return purchase
+        # Trial-as-period purchases use TRIAL_ACTIVATION_PRICE / TRIAL_DURATION_DAYS
+        # from settings — the price is NOT in tariff.period_prices, so skip the
+        # tariff-level price check for them.
+        is_trial_purchase = (
+            settings.TRIAL_PAYMENT_ENABLED
+            and settings.TRIAL_ACTIVATION_PRICE > 0
+            and purchase.period_days == settings.TRIAL_DURATION_DAYS
+        )
+
+        if not is_trial_purchase:
+            # Verify the tariff still has a price configured for this period.
+            # We do NOT re-verify the exact amount because discounts, price changes,
+            # or promo codes may have altered the price at purchase time. The amount
+            # was validated server-side in validate_and_calculate() and the payment
+            # provider confirmed the charged amount.
+            expected_price = tariff.get_price_for_period(purchase.period_days)
+            if expected_price is None:
+                logger.error(
+                    'Price no longer configured for period — aborting fulfillment',
+                    purchase_id=purchase.id,
+                    tariff_id=tariff.id,
+                    period_days=purchase.period_days,
+                )
+                purchase.status = GuestPurchaseStatus.FAILED.value
+                await db.commit()
+                return purchase
 
         # Check if user already has a subscription
         if settings.is_multi_tariff_enabled():
@@ -359,7 +483,19 @@ async def fulfill_purchase(
             existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
-        if existing_subscription is not None and (existing_subscription.is_active or purchase.is_gift):
+        # Treat trial subscriptions like active ones for the "already has subscription"
+        # check — иначе после покупки триала (status=TRIAL) защита не срабатывает и
+        # второй платёж за то же лендинг-окно проходит fulfillment → подписка
+        # extend'ится через activate_purchase, юзер получает 2× оплаты за 1× день.
+        _existing_alive = existing_subscription is not None and (
+            existing_subscription.is_active
+            or (
+                existing_subscription.status == SubscriptionStatus.TRIAL.value
+                and existing_subscription.end_date is not None
+                and _aware(existing_subscription.end_date) > datetime.now(UTC)
+            )
+        )
+        if existing_subscription is not None and (_existing_alive or purchase.is_gift):
             # Active subscription or gift with any existing subscription — hold for manual activation
             purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
             purchase.user_id = user.id
@@ -405,6 +541,21 @@ async def fulfill_purchase(
             all_servers, _ = await get_all_server_squads(db, available_only=True)
             squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
+        # Trial purchase: when period_days matches TRIAL_DURATION_DAYS and paid trial
+        # is enabled, the subscription is created with is_trial=True and uses the
+        # trial-specific traffic / device limits from settings (not the tariff's).
+        is_trial_purchase = (
+            settings.TRIAL_PAYMENT_ENABLED
+            and settings.TRIAL_ACTIVATION_PRICE > 0
+            and purchase.period_days == settings.TRIAL_DURATION_DAYS
+        )
+        if is_trial_purchase:
+            traffic_limit = settings.TRIAL_TRAFFIC_LIMIT_GB
+            device_limit = settings.TRIAL_DEVICE_LIMIT
+        else:
+            traffic_limit = tariff.traffic_limit_gb
+            device_limit = tariff.device_limit
+
         if existing_subscription is not None:
             # Expired/inactive subscription — replace it
             existing_subscription.tariff_id = tariff.id
@@ -412,22 +563,26 @@ async def fulfill_purchase(
                 db,
                 existing_subscription,
                 duration_days=purchase.period_days,
-                traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
+                traffic_limit_gb=traffic_limit,
+                device_limit=device_limit,
                 connected_squads=squads,
-                is_trial=False,
+                is_trial=is_trial_purchase,
                 update_server_counters=True,
             )
         else:
-            # No subscription at all — create new
+            # No subscription at all — create new. is_trial is passed in the
+            # constructor so the row is persisted with the correct flag in a
+            # single transaction (no two-commit window where a crash could
+            # leave is_trial=False on a trial subscription).
             subscription = await create_paid_subscription(
                 db=db,
                 user_id=user.id,
                 duration_days=purchase.period_days,
-                traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
+                traffic_limit_gb=traffic_limit,
+                device_limit=device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
+                is_trial=is_trial_purchase,
                 update_server_counters=True,
             )
 
@@ -442,6 +597,12 @@ async def fulfill_purchase(
         purchase.status = GuestPurchaseStatus.DELIVERED.value
         purchase.user_id = user.id
         purchase.delivered_at = datetime.now(UTC)
+
+        # EtoPlatezhi guest payments register their recurring card during the
+        # webhook, but at that moment user_id is unknown. The webhook stashes
+        # the recurring/account data in payment.metadata_json — pick it up now
+        # that user_id is resolved and persist the saved_payment_methods row.
+        await _maybe_save_etoplatezhi_card_from_guest_payment(db, purchase, user)
 
         # Extract subid from Redis cache (saved at purchase creation)
         try:
@@ -1099,6 +1260,36 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
     notification_tariff_name = tariff.name
     notification_language = user.language or 'ru'
 
+    # Layer 1 защита: дубликат trial purchase не должен флипать is_trial живой
+    # триал-подписки. _fulfill_purchase (c50c1813) уже блочит дубль в момент
+    # webhook, отправляя его в PENDING_ACTIVATION. Но retry_stuck_pending_activation
+    # через 10 мин дёргает activate_purchase, который идёт по extend_subscription
+    # (tariff_id передан) → crud/subscription.py:776 flip is_trial=False →
+    # recurrent_payment_service сразу видит "paid sub с end через 24ч" и списывает
+    # с карты. Случай user 24513: 19₽ trial → дубль 19₽ → 299₽ списание через
+    # 7 мин. Оставляем покупку в PENDING_ACTIVATION для админ-refund.
+    is_trial_purchase = (
+        settings.TRIAL_PAYMENT_ENABLED
+        and settings.TRIAL_ACTIVATION_PRICE > 0
+        and purchase.period_days == settings.TRIAL_DURATION_DAYS
+    )
+    if is_trial_purchase:
+        _existing = await get_subscription_by_user_id(db, user.id)
+        _existing_trial_alive = (
+            _existing is not None
+            and getattr(_existing, 'is_trial', False)
+            and _existing.end_date is not None
+            and _aware(_existing.end_date) > datetime.now(UTC)
+        )
+        if _existing_trial_alive:
+            logger.info(
+                'activate_purchase: blocking duplicate trial activation',
+                purchase_token_prefix=purchase_token[:5],
+                user_id=user.id,
+                existing_subscription_id=_existing.id,
+            )
+            return purchase
+
     try:
         subscription_service = SubscriptionService()
 
@@ -1264,8 +1455,9 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
         await db.rollback()
         raise
     except Exception:
+        purchase_id_snapshot = purchase.id
         await db.rollback()
-        logger.exception('Failed to activate purchase', purchase_id=purchase.id)
+        logger.exception('Failed to activate purchase', purchase_id=purchase_id_snapshot)
         raise GuestPurchaseError('Activation failed, please try again', status_code=500)
 
     return purchase

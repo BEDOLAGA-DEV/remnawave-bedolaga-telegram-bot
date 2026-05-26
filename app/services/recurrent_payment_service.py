@@ -1,8 +1,9 @@
-"""Сервис рекуррентных автоплатежей через YooKassa.
+"""Сервис рекуррентных автоплатежей через сохранённые карты.
 
 Находит подписки с autopay, у которых недостаточно баланса для продления,
-и пополняет баланс с сохранённой карты. Существующий autopay в
-monitoring_service затем спишет баланс и продлит подписку.
+и пополняет баланс с сохранённой карты. Поставщик карты выбирается через
+:mod:`app.services.payment.recurring` registry — текущая реализация
+поддерживает YooKassa и легко расширяется новыми провайдерами.
 """
 
 from __future__ import annotations
@@ -81,11 +82,11 @@ async def process_recurrent_payments(db: AsyncSession, bot: Bot | None = None) -
     Returns:
         dict: Статистика обработки
     """
-    if not settings.YOOKASSA_RECURRENT_ENABLED:
-        return {'skipped': True, 'reason': 'recurrent_disabled'}
+    # Provider-agnostic gate: skip only if NO recurring provider is configured.
+    from app.services.payment.recurring import is_any_recurring_enabled
 
-    if not settings.YOOKASSA_ENABLED:
-        return {'skipped': True, 'reason': 'yookassa_disabled'}
+    if not is_any_recurring_enabled():
+        return {'skipped': True, 'reason': 'recurrent_disabled'}
 
     if not settings.ENABLE_AUTOPAY:
         return {'skipped': True, 'reason': 'autopay_disabled'}
@@ -224,6 +225,15 @@ async def _find_subscriptions_needing_topup(db: AsyncSession) -> list:
                 ),
                 Subscription.autopay_enabled == True,
                 Subscription.is_trial == False,
+                # Layer 2 sanity-guard: подписка должна "пожить" хотя бы 12ч
+                # перед тем как мы начнём списывать через recurring карту.
+                # Защищает от каскада "юзер только что взял триал → дубль →
+                # extend_subscription flip is_trial=False → балансовый autopay
+                # сразу списывает". См. кейс user 24513: 19₽ trial → 7 мин →
+                # 299₽ recurring. Также: trial-to-paid конверсия идёт через
+                # trial_conversion_service (T-12h..T+0), эта таблица —
+                # для полноценных paid subs c длительным периодом.
+                Subscription.start_date <= current_time - timedelta(hours=12),
             )
         )
     )
@@ -302,12 +312,13 @@ async def _process_single_subscription(
     # Сумма пополнения = нехватка (минимум YOOKASSA_MIN_AMOUNT_KOPEKS)
     min_amount = settings.YOOKASSA_MIN_AMOUNT_KOPEKS
     topup_amount_kopeks = max(shortage, min_amount)
-    topup_amount_rubles = topup_amount_kopeks / 100
 
-    # Создаём автоплатёж
-    yookassa_service = payment_service.yookassa_service
-    if not yookassa_service or not yookassa_service.configured:
-        logger.warning('YooKassa сервис не сконфигурирован для рекуррентных платежей')
+    # Заведомо не выходим за рамки локальных рекуррентов: список провайдеров
+    # берётся из registry. Если ни один не настроен — пропускаем подписку.
+    from app.services.payment.recurring import get_provider, is_any_recurring_enabled
+
+    if not is_any_recurring_enabled():
+        logger.warning('Ни один провайдер рекуррентных платежей не сконфигурирован')
         return 'skipped'
 
     description = settings.get_balance_payment_description(
@@ -324,61 +335,174 @@ async def _process_single_subscription(
     # Перебираем все сохранённые карты пока не найдём рабочую
     today = datetime.now(UTC).strftime('%Y-%m-%d')
     for saved_method in saved_methods:
-        # Детерминированный ключ: при рестарте/повторе YooKassa вернёт тот же платёж
+        provider_name = saved_method.provider or 'yookassa'
+        provider_token = saved_method.provider_token or saved_method.yookassa_payment_method_id
+        provider = get_provider(provider_name)
+        if not provider or not provider.is_enabled() or not provider_token:
+            logger.debug(
+                'Провайдер карты недоступен, пробуем следующую',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                provider=provider_name,
+                saved_method_id=saved_method.id,
+            )
+            continue
+
+        # Детерминированный ключ: при рестарте/повторе платформа вернёт тот же платёж
         idem_key = f'recurrent_{subscription.id}_{saved_method.id}_{today}'
-        result = await yookassa_service.create_autopayment(
-            amount=topup_amount_rubles,
-            currency='RUB',
+        # Per-card method_code so providers with method-specific endpoints
+        # (EtoPlatezhi card-partner/sberpay/yoomoney-wallet) route correctly.
+        per_card_meta = dict(metadata)
+        per_card_meta['method_code'] = getattr(saved_method, 'method_code', None)
+
+        # EtoPlatezhi: предсоздать pending-запись и закоммитить ДО charge.
+        # Webhook ищет платёж по order_id из новой сессии — row должен быть
+        # видим до того, как провайдер начнёт коллбечить. Иначе callback
+        # вернёт "платёж не найден" и пополнение молча потеряется.
+        if provider_name == 'etoplatezhi':
+            try:
+                from app.database.crud.etoplatezhi import (
+                    create_etoplatezhi_payment,
+                    get_etoplatezhi_payment_by_order_id,
+                )
+
+                existing = await get_etoplatezhi_payment_by_order_id(db, idem_key)
+                if not existing:
+                    await create_etoplatezhi_payment(
+                        db=db,
+                        user_id=user.id,
+                        order_id=idem_key,
+                        amount_kopeks=topup_amount_kopeks,
+                        currency='RUB',
+                        description=description,
+                        payment_method=getattr(saved_method, 'method_code', None) or 'card-partner',
+                        metadata_json=per_card_meta,
+                    )
+            except Exception as e:
+                logger.warning(
+                    'Не удалось предсоздать запись etoplatezhi, пропускаем карту',
+                    user_id=user.id,
+                    subscription_id=subscription.id,
+                    error=e,
+                )
+                continue
+
+        charge = await provider.charge(
+            provider_token=provider_token,
+            amount_kopeks=topup_amount_kopeks,
             description=description,
-            payment_method_id=saved_method.yookassa_payment_method_id,
-            metadata=metadata,
-            idempotence_key=idem_key,
+            metadata=per_card_meta,
+            idempotency_key=idem_key,
+            user_id=user.id,
         )
 
-        if not result:
+        if not charge.success:
             card_display = f'*{saved_method.card_last4}' if saved_method.card_last4 else ''
             logger.warning(
                 'Не удалось списать с карты, пробуем следующую',
                 user_id=user.id,
                 subscription_id=subscription.id,
-                payment_method_id=saved_method.yookassa_payment_method_id,
+                provider=provider_name,
+                payment_method_id=provider_token,
                 card_display=card_display,
+                error=charge.error_message,
             )
+            if provider_name == 'etoplatezhi':
+                try:
+                    from app.database.crud.etoplatezhi import (
+                        get_etoplatezhi_payment_by_order_id,
+                        update_etoplatezhi_payment_status,
+                    )
+
+                    pending = await get_etoplatezhi_payment_by_order_id(db, idem_key)
+                    if pending and pending.status == 'pending':
+                        await update_etoplatezhi_payment_status(db, pending, status='failed')
+                except Exception as mark_error:
+                    logger.warning(
+                        'Не удалось пометить etoplatezhi платёж как failed',
+                        error=mark_error,
+                    )
             continue
 
-        # Успешно — сохраняем локальную запись с привязкой к YooKassa ID
-        try:
-            from app.database.crud.yookassa import create_yookassa_payment
+        result = charge.raw or {}
 
-            yookassa_created_at = None
-            if result.get('created_at'):
-                try:
-                    yookassa_created_at = datetime.fromisoformat(result['created_at'].replace('Z', '+00:00'))
-                except Exception:
-                    pass
+        # Успешно — сохраняем локальную запись чтобы webhook callback мог найти
+        # платёж по order_id и применить пополнение баланса.
+        if provider_name == 'yookassa':
+            try:
+                from app.database.crud.yookassa import create_yookassa_payment
 
-            result_payment = await create_yookassa_payment(
-                db=db,
-                user_id=user.id,
-                yookassa_payment_id=result['id'],
-                amount_kopeks=topup_amount_kopeks,
-                currency='RUB',
-                description=description,
-                status=result.get('status', 'pending'),
-                metadata_json=metadata,
-                yookassa_created_at=yookassa_created_at,
-                test_mode=result.get('test_mode', False),
-            )
-            if result_payment:
-                logger.info(
-                    'Рекуррентный автоплатёж создан',
+                yookassa_created_at = None
+                if result.get('created_at'):
+                    try:
+                        yookassa_created_at = datetime.fromisoformat(result['created_at'].replace('Z', '+00:00'))
+                    except Exception:
+                        pass
+
+                result_payment = await create_yookassa_payment(
+                    db=db,
                     user_id=user.id,
-                    subscription_id=subscription.id,
-                    amount_kopeks=topup_amount_kopeks,
                     yookassa_payment_id=result['id'],
+                    amount_kopeks=topup_amount_kopeks,
+                    currency='RUB',
+                    description=description,
+                    status=result.get('status', 'pending'),
+                    metadata_json=metadata,
+                    yookassa_created_at=yookassa_created_at,
+                    test_mode=result.get('test_mode', False),
                 )
-        except Exception as e:
-            logger.warning('Ошибка создания локальной записи рекуррентного платежа', error=e)
+                if result_payment:
+                    logger.info(
+                        'Рекуррентный автоплатёж создан',
+                        user_id=user.id,
+                        subscription_id=subscription.id,
+                        provider=provider_name,
+                        amount_kopeks=topup_amount_kopeks,
+                        provider_payment_id=charge.provider_payment_id,
+                    )
+            except Exception as e:
+                logger.warning('Ошибка создания локальной записи рекуррентного платежа', error=e)
+        elif provider_name == 'etoplatezhi':
+            # Pending-запись уже создана и закоммичена ДО charge (см. выше).
+            # Дописываем provider_payment_id атомарным UPDATE без чтения row
+            # — set_etoplatezhi_payment_id_if_missing трогает только это поле
+            # и НЕ касается status/is_paid. Защита от race: пока шёл charge
+            # (несколько секунд), webhook мог уже доставить status='success',
+            # is_paid=True. Раньше re-fetch + update со stale pending.status
+            # клобберил webhook-set success обратно на 'pending'. Теперь —
+            # невозможно, status вообще не задевается.
+            if charge.provider_payment_id:
+                try:
+                    from app.database.crud.etoplatezhi import set_etoplatezhi_payment_id_if_missing
+
+                    await set_etoplatezhi_payment_id_if_missing(
+                        db,
+                        order_id=idem_key,
+                        etoplatezhi_payment_id=str(charge.provider_payment_id),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        'Ошибка обновления etoplatezhi_payment_id',
+                        provider=provider_name,
+                        error=e,
+                    )
+            logger.info(
+                'Рекуррентный автоплатёж создан',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                provider=provider_name,
+                amount_kopeks=topup_amount_kopeks,
+                provider_payment_id=charge.provider_payment_id,
+            )
+        else:
+            logger.info(
+                'Рекуррентный автоплатёж создан',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                provider=provider_name,
+                amount_kopeks=topup_amount_kopeks,
+                provider_payment_id=charge.provider_payment_id,
+            )
 
         # Уведомляем пользователя
         if bot and user.telegram_id:
@@ -405,7 +529,8 @@ async def _process_single_subscription(
                     logger.info(
                         'Рекуррентный платёж в обработке',
                         user_id=user.id,
-                        yookassa_payment_id=result.get('id'),
+                        provider=provider_name,
+                        provider_payment_id=charge.provider_payment_id,
                     )
             except Exception as notify_error:
                 logger.warning('Ошибка уведомления об автоплатеже', notify_error=notify_error)

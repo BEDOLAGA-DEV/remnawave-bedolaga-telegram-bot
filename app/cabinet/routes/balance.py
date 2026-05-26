@@ -203,6 +203,14 @@ async def get_payment_methods(
                 )
             options = formatted_options or None
 
+        requires_recurring_consent = False
+        if (
+            method_id == 'etoplatezhi'
+            and settings.ETOPLATEZHI_RECURRENT_ENABLED
+            and settings.ETOPLATEZHI_RECURRENT_REQUIRED
+        ) or (method_id == 'yookassa' and getattr(settings, 'YOOKASSA_RECURRENT_ENABLED', False)):
+            requires_recurring_consent = True
+
         methods.append(
             PaymentMethodResponse(
                 id=method_id,
@@ -213,6 +221,7 @@ async def get_payment_methods(
                 is_available=True,
                 options=options,
                 open_url_direct=bool(method_data.get('open_url_direct', False)),
+                requires_recurring_consent=requires_recurring_consent,
             )
         )
 
@@ -692,6 +701,38 @@ async def create_topup(
                     detail='Failed to create FreeKassa payment',
                 )
 
+        elif request.payment_method == 'etoplatezhi':
+            if not settings.is_etoplatezhi_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='EtoPlatezhi payment method is unavailable',
+                )
+
+            payment_service = PaymentService()
+            payment_method_type = request.payment_option or None
+            result = await payment_service.create_etoplatezhi_payment(
+                db=db,
+                user_id=user.id,
+                amount_kopeks=request.amount_kopeks,
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
+                email=getattr(user, 'email', None),
+                language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                payment_method_type=payment_method_type,
+                success_url=cabinet_success_url,
+                fail_url=cabinet_failed_url,
+            )
+
+            if result and result.get('payment_url'):
+                payment_url = result.get('payment_url')
+                payment_id = str(result.get('local_payment_id') or result.get('order_id') or 'pending')
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Failed to create EtoPlatezhi payment',
+                )
+
         elif request.payment_method == 'kassa_ai':
             if not settings.is_kassa_ai_enabled():
                 raise HTTPException(
@@ -715,6 +756,8 @@ async def create_topup(
                 email=getattr(user, 'email', None),
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_system_id=ps_id,
+                return_url=cabinet_success_url,
+                fail_url=cabinet_failed_url,
             )
 
             if result and result.get('payment_url'):
@@ -1534,7 +1577,9 @@ async def get_saved_cards(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get user's saved payment methods (cards) for recurrent payments."""
-    recurrent_enabled = settings.YOOKASSA_RECURRENT_ENABLED
+    from app.services.payment.recurring import is_any_recurring_enabled
+
+    recurrent_enabled = is_any_recurring_enabled()
 
     if not recurrent_enabled:
         return SavedCardsListResponse(cards=[], recurrent_enabled=False)
@@ -1549,6 +1594,7 @@ async def get_saved_cards(
             card_type=m.card_type,
             title=m.title,
             created_at=m.created_at,
+            provider=m.provider,
         )
         for m in methods
     ]
@@ -1563,7 +1609,9 @@ async def delete_saved_card(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Unlink (deactivate) a saved payment method."""
-    if not settings.YOOKASSA_RECURRENT_ENABLED:
+    from app.services.payment.recurring import is_any_recurring_enabled
+
+    if not is_any_recurring_enabled():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Recurrent payments are not enabled',

@@ -48,6 +48,7 @@ class LandingTariffPeriod(BaseModel):
     original_price_kopeks: int | None = None  # set if discount active
     original_price_label: str | None = None
     discount_percent: int | None = None  # effective discount for this tariff
+    is_trial: bool = False  # True when this period activates a paid trial subscription
 
 
 class LandingTariff(BaseModel):
@@ -77,6 +78,7 @@ class LandingPaymentMethod(BaseModel):
     # Enabled sub-options with display labels (e.g. СБП, Карта).
     # None or empty means no sub-option selection needed.
     sub_options: list[LandingPaymentMethodSubOption] | None = None
+    requires_recurring_consent: bool = False
 
 
 class LandingDiscountInfo(BaseModel):
@@ -325,6 +327,13 @@ async def _load_landing_tariffs(
     allowed_periods = landing.allowed_periods or {}
     landing_tariffs = []
 
+    # Trial config: when TRIAL_PAYMENT_ENABLED and price > 0, expose the trial
+    # period alongside the tariff's regular periods so it appears as the first
+    # purchasable option on the landing.
+    trial_enabled = bool(settings.TRIAL_PAYMENT_ENABLED and settings.TRIAL_ACTIVATION_PRICE > 0)
+    trial_days = settings.TRIAL_DURATION_DAYS if trial_enabled else None
+    trial_price = settings.TRIAL_ACTIVATION_PRICE if trial_enabled else 0
+
     for tariff in tariffs:
         # Determine which periods to show
         tariff_period_override = allowed_periods.get(str(tariff.id))
@@ -334,6 +343,25 @@ async def _load_landing_tariffs(
             period_days_list = tariff.get_available_periods()
 
         periods = []
+
+        # Prepend trial period (only on first eligible tariff to avoid duplicates).
+        # If admin set an allowed_periods override for this tariff and trial_days
+        # is NOT in the override, the trial is suppressed on this landing.
+        trial_allowed_for_this_tariff = tariff_period_override is None or trial_days in tariff_period_override
+        if trial_enabled and not landing_tariffs and trial_allowed_for_this_tariff:
+            periods.append(
+                LandingTariffPeriod(
+                    days=trial_days,
+                    label='Пробный период',
+                    price_kopeks=trial_price,
+                    price_label=settings.format_price(trial_price),
+                    original_price_kopeks=None,
+                    original_price_label=None,
+                    discount_percent=None,
+                    is_trial=True,
+                )
+            )
+
         for days in period_days_list:
             price = tariff.get_price_for_period(days)
             if price is None:
@@ -505,6 +533,14 @@ async def get_landing_config(
             if resolved:
                 resolved_sub_options = resolved
 
+        requires_recurring_consent = False
+        if (
+            method_id == 'etoplatezhi'
+            and settings.ETOPLATEZHI_RECURRENT_ENABLED
+            and settings.ETOPLATEZHI_RECURRENT_REQUIRED
+        ) or (method_id == 'yookassa' and getattr(settings, 'YOOKASSA_RECURRENT_ENABLED', False)):
+            requires_recurring_consent = True
+
         payment_methods.append(
             LandingPaymentMethod(
                 method_id=method_id,
@@ -516,6 +552,7 @@ async def get_landing_config(
                 max_amount_kopeks=m.get('max_amount_kopeks'),
                 currency=m.get('currency'),
                 sub_options=resolved_sub_options,
+                requires_recurring_consent=requires_recurring_consent,
             )
         )
 

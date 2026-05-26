@@ -29,6 +29,8 @@ class KassaAiPaymentMixin:
         email: str | None = None,
         language: str = 'ru',
         payment_system_id: int | None = None,
+        return_url: str | None = None,
+        fail_url: str | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж KassaAI.
@@ -95,6 +97,11 @@ class KassaAiPaymentMixin:
             # KassaAI требует email в формате {telegram_id}@telegram.org
             target_email = email or (f'{user.telegram_id}@telegram.org' if user and user.telegram_id else None)
 
+            # Notification (webhook) URL — always points to our /kassa-ai-webhook
+            webhook_url = None
+            if settings.WEBHOOK_URL:
+                webhook_url = f'{settings.WEBHOOK_URL.rstrip("/")}/kassa-ai-webhook'
+
             result = await kassa_ai_service.create_order(
                 order_id=order_id,
                 amount=amount_rubles,
@@ -103,6 +110,9 @@ class KassaAiPaymentMixin:
                 payment_system_id=payment_system_id
                 if payment_system_id is not None
                 else settings.KASSA_AI_PAYMENT_SYSTEM_ID,
+                success_url=return_url,
+                fail_url=fail_url or return_url,
+                notification_url=webhook_url,
             )
 
             payment_url = result.get('location')

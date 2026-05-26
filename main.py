@@ -294,7 +294,31 @@ async def main():
             bot, dp = await setup_bot()
             stage.log('Кеш и FSM подготовлены')
 
-        bot_user = await bot.get_me()
+        # Telegram API connectivity from RU/Timeweb hosts is flaky after the
+        # PROXY_URL removal — a single ConnectTimeout on get_me() crashes the
+        # whole startup. Retry up to 5 times with linear backoff before giving up.
+        from aiogram.exceptions import TelegramNetworkError
+
+        bot_user = None
+        _last_err: Exception | None = None
+        for _attempt in range(8):
+            try:
+                # short per-call timeout: aiogram default is 60s — на flaky
+                # сети это значит, что 5 fail подряд = 5 минут startup. Тут
+                # 6s × 8 попыток = ~48с worst-case с 1-3-5-7-9-11-13s бэк-офф.
+                bot_user = await bot.get_me(request_timeout=6)
+                break
+            except TelegramNetworkError as exc:
+                _last_err = exc
+                logger.warning(
+                    'bot.get_me() failed, retrying',
+                    attempt=_attempt + 1,
+                    error=str(exc),
+                )
+                await asyncio.sleep(min(1 + _attempt * 2, 10))
+        if bot_user is None:
+            raise _last_err if _last_err else RuntimeError('bot.get_me() exhausted retries')
+
         if bot_user.username and not settings.BOT_USERNAME:
             settings.BOT_USERNAME = bot_user.username
             logger.info('BOT_USERNAME auto-detected', bot_username=bot_user.username)

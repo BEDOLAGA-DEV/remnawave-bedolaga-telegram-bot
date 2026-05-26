@@ -228,16 +228,32 @@ class MonitoringService:
                 # экспайрятся до того, как autopay успеет их продлить
                 # Продление с баланса работает всегда, если у подписки autopay_enabled=True
                 await self._process_autopayments(db)
-                # Рекуррентные автоплатежи с карты: требуют ENABLE_AUTOPAY + YOOKASSA_RECURRENT_ENABLED
-                if settings.ENABLE_AUTOPAY and settings.YOOKASSA_RECURRENT_ENABLED:
+                # Рекуррентные автоплатежи с карты: ENABLE_AUTOPAY + любой включённый provider
+                # (YooKassa, EtoPlatezhi, …). Внутренний gate в process_recurrent_payments
+                # вернёт skip если ни один провайдер не активен.
+                if settings.ENABLE_AUTOPAY:
                     try:
+                        from app.services.payment.recurring import is_any_recurring_enabled
                         from app.services.recurrent_payment_service import process_recurrent_payments
 
-                        await process_recurrent_payments(db=db, bot=self.bot)
+                        if is_any_recurring_enabled():
+                            await process_recurrent_payments(db=db, bot=self.bot)
                     except Exception as recurrent_error:
                         logger.error(
                             'Ошибка рекуррентных автоплатежей',
                             error=recurrent_error,
+                            exc_info=True,
+                        )
+                # Trial → paid auto-conversion (multi-provider через recurring/)
+                if settings.ENABLE_AUTOPAY:
+                    try:
+                        from app.services.trial_conversion_service import process_trial_conversions
+
+                        await process_trial_conversions(db)
+                    except Exception as trial_conv_error:
+                        logger.error(
+                            'Ошибка авто-конверсии триалов',
+                            error=trial_conv_error,
                             exc_info=True,
                         )
                 await self._check_expired_subscriptions(db)
@@ -1191,6 +1207,15 @@ class MonitoringService:
                         ),
                         Subscription.autopay_enabled == True,
                         Subscription.is_trial == False,
+                        # Layer 2 sanity-guard: подписка должна "пожить" хотя
+                        # бы 12ч до первого balance autopay. Триал-to-paid
+                        # конверсия (trial_conversion_service) уже забирает
+                        # окно T-12h..T+0 для свежих триалов через карту;
+                        # балансовый autopay должен подключаться только когда
+                        # sub реально устоявшаяся. Защищает от кейсов вроде
+                        # user 24513 (триал → дубль → flip is_trial → balance
+                        # autopay сразу +30д через 1 минуту).
+                        Subscription.start_date <= current_time - timedelta(hours=12),
                     )
                 )
             )

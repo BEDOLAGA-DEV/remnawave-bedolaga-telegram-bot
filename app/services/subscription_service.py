@@ -676,6 +676,74 @@ class SubscriptionService:
             logger.error('Ошибка обновления ссылки подписки', error=e)
             return None
 
+    async def convert_trial_to_paid(
+        self,
+        db: AsyncSession,
+        subscription: Subscription,
+        *,
+        period_days: int = 30,
+        amount_kopeks: int | None = None,
+        provider: str | None = None,
+        provider_payment_id: str | None = None,
+    ) -> Subscription | None:
+        """Конвертирует trial-подписку в платную и синхронизирует с RemnaWave.
+
+        Steps:
+            1. CRUD конверсия (is_trial=False, status=ACTIVE, end_date += period_days)
+            2. Audit Transaction (subscription_payment, -amount_kopeks)
+            3. RemnaWave panel update (new expire_at)
+            4. NOT commit — caller decides
+        """
+        from app.database.crud.subscription import convert_trial_to_paid_in_db
+        from app.database.crud.transaction import create_transaction
+        from app.database.models import TransactionType
+
+        updated = await convert_trial_to_paid_in_db(db, subscription.id, period_days=period_days)
+        if not updated:
+            return None
+
+        # Audit Transaction (debit)
+        if amount_kopeks and amount_kopeks > 0:
+            description_parts = [f'Конверсия триала в подписку ({period_days} дн.)']
+            if provider:
+                description_parts.append(f'провайдер: {provider}')
+            if provider_payment_id:
+                description_parts.append(f'payment_id: {provider_payment_id}')
+            try:
+                await create_transaction(
+                    db=db,
+                    user_id=updated.user_id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    amount_kopeks=-amount_kopeks,
+                    description=' | '.join(description_parts),
+                )
+            except Exception as e:
+                logger.warning(
+                    'convert_trial_to_paid: failed to create audit transaction',
+                    subscription_id=updated.id,
+                    error=str(e),
+                )
+
+        # Sync RemnaWave panel
+        try:
+            await self.update_remnawave_user(db, updated)
+        except Exception as e:
+            logger.error(
+                'convert_trial_to_paid: failed to sync RemnaWave panel',
+                subscription_id=updated.id,
+                error=str(e),
+            )
+
+        logger.info(
+            '✅ Trial converted to paid',
+            subscription_id=updated.id,
+            user_id=updated.user_id,
+            new_end_date=updated.end_date.isoformat(),
+            amount_kopeks=amount_kopeks,
+            provider=provider,
+        )
+        return updated
+
     async def get_subscription_info(self, short_uuid: str) -> dict | None:
         try:
             async with self.get_api_client() as api:

@@ -77,6 +77,13 @@ class PublicOfferResponse(BaseModel):
     updated_at: str | None = None
 
 
+class RecurrentPaymentsResponse(BaseModel):
+    """Recurrent payments agreement."""
+
+    content: str
+    updated_at: str | None = None
+
+
 class ServiceInfoResponse(BaseModel):
     """General service info."""
 
@@ -216,6 +223,30 @@ async def get_public_offer(
 
 Условия использования сервиса.
 """,
+        updated_at=None,
+    )
+
+
+@router.get('/recurrent-payments', response_model=RecurrentPaymentsResponse)
+async def get_recurrent_payments_agreement(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get recurrent payments agreement.
+
+    Stored in ``system_settings.LEGAL_DOC_recurrent``. Public — no auth.
+    """
+    from sqlalchemy import select
+
+    from app.database.models import SystemSetting
+
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == 'LEGAL_DOC_recurrent'))
+    setting = result.scalar_one_or_none()
+    if setting and setting.value:
+        updated_at = setting.updated_at.isoformat() if setting.updated_at else None
+        return RecurrentPaymentsResponse(content=setting.value, updated_at=updated_at)
+
+    return RecurrentPaymentsResponse(
+        content='# Соглашение о рекуррентных платежах\n\nУсловия автоматических списаний.\n',
         updated_at=None,
     )
 

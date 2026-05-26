@@ -140,6 +140,9 @@ class KassaAiService:
         email: str | None = None,
         ip: str | None = None,
         payment_system_id: int | None = None,
+        success_url: str | None = None,
+        fail_url: str | None = None,
+        notification_url: str | None = None,
     ) -> dict[str, Any]:
         """
         Создает заказ через API KassaAI.
@@ -172,6 +175,12 @@ class KassaAiService:
             'amount': final_amount,
             'currency': currency,
         }
+        if success_url:
+            params['success_url'] = success_url
+        if fail_url:
+            params['fail_url'] = fail_url
+        if notification_url:
+            params['notification_url'] = notification_url
 
         # Генерируем подпись HMAC-SHA256
         params['signature'] = self._generate_hmac_signature(params)
@@ -228,6 +237,9 @@ class KassaAiService:
         email: str | None = None,
         ip: str | None = None,
         payment_system_id: int | None = None,
+        success_url: str | None = None,
+        fail_url: str | None = None,
+        notification_url: str | None = None,
     ) -> str:
         """
         Создает заказ через API и возвращает URL для оплаты.
@@ -239,6 +251,9 @@ class KassaAiService:
             email=email,
             ip=ip,
             payment_system_id=payment_system_id,
+            success_url=success_url,
+            fail_url=fail_url,
+            notification_url=notification_url,
         )
         location = result.get('location')
         if not location:

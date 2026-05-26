@@ -2470,3 +2470,80 @@ async def get_all_subscriptions_by_user_id(db: AsyncSession, user_id: int) -> li
         )
     )
     return list(result.scalars().all())
+
+
+async def convert_trial_to_paid_in_db(
+    db: AsyncSession,
+    subscription_id: int,
+    period_days: int = 30,
+) -> Subscription | None:
+    """Atomically convert a trial subscription to paid.
+
+    Behavior:
+        * is_trial → False
+        * status → ACTIVE
+        * end_date → max(now, end_date) + period_days
+        * If sub is_trial=False already → noop, return sub
+        * If sub not found → None
+
+    Concurrency: берёт `SELECT ... FOR UPDATE` lock на Subscription row перед
+    проверкой `is_trial`. Защищает от двойного продления end_date при at-least-once
+    webhook delivery (EtoPlatezhi/YooKassa могут ретраить callback при таймауте).
+    """
+    # Single SELECT ... FOR UPDATE: acquires row lock and loads fresh state in
+    # one round-trip. Replaces previous get + lock-only-select + refresh trio
+    # (3 queries → 1) and protects against double-extension on webhook retries.
+    # selectinload(tariff) — нужен ниже для upgrade лимитов; lazy-load после
+    # FOR UPDATE триггерит MissingGreenlet в async-сессии.
+    result = await db.execute(
+        select(Subscription)
+        .options(selectinload(Subscription.tariff))
+        .where(Subscription.id == subscription_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    sub = result.scalar_one_or_none()
+    if not sub:
+        logger.warning('convert_trial_to_paid_in_db: subscription not found', subscription_id=subscription_id)
+        return None
+
+    if not sub.is_trial:
+        logger.info(
+            'convert_trial_to_paid_in_db: already paid, noop',
+            subscription_id=subscription_id,
+        )
+        return sub
+
+    now = datetime.now(UTC)
+    base_end = sub.end_date if sub.end_date and sub.end_date > now else now
+    new_end = base_end + timedelta(days=period_days)
+
+    sub.is_trial = False
+    sub.status = SubscriptionStatus.ACTIVE.value
+    sub.end_date = new_end
+    sub.updated_at = now
+
+    # Upgrade traffic/device лимитов с триальных (settings.TRIAL_*) на лимиты
+    # paid-тарифа. Триал на guest_purchase создаётся с tariff_id уже paid, но
+    # traffic_limit_gb/device_limit оверрайдятся из TRIAL_TRAFFIC_LIMIT_GB и
+    # TRIAL_DEVICE_LIMIT (см. guest_purchase_service._fulfill_purchase).
+    # connected_squads не трогаем — они уже = tariff.allowed_squads на момент
+    # создания, менять их = риск оторвать юзера от сервера.
+    # purchased_traffic_gb / traffic_used_gb / subscription_url сохраняем.
+    tariff = sub.tariff
+    if tariff is not None:
+        sub.traffic_limit_gb = tariff.traffic_limit_gb
+        sub.device_limit = tariff.device_limit
+
+    await db.flush()
+
+    logger.info(
+        'convert_trial_to_paid_in_db: success',
+        subscription_id=subscription_id,
+        new_end_date=new_end.isoformat(),
+        period_days=period_days,
+        tariff_id=tariff.id if tariff else None,
+        traffic_limit_gb=sub.traffic_limit_gb,
+        device_limit=sub.device_limit,
+    )
+    return sub

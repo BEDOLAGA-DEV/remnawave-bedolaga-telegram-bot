@@ -236,12 +236,24 @@ async def _get_jwks(force: bool = False) -> dict[str, Any]:
             return _jwks_cache
 
         proxy = settings.PROXY_URL if hasattr(settings, 'PROXY_URL') and settings.PROXY_URL else None
+        # Retry on transient ConnectTimeout — oauth.telegram.org from RU/Timeweb
+        # hosts is flaky (~30% timeout per attempt, succeeds within 2-3 tries).
+        # Without this, a single TCP glitch wedges every cabinet login for ~1h
+        # until the next cache refresh attempt.
+        last_exc: Exception | None = None
         async with httpx.AsyncClient(timeout=10, proxy=proxy) as client:
-            response = await client.get(_JWKS_URL)
-            response.raise_for_status()
-            _jwks_cache = response.json()
-            _jwks_cache_expiry = now + timedelta(seconds=_JWKS_CACHE_TTL_SECONDS)
-            return _jwks_cache
+            for attempt in range(3):
+                try:
+                    response = await client.get(_JWKS_URL)
+                    response.raise_for_status()
+                    _jwks_cache = response.json()
+                    _jwks_cache_expiry = now + timedelta(seconds=_JWKS_CACHE_TTL_SECONDS)
+                    return _jwks_cache
+                except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
+                    last_exc = exc
+                    if attempt < 2:
+                        await asyncio.sleep(0.5 * (attempt + 1))
+        raise last_exc if last_exc else httpx.ConnectTimeout('JWKS fetch failed after 3 retries')
 
 
 async def _force_refresh_jwks(kid: str) -> dict[str, Any] | None:

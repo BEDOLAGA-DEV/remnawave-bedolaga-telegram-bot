@@ -96,18 +96,33 @@ async def _get_tariff_promo_groups(db: AsyncSession, tariff: Tariff) -> list[Pro
 
 
 def _period_prices_to_list(period_prices: dict) -> list[PeriodPrice]:
-    """Convert period_prices dict to list."""
-    if not period_prices:
-        return []
-    return [
-        PeriodPrice(days=int(days), price_kopeks=price)
-        for days, price in sorted(period_prices.items(), key=lambda x: int(x[0]))
-    ]
+    """Convert period_prices dict to list.
+
+    Prepends a virtual trial-period entry when TRIAL_PAYMENT_ENABLED and
+    TRIAL_ACTIVATION_PRICE > 0 so admins can toggle it on per-landing
+    allow-list just like any other period.
+    """
+    items: list[PeriodPrice] = []
+    if settings.TRIAL_PAYMENT_ENABLED and settings.TRIAL_ACTIVATION_PRICE > 0:
+        items.append(
+            PeriodPrice(
+                days=settings.TRIAL_DURATION_DAYS,
+                price_kopeks=settings.TRIAL_ACTIVATION_PRICE,
+                is_trial=True,
+            )
+        )
+    if period_prices:
+        for days, price in sorted(period_prices.items(), key=lambda x: int(x[0])):
+            items.append(PeriodPrice(days=int(days), price_kopeks=price))
+    return items
 
 
 def _period_prices_to_dict(period_prices: list[PeriodPrice]) -> dict:
-    """Convert period_prices list to dict."""
-    return {str(pp.days): pp.price_kopeks for pp in period_prices}
+    """Convert period_prices list to dict.
+
+    Skips the virtual trial period (is_trial=True): it's stored in env, not in DB.
+    """
+    return {str(pp.days): pp.price_kopeks for pp in period_prices if not pp.is_trial}
 
 
 @router.get('', response_model=TariffListResponse)

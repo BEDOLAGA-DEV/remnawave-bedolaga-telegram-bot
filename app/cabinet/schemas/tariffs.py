@@ -11,6 +11,7 @@ class PeriodPrice(BaseModel):
     days: int = Field(..., ge=1, description='Period in days')
     price_kopeks: int = Field(..., ge=0, description='Price in kopeks')
     price_rubles: float | None = None
+    is_trial: bool = False  # True for the virtual trial period (TRIAL_DURATION_DAYS)
 
     def __init__(self, **data):
         super().__init__(**data)
