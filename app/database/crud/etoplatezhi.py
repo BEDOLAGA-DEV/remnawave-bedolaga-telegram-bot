@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import EtoplatezhiPayment
@@ -118,6 +118,37 @@ async def update_etoplatezhi_payment_status(
         is_paid=payment.is_paid,
     )
     return payment
+
+
+async def set_etoplatezhi_payment_id_if_missing(
+    db: AsyncSession,
+    *,
+    order_id: str,
+    etoplatezhi_payment_id: str,
+) -> int:
+    """Атомарно дописать etoplatezhi_payment_id, если ещё пуст.
+
+    Делает один UPDATE без чтения row, поэтому НЕ может клобберить status
+    или is_paid, поставленные параллельным webhook handler'ом (тот может
+    в этот момент уже выставить status='success', is_paid=True). Webhook
+    race в charge-loop ↔ webhook теперь невозможен — этот helper не
+    касается status/is_paid вообще.
+
+    Returns: число обновлённых строк (0 если payment_id уже был дописан).
+    """
+    result = await db.execute(
+        update(EtoplatezhiPayment)
+        .where(
+            EtoplatezhiPayment.order_id == order_id,
+            EtoplatezhiPayment.etoplatezhi_payment_id.is_(None),
+        )
+        .values(
+            etoplatezhi_payment_id=etoplatezhi_payment_id,
+            updated_at=datetime.now(UTC),
+        )
+    )
+    await db.commit()
+    return result.rowcount or 0
 
 
 async def get_pending_etoplatezhi_payments(db: AsyncSession, user_id: int) -> list[EtoplatezhiPayment]:

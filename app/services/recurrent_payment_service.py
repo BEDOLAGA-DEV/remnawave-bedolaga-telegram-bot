@@ -455,28 +455,28 @@ async def _process_single_subscription(
                 logger.warning('Ошибка создания локальной записи рекуррентного платежа', error=e)
         elif provider_name == 'etoplatezhi':
             # Pending-запись уже создана и закоммичена ДО charge (см. выше).
-            # Здесь только дописываем provider_payment_id чтобы webhook мог
-            # дополнительно сматчиться по нему при необходимости.
-            try:
-                from app.database.crud.etoplatezhi import (
-                    get_etoplatezhi_payment_by_order_id,
-                    update_etoplatezhi_payment_status,
-                )
+            # Дописываем provider_payment_id атомарным UPDATE без чтения row
+            # — set_etoplatezhi_payment_id_if_missing трогает только это поле
+            # и НЕ касается status/is_paid. Защита от race: пока шёл charge
+            # (несколько секунд), webhook мог уже доставить status='success',
+            # is_paid=True. Раньше re-fetch + update со stale pending.status
+            # клобберил webhook-set success обратно на 'pending'. Теперь —
+            # невозможно, status вообще не задевается.
+            if charge.provider_payment_id:
+                try:
+                    from app.database.crud.etoplatezhi import set_etoplatezhi_payment_id_if_missing
 
-                pending = await get_etoplatezhi_payment_by_order_id(db, idem_key)
-                if pending and charge.provider_payment_id and not pending.etoplatezhi_payment_id:
-                    await update_etoplatezhi_payment_status(
+                    await set_etoplatezhi_payment_id_if_missing(
                         db,
-                        pending,
-                        status=pending.status,
-                        etoplatezhi_payment_id=charge.provider_payment_id,
+                        order_id=idem_key,
+                        etoplatezhi_payment_id=str(charge.provider_payment_id),
                     )
-            except Exception as e:
-                logger.warning(
-                    'Ошибка обновления etoplatezhi_payment_id',
-                    provider=provider_name,
-                    error=e,
-                )
+                except Exception as e:
+                    logger.warning(
+                        'Ошибка обновления etoplatezhi_payment_id',
+                        provider=provider_name,
+                        error=e,
+                    )
             logger.info(
                 'Рекуррентный автоплатёж создан',
                 user_id=user.id,
