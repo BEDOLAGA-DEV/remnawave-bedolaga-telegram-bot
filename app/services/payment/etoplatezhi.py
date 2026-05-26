@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -243,15 +244,48 @@ class EtoplatezhiPaymentMixin:
                         payment_id=our_payment_id,
                     )
                     return False
+
+                # Mirror the recurring/topup model: maintain an etoplatezhi_payments
+                # row for every trial_convert webhook (decline/success), so admin
+                # /admin/payments search via _search_etoplatezhi can surface them.
+                # Trial-convert charges bypass Payment Page (COF endpoint), so we
+                # create the row here in the webhook rather than at charge time.
+                etoplatezhi_crud = import_module('app.database.crud.etoplatezhi')
+                sum_data = payment_data.get('sum', {}) or {}
+                amount_kopeks = int(sum_data.get('amount') or 0) or None
+
+                from app.database.models import Subscription as _SubModel
+                _sub_row = (
+                    await db.execute(select(_SubModel).where(_SubModel.id == subscription_id))
+                ).scalar_one_or_none()
+                _user_id = _sub_row.user_id if _sub_row else None
+
+                existing = await etoplatezhi_crud.get_etoplatezhi_payment_by_order_id(db, our_payment_id)
+                if existing is None and amount_kopeks:
+                    existing = await etoplatezhi_crud.create_etoplatezhi_payment(
+                        db,
+                        user_id=_user_id,
+                        order_id=our_payment_id,
+                        amount_kopeks=amount_kopeks,
+                        description=f'Конверсия триала #{subscription_id}',
+                        etoplatezhi_payment_id=str(etoplatezhi_payment_id) if etoplatezhi_payment_id else None,
+                    )
+
                 if not is_confirmed:
                     logger.info(
                         'Etoplatezhi trial_convert: статус не success, skip',
                         payment_id=our_payment_id,
                         status=etoplatezhi_status,
                     )
+                    if existing:
+                        await etoplatezhi_crud.update_etoplatezhi_payment_status(
+                            db,
+                            existing,
+                            status=etoplatezhi_status or 'error',
+                            etoplatezhi_payment_id=str(etoplatezhi_payment_id) if etoplatezhi_payment_id else None,
+                        )
                     return True
-                sum_data = payment_data.get('sum', {}) or {}
-                amount_kopeks = int(sum_data.get('amount') or 0) or None
+
                 ok = await convert_trial_to_paid_from_callback(
                     db,
                     subscription_id=subscription_id,
@@ -259,6 +293,14 @@ class EtoplatezhiPaymentMixin:
                     provider='etoplatezhi',
                     provider_payment_id=str(etoplatezhi_payment_id),
                 )
+                if ok and existing:
+                    await etoplatezhi_crud.update_etoplatezhi_payment_status(
+                        db,
+                        existing,
+                        status='success',
+                        is_paid=True,
+                        etoplatezhi_payment_id=str(etoplatezhi_payment_id) if etoplatezhi_payment_id else None,
+                    )
                 if ok:
                     await db.commit()
                 return ok
