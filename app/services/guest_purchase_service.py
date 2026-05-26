@@ -29,6 +29,7 @@ from app.database.models import (
     GuestPurchaseStatus,
     LandingPage,
     PaymentMethod,
+    SubscriptionStatus,
     Tariff,
     Transaction,
     TransactionType,
@@ -482,7 +483,19 @@ async def fulfill_purchase(
             existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
-        if existing_subscription is not None and (existing_subscription.is_active or purchase.is_gift):
+        # Treat trial subscriptions like active ones for the "already has subscription"
+        # check — иначе после покупки триала (status=TRIAL) защита не срабатывает и
+        # второй платёж за то же лендинг-окно проходит fulfillment → подписка
+        # extend'ится через activate_purchase, юзер получает 2× оплаты за 1× день.
+        _existing_alive = existing_subscription is not None and (
+            existing_subscription.is_active
+            or (
+                existing_subscription.status == SubscriptionStatus.TRIAL.value
+                and existing_subscription.end_date is not None
+                and _aware(existing_subscription.end_date) > datetime.now(UTC)
+            )
+        )
+        if existing_subscription is not None and (_existing_alive or purchase.is_gift):
             # Active subscription or gift with any existing subscription — hold for manual activation
             purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
             purchase.user_id = user.id
