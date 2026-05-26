@@ -34,9 +34,7 @@ async def test_returns_zero_when_already_set():
 
 async def test_rowcount_none_is_treated_as_zero():
     db = _make_db(rowcount=None)
-    n = await set_etoplatezhi_payment_id_if_missing(
-        db, order_id='x', etoplatezhi_payment_id='y'
-    )
+    n = await set_etoplatezhi_payment_id_if_missing(db, order_id='x', etoplatezhi_payment_id='y')
     assert n == 0
 
 
@@ -44,9 +42,7 @@ async def test_update_filters_by_order_id_and_null_payment_id():
     """UPDATE must include both WHERE conditions, so a webhook-set non-null
     payment_id is never overwritten — and we never touch status/is_paid."""
     db = _make_db(rowcount=1)
-    await set_etoplatezhi_payment_id_if_missing(
-        db, order_id='abc', etoplatezhi_payment_id='xyz'
-    )
+    await set_etoplatezhi_payment_id_if_missing(db, order_id='abc', etoplatezhi_payment_id='xyz')
 
     sent_stmt = db.execute.call_args.args[0]
     compiled = str(sent_stmt.compile(compile_kwargs={'literal_binds': True}))

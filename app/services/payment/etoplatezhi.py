@@ -255,6 +255,7 @@ class EtoplatezhiPaymentMixin:
                 amount_kopeks = int(sum_data.get('amount') or 0) or None
 
                 from app.database.models import Subscription as _SubModel
+
                 _sub_row = (
                     await db.execute(select(_SubModel).where(_SubModel.id == subscription_id))
                 ).scalar_one_or_none()
@@ -571,6 +572,30 @@ class EtoplatezhiPaymentMixin:
             provider_name='etoplatezhi',
         )
         if guest_result is not None:
+            # Backlink etoplatezhi_payments.user_id from the (now-fulfilled)
+            # guest_purchase. Webhook created the eto row with user_id=NULL
+            # because at Payment Page time we don't know the buyer; after
+            # try_fulfill_guest_purchase the user exists. Without this link
+            # the row is invisible in /admin/payments (search skips payments
+            # without a linked user — see _build_record).
+            try:
+                from app.database.models import GuestPurchase
+
+                _guest_user_id = (
+                    await db.execute(select(GuestPurchase.user_id).where(GuestPurchase.payment_id == payment.order_id))
+                ).scalar_one_or_none()
+                if _guest_user_id:
+                    await etoplatezhi_crud.link_etoplatezhi_payment_to_user(
+                        db,
+                        order_id=payment.order_id,
+                        user_id=int(_guest_user_id),
+                    )
+            except Exception as e:  # pragma: no cover - safety net
+                logger.warning(
+                    'Etoplatezhi: не удалось привязать user_id к платежу',
+                    order_id=payment.order_id,
+                    error=e,
+                )
             return True
 
         # Ensure paid fields are set (idempotent — caller may have already set them)

@@ -120,6 +120,36 @@ async def update_etoplatezhi_payment_status(
     return payment
 
 
+async def link_etoplatezhi_payment_to_user(
+    db: AsyncSession,
+    *,
+    order_id: str,
+    user_id: int,
+) -> int:
+    """Атомарно прописать user_id, если ещё пуст.
+
+    Guest payments создаются с ``user_id=NULL`` (юзер ещё не известен на
+    момент Payment Page checkout). После guest_purchase fulfillment мы
+    знаем кому принадлежит row — линкуем, чтобы admin /admin/payments
+    показал её (там фильтр skip'ает payments без linked user).
+
+    Returns: число обновлённых строк (0 если user_id уже был).
+    """
+    result = await db.execute(
+        update(EtoplatezhiPayment)
+        .where(
+            EtoplatezhiPayment.order_id == order_id,
+            EtoplatezhiPayment.user_id.is_(None),
+        )
+        .values(
+            user_id=user_id,
+            updated_at=datetime.now(UTC),
+        )
+    )
+    await db.commit()
+    return result.rowcount or 0
+
+
 async def set_etoplatezhi_payment_id_if_missing(
     db: AsyncSession,
     *,
