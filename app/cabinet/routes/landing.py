@@ -130,6 +130,7 @@ class PurchaseRequest(BaseModel):
     gift_message: str | None = Field(default=None, max_length=1000)
     yandex_cid: str | None = Field(default=None, max_length=128, pattern=r'^[A-Za-z0-9._:-]{4,128}$')
     referrer: str | None = Field(default=None, max_length=500)
+    referrer_code: str | None = Field(default=None, max_length=64, pattern=r'^[A-Za-z0-9_-]+$')
     subid: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode='after')
@@ -659,6 +660,7 @@ async def create_landing_purchase(
         gift_message=body.gift_message,
         subid=body.subid,
         referrer=body.referrer,
+        referrer_code=body.referrer_code,
         commit=False,
     )
 
