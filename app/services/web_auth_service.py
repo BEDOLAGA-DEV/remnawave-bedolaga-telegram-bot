@@ -27,8 +27,14 @@ WEB_AUTH_TOKEN_MIN_LENGTH = 16
 WEB_AUTH_PREFIX = 'web_auth'
 
 
-async def create_web_auth_token() -> str:
+async def create_web_auth_token(referral_code: str | None = None) -> str:
     """Generate a web auth token and store it in Redis (pending state).
+
+    ``referral_code`` is optional and UNTRUSTED. It is persisted in the token
+    so the bot can read it on /start and attach a referrer ONLY when the deep
+    link results in a NEW user registration. Existing users are never
+    re-attached. The bot validates the code (resolution + self-referral guard);
+    we just carry it through.
 
     Returns the raw token string (URL-safe, 24 bytes of entropy).
     """
@@ -38,6 +44,8 @@ async def create_web_auth_token() -> str:
         'status': 'pending',
         'created_at': datetime.now(UTC).isoformat(),
     }
+    if referral_code:
+        value['referral_code'] = referral_code
     stored = await cache.set(key, value, expire=WEB_AUTH_TOKEN_TTL)
     if not stored:
         logger.error('Failed to store web auth token in Redis')

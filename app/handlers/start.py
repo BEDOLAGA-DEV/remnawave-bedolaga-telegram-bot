@@ -56,7 +56,11 @@ from app.services.referral_service import (
 )
 from app.services.subscription_service import SubscriptionService
 from app.services.support_settings_service import SupportSettingsService
-from app.services.web_auth_service import WEB_AUTH_TOKEN_MIN_LENGTH, link_web_auth_token
+from app.services.web_auth_service import (
+    WEB_AUTH_TOKEN_MIN_LENGTH,
+    link_web_auth_token,
+    poll_web_auth_token,
+)
 from app.states import RegistrationStates
 from app.utils.promo_offer import (
     build_promo_offer_hint,
@@ -782,6 +786,64 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         web_auth_token = start_parameter.removeprefix('webauth_')
         if len(web_auth_token) >= WEB_AUTH_TOKEN_MIN_LENGTH:
             user = db_user or await get_user_by_telegram_id(db, message.from_user.id)
+
+            # First-time user (no row yet): auto-register so the cabinet QR
+            # login works for new users too, instead of rejecting them. The
+            # referral code carried in the token (if any) is attached ONLY
+            # here, on fresh registration — existing users are never
+            # re-attached to a referrer.
+            if not user:
+                referrer = None
+                try:
+                    token_data = await poll_web_auth_token(web_auth_token)
+                except Exception as exc:
+                    token_data = None
+                    logger.warning('Failed to read web auth token for referral', error=exc)
+                ref_code = (token_data or {}).get('referral_code')
+                if ref_code:
+                    try:
+                        candidate = await get_user_by_referral_code(db, ref_code)
+                    except Exception as exc:
+                        candidate = None
+                        logger.warning(
+                            'Failed to resolve webauth referral code',
+                            referral_code=ref_code,
+                            error=exc,
+                        )
+                    # Self-referral guard by telegram_id (user not created yet).
+                    # Invalid/unknown code → register without a referrer.
+                    if candidate and candidate.telegram_id != message.from_user.id:
+                        referrer = candidate
+
+                user = await create_user(
+                    db,
+                    telegram_id=message.from_user.id,
+                    username=message.from_user.username,
+                    first_name=message.from_user.first_name,
+                    last_name=message.from_user.last_name,
+                    language=(message.from_user.language_code or 'ru'),
+                    referred_by_id=referrer.id if referrer else None,
+                )
+                logger.info(
+                    'Auto-registered new user via web auth deep link',
+                    telegram_id=message.from_user.id,
+                    user_id=user.id,
+                    referrer_id=user.referred_by_id,
+                )
+                # Fire referral bonus when a referrer was resolved (either from
+                # the token code above or a Redis pending referral applied
+                # inside create_user). Mirrors the cabinet auth flow; never
+                # raises into the auth path.
+                if user.referred_by_id:
+                    try:
+                        await process_referral_registration(db, user.id, user.referred_by_id, message.bot)
+                    except Exception as exc:
+                        logger.warning(
+                            'webauth referral registration failed',
+                            user_id=user.id,
+                            error=exc,
+                        )
+
             if user and user.status != UserStatus.DELETED.value:
                 texts = get_texts(user.language)
                 keyboard = types.InlineKeyboardMarkup(
@@ -806,7 +868,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                     reply_markup=keyboard,
                 )
             else:
-                logger.warning('Web auth attempt from unregistered user', telegram_id=message.from_user.id)
+                logger.warning('Web auth attempt from deleted user', telegram_id=message.from_user.id)
                 await message.answer('❌ Сначала зарегистрируйтесь в боте, затем попробуйте войти в кабинет.')
             return
         start_parameter = None  # Invalid token, ignore
