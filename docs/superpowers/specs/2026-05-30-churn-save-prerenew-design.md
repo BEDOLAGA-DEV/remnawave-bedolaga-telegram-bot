@@ -26,8 +26,8 @@ post-expiry: пользователь уже потерял доступ.
 Новый метод-сиблинг `_check_prerenew_save_offers(db)` в
 `MonitoringService`, зеркалит паттерн `_check_expired_subscription_followups`,
 но триггерится **до** expiry для at-risk сегмента: подписка истекает в окне
-`trigger_hours`, и пользователь **не** авто-продлится (нет активной
-автоплатёжной карты). Таким юзерам шлётся один discount-оффер «продли
+`trigger_hours`, и автопродление выключено (`autopay_enabled == False`),
+т.е. подписка сама не продлится. Таким юзерам шлётся один discount-оффер «продли
 сейчас -X%, не теряй доступ» через существующую `DiscountOffer` +
 claim-механику.
 
@@ -51,17 +51,15 @@ trigger_hours = NotificationSettingsService.get_prerenew_save_trigger_hours()  #
 trigger_days = ceil(trigger_hours / 24)  # для запроса
 subs = await self._get_expiring_paid_subscriptions(db, days_before=trigger_days)
 
-# batch: какие user_id имеют активную автоплатёжную карту (как в _check_expiring_subscriptions)
-users_with_cards = ... (get_user_ids_with_active_payment_methods)
-
 for sub in subs:
     # окно: истекает в ближайшие trigger_hours (но ещё не истёк)
     hours_left = (sub.end_date - now).total_seconds() / 3600
     if not (0 < hours_left <= trigger_hours): continue
 
-    # at-risk: НЕ авто-продлится
-    will_autopay = sub.autopay_enabled and sub.user_id in users_with_cards
-    if will_autopay: continue
+    # at-risk: автопродление выключено → сам не продлится.
+    # autopay_enabled продлевается с баланса ИЛИ карты — таких пропускаем
+    # (при достаточном балансе продление сработает даже без карты).
+    if sub.autopay_enabled: continue
 
     # multi-tariff: пропустить если есть другая активная подписка (как в followups)
     # daily-тарифы исключены (_get_expiring_paid_subscriptions уже фильтрует)
@@ -119,9 +117,10 @@ Network` + `_handle_unreachable_user`.
 ## Что НЕ входит
 
 - Расчёт «недостаточно баланса» как доп. критерий at-risk. В первой
-  версии at-risk = «нет автоплатёжной карты». Баланс-критерий хрупкий
-  (нужна точная цена продления с учётом промогрупп/тарифа) — отдельная
-  итерация при необходимости.
+  версии at-risk = «автопродление выключено» (`autopay_enabled == False`).
+  Юзеров с включённым autopay, но без средств/карты, ловит существующий
+  post-expiry win-back. Баланс-критерий хрупкий (нужна точная цена
+  продления с учётом промогрупп/тарифа) — отдельная итерация.
 - Изменение post-expiry волн и `_check_expiring_subscriptions` (не
   трогаем; churn-save — независимый канал).
 - A/B вариаций текста/процента.
@@ -136,7 +135,7 @@ monitoring loop (~стр. 245)
   ├── _check_prerenew_save_offers   ← НОВОЕ
   │     ├── _get_expiring_paid_subscriptions(trigger_days)
   │     ├── фильтр: 0 < hours_left <= trigger_hours
-  │     ├── фильтр: will_autopay == False  (at-risk)
+  │     ├── фильтр: autopay_enabled == False  (at-risk)
   │     ├── фильтр: prefs + multi-active + dedup('prerenew_save')
   │     ├── upsert_discount_offer(notification_type='prerenew_save')
   │     ├── _send_prerenew_save_notification(...)
@@ -148,7 +147,7 @@ monitoring loop (~стр. 245)
 
 1. Cron-цикл мониторинга вызывает `_check_prerenew_save_offers`.
 2. Метод тянет ACTIVE-подписки, истекающие в ближайшие `trigger_days`.
-3. Отсекает тех, кто авто-продлится (autopay + карта), daily, multi-active,
+3. Отсекает тех, у кого autopay включён (продлятся сами), daily, multi-active,
    отключивших уведомления, уже получивших `prerenew_save`.
 4. Для оставшихся at-risk: создаёт `DiscountOffer` (percent_discount,
    valid_hours) и шлёт TG-сообщение с кнопкой claim.
@@ -173,9 +172,9 @@ monitoring loop (~стр. 245)
 Юнит-тесты (новый `tests/services/test_monitoring_prerenew_save.py`),
 мок `db`/`bot`/`NotificationSettingsService`/`upsert_discount_offer`:
 
-- at-risk (нет карты), в окне `trigger_hours` → оффер создан + send +
-  `record_notification` вызваны.
-- autopay + карта → пропущен (will_autopay), оффер НЕ создан.
+- at-risk (`autopay_enabled=False`), в окне `trigger_hours` → оффер создан +
+  send + `record_notification` вызваны.
+- `autopay_enabled=True` → пропущен, оффер НЕ создан.
 - вне окна (истекает позже `trigger_hours`) → пропущен.
 - уже отправлено (`notification_sent` → True) → пропущен.
 - `is_prerenew_save_enabled() == False` → ранний выход, ничего.
