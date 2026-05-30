@@ -2108,6 +2108,13 @@ class Subscription(Base):
     )  # Приостановлена ли суточная подписка пользователем
     last_daily_charge_at = Column(AwareDateTime(), nullable=True)  # Время последнего суточного списания
 
+    # Заморозка (vacation freeze) для обычных подписок
+    frozen_at = Column(AwareDateTime(), nullable=True)
+    frozen_until = Column(AwareDateTime(), nullable=True)
+    freeze_days_used_year = Column(Integer, default=0, nullable=False, server_default='0')
+    freeze_year = Column(Integer, nullable=True)
+    last_freeze_at = Column(AwareDateTime(), nullable=True)
+
     # Bio-reward: % скидки, применённой при покупке. Ненулевое значение = подписка
     # куплена с bio-скидкой и подлежит пропорциональному пересчёту при revoke.
     bio_reward_discount_percent = Column(Integer, nullable=True)
