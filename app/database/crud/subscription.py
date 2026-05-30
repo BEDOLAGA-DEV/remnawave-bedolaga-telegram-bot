@@ -1533,6 +1533,10 @@ async def check_and_update_subscription_status(db: AsyncSession, subscription: S
         format_local_datetime_2=format_local_datetime(current_time),
     )
 
+    if getattr(subscription, 'frozen_at', None) is not None:
+        logger.info('❄️ Подписка заморожена, пропускаем проверку истечения', subscription_id=subscription.id)
+        return subscription
+
     # Для суточных тарифов с паузой не меняем статус на expired
     # (время "заморожено" пока пользователь на паузе)
     is_daily_paused = getattr(subscription, 'is_daily_paused', False)

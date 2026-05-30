@@ -343,3 +343,11 @@ class BirthdayAdminStates(StatesGroup):
     waiting_for_promodays = State()
     waiting_for_minage = State()
     waiting_for_dobstable = State()
+
+
+class FreezeAdminStates(StatesGroup):
+    waiting_for_maxyear = State()
+    waiting_for_minage = State()
+    waiting_for_cooldown = State()
+    waiting_for_minfreeze = State()
+    waiting_for_maxsingle = State()
