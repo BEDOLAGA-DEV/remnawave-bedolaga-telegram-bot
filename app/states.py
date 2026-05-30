@@ -336,3 +336,10 @@ class BioRewardAdminStates(StatesGroup):
     waiting_for_squad_uuid = State()
     waiting_for_bio_string_add = State()
     waiting_for_instruction_text = State()
+
+
+class BirthdayAdminStates(StatesGroup):
+    waiting_for_amount = State()
+    waiting_for_promodays = State()
+    waiting_for_minage = State()
+    waiting_for_dobstable = State()
