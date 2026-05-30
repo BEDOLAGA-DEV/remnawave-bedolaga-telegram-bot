@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database.crud.user import get_user_by_id
-from app.database.models import Subscription, SubscriptionStatus
+from app.database.models import Subscription, SubscriptionStatus, User
 from app.services.remnawave_retry_queue import remnawave_retry_queue
 from app.services.subscription_service import SubscriptionService
 
@@ -37,6 +37,18 @@ class TrialInviteService:
                 return
 
             now = datetime.now(UTC)
+
+            # Lock the referrer User row FOR UPDATE and re-read the cap counter
+            # from the locked row. Without this, two invitees sharing one referrer
+            # both read a stale trial_invite_bonus_days_used (loaded before any
+            # lock) and each grant the full extend, blowing past the yearly cap
+            # and clobbering the counter. The lock serializes the cap arithmetic.
+            locked_ref = await db.execute(
+                select(User).where(User.id == referrer.id).with_for_update()
+            )
+            referrer = locked_ref.scalar_one_or_none()
+            if referrer is None:
+                return
 
             locked = await db.execute(
                 select(Subscription)

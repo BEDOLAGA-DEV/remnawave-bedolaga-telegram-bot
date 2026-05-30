@@ -40,13 +40,18 @@ def _cfg(monkeypatch):
     yield
 
 
-def _db(locked_sub=None):
+def _db(locked_sub=None, locked_referrer=None):
     db = MagicMock()
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = locked_sub
-    db.execute = AsyncMock(return_value=result)
+    # The service issues two FOR UPDATE selects in order:
+    #   1) lock the referrer User row -> locked_referrer
+    #   2) lock the referrer's trial subscription -> locked_sub
+    ref_result = MagicMock()
+    ref_result.scalar_one_or_none.return_value = locked_referrer
+    sub_result = MagicMock()
+    sub_result.scalar_one_or_none.return_value = locked_sub
+    db.execute = AsyncMock(side_effect=[ref_result, sub_result])
     return db
 
 
@@ -55,7 +60,7 @@ async def test_reward_happy(service, monkeypatch):
     invitee = _user(id=10, referred_by_id=1)
     referrer = _user(id=1, trial_invite_bonus_days_used=0)
     inv_sub = _trial_sub(user_id=1)
-    db = _db(locked_sub=inv_sub)
+    db = _db(locked_sub=inv_sub, locked_referrer=referrer)
     monkeypatch.setattr(tis, 'get_user_by_id', AsyncMock(return_value=referrer))
     old_end = inv_sub.end_date
 
@@ -92,7 +97,7 @@ async def test_self_invite_noop(service, monkeypatch):
 async def test_referrer_not_on_trial_noop(service, monkeypatch):
     invitee = _user(id=10, referred_by_id=1)
     referrer = _user(id=1)
-    db = _db(locked_sub=None)
+    db = _db(locked_sub=None, locked_referrer=referrer)
     monkeypatch.setattr(tis, 'get_user_by_id', AsyncMock(return_value=referrer))
     await service.reward_inviter_on_trial_activation(db, invitee, bot=None)
     service._subscription_service.create_remnawave_user.assert_not_awaited()
@@ -104,7 +109,7 @@ async def test_cap_exhausted_noop(service, monkeypatch):
     invitee = _user(id=10, referred_by_id=1)
     referrer = _user(id=1, trial_invite_bonus_days_used=14)
     inv_sub = _trial_sub(user_id=1)
-    db = _db(locked_sub=inv_sub)
+    db = _db(locked_sub=inv_sub, locked_referrer=referrer)
     monkeypatch.setattr(tis, 'get_user_by_id', AsyncMock(return_value=referrer))
     old_end = inv_sub.end_date
     await service.reward_inviter_on_trial_activation(db, invitee, bot=None)
@@ -117,7 +122,7 @@ async def test_cap_partial_grant(service, monkeypatch):
     invitee = _user(id=10, referred_by_id=1)
     referrer = _user(id=1, trial_invite_bonus_days_used=12)
     inv_sub = _trial_sub(user_id=1)
-    db = _db(locked_sub=inv_sub)
+    db = _db(locked_sub=inv_sub, locked_referrer=referrer)
     monkeypatch.setattr(tis, 'get_user_by_id', AsyncMock(return_value=referrer))
     old_end = inv_sub.end_date
     await service.reward_inviter_on_trial_activation(db, invitee, bot=None)
@@ -144,7 +149,7 @@ async def test_panel_failure_keeps_time_enqueues(service, monkeypatch):
     invitee = _user(id=10, referred_by_id=1)
     referrer = _user(id=1)
     inv_sub = _trial_sub(user_id=1)
-    db = _db(locked_sub=inv_sub)
+    db = _db(locked_sub=inv_sub, locked_referrer=referrer)
     monkeypatch.setattr(tis, 'get_user_by_id', AsyncMock(return_value=referrer))
     old_end = inv_sub.end_date
     await service.reward_inviter_on_trial_activation(db, invitee, bot=None)
