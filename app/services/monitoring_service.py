@@ -58,6 +58,7 @@ from app.services.notification_delivery_service import (
     notification_delivery_service,
 )
 from app.services.notification_settings_service import NotificationSettingsService
+from app.services.freeze_service import freeze_service
 from app.services.promo_offer_service import promo_offer_service
 from app.services.subscription_service import SubscriptionService, get_traffic_reset_strategy
 from app.utils.cache import cache
@@ -249,6 +250,7 @@ class MonitoringService:
                 await self._check_trial_expiring_soon(db)
                 await self._check_trial_channel_subscriptions(db)
                 await self._check_expired_subscription_followups(db)
+                await self._check_frozen_subscriptions(db)
                 await self._check_traffic_warnings(db)
                 await self._check_low_balance_alerts(db)
                 await self._retry_stuck_guest_purchases(db)
@@ -1348,6 +1350,25 @@ class MonitoringService:
 
         except Exception as e:
             logger.error('Ошибка проверки напоминаний об истекшей подписке', error=e)
+
+    async def _check_frozen_subscriptions(self, db: AsyncSession):
+        try:
+            now = datetime.now(UTC)
+            result = await db.execute(
+                select(Subscription).where(
+                    Subscription.frozen_at.isnot(None),
+                    Subscription.frozen_until.isnot(None),
+                    Subscription.frozen_until <= now,
+                ).options(selectinload(Subscription.user))
+            )
+            subs = result.scalars().all()
+            for sub in subs:
+                try:
+                    await freeze_service.resume_subscription(db, sub, sub.user, reason='auto')
+                except Exception as exc:
+                    logger.warning('freeze.auto_resume_failed', subscription_id=sub.id, err=str(exc))
+        except Exception as exc:
+            logger.error('freeze.check_frozen_failed', err=str(exc))
 
     async def _check_prerenew_save_offers(self, db: AsyncSession):
         if not NotificationSettingsService.are_notifications_globally_enabled():
