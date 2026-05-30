@@ -1877,6 +1877,8 @@ class User(Base):
     has_had_paid_subscription = Column(Boolean, default=False, nullable=False)
     referred_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
     referral_code = Column(String(20), unique=True, nullable=True)
+    trial_invite_bonus_days_used = Column(Integer, default=0, nullable=False, server_default='0')
+    trial_invite_rewarded_count = Column(Integer, default=0, nullable=False, server_default='0')
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
     last_activity = Column(AwareDateTime(), default=func.now())

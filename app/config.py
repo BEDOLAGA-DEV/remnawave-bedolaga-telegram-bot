@@ -147,6 +147,9 @@ class Settings(BaseSettings):
 
     TRIAL_DURATION_DAYS: int = 3
     TRIAL_TRAFFIC_LIMIT_GB: int = 10
+    TRIAL_INVITE_ENABLED: bool = False
+    TRIAL_INVITE_EXTEND_DAYS: int = 3
+    TRIAL_INVITE_MAX_EXTENSION_DAYS: int = 14
     TRIAL_DEVICE_LIMIT: int = 2
     TRIAL_ADD_REMAINING_DAYS_TO_PAID: bool = False
     TRIAL_PAYMENT_ENABLED: bool = False
@@ -1756,6 +1759,18 @@ class Settings(BaseSettings):
 
     def get_trial_warning_hours(self) -> int:
         return self.TRIAL_WARNING_HOURS
+
+    def get_trial_invite_extend_days(self) -> int:
+        try:
+            return max(0, min(365, int(self.TRIAL_INVITE_EXTEND_DAYS)))
+        except (TypeError, ValueError):
+            return 3
+
+    def get_trial_invite_max_extension_days(self) -> int:
+        try:
+            return max(0, min(365, int(self.TRIAL_INVITE_MAX_EXTENSION_DAYS)))
+        except (TypeError, ValueError):
+            return 14
 
     def get_trial_user_tag(self) -> str | None:
         return self._normalize_user_tag(self.TRIAL_USER_TAG, 'TRIAL_USER_TAG')
