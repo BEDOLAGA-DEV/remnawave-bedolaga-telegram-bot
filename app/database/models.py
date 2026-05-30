@@ -1901,6 +1901,11 @@ class User(Base):
     yandex_id = Column(String(255), unique=True, nullable=True, index=True)
     discord_id = Column(String(255), unique=True, nullable=True, index=True)
     vk_id = Column(BigInteger, unique=True, nullable=True, index=True)
+    # Birthday bonus fields
+    birth_date = Column(Date(), nullable=True)
+    birthday_synced_at = Column(AwareDateTime(), nullable=True)
+    birthday_changed_at = Column(AwareDateTime(), nullable=True)
+    last_birthday_reward_year = Column(Integer(), nullable=True)
     broadcasts = relationship('BroadcastHistory', back_populates='admin')
     referrals = relationship(
         'User', backref='referrer', remote_side=[id], foreign_keys='User.referred_by_id', post_update=True
