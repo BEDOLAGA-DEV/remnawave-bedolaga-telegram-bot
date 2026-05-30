@@ -98,6 +98,21 @@ async def test_expiry_pref_disabled_is_skipped(service, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_email_only_user_is_skipped(service, monkeypatch):
+    sub = _make_sub(autopay=False, hours_left=10, tg_id=None)
+    monkeypatch.setattr(service, '_get_expiring_paid_subscriptions', AsyncMock(return_value=[sub]))
+    monkeypatch.setattr(ms, 'notification_sent', AsyncMock(return_value=False))
+    upsert = AsyncMock()
+    monkeypatch.setattr(ms, 'upsert_discount_offer', upsert)
+    monkeypatch.setattr(ms, 'record_notification', AsyncMock())
+
+    await service._check_prerenew_save_offers(MagicMock())
+
+    upsert.assert_not_awaited()
+    service._send_prerenew_save_notification.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_outside_window_is_skipped(service, monkeypatch):
     # trigger_hours=36, sub expires in 50h -> outside window
     sub = _make_sub(autopay=False, hours_left=50)

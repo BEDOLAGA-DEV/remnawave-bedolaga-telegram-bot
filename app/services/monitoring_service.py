@@ -1,5 +1,6 @@
 import asyncio
 import html
+import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1362,6 +1363,12 @@ class MonitoringService:
                 if not user or subscription.end_date is None:
                     continue
 
+                # Churn-save шлётся только в Telegram. Email-only пользователям
+                # пропускаем, чтобы не плодить orphan-офферы и мёртвые dedup-записи
+                # (оффер истёк бы раньше, чем дошёл бы другим каналом).
+                if not user.telegram_id:
+                    continue
+
                 hours_left = (subscription.end_date - now).total_seconds() / 3600
                 if not (0 < hours_left <= trigger_hours):
                     continue
@@ -1405,7 +1412,7 @@ class MonitoringService:
                     effect_type='percent_discount',
                 )
                 success = await self._send_prerenew_save_notification(
-                    user, subscription, percent, offer.expires_at, offer.id, int(hours_left),
+                    user, subscription, percent, offer.expires_at, offer.id, max(1, math.ceil(hours_left)),
                 )
                 if success:
                     await record_notification(db, user.id, subscription.id, 'prerenew_save')
