@@ -4,8 +4,9 @@ import math
 from datetime import UTC, datetime, timedelta
 
 import structlog
+from sqlalchemy import select
 
-from app.database.models import SubscriptionStatus
+from app.database.models import Subscription, SubscriptionStatus
 from app.services.freeze_settings_service import FreezeSettingsService
 from app.services.remnawave_retry_queue import remnawave_retry_queue
 from app.services.subscription_service import SubscriptionService
@@ -32,6 +33,11 @@ class FreezeService:
 
     async def freeze_subscription(self, db, subscription, user) -> None:
         now = datetime.now(UTC)
+
+        # Self-defending: never freeze when the feature is disabled, regardless
+        # of how this method was reached (guards at entry points can be bypassed).
+        if not FreezeSettingsService.is_enabled():
+            raise FreezeError('disabled', 'Заморозка подписки отключена.')
 
         if subscription.frozen_at is not None:
             raise FreezeError('already_frozen', 'Подписка уже заморожена.')
@@ -78,7 +84,18 @@ class FreezeService:
 
     async def resume_subscription(self, db, subscription, user, *, reason: str = 'manual') -> None:
         if subscription.frozen_at is None:
-            return  # idempotent no-op
+            return  # fast-path no-op (re-checked under lock below)
+
+        # Lock the subscription row to serialize concurrent resume attempts
+        # (manual user action vs scheduler auto-resume). Without the lock both
+        # could read frozen_at, each add `actual` to end_date, and double-credit
+        # time. Under FOR UPDATE the second caller waits, then sees frozen_at=None.
+        locked = await db.execute(
+            select(Subscription).where(Subscription.id == subscription.id).with_for_update()
+        )
+        subscription = locked.scalar_one_or_none()
+        if subscription is None or subscription.frozen_at is None:
+            return  # already resumed by a concurrent caller — idempotent
 
         now = datetime.now(UTC)
         until = subscription.frozen_until or now

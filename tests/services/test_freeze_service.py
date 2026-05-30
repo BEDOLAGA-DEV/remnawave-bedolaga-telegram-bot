@@ -32,6 +32,7 @@ def service():
 
 @pytest.fixture(autouse=True)
 def _cfg(monkeypatch):
+    monkeypatch.setattr(fs.FreezeSettingsService, 'is_enabled', classmethod(lambda cls: True))
     monkeypatch.setattr(fs.FreezeSettingsService, 'get_max_days_per_year', classmethod(lambda cls: 30))
     monkeypatch.setattr(fs.FreezeSettingsService, 'get_min_subscription_age_days', classmethod(lambda cls: 7))
     monkeypatch.setattr(fs.FreezeSettingsService, 'get_cooldown_days', classmethod(lambda cls: 7))
@@ -40,10 +41,14 @@ def _cfg(monkeypatch):
     yield
 
 
-def _db():
+def _db(locked_sub=None):
     db = MagicMock()
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
+    # resume_subscription re-loads the row FOR UPDATE via db.execute(...).scalar_one_or_none()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = locked_sub
+    db.execute = AsyncMock(return_value=result)
     return db
 
 
@@ -116,7 +121,7 @@ async def test_resume_happy_extends_end_date(service):
     frozen_at = now - timedelta(days=5)
     sub = _sub(frozen_at=frozen_at, frozen_until=now + timedelta(days=25),
                end_date=now + timedelta(days=10), freeze_year=now.year, freeze_days_used_year=0)
-    db = _db()
+    db = _db(locked_sub=sub)
     old_end = sub.end_date
     await service.resume_subscription(db, sub, SimpleNamespace(id=10), reason='manual')
     assert sub.frozen_at is None
@@ -130,7 +135,7 @@ async def test_resume_capped_at_frozen_until(service):
     now = datetime.now(UTC)
     sub = _sub(frozen_at=now - timedelta(days=40), frozen_until=now - timedelta(days=10),
                end_date=now, freeze_year=now.year)
-    db = _db()
+    db = _db(locked_sub=sub)
     old_end = sub.end_date
     await service.resume_subscription(db, sub, SimpleNamespace(id=10), reason='auto')
     delta_days = (sub.end_date - old_end).days
@@ -145,7 +150,42 @@ async def test_resume_panel_failure_keeps_time_enqueues(service, monkeypatch):
     now = datetime.now(UTC)
     sub = _sub(frozen_at=now - timedelta(days=5), frozen_until=now + timedelta(days=25),
                end_date=now + timedelta(days=10), freeze_year=now.year)
-    db = _db()
+    db = _db(locked_sub=sub)
     await service.resume_subscription(db, sub, SimpleNamespace(id=10), reason='manual')
     assert sub.frozen_at is None
     enqueue.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_resume_concurrent_already_cleared_is_noop(service):
+    # Second resumer: fast-path sub still looks frozen, but the locked row
+    # (committed by the first resumer) has frozen_at=None -> idempotent no-op.
+    now = datetime.now(UTC)
+    sub = _sub(frozen_at=now - timedelta(days=5), frozen_until=now + timedelta(days=25),
+               end_date=now + timedelta(days=10), freeze_year=now.year)
+    locked = _sub(frozen_at=None, end_date=now + timedelta(days=15))  # already resumed
+    db = _db(locked_sub=locked)
+    await service.resume_subscription(db, sub, SimpleNamespace(id=10), reason='auto')
+    service._subscription_service.enable_remnawave_user.assert_not_awaited()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_freeze_rejects_cooldown(service):
+    sub = _sub(last_freeze_at=datetime.now(UTC) - timedelta(days=2))  # cooldown=7
+    db = _db()
+    with pytest.raises(FreezeError) as ei:
+        await service.freeze_subscription(db, sub, SimpleNamespace(id=10))
+    assert ei.value.code == 'cooldown'
+    service._subscription_service.disable_remnawave_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_freeze_rejects_when_feature_disabled(service, monkeypatch):
+    monkeypatch.setattr(fs.FreezeSettingsService, 'is_enabled', classmethod(lambda cls: False))
+    sub = _sub()
+    db = _db()
+    with pytest.raises(FreezeError) as ei:
+        await service.freeze_subscription(db, sub, SimpleNamespace(id=10))
+    assert ei.value.code == 'disabled'
+    service._subscription_service.disable_remnawave_user.assert_not_awaited()

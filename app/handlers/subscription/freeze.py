@@ -8,11 +8,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models import User
 
 
+def _freeze_available() -> bool:
+    from app.config import settings
+    from app.services.freeze_settings_service import FreezeSettingsService
+
+    return bool(settings.SUBSCRIPTION_FREEZE_ENABLED) and FreezeSettingsService.is_enabled()
+
+
 async def handle_freeze_subscription(
     callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
 ) -> None:
     from app.database.crud.subscription import get_active_subscriptions_by_user_id
-    from app.services.freeze_service import FreezeError, FreezeService
+    from app.services.freeze_service import FreezeError, freeze_service
+
+    # Guard: stale inline keyboards can deliver this callback even with the
+    # feature disabled — the button is hidden but the callback stays registered.
+    if not _freeze_available():
+        await callback.answer('Функция недоступна', show_alert=True)
+        return
 
     subs = await get_active_subscriptions_by_user_id(db, db_user.id)
     if not subs:
@@ -20,7 +33,7 @@ async def handle_freeze_subscription(
         return
 
     try:
-        await FreezeService().freeze_subscription(db, subs[0], db_user)
+        await freeze_service.freeze_subscription(db, subs[0], db_user)
     except FreezeError as e:
         await callback.answer(e.message, show_alert=True)
         return
@@ -39,7 +52,11 @@ async def handle_resume_subscription(
     callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
 ) -> None:
     from app.database.crud.subscription import get_active_subscriptions_by_user_id
-    from app.services.freeze_service import FreezeError, FreezeService
+    from app.services.freeze_service import FreezeError, freeze_service
+
+    if not _freeze_available():
+        await callback.answer('Функция недоступна', show_alert=True)
+        return
 
     subs = await get_active_subscriptions_by_user_id(db, db_user.id)
     if not subs:
@@ -47,7 +64,7 @@ async def handle_resume_subscription(
         return
 
     try:
-        await FreezeService().resume_subscription(db, subs[0], db_user, reason='manual')
+        await freeze_service.resume_subscription(db, subs[0], db_user, reason='manual')
     except FreezeError as e:
         await callback.answer(e.message, show_alert=True)
         return
