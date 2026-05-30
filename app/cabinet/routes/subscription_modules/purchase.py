@@ -1393,6 +1393,20 @@ async def activate_trial(
             action='create',
         )
 
+    try:
+        from app.services.trial_invite_service import trial_invite_service
+
+        _ti_bot = None
+        if settings.BOT_TOKEN:
+            from aiogram import Bot
+
+            _ti_bot = Bot(token=settings.BOT_TOKEN)
+        await trial_invite_service.reward_inviter_on_trial_activation(db, user, _ti_bot)
+        if _ti_bot is not None:
+            await _ti_bot.session.close()
+    except Exception as e:
+        logger.error('trial_invite hook failed (cabinet)', error=e)
+
     # Send admin notification about trial activation
     try:
         from aiogram import Bot
