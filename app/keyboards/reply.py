@@ -79,6 +79,22 @@ def get_contact_keyboard(language: str = 'ru') -> ReplyKeyboardMarkup:
     )
 
 
+def get_receipt_email_keyboard(language: str = 'ru', current_email: str | None = None) -> ReplyKeyboardMarkup:
+    texts = get_texts(language)
+    keyboard = []
+
+    if current_email:
+        keyboard.append([KeyboardButton(text=current_email)])
+
+    keyboard.append([KeyboardButton(text=texts.CANCEL)])
+
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
 def get_location_keyboard(language: str = 'ru') -> ReplyKeyboardMarkup:
     texts = get_texts(language)
     return ReplyKeyboardMarkup(

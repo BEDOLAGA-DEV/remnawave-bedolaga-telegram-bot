@@ -12,10 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
+from app.handlers.balance.receipt_contact import ask_receipt_email
 from app.keyboards.inline import get_happ_download_button_row
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.services.subscription_purchase_service import SubscriptionPurchaseService
+from app.states import BalanceStates
 from app.states import SubscriptionStates
 from app.utils.decorators import error_handler
 from app.utils.pricing_utils import compute_simple_subscription_price
@@ -721,13 +723,31 @@ async def handle_simple_subscription_other_payment_methods(
     db: AsyncSession,
 ):
     """Обрабатывает выбор других способов оплаты."""
+    await _show_simple_subscription_payment_methods(
+        target_message=callback.message,
+        db_user=db_user,
+        state=state,
+        db=db,
+        edit_message=True,
+    )
+    await callback.answer()
+
+
+async def _show_simple_subscription_payment_methods(
+    target_message: types.Message,
+    db_user: User,
+    state: FSMContext,
+    db: AsyncSession,
+    edit_message: bool,
+):
+    """Рендерит экран выбора методов оплаты простой подписки."""
     texts = get_texts(db_user.language)
 
     data = await state.get_data()
     subscription_params = data.get('subscription_params', {})
 
     if not subscription_params:
-        await callback.answer('❌ Данные подписки устарели. Пожалуйста, начните сначала.', show_alert=True)
+        await target_message.answer('❌ Данные подписки устарели. Пожалуйста, начните сначала.')
         return
 
     resolved_squad_uuid = await _ensure_simple_subscription_squad_uuid(
@@ -813,9 +833,10 @@ async def handle_simple_subscription_other_payment_methods(
     keyboard_rows.extend(base_keyboard.inline_keyboard)
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
-    await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
-
-    await callback.answer()
+    if edit_message:
+        await target_message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
+    else:
+        await target_message.answer(message_text, reply_markup=keyboard, parse_mode='HTML')
 
 
 @error_handler
@@ -944,168 +965,16 @@ async def handle_simple_subscription_payment_method(
                 await callback.answer('❌ Ошибка создания заказа', show_alert=True)
                 return
 
-            # Создаем платеж через YooKassa
-            if payment_method == 'yookassa_sbp':
-                payment_result = await payment_service.create_yookassa_sbp_payment(
-                    db=db,
-                    user_id=db_user.id,
-                    amount_kopeks=price_kopeks,
-                    description=f'Оплата подписки на {subscription_params["period_days"]} дней',
-                    receipt_email=db_user.email if hasattr(db_user, 'email') and db_user.email else None,
-                    receipt_phone=db_user.phone if hasattr(db_user, 'phone') and db_user.phone else None,
-                    metadata={
-                        'user_telegram_id': str(db_user.telegram_id),
-                        'user_username': db_user.username or '',
-                        'order_id': str(order.id),
-                        'subscription_id': str(order.id),
-                        'subscription_period': str(subscription_params['period_days']),
-                        'payment_purpose': 'simple_subscription_purchase',
-                    },
-                )
-            else:
-                payment_result = await payment_service.create_yookassa_payment(
-                    db=db,
-                    user_id=db_user.id,
-                    amount_kopeks=price_kopeks,
-                    description=f'Оплата подписки на {subscription_params["period_days"]} дней',
-                    receipt_email=db_user.email if hasattr(db_user, 'email') and db_user.email else None,
-                    receipt_phone=db_user.phone if hasattr(db_user, 'phone') and db_user.phone else None,
-                    metadata={
-                        'user_telegram_id': str(db_user.telegram_id),
-                        'user_username': db_user.username or '',
-                        'order_id': str(order.id),
-                        'subscription_id': str(order.id),
-                        'subscription_period': str(subscription_params['period_days']),
-                        'payment_purpose': 'simple_subscription_purchase',
-                    },
-                )
-
-            if not payment_result:
-                await callback.answer('❌ Ошибка создания платежа', show_alert=True)
-                return
-
-            # Отправляем QR-код и/или ссылку для оплаты
-            confirmation_url = payment_result.get('confirmation_url')
-            qr_confirmation_data = payment_result.get('qr_confirmation_data')
-
-            if not confirmation_url and not qr_confirmation_data:
-                await callback.answer('❌ Ошибка получения данных для оплаты', show_alert=True)
-                return
-
-            # Подготовим QR-код для вставки в основное сообщение
-            qr_photo = None
-            if qr_confirmation_data or confirmation_url:
-                try:
-                    # Импортируем необходимые модули для генерации QR-кода
-                    from io import BytesIO
-
-                    import qrcode
-                    from aiogram.types import BufferedInputFile
-
-                    # Используем qr_confirmation_data если доступно, иначе confirmation_url
-                    qr_data = qr_confirmation_data or confirmation_url
-
-                    # Создаем QR-код из полученных данных
-                    qr = qrcode.QRCode(version=1, box_size=10, border=5)
-                    qr.add_data(qr_data)
-                    qr.make(fit=True)
-
-                    img = qr.make_image(fill_color='black', back_color='white')
-
-                    # Сохраняем изображение в байты
-                    img_bytes = BytesIO()
-                    img.save(img_bytes, format='PNG')
-                    img_bytes.seek(0)
-
-                    qr_photo = BufferedInputFile(img_bytes.getvalue(), filename='qrcode.png')
-                except ImportError:
-                    logger.warning('qrcode библиотека не установлена, QR-код не будет сгенерирован')
-                except Exception as e:
-                    logger.error('Ошибка генерации QR-кода', error=e)
-
-            # Создаем клавиатуру с кнопками для оплаты по ссылке и проверки статуса
-            keyboard_buttons = []
-
-            # Добавляем кнопку оплаты, если доступна ссылка
-            if confirmation_url:
-                keyboard_buttons.append([types.InlineKeyboardButton(text='🔗 Перейти к оплате', url=confirmation_url)])
-            else:
-                # Если ссылка недоступна, предлагаем оплатить через ID платежа в приложении банка
-                keyboard_buttons.append(
-                    [types.InlineKeyboardButton(text='📱 Оплатить в приложении банка', callback_data='temp_disabled')]
-                )
-
-            # Добавляем общие кнопки
-            keyboard_buttons.append(
-                [
-                    types.InlineKeyboardButton(
-                        text='📊 Проверить статус', callback_data=f'check_yookassa_{payment_result["local_payment_id"]}'
-                    )
-                ]
+            await state.set_state(BalanceStates.waiting_for_receipt_email)
+            await state.update_data(
+                receipt_payment_method=f'simple_subscription_{payment_method}',
+                receipt_amount_kopeks=price_kopeks,
+                receipt_order_id=order.id,
+                receipt_subscription_params=subscription_params,
             )
-            keyboard_buttons.append(
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')]
-            )
-
-            keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-
-            # Подготавливаем текст сообщения
-            show_devices = settings.is_devices_selection_enabled()
-
-            message_lines = [
-                '💳 <b>Оплата подписки через YooKassa</b>',
-                '',
-                f'📅 Период: {subscription_params["period_days"]} дней',
-            ]
-
-            if show_devices:
-                message_lines.append(f'📱 Устройства: {subscription_params["device_limit"]}')
-
-            yookassa_traffic_gb = subscription_params['traffic_limit_gb']
-            yookassa_traffic_label = 'Безлимит' if yookassa_traffic_gb == 0 else f'{yookassa_traffic_gb} ГБ'
-
-            message_lines.extend(
-                [
-                    f'📊 Трафик: {yookassa_traffic_label}',
-                    f'💰 Сумма: {settings.format_price(price_kopeks)}',
-                    f'🆔 ID платежа: {payment_result["yookassa_payment_id"][:8]}...',
-                    '',
-                ]
-            )
-
-            message_text = '\n'.join(message_lines)
-
-            # Добавляем инструкции в зависимости от доступных способов оплаты
-            if not confirmation_url:
-                message_text += (
-                    f'📱 <b>Инструкция по оплате:</b>\n'
-                    f'1. Откройте приложение вашего банка\n'
-                    f'2. Найдите функцию оплаты по реквизитам или перевод по СБП\n'
-                    f'3. Введите ID платежа: <code>{payment_result["yookassa_payment_id"]}</code>\n'
-                    f'4. Подтвердите платеж в приложении банка\n'
-                    f'5. Деньги поступят на баланс автоматически\n\n'
-                )
-
-            message_text += (
-                f'🔒 Оплата происходит через защищенную систему YooKassa\n'
-                f'✅ Принимаем карты: Visa, MasterCard, МИР\n\n'
-                f'❓ Если возникнут проблемы, обратитесь в {settings.get_support_contact_display_html()}'
-            )
-
-            # Отправляем сообщение с инструкциями и клавиатурой
-            # Если есть QR-код, отправляем его как медиа-сообщение
-            if qr_photo:
-                # Используем метод отправки фото с описанием
-                await callback.message.edit_media(
-                    media=types.InputMediaPhoto(media=qr_photo, caption=message_text, parse_mode='HTML'),
-                    reply_markup=keyboard,
-                )
-            else:
-                # Если QR-код недоступен, отправляем обычное текстовое сообщение
-                await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
-
-            await state.clear()
+            await ask_receipt_email(callback.message, db_user, state)
             await callback.answer()
+            return
 
         elif payment_method == 'cryptobot':
             # Оплата через CryptoBot

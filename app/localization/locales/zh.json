@@ -1666,5 +1666,21 @@
   "SUBSCRIPTION_REVOKE_COOLDOWN": "⏱ 重新签发将在 {minutes} 分 {seconds} 秒后可用。",
   "SUBSCRIPTION_REVOKE_DISABLED": "订阅重新签发不可用",
   "SUBSCRIPTION_REVOKE_ERROR": "❌ 重新签发订阅时出错。请稍后重试。",
-  "SUBSCRIPTION_REVOKE_CONNECT_BTN": "🔗 连接"
+  "SUBSCRIPTION_REVOKE_CONNECT_BTN": "🔗 连接",
+  "RECEIPT_EMAIL_PROMPT": "📧 请输入用于收据的电子邮件。\n\n请在聊天中发送电子邮件以继续付款。",
+  "RECEIPT_EMAIL_PROMPT_WITH_CURRENT": "📧 已验证的收据邮箱：{email}\n\n点击它，或在聊天中发送其他邮箱以继续付款。",
+  "RECEIPT_INVALID_EMAIL": "❌ 无效的电子邮件 \"{email}\"\n\n请输入有效的电子邮件以继续付款。",
+  "RECEIPT_EMAIL_IN_USE": "❌ 电子邮件 \"{email}\" 已被其他账户使用。\n\n请输入其他电子邮件以继续付款。",
+  "RECEIPT_EMAIL_SAVED": "✅ 电子邮件已保存：{email}",
+  "RECEIPT_SKIP": "⏭ 跳过收据",
+  "RECEIPT_PAYMENT_CREATING": "⏳ 正在创建付款...",
+  "RECEIPT_AMOUNT_MISSING": "❌ 无法确定付款金额。请重试。",
+  "RECEIPT_PAYMENT_ERROR": "❌ 创建付款失败。请稍后重试或联系支持。",
+  "RECEIPT_PAYMENT_LINK_ERROR": "❌ 获取付款链接失败。请联系支持。",
+  "RECEIPT_SBP_DATA_ERROR": "❌ 获取 SBP 付款数据失败。请联系支持。",
+  "RECEIPT_PAY_CARD_BUTTON": "💳 银行卡支付",
+  "RECEIPT_GO_TO_PAYMENT_BUTTON": "🔗 前往付款",
+  "SIMPLE_SUBSCRIPTION_YOOKASSA_INVOICE": "💳 <b>通过 YooKassa 支付订阅</b>\n\n📅 时长：{period_days} 天{devices_line}\n📊 流量：{traffic}\n💰 金额：{amount}\n🆔 支付 ID：{payment_id}\n\n🔒 付款通过安全的 YooKassa 系统处理\n✅ 支持 Visa、MasterCard、MIR\n\n❓ 如有问题，请联系 {support}",
+  "RECEIPT_CARD_INVOICE": "💳 <b>银行卡支付</b>\n\n💰 金额：{amount}\n🆔 支付 ID：{payment_id}\n\n📱 <b>操作说明：</b>\n1. 点击“银行卡支付”按钮\n2. 输入银行卡信息\n3. 确认付款\n4. 余额将自动到账\n\n🔒 付款通过安全的 YooKassa 系统处理\n✅ 支持 Visa、MasterCard、MIR\n\n❓ 如有问题，请联系 {support}",
+  "RECEIPT_SBP_INVOICE": "🔗 <b>SBP 付款</b>\n\n💰 金额：{amount}\n🆔 支付 ID：{payment_id}\n\n🔒 付款通过安全的 YooKassa 系统处理\n✅ 支持所有参与银行的 SBP\n\n❓ 如有问题，请联系 {support}"
 }

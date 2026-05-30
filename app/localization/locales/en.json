@@ -1776,5 +1776,21 @@
   "SUBSCRIPTION_REVOKE_COOLDOWN": "⏱ Reissue will be available in {minutes} min {seconds} sec.",
   "SUBSCRIPTION_REVOKE_DISABLED": "Subscription reissue is not available",
   "SUBSCRIPTION_REVOKE_ERROR": "❌ Error reissuing subscription. Please try again later.",
-  "SUBSCRIPTION_REVOKE_CONNECT_BTN": "🔗 Connect"
+  "SUBSCRIPTION_REVOKE_CONNECT_BTN": "🔗 Connect",
+  "RECEIPT_EMAIL_PROMPT": "📧 Enter your email for the receipt.\n\nSend an email in chat to continue with the payment.",
+  "RECEIPT_EMAIL_PROMPT_WITH_CURRENT": "📧 Verified receipt email: {email}\n\nTap it or send another email in chat to continue with the payment.",
+  "RECEIPT_INVALID_EMAIL": "❌ Invalid email \"{email}\"\n\nSend a valid email to continue with the payment.",
+  "RECEIPT_EMAIL_IN_USE": "❌ Email \"{email}\" is already used by another account.\n\nSend another email to continue with the payment.",
+  "RECEIPT_EMAIL_SAVED": "✅ Email saved: {email}",
+  "RECEIPT_SKIP": "⏭ Skip receipt",
+  "RECEIPT_PAYMENT_CREATING": "⏳ Creating payment...",
+  "RECEIPT_AMOUNT_MISSING": "❌ Failed to determine the payment amount. Please try again.",
+  "RECEIPT_PAYMENT_ERROR": "❌ Failed to create payment. Please try again later or contact support.",
+  "RECEIPT_PAYMENT_LINK_ERROR": "❌ Failed to get the payment link. Contact support.",
+  "RECEIPT_SBP_DATA_ERROR": "❌ Failed to get SBP payment data. Contact support.",
+  "RECEIPT_PAY_CARD_BUTTON": "💳 Pay by card",
+  "RECEIPT_GO_TO_PAYMENT_BUTTON": "🔗 Go to payment",
+  "SIMPLE_SUBSCRIPTION_YOOKASSA_INVOICE": "💳 <b>Subscription payment via YooKassa</b>\n\n📅 Period: {period_days} days{devices_line}\n📊 Traffic: {traffic}\n💰 Amount: {amount}\n🆔 Payment ID: {payment_id}\n\n🔒 Payment is processed via secure YooKassa\n✅ Accepted cards: Visa, MasterCard, MIR\n\n❓ If anything goes wrong, contact {support}",
+  "RECEIPT_CARD_INVOICE": "💳 <b>Card payment</b>\n\n💰 Amount: {amount}\n🆔 Payment ID: {payment_id}\n\n📱 <b>Instructions:</b>\n1. Tap the 'Pay by card' button\n2. Enter your card details\n3. Confirm the payment\n4. Funds will be credited automatically\n\n🔒 Payment is processed via secure YooKassa\n✅ Accepted cards: Visa, MasterCard, MIR\n\n❓ If anything goes wrong, contact {support}",
+  "RECEIPT_SBP_INVOICE": "🔗 <b>SBP payment</b>\n\n💰 Amount: {amount}\n🆔 Payment ID: {payment_id}\n\n🔒 Payment is processed via secure YooKassa\n✅ SBP from all participating banks is supported\n\n❓ If anything goes wrong, contact {support}"
 }

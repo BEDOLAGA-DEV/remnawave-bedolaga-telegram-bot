@@ -745,6 +745,10 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.message.register(process_topup_amount, BalanceStates.waiting_for_amount)
 
+    from app.handlers.balance.receipt_contact import process_receipt_email
+
+    dp.message.register(process_receipt_email, BalanceStates.waiting_for_receipt_email)
+
     from .cryptobot import start_cryptobot_payment
 
     dp.callback_query.register(start_cryptobot_payment, F.data == 'topup_cryptobot')

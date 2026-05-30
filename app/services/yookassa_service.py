@@ -188,6 +188,7 @@ class YooKassaService:
         metadata: dict[str, Any],
         receipt_email: str | None = None,
         receipt_phone: str | None = None,
+        skip_receipt: bool = False,
         return_url: str | None = None,
     ) -> dict[str, Any] | None:
         """Создает платеж в YooKassa"""
@@ -197,20 +198,21 @@ class YooKassaService:
             return None
 
         customer_contact_for_receipt = {}
-        if receipt_email:
-            customer_contact_for_receipt['email'] = receipt_email
-        elif receipt_phone:
-            customer_contact_for_receipt['phone'] = receipt_phone
-        elif hasattr(settings, 'YOOKASSA_DEFAULT_RECEIPT_EMAIL') and settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL:
-            customer_contact_for_receipt['email'] = settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL
-        else:
-            logger.error(
-                'КРИТИЧНО: Не предоставлен email/телефон для чека YooKassa и YOOKASSA_DEFAULT_RECEIPT_EMAIL не установлен.'
-            )
-            return {
-                'error': True,
-                'internal_message': 'Отсутствуют контактные данные для чека YooKassa и не настроен email по умолчанию.',
-            }
+        if not skip_receipt:
+            if receipt_email:
+                customer_contact_for_receipt['email'] = receipt_email
+            elif receipt_phone:
+                customer_contact_for_receipt['phone'] = receipt_phone
+            elif hasattr(settings, 'YOOKASSA_DEFAULT_RECEIPT_EMAIL') and settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL:
+                customer_contact_for_receipt['email'] = settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL
+            else:
+                logger.error(
+                    'КРИТИЧНО: Не предоставлен email/телефон для чека YooKassa и YOOKASSA_DEFAULT_RECEIPT_EMAIL не установлен.'
+                )
+                return {
+                    'error': True,
+                    'internal_message': 'Отсутствуют контактные данные для чека YooKassa и не настроен email по умолчанию.',
+                }
 
         try:
             builder = PaymentRequestBuilder()
@@ -231,9 +233,10 @@ class YooKassaService:
                 }
             ]
 
-            receipt_data_dict: dict[str, Any] = {'customer': customer_contact_for_receipt, 'items': receipt_items_list}
-
-            builder.set_receipt(receipt_data_dict)
+            receipt_data_dict: dict[str, Any] | None = None
+            if not skip_receipt:
+                receipt_data_dict = {'customer': customer_contact_for_receipt, 'items': receipt_items_list}
+                builder.set_receipt(receipt_data_dict)
 
             # Рекуррентные платежи: сохранение карты
             if settings.YOOKASSA_RECURRENT_ENABLED:
@@ -294,6 +297,7 @@ class YooKassaService:
         metadata: dict[str, Any],
         receipt_email: str | None = None,
         receipt_phone: str | None = None,
+        skip_receipt: bool = False,
         return_url: str | None = None,
     ) -> dict[str, Any] | None:
         if not self.configured:
@@ -301,20 +305,21 @@ class YooKassaService:
             return None
 
         customer_contact_for_receipt = {}
-        if receipt_email:
-            customer_contact_for_receipt['email'] = receipt_email
-        elif receipt_phone:
-            customer_contact_for_receipt['phone'] = receipt_phone
-        elif hasattr(settings, 'YOOKASSA_DEFAULT_RECEIPT_EMAIL') and settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL:
-            customer_contact_for_receipt['email'] = settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL
-        else:
-            logger.error(
-                'КРИТИЧНО: Не предоставлен email/телефон для чека YooKassa и YOOKASSA_DEFAULT_RECEIPT_EMAIL не установлен.'
-            )
-            return {
-                'error': True,
-                'internal_message': 'Отсутствуют контактные данные для чека YooKassa и не настроен email по умолчанию.',
-            }
+        if not skip_receipt:
+            if receipt_email:
+                customer_contact_for_receipt['email'] = receipt_email
+            elif receipt_phone:
+                customer_contact_for_receipt['phone'] = receipt_phone
+            elif hasattr(settings, 'YOOKASSA_DEFAULT_RECEIPT_EMAIL') and settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL:
+                customer_contact_for_receipt['email'] = settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL
+            else:
+                logger.error(
+                    'КРИТИЧНО: Не предоставлен email/телефон для чека YooKassa и YOOKASSA_DEFAULT_RECEIPT_EMAIL не установлен.'
+                )
+                return {
+                    'error': True,
+                    'internal_message': 'Отсутствуют контактные данные для чека YooKassa и не настроен email по умолчанию.',
+                }
 
         try:
             # Создаем один платеж с подтверждением через QR
@@ -345,9 +350,10 @@ class YooKassaService:
                 }
             ]
 
-            receipt_data_dict: dict[str, Any] = {'customer': customer_contact_for_receipt, 'items': receipt_items_list}
-
-            builder.set_receipt(receipt_data_dict)
+            receipt_data_dict: dict[str, Any] | None = None
+            if not skip_receipt:
+                receipt_data_dict = {'customer': customer_contact_for_receipt, 'items': receipt_items_list}
+                builder.set_receipt(receipt_data_dict)
 
             idempotence_key = str(uuid.uuid4())
 

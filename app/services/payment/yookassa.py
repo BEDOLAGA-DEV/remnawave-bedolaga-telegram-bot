@@ -97,6 +97,7 @@ class YooKassaPaymentMixin:
         description: str,
         receipt_email: str | None = None,
         receipt_phone: str | None = None,
+        skip_receipt: bool = False,
         metadata: dict[str, Any] | None = None,
         return_url: str | None = None,
     ) -> dict[str, Any] | None:
@@ -141,6 +142,7 @@ class YooKassaPaymentMixin:
                 metadata=payment_metadata,
                 receipt_email=receipt_email,
                 receipt_phone=receipt_phone,
+                skip_receipt=skip_receipt,
                 return_url=return_url,
             )
 
@@ -201,6 +203,7 @@ class YooKassaPaymentMixin:
         description: str,
         receipt_email: str | None = None,
         receipt_phone: str | None = None,
+        skip_receipt: bool = False,
         metadata: dict[str, Any] | None = None,
         return_url: str | None = None,
     ) -> dict[str, Any] | None:
@@ -245,6 +248,7 @@ class YooKassaPaymentMixin:
                 metadata=payment_metadata,
                 receipt_email=receipt_email,
                 receipt_phone=receipt_phone,
+                skip_receipt=skip_receipt,
                 return_url=return_url,
             )
 

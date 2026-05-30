@@ -1797,5 +1797,21 @@
   "SUBSCRIPTION_REVOKE_COOLDOWN": "⏱ Перевыпуск будет доступен через {minutes} мин. {seconds} сек.",
   "SUBSCRIPTION_REVOKE_DISABLED": "Перевыпуск подписки недоступен",
   "SUBSCRIPTION_REVOKE_ERROR": "❌ Ошибка при перевыпуске подписки. Попробуйте позже.",
-  "SUBSCRIPTION_REVOKE_CONNECT_BTN": "🔗 Подключиться"
+  "SUBSCRIPTION_REVOKE_CONNECT_BTN": "🔗 Подключиться",
+  "RECEIPT_EMAIL_PROMPT": "📧 Для отправки чека укажите email.\n\nОтправьте email в чат, чтобы продолжить оплату.",
+  "RECEIPT_EMAIL_PROMPT_WITH_CURRENT": "📧 Подтверждённый email для чека: {email}\n\nНажмите на него или отправьте другой email в чат, чтобы продолжить оплату.",
+  "RECEIPT_INVALID_EMAIL": "❌ Некорректный email \"{email}\"\n\nОтправьте корректный email, чтобы продолжить оплату.",
+  "RECEIPT_EMAIL_IN_USE": "❌ Email \"{email}\" уже используется другим аккаунтом.\n\nОтправьте другой email, чтобы продолжить оплату.",
+  "RECEIPT_EMAIL_SAVED": "✅ Email сохранён: {email}",
+  "RECEIPT_SKIP": "⏭ Пропустить чек",
+  "RECEIPT_PAYMENT_CREATING": "⏳ Создаю платёж...",
+  "RECEIPT_AMOUNT_MISSING": "❌ Не удалось определить сумму платежа. Попробуйте ещё раз.",
+  "RECEIPT_PAYMENT_ERROR": "❌ Ошибка создания платежа. Попробуйте позже или обратитесь в поддержку.",
+  "RECEIPT_PAYMENT_LINK_ERROR": "❌ Ошибка получения ссылки для оплаты. Обратитесь в поддержку.",
+  "RECEIPT_SBP_DATA_ERROR": "❌ Ошибка получения данных для оплаты через СБП. Обратитесь в поддержку.",
+  "RECEIPT_PAY_CARD_BUTTON": "💳 Оплатить картой",
+  "RECEIPT_GO_TO_PAYMENT_BUTTON": "🔗 Перейти к оплате",
+  "SIMPLE_SUBSCRIPTION_YOOKASSA_INVOICE": "💳 <b>Оплата подписки через YooKassa</b>\n\n📅 Период: {period_days} дней{devices_line}\n📊 Трафик: {traffic}\n💰 Сумма: {amount}\n🆔 ID платежа: {payment_id}\n\n🔒 Оплата происходит через защищенную систему YooKassa\n✅ Принимаем карты: Visa, MasterCard, МИР\n\n❓ Если возникнут проблемы, обратитесь в {support}",
+  "RECEIPT_CARD_INVOICE": "💳 <b>Оплата банковской картой</b>\n\n💰 Сумма: {amount}\n🆔 ID платежа: {payment_id}\n\n📱 <b>Инструкция:</b>\n1. Нажмите кнопку 'Оплатить картой'\n2. Введите данные вашей карты\n3. Подтвердите платеж\n4. Деньги поступят на баланс автоматически\n\n🔒 Оплата происходит через защищенную систему YooKassa\n✅ Принимаем карты: Visa, MasterCard, МИР\n\n❓ Если возникнут проблемы, обратитесь в {support}",
+  "RECEIPT_SBP_INVOICE": "🔗 <b>Оплата через СБП</b>\n\n💰 Сумма: {amount}\n🆔 ID платежа: {payment_id}\n\n🔒 Оплата происходит через защищенную систему YooKassa\n✅ Принимаем СБП от всех банков-участников\n\n❓ Если возникнут проблемы, обратитесь в {support}"
 }
