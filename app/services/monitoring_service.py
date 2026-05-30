@@ -1,5 +1,6 @@
 import asyncio
 import html
+import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -243,6 +244,7 @@ class MonitoringService:
                         )
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
+                await self._check_prerenew_save_offers(db)
                 await self._check_traffic_usage_warnings(db)
                 await self._check_trial_expiring_soon(db)
                 await self._check_trial_channel_subscriptions(db)
@@ -1337,6 +1339,176 @@ class MonitoringService:
 
         except Exception as e:
             logger.error('Ошибка проверки напоминаний об истекшей подписке', error=e)
+
+    async def _check_prerenew_save_offers(self, db: AsyncSession):
+        if not NotificationSettingsService.are_notifications_globally_enabled():
+            return
+        if not NotificationSettingsService.is_prerenew_save_enabled():
+            return
+        if not self.bot:
+            return
+
+        try:
+            now = datetime.now(UTC)
+            trigger_hours = NotificationSettingsService.get_prerenew_save_trigger_hours()
+            trigger_days = max(1, (trigger_hours + 23) // 24)
+
+            subscriptions = await self._get_expiring_paid_subscriptions(db, trigger_days)
+
+            from app.utils.notification_prefs import is_subscription_expiry_enabled
+
+            sent = 0
+            for subscription in subscriptions:
+                user = subscription.user
+                if not user or subscription.end_date is None:
+                    continue
+
+                # Churn-save шлётся только в Telegram. Email-only пользователям
+                # пропускаем, чтобы не плодить orphan-офферы и мёртвые dedup-записи
+                # (оффер истёк бы раньше, чем дошёл бы другим каналом).
+                if not user.telegram_id:
+                    continue
+
+                hours_left = (subscription.end_date - now).total_seconds() / 3600
+                if not (0 < hours_left <= trigger_hours):
+                    continue
+
+                # at-risk: автопродление выключено -> сам не продлится.
+                # autopay_enabled продлевается с баланса ИЛИ карты — пропускаем.
+                if subscription.autopay_enabled:
+                    continue
+
+                if not is_subscription_expiry_enabled(user):
+                    continue
+
+                # multi-tariff: пропустить, если есть другая активная подписка
+                if settings.is_multi_tariff_enabled():
+                    other_active = await db.execute(
+                        select(Subscription.id)
+                        .where(
+                            Subscription.user_id == user.id,
+                            Subscription.id != subscription.id,
+                            Subscription.status == SubscriptionStatus.ACTIVE.value,
+                            Subscription.end_date > now,
+                        )
+                        .limit(1)
+                    )
+                    if other_active.scalar_one_or_none() is not None:
+                        continue
+
+                if await notification_sent(db, user.id, subscription.id, 'prerenew_save'):
+                    continue
+
+                percent = NotificationSettingsService.get_prerenew_save_discount_percent()
+                valid_hours = NotificationSettingsService.get_prerenew_save_valid_hours()
+                offer = await upsert_discount_offer(
+                    db,
+                    user_id=user.id,
+                    subscription_id=subscription.id,
+                    notification_type='prerenew_save',
+                    discount_percent=percent,
+                    bonus_amount_kopeks=0,
+                    valid_hours=valid_hours,
+                    effect_type='percent_discount',
+                )
+                success = await self._send_prerenew_save_notification(
+                    user, subscription, percent, offer.expires_at, offer.id, max(1, math.ceil(hours_left)),
+                )
+                if success:
+                    await record_notification(db, user.id, subscription.id, 'prerenew_save')
+                    sent += 1
+
+            if sent:
+                await self._log_monitoring_event(
+                    db,
+                    'prerenew_save_sent',
+                    f'Churn-save офферы отправлены: {sent}',
+                    {'sent': sent},
+                )
+
+        except Exception as e:
+            logger.error('Ошибка проверки churn-save офферов', error=e)
+
+    async def _send_prerenew_save_notification(
+        self,
+        user: User,
+        subscription: Subscription,
+        percent: int,
+        expires_at: datetime,
+        offer_id: int,
+        hours_left: int,
+    ) -> bool:
+        try:
+            texts = get_texts(user.language)
+
+            template = texts.get(
+                'SUBSCRIPTION_PRERENEW_SAVE',
+                (
+                    '⏳ <b>Подписка истекает через {hours_left} ч</b>\n\n'
+                    'Продлите сейчас со скидкой {percent}% — не теряйте доступ. '
+                    'Скидка суммируется с промогруппой и действует до {expires_at}.'
+                ),
+            )
+            message = template.format(
+                hours_left=hours_left,
+                percent=percent,
+                expires_at=format_local_datetime(expires_at, '%d.%m.%Y %H:%M'),
+            )
+
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+            extend_callback = f'se:{subscription.id}' if settings.is_multi_tariff_enabled() else 'subscription_extend'
+
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        build_miniapp_or_callback_button(
+                            text='🎁 Получить скидку', callback_data=f'nz!_claim_discount_{offer_id}'
+                        )
+                    ],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('SUBSCRIPTION_EXTEND', '💎 Продлить подписку'),
+                            callback_data=f'nz!_{extend_callback}',
+                        )
+                    ],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'),
+                            callback_data='nz!_balance_topup',
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('SUPPORT_BUTTON', '🆘 Поддержка'), callback_data='nz!_menu_support'
+                        )
+                    ],
+                ]
+            )
+
+            await self._send_message_with_logo(
+                chat_id=user.telegram_id,
+                text=message,
+                parse_mode='HTML',
+                reply_markup=keyboard,
+            )
+            return True
+
+        except (TelegramForbiddenError, TelegramBadRequest) as exc:
+            if await self._handle_unreachable_user(user, exc, 'churn-save уведомление'):
+                return True
+            logger.error(
+                'Ошибка Telegram API при отправке churn-save уведомления',
+                telegram_id=user.telegram_id,
+                exc=exc,
+            )
+            return False
+        except TelegramNetworkError as e:
+            logger.warning('Таймаут отправки churn-save уведомления', telegram_id=user.telegram_id, e=e)
+            return False
+        except Exception as e:
+            logger.error('Ошибка отправки churn-save уведомления', telegram_id=user.telegram_id, e=e)
+            return False
 
     async def _get_expiring_paid_subscriptions(self, db: AsyncSession, days_before: int) -> list[Subscription]:
         current_time = datetime.now(UTC)

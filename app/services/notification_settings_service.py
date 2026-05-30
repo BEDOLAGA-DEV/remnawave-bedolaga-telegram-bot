@@ -32,6 +32,12 @@ class NotificationSettingsService:
             'valid_hours': 24,
             'trigger_days': 5,
         },
+        'prerenew_save': {
+            'enabled': False,
+            'discount_percent': 15,
+            'valid_hours': 24,
+            'trigger_hours': 36,
+        },
     }
 
     @classmethod
@@ -177,6 +183,62 @@ class NotificationSettingsService:
         except (TypeError, ValueError):
             return False
         return cls._set_field('expired_second_wave', 'valid_hours', hours_int)
+
+    @classmethod
+    def is_prerenew_save_enabled(cls) -> bool:
+        return cls.is_enabled('prerenew_save')
+
+    @classmethod
+    def set_prerenew_save_enabled(cls, enabled: bool) -> bool:
+        return cls.set_enabled('prerenew_save', enabled)
+
+    @classmethod
+    def get_prerenew_save_discount_percent(cls) -> int:
+        value = cls._get('prerenew_save').get('discount_percent', 15)
+        try:
+            return max(0, min(100, int(value)))
+        except (TypeError, ValueError):
+            return 15
+
+    @classmethod
+    def set_prerenew_save_discount_percent(cls, percent: int) -> bool:
+        try:
+            percent_int = max(0, min(100, int(percent)))
+        except (TypeError, ValueError):
+            return False
+        return cls._set_field('prerenew_save', 'discount_percent', percent_int)
+
+    @classmethod
+    def get_prerenew_save_valid_hours(cls) -> int:
+        value = cls._get('prerenew_save').get('valid_hours', 24)
+        try:
+            return max(1, min(168, int(value)))
+        except (TypeError, ValueError):
+            return 24
+
+    @classmethod
+    def set_prerenew_save_valid_hours(cls, hours: int) -> bool:
+        try:
+            hours_int = max(1, min(168, int(hours)))
+        except (TypeError, ValueError):
+            return False
+        return cls._set_field('prerenew_save', 'valid_hours', hours_int)
+
+    @classmethod
+    def get_prerenew_save_trigger_hours(cls) -> int:
+        value = cls._get('prerenew_save').get('trigger_hours', 36)
+        try:
+            return max(1, min(168, int(value)))
+        except (TypeError, ValueError):
+            return 36
+
+    @classmethod
+    def set_prerenew_save_trigger_hours(cls, hours: int) -> bool:
+        try:
+            hours_int = max(1, min(168, int(hours)))
+        except (TypeError, ValueError):
+            return False
+        return cls._set_field('prerenew_save', 'trigger_hours', hours_int)
 
     @classmethod
     def is_third_wave_enabled(cls) -> bool:
