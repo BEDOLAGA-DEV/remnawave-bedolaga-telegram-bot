@@ -269,6 +269,12 @@ def get_admin_settings_submenu_keyboard(language: str = 'ru') -> InlineKeyboardM
                     callback_data='br_admin_open',
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_SETTINGS_BIRTHDAY_BONUS', '🎂 Подарок на ДР'),
+                    callback_data='admin_birthday_menu',
+                )
+            ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_panel')],
         ]
     )

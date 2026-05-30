@@ -28,6 +28,7 @@ from app.handlers import (
 from app.handlers.admin import (
     backup as admin_backup,
     bio_reward as admin_bio_reward,
+    birthday as admin_birthday,
     blacklist as admin_blacklist,
     blocked_users as admin_blocked_users,
     bot_configuration as admin_bot_configuration,
@@ -257,6 +258,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     user_achievements.register_handlers(dp)
     bio_reward.register_handlers(dp)
     admin_bio_reward.register_handlers(dp)
+    admin_birthday.register_handlers(dp)
     common.register_handlers(dp)
     register_stars_handlers(dp)
     user_contests.register_handlers(dp)

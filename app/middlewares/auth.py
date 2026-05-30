@@ -196,6 +196,14 @@ class AuthMiddleware(BaseMiddleware):
 
                 db_user.last_activity = datetime.now(UTC)
 
+                if settings.BIRTHDAY_BONUS_ENABLED:
+                    from app.services.birthday_service import birthday_service, should_sync_birthday
+
+                    if db_user.telegram_id and should_sync_birthday(db_user):
+                        asyncio.create_task(
+                            birthday_service.sync_user_birthday(db_user.id, db_user.telegram_id)
+                        )
+
                 if profile_updated:
                     db_user.updated_at = datetime.now(UTC)
                     logger.info('💾 [Middleware] Профиль пользователя обновлен в middleware', user_id=user.id)
