@@ -1394,6 +1394,28 @@ def get_subscription_keyboard(
                     ]
                 )
 
+            if getattr(settings, 'SUBSCRIPTION_FREEZE_ENABLED', False):
+                if subscription and getattr(subscription, 'frozen_at', None) is not None:
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                text='▶️ Разморозить',
+                                callback_data='nz!_resume_sub',
+                                style='primary',
+                            )
+                        ]
+                    )
+                else:
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                text='❄️ Заморозить',
+                                callback_data='nz!_freeze_sub',
+                                style='primary',
+                            )
+                        ]
+                    )
+
     keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu', style='danger')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)

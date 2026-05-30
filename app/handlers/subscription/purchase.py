@@ -181,6 +181,7 @@ from .traffic import (
     handle_switch_traffic,
     select_traffic,
 )
+from .freeze import handle_freeze_subscription, handle_resume_subscription
 from .wl_traffic import (
     add_traffic as add_wl_traffic,
     confirm_reset_wl_traffic,
@@ -4336,6 +4337,9 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(select_wl_traffic, F.data.startswith('nz!_wl_traffic_'), SubscriptionStates.selecting_traffic)
     dp.callback_query.register(add_wl_traffic, F.data.startswith('nz!_confirm_wl_traffic_'))
     dp.callback_query.register(handle_simple_subscription_purchase, F.data == 'nz!_simple_subscription_purchase')
+
+    dp.callback_query.register(handle_freeze_subscription, F.data == 'nz!_freeze_sub')
+    dp.callback_query.register(handle_resume_subscription, F.data == 'nz!_resume_sub')
 
 
 async def handle_simple_subscription_purchase(
