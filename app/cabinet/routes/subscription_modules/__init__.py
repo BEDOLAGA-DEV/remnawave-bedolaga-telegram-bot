@@ -2,6 +2,7 @@
 
 from .autopay import router as autopay_router
 from .daily import router as daily_router
+from .freeze import router as freeze_router
 from .devices import router as devices_router
 from .multi_tariff import router as multi_tariff_router
 from .purchase import router as purchase_router
@@ -17,6 +18,7 @@ from .wl_traffic import router as wl_traffic_router
 __all__ = [
     'autopay_router',
     'daily_router',
+    'freeze_router',
     'devices_router',
     'multi_tariff_router',
     'purchase_router',
