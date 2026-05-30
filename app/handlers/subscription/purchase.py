@@ -1130,6 +1130,13 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
         await db.refresh(db_user)
 
         try:
+            from app.services.trial_invite_service import trial_invite_service
+
+            await trial_invite_service.reward_inviter_on_trial_activation(db, db_user, callback.bot)
+        except Exception as exc:
+            logger.error('trial_invite hook failed (bot)', error=exc)
+
+        try:
             notification_service = AdminNotificationService(callback.bot)
             await notification_service.send_trial_activation_notification(
                 db,
