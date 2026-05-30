@@ -128,7 +128,15 @@ class BirthdayService:
                 if changed is not None and (now - changed) < timedelta(days=dob_stable):
                     continue
 
-                rewarded = await self._apply_reward(db, user)
+                ok, rewarded = await self._apply_reward(db, user)
+                if not ok:
+                    # Грант не прошёл (например, add_user_balance вернул False) —
+                    # откатываем частичное состояние и НЕ ставим year-метку,
+                    # чтобы попробовать снова в следующий тик.
+                    await db.rollback()
+                    continue
+                # Year-метка и сам грант коммитятся одной транзакцией —
+                # crash между ними невозможен, повторная выдача исключена.
                 user.last_birthday_reward_year = today.year
                 await db.commit()
                 await self._notify(user, rewarded)
@@ -142,7 +150,15 @@ class BirthdayService:
         if granted:
             logger.info('birthday.granted', count=granted)
 
-    async def _apply_reward(self, db, user) -> str:
+    async def _apply_reward(self, db, user) -> tuple[bool, str]:
+        """Apply the configured reward WITHOUT committing.
+
+        Returns (ok, description). The caller commits the reward together with
+        the year-marker in a single transaction (atomicity → no double-grant).
+        `ok=False` means nothing was granted (caller must rollback + skip the
+        year-marker). The subscription_days 'skip' fallback returns (True, '')
+        — congratulation without a gift, year-marker intentionally consumed.
+        """
         reward_type = BirthdaySettingsService.get_reward_type()
         amount = BirthdaySettingsService.get_reward_amount()
 
@@ -151,29 +167,23 @@ class BirthdayService:
             if subs:
                 from app.database.crud.subscription import extend_subscription
 
-                await extend_subscription(db, subs[0], amount)
-                return f'+{amount} дней подписки'
+                await extend_subscription(db, subs[0], amount, commit=False)
+                return True, f'+{amount} дней подписки'
             fallback = BirthdaySettingsService.get_subscription_days_fallback()
             if fallback == 'skip':
-                return ''
-            await add_user_balance(
+                return True, ''
+            ok = await add_user_balance(
                 db, user, amount, description='🎂 Подарок на день рождения',
-                transaction_type=TransactionType.DEPOSIT,
+                transaction_type=TransactionType.DEPOSIT, commit=False,
             )
-            return f'{amount / 100:.0f} ₽ на баланс'
+            return ok, (f'{amount / 100:.0f} ₽ на баланс' if ok else '')
 
-        if reward_type == 'promocode':
-            await add_user_balance(
-                db, user, amount, description='🎂 Подарок на день рождения',
-                transaction_type=TransactionType.DEPOSIT,
-            )
-            return f'{amount / 100:.0f} ₽ на баланс'
-
-        await add_user_balance(
+        # 'promocode' currently credits balance (real promocode minting is a follow-up).
+        ok = await add_user_balance(
             db, user, amount, description='🎂 Подарок на день рождения',
-            transaction_type=TransactionType.DEPOSIT,
+            transaction_type=TransactionType.DEPOSIT, commit=False,
         )
-        return f'{amount / 100:.0f} ₽ на баланс'
+        return ok, (f'{amount / 100:.0f} ₽ на баланс' if ok else '')
 
     async def _notify(self, user, reward_desc: str) -> None:
         if self._bot is None or not getattr(user, 'telegram_id', None):

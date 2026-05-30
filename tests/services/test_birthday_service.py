@@ -133,14 +133,18 @@ async def test_grant_balance_reward(service, monkeypatch):
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
     monkeypatch.setattr(service, '_select_birthday_users', AsyncMock(return_value=[user]))
-    add_balance = AsyncMock()
+    add_balance = AsyncMock(return_value=True)
     monkeypatch.setattr(bs, 'add_user_balance', add_balance)
     service._notify = AsyncMock()
 
     await service._grant_birthday_rewards(db)
 
     add_balance.assert_awaited_once()
+    # reward credited with commit=False (atomic with year-marker)
+    assert add_balance.await_args.kwargs.get('commit') is False
     assert user.last_birthday_reward_year == datetime.now(UTC).year
+    # year-marker + reward committed exactly once, together
+    db.commit.assert_awaited_once()
     service._notify.assert_awaited_once()
 
 
@@ -163,7 +167,7 @@ async def test_grant_skips_young_account(service, monkeypatch):
     user = _bday_user(created_at=datetime.now(UTC) - timedelta(days=2))
     db = MagicMock(); db.commit = AsyncMock(); db.rollback = AsyncMock()
     monkeypatch.setattr(service, '_select_birthday_users', AsyncMock(return_value=[user]))
-    add_balance = AsyncMock()
+    add_balance = AsyncMock(return_value=True)
     monkeypatch.setattr(bs, 'add_user_balance', add_balance)
     service._notify = AsyncMock()
 
@@ -177,10 +181,73 @@ async def test_grant_skips_recently_changed_dob(service, monkeypatch):
     user = _bday_user(birthday_changed_at=datetime.now(UTC) - timedelta(days=2))
     db = MagicMock(); db.commit = AsyncMock(); db.rollback = AsyncMock()
     monkeypatch.setattr(service, '_select_birthday_users', AsyncMock(return_value=[user]))
-    add_balance = AsyncMock()
+    add_balance = AsyncMock(return_value=True)
     monkeypatch.setattr(bs, 'add_user_balance', add_balance)
     service._notify = AsyncMock()
 
     await service._grant_birthday_rewards(db)
 
     add_balance.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_grant_balance_failure_does_not_mark_year(service, monkeypatch):
+    # add_user_balance returns False (e.g. internal error) -> no year-marker, rollback, retry next tick
+    user = _bday_user()
+    db = MagicMock(); db.commit = AsyncMock(); db.rollback = AsyncMock()
+    monkeypatch.setattr(service, '_select_birthday_users', AsyncMock(return_value=[user]))
+    monkeypatch.setattr(bs, 'add_user_balance', AsyncMock(return_value=False))
+    service._notify = AsyncMock()
+
+    await service._grant_birthday_rewards(db)
+
+    assert user.last_birthday_reward_year is None
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited()
+    service._notify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_grant_subscription_days_extends_active_sub(service, monkeypatch):
+    monkeypatch.setattr(bs.BirthdaySettingsService, 'get_reward_type', classmethod(lambda cls: 'subscription_days'))
+    monkeypatch.setattr(bs.BirthdaySettingsService, 'get_reward_amount', classmethod(lambda cls: 30))
+    user = _bday_user()
+    db = MagicMock(); db.commit = AsyncMock(); db.rollback = AsyncMock()
+    monkeypatch.setattr(service, '_select_birthday_users', AsyncMock(return_value=[user]))
+    sub = SimpleNamespace(id=7)
+    monkeypatch.setattr(bs, 'get_active_subscriptions_by_user_id', AsyncMock(return_value=[sub]))
+    extend = AsyncMock()
+    monkeypatch.setattr('app.database.crud.subscription.extend_subscription', extend)
+    add_balance = AsyncMock(return_value=True)
+    monkeypatch.setattr(bs, 'add_user_balance', add_balance)
+    service._notify = AsyncMock()
+
+    await service._grant_birthday_rewards(db)
+
+    extend.assert_awaited_once()
+    assert extend.await_args.kwargs.get('commit') is False
+    add_balance.assert_not_awaited()  # had active sub, no fallback
+    assert user.last_birthday_reward_year == datetime.now(UTC).year
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_select_feb29_birthday_matched_on_feb28_nonleap(service):
+    # 2025 is non-leap; on 28 Feb a 29-Feb birthday must be included
+    captured = {}
+
+    class _Result:
+        def scalars(self):
+            return self
+        def all(self):
+            return []
+
+    db = MagicMock()
+
+    async def _execute(stmt):
+        captured['called'] = True
+        return _Result()
+
+    db.execute = _execute
+    await service._select_birthday_users(db, date(2025, 2, 28))
+    assert captured.get('called') is True  # non-leap Feb-28 branch executed without error
