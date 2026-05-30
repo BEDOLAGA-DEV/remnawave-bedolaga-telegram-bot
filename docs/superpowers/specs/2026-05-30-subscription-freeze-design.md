@@ -26,8 +26,17 @@
 (`enable_user`). Антиабуз — настраивается админом. Точки входа: бот +
 кабинет.
 
-RemnaWave API уже имеет `enable_user(uuid)` / `disable_user(uuid)`
-(`app/external/remnawave_api.py:646,651`).
+`SubscriptionService` уже имеет идемпотентные обёртки
+`disable_remnawave_user(uuid) -> bool` (subscription_service.py:915) и
+`enable_remnawave_user(uuid) -> bool` (:951) поверх RemnaWave API. Они
+трактуют «already disabled/enabled» и «not found» как успех и возвращают
+bool — FreezeService использует ИХ, а не сырой API.
+
+**Панель-uuid:** замораживаем основной аккаунт подписки —
+`subscription.remnawave_uuid`. Отдельной `wl_remnawave_uuid`-колонки в
+схеме нет (WL-аккаунт резолвится по username при sync и следует за
+состоянием main-аккаунта), поэтому отдельный disable/enable WL в этой
+работе НЕ делаем — WL подхватит состояние main при ближайшем sync.
 
 ### Компонент 1: миграция + поля Subscription (0097)
 
@@ -68,9 +77,11 @@ last_freeze_at = Column(AwareDateTime(), nullable=True)   # для кулдау�
    Если `remaining_year_quota < min_freeze_days` → отказ (квота почти
    исчерпана, осмысленную заморозку не сделать).
 3. `frozen_at = now`, `frozen_until = now + max_single days`.
-4. Панель: `disable_user(main_uuid)` + WL-uuid (если есть). Ошибка панели
-   → откат БД-изменений + `FreezeError('panel_error')` (не оставляем
-   рассинхрон: в БД заморожено, на панели активно).
+4. Панель: `SubscriptionService.disable_remnawave_user(subscription.remnawave_uuid)`.
+   Возвращает False (реальная ошибка) → откат БД-изменений +
+   `FreezeError('panel_error')` (не оставляем рассинхрон: в БД заморожено,
+   на панели активно). `remnawave_uuid` пустой → пропускаем панель-шаг
+   (нечего отключать), заморозка только в БД.
 5. commit, notify.
 
 `resume_subscription(db, subscription, user, *, reason='manual') -> FreezeResult`:
@@ -81,9 +92,10 @@ last_freeze_at = Column(AwareDateTime(), nullable=True)   # для кулдау�
 4. Ресет счётчика если `freeze_year != current_year`, затем
    `freeze_days_used_year += ceil(actual в днях)`; `freeze_year = year`.
 5. `last_freeze_at = now`; `frozen_at = None`; `frozen_until = None`.
-6. Панель: `enable_user(...)` main + WL. Ошибка панели → НЕ откатываем
-   время (юзер заслужил), но enqueue в `remnawave_retry_queue` (как делает
-   daily resume) + лог.
+6. Панель: `SubscriptionService.enable_remnawave_user(subscription.remnawave_uuid)`.
+   Возвращает False → НЕ откатываем время (юзер заслужил), enqueue в
+   `remnawave_retry_queue.enqueue(subscription_id, user_id, action='update')`
+   (как daily resume) + лог.
 7. commit, notify.
 
 Квота-хелпер:
@@ -151,13 +163,13 @@ freeze_service.FreezeService
   ├── freeze_subscription(db, sub, user)
   │     ├── validate (active/non-trial/non-daily/age/cooldown/quota)
   │     ├── frozen_at=now, frozen_until=now+max_single
-  │     ├── api.disable_user(main + WL)   [rollback on panel error]
+  │     ├── disable_remnawave_user(sub.remnawave_uuid)  [rollback on False]
   │     └── commit + notify
   └── resume_subscription(db, sub, user, reason)
         ├── actual = min(now,frozen_until) - frozen_at
         ├── end_date += actual; freeze_days_used_year += actual.days
         ├── clear frozen_at/until; last_freeze_at=now
-        ├── api.enable_user(main + WL)     [retry-queue on panel error]
+        ├── enable_remnawave_user(sub.remnawave_uuid)  [retry-queue on False]
         └── commit + notify
 
 monitoring loop ── _check_frozen_subscriptions ── auto-resume past frozen_until
@@ -190,13 +202,14 @@ migration 0097: subscriptions += frozen_at, frozen_until, freeze_days_used_year,
 ## Тестирование
 
 Юнит (`tests/services/test_freeze_service.py`), мок db/api/config:
-- freeze happy: active sub, квота есть → frozen_at/until set, disable_user
-  вызван, commit.
+- freeze happy: active sub, квота есть → frozen_at/until set,
+  disable_remnawave_user вызван, commit.
 - freeze отказ: trial / daily / уже заморожена / молодая подписка /
   кулдаун / квота 0 → FreezeError с нужным кодом, панель НЕ трогается.
-- freeze panel error → БД-изменения откатаны, frozen_at остался None.
+- freeze panel error (disable_remnawave_user → False) → БД-изменения
+  откатаны, frozen_at остался None.
 - resume happy: end_date += длительность, счётчик += дни, frozen_at
-  очищен, enable_user вызван.
+  очищен, enable_remnawave_user вызван.
 - resume capped at frozen_until: actual не больше дедлайна.
 - resume year rollover: freeze_year != текущий → счётчик сброшен.
 - resume panel error → время восстановлено, retry-queue enqueued.
