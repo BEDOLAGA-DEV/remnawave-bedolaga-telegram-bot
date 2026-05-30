@@ -614,6 +614,7 @@ class MonitoringService:
         UserNotification records — no duplicate warning for same threshold within 7 days.
         """
         from app.database.crud.user_notification import check_recent_traffic_warning
+        from app.utils.notification_prefs import is_traffic_warning_enabled
 
         thresholds = self._parse_traffic_warning_thresholds()
         if not thresholds:
@@ -663,6 +664,9 @@ class MonitoringService:
                     if already_sent:
                         continue
 
+                    if not is_traffic_warning_enabled(user):
+                        continue
+
                     level = 'error' if highest_threshold >= 95 else 'warning'
                     emoji = '🚨' if highest_threshold >= 95 else '⚠️'
                     message = (
@@ -686,6 +690,11 @@ class MonitoringService:
                             'limit_gb': limit_gb,
                         },
                     )
+
+                    if user.telegram_id and self.bot:
+                        await self._send_traffic_upsell_notification(
+                            user, subscription, highest_threshold, used_gb, limit_gb,
+                        )
 
                     logger.info(
                         '🚦 Отправлено предупреждение о трафике',
@@ -1508,6 +1517,75 @@ class MonitoringService:
             return False
         except Exception as e:
             logger.error('Ошибка отправки churn-save уведомления', telegram_id=user.telegram_id, e=e)
+            return False
+
+    async def _send_traffic_upsell_notification(
+        self,
+        user: User,
+        subscription: Subscription,
+        threshold: int,
+        used_gb: float,
+        limit_gb: float,
+    ) -> bool:
+        try:
+            texts = get_texts(user.language)
+            emoji = '🚨' if threshold >= 95 else '⚠️'
+            template = texts.get(
+                'TRAFFIC_UPSELL_PUSH',
+                (
+                    '{emoji} <b>Трафик заканчивается: {threshold}%</b>\n\n'
+                    'Использовано {used:.1f} / {limit} ГБ. '
+                    'Докупите пакет или поднимите тариф, чтобы не остаться без доступа.'
+                ),
+            )
+            message = template.format(emoji=emoji, threshold=threshold, used=used_gb, limit=limit_gb)
+
+            from aiogram.types import InlineKeyboardMarkup
+
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        build_miniapp_or_callback_button(
+                            text='➕ Докупить трафик', callback_data='nz!_buy_traffic'
+                        )
+                    ],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('MENU_SUBSCRIPTION', '📱 Моя подписка'),
+                            callback_data='nz!_menu_subscription',
+                        )
+                    ],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'),
+                            callback_data='nz!_balance_topup',
+                        )
+                    ],
+                ]
+            )
+
+            await self._send_message_with_logo(
+                chat_id=user.telegram_id,
+                text=message,
+                parse_mode='HTML',
+                reply_markup=keyboard,
+            )
+            return True
+
+        except (TelegramForbiddenError, TelegramBadRequest) as exc:
+            if await self._handle_unreachable_user(user, exc, 'предупреждение о трафике'):
+                return True
+            logger.error(
+                'Ошибка Telegram API при отправке upsell трафика',
+                telegram_id=user.telegram_id,
+                exc=exc,
+            )
+            return False
+        except TelegramNetworkError as e:
+            logger.warning('Таймаут отправки upsell трафика', telegram_id=user.telegram_id, e=e)
+            return False
+        except Exception as e:
+            logger.error('Ошибка отправки upsell трафика', telegram_id=user.telegram_id, e=e)
             return False
 
     async def _get_expiring_paid_subscriptions(self, db: AsyncSession, days_before: int) -> list[Subscription]:
