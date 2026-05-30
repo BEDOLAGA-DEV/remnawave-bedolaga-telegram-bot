@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime, timedelta
 
 import structlog
 from aiogram import Bot
+from sqlalchemy import and_, extract, or_, select
 
 from app.config import settings
+from app.database.crud.subscription import get_active_subscriptions_by_user_id
+from app.database.crud.user import add_user_balance
 from app.database.database import AsyncSessionLocal
-from app.database.models import User
+from app.database.models import TransactionType, User, UserStatus
 from app.services.birthday_settings_service import BirthdaySettingsService
 
 
@@ -74,6 +78,129 @@ class BirthdayService:
                 await db.commit()
         except Exception as exc:
             logger.warning('birthday.sync_failed', user_id=user_id, err=str(exc))
+
+    async def _select_birthday_users(self, db, today: date) -> list[User]:
+        is_leap = (today.year % 4 == 0 and today.year % 100 != 0) or (today.year % 400 == 0)
+        if today.month == 2 and today.day == 28 and not is_leap:
+            result = await db.execute(
+                select(User).where(
+                    User.birth_date.isnot(None),
+                    User.status == UserStatus.ACTIVE.value,
+                    or_(
+                        and_(extract('month', User.birth_date) == 2, extract('day', User.birth_date) == 28),
+                        and_(extract('month', User.birth_date) == 2, extract('day', User.birth_date) == 29),
+                    ),
+                )
+            )
+            return list(result.scalars().all())
+        result = await db.execute(
+            select(User).where(
+                and_(
+                    User.birth_date.isnot(None),
+                    extract('month', User.birth_date) == today.month,
+                    extract('day', User.birth_date) == today.day,
+                    User.status == UserStatus.ACTIVE.value,
+                )
+            )
+        )
+        return list(result.scalars().all())
+
+    async def _grant_birthday_rewards(self, db) -> None:
+        now = datetime.now(UTC)
+        today = now.date()
+        try:
+            users = await self._select_birthday_users(db, today)
+        except Exception as exc:
+            logger.error('birthday.select_failed', err=str(exc))
+            return
+
+        min_age = BirthdaySettingsService.get_min_account_age_days()
+        dob_stable = BirthdaySettingsService.get_dob_stable_days()
+        granted = 0
+        for user in users:
+            try:
+                if user.last_birthday_reward_year == today.year:
+                    continue
+                created = getattr(user, 'created_at', None)
+                if created is not None and (now - created) < timedelta(days=min_age):
+                    continue
+                changed = getattr(user, 'birthday_changed_at', None)
+                if changed is not None and (now - changed) < timedelta(days=dob_stable):
+                    continue
+
+                rewarded = await self._apply_reward(db, user)
+                user.last_birthday_reward_year = today.year
+                await db.commit()
+                await self._notify(user, rewarded)
+                granted += 1
+            except Exception as exc:
+                logger.warning('birthday.grant_failed', user_id=getattr(user, 'id', None), err=str(exc))
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+        if granted:
+            logger.info('birthday.granted', count=granted)
+
+    async def _apply_reward(self, db, user) -> str:
+        reward_type = BirthdaySettingsService.get_reward_type()
+        amount = BirthdaySettingsService.get_reward_amount()
+
+        if reward_type == 'subscription_days':
+            subs = await get_active_subscriptions_by_user_id(db, user.id)
+            if subs:
+                from app.database.crud.subscription import extend_subscription
+
+                await extend_subscription(db, subs[0], amount)
+                return f'+{amount} дней подписки'
+            fallback = BirthdaySettingsService.get_subscription_days_fallback()
+            if fallback == 'skip':
+                return ''
+            await add_user_balance(
+                db, user, amount, description='🎂 Подарок на день рождения',
+                transaction_type=TransactionType.DEPOSIT,
+            )
+            return f'{amount / 100:.0f} ₽ на баланс'
+
+        if reward_type == 'promocode':
+            await add_user_balance(
+                db, user, amount, description='🎂 Подарок на день рождения',
+                transaction_type=TransactionType.DEPOSIT,
+            )
+            return f'{amount / 100:.0f} ₽ на баланс'
+
+        await add_user_balance(
+            db, user, amount, description='🎂 Подарок на день рождения',
+            transaction_type=TransactionType.DEPOSIT,
+        )
+        return f'{amount / 100:.0f} ₽ на баланс'
+
+    async def _notify(self, user, reward_desc: str) -> None:
+        if self._bot is None or not getattr(user, 'telegram_id', None):
+            return
+        gift_line = f'\n\nВаш подарок: <b>{reward_desc}</b> 🎁' if reward_desc else ''
+        text = f'🎂 <b>С днём рождения!</b>{gift_line}'
+        try:
+            await self._bot.send_message(user.telegram_id, text, parse_mode='HTML')
+        except Exception as exc:
+            logger.warning('birthday.notify_failed', user_id=user.id, err=str(exc))
+
+    async def start_monitoring(self) -> None:
+        self._running = True
+        logger.info('birthday.scheduler.start')
+        while self._running:
+            interval = 3600
+            try:
+                if self.is_enabled() and BirthdaySettingsService.is_enabled():
+                    async with AsyncSessionLocal() as db:
+                        await self._grant_birthday_rewards(db)
+            except Exception as exc:
+                logger.error('birthday.scheduler.error', err=str(exc), exc_info=True)
+            await asyncio.sleep(interval)
+
+    def stop_monitoring(self) -> None:
+        self._running = False
+        logger.info('birthday.scheduler.stop')
 
 
 birthday_service = BirthdayService()
