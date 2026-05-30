@@ -373,6 +373,7 @@ class Settings(BaseSettings):
 
     # Bio-reward feature: master switch + scheduler concurrency (rest is in DB BioRewardConfig)
     BIO_REWARD_ENABLED: bool = False  # Master kill-switch; if False, scheduler does not start
+    BIRTHDAY_BONUS_ENABLED: bool = False  # Master kill-switch for the birthday-bonus feature
     BIO_REWARD_SCHEDULER_CONCURRENCY: int = 10  # Semaphore for bot.get_chat() calls in the loop
     BIO_REWARD_USER_TAG: str | None = 'FREE'  # Remnawave user tag for bio-reward subs
 

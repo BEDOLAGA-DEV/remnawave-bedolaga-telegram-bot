@@ -22,6 +22,7 @@ from app.services.ban_notification_service import ban_notification_service
 from app.services.broadcast_service import broadcast_service
 from app.services.contest_rotation_service import contest_rotation_service
 from app.services.bio_reward_service import bio_reward_service
+from app.services.birthday_service import birthday_service
 from app.services.daily_subscription_service import daily_subscription_service
 from app.services.log_rotation_service import log_rotation_service
 from app.services.maintenance_service import maintenance_service
@@ -308,6 +309,7 @@ async def main():
         traffic_monitoring_scheduler.set_bot(bot)
         daily_subscription_service.set_bot(bot)
         bio_reward_service.set_bot(bot)
+        birthday_service.set_bot(bot)
         telegram_notifier.set_bot(bot)
 
         from app.services.channel_subscription_service import channel_subscription_service
@@ -663,6 +665,18 @@ async def main():
                 stage.skip('BIO_REWARD_ENABLED=False')
 
         async with timeline.stage(
+            'Birthday scheduler',
+            '🎂',
+            success_message='Birthday scheduler запущен',
+        ) as stage:
+            if birthday_service.is_enabled():
+                birthday_task = asyncio.create_task(birthday_service.start_monitoring())
+                stage.log('Birthday-bonus активен')
+            else:
+                birthday_task = None
+                stage.skip('BIRTHDAY_BONUS_ENABLED=False')
+
+        async with timeline.stage(
             'Сервис проверки версий',
             '📄',
             success_message='Проверка версий запущена',
@@ -892,6 +906,15 @@ async def main():
             bio_reward_task.cancel()
             try:
                 await bio_reward_task
+            except asyncio.CancelledError:
+                pass
+
+        if 'birthday_task' in locals() and birthday_task and not birthday_task.done():
+            logger.info('ℹ️ Остановка birthday scheduler...')
+            birthday_service.stop_monitoring()
+            birthday_task.cancel()
+            try:
+                await birthday_task
             except asyncio.CancelledError:
                 pass
 
