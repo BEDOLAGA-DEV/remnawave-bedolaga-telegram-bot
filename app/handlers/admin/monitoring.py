@@ -41,18 +41,23 @@ def _build_notification_settings_view(language: str):
     third_percent = NotificationSettingsService.get_third_wave_discount_percent()
     third_hours = NotificationSettingsService.get_third_wave_valid_hours()
     third_days = NotificationSettingsService.get_third_wave_trigger_days()
+    prerenew_percent = NotificationSettingsService.get_prerenew_save_discount_percent()
+    prerenew_hours = NotificationSettingsService.get_prerenew_save_valid_hours()
+    prerenew_trigger = NotificationSettingsService.get_prerenew_save_trigger_hours()
 
     trial_channel_status = _format_toggle(config.get('trial_channel_unsubscribed', {}).get('enabled', True))
     expired_1d_status = _format_toggle(config['expired_1d'].get('enabled', True))
     second_wave_status = _format_toggle(config['expired_second_wave'].get('enabled', True))
     third_wave_status = _format_toggle(config['expired_third_wave'].get('enabled', True))
+    prerenew_status = _format_toggle(config['prerenew_save'].get('enabled', False))
 
     summary_text = (
         '🔔 <b>Уведомления пользователям</b>\n\n'
         f'• Отписка от канала: {trial_channel_status}\n'
         f'• 1 день после истечения: {expired_1d_status}\n'
         f'• 2-3 дня (скидка {second_percent}% / {second_hours} ч): {second_wave_status}\n'
-        f'• {third_days} дней (скидка {third_percent}% / {third_hours} ч): {third_wave_status}'
+        f'• {third_days} дней (скидка {third_percent}% / {third_hours} ч): {third_wave_status}\n'
+        f'• Churn-save (до истечения, скидка {prerenew_percent}% / {prerenew_hours} ч, за {prerenew_trigger} ч): {prerenew_status}'
     )
 
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -128,6 +133,30 @@ def _build_notification_settings_view(language: str):
             [
                 InlineKeyboardButton(
                     text=f'📆 Порог уведомления: {third_days} дн.', callback_data='admin_mon_notify_edit_nd_threshold'
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f'{prerenew_status} • Churn-save до истечения',
+                    callback_data='admin_mon_notify_toggle_prerenew',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f'✏️ Churn-save скидка: {prerenew_percent}%',
+                    callback_data='admin_mon_notify_edit_prerenew_percent',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f'⏱️ Срок Churn-save скидки: {prerenew_hours} ч',
+                    callback_data='admin_mon_notify_edit_prerenew_hours',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f'📆 Слать за: {prerenew_trigger} ч до истечения',
+                    callback_data='admin_mon_notify_edit_prerenew_trigger',
                 )
             ],
             [InlineKeyboardButton(text='🧪 Отправить все тесты', callback_data='admin_mon_notify_preview_all')],
@@ -505,6 +534,15 @@ async def toggle_third_wave_notification(callback: CallbackQuery):
     await _render_notification_settings(callback)
 
 
+@router.callback_query(F.data == 'admin_mon_notify_toggle_prerenew')
+@admin_required
+async def toggle_prerenew_save_notification(callback: CallbackQuery):
+    enabled = NotificationSettingsService.is_prerenew_save_enabled()
+    NotificationSettingsService.set_prerenew_save_enabled(not enabled)
+    await callback.answer('✅ Включено' if not enabled else '⏸️ Отключено')
+    await _render_notification_settings(callback)
+
+
 @router.callback_query(F.data == 'admin_mon_notify_preview_expired_nd')
 @admin_required
 async def preview_third_wave_notification(callback: CallbackQuery):
@@ -625,6 +663,45 @@ async def edit_third_wave_threshold(callback: CallbackQuery, state: FSMContext):
         'trigger',
         'NOTIFY_PROMPT_THIRD_DAYS',
         'Через сколько дней после истечения отправлять предложение? (минимум 2):',
+    )
+
+
+@router.callback_query(F.data == 'admin_mon_notify_edit_prerenew_percent')
+@admin_required
+async def edit_prerenew_save_percent(callback: CallbackQuery, state: FSMContext):
+    await _start_notification_value_edit(
+        callback,
+        state,
+        'prerenew_save',
+        'percent',
+        'NOTIFY_PROMPT_PRERENEW_PERCENT',
+        'Введите новый процент скидки churn-save (0-100):',
+    )
+
+
+@router.callback_query(F.data == 'admin_mon_notify_edit_prerenew_hours')
+@admin_required
+async def edit_prerenew_save_hours(callback: CallbackQuery, state: FSMContext):
+    await _start_notification_value_edit(
+        callback,
+        state,
+        'prerenew_save',
+        'hours',
+        'NOTIFY_PROMPT_PRERENEW_HOURS',
+        'Введите срок действия скидки churn-save в часах (1-168):',
+    )
+
+
+@router.callback_query(F.data == 'admin_mon_notify_edit_prerenew_trigger')
+@admin_required
+async def edit_prerenew_save_trigger(callback: CallbackQuery, state: FSMContext):
+    await _start_notification_value_edit(
+        callback,
+        state,
+        'prerenew_save',
+        'trigger',
+        'NOTIFY_PROMPT_PRERENEW_TRIGGER',
+        'За сколько часов до истечения слать churn-save оффер? (1-168):',
     )
 
 
@@ -1666,17 +1743,29 @@ async def process_notification_value_input(message: Message, state: FSMContext):
     texts = get_texts(language)
 
     # Добавляем дополнительные проверки диапазона значений
-    if (key == 'expired_second_wave' and field == 'percent') or (key == 'expired_third_wave' and field == 'percent'):
+    if (
+        (key == 'expired_second_wave' and field == 'percent')
+        or (key == 'expired_third_wave' and field == 'percent')
+        or (key == 'prerenew_save' and field == 'percent')
+    ):
         if value < 0 or value > 100:
             await message.answer('❌ Процент скидки должен быть от 0 до 100.')
             return
-    elif (key == 'expired_second_wave' and field == 'hours') or (key == 'expired_third_wave' and field == 'hours'):
+    elif (
+        (key == 'expired_second_wave' and field == 'hours')
+        or (key == 'expired_third_wave' and field == 'hours')
+        or (key == 'prerenew_save' and field == 'hours')
+    ):
         if value < 1 or value > 168:  # Максимум 168 часов (7 дней)
             await message.answer('❌ Количество часов должно быть от 1 до 168.')
             return
     elif key == 'expired_third_wave' and field == 'trigger':
         if value < 2:  # Минимум 2 дня
             await message.answer('❌ Количество дней должно быть не менее 2.')
+            return
+    elif key == 'prerenew_save' and field == 'trigger':
+        if value < 1 or value > 168:
+            await message.answer('❌ Количество часов должно быть от 1 до 168.')
             return
 
     success = False
@@ -1690,6 +1779,12 @@ async def process_notification_value_input(message: Message, state: FSMContext):
         success = NotificationSettingsService.set_third_wave_valid_hours(value)
     elif key == 'expired_third_wave' and field == 'trigger':
         success = NotificationSettingsService.set_third_wave_trigger_days(value)
+    elif key == 'prerenew_save' and field == 'percent':
+        success = NotificationSettingsService.set_prerenew_save_discount_percent(value)
+    elif key == 'prerenew_save' and field == 'hours':
+        success = NotificationSettingsService.set_prerenew_save_valid_hours(value)
+    elif key == 'prerenew_save' and field == 'trigger':
+        success = NotificationSettingsService.set_prerenew_save_trigger_hours(value)
 
     if not success:
         await message.answer(texts.get('NOTIFICATION_VALUE_INVALID', '❌ Некорректное значение, попробуйте снова.'))
