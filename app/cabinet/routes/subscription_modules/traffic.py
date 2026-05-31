@@ -92,6 +92,24 @@ async def purchase_traffic(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='No subscription found',
         )
+
+    # Cap-check: reject before any pricing / charge if accumulated purchased traffic would exceed cap
+    if request.gb > 0:
+        from app.database.crud.subscription import can_add_purchased_traffic
+
+        allowed, remaining = await can_add_purchased_traffic(db, subscription.id, request.gb)
+        if not allowed:
+            cap = settings.get_max_purchased_traffic_gb()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    'code': 'traffic_cap',
+                    'message': f'Достигнут лимит докупленного трафика ({cap} ГБ). Доступно ещё: {remaining} ГБ.',
+                    'cap_gb': cap,
+                    'remaining_gb': remaining,
+                },
+            )
+
     tariff = None
     is_tariff_mode = settings.is_tariffs_mode() and subscription.tariff_id
 

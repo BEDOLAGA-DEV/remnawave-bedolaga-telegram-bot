@@ -832,6 +832,34 @@ async def extend_subscription(
     return subscription
 
 
+async def get_active_purchased_traffic_gb(db: AsyncSession, subscription_id: int) -> int:
+    """Sum of non-expired purchased traffic (the source of truth for the cap)."""
+    from app.database.models import TrafficPurchase
+
+    now = datetime.now(UTC)
+    result = await db.execute(
+        select(func.coalesce(func.sum(TrafficPurchase.traffic_gb), 0))
+        .where(TrafficPurchase.subscription_id == subscription_id)
+        .where(TrafficPurchase.expires_at > now)
+    )
+    return int(result.scalar() or 0)
+
+
+async def can_add_purchased_traffic(db: AsyncSession, subscription_id: int, gb: int) -> tuple[bool, int]:
+    """Whether `gb` more purchased traffic may be added under the configured cap.
+
+    Returns (allowed, remaining_headroom_gb). remaining = -1 when uncapped.
+    Cap is enforced at user-facing purchase flows (bot/cabinet), NOT inside
+    add_subscription_traffic (also used by trusted admin/API callers).
+    """
+    cap = settings.get_max_purchased_traffic_gb()
+    if cap <= 0:
+        return True, -1
+    active = await get_active_purchased_traffic_gb(db, subscription_id)
+    remaining = max(0, cap - active)
+    return (gb <= remaining), remaining
+
+
 async def add_subscription_traffic(db: AsyncSession, subscription: Subscription, gb: int) -> Subscription:
     subscription.add_traffic(gb)
     subscription.updated_at = datetime.now(UTC)
