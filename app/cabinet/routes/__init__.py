@@ -61,6 +61,7 @@ from .news import router as news_router
 from .notifications import router as notifications_router
 from .oauth import router as oauth_router
 from .partner_application import router as partner_application_router
+from .partner_promo import router as partner_promo_router
 from .polls import router as polls_router
 from .promo import router as promo_router
 from .promocode import router as promocode_router
@@ -119,6 +120,7 @@ router.include_router(notifications_router)
 router.include_router(user_notifications_router)
 router.include_router(web_push_router)
 router.include_router(info_router)
+router.include_router(partner_promo_router)
 router.include_router(branding_router)
 router.include_router(landing_router)
 router.include_router(media_router)
