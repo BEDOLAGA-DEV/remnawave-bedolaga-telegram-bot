@@ -237,6 +237,21 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
         '📢 Приглашайте друзей и зарабатывайте!',
     )
 
+    if settings.REFERRAL_MILESTONES_ENABLED:
+        from app.database.crud import referral as ref_crud
+        from app.database.crud import referral_milestone as milestone_crud
+
+        paid_count = await ref_crud.count_paid_referrals(db, db_user.id)
+        active_ms = await milestone_crud.list_active(db)
+        next_ms = next((m for m in active_ms if m.threshold > paid_count), None)
+        if next_ms:
+            referral_text += '\n\n' + texts.t(
+                'REFERRAL_MILESTONE_PROGRESS',
+                '🎯 Оплативших рефералов: {count} · до награды ({next}): {left}',
+            ).format(count=paid_count, next=next_ms.threshold, left=next_ms.threshold - paid_count)
+        elif active_ms:
+            referral_text += '\n\n' + texts.t('REFERRAL_MILESTONE_ALL_DONE', '🎯 Все реферальные милстоуны достигнуты!')
+
     await edit_or_answer_photo(
         callback,
         referral_text,
