@@ -4610,3 +4610,27 @@ class PartnerPromo(Base):
     click_count = Column(Integer, nullable=False, default=0, server_default='0')
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+
+class ReferralMilestone(Base):
+    """Admin-defined milestone: reward for reaching N paid referrals."""
+
+    __tablename__ = 'referral_milestones'
+    id = Column(Integer, primary_key=True, index=True)
+    threshold = Column(Integer, nullable=False, unique=True)
+    reward_type = Column(String(20), nullable=False)                # 'balance' | 'promo_group'
+    reward_value = Column(Integer, nullable=False)                  # kopeks | promo_group_id
+    title = Column(JSONB, nullable=False, server_default='{}')
+    is_active = Column(Boolean, nullable=False, default=True, server_default='true')
+    created_at = Column(AwareDateTime(), server_default=func.now())
+
+
+class UserReferralMilestoneClaim(Base):
+    """Idempotency record: one claim per (user, milestone)."""
+
+    __tablename__ = 'user_referral_milestone_claims'
+    __table_args__ = (UniqueConstraint('user_id', 'milestone_id', name='uq_user_milestone_claim'),)
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    milestone_id = Column(Integer, ForeignKey('referral_milestones.id', ondelete='CASCADE'), nullable=False)
+    claimed_at = Column(AwareDateTime(), server_default=func.now())
