@@ -180,6 +180,8 @@ class Settings(BaseSettings):
     MAX_DEVICES_LIMIT: int = 20
     MAX_PURCHASED_TRAFFIC_GB: int = 0  # 0 = no cap on accumulated purchased traffic
 
+    PARTNER_SHOWCASE_ENABLED: bool = False  # Outbound partner showcase (cross-promo)
+
     TRIAL_WARNING_HOURS: int = 2
     ENABLE_NOTIFICATIONS: bool = True
     NOTIFICATION_RETRY_ATTEMPTS: int = 3
