@@ -405,6 +405,13 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
                             commission_amount=commission_amount,
                         )
 
+                try:
+                    from app.services.referral_milestone_service import referral_milestone_service
+
+                    await referral_milestone_service.reward_milestones(db, referrer.id, bot)
+                except Exception as exc:
+                    logger.error('referral milestone hook failed (pre-first-bonus)', error=exc)
+
                 return True
 
             user.has_made_first_topup = True
@@ -579,6 +586,13 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
                     referrer_id=referrer.id,
                     commission_amount=commission_amount,
                 )
+
+        try:
+            from app.services.referral_milestone_service import referral_milestone_service
+
+            await referral_milestone_service.reward_milestones(db, referrer.id, bot)
+        except Exception as exc:
+            logger.error('referral milestone hook failed', error=exc)
 
         return True
 

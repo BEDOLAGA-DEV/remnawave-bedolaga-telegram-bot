@@ -3,7 +3,7 @@
 import math
 
 import structlog
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -251,3 +251,35 @@ async def get_referral_terms():
         max_commission_payments=settings.REFERRAL_MAX_COMMISSION_PAYMENTS,
         partner_section_visible=settings.REFERRAL_PARTNER_SECTION_VISIBLE,
     )
+
+
+@router.get('/milestones')
+async def referral_milestones(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get referral milestone progress for current user."""
+    if not settings.REFERRAL_MILESTONES_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Not found')
+    from app.database.crud import referral as ref_crud
+    from app.database.crud import referral_milestone as milestone_crud
+
+    count = await ref_crud.count_paid_referrals(db, user.id)
+    milestones = await milestone_crud.list_active(db)
+    claimed = await milestone_crud.get_claimed_milestone_ids(db, user.id)
+    return {
+        'count': count,
+        'milestones': [
+            {
+                'threshold': m.threshold,
+                'title': m.title,
+                'reward_type': m.reward_type,
+                # Expose the numeric value only for balance (a ₽ amount the UI shows).
+                # For promo_group it's an internal group id — don't leak it; title describes it.
+                'reward_value': m.reward_value if m.reward_type == 'balance' else None,
+                'claimed': m.id in claimed,
+                'reached': m.threshold <= count,
+            }
+            for m in milestones
+        ],
+    }

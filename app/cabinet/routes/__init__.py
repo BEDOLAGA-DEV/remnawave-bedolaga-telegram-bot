@@ -17,6 +17,7 @@ from .admin_email_templates import router as admin_email_templates_router
 from .admin_help import router as admin_help_router
 from .admin_info_pages import router as admin_info_pages_router
 from .admin_partner_promos import router as admin_partner_promos_router
+from .admin_referral_milestones import router as admin_referral_milestones_router
 from .admin_landings import router as admin_landings_router
 from .admin_menu_layout import router as admin_menu_layout_router
 from .admin_news import router as admin_news_router
@@ -186,6 +187,7 @@ router.include_router(admin_news_media_router)
 router.include_router(admin_news_router)
 router.include_router(admin_info_pages_router)
 router.include_router(admin_partner_promos_router)
+router.include_router(admin_referral_milestones_router)
 
 # WebSocket route
 router.include_router(websocket_router)

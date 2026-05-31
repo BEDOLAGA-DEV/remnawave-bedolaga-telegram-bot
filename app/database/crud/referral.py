@@ -50,6 +50,17 @@ async def create_referral_earning(
     return earning
 
 
+async def count_paid_referrals(db: AsyncSession, referrer_id: int) -> int:
+    """DISTINCT referrals who actually paid (have a positive earning) — anti-fraud metric."""
+    result = await db.execute(
+        select(func.count(func.distinct(ReferralEarning.referral_id)))
+        .where(ReferralEarning.user_id == referrer_id)
+        .where(ReferralEarning.referral_id.isnot(None))
+        .where(ReferralEarning.amount_kopeks > 0)
+    )
+    return int(result.scalar() or 0)
+
+
 async def get_commission_payment_count(db: AsyncSession, referrer_id: int, referral_id: int) -> int:
     """Подсчитать количество комиссионных начислений реферера за платежи конкретного реферала."""
     result = await db.execute(
