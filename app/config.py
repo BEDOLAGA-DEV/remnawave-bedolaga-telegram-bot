@@ -178,6 +178,7 @@ class Settings(BaseSettings):
     TARIFF_SWITCH_UPGRADE_ENABLED: bool = True
     TARIFF_SWITCH_DOWNGRADE_ENABLED: bool = True
     MAX_DEVICES_LIMIT: int = 20
+    MAX_PURCHASED_TRAFFIC_GB: int = 0  # 0 = no cap on accumulated purchased traffic
 
     TRIAL_WARNING_HOURS: int = 2
     ENABLE_NOTIFICATIONS: bool = True
@@ -1780,6 +1781,12 @@ class Settings(BaseSettings):
             return max(3, min(10, int(self.SPEEDTEST_SAMPLES)))
         except (TypeError, ValueError):
             return 5
+
+    def get_max_purchased_traffic_gb(self) -> int:
+        try:
+            return max(0, int(self.MAX_PURCHASED_TRAFFIC_GB))
+        except (TypeError, ValueError):
+            return 0
 
     def get_trial_user_tag(self) -> str | None:
         return self._normalize_user_tag(self.TRIAL_USER_TAG, 'TRIAL_USER_TAG')
