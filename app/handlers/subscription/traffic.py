@@ -632,6 +632,21 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         await callback.answer()
         return
 
+    if traffic_gb > 0:
+        from app.database.crud.subscription import can_add_purchased_traffic
+
+        allowed, remaining = await can_add_purchased_traffic(db, subscription.id, traffic_gb)
+        if not allowed:
+            cap = settings.get_max_purchased_traffic_gb()
+            await callback.answer(
+                texts.t(
+                    'TRAFFIC_CAP_REACHED',
+                    '⚠️ Достигнут лимит докупленного трафика ({cap} ГБ). Доступно ещё: {remaining} ГБ.',
+                ).format(cap=cap, remaining=remaining),
+                show_alert=True,
+            )
+            return
+
     # Сохраняем старое значение трафика для уведомления
     old_traffic_limit = subscription.traffic_limit_gb
 
