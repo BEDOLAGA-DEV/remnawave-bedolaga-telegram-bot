@@ -1583,7 +1583,15 @@ async def show_partner_showcase(
         )
         return
 
-    base = (settings.MINIAPP_CUSTOM_URL or '').strip().rstrip('/')
+    # Public base that serves the click-redirect /partner-promo/{id}/go.
+    # Prefer any configured public origin so clicks are counted; only fall back
+    # to the raw partner url when no public base is configured at all.
+    base = ''
+    for candidate in (settings.MINIAPP_CUSTOM_URL, settings.CABINET_URL, settings.WEBHOOK_URL):
+        cleaned = (candidate or '').strip().rstrip('/')
+        if cleaned and cleaned != 'https://example.com/cabinet':
+            base = cleaned
+            break
 
     buttons: list[list[types.InlineKeyboardButton]] = []
     for p in promos:

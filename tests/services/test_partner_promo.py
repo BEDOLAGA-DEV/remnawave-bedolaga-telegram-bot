@@ -36,6 +36,20 @@ async def test_create_rejects_bad_image_url():
 
 
 @pytest.mark.asyncio
+async def test_update_rejects_non_https_url():
+    db = MagicMock(); db.commit = AsyncMock()
+    with pytest.raises(ValueError):
+        await crud.update_promo(db, 1, url='http://evil.com')
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_non_https_image_url():
+    db = MagicMock(); db.commit = AsyncMock()
+    with pytest.raises(ValueError):
+        await crud.update_promo(db, 1, image_url='javascript:alert(1)')
+
+
+@pytest.mark.asyncio
 async def test_increment_click_uses_atomic_update():
     db = MagicMock(); db.execute = AsyncMock(); db.commit = AsyncMock()
     await crud.increment_click(db, 7)
