@@ -378,6 +378,9 @@ class Settings(BaseSettings):
     BIO_REWARD_ENABLED: bool = False  # Master kill-switch; if False, scheduler does not start
     BIRTHDAY_BONUS_ENABLED: bool = False  # Master kill-switch for the birthday-bonus feature
     SUBSCRIPTION_FREEZE_ENABLED: bool = False  # Master kill-switch for the subscription-freeze feature
+    SPEEDTEST_ENABLED: bool = False
+    SPEEDTEST_SAMPLES: int = 5
+    SPEEDTEST_PING_HOST_TEMPLATE: str = ''
     BIO_REWARD_SCHEDULER_CONCURRENCY: int = 10  # Semaphore for bot.get_chat() calls in the loop
     BIO_REWARD_USER_TAG: str | None = 'FREE'  # Remnawave user tag for bio-reward subs
 
@@ -1771,6 +1774,12 @@ class Settings(BaseSettings):
             return max(0, min(365, int(self.TRIAL_INVITE_MAX_EXTENSION_DAYS)))
         except (TypeError, ValueError):
             return 14
+
+    def get_speedtest_samples(self) -> int:
+        try:
+            return max(3, min(10, int(self.SPEEDTEST_SAMPLES)))
+        except (TypeError, ValueError):
+            return 5
 
     def get_trial_user_tag(self) -> str | None:
         return self._normalize_user_tag(self.TRIAL_USER_TAG, 'TRIAL_USER_TAG')

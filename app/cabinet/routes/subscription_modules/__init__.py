@@ -9,6 +9,7 @@ from .purchase import router as purchase_router
 from .renewal import router as renewal_router
 from .revoke import router as revoke_router
 from .servers import router as servers_router
+from .speedtest import router as speedtest_router
 from .status import router as status_router
 from .tariff_switch import router as tariff_switch_router
 from .traffic import router as traffic_router
@@ -25,6 +26,7 @@ __all__ = [
     'renewal_router',
     'revoke_router',
     'servers_router',
+    'speedtest_router',
     'status_router',
     'tariff_switch_router',
     'traffic_router',
