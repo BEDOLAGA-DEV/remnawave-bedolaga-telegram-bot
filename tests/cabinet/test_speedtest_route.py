@@ -52,7 +52,11 @@ async def test_speedtest_happy_path_returns_targets_and_samples(fake_user, mock_
     from app.config import Settings
     from app.cabinet.routes.subscription_modules import speedtest as st
 
-    sample_targets = [{'host': '1.2.3.4', 'port': 443, 'label': 'Node 1'}]
+    # Real target shape (matches SpeedtestService.get_ping_targets output) — NO raw IP/port.
+    sample_targets = [
+        {'name': 'NL-1', 'country_code': 'NL', 'ping_host': 'nl1.example.com',
+         'is_online': True, 'users_online': 5},
+    ]
 
     with (
         patch.object(st.settings, 'SPEEDTEST_ENABLED', True),
@@ -65,6 +69,9 @@ async def test_speedtest_happy_path_returns_targets_and_samples(fake_user, mock_
     assert 'targets' in result
     assert isinstance(result['targets'], list)
     assert result['targets'] == sample_targets
-    assert 'samples' in result
-    assert isinstance(result['samples'], int)
     assert result['samples'] == 5
+    # No raw infra (IP/port) leaks through the endpoint contract.
+    target = result['targets'][0]
+    assert 'address' not in target
+    assert 'port' not in target
+    assert set(target.keys()) == {'name', 'country_code', 'ping_host', 'is_online', 'users_online'}

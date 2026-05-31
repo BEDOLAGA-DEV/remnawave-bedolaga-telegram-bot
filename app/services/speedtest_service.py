@@ -6,7 +6,7 @@ import structlog
 
 from app.config import settings
 from app.services.remnawave_service import RemnaWaveService
-from app.services.speedtest_settings_service import SpeedtestSettingsService
+from app.services.speedtest_settings_service import SpeedtestSettingsService, _sanitize_host
 
 
 logger = structlog.get_logger(__name__)
@@ -40,12 +40,16 @@ class SpeedtestService:
         template = settings.SPEEDTEST_PING_HOST_TEMPLATE
         if template:
             try:
-                return template.format(
+                raw = template.format(
                     node_name=node.get('name', ''),
                     country_code=node.get('country_code', ''),
                 )
             except Exception:
                 return None
+            # Sanitize: a hostile/typo node name must not inject a bad host that
+            # the frontend would fetch() (the mapping path is sanitized at write
+            # time; the template path is sanitized here).
+            return _sanitize_host(raw)
         return None
 
     async def get_ping_targets(self) -> list[dict]:
@@ -53,6 +57,8 @@ class SpeedtestService:
         mapping = SpeedtestSettingsService.get_host_mapping()
         targets = []
         for node in nodes:
+            if node.get('is_disabled'):
+                continue  # admin took this node out of service — don't offer it
             ping_host = self._resolve_ping_host(node, mapping)
             if not ping_host:
                 continue
