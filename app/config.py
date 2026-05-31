@@ -181,6 +181,7 @@ class Settings(BaseSettings):
     MAX_PURCHASED_TRAFFIC_GB: int = 0  # 0 = no cap on accumulated purchased traffic
 
     PARTNER_SHOWCASE_ENABLED: bool = False  # Outbound partner showcase (cross-promo)
+    REFERRAL_MILESTONES_ENABLED: bool = False
 
     TRIAL_WARNING_HOURS: int = 2
     ENABLE_NOTIFICATIONS: bool = True
