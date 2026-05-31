@@ -57,7 +57,21 @@ class ReferralMilestoneService:
                         await db.rollback()
                         continue
                 elif m.reward_type == 'promo_group':
-                    await add_user_to_promo_group(db, referrer_id, m.reward_value)
+                    try:
+                        # commit=False: the service owns the single commit, so the
+                        # claim + promo-group grant land in ONE transaction.
+                        await add_user_to_promo_group(
+                            db, referrer_id, m.reward_value, assigned_by='system', commit=False,
+                        )
+                    except Exception as exc:
+                        # Misconfigured milestone (e.g. promo_group_id doesn't exist).
+                        # Roll back the claim so it stays grantable once admin fixes it.
+                        await db.rollback()
+                        logger.warning(
+                            'referral_milestone.invalid_promo_group',
+                            milestone_id=m.id, promo_group_id=m.reward_value, err=str(exc),
+                        )
+                        continue
                 else:
                     await db.rollback()
                     continue

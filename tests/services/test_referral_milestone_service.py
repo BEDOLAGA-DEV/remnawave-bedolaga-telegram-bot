@@ -77,6 +77,8 @@ async def test_grants_reached_unclaimed(service, monkeypatch):
 
     assert len(granted) == 3
     assert add_balance.await_count == 3
+    # balance reward must be applied with commit=False (atomic with the claim)
+    assert all(call.kwargs.get('commit') is False for call in add_balance.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -110,7 +112,48 @@ async def test_promo_group_reward(service, monkeypatch):
 
     granted = await service.reward_milestones(db, 1, bot=None)
     assert len(granted) == 1
-    add_pg.assert_awaited_once_with(db, 1, 7)
+    # promo_group grant must be commit=False (atomic with the claim, service owns commit)
+    add_pg.assert_awaited_once_with(db, 1, 7, assigned_by='system', commit=False)
+
+
+@pytest.mark.asyncio
+async def test_claim_race_integrity_error_skips(service, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    referrer = SimpleNamespace(id=1, telegram_id=10, language='ru')
+    db = _db()
+    db.flush = AsyncMock(side_effect=IntegrityError('dup', None, Exception()))
+    monkeypatch.setattr(ms, 'get_user_by_id', AsyncMock(return_value=referrer))
+    monkeypatch.setattr(ms.ref_crud, 'count_paid_referrals', AsyncMock(return_value=5))
+    monkeypatch.setattr(ms.milestone_crud, 'list_active',
+                        AsyncMock(return_value=[_milestone(1, 1)]))
+    monkeypatch.setattr(ms.milestone_crud, 'get_claimed_milestone_ids', AsyncMock(return_value=set()))
+    add_balance = AsyncMock(return_value=True)
+    monkeypatch.setattr(ms, 'add_user_balance', add_balance)
+
+    granted = await service.reward_milestones(db, 1, bot=None)
+
+    # claim insert raced (already claimed by concurrent tx) → skip, no double reward
+    assert granted == []
+    add_balance.assert_not_awaited()
+    db.rollback.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invalid_promo_group_skips_without_breaking(service, monkeypatch):
+    referrer = SimpleNamespace(id=1, telegram_id=10, language='ru')
+    db = _db()
+    monkeypatch.setattr(ms, 'get_user_by_id', AsyncMock(return_value=referrer))
+    monkeypatch.setattr(ms.ref_crud, 'count_paid_referrals', AsyncMock(return_value=10))
+    monkeypatch.setattr(ms.milestone_crud, 'list_active',
+                        AsyncMock(return_value=[_milestone(1, 10, reward_type='promo_group', reward_value=999)]))
+    monkeypatch.setattr(ms.milestone_crud, 'get_claimed_milestone_ids', AsyncMock(return_value=set()))
+    monkeypatch.setattr(ms, 'add_user_to_promo_group', AsyncMock(side_effect=RuntimeError('no such promo group')))
+
+    granted = await service.reward_milestones(db, 1, bot=None)
+
+    assert granted == []  # misconfigured milestone skipped, not granted
+    db.rollback.assert_awaited()
 
 
 @pytest.mark.asyncio

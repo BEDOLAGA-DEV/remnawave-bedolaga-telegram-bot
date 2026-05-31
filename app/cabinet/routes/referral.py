@@ -274,7 +274,9 @@ async def referral_milestones(
                 'threshold': m.threshold,
                 'title': m.title,
                 'reward_type': m.reward_type,
-                'reward_value': m.reward_value,
+                # Expose the numeric value only for balance (a ₽ amount the UI shows).
+                # For promo_group it's an internal group id — don't leak it; title describes it.
+                'reward_value': m.reward_value if m.reward_type == 'balance' else None,
                 'claimed': m.id in claimed,
                 'reached': m.threshold <= count,
             }
