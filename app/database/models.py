@@ -4594,3 +4594,19 @@ class InfoPage(Base):
     replaces_tab = Column(String(20), nullable=True)  # 'faq', 'rules', 'privacy', 'offer', or null
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+
+class PartnerPromo(Base):
+    """Outbound cross-promo card (admin-managed). Shown to users in bot + cabinet."""
+
+    __tablename__ = 'partner_promos'
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(JSONB, nullable=False, server_default='{}')
+    description = Column(JSONB, nullable=False, server_default='{}')
+    url = Column(String(2048), nullable=False)
+    image_url = Column(String(2048), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default='true')
+    sort_order = Column(Integer, nullable=False, default=0, server_default='0')
+    click_count = Column(Integer, nullable=False, default=0, server_default='0')
+    created_at = Column(AwareDateTime(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
