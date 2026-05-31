@@ -2394,15 +2394,32 @@ async def link_provider_init(
     user: User = Depends(get_current_cabinet_user),
 ):
     """
-    Initialize OAuth linking process.
+    Initialize OAuth linking process. Returns an authorize_url the frontend
+    redirects to; the callback links the provider to THIS user via the
+    link_user_id carried in the OAuth state.
     """
-    from .oauth import get_oauth_authorize_url
+    from ..auth.oauth_providers import generate_oauth_state, get_provider
 
-    return {
-        'pending': True,
-        'new_email': user.email_change_new,
-        'expires_at': user.email_change_expires.isoformat() if user.email_change_expires else None,
-    }
+    oauth_provider = get_provider(provider)
+    if not oauth_provider:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Requested OAuth provider is not available',
+        )
+
+    # Check if already linked
+    if getattr(user, f'{provider}_id', None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'{provider} is already linked to this account',
+        )
+
+    auth_extra = oauth_provider.prepare_auth_state()
+    # Add 'link_user_id' to state to ensure we link to the CORRECT user on callback
+    state = await generate_oauth_state(provider, extra_data={'link_user_id': user.id, **(auth_extra or {})})
+    authorize_url = oauth_provider.get_authorization_url(state, **auth_extra)
+
+    return {'authorize_url': authorize_url, 'state': state}
 
 
 # --- Deep link auth (fallback when oauth.telegram.org is blocked) ---
@@ -2530,33 +2547,6 @@ async def poll_deep_link_token(
     logger.info('Deep link auth successful', user_id=user.id, telegram_id=user.telegram_id)
 
     return response
-    # We reuse the same authorize logic but we might want to flag it as "linking" in state
-    # Actually, current oauth routes are prefix /cabinet/auth/oauth
-    # Frontend calls /cabinet/auth/account/link/{provider}/init
-    # I'll redirect to the oauth authorize url or mirror the logic
-
-    from ..auth.oauth_providers import generate_oauth_state, get_provider
-
-    oauth_provider = get_provider(provider)
-    if not oauth_provider:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Requested OAuth provider is not available',
-        )
-
-    # Check if already linked
-    if getattr(user, f'{provider}_id', None):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'{provider} is already linked to this account',
-        )
-
-    auth_extra = oauth_provider.prepare_auth_state()
-    # Add 'link_user_id' to state to ensure we link to the CORRECT user on callback
-    state = await generate_oauth_state(provider, extra_data={'link_user_id': user.id, **(auth_extra or {})})
-    authorize_url = oauth_provider.get_authorization_url(state, **auth_extra)
-
-    return {'authorize_url': authorize_url, 'state': state}
 
 
 @router.post('/account/link/{provider}/callback')
