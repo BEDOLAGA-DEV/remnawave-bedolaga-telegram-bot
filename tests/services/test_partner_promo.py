@@ -41,3 +41,36 @@ async def test_increment_click_uses_atomic_update():
     await crud.increment_click(db, 7)
     assert db.execute.await_count == 1
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_go_redirects_and_counts(monkeypatch):
+    import app.webserver.partner_promo as pp
+    from types import SimpleNamespace
+    from contextlib import asynccontextmanager
+
+    monkeypatch.setattr(pp.settings, 'PARTNER_SHOWCASE_ENABLED', True, raising=False)
+    promo = SimpleNamespace(id=1, url='https://partner.example.com', is_active=True)
+    monkeypatch.setattr(pp.crud, 'get', AsyncMock(return_value=promo))
+    inc = AsyncMock()
+    monkeypatch.setattr(pp.crud, 'increment_click', inc)
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield MagicMock()
+    monkeypatch.setattr(pp, 'AsyncSessionLocal', _fake_session)
+
+    resp = await pp.partner_promo_go(1)
+    assert resp.status_code == 302
+    assert resp.headers['location'] == 'https://partner.example.com'
+    inc.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_go_404_when_disabled(monkeypatch):
+    import app.webserver.partner_promo as pp
+    from fastapi import HTTPException
+    monkeypatch.setattr(pp.settings, 'PARTNER_SHOWCASE_ENABLED', False, raising=False)
+    with pytest.raises(HTTPException) as exc:
+        await pp.partner_promo_go(1)
+    assert exc.value.status_code == 404

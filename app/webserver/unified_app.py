@@ -16,6 +16,7 @@ from app.webapi.app import create_web_api_app
 from app.webapi.docs import add_redoc_endpoint
 
 from . import payments, telegram
+from .partner_promo import router as partner_promo_router
 
 
 logger = structlog.get_logger(__name__)
@@ -86,6 +87,7 @@ def _create_base_app() -> FastAPI:
                 )
             app.include_router(cabinet_router)
 
+    app.include_router(partner_promo_router)
     _attach_docs_alias(app, app.docs_url)
     return app
 
@@ -153,6 +155,7 @@ def create_app() -> FastAPI:
     """
     app = FastAPI(title='NoZapret Cabinet Auth', version=settings.WEB_API_VERSION)
     app.include_router(cabinet_router)
+    app.include_router(partner_promo_router)
     _mount_cabinet_static(app)
     return app
 
