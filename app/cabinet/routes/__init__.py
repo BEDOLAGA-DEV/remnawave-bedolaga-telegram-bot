@@ -16,6 +16,7 @@ from .admin_channels import router as admin_channels_router
 from .admin_email_templates import router as admin_email_templates_router
 from .admin_help import router as admin_help_router
 from .admin_info_pages import router as admin_info_pages_router
+from .admin_partner_promos import router as admin_partner_promos_router
 from .admin_landings import router as admin_landings_router
 from .admin_menu_layout import router as admin_menu_layout_router
 from .admin_news import router as admin_news_router
@@ -61,6 +62,7 @@ from .news import router as news_router
 from .notifications import router as notifications_router
 from .oauth import router as oauth_router
 from .partner_application import router as partner_application_router
+from .partner_promo import router as partner_promo_router
 from .polls import router as polls_router
 from .promo import router as promo_router
 from .promocode import router as promocode_router
@@ -119,6 +121,7 @@ router.include_router(notifications_router)
 router.include_router(user_notifications_router)
 router.include_router(web_push_router)
 router.include_router(info_router)
+router.include_router(partner_promo_router)
 router.include_router(branding_router)
 router.include_router(landing_router)
 router.include_router(media_router)
@@ -182,6 +185,7 @@ router.include_router(admin_news_tags_router)
 router.include_router(admin_news_media_router)
 router.include_router(admin_news_router)
 router.include_router(admin_info_pages_router)
+router.include_router(admin_partner_promos_router)
 
 # WebSocket route
 router.include_router(websocket_router)

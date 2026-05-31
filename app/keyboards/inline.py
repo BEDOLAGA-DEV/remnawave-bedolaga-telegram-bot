@@ -455,6 +455,16 @@ def _build_cabinet_main_menu_keyboard(
         info_text = info_cfg.get('labels', {}).get(language, '') or texts.t('MENU_INFO', 'ℹ️ Инфо')
         paired.append(_cabinet_button(info_text, '/info', 'menu_info'))
 
+    # Partners (partner showcase) — stays as callback, not a cabinet section
+    if settings.PARTNER_SHOWCASE_ENABLED:
+        paired.append(
+            InlineKeyboardButton(
+                text=texts.t('MENU_PARTNERS', '🤝 Партнёры'),
+                callback_data='nz!_partner_showcase',
+                style='primary',
+            )
+        )
+
     proxy_url = settings.MTPROXY_URL or settings.TELEGRAM_PROXY_URL
     if proxy_url:
         paired.append(InlineKeyboardButton(text=texts.t('MENU_PROXY', '🛡️ Прокси Telegram'), url=proxy_url, style='primary'))
@@ -749,6 +759,16 @@ def get_main_menu_keyboard(
             InlineKeyboardButton(
                 text=texts.t('MENU_PROXY', '🛡️ Прокси Telegram'),
                 url=proxy_url,
+                style='primary',
+            )
+        )
+
+    # Partners (partner showcase)
+    if settings.PARTNER_SHOWCASE_ENABLED:
+        paired_buttons.append(
+            InlineKeyboardButton(
+                text=texts.t('MENU_PARTNERS', '🤝 Партнёры'),
+                callback_data='nz!_partner_showcase',
                 style='primary',
             )
         )

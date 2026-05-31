@@ -1547,6 +1547,91 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
         )
 
 
+async def show_partner_showcase(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+):
+    if db_user is None:
+        texts = get_texts(settings.DEFAULT_LANGUAGE)
+        await callback.answer(
+            texts.t(
+                'USER_NOT_FOUND_ERROR',
+                'Ошибка: пользователь не найден.',
+            ),
+            show_alert=True,
+        )
+        return
+
+    if not settings.PARTNER_SHOWCASE_ENABLED:
+        texts = get_texts(db_user.language)
+        await callback.answer(
+            texts.t('PARTNER_SHOWCASE_DISABLED', 'Раздел временно недоступен.'),
+            show_alert=True,
+        )
+        return
+
+    from app.database.crud import partner_promo as crud
+
+    texts = get_texts(db_user.language)
+    promos = await crud.list_active(db)
+
+    if not promos:
+        await callback.answer(
+            texts.t('PARTNER_SHOWCASE_EMPTY', 'Пока нет партнёров.'),
+            show_alert=True,
+        )
+        return
+
+    # Public base that serves the click-redirect /partner-promo/{id}/go.
+    # Prefer any configured public origin so clicks are counted; only fall back
+    # to the raw partner url when no public base is configured at all.
+    base = ''
+    for candidate in (settings.MINIAPP_CUSTOM_URL, settings.CABINET_URL, settings.WEBHOOK_URL):
+        cleaned = (candidate or '').strip().rstrip('/')
+        if cleaned and cleaned != 'https://example.com/cabinet':
+            base = cleaned
+            break
+
+    buttons: list[list[types.InlineKeyboardButton]] = []
+    for p in promos:
+        title_dict = p.title or {}
+        title = (
+            title_dict.get(db_user.language)
+            or title_dict.get('ru')
+            or next(iter(title_dict.values()), None)
+            or 'Partner'
+        )
+        if base:
+            url = f'{base}/partner-promo/{p.id}/go'
+        else:
+            url = p.url
+        buttons.append(
+            [
+                types.InlineKeyboardButton(
+                    text=title,
+                    url=url,
+                )
+            ]
+        )
+
+    buttons.append(
+        [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')]
+    )
+
+    header = texts.t('PARTNER_SHOWCASE_HEADER', '🤝 <b>Партнёры</b>')
+    prompt = texts.t('PARTNER_SHOWCASE_PROMPT', 'Выберите партнёра:')
+    caption = f'{header}\n\n{prompt}' if prompt else header
+
+    await edit_or_answer_photo(
+        callback=callback,
+        caption=caption,
+        keyboard=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_back_to_menu, F.data == 'nz!_back_to_menu')
 
@@ -1608,3 +1693,5 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(add_traffic, F.data.startswith('nz!_add_traffic_'))
 
     dp.callback_query.register(handle_activate_button, F.data == 'nz!_activate_button')
+
+    dp.callback_query.register(show_partner_showcase, F.data == 'nz!_partner_showcase')
