@@ -192,6 +192,25 @@ class EmailChangeResponse(BaseModel):
     expires_in_minutes: int = Field(..., description='Code expiration time in minutes')
 
 
+class DeepLinkTokenRequest(BaseModel):
+    """Request to create a deep link auth token.
+
+    ``referral_code`` is optional and UNTRUSTED. It is only applied when the
+    deep link leads to a NEW user registration in the bot — existing users are
+    never re-attached to a referrer. Self-referral is blocked bot-side. Omitting
+    it (or sending an empty body) keeps the original behaviour: register without
+    a referrer.
+    """
+
+    referral_code: str | None = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r'^[a-zA-Z0-9_-]+$',
+        description='Optional referral code to attach if a new user registers',
+    )
+
+
 class DeepLinkTokenResponse(BaseModel):
     """Response with deep link auth token."""
 

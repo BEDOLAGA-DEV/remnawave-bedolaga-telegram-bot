@@ -74,6 +74,7 @@ from ..schemas.auth import (
     AutoLoginRequest,
     CampaignBonusInfo,
     DeepLinkPollRequest,
+    DeepLinkTokenRequest,
     DeepLinkTokenResponse,
     EmailChangeRequest,
     EmailChangeResponse,
@@ -2085,11 +2086,16 @@ async def get_email_change_status(
 @router.post('/deeplink/request', response_model=DeepLinkTokenResponse)
 async def request_deep_link_token(
     raw_request: Request,
+    payload: DeepLinkTokenRequest | None = None,
 ):
     """Generate a one-time deep link auth token.
 
     Frontend shows t.me/{bot}?start=webauth_{token} to the user.
     No auth required (user is not logged in yet).
+
+    An optional ``referral_code`` may be supplied; it is stored with the token
+    and attached only if the deep link results in a NEW user registration in
+    the bot. The body is optional for backward compatibility.
     """
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'deeplink_request', limit=10, window=60, fail_closed=True):
@@ -2099,8 +2105,9 @@ async def request_deep_link_token(
             headers={'Retry-After': '60'},
         )
 
+    referral_code = payload.referral_code if payload else None
     try:
-        token = await create_web_auth_token()
+        token = await create_web_auth_token(referral_code=referral_code)
     except RuntimeError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
