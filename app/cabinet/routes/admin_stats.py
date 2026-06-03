@@ -11,6 +11,9 @@ from pydantic import BaseModel
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Define router before app imports to avoid circular import via routes/__init__.py
+router = APIRouter(prefix='/admin/stats', tags=['Cabinet Admin Stats'])
+
 from app.database.crud.campaign import get_campaign_statistics, get_campaigns_count, get_campaigns_list
 from app.database.crud.server_squad import get_server_statistics
 from app.database.crud.subscription import get_subscriptions_statistics
@@ -24,7 +27,6 @@ from app.database.models import (
     TransactionType,
     User,
 )
-from app.services.remnawave_service import RemnaWaveService
 from app.services.version_service import version_service
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -33,8 +35,6 @@ from ..dependencies import get_cabinet_db, require_permission
 logger = structlog.get_logger(__name__)
 
 _start_time = time.time()
-
-router = APIRouter(prefix='/admin/stats', tags=['Cabinet Admin Stats'])
 
 
 # ============ Schemas ============
@@ -152,6 +152,9 @@ class SystemInfoResponse(BaseModel):
     uptime_seconds: int
     users_total: int
     subscriptions_active: int
+    paid_subscriptions: int
+    trial_subscriptions: int
+    purchased_today: int
 
 
 # ============ Extended Stats Schemas ============
@@ -343,12 +346,10 @@ async def get_system_info(
         users_total_result = await db.execute(select(func.count()).select_from(User))
         users_total = users_total_result.scalar() or 0
 
-        subs_active_result = await db.execute(
-            select(func.count(Subscription.id)).where(
-                Subscription.status == SubscriptionStatus.ACTIVE.value,
-            )
-        )
-        subscriptions_active = subs_active_result.scalar() or 0
+        sub_stats = await get_subscriptions_statistics(db)
+        paid_subscriptions = sub_stats.get('paid_subscriptions', 0) or 0
+        trial_subscriptions = sub_stats.get('trial_subscriptions', 0) or 0
+        subscriptions_active = paid_subscriptions + trial_subscriptions
 
         return SystemInfoResponse(
             bot_version=version_service.current_version,
@@ -356,6 +357,9 @@ async def get_system_info(
             uptime_seconds=int(time.time() - _start_time),
             users_total=users_total,
             subscriptions_active=subscriptions_active,
+            paid_subscriptions=paid_subscriptions,
+            trial_subscriptions=trial_subscriptions,
+            purchased_today=sub_stats.get('purchased_today', 0) or 0,
         )
     except Exception as e:
         logger.error('Failed to get system info', error=e)
@@ -387,6 +391,8 @@ async def restart_node(
 ):
     """Restart a node."""
     try:
+        from app.services.remnawave_service import RemnaWaveService
+
         service = RemnaWaveService()
         success = await service.manage_node(node_uuid, 'restart')
 
@@ -414,6 +420,8 @@ async def toggle_node(
 ):
     """Enable or disable a node."""
     try:
+        from app.services.remnawave_service import RemnaWaveService
+
         service = RemnaWaveService()
         nodes = await service.get_all_nodes()
 
@@ -448,6 +456,8 @@ async def toggle_node(
 async def _get_nodes_overview() -> NodesOverview:
     """Get overview of all nodes."""
     try:
+        from app.services.remnawave_service import RemnaWaveService
+
         service = RemnaWaveService()
         nodes = await service.get_all_nodes()
 

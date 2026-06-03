@@ -123,26 +123,25 @@ class StartupNotificationService:
             return 0
 
     async def _get_paid_subscriptions_count(self) -> int:
-        """Получает количество платных подписок (не триальных, активных)."""
+        """Получает количество активных платных подписок (не триальных, не истёкших)."""
         try:
+            from app.database.crud.subscription import get_subscriptions_statistics
+
             async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    select(func.count(Subscription.id)).where(
-                        Subscription.is_trial == False,
-                        Subscription.status == SubscriptionStatus.ACTIVE.value,
-                    )
-                )
-                return result.scalar() or 0
+                stats = await get_subscriptions_statistics(db)
+                return stats.get('paid_subscriptions', 0) or 0
         except Exception as e:
             logger.error('Ошибка получения количества платных подписок', e=e)
             return 0
 
     async def _get_trial_subscriptions_count(self) -> int:
-        """Получает количество триальных подписок."""
+        """Получает количество активных триальных подписок."""
         try:
+            from app.database.crud.subscription import get_subscriptions_statistics
+
             async with AsyncSessionLocal() as db:
-                result = await db.execute(select(func.count(Subscription.id)).where(Subscription.is_trial == True))
-                return result.scalar() or 0
+                stats = await get_subscriptions_statistics(db)
+                return stats.get('trial_subscriptions', 0) or 0
         except Exception as e:
             logger.error('Ошибка получения количества триальных подписок', e=e)
             return 0
