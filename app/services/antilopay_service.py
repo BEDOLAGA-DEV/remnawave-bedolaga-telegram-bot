@@ -1,4 +1,4 @@
-"""Сервис для работы с API Antilopay (lk.antilopay.com/api/v2)."""
+"""Сервис для работы с API Antilopay (lk.antilopay.com/api/v1)."""
 
 import base64
 import json
@@ -15,7 +15,7 @@ from app.config import settings
 
 logger = structlog.get_logger(__name__)
 
-API_BASE_URL = 'https://lk.antilopay.com/api/v2'
+API_BASE_URL = 'https://lk.antilopay.com/api/v1'
 
 
 class AntilopayAPIError(Exception):
@@ -78,10 +78,41 @@ class AntilopayService:
         """Строит заголовки запроса с подписью."""
         return {
             'Content-Type': 'application/json',
+            'Accept': 'application/json',
             'X-Apay-Secret-Id': self.secret_id,
             'X-Apay-Sign': self._sign_request(json_body),
             'X-Apay-Sign-Version': '1',
         }
+
+    @staticmethod
+    async def _parse_json_response(response: aiohttp.ClientResponse) -> dict[str, Any]:
+        """Парсит JSON-ответ API; при HTML/пустом теле — понятная ошибка."""
+        text = await response.text()
+        stripped = text.lstrip()
+        if not stripped or stripped.startswith('<'):
+            preview = text[:500].replace('\n', ' ')
+            logger.error(
+                'Antilopay API returned non-JSON response',
+                status_code=response.status,
+                body_preview=preview,
+            )
+            raise AntilopayAPIError(
+                response.status,
+                'Antilopay API returned HTML instead of JSON (check API URL and credentials)',
+            )
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            logger.error(
+                'Antilopay API invalid JSON',
+                status_code=response.status,
+                body_preview=stripped[:500],
+                error=str(exc),
+            )
+            raise AntilopayAPIError(response.status, f'Invalid JSON from Antilopay API: {exc}') from exc
+        if not isinstance(data, dict):
+            raise AntilopayAPIError(response.status, f'Unexpected Antilopay response type: {type(data).__name__}')
+        return data
 
     async def create_payment(
         self,
@@ -102,11 +133,12 @@ class AntilopayService:
         Создает платеж через API Antilopay.
         POST /payment/create
         """
+        amount_value = int(amount_rubles) if amount_rubles == int(amount_rubles) else amount_rubles
         payload: dict[str, Any] = {
             'project_identificator': self.project_id,
-            'amount': amount_rubles,
+            'amount': amount_value,
             'order_id': order_id,
-            'currency': settings.ANTILOPAY_CURRENCY.lower(),
+            'currency': (settings.ANTILOPAY_CURRENCY or 'RUB').upper(),
             'product_name': product_name,
             'product_type': product_type,
             'description': description,
@@ -148,7 +180,7 @@ class AntilopayService:
                 data=json_body,
                 headers=self._build_headers(json_body),
             ) as response:
-                data = await response.json(content_type=None)
+                data = await self._parse_json_response(response)
 
                 api_code = data.get('code')
                 if response.status == 200 and api_code == 0:
@@ -199,7 +231,7 @@ class AntilopayService:
                 data=json_body,
                 headers=self._build_headers(json_body),
             ) as response:
-                data = await response.json(content_type=None)
+                data = await self._parse_json_response(response)
 
                 if response.status == 200:
                     return data
