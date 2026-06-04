@@ -193,6 +193,16 @@ async def get_payment_methods(
                     definitions = settings.get_platega_method_definitions()
                     info = definitions.get(int(opt_id), {}) if opt_id.isdigit() else {}
                     description = info.get('description') or info.get('name') or ''
+                elif method_id == 'antilopay':
+                    if opt_id == 'card':
+                        opt_name = f'💳 {opt_name}'
+                        description = 'Банковская карта'
+                    elif opt_id == 'sbp':
+                        opt_name = f'🏦 {opt_name}'
+                        description = 'Система быстрых платежей'
+                    elif opt_id == 'sberpay':
+                        opt_name = f'💳 {opt_name}'
+                        description = 'SberPay'
 
                 formatted_options.append(
                     {
@@ -1006,6 +1016,67 @@ async def create_topup(
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail='Failed to create Lava payment',
+                )
+
+        elif request.payment_method in ('antilopay', 'antilopay_sbp', 'antilopay_card', 'antilopay_sberpay'):
+            if not settings.is_antilopay_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Antilopay payment method is unavailable',
+                )
+
+            legacy_type_map = {
+                'antilopay_sbp': 'sbp',
+                'antilopay_card': 'card',
+                'antilopay_sberpay': 'sberpay',
+            }
+            payment_method_type = legacy_type_map.get(request.payment_method)
+            if payment_method_type is None:
+                payment_method_type = (request.payment_option or '').strip().lower() or None
+
+            type_enabled = {
+                'sbp': settings.is_antilopay_sbp_enabled,
+                'card': settings.is_antilopay_card_enabled,
+                'sberpay': settings.is_antilopay_sberpay_enabled,
+            }
+            if payment_method_type:
+                is_enabled = type_enabled.get(payment_method_type)
+                if is_enabled is not None and not is_enabled():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail='Selected Antilopay payment option is unavailable',
+                    )
+            elif not any(checker() for checker in type_enabled.values()):
+                payment_method_type = None
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Select Antilopay payment option (card, sbp, or sberpay)',
+                )
+
+            payment_service = PaymentService()
+            result = await payment_service.create_antilopay_payment(
+                db=db,
+                user_id=user.id,
+                amount_kopeks=request.amount_kopeks,
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
+                email=getattr(user, 'email', None),
+                language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                payment_method_type=payment_method_type,
+                return_url=cabinet_success_url or settings.ANTILOPAY_RETURN_URL,
+            )
+
+            if result and result.get('payment_url'):
+                payment_url = result.get('payment_url')
+                payment_id = str(
+                    result.get('local_payment_id') or result.get('payment_id') or result.get('order_id') or 'pending'
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Failed to create Antilopay payment',
                 )
 
         else:

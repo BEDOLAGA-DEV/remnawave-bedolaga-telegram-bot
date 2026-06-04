@@ -550,10 +550,20 @@ async def get_enabled_methods_for_user(
         available_sub_options = method_def.get('available_sub_options')
         if available_sub_options and config.sub_options:
             enabled_options = []
+            antilopay_sub_enabled = None
+            if method_id == 'antilopay':
+                antilopay_sub_enabled = {
+                    'sbp': settings.is_antilopay_sbp_enabled(),
+                    'card': settings.is_antilopay_card_enabled(),
+                    'sberpay': settings.is_antilopay_sberpay_enabled(),
+                }
             for opt in available_sub_options:
                 opt_id = opt['id']
-                if config.sub_options.get(opt_id, True):
-                    enabled_options.append(opt)
+                if not config.sub_options.get(opt_id, True):
+                    continue
+                if antilopay_sub_enabled is not None and not antilopay_sub_enabled.get(opt_id, False):
+                    continue
+                enabled_options.append(opt)
             if enabled_options:
                 options = enabled_options
 
