@@ -23,6 +23,15 @@ from ..schemas.config import (
 router = APIRouter()
 
 
+async def _sync_maintenance_mode_if_needed(key: str) -> None:
+    if key != 'MAINTENANCE_MODE':
+        return
+
+    from app.services.maintenance_service import maintenance_service
+
+    await maintenance_service.sync_with_settings()
+
+
 def _coerce_value(key: str, value: Any) -> Any:
     definition = bot_configuration_service.get_definition(key)
 
@@ -159,6 +168,7 @@ async def update_setting(
         await bot_configuration_service.set_value(db, key, value)
     except ReadOnlySettingError as error:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+    await _sync_maintenance_mode_if_needed(key)
     await db.commit()
 
     return _serialize_definition(definition)
@@ -179,5 +189,6 @@ async def reset_setting(
         await bot_configuration_service.reset_value(db, key)
     except ReadOnlySettingError as error:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+    await _sync_maintenance_mode_if_needed(key)
     await db.commit()
     return _serialize_definition(definition)

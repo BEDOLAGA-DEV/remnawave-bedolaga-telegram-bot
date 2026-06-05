@@ -36,6 +36,8 @@ class MaintenanceService:
 
     def set_bot(self, bot):
         self._bot = bot
+        if settings.is_maintenance_mode() and not self._status.is_active:
+            asyncio.create_task(self.enable_maintenance(reason='Включено из системных настроек', auto=False))
         logger.info('Бот установлен для maintenance_service')
 
     @property
@@ -206,6 +208,11 @@ class MaintenanceService:
         except Exception as e:
             logger.error('Ошибка выключения режима техработ', error=e)
             return False
+
+    async def sync_with_settings(self) -> bool:
+        if settings.is_maintenance_mode():
+            return await self.enable_maintenance(reason='Включено из системных настроек', auto=False)
+        return await self.disable_maintenance()
 
     async def start_monitoring(self) -> bool:
         try:
