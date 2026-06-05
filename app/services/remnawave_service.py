@@ -1314,6 +1314,12 @@ class RemnaWaveService:
 
             logger.info('🔄 Начинаем синхронизацию типа', sync_type=sync_type)
 
+            # FIX MissingGreenlet: bot_users_* (selectinload) читаются ПОСЛЕ db.commit().
+            # expire_on_commit=True протухает их → implicit lazy-reload вне async greenlet
+            # → MissingGreenlet → залипшие коннекты → деградация пула → виснет API/кабинет.
+            # Держим объекты живыми на всю синхронизацию (она сама — источник истины).
+            db.sync_session.expire_on_commit = False
+
             async with self.get_api_client() as api:
                 panel_users = []
                 start = 0
