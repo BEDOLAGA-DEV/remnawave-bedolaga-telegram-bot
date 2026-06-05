@@ -4094,6 +4094,7 @@ class GuestPurchase(Base):
     yandex_cid = Column(String(128), nullable=True)
     subid = Column(String(255), nullable=True)
     referrer = Column(String(500), nullable=True)
+    referrer_code = Column(String(64), nullable=True, index=True)
 
     landing = relationship('LandingPage', back_populates='guest_purchases', lazy='selectin')
     tariff = relationship('Tariff', lazy='selectin')
