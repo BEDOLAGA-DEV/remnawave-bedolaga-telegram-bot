@@ -171,7 +171,7 @@ class MonitoringService:
                 return result
             except TelegramBadRequest as exc:
                 logger.warning(
-                    'Не удалось отправить сообщение с логотипом пользователю : . Отправляем текстовое сообщение.',
+                    'Не удалось отправить сообщение с логотипом, отправляем текстовое сообщение',
                     chat_id=chat_id,
                     exc=exc,
                 )
@@ -1439,13 +1439,56 @@ class MonitoringService:
                                     user_id=user.id,
                                 )
                             old_end_date = subscription.end_date
-                            await extend_subscription(db, subscription, autopay_period)
-                            await self.subscription_service.update_remnawave_user(
-                                db,
-                                subscription,
-                                reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
-                                reset_reason='автопродление подписки',
-                            )
+                            try:
+                                await extend_subscription(db, subscription, autopay_period)
+                            except Exception as extend_exc:
+                                # Баланс уже списан и закоммичен в subtract_user_balance выше.
+                                # Само продление упало → компенсирующий возврат, иначе деньги
+                                # пропадают без продления (как и делает _auto_extend_subscription).
+                                logger.error(
+                                    '🔴 Автопродление: extend_subscription упал — возвращаю списанное',
+                                    user_id=user.id,
+                                    subscription_id=subscription.id,
+                                    exc=extend_exc,
+                                )
+                                try:
+                                    from app.database.crud.user import add_user_balance
+                                    from app.database.models import TransactionType as _TxType
+
+                                    await add_user_balance(
+                                        db,
+                                        user,
+                                        charge_amount,
+                                        'Возврат: автопродление не удалось',
+                                        transaction_type=_TxType.REFUND,
+                                        create_transaction=True,
+                                    )
+                                except Exception as refund_exc:
+                                    logger.critical(
+                                        '🔴🔴 Автопродление: НЕ УДАЛОСЬ вернуть списанное — нужно ручное вмешательство',
+                                        user_id=user.id,
+                                        charge_amount=charge_amount,
+                                        exc=refund_exc,
+                                    )
+                                failed_count += 1
+                                continue
+
+                            # Синк панели — лучшее-усилие: продление уже в БД, при сбое не возвращаем,
+                            # а полагаемся на очередь повтора синка.
+                            try:
+                                await self.subscription_service.update_remnawave_user(
+                                    db,
+                                    subscription,
+                                    reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
+                                    reset_reason='автопродление подписки',
+                                )
+                            except Exception as sync_exc:
+                                logger.error(
+                                    'Автопродление: ошибка синка RemnaWave (продление уже применено в БД)',
+                                    user_id=user.id,
+                                    subscription_id=subscription.id,
+                                    exc=sync_exc,
+                                )
 
                             # Создаём транзакцию, чтобы автопродление было видно в статистике и карточке пользователя
                             try:

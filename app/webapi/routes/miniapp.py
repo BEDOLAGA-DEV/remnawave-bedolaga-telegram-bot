@@ -1181,6 +1181,10 @@ async def create_payment_link(
         option = (payload.payment_option or '').strip().lower()
         if option not in {'card', 'sbp'}:
             option = 'sbp'
+        # Передаём выбранный пользователем способ (card/sbp) в Pal24 — иначе счёт
+        # всегда создаётся как SBP, а ниже provider_method ещё и используется в
+        # ответе. (Регрессия из 95a32e85: и определение, и проброс были удалены.)
+        provider_method = 'card' if option == 'card' else 'sbp'
         payment_service = PaymentService()
         result = await payment_service.create_pal24_payment(
             db=db,
@@ -1190,6 +1194,7 @@ async def create_payment_link(
                 amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
             ),
             language=user.language or settings.DEFAULT_LANGUAGE,
+            payment_method=provider_method,
         )
         if not result:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail='Failed to create payment')
@@ -6771,6 +6776,19 @@ async def preview_tariff_switch_endpoint(
             detail={'code': 'subscription_inactive', 'message': 'Subscription is not active'},
         )
 
+    if subscription.is_trial:
+        # A trial has no paid value to prorate from — "switching" it would hand the
+        # user a full paid period of the target tariff for the (often zero/cheap)
+        # upgrade cost (bug #629889 class). Trials must buy a real tariff instead.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'trial_cannot_switch',
+                'message': 'Trial subscriptions cannot switch tariffs. Please purchase a tariff instead.',
+                'use_purchase_flow': True,
+            },
+        )
+
     current_tariff = await get_tariff_by_id(db, subscription.tariff_id)
     new_tariff = await get_tariff_by_id(db, payload.tariff_id)
 
@@ -6872,6 +6890,19 @@ async def switch_tariff_endpoint(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={'code': 'subscription_inactive', 'message': 'Subscription is not active'},
+        )
+
+    if subscription.is_trial:
+        # A trial has no paid value to prorate from — "switching" it would hand the
+        # user a full paid period of the target tariff for the (often zero/cheap)
+        # upgrade cost (bug #629889 class). Trials must buy a real tariff instead.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'trial_cannot_switch',
+                'message': 'Trial subscriptions cannot switch tariffs. Please purchase a tariff instead.',
+                'use_purchase_flow': True,
+            },
         )
 
     current_tariff = await get_tariff_by_id(db, subscription.tariff_id)

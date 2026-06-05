@@ -72,7 +72,7 @@ class EventEmitter:
                     else:
                         callback(event_data)
                 except Exception as error:
-                    logger.exception('Error in event listener for', event_type=event_type, error=error)
+                    logger.exception('Error in event listener', event_type=event_type, error=error)
 
         # Отправляем через WebSocket
         await self._broadcast_to_websockets(event_data)

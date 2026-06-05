@@ -745,7 +745,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             data['pending_start_payload'] = redis_payload
             state_needs_update = True
             logger.info(
-                "📦 START: Payload '' восстановлен из Redis (fallback)", pending_start_payload=pending_start_payload
+                '📦 START: Payload восстановлен из Redis (fallback)', pending_start_payload=pending_start_payload
             )
             # НЕ удаляем Redis payload здесь - удаление только после успешной регистрации
 
@@ -758,14 +758,18 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         start_parameter = start_args[1]
     elif pending_start_payload:
         start_parameter = pending_start_payload
-        logger.info("📦 START: Используем сохраненный payload ''", pending_start_payload=pending_start_payload)
+        logger.info('📦 START: Используем сохраненный payload', pending_start_payload=pending_start_payload)
 
     if state_needs_update:
         await state.set_data(data)
 
-    # Handle gift code deep links: /start GIFT_{token}
-    if start_parameter and start_parameter.startswith('GIFT_'):
-        gift_token = start_parameter[5:]  # Strip "GIFT_" prefix
+    # Handle gift code deep links: /start GIFT_{token} (or giftclaim_{token} alias)
+    if start_parameter and (start_parameter.startswith('GIFT_') or start_parameter.startswith('giftclaim_')):
+        gift_token = (
+            start_parameter.removeprefix('giftclaim_')
+            if start_parameter.startswith('giftclaim_')
+            else start_parameter[5:]  # Strip "GIFT_" prefix
+        )
         if len(gift_token) >= 8:
             logger.info(
                 'Gift code deep link detected',
@@ -811,6 +815,19 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             return
         start_parameter = None  # Invalid token, ignore
 
+    # Handle contests deep link: /start contests — the channel announcement's
+    # "🎲 Играть" button opens the bot here (a callback button can't open a
+    # private chat / show a personal menu from a channel post).
+    if start_parameter == 'contests':
+        user = db_user or await get_user_by_telegram_id(db, message.from_user.id)
+        if user and user.status != UserStatus.DELETED.value:
+            from app.handlers.contests import open_contests_menu_message
+
+            await open_contests_menu_message(message, user, db)
+            return
+        # Unregistered → fall through to normal /start (contests need a subscription anyway).
+        start_parameter = None
+
     # Keitaro/affiliate click ID rides on /start as `{campaign}_subid_{click_id}`
     # (64 chars total). Pull the click_id into FSM state and continue campaign
     # lookup with the bare campaign portion.
@@ -834,7 +851,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
 
         if campaign:
             logger.info(
-                '📣 Найдена рекламная кампания (start=)',
+                '📣 Найдена рекламная кампания',
                 campaign_id=campaign.id,
                 start_parameter=campaign.start_parameter,
             )
@@ -1187,7 +1204,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         data['language'] = normalized_default
         await state.set_data(data)
         logger.info(
-            "🌐 LANGUAGE: выбор языка отключен, устанавливаем язык по умолчанию ''",
+            '🌐 LANGUAGE: выбор языка отключен, устанавливаем язык по умолчанию',
             normalized_default=normalized_default,
         )
 
@@ -2528,12 +2545,12 @@ async def required_sub_channel_check(
                 pending_start_payload = redis_payload
                 state_data['pending_start_payload'] = redis_payload
                 logger.info(
-                    "📦 CHANNEL CHECK: Payload '' восстановлен из Redis (fallback)",
+                    '📦 CHANNEL CHECK: Payload восстановлен из Redis (fallback)',
                     pending_start_payload=pending_start_payload,
                 )
 
         if pending_start_payload:
-            logger.info("📦 CHANNEL CHECK: Найден сохраненный payload ''", pending_start_payload=pending_start_payload)
+            logger.info('📦 CHANNEL CHECK: Найден сохраненный payload', pending_start_payload=pending_start_payload)
 
         user = db_user
         if not user:

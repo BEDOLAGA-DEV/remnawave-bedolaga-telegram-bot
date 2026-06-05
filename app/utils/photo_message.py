@@ -172,7 +172,7 @@ async def edit_or_answer_photo(
         except TelegramNetworkError as net_error:
             if attempt < MAX_RETRIES - 1:
                 logger.warning(
-                    'Сетевая ошибка edit_media (попытка /)',
+                    'Сетевая ошибка edit_media, повторная попытка',
                     attempt=attempt + 1,
                     MAX_RETRIES=MAX_RETRIES,
                     net_error=net_error,

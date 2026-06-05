@@ -287,11 +287,12 @@ async def _do_change_tariff(
     # Set squads from tariff
     sub.connected_squads = tariff.allowed_squads or []
 
-    # Convert trial subscription to paid when switching to a non-trial tariff
-    if sub.is_trial and not tariff.is_trial_available:
-        sub.is_trial = False
-        if sub.end_date and sub.end_date > datetime.now(UTC):
-            sub.status = SubscriptionStatus.ACTIVE.value
+    # NB: changing the tariff is a *relabel*, not a purchase — we deliberately
+    # do NOT flip is_trial here. Bug #629889: flipping a 1-day trial to
+    # is_trial=False left a phantom "paid" subscription that, once its trial
+    # day expired, got picked up by try_auto_extend_expired_after_topup (which
+    # only renews is_trial=False subs) and granted a full ~30-day tariff period.
+    # A trial stays a trial across a tariff change and expires normally.
 
     # Reset purchased traffic on tariff change
     await db.execute(sa_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == sub.id))

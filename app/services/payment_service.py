@@ -669,6 +669,28 @@ _GETTER_OVERRIDES: dict[str, str] = {
 }
 
 
+def _split_guest_payment_method(payment_method: str) -> tuple[str, str | None]:
+    """Разбивает метод гостевого платежа на базовый шлюз + под-опцию.
+
+    Кабинет кодирует выбор СБП/карты/крипто суффиксом метода ("rollypay_sbp"),
+    тогда как в обычном (баланс) флоу метод и опция — отдельные поля. Сплитим
+    склейку обратно, чтобы ветка шлюза матчилась по базовому ключу, а под-метод
+    не терялся. Базовые ключи берём из канонического enum PaymentMethod (НЕ
+    хардкодим список — новый шлюз подхватывается автоматически).
+
+    ('rollypay_sbp') -> ('rollypay', 'sbp');  ('rollypay') -> ('rollypay', None).
+    """
+    from app.database.models import PaymentMethod
+
+    for member in PaymentMethod:
+        base = member.value
+        if payment_method == base:
+            return base, None
+        if payment_method.startswith(f'{base}_'):
+            return base, payment_method[len(base) + 1 :] or None
+    return payment_method, None
+
+
 class PaymentService(
     PaymentCommonMixin,
     TelegramStarsMixin,
@@ -714,7 +736,7 @@ class PaymentService(
 
         mulenpay_name = settings.get_mulenpay_display_name()
         logger.debug(
-            'PaymentService инициализирован (YooKassa Stars CryptoBot Heleket Pal24 Platega Wata CloudPayments=)',
+            'PaymentService инициализирован',
             yookassa_service=bool(self.yookassa_service),
             stars_service=bool(self.stars_service),
             cryptobot_service=bool(self.cryptobot_service),
@@ -798,6 +820,12 @@ class PaymentService(
                     local_payment_id=local_payment_id,
                     error=patch_error,
                 )
+
+        # Кабинет шлёт выбор под-метода склейкой ("rollypay_sbp") — разбиваем на
+        # базовый шлюз + опцию. Шлюзы, что сами разбирают свой суффикс (yookassa,
+        # pal24, freekassa, kassa_ai), матчатся по исходному payment_method ниже;
+        # одно-эндпоинтные (rollypay, overpay, lava...) — по _base, с пробросом _option.
+        _base, _option = _split_guest_payment_method(payment_method)
 
         # --- YooKassa (card / sbp) -------------------------------------------
         if payment_method in ('yookassa', 'yookassa_card', 'yookassa_sbp'):
@@ -1070,7 +1098,7 @@ class PaymentService(
             return None
 
         # --- RioPay -----------------------------------------------------------
-        if payment_method == 'riopay':
+        if _base == 'riopay':
             if not settings.is_riopay_enabled():
                 logger.warning('RioPay is not enabled, cannot create guest payment')
                 return None
@@ -1093,7 +1121,7 @@ class PaymentService(
             return None
 
         # --- SeverPay ---------------------------------------------------------
-        if payment_method == 'severpay':
+        if _base == 'severpay':
             if not settings.is_severpay_enabled():
                 logger.warning('SeverPay is not enabled, cannot create guest payment')
                 return None
@@ -1115,7 +1143,7 @@ class PaymentService(
             return None
 
         # --- PayPear ----------------------------------------------------------
-        if payment_method == 'paypear':
+        if _base == 'paypear':
             if not settings.is_paypear_enabled():
                 logger.warning('PayPear is not enabled, cannot create guest payment')
                 return None
@@ -1137,7 +1165,7 @@ class PaymentService(
             return None
 
         # --- RollyPay ---------------------------------------------------------
-        if payment_method == 'rollypay':
+        if _base == 'rollypay':
             if not settings.is_rollypay_enabled():
                 logger.warning('RollyPay is not enabled, cannot create guest payment')
                 return None
@@ -1148,6 +1176,7 @@ class PaymentService(
                 amount_kopeks=amount_kopeks,
                 description=description,
                 return_url=return_url,
+                payment_method_type=_option,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'rollypay')
@@ -1159,7 +1188,7 @@ class PaymentService(
             return None
 
         # --- Overpay ----------------------------------------------------------
-        if payment_method == 'overpay':
+        if _base == 'overpay':
             if not settings.is_overpay_enabled():
                 logger.warning('Overpay is not enabled, cannot create guest payment')
                 return None
@@ -1181,7 +1210,7 @@ class PaymentService(
             return None
 
         # --- AuraPay ----------------------------------------------------------
-        if payment_method == 'aurapay':
+        if _base == 'aurapay':
             if not settings.is_aurapay_enabled():
                 logger.warning('AuraPay is not enabled, cannot create guest payment')
                 return None
@@ -1192,6 +1221,7 @@ class PaymentService(
                 amount_kopeks=amount_kopeks,
                 description=description,
                 return_url=return_url,
+                payment_method_type=_option,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'aurapay')
@@ -1203,7 +1233,7 @@ class PaymentService(
             return None
 
         # --- Etoplatezhi ------------------------------------------------------
-        if payment_method == 'etoplatezhi':
+        if _base == 'etoplatezhi':
             if not settings.is_etoplatezhi_enabled():
                 logger.warning('Etoplatezhi is not enabled, cannot create guest payment')
                 return None
@@ -1214,6 +1244,7 @@ class PaymentService(
                 amount_kopeks=amount_kopeks,
                 description=description,
                 return_url=return_url,
+                payment_method_type=_option,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'etoplatezhi')
@@ -1225,7 +1256,7 @@ class PaymentService(
             return None
 
         # --- Antilopay --------------------------------------------------------
-        if payment_method == 'antilopay':
+        if _base == 'antilopay':
             if not settings.is_antilopay_enabled():
                 logger.warning('Antilopay is not enabled, cannot create guest payment')
                 return None
@@ -1236,6 +1267,7 @@ class PaymentService(
                 amount_kopeks=amount_kopeks,
                 description=description,
                 return_url=return_url,
+                payment_method_type=_option,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'antilopay')
@@ -1247,7 +1279,7 @@ class PaymentService(
             return None
 
         # --- Jupiter ----------------------------------------------------------
-        if payment_method == 'jupiter':
+        if _base == 'jupiter':
             if not settings.is_jupiter_enabled():
                 logger.warning('Jupiter is not enabled, cannot create guest payment')
                 return None
@@ -1258,6 +1290,7 @@ class PaymentService(
                 amount_kopeks=amount_kopeks,
                 description=description,
                 return_url=return_url,
+                payment_method_type=_option,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'jupiter')
@@ -1269,7 +1302,7 @@ class PaymentService(
             return None
 
         # --- Donut ------------------------------------------------------------
-        if payment_method == 'donut':
+        if _base == 'donut':
             if not settings.is_donut_enabled():
                 logger.warning('Donut is not enabled, cannot create guest payment')
                 return None
@@ -1280,6 +1313,7 @@ class PaymentService(
                 amount_kopeks=amount_kopeks,
                 description=description,
                 return_url=return_url,
+                payment_method_type=_option,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'donut')
@@ -1291,7 +1325,7 @@ class PaymentService(
             return None
 
         # --- Lava -------------------------------------------------------------
-        if payment_method == 'lava':
+        if _base == 'lava':
             if not settings.is_lava_enabled():
                 logger.warning('Lava is not enabled, cannot create guest payment')
                 return None
@@ -1302,6 +1336,7 @@ class PaymentService(
                 amount_kopeks=amount_kopeks,
                 description=description,
                 return_url=return_url,
+                payment_method_type=_option,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'lava')

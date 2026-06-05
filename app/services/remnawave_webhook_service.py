@@ -1177,7 +1177,7 @@ class RemnaWaveWebhookService:
                     changed = True
                     if old_end_date and new_end_date < old_end_date:
                         logger.info(
-                            'Webhook: end_date обновлена назад (панель авторитетна): → ',
+                            'Webhook: end_date обновлена назад (панель авторитетна)',
                             subscription_id=subscription.id,
                             old_end_date=old_end_date,
                             new_end_date=new_end_date,
@@ -1488,7 +1488,7 @@ class RemnaWaveWebhookService:
     async def _handle_user_created(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
     ) -> None:
-        logger.info('Webhook: user created externally in panel (uuid=)', user_id=user.id, data=data.get('uuid'))
+        logger.info('Webhook: user created externally in panel', user_id=user.id, data=data.get('uuid'))
 
     async def _handle_expires_in_72h(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict

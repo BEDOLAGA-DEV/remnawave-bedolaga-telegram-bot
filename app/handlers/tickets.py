@@ -890,7 +890,7 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
         await state.clear()
 
         # Уведомить админов об ответе пользователя
-        logger.info('Attempting to notify admins about ticket reply #', ticket_id=ticket_id)
+        logger.info('Attempting to notify admins about ticket reply', ticket_id=ticket_id)
         await notify_admins_about_ticket_reply(
             ticket, reply_text, db, media_file_id=media_file_id, media_type=media_type
         )
@@ -1001,7 +1001,7 @@ async def notify_admins_about_new_ticket(ticket: Ticket, db: AsyncSession):
 
         if not settings.is_admin_notifications_enabled():
             logger.info(
-                'Admin notifications disabled. Ticket # created by user', ticket_id=ticket.id, user_id=ticket.user_id
+                'Admin notifications disabled. Ticket created by user', ticket_id=ticket.id, user_id=ticket.user_id
             )
             return
 
@@ -1070,12 +1070,12 @@ async def notify_admins_about_ticket_reply(
     media_type: str | None = None,
 ):
     """Уведомить админов об ответе пользователя на тикет"""
-    logger.info('notify_admins_about_ticket_reply called for ticket #', ticket_id=ticket.id)
+    logger.info('notify_admins_about_ticket_reply called for ticket', ticket_id=ticket.id)
     try:
         from app.config import settings
 
         if not settings.is_admin_notifications_enabled():
-            logger.info('Admin notifications disabled. Reply to ticket #', ticket_id=ticket.id)
+            logger.info('Admin notifications disabled. Reply to ticket', ticket_id=ticket.id)
             return
 
         title = (ticket.title or '').strip()
@@ -1114,7 +1114,7 @@ async def notify_admins_about_ticket_reply(
         result = await service.send_ticket_event_notification(
             notification_text, None, media_file_id=media_file_id, media_type=media_type
         )
-        logger.info('Ticket # reply notification sent', ticket_id=ticket.id, result=result)
+        logger.info('Ticket reply notification sent', ticket_id=ticket.id, result=result)
     except Exception as e:
         logger.error('Error notifying admins about ticket reply', error=e)
 

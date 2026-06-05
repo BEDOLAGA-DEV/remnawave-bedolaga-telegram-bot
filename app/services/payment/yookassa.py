@@ -173,7 +173,7 @@ class YooKassaPaymentMixin:
             )
 
             logger.info(
-                'Создан платеж YooKassa на ₽ для пользователя',
+                'Создан платеж YooKassa',
                 yookassa_response=yookassa_response['id'],
                 amount_rubles=amount_rubles,
                 user_id=user_id,
@@ -268,7 +268,7 @@ class YooKassaPaymentMixin:
             )
 
             logger.info(
-                'Создан платеж YooKassa СБП на ₽ для пользователя',
+                'Создан платеж YooKassa СБП',
                 yookassa_response=yookassa_response['id'],
                 amount_rubles=amount_rubles,
                 user_id=user_id,
@@ -363,7 +363,7 @@ class YooKassaPaymentMixin:
 
             if transaction_id:
                 logger.info(
-                    'Пропускаем повторную обработку платежа YooKassa : уже связан с транзакцией',
+                    'Пропускаем повторную обработку платежа YooKassa: уже связан с транзакцией',
                     yookassa_payment_id=payment.yookassa_payment_id,
                     transaction_id=transaction_id,
                 )
@@ -404,7 +404,7 @@ class YooKassaPaymentMixin:
             # Fast-path: already processed
             if getattr(payment, 'transaction_id', None):
                 logger.info(
-                    'Платеж YooKassa уже обработан (transaction_id=), пропускаем.',
+                    'Платеж YooKassa уже обработан, пропускаем.',
                     yookassa_payment_id=payment.yookassa_payment_id,
                     transaction_id=payment.transaction_id,
                 )
@@ -517,7 +517,7 @@ class YooKassaPaymentMixin:
 
                 if transaction and processing_completed:
                     logger.info(
-                        'Пропускаем повторную обработку платежа YooKassa : транзакция уже завершила начисление.',
+                        'Пропускаем повторную обработку платежа YooKassa: транзакция уже завершила начисление.',
                         yookassa_payment_id=payment.yookassa_payment_id,
                         existing_transaction_id=existing_transaction_id,
                     )
@@ -726,7 +726,7 @@ class YooKassaPaymentMixin:
                                     )
                             else:
                                 logger.error(
-                                    'Не удалось активировать триал для',
+                                    'Не удалось активировать триал',
                                     subscription_id=subscription_id,
                                     user_id=user.id,
                                 )
@@ -1133,14 +1133,14 @@ class YooKassaPaymentMixin:
 
             if is_simple_subscription:
                 logger.info(
-                    'Успешно обработан платеж YooKassa как покупка подписки: пользователь , сумма ₽',
+                    'Успешно обработан платеж YooKassa как покупка подписки',
                     yookassa_payment_id=payment.yookassa_payment_id,
                     user_id=payment.user_id,
                     amount_rubles=payment.amount_kopeks / 100,
                 )
             else:
                 logger.info(
-                    'Успешно обработан платеж YooKassa : пользователь пополнил баланс на ₽',
+                    'Успешно обработан платеж YooKassa: пользователь пополнил баланс',
                     yookassa_payment_id=payment.yookassa_payment_id,
                     user_id=payment.user_id,
                     amount_rubles=payment.amount_kopeks / 100,
@@ -1371,7 +1371,9 @@ class YooKassaPaymentMixin:
         yookassa_payment_id = event_object.get('id')
 
         if not yookassa_payment_id:
-            logger.warning('Webhook без payment id', event=event)
+            # 'event' зарезервировано в structlog (это само сообщение лога), нельзя
+            # передавать его как kwarg — иначе TypeError. Берём другое имя.
+            logger.warning('Webhook без payment id', webhook_event=event)
             return False
 
         # The remote API call is a defence-in-depth cross-check of the
@@ -1416,7 +1418,7 @@ class YooKassaPaymentMixin:
             event_object = self._merge_remote_yookassa_payload(event_object, remote_data)
             if previous_status and event_object.get('status') != previous_status:
                 logger.info(
-                    'Статус платежа YooKassa скорректирован по данным API: →',
+                    'Статус платежа YooKassa скорректирован по данным API',
                     yookassa_payment_id=yookassa_payment_id,
                     previous_status=previous_status,
                     event_object=event_object.get('status'),
@@ -1608,7 +1610,7 @@ class YooKassaPaymentMixin:
                 yookassa_created_at = datetime.fromisoformat(created_at_raw.replace('Z', '+00:00'))
             except Exception as error:  # pragma: no cover - диагностический лог
                 logger.debug(
-                    'Не удалось распарсить created_at= для YooKassa',
+                    'Не удалось распарсить created_at для YooKassa',
                     created_at_raw=created_at_raw,
                     yookassa_payment_id=yookassa_payment_id,
                     error=error,

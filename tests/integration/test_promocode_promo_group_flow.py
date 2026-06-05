@@ -77,6 +77,13 @@ async def test_promo_group_promocode_full_workflow(
     create_usage_mock = AsyncMock()
     monkeypatch.setattr('app.services.promocode_service.create_promocode_use', create_usage_mock)
 
+    # Anti-stacking counter is imported lazily from the CRUD module inside
+    # activate_promocode, so it must be patched at the source-module path.
+    monkeypatch.setattr(
+        'app.database.crud.promocode.count_user_recent_activations',
+        AsyncMock(return_value=0),
+    )
+
     # Execute: User activates promocode
     service = PromoCodeService()
     result = await service.activate_promocode(mock_db_session, sample_user.id, 'INTEGRATIONTEST')
@@ -94,14 +101,14 @@ async def test_promo_group_promocode_full_workflow(
     get_promo_group_mock.assert_awaited_once_with(mock_db_session, sample_promo_group.id)
     has_promo_group_mock.assert_awaited_once_with(mock_db_session, sample_user.id, sample_promo_group.id)
     add_promo_group_mock.assert_awaited_once_with(
-        mock_db_session, sample_user.id, sample_promo_group.id, assigned_by='promocode'
+        mock_db_session, sample_user.id, sample_promo_group.id, assigned_by='promocode', commit=False
     )
 
     # Verify: Usage recorded
     create_usage_mock.assert_awaited_once_with(mock_db_session, promocode.id, sample_user.id)
 
-    # Verify: Counter incremented
-    assert promocode.current_uses == 1
+    # Verify: Counter incremented (atomic SQL UPDATE; value lives in the returned dict)
+    assert result['promocode']['current_uses'] == 1
 
     # Verify: Database committed
     mock_db_session.commit.assert_awaited()
@@ -158,6 +165,13 @@ async def test_duplicate_promo_group_assignment_edge_case(
     create_usage_mock = AsyncMock()
     monkeypatch.setattr('app.services.promocode_service.create_promocode_use', create_usage_mock)
 
+    # Anti-stacking counter is imported lazily from the CRUD module inside
+    # activate_promocode, so it must be patched at the source-module path.
+    monkeypatch.setattr(
+        'app.database.crud.promocode.count_user_recent_activations',
+        AsyncMock(return_value=0),
+    )
+
     # Execute
     service = PromoCodeService()
     result = await service.activate_promocode(mock_db_session, sample_user.id, 'DUPLICATE')
@@ -171,8 +185,8 @@ async def test_duplicate_promo_group_assignment_edge_case(
     # Verify: Usage was still recorded
     create_usage_mock.assert_awaited_once()
 
-    # Verify: Counter still incremented
-    assert promocode.current_uses == 6
+    # Verify: Counter still incremented (atomic SQL UPDATE; value lives in the returned dict)
+    assert result['promocode']['current_uses'] == 6
 
 
 async def test_missing_promo_group_graceful_failure(
@@ -230,6 +244,13 @@ async def test_missing_promo_group_graceful_failure(
     create_usage_mock = AsyncMock()
     monkeypatch.setattr('app.services.promocode_service.create_promocode_use', create_usage_mock)
 
+    # Anti-stacking counter is imported lazily from the CRUD module inside
+    # activate_promocode, so it must be patched at the source-module path.
+    monkeypatch.setattr(
+        'app.database.crud.promocode.count_user_recent_activations',
+        AsyncMock(return_value=0),
+    )
+
     # Execute
     service = PromoCodeService()
     result = await service.activate_promocode(mock_db_session, sample_user.id, 'ORPHANED')
@@ -246,5 +267,5 @@ async def test_missing_promo_group_graceful_failure(
     # Verify: Usage was still recorded (promocode still works)
     create_usage_mock.assert_awaited_once()
 
-    # Verify: Counter still incremented
-    assert promocode.current_uses == 1
+    # Verify: Counter still incremented (atomic SQL UPDATE; value lives in the returned dict)
+    assert result['promocode']['current_uses'] == 1

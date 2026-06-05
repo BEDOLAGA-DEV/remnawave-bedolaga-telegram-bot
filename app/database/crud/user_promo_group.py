@@ -277,7 +277,7 @@ async def replace_user_promo_groups(
         await _sync_user_primary_promo_group(db, user_id)
 
         await db.commit()
-        logger.info('Промогруппы пользователя заменены на', user_id=user_id, promo_group_ids=promo_group_ids)
+        logger.info('Промогруппы пользователя заменены', user_id=user_id, promo_group_ids=promo_group_ids)
         return True
 
     except Exception as error:

@@ -65,7 +65,7 @@ async def create_cloudpayments_payment(
     await db.refresh(payment)
 
     logger.debug(
-        'Created CloudPayments payment: id invoice amount',
+        'Created CloudPayments payment',
         payment_id=payment.id,
         invoice_id=invoice_id,
         amount_kopeks=amount_kopeks,
@@ -204,9 +204,7 @@ async def mark_cloudpayments_payment_as_paid(
     await db.flush()
     await db.refresh(payment)
 
-    logger.info(
-        'Marked CloudPayments payment as paid: id invoice', payment_id=payment.id, invoice_id=payment.invoice_id
-    )
+    logger.info('Marked CloudPayments payment as paid', payment_id=payment.id, invoice_id=payment.invoice_id)
 
     return payment
 

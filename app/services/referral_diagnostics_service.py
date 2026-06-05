@@ -314,7 +314,7 @@ class ReferralDiagnosticsService:
                 mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).date()
                 is_fresh = mtime >= today - timedelta(days=1)
                 candidates.append((path, is_fresh, path.stat().st_mtime))
-                logger.info('📁 Найден лог: (свежий: )', path=path, is_fresh=is_fresh)
+                logger.info('📁 Найден лог', path=path, is_fresh=is_fresh)
 
         candidates.sort(key=lambda x: (not x[1], -x[2]))
 
@@ -402,7 +402,7 @@ class ReferralDiagnosticsService:
             lost_referrals = await self._find_lost_referrals(db, list(user_clicks.values()))
 
             logger.info(
-                '✅ Анализ файла завершён: строк=, реф-кликов=, потерянных',
+                '✅ Анализ файла завершён',
                 total_lines=total_lines,
                 clicks_count=len(clicks),
                 lost_referrals_count=len(lost_referrals),
@@ -510,7 +510,7 @@ class ReferralDiagnosticsService:
             logger.error('Ошибка парсинга логов', error=e, exc_info=True)
 
         logger.info(
-            '📊 Парсинг: строк=, за период=, реф-кликов',
+            '📊 Парсинг завершён',
             total_lines=total_lines,
             lines_in_period=lines_in_period,
             clicks_count=len(clicks),
@@ -550,7 +550,7 @@ class ReferralDiagnosticsService:
                 # Это старый пользователь, который просто зашёл по чужой ссылке
                 is_lost = False
                 logger.debug(
-                    '⏭️ Пропускаем создан < клик',
+                    '⏭️ Пропускаем: пользователь создан раньше клика',
                     telegram_id=click.telegram_id,
                     created_at=user.created_at,
                     timestamp=click.timestamp,
@@ -950,7 +950,7 @@ class ReferralDiagnosticsService:
             report.total_missing_to_referrers += missing.referrer_bonus_amount
 
         logger.info(
-            '📊 Проверка бонусов: рефералов, с пополнением, без бонусов',
+            '📊 Проверка бонусов завершена',
             total_referrals_checked=report.total_referrals_checked,
             referrals_with_topup=report.referrals_with_topup,
             missing_bonuses_count=len(report.missing_bonuses),

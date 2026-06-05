@@ -23,11 +23,11 @@ class LoggingMiddleware(BaseMiddleware):
             if isinstance(event, Message) and event.from_user:
                 user_info = f'@{event.from_user.username}' if event.from_user.username else f'ID:{event.from_user.id}'
                 text = event.text or event.caption or '[медиа]'
-                logger.info('📩 Сообщение от', user_info=user_info, text=text)
+                logger.info('📩 Входящее сообщение', user_info=user_info, text=text)
 
             elif isinstance(event, CallbackQuery) and event.from_user:
                 user_info = f'@{event.from_user.username}' if event.from_user.username else f'ID:{event.from_user.id}'
-                logger.info('🔘 Callback от', user_info=user_info, event_data=event.data)
+                logger.info('🔘 Входящий callback', user_info=user_info, event_data=event.data)
 
             result = await handler(event, data)
 
@@ -39,5 +39,5 @@ class LoggingMiddleware(BaseMiddleware):
 
         except Exception as e:
             execution_time = monotonic() - start_time
-            logger.exception('❌ Ошибка при обработке события за', execution_time=round(execution_time, 2), error=e)
+            logger.exception('❌ Ошибка при обработке события', execution_time=round(execution_time, 2), error=e)
             raise

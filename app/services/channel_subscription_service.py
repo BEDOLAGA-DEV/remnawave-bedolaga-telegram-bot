@@ -28,6 +28,11 @@ logger = structlog.get_logger(__name__)
 # Rate limiting for Telegram API calls
 _API_SEMAPHORE = asyncio.Semaphore(20)  # max 20 concurrent getChatMember calls
 _API_DELAY = 0.05  # 50ms between calls -> ~20/sec safe rate
+# Это проверка подписки на канал вызывается из пользовательских хендлеров. Длинный
+# Telegram FloodWait (десятки секунд/минуты) нельзя «отсыпать» блокирующим sleep —
+# юзер повиснет. Коротко (<= порога) ждём и повторяем; иначе считаем результат
+# неопределённым (None: текущее состояние сохраняется, авто-деактивации НЕ будет).
+_MAX_RETRY_AFTER = 5.0
 
 GOOD_STATUSES = (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
 
@@ -295,6 +300,14 @@ class ChannelSubscriptionService:
                 return member.status in GOOD_STATUSES
             except TelegramRetryAfter as e:
                 logger.warning('Rate limited by Telegram', retry_after=e.retry_after, channel_id=channel_id)
+                if e.retry_after > _MAX_RETRY_AFTER:
+                    # Слишком долгий FloodWait — не вешаем хендлер; результат неизвестен.
+                    logger.warning(
+                        'Telegram rate-limit too long, skipping channel check',
+                        retry_after=e.retry_after,
+                        channel_id=channel_id,
+                    )
+                    return None
                 await asyncio.sleep(e.retry_after)
                 try:
                     member = await self.bot.get_chat_member(chat_id=channel_id, user_id=telegram_id)

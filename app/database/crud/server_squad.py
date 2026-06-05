@@ -92,7 +92,7 @@ async def create_server_squad(
     await db.commit()
     await db.refresh(server_squad)
 
-    logger.info('✅ Создан сервер (UUID: )', display_name=display_name, squad_uuid=squad_uuid)
+    logger.info('✅ Создан сервер', display_name=display_name, squad_uuid=squad_uuid)
     return server_squad
 
 
@@ -303,7 +303,7 @@ async def delete_server_squad(db: AsyncSession, server_id: int) -> bool:
     await db.execute(delete(ServerSquad).where(ServerSquad.id == server_id))
     await db.commit()
 
-    logger.info('🗑️ Удален сервер (ID: )', server_id=server_id)
+    logger.info('🗑️ Удален сервер', server_id=server_id)
     return True
 
 
@@ -361,7 +361,7 @@ async def sync_with_remnawave(db: AsyncSession, remnawave_squads: list[dict]) ->
         subscription_ids = {row[0] for row in subscription_ids_result.fetchall()}
 
         for server in removed_servers:
-            logger.info('🗑️ Удаляется сервер (UUID:)', display_name=server.display_name, squad_uuid=server.squad_uuid)
+            logger.info('🗑️ Удаляется сервер', display_name=server.display_name, squad_uuid=server.squad_uuid)
 
         await db.execute(delete(SubscriptionServer).where(SubscriptionServer.server_squad_id.in_(removed_ids)))
 

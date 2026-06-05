@@ -516,11 +516,16 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User):
             bonus=texts.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS),
         )
 
+    # Ссылки оборачиваем в <code>: при тапе по <blockquote> для копирования
+    # Telegram сохраняет содержимое <code> в буфере, но ВЫБРАСЫВАЕТ авто-линкнутые
+    # сырые URL — поэтому из скопированного приглашения выпадали обе ссылки
+    # (#634720). Экранируем прозу сами и подставляем ссылки уже в <code>, а не
+    # html_escape-им всю собранную строку (иначе экранировались бы и теги <code>).
     cabinet_block = ''
     if cabinet_referral_link:
-        cabinet_block = f'\n\n🌐 {cabinet_referral_link}'
+        cabinet_block = f'\n\n🌐 <code>{html_escape(cabinet_referral_link)}</code>'
 
-    invite_text = texts.t(
+    invite_template = texts.t(
         'REFERRAL_INVITE_TEXT',
         '🎉 Присоединяйся к VPN сервису!{bonus_block}\n\n'
         '🚀 Быстрое подключение\n'
@@ -528,9 +533,10 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User):
         '🔒 Надежная защита\n\n'
         '👇 Переходи по ссылке:\n'
         '{link}{cabinet_block}',
-    ).format(
-        bonus_block=bonus_block,
-        link=bot_referral_link,
+    )
+    invite_html = html_escape(invite_template).format(
+        bonus_block=html_escape(bonus_block),
+        link=f'<code>{html_escape(bot_referral_link)}</code>',
         cabinet_block=cabinet_block,
     )
 
@@ -550,7 +556,7 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User):
                 'Нажмите на текст ниже, чтобы скопировать:',
             )
             + '\n\n'
-            f'<blockquote>{html_escape(invite_text)}</blockquote>'
+            f'<blockquote>{invite_html}</blockquote>'
         ),
         keyboard,
     )

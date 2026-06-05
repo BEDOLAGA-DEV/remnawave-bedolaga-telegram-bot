@@ -228,7 +228,7 @@ class RemnaWaveService:
         mutation.set_map_entry(panel_uuid, user)
 
         logger.info(
-            '🔁 Обновлен RemnaWave UUID пользователя : →',
+            '🔁 Обновлён RemnaWave UUID пользователя',
             getattr=getattr(user, 'telegram_id', '?'),
             current_uuid=current_uuid,
             panel_uuid=panel_uuid,
@@ -430,7 +430,7 @@ class RemnaWaveService:
             # Убираем username из основной информации
             name_part = user_info[: username_match.start()].strip()
             logger.debug(
-                '📱 Найден username: (обработанный: ), остаток',
+                '📱 Найден username',
                 username_with_at=username_with_at,
                 username=username,
                 name_part=name_part,
@@ -466,7 +466,7 @@ class RemnaWaveService:
             logger.debug('👤 Имя не определено (начинается с @)')
 
         logger.debug(
-            '✅ Результат парсинга: first_name=, last_name=, username',
+            '✅ Результат парсинга имени',
             first_name=first_name,
             last_name=last_name,
             username=username,
@@ -704,7 +704,7 @@ class RemnaWaveService:
                 }
 
                 logger.info(
-                    'Статистика сформирована: пользователи=, общий трафик',
+                    'Статистика сформирована',
                     result=result['system']['total_users'],
                     total_user_traffic=total_user_traffic,
                 )
@@ -1295,7 +1295,7 @@ class RemnaWaveService:
             raise
         except Exception as error:
             await db.rollback()
-            logger.error('❌ Ошибка переезда сквада →', source_uuid=source_uuid, target_uuid=target_uuid, error=error)
+            logger.error('❌ Ошибка переезда сквада', source_uuid=source_uuid, target_uuid=target_uuid, error=error)
             return {
                 'success': False,
                 'error': 'unexpected',
@@ -1320,7 +1320,7 @@ class RemnaWaveService:
                 size = 500  # Увеличен размер батча для ускорения загрузки
 
                 while True:
-                    logger.info('📥 Загружаем пользователей: start=, size', start=start, size=size)
+                    logger.info('📥 Загружаем пользователей', start=start, size=size)
 
                     # enrich_happ_links=False - happ_crypto_link уже возвращается API в поле happ.cryptoLink
                     # Не делаем дополнительные HTTP-запросы для каждого пользователя
@@ -1329,7 +1329,9 @@ class RemnaWaveService:
                     total_users = response['total']
 
                     logger.info(
-                        '📊 Получено пользователей из', users_batch_count=len(users_batch), total_users=total_users
+                        '📊 Получена партия пользователей из панели',
+                        users_batch_count=len(users_batch),
+                        total_users=total_users,
                     )
 
                     for user_obj in users_batch:
@@ -1434,7 +1436,7 @@ class RemnaWaveService:
 
                     if (i + 1) % 10 == 0:
                         logger.info(
-                            '🔄 Обрабатываем пользователя /',
+                            '🔄 Обрабатываем пользователя',
                             i=i + 1,
                             unique_panel_users_count=len(unique_panel_users),
                             telegram_id=telegram_id,
@@ -1554,7 +1556,7 @@ class RemnaWaveService:
                     # in async context (greenlet_spawn error).  Break the loop to
                     # prevent cascading failures for every remaining user.
                     logger.warning(
-                        '⚠️ Сессия повреждена после rollback, прерываем обработку (обработано / пользователей)',
+                        '⚠️ Сессия повреждена после rollback, прерываем обработку',
                         i=i + 1,
                         unique_panel_users_count=len(unique_panel_users),
                     )
@@ -1738,7 +1740,7 @@ class RemnaWaveService:
                                         )
                                     )
                                     logger.info(
-                                        '🗑️ Удалены серверы подписки для',
+                                        '🗑️ Удалены серверы подписки',
                                         telegram_id=telegram_id,
                                         subscription_id=subscription.id,
                                     )
@@ -1859,7 +1861,7 @@ class RemnaWaveService:
                             pass
 
             logger.info(
-                '🎯 Синхронизация завершена: создано обновлено деактивировано ошибок',
+                '🎯 Синхронизация завершена',
                 stats=stats['created'],
                 stats_2=stats['updated'],
                 stats_3=stats['deleted'],
@@ -2191,9 +2193,7 @@ class RemnaWaveService:
             }
 
             await create_subscription_no_commit(db, **subscription_data)
-            logger.info(
-                '✅ Подготовлена подписка для пользователя до', telegram_id=user.telegram_id, expire_at=expire_at
-            )
+            logger.info('✅ Подготовлена подписка для пользователя', telegram_id=user.telegram_id, expire_at=expire_at)
 
         except Exception as e:
             logger.error('❌ Ошибка создания подписки для пользователя', telegram_id=user.telegram_id, error=e)
@@ -2272,7 +2272,7 @@ class RemnaWaveService:
                         )
                         direction = '→' if expire_at > local_end_date_utc else '←'
                         logger.info(
-                            '✅ Sync: обновлена end_date для user -> (разница: с, направление: )',
+                            '✅ Sync: обновлена end_date пользователя',
                             value=getattr(user, 'telegram_id', '?'),
                             end_date=subscription.end_date,
                             new_end_date_local=new_end_date_local,
@@ -2282,13 +2282,13 @@ class RemnaWaveService:
                         subscription.end_date = new_end_date_local
                     else:
                         logger.debug(
-                            '⏭️ Sync: пропускаем обновление end_date для user разница слишком мала (с < 60с)',
+                            '⏭️ Sync: пропускаем обновление end_date — разница слишком мала (< 60с)',
                             value=getattr(user, 'telegram_id', '?'),
                             time_diff=round(time_diff, 0),
                         )
                 else:
                     logger.debug(
-                        '⏭️ Sync: пропускаем обновление end_date для user панель не ACTIVE (статус: )',
+                        '⏭️ Sync: пропускаем обновление end_date — статус в панели не ACTIVE',
                         value=getattr(user, 'telegram_id', '?'),
                         panel_status=panel_status,
                     )
@@ -2309,7 +2309,7 @@ class RemnaWaveService:
                 # а реальная end_date уже обновлена продлением
                 if subscription.status == SubscriptionStatus.ACTIVE.value:
                     logger.warning(
-                        '⚠️ Sync: пропускаем деактивацию подписки user статус ACTIVE, end_date ( UTC: ) <= now . Деактивация будет выполнена через middleware с буфером.',
+                        '⚠️ Sync: пропускаем деактивацию подписки (статус в панели ACTIVE). Деактивация будет выполнена через middleware с буфером.',
                         value=getattr(user, 'telegram_id', '?'),
                         end_date=subscription.end_date,
                         end_date_utc=end_date_utc,
@@ -2357,7 +2357,7 @@ class RemnaWaveService:
                 old_short_uuid = subscription.remnawave_short_uuid
                 subscription.remnawave_short_uuid = new_short_uuid
                 logger.debug(
-                    'Обновлен short UUID подписки пользователя : →',
+                    'Обновлён short UUID подписки пользователя',
                     getattr=getattr(user, 'telegram_id', '?'),
                     old_short_uuid=old_short_uuid,
                     new_short_uuid=new_short_uuid,
@@ -2614,7 +2614,7 @@ class RemnaWaveService:
                         stats['errors'] += len(valid_subscriptions)
 
                     logger.info(
-                        '📦 Обработано подписок: создано обновлено ошибок',
+                        '📦 Обработана партия подписок',
                         offset=offset + len(subscriptions),
                         stats=stats['created'],
                         stats_2=stats['updated'],
@@ -2627,7 +2627,7 @@ class RemnaWaveService:
                     offset += batch_size
 
             logger.info(
-                '✅ Синхронизация в панель завершена: создано обновлено ошибок',
+                '✅ Синхронизация в панель завершена',
                 stats=stats['created'],
                 stats_2=stats['updated'],
                 stats_3=stats['errors'],
@@ -2751,7 +2751,7 @@ class RemnaWaveService:
                 return None
 
         except Exception as e:
-            logger.error('Ошибка получения telegram_id для', user_identifier=user_identifier, error=e)
+            logger.error('Ошибка получения telegram_id по идентификатору', user_identifier=user_identifier, error=e)
             return None
 
     async def test_api_connection(self) -> dict[str, Any]:
@@ -2953,7 +2953,7 @@ class RemnaWaveService:
             user_id_display = user.telegram_id or user.email or f'#{user.id}'
             if was_paid:
                 logger.warning(
-                    '⚠️ ВНИМАНИЕ: force_cleanup_user_data вызвана для ПЛАТНОГО пользователя ! has_had_paid_subscription=, balance=, is_trial',
+                    '⚠️ ВНИМАНИЕ: force_cleanup_user_data вызвана для ПЛАТНОГО пользователя',
                     user_id_display=user_id_display,
                     has_had_paid_subscription=user.has_had_paid_subscription,
                     balance_kopeks=user.balance_kopeks,
@@ -2995,14 +2995,14 @@ class RemnaWaveService:
 
                     await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id == sub.id))
                 if user_subscriptions:
-                    logger.info('🗑️ Удалены серверы подписок для', user_id_display=user_id_display)
+                    logger.info('🗑️ Удалены серверы подписок пользователя', user_id_display=user_id_display)
 
                 await db.execute(delete(Transaction).where(Transaction.user_id == user.id))
-                logger.info('🗑️ Удалены транзакции для', user_id_display=user_id_display)
+                logger.info('🗑️ Удалены транзакции пользователя', user_id_display=user_id_display)
 
                 await db.execute(delete(ReferralEarning).where(ReferralEarning.user_id == user.id))
                 await db.execute(delete(ReferralEarning).where(ReferralEarning.referral_id == user.id))
-                logger.info('🗑️ Удалены реферальные доходы для', user_id_display=user_id_display)
+                logger.info('🗑️ Удалены реферальные доходы пользователя', user_id_display=user_id_display)
 
                 # PromoCodeUse НЕ удаляем — история промокодов постоянна,
                 # иначе пользователь может повторно активировать промокоды
@@ -3121,7 +3121,7 @@ class RemnaWaveService:
                     break
 
             logger.info(
-                '🧹 Усиленная очистка завершена: проверено деактивировано ошибок',
+                '🧹 Усиленная очистка завершена',
                 stats=stats['checked'],
                 stats_2=stats['deactivated'],
                 stats_3=stats['errors'],
@@ -3208,7 +3208,7 @@ class RemnaWaveService:
                     break
 
             logger.info(
-                '🔄 Синхронизация статусов завершена: проверено обновлено ошибок',
+                '🔄 Синхронизация статусов завершена',
                 stats=stats['checked'],
                 stats_2=stats['updated'],
                 stats_3=stats['errors'],
@@ -3267,7 +3267,7 @@ class RemnaWaveService:
                         ):
                             time_since_expiry = current_time - end_date_utc
                             logger.warning(
-                                '🔧 fix_data_issues: деактивируем подписку (user=), просрочена на',
+                                '🔧 fix_data_issues: деактивируем просроченную подписку',
                                 subscription_id=subscription.id,
                                 telegram_id=user.telegram_id,
                                 time_since_expiry=time_since_expiry,
@@ -3289,36 +3289,42 @@ class RemnaWaveService:
                                         subscription.subscription_url = rw_user.subscription_url
                                         subscription.subscription_crypto_link = rw_user.happ_crypto_link
                                         logger.info(
-                                            '🔧 Восстановлены данные Remnawave для', telegram_id=user.telegram_id
+                                            '🔧 Восстановлены данные Remnawave для пользователя',
+                                            telegram_id=user.telegram_id,
                                         )
                                         issues_fixed += 1
                             except Exception as rw_error:
                                 logger.warning(
-                                    '⚠️ Не удалось получить данные Remnawave для',
+                                    '⚠️ Не удалось получить данные Remnawave для пользователя',
                                     telegram_id=user.telegram_id,
                                     rw_error=rw_error,
                                 )
 
                         if subscription.traffic_limit_gb < 0:
                             subscription.traffic_limit_gb = 0
-                            logger.info('🔧 Исправлен некорректный лимит трафика для', telegram_id=user.telegram_id)
+                            logger.info(
+                                '🔧 Исправлен некорректный лимит трафика для пользователя', telegram_id=user.telegram_id
+                            )
                             issues_fixed += 1
 
                         if subscription.traffic_used_gb < 0:
                             subscription.traffic_used_gb = 0.0
                             logger.info(
-                                '🔧 Исправлено некорректное использование трафика для', telegram_id=user.telegram_id
+                                '🔧 Исправлено некорректное использование трафика для пользователя',
+                                telegram_id=user.telegram_id,
                             )
                             issues_fixed += 1
 
                         if device_limit_needs_heal(subscription.device_limit):
                             subscription.device_limit = 1
-                            logger.info('🔧 Исправлен лимит устройств для', telegram_id=user.telegram_id)
+                            logger.info('🔧 Исправлен лимит устройств для пользователя', telegram_id=user.telegram_id)
                             issues_fixed += 1
 
                         if subscription.connected_squads is None:
                             subscription.connected_squads = []
-                            logger.info('🔧 Инициализирован список сквадов для', telegram_id=user.telegram_id)
+                            logger.info(
+                                '🔧 Инициализирован список сквадов для пользователя', telegram_id=user.telegram_id
+                            )
                             issues_fixed += 1
 
                         if issues_fixed > 0:
@@ -3338,7 +3344,7 @@ class RemnaWaveService:
                     break
 
             logger.info(
-                '🔍 Валидация завершена: проверено исправлено подписок найдено проблем ошибок',
+                '🔍 Валидация завершена',
                 stats=stats['checked'],
                 stats_2=stats['fixed'],
                 stats_3=stats['issues_found'],

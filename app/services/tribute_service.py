@@ -99,7 +99,7 @@ class TributeService:
             trb_user_id = payment_data.get('trb_user_id')
 
             logger.info(
-                'Обрабатываем успешный Tribute платеж: user_telegram_id=, amount=, payment_id=, trb_user_id=',
+                'Обрабатываем успешный Tribute платеж',
                 user_telegram_id=user_telegram_id,
                 amount_kopeks=amount_kopeks,
                 payment_id=payment_id,
@@ -113,7 +113,7 @@ class TributeService:
                     return
 
                 logger.info(
-                    'Найден пользователь текущий баланс: коп',
+                    'Найден пользователь',
                     telegram_id=user.telegram_id,
                     balance_kopeks=user.balance_kopeks,
                 )
@@ -125,11 +125,11 @@ class TributeService:
                 )
 
                 if duplicate_transaction:
-                    logger.warning('Найден дубликат платежа в течение 24ч:')
-                    logger.warning('Transaction ID', duplicate_transaction_id=duplicate_transaction.id)
-                    logger.warning('Amount: коп', amount_kopeks=duplicate_transaction.amount_kopeks)
-                    logger.warning('Created', created_at=duplicate_transaction.created_at)
-                    logger.warning('External ID', external_id=duplicate_transaction.external_id)
+                    logger.warning('Найден дубликат платежа в течение 24ч')
+                    logger.warning('Дубликат: ID транзакции', duplicate_transaction_id=duplicate_transaction.id)
+                    logger.warning('Дубликат: сумма', amount_kopeks=duplicate_transaction.amount_kopeks)
+                    logger.warning('Дубликат: дата создания', created_at=duplicate_transaction.created_at)
+                    logger.warning('Дубликат: внешний ID', external_id=duplicate_transaction.external_id)
                     logger.warning('Платеж игнорирован - это дубликат свежего платежа')
                     return
 
@@ -181,7 +181,7 @@ class TributeService:
                     balance_kopeks=user.balance_kopeks,
                     amount_kopeks=amount_kopeks,
                 )
-                logger.info('✅ Создана транзакция ID', transaction_id=transaction.id)
+                logger.info('✅ Создана транзакция', transaction_id=transaction.id)
 
                 if was_first_topup:
                     logger.info('Отмечен первый топап для пользователя', user_telegram_id=user_telegram_id)
@@ -392,7 +392,7 @@ class TributeService:
     ) -> bool:
         try:
             logger.info(
-                '🔧 ПРИНУДИТЕЛЬНАЯ ОБРАБОТКА: payment_id=, user_id=, amount',
+                '🔧 ПРИНУДИТЕЛЬНАЯ ОБРАБОТКА платежа',
                 payment_id=payment_id,
                 user_id=user_id,
                 amount_kopeks=amount_kopeks,
@@ -429,7 +429,7 @@ class TributeService:
                 await session.commit()
 
                 logger.info(
-                    '💰 ПРИНУДИТЕЛЬНО обновлен баланс: коп', old_balance=old_balance, balance_kopeks=user.balance_kopeks
+                    '💰 ПРИНУДИТЕЛЬНО обновлён баланс', old_balance=old_balance, balance_kopeks=user.balance_kopeks
                 )
 
                 await self._send_success_notification(user_id, amount_kopeks)

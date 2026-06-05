@@ -38,7 +38,7 @@ class PromoRateLimiter:
 
         if len(attempts) >= MAX_FAILED_ATTEMPTS:
             logger.warning(
-                'Promo brute-force: user — failed attempts in s',
+                'Promo brute-force: too many failed attempts within window',
                 user_id=user_id,
                 attempts_count=len(attempts),
                 FAILED_WINDOW_SECONDS=FAILED_WINDOW_SECONDS,

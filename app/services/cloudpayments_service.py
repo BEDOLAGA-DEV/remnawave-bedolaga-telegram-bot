@@ -312,7 +312,7 @@ class CloudPaymentsService:
             pass
 
         logger.warning(
-            'CloudPayments signature mismatch: expected_raw=..., expected_decoded=..., got=...',
+            'CloudPayments signature mismatch',
             calculated_raw=calculated_raw[:20],
             calculated_decoded=calculated_decoded[:20] if calculated_decoded else 'N/A',
             signature=signature[:20],

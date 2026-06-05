@@ -55,11 +55,15 @@ class WebhookServer:
             self.app.router.add_options(settings.FREEKASSA_WEBHOOK_PATH, self._options_handler)
 
         logger.info('Webhook сервер настроен:')
-        logger.info('Tribute webhook: POST', TRIBUTE_WEBHOOK_PATH=settings.TRIBUTE_WEBHOOK_PATH)
+        logger.info('Tribute webhook зарегистрирован (POST)', TRIBUTE_WEBHOOK_PATH=settings.TRIBUTE_WEBHOOK_PATH)
         if settings.is_cryptobot_enabled():
-            logger.info('CryptoBot webhook: POST', CRYPTOBOT_WEBHOOK_PATH=settings.CRYPTOBOT_WEBHOOK_PATH)
+            logger.info(
+                'CryptoBot webhook зарегистрирован (POST)', CRYPTOBOT_WEBHOOK_PATH=settings.CRYPTOBOT_WEBHOOK_PATH
+            )
         if settings.is_freekassa_enabled():
-            logger.info('Freekassa webhook: POST', FREEKASSA_WEBHOOK_PATH=settings.FREEKASSA_WEBHOOK_PATH)
+            logger.info(
+                'Freekassa webhook зарегистрирован (POST)', FREEKASSA_WEBHOOK_PATH=settings.FREEKASSA_WEBHOOK_PATH
+            )
         logger.info('  - Health check: GET /health')
 
         return self.app
@@ -77,19 +81,19 @@ class WebhookServer:
             await self.site.start()
 
             logger.info(
-                'Webhook сервер запущен на',
+                'Webhook сервер запущен',
                 TRIBUTE_WEBHOOK_HOST=settings.TRIBUTE_WEBHOOK_HOST,
                 TRIBUTE_WEBHOOK_PORT=settings.TRIBUTE_WEBHOOK_PORT,
             )
             logger.info(
-                'Tribute webhook URL: http://',
+                'Tribute webhook URL',
                 TRIBUTE_WEBHOOK_HOST=settings.TRIBUTE_WEBHOOK_HOST,
                 TRIBUTE_WEBHOOK_PORT=settings.TRIBUTE_WEBHOOK_PORT,
                 TRIBUTE_WEBHOOK_PATH=settings.TRIBUTE_WEBHOOK_PATH,
             )
             if settings.is_cryptobot_enabled():
                 logger.info(
-                    'CryptoBot webhook URL: http://',
+                    'CryptoBot webhook URL',
                     TRIBUTE_WEBHOOK_HOST=settings.TRIBUTE_WEBHOOK_HOST,
                     TRIBUTE_WEBHOOK_PORT=settings.TRIBUTE_WEBHOOK_PORT,
                     CRYPTOBOT_WEBHOOK_PATH=settings.CRYPTOBOT_WEBHOOK_PATH,
@@ -299,10 +303,10 @@ class WebhookServer:
                 )
 
             if success:
-                logger.info('Freekassa webhook обработан успешно: order_id', order_id=order_id)
+                logger.info('Freekassa webhook обработан успешно', order_id=order_id)
                 # Freekassa ожидает YES в ответе
                 return web.Response(text='YES', status=200)
-            logger.error('Ошибка обработки Freekassa webhook: order_id', order_id=order_id)
+            logger.error('Ошибка обработки Freekassa webhook', order_id=order_id)
             return web.Response(text='NO', status=400)
 
         except Exception as e:

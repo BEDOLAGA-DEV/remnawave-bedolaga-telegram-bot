@@ -165,7 +165,7 @@ class DailySubscriptionService:
                         pass
 
             logger.info(
-                'Подписка приостановлена: недостаточно средств (баланс: требуется: )',
+                'Подписка приостановлена: недостаточно средств',
                 subscription_id=subscription.id,
                 balance_kopeks=user.balance_kopeks,
                 daily_price=daily_price,
@@ -564,7 +564,7 @@ class DailySubscriptionService:
         await db.commit()
 
         logger.info(
-            '🔄 Сброс истекших докупок: подписка было ГБ (базовый: ГБ, докуплено: ГБ), стало ГБ (базовый: ГБ, докуплено: ГБ), убрано ГБ из покупок',
+            '🔄 Сброс истекших докупок трафика',
             subscription_id=subscription.id,
             old_limit=old_limit,
             base_limit=base_limit,
@@ -824,7 +824,7 @@ class DailySubscriptionService:
         self._running = True
         interval_minutes = self.get_check_interval_minutes()
 
-        logger.info('🔄 Запуск сервиса суточных подписок (интервал: мин)', interval_minutes=interval_minutes)
+        logger.info('🔄 Запуск сервиса суточных подписок', interval_minutes=interval_minutes)
 
         while self._running:
             try:
@@ -832,7 +832,7 @@ class DailySubscriptionService:
                 resume_stats = await self.process_auto_resume()
                 if resume_stats['resumed'] > 0 or resume_stats['recovered'] > 0:
                     logger.info(
-                        '📊 Авто-возобновление: возобновлено=, восстановлено=, ошибок=',
+                        '📊 Авто-возобновление завершено',
                         resumed=resume_stats['resumed'],
                         recovered=resume_stats['recovered'],
                         errors=resume_stats['errors'],
@@ -843,7 +843,7 @@ class DailySubscriptionService:
 
                 if stats['charged'] > 0 or stats['suspended'] > 0:
                     logger.info(
-                        '📊 Суточные списания: проверено=, списано=, приостановлено=, ошибок',
+                        '📊 Суточные списания завершены',
                         stats=stats['checked'],
                         stats_2=stats['charged'],
                         stats_3=stats['suspended'],
@@ -854,13 +854,45 @@ class DailySubscriptionService:
                 traffic_stats = await self.process_traffic_resets()
                 if traffic_stats['reset'] > 0:
                     logger.info(
-                        '📊 Сброс трафика: проверено=, сброшено=, ошибок',
+                        '📊 Сброс трафика завершён',
                         traffic_stats=traffic_stats['checked'],
                         traffic_stats_2=traffic_stats['reset'],
                         traffic_stats_3=traffic_stats['errors'],
                     )
             except Exception as e:
                 logger.error('Ошибка в цикле проверки суточных подписок', error=e, exc_info=True)
+
+            await asyncio.sleep(interval_minutes * 60)
+
+    async def start_traffic_reset_monitoring(self):
+        """Периодический сброс истёкших докупок трафика БЕЗ суточных списаний.
+
+        Запускается, когда суточные подписки выключены (DAILY_SUBSCRIPTIONS_ENABLED=
+        False). Сброс докупленного трафика — общая механика для ЛЮБОЙ установки,
+        продающей пакеты ГБ, и не должен зависеть от суточных тарифов. Без этого
+        истёкшая докупка роняет лимит резко мимо защиты _reset_subscription_traffic
+        (defer + честный сброс used панелью) → активный юзер уходит в минус по
+        трафику (60/50), баг #630055.
+        """
+        self._running = True
+        interval_minutes = self.get_check_interval_minutes()
+        logger.info(
+            '🔄 Запуск сброса докупок трафика (суточные тарифы выключены)',
+            interval_minutes=interval_minutes,
+        )
+
+        while self._running:
+            try:
+                traffic_stats = await self.process_traffic_resets()
+                if traffic_stats['reset'] > 0:
+                    logger.info(
+                        '📊 Сброс трафика завершён',
+                        traffic_stats=traffic_stats['checked'],
+                        traffic_stats_2=traffic_stats['reset'],
+                        traffic_stats_3=traffic_stats['errors'],
+                    )
+            except Exception as e:
+                logger.error('Ошибка в цикле сброса докупок трафика', error=e, exc_info=True)
 
             await asyncio.sleep(interval_minutes * 60)
 

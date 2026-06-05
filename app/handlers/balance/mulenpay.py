@@ -250,7 +250,7 @@ async def process_mulenpay_payment_amount(
         await state.clear()
 
         logger.info(
-            'Создан платеж для пользователя : ₽, ID',
+            'Создан MulenPay платеж',
             mulenpay_name=mulenpay_name,
             telegram_id=db_user.telegram_id,
             amount_rubles=amount_rubles,

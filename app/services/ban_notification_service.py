@@ -138,7 +138,7 @@ class BanNotificationService:
                 chat_id=user.telegram_id, text=message_text, parse_mode='HTML', reply_markup=get_delete_keyboard()
             )
             logger.info(
-                'Уведомление о бане отправлено пользователю (telegram_id: )',
+                'Уведомление о бане отправлено пользователю',
                 username=username,
                 telegram_id=user.telegram_id,
             )
@@ -146,7 +146,7 @@ class BanNotificationService:
 
         except TelegramAPIError as e:
             logger.error(
-                'Ошибка отправки уведомления пользователю (telegram_id: )',
+                'Ошибка отправки уведомления пользователю',
                 username=username,
                 telegram_id=user.telegram_id,
                 error=e,
@@ -188,7 +188,7 @@ class BanNotificationService:
                 chat_id=user.telegram_id, text=message_text, parse_mode='HTML', reply_markup=get_delete_keyboard()
             )
             logger.info(
-                'Уведомление о разбане отправлено пользователю (telegram_id: )',
+                'Уведомление о разбане отправлено пользователю',
                 username=username,
                 telegram_id=user.telegram_id,
             )
@@ -196,7 +196,7 @@ class BanNotificationService:
 
         except TelegramAPIError as e:
             logger.error(
-                'Ошибка отправки уведомления пользователю (telegram_id: )',
+                'Ошибка отправки уведомления пользователю',
                 username=username,
                 telegram_id=user.telegram_id,
                 error=e,
@@ -243,7 +243,7 @@ class BanNotificationService:
                 chat_id=user.telegram_id, text=message_text, parse_mode='HTML', reply_markup=get_delete_keyboard()
             )
             logger.info(
-                'Предупреждение отправлено пользователю (telegram_id: )',
+                'Предупреждение отправлено пользователю',
                 username=username,
                 telegram_id=user.telegram_id,
             )
@@ -251,7 +251,7 @@ class BanNotificationService:
 
         except TelegramAPIError as e:
             logger.error(
-                'Ошибка отправки предупреждения пользователю (telegram_id: )',
+                'Ошибка отправки предупреждения пользователю',
                 username=username,
                 telegram_id=user.telegram_id,
                 error=e,
@@ -286,7 +286,7 @@ class BanNotificationService:
         network_info = f'├ 🌐 Сеть: <b>{network_type}</b>\n' if network_type else ''
         node_info = f'🖥 <b>Нода:</b> <code>{node_name}</code>' if node_name else ''
 
-        logger.info('WiFi notification: node_name=, node_info', node_name=repr(node_name), node_info=repr(node_info))
+        logger.info('WiFi notification', node_name=repr(node_name), node_info=repr(node_info))
 
         # Безопасное форматирование
         format_vars = {'ban_minutes': ban_minutes, 'network_info': network_info, 'node_info': node_info}
@@ -321,7 +321,7 @@ class BanNotificationService:
                 chat_id=user.telegram_id, text=message_text, parse_mode='HTML', reply_markup=get_delete_keyboard()
             )
             logger.info(
-                'Уведомление о WiFi бане отправлено пользователю (telegram_id: )',
+                'Уведомление о WiFi бане отправлено пользователю',
                 username=username,
                 telegram_id=user.telegram_id,
             )
@@ -329,7 +329,7 @@ class BanNotificationService:
 
         except TelegramAPIError as e:
             logger.error(
-                'Ошибка отправки WiFi уведомления пользователю (telegram_id: )',
+                'Ошибка отправки WiFi уведомления пользователю',
                 username=username,
                 telegram_id=user.telegram_id,
                 error=e,
@@ -396,7 +396,7 @@ class BanNotificationService:
                 chat_id=user.telegram_id, text=message_text, parse_mode='HTML', reply_markup=get_delete_keyboard()
             )
             logger.info(
-                'Уведомление о Mobile бане отправлено пользователю (telegram_id: )',
+                'Уведомление о Mobile бане отправлено пользователю',
                 username=username,
                 telegram_id=user.telegram_id,
             )
@@ -404,7 +404,7 @@ class BanNotificationService:
 
         except TelegramAPIError as e:
             logger.error(
-                'Ошибка отправки Mobile уведомления пользователю (telegram_id: )',
+                'Ошибка отправки Mobile уведомления пользователю',
                 username=username,
                 telegram_id=user.telegram_id,
                 error=e,

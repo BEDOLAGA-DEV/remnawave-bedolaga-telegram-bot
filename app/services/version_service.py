@@ -242,7 +242,7 @@ class VersionService:
             logger.info('Проверка версий отключена')
             return
 
-        logger.info('Запуск периодической проверки обновлений для', repo=self.repo)
+        logger.info('Запуск периодической проверки обновлений репозитория', repo=self.repo)
         logger.info('Текущая версия', current_version=self.current_version)
 
         while True:

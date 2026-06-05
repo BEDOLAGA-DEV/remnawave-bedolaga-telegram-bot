@@ -166,11 +166,11 @@ class WebhookService:
             await update_webhook_stats(db, result.webhook, result.status == 'success')
 
             if result.status == 'success':
-                logger.info('Webhook delivered successfully to', id=result.webhook.id, url=result.webhook.url)
+                logger.info('Webhook delivered successfully', id=result.webhook.id, url=result.webhook.url)
             else:
                 logger.warning('Webhook delivery failed', id=result.webhook.id, error_message=result.error_message)
         except Exception as error:
-            logger.exception('Failed to record webhook delivery result for', id=result.webhook.id, error=error)
+            logger.exception('Failed to record webhook delivery result', id=result.webhook.id, error=error)
 
 
 # Глобальный экземпляр сервиса

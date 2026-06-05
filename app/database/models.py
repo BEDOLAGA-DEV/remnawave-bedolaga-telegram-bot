@@ -1758,6 +1758,27 @@ class Tariff(Base):
         prices = self.period_prices or {}
         return sorted([int(p) for p in prices.keys()])
 
+    def get_purchasable_periods(self) -> list[int]:
+        """Периоды, доступные для покупки, с учётом суточных тарифов.
+
+        У суточных тарифов ``period_prices`` пуст — оплата идёт за день,
+        поэтому единственный «период» покупки равен 1 дню. Для обычных
+        тарифов поведение совпадает с :meth:`get_available_periods`.
+        """
+        if self.is_daily and self.daily_price_kopeks:
+            return [1]
+        return self.get_available_periods()
+
+    def get_purchasable_price_for_period(self, period_days: int) -> int | None:
+        """Цена за период с учётом суточных тарифов.
+
+        Для суточного тарифа период в 1 день стоит ``daily_price_kopeks``;
+        в остальных случаях используется обычная цена из ``period_prices``.
+        """
+        if self.is_daily and period_days == 1:
+            return self.daily_price_kopeks or None
+        return self.get_price_for_period(period_days)
+
     def get_shortest_period(self) -> int | None:
         """Возвращает минимальный доступный период в днях (для автопродления)."""
         periods = self.get_available_periods()
@@ -1921,6 +1942,21 @@ class User(Base):
                 return sub
         # Fallback to most recent (already ordered by created_at desc)
         return self.subscriptions[0]
+
+    def is_trial_already_used(self) -> bool:
+        """Единый гейт доступности триала для бота И кабинета.
+
+        Раньше проверка дублировалась 4× в боте (purchase.py) и 2× в кабинете, причём
+        с разной логикой. Триал недоступен, если пользователь уже оплачивал подписку
+        ЛИБО у него есть ЛЮБАЯ подписка — кроме PENDING-триала (это повторная попытка
+        оплаты того же триала). Проверяются ВСЕ подписки (multi-tariff-safe). Требует
+        загруженного `subscriptions`.
+        """
+        if self.has_had_paid_subscription:
+            return True
+        return any(
+            not (sub.status == SubscriptionStatus.PENDING.value and sub.is_trial) for sub in (self.subscriptions or [])
+        )
 
     transactions = relationship('Transaction', back_populates='user')
     referral_earnings = relationship('ReferralEarning', foreign_keys='ReferralEarning.user_id', back_populates='user')
@@ -3660,6 +3696,11 @@ class WheelSpin(Base):
 
     # Сгенерированный промокод (если приз - промокод)
     generated_promocode_id = Column(Integer, ForeignKey('promocodes.id'), nullable=True)
+
+    # Telegram Stars charge id — идемпотентность: Telegram доставляет successful_payment
+    # «как минимум один раз», поэтому при повторной доставке апдейта спин по этому charge_id
+    # не должен начислить приз второй раз. Уникальный индекс — гарантия на уровне БД.
+    telegram_charge_id = Column(String(255), nullable=True, unique=True)
 
     # Флаг успешного начисления
     is_applied = Column(Boolean, default=False, nullable=False)

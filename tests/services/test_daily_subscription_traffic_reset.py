@@ -141,3 +141,27 @@ async def test_forces_drop_after_grace_even_if_panel_resets():
     assert fake_ss.update_remnawave_user.await_count == 2
     assert fake_ss.update_remnawave_user.await_args_list[1].kwargs.get('reset_traffic') is True
     service._get_panel_used_gb.assert_not_awaited()
+
+
+async def test_traffic_reset_only_loop_runs_processor(monkeypatch):
+    """#630055: с ВЫКЛЮЧЕННЫМИ суточными тарифами джоба сброса докупок всё равно
+    должна крутиться. Иначе истёкший пакет роняет лимит мимо защиты
+    _reset_subscription_traffic (defer + честный сброс used) → юзер уходит в минус
+    (60/50). start_traffic_reset_monitoring обязан гонять process_traffic_resets.
+    """
+    from app.services.daily_subscription_service import DailySubscriptionService
+
+    service = DailySubscriptionService()
+    calls = []
+
+    async def fake_process():
+        calls.append(1)
+        service._running = False  # один проход — и выходим из цикла
+        return {'checked': 0, 'reset': 0, 'errors': 0}
+
+    monkeypatch.setattr(service, 'process_traffic_resets', fake_process)
+    monkeypatch.setattr('app.services.daily_subscription_service.asyncio.sleep', AsyncMock())
+
+    await service.start_traffic_reset_monitoring()
+
+    assert calls == [1]

@@ -174,7 +174,7 @@ class YooKassaService:
         else:
             self.return_url = 'https://t.me/'
             logger.warning(
-                'КРИТИЧНО: YOOKASSA_RETURN_URL не установлен И username бота не предоставлен. Используем заглушку: . Платежи могут работать некорректно.',
+                'КРИТИЧНО: YOOKASSA_RETURN_URL не установлен И username бота не предоставлен. Используем заглушку. Платежи могут работать некорректно.',
                 return_url=self.return_url,
             )
 
@@ -245,7 +245,7 @@ class YooKassaService:
             payment_request = builder.build()
 
             logger.info(
-                'Создание платежа YooKassa (Idempotence-Key: ). Сумма: . Метаданные: . Чек',
+                'Создание платежа YooKassa',
                 idempotence_key=idempotence_key,
                 amount=amount,
                 currency=currency,
@@ -260,7 +260,7 @@ class YooKassaService:
                 )
 
             logger.info(
-                'Ответ YooKassa Payment.create: ID=, Status=, Paid',
+                'Ответ YooKassa Payment.create',
                 response_id=response.id,
                 status=response.status,
                 paid=response.paid,
@@ -354,7 +354,7 @@ class YooKassaService:
             payment_request = builder.build()
 
             logger.info(
-                'Создание платежа YooKassa СБП с подтверждением redirect (Idempotence-Key: ). Сумма: . Метаданные: . Чек',
+                'Создание платежа YooKassa СБП с подтверждением redirect',
                 idempotence_key=idempotence_key,
                 amount=amount,
                 currency=currency,
@@ -369,7 +369,7 @@ class YooKassaService:
                 )
 
             logger.info(
-                'Ответ YooKassa Payment.create (СБП, redirect): ID=, Status=, Paid',
+                'Ответ YooKassa Payment.create (СБП, redirect)',
                 response_id=response.id,
                 status=response.status,
                 paid=response.paid,
@@ -408,7 +408,7 @@ class YooKassaService:
             return None
 
         try:
-            logger.info('Получение информации о платеже YooKassa ID', payment_id_in_yookassa=payment_id_in_yookassa)
+            logger.info('Получение информации о платеже YooKassa', payment_id_in_yookassa=payment_id_in_yookassa)
 
             loop = asyncio.get_running_loop()
             async with asyncio.timeout(30):
@@ -418,7 +418,7 @@ class YooKassaService:
 
             if payment_info_yk:
                 logger.info(
-                    'Информация о платеже YooKassa Status=, Paid',
+                    'Информация о платеже YooKassa',
                     payment_id_in_yookassa=payment_id_in_yookassa,
                     status=payment_info_yk.status,
                     paid=payment_info_yk.paid,
@@ -458,7 +458,7 @@ class YooKassaService:
                     else None,
                     'test_mode': payment_info_yk.test if hasattr(payment_info_yk, 'test') else None,
                 }
-            logger.warning('Платеж не найден в YooKassa ID', payment_id_in_yookassa=payment_id_in_yookassa)
+            logger.warning('Платеж не найден в YooKassa', payment_id_in_yookassa=payment_id_in_yookassa)
             return None
         except YooKassaNotFoundError:
             logger.warning(

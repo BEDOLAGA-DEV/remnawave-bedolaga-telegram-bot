@@ -71,13 +71,9 @@ async def _safe_delete_message_by_id(bot, chat_id: int, message_id: int) -> None
         await bot.delete_message(chat_id, message_id)
     except TelegramBadRequest as exc:
         if 'message to delete not found' not in str(exc).lower():
-            logger.debug(
-                'Не удалось удалить сообщение администратора (,)', chat_id=chat_id, message_id=message_id, exc=exc
-            )
+            logger.debug('Не удалось удалить сообщение администратора', chat_id=chat_id, message_id=message_id, exc=exc)
     except TelegramForbiddenError:
-        logger.debug(
-            'Недостаточно прав для удаления сообщения администратора (,)', chat_id=chat_id, message_id=message_id
-        )
+        logger.debug('Недостаточно прав для удаления сообщения администратора', chat_id=chat_id, message_id=message_id)
 
 
 async def _clear_promo_offer_search_prompt(state: FSMContext, bot) -> None:

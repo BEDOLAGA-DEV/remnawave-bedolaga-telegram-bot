@@ -14,9 +14,12 @@ from app.cabinet.ip_utils import get_client_ip
 from app.cabinet.utils.locale import DEFAULT_LOCALE, resolve_locale_text
 from app.config import settings
 from app.database.crud.landing import get_active_landing_by_slug, get_purchase_by_token
+from app.database.crud.tariff import get_tariff_by_id
+from app.database.crud.user import get_user_by_email
 from app.database.models import GuestPurchase, GuestPurchaseStatus, LandingPage, Tariff
 from app.services.guest_purchase_service import (
     GuestPurchaseError,
+    _find_or_create_user,
     activate_purchase as activate_guest_purchase,
     create_purchase,
     validate_and_calculate,
@@ -58,6 +61,8 @@ class LandingTariff(BaseModel):
     device_limit: int
     tier_level: int
     periods: list[LandingTariffPeriod]
+    is_daily: bool = False  # суточный тариф: единственный период — 1 день
+    daily_price_kopeks: int = 0
 
 
 class LandingPaymentMethodSubOption(BaseModel):
@@ -163,6 +168,36 @@ class PurchaseStatusResponse(BaseModel):
     auto_login_token: str | None = None
     recipient_in_bot: bool | None = None
     bot_link: str | None = None
+    # Gift claim link (the buyer forwards this; whoever activates it gets the gift).
+    # Derived from token + status, NOT from purchase.user (which is NULL until claimed).
+    is_claimable: bool = False
+    claim_url: str | None = None
+    bot_claim_link: str | None = None
+
+
+class GiftClaimRequest(BaseModel):
+    """Web (email) gift claim. The token is the bearer secret; the email is the
+    account the gift binds to. No auth — whoever holds the link can claim."""
+
+    email: str = Field(min_length=3, max_length=255)
+
+    @model_validator(mode='after')
+    def validate_email(self) -> 'GiftClaimRequest':
+        _validate_contact('email', self.email)
+        return self
+
+
+class GiftClaimResponse(BaseModel):
+    """Returned to the claimer (recipient) after a successful web claim. Carries
+    the connection link + one-click cabinet login — these are NOT exposed on the
+    public GET endpoint, only handed to the person who just claimed."""
+
+    status: str
+    tariff_name: str | None = None
+    period_days: int | None = None
+    subscription_url: str | None = None
+    subscription_crypto_link: str | None = None
+    auto_login_token: str | None = None
 
 
 # ============ Helpers ============
@@ -241,6 +276,25 @@ def _build_purchase_status_response(purchase: GuestPurchase) -> PurchaseStatusRe
             if bot_username:
                 bot_link = f'https://t.me/{bot_username}'
 
+    # Transferable gift claim link. Derived from token + status only (NOT from
+    # purchase.user, which stays NULL until someone claims). The buyer forwards
+    # claim_url; whoever activates it gets the gift bound to their account.
+    is_claimable = purchase.is_gift and purchase.status in (
+        GuestPurchaseStatus.PAID.value,
+        GuestPurchaseStatus.PENDING_ACTIVATION.value,
+    )
+    claim_url: str | None = None
+    bot_claim_link: str | None = None
+    if is_claimable:
+        cabinet_base = (settings.CABINET_URL or '').rstrip('/')
+        if cabinet_base:
+            claim_url = f'{cabinet_base}/buy/gift/{purchase.token}'
+        bot_username = settings.get_bot_username()
+        if bot_username:
+            # Telegram start params are length-limited; use a token prefix.
+            # The bot handler resolves gifts by prefix (start.py:149).
+            bot_claim_link = f'https://t.me/{bot_username}?start=GIFT_{purchase.token[:12]}'
+
     return PurchaseStatusResponse(
         status=purchase.status,
         subscription_url=subscription_url,
@@ -257,6 +311,9 @@ def _build_purchase_status_response(purchase: GuestPurchase) -> PurchaseStatusRe
         auto_login_token=auto_login_token,
         recipient_in_bot=recipient_in_bot,
         bot_link=bot_link,
+        is_claimable=is_claimable,
+        claim_url=claim_url,
+        bot_claim_link=bot_claim_link,
     )
 
 
@@ -331,11 +388,11 @@ async def _load_landing_tariffs(
         if tariff_period_override is not None:
             period_days_list = sorted(tariff_period_override)
         else:
-            period_days_list = tariff.get_available_periods()
+            period_days_list = tariff.get_purchasable_periods()
 
         periods = []
         for days in period_days_list:
-            price = tariff.get_price_for_period(days)
+            price = tariff.get_purchasable_price_for_period(days)
             if price is None:
                 continue
 
@@ -378,6 +435,8 @@ async def _load_landing_tariffs(
                 device_limit=tariff.device_limit,
                 tier_level=tariff.tier_level,
                 periods=periods,
+                is_daily=bool(tariff.is_daily),
+                daily_price_kopeks=tariff.daily_price_kopeks or 0,
             )
         )
 
@@ -455,6 +514,106 @@ async def activate_purchase(
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     return _build_purchase_status_response(purchase)
+
+
+@router.get('/gift/{token}', response_model=PurchaseStatusResponse)
+async def get_gift_claim(
+    token: str,
+    raw_request: Request,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Public gift claim page data (tariff, period, message, claim links).
+
+    No authentication required — the token is the bearer secret. Subscription
+    URL / credentials are never exposed here (only to the actual claimer via the
+    POST claim endpoint).
+    """
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'gift_claim_status', limit=30, window=60, fail_closed=True):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail='Too many requests')
+
+    purchase = await get_purchase_by_token(db, token)
+    if purchase is None or not purchase.is_gift:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Gift not found')
+
+    return _build_purchase_status_response(purchase)
+
+
+@router.post('/gift/{token}/claim', response_model=GiftClaimResponse)
+async def claim_gift(
+    token: str,
+    body: GiftClaimRequest,
+    raw_request: Request,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Web (email) arm of the channel-agnostic gift claim.
+
+    Binds the gift's subscription to the activator's email account and returns
+    the connection link + one-click cabinet login. First-writer-wins via
+    SELECT ... FOR UPDATE; the typed gift_recipient_value is never the binding
+    key (whoever holds the link claims). Telegram recipients use the bot deep
+    link instead of this endpoint.
+    """
+    client_ip = get_client_ip(raw_request)
+    if await RateLimitCache.is_ip_rate_limited(client_ip, 'gift_claim', limit=5, window=60, fail_closed=True):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail='Too many requests')
+
+    # Public endpoint: require the full 64-char token (no short-prefix matching,
+    # which is reserved for the human-typed cabinet code path) to rule out
+    # prefix collisions / enumeration.
+    if len(token) < 64:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Gift not found')
+
+    # Lock the row so concurrent claims serialize (exactly one binds).
+    result = await db.execute(select(GuestPurchase).where(GuestPurchase.token == token).with_for_update())
+    purchase = result.scalars().first()
+    if purchase is None or not purchase.is_gift:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Gift not found')
+
+    if purchase.status not in (
+        GuestPurchaseStatus.PAID.value,
+        GuestPurchaseStatus.PENDING_ACTIVATION.value,
+        GuestPurchaseStatus.DELIVERED.value,
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='This gift cannot be activated')
+
+    # Resolve the activator by email WITHOUT creating an account yet, so a
+    # rejected claim (self-gift / already-claimed) never leaves an orphan account.
+    existing_user = await get_user_by_email(db, body.email)
+
+    # Self-activation guard — only meaningful for cabinet-originated gifts where
+    # the buyer is a known account (landing buyers are anonymous → inert).
+    if existing_user is not None and purchase.buyer_user_id is not None and purchase.buyer_user_id == existing_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Cannot activate your own gift')
+
+    # Ownership guard — already claimed by a different account.
+    if purchase.user_id is not None and (existing_user is None or purchase.user_id != existing_user.id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='This gift has already been claimed')
+
+    # Guards passed — now create/finalize the account the gift binds to.
+    user, _is_new = await _find_or_create_user(db, 'email', body.email, purchase=purchase, tariff_id=purchase.tariff_id)
+
+    # Bind (if unbound) and move PAID → PENDING_ACTIVATION so activate accepts it.
+    if purchase.user_id is None:
+        purchase.user_id = user.id
+    if purchase.status == GuestPurchaseStatus.PAID.value:
+        purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
+    await db.flush()
+
+    try:
+        purchase = await activate_guest_purchase(db, purchase.token, skip_notification=True)
+    except GuestPurchaseError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    tariff = await get_tariff_by_id(db, purchase.tariff_id)
+    return GiftClaimResponse(
+        status=purchase.status,
+        tariff_name=tariff.name if tariff else None,
+        period_days=purchase.period_days,
+        subscription_url=purchase.subscription_url,
+        subscription_crypto_link=purchase.subscription_crypto_link,
+        auto_login_token=purchase.auto_login_token,
+    )
 
 
 @router.get('/{slug}', response_model=LandingConfigResponse)

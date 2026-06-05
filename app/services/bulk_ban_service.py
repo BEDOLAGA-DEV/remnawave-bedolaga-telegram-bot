@@ -110,7 +110,7 @@ class BulkBanService:
                 logger.error('Ошибка при отправке уведомления администратору', error=e)
 
         logger.info(
-            'Массовая блокировка завершена: успешно=, не найдено=, ошибки',
+            'Массовая блокировка завершена',
             successfully_banned=successfully_banned,
             not_found_users_count=len(not_found_users),
             error_ids_count=len(error_ids),

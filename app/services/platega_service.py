@@ -119,7 +119,7 @@ class PlategaService:
             except TimeoutError as error:
                 last_error = error
                 logger.warning(
-                    'Platega request timeout attempt /',
+                    'Platega request timeout, retrying',
                     method=method,
                     endpoint=endpoint,
                     attempt=attempt,
@@ -128,7 +128,7 @@ class PlategaService:
             except aiohttp.ClientError as error:
                 last_error = error
                 logger.warning(
-                    'Platega client error attempt /',
+                    'Platega client error, retrying',
                     method=method,
                     endpoint=endpoint,
                     attempt=attempt,
@@ -144,7 +144,7 @@ class PlategaService:
 
         if last_error is not None:
             logger.error(
-                'Platega request failed after attempts',
+                'Platega request failed after all retries',
                 max_retries=self._max_retries,
                 method=method,
                 endpoint=endpoint,

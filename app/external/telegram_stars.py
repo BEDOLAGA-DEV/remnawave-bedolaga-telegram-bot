@@ -49,7 +49,7 @@ class TelegramStarsService:
             )
 
             logger.info(
-                'Создан Stars invoice на звезд (~) для курс: ₽/⭐',
+                'Создан Stars invoice',
                 stars_amount=stars_amount,
                 settings=settings.format_price(amount_kopeks),
                 chat_id=chat_id,
@@ -87,7 +87,7 @@ class TelegramStarsService:
             )
 
             logger.info(
-                'Отправлен Stars invoice на звезд (~), курс: ₽/⭐',
+                'Отправлен Stars invoice',
                 message_id=message.message_id,
                 stars_amount=stars_amount,
                 settings=settings.format_price(amount_kopeks),
@@ -111,7 +111,7 @@ class TelegramStarsService:
             await self.bot.answer_pre_checkout_query(
                 pre_checkout_query_id=pre_checkout_query_id, ok=ok, error_message=error_message
             )
-            logger.info('Ответ на pre_checkout_query: ok', ok=ok)
+            logger.info('Ответ на pre_checkout_query отправлен', ok=ok)
             return True
         except Exception as e:
             logger.error('Ошибка ответа на pre_checkout_query', error=e)

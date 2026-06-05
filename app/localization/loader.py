@@ -105,24 +105,24 @@ def _determine_default_language() -> str:
 
         if _locale_file_exists(normalized_configured):
             _logger.warning(
-                "Configured default language '' is not listed in AVAILABLE_LANGUAGES. Falling back to ''.",
+                'Configured default language is not listed in AVAILABLE_LANGUAGES — falling back',
                 configured=configured,
                 FALLBACK_LANGUAGE=_FALLBACK_LANGUAGE,
             )
         else:
             _logger.warning(
-                "Configured default language '' is not available. Falling back to ''.",
+                'Configured default language is not available — falling back',
                 configured=configured,
                 FALLBACK_LANGUAGE=_FALLBACK_LANGUAGE,
             )
     else:
-        _logger.debug("DEFAULT_LANGUAGE is not set. Falling back to ''.", FALLBACK_LANGUAGE=_FALLBACK_LANGUAGE)
+        _logger.debug('DEFAULT_LANGUAGE is not set — falling back', FALLBACK_LANGUAGE=_FALLBACK_LANGUAGE)
 
     fallback_language = _select_fallback_language(available_map)
 
     if _normalize_language_code(fallback_language) != _normalize_language_code(_FALLBACK_LANGUAGE):
         _logger.warning(
-            "Fallback language '' is not available. Using '' instead.",
+            'Fallback language is not available — using a different fallback instead',
             FALLBACK_LANGUAGE=_FALLBACK_LANGUAGE,
             fallback_language=fallback_language,
         )
@@ -182,7 +182,7 @@ def _directory_is_writable(directory: Path) -> bool:
         )
     except OSError as error:
         _logger.warning(
-            'Unable to prepare locale directory for writing: . Configure LOCALES_PATH to a writable path.',
+            'Unable to prepare locale directory for writing. Configure LOCALES_PATH to a writable path.',
             directory=directory,
             user_hint=user_hint,
             error=error,
@@ -215,7 +215,7 @@ def ensure_locale_templates() -> None:
         try:
             shutil.copyfile(source, target)
         except Exception as error:
-            _logger.warning('Failed to copy default locale to', source=source, target=target, error=error)
+            _logger.warning('Failed to copy default locale', source=source, target=target, error=error)
 
     if not destination_has_files:
         for template in _DEFAULT_LOCALES_DIR.iterdir():
@@ -232,7 +232,7 @@ def ensure_locale_templates() -> None:
             continue
 
         if not source_path.exists():
-            _logger.debug('Default locale template is missing at', locale_code=locale_code, source_path=source_path)
+            _logger.debug('Default locale template is missing', locale_code=locale_code, source_path=source_path)
             continue
 
         _copy_locale(source_path, target_path)
@@ -271,7 +271,7 @@ def _load_locale_file(path: Path) -> dict[str, Any]:
         _logger.warning('Failed to parse locale file', path=path, error=error)
         return {}
 
-    _logger.warning('Unsupported locale format for', path=path)
+    _logger.warning('Unsupported locale format', path=path)
     return {}
 
 
@@ -294,7 +294,7 @@ def load_locale(language: str) -> dict[str, Any]:
 
     if not merged and language != DEFAULT_LANGUAGE:
         _logger.warning(
-            'Locale not found. Falling back to default language .', language=language, DEFAULT_LANGUAGE=DEFAULT_LANGUAGE
+            'Locale not found — falling back to default language', language=language, DEFAULT_LANGUAGE=DEFAULT_LANGUAGE
         )
         return load_locale(DEFAULT_LANGUAGE)
     return merged

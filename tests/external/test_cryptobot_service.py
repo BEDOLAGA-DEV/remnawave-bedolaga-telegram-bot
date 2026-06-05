@@ -80,6 +80,8 @@ def test_verify_webhook_signature(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_verify_webhook_signature_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Fail-closed: без настроенного токена подпись проверить нельзя, поэтому любой
+    # webhook ОТКЛОНЯЕТСЯ. Иначе подделанный webhook мог бы зачислить баланс.
     monkeypatch.setattr(settings, 'CRYPTOBOT_API_TOKEN', '', raising=False)
     service = CryptoBotService()
-    assert service.verify_webhook_signature('{}', 'anything') is True
+    assert service.verify_webhook_signature('{}', 'anything') is False

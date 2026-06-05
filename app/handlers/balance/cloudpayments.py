@@ -119,7 +119,7 @@ async def _create_cloudpayments_payment_and_respond(
             parse_mode='HTML',
         )
 
-    logger.info('CloudPayments payment created: user amount=₽', telegram_id=db_user.telegram_id, amount_rub=amount_rub)
+    logger.info('CloudPayments payment created', telegram_id=db_user.telegram_id, amount_rub=amount_rub)
 
 
 @error_handler
@@ -376,4 +376,4 @@ async def process_cloudpayments_amount(
         parse_mode='HTML',
     )
 
-    logger.info('CloudPayments payment created: user amount=₽', telegram_id=db_user.telegram_id, amount_rub=amount_rub)
+    logger.info('CloudPayments payment created', telegram_id=db_user.telegram_id, amount_rub=amount_rub)

@@ -68,7 +68,21 @@ class ReadOnlySettingError(RuntimeError):
 
 
 class BotConfigurationService:
-    EXCLUDED_KEYS: set[str] = {'BOT_TOKEN', 'ADMIN_IDS'}
+    # SECURITY: keys that must NEVER be editable through the settings API. Beyond
+    # the bot token, this covers admin IDENTITY and core AUTH secrets — a
+    # delegated admin holding only `settings:edit` could otherwise add their own
+    # email to ADMIN_EMAILS and become a full superadmin, or overwrite the JWT /
+    # web-api / webhook secrets to forge sessions and requests. Payment-provider
+    # secrets are intentionally NOT here: operators configure those via the UI.
+    EXCLUDED_KEYS: set[str] = {
+        'BOT_TOKEN',
+        'ADMIN_IDS',
+        'ADMIN_EMAILS',
+        'CABINET_JWT_SECRET',
+        'WEB_API_DEFAULT_TOKEN',
+        'WEB_API_TOKEN_HMAC_SECRET',
+        'WEBHOOK_SECRET_TOKEN',
+    }
 
     READ_ONLY_KEYS: set[str] = set()
     PLAIN_TEXT_KEYS: set[str] = set()

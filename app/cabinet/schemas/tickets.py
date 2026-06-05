@@ -15,6 +15,8 @@ class TicketMediaItem(BaseModel):
     type: str = Field(..., description='Media type: photo, video, or document')
     file_id: str = Field(..., max_length=255, description='Telegram file_id')
     caption: str | None = Field(None, max_length=1000, description='Optional caption')
+    # Response-only: signed, expiring download token. Ignored on request bodies.
+    token: str | None = Field(default=None, description='Signed media download token (response only)')
 
     @model_validator(mode='after')
     def validate_type(self) -> 'TicketMediaItem':
@@ -57,6 +59,8 @@ class TicketMessageResponse(BaseModel):
     has_media: bool = False
     media_type: str | None = None
     media_file_id: str | None = None
+    # Signed, expiring download token for the legacy single `media_file_id`.
+    media_token: str | None = None
     media_caption: str | None = None
     media_items: list[TicketMediaItem] | None = None
     created_at: datetime

@@ -219,7 +219,7 @@ class ReferralContestService:
         )
 
         if not leaderboard:
-            logger.info('Конкурс : пока нет участников', contest_id=contest.id)
+            logger.info('Конкурс: пока нет участников', contest_id=contest.id)
 
         async with AsyncSessionLocal() as mark_db:
             contest_ref = await mark_db.get(ReferralContest, contest_id)

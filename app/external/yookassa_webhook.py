@@ -295,14 +295,14 @@ class YooKassaWebhookHandler:
                     if success:
                         await db.commit()
                         logger.info(
-                            '✅ Успешно обработан webhook YooKassa: для платежа',
+                            '✅ Успешно обработан webhook YooKassa',
                             event_type=event_type,
                             yookassa_payment_id=yookassa_payment_id,
                         )
                         return web.Response(status=200, text='OK')
                     await db.rollback()
                     logger.error(
-                        '❌ Ошибка обработки webhook YooKassa: для платежа',
+                        '❌ Ошибка обработки webhook YooKassa',
                         event_type=event_type,
                         yookassa_payment_id=yookassa_payment_id,
                     )
@@ -323,7 +323,7 @@ class YooKassaWebhookHandler:
         app.router.add_get(webhook_path, self._get_handler)
         app.router.add_options(webhook_path, self._options_handler)
 
-        logger.info('✅ Настроен YooKassa webhook на пути: POST', webhook_path=webhook_path)
+        logger.info('✅ Настроен YooKassa webhook (POST)', webhook_path=webhook_path)
 
     async def _get_handler(self, request: web.Request) -> web.Response:
         return web.json_response(
@@ -385,12 +385,12 @@ async def start_yookassa_webhook_server(payment_service: PaymentService) -> None
         await site.start()
 
         logger.info(
-            '✅ YooKassa webhook сервер запущен на',
+            '✅ YooKassa webhook сервер запущен',
             YOOKASSA_WEBHOOK_HOST=settings.YOOKASSA_WEBHOOK_HOST,
             YOOKASSA_WEBHOOK_PORT=settings.YOOKASSA_WEBHOOK_PORT,
         )
         logger.info(
-            '🎯 YooKassa webhook URL: http://',
+            '🎯 YooKassa webhook URL',
             YOOKASSA_WEBHOOK_HOST=settings.YOOKASSA_WEBHOOK_HOST,
             YOOKASSA_WEBHOOK_PORT=settings.YOOKASSA_WEBHOOK_PORT,
             YOOKASSA_WEBHOOK_PATH=settings.YOOKASSA_WEBHOOK_PATH,

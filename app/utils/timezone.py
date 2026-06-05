@@ -27,7 +27,7 @@ def get_local_timezone() -> ZoneInfo:
     try:
         return ZoneInfo(tz_name)
     except Exception as exc:  # pragma: no cover - defensive branch
-        logger.warning("⚠️ Не удалось загрузить временную зону '': . Используем UTC.", tz_name=tz_name, exc=exc)
+        logger.warning('⚠️ Не удалось загрузить временную зону, используем UTC', tz_name=tz_name, exc=exc)
         return ZoneInfo('UTC')
 
 

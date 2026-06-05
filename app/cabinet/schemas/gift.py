@@ -77,6 +77,7 @@ class GiftPurchaseStatusResponse(BaseModel):
     status: str
     is_gift: bool = True
     is_code_only: bool = False
+    is_claimable: bool = False
     purchase_token: str | None = None
     recipient_contact_value: str | None = None
     gift_message: str | None = None

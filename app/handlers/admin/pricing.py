@@ -852,7 +852,7 @@ async def _render_message_by_id(
             parse_mode='HTML',
         )
     except TelegramBadRequest as error:
-        logger.debug('Failed to edit pricing message by id', error=error)
+        logger.debug('Failed to edit pricing message', error=error)
         await bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode='HTML')
 
 

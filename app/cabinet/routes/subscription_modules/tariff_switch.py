@@ -67,6 +67,19 @@ async def preview_tariff_switch(
                 'use_purchase_flow': True,
             },
         )
+    if subscription.is_trial:
+        # A trial has no paid value to prorate from — "switching" it would hand the
+        # user a full paid period of the target tariff for the (often zero/cheap)
+        # upgrade cost (bug #629889 class). Trials must buy a real tariff via the
+        # purchase flow instead of switching.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'trial_cannot_switch',
+                'message': 'Trial subscriptions cannot switch tariffs. Please purchase a tariff instead.',
+                'use_purchase_flow': True,
+            },
+        )
     if actual_status not in ('active', 'trial'):
         # For disabled/pending subscriptions, block switching with generic error
         raise HTTPException(
@@ -218,6 +231,19 @@ async def switch_tariff(
             detail={
                 'code': 'subscription_expired',
                 'message': 'Subscription is expired. Please purchase a new tariff instead of switching.',
+                'use_purchase_flow': True,
+            },
+        )
+    if subscription.is_trial:
+        # A trial has no paid value to prorate from — "switching" it would hand the
+        # user a full paid period of the target tariff for the (often zero/cheap)
+        # upgrade cost (bug #629889 class). Trials must buy a real tariff via the
+        # purchase flow instead of switching.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'trial_cannot_switch',
+                'message': 'Trial subscriptions cannot switch tariffs. Please purchase a tariff instead.',
                 'use_purchase_flow': True,
             },
         )

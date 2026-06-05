@@ -154,7 +154,7 @@ class MaintenanceService:
 
             await self._notify_admins(notification_msg, 'warning' if auto else 'info')
 
-            logger.warning('🔧 Режим техработ ВКЛЮЧЕН. Причина', reason=self._status.reason)
+            logger.warning('🔧 Режим техработ ВКЛЮЧЕН', reason=self._status.reason)
             return True
 
         except Exception as e:
@@ -217,7 +217,7 @@ class MaintenanceService:
 
             self._check_task = asyncio.create_task(self._monitoring_loop())
             logger.info(
-                '🔄 Запущен мониторинг API Remnawave (интервал: с, попыток:)',
+                '🔄 Запущен мониторинг API Remnawave',
                 get_maintenance_check_interval=settings.get_maintenance_check_interval(),
                 get_maintenance_retry_attempts=settings.get_maintenance_retry_attempts(),
             )

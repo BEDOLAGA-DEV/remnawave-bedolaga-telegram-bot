@@ -234,7 +234,7 @@ async def _send_pal24_payment_message(
         await state.clear()
 
         logger.info(
-            'Создан PayPalych счет для пользователя : ₽, ID метод',
+            'Создан PayPalych счет',
             telegram_id=db_user.telegram_id,
             amount_kopeks=amount_kopeks / 100,
             bill_id=bill_id,

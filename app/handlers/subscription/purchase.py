@@ -615,16 +615,7 @@ async def show_trial_offer(callback: types.CallbackQuery, db_user: User, db: Asy
     # Multi-tariff note: db_user.subscription returns the first active/most recent
     # subscription. In multi-tariff mode a user can have multiple subscriptions, but
     # trial eligibility is still "has any subscription" so this check is correct.
-    trial_blocked = False
-    if db_user.has_had_paid_subscription:
-        trial_blocked = True
-    elif db_user.subscription:
-        sub = db_user.subscription
-        # Разрешаем если это PENDING триальная подписка (повторная попытка оплаты)
-        if not (sub.status == SubscriptionStatus.PENDING.value and sub.is_trial):
-            trial_blocked = True
-
-    if trial_blocked:
+    if db_user.is_trial_already_used():
         await callback.message.edit_text(texts.TRIAL_ALREADY_USED, reply_markup=get_back_keyboard(db_user.language))
         await callback.answer()
         return
@@ -816,16 +807,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
     # PENDING триальные подписки не считаются - пользователь может повторить оплату
     # Multi-tariff note: db_user.subscription returns the first active/most recent
     # subscription. Trial eligibility is "has any subscription" so this check is correct.
-    trial_blocked = False
-    if db_user.has_had_paid_subscription:
-        trial_blocked = True
-    elif db_user.subscription:
-        sub = db_user.subscription
-        # Разрешаем если это PENDING триальная подписка (повторная попытка оплаты)
-        if not (sub.status == SubscriptionStatus.PENDING.value and sub.is_trial):
-            trial_blocked = True
-
-    if trial_blocked:
+    if db_user.is_trial_already_used():
         await callback.message.edit_text(texts.TRIAL_ALREADY_USED, reply_markup=get_back_keyboard(db_user.language))
         await callback.answer()
         return
@@ -3246,16 +3228,7 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
     # PENDING триальные подписки не считаются - пользователь может повторить оплату
     # Multi-tariff note: trial eligibility is "has any subscription", so checking
     # db_user.subscription (first active/most recent) is correct in all modes.
-    trial_blocked = False
-    if db_user.has_had_paid_subscription:
-        trial_blocked = True
-    elif db_user.subscription:
-        sub = db_user.subscription
-        # Разрешаем если это PENDING триальная подписка (повторная попытка оплаты)
-        if not (sub.status == SubscriptionStatus.PENDING.value and sub.is_trial):
-            trial_blocked = True
-
-    if trial_blocked:
+    if db_user.is_trial_already_used():
         await callback.message.edit_text(texts.TRIAL_ALREADY_USED, reply_markup=get_back_keyboard(db_user.language))
         await callback.answer()
         return
@@ -3652,16 +3625,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
     # PENDING триальные подписки не считаются - пользователь может повторить оплату
     # Multi-tariff note: trial eligibility is "has any subscription", so checking
     # db_user.subscription (first active/most recent) is correct in all modes.
-    trial_blocked = False
-    if db_user.has_had_paid_subscription:
-        trial_blocked = True
-    elif db_user.subscription:
-        sub = db_user.subscription
-        # Разрешаем если это PENDING триальная подписка (повторная попытка оплаты)
-        if not (sub.status == SubscriptionStatus.PENDING.value and sub.is_trial):
-            trial_blocked = True
-
-    if trial_blocked:
+    if db_user.is_trial_already_used():
         await callback.message.edit_text(texts.TRIAL_ALREADY_USED, reply_markup=get_back_keyboard(db_user.language))
         await callback.answer()
         return

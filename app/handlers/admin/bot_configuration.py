@@ -703,11 +703,11 @@ async def apply_preset(
             applied.append(setting_key)
         except ReadOnlySettingError:
             logger.info(
-                'Пропускаем настройку из пресета : только для чтения', setting_key=setting_key, preset_key=preset_key
+                'Пропускаем настройку из пресета: только для чтения', setting_key=setting_key, preset_key=preset_key
             )
         except Exception as error:
             logger.warning(
-                'Не удалось применить пресет для', preset_key=preset_key, setting_key=setting_key, error=error
+                'Не удалось применить настройку из пресета', preset_key=preset_key, setting_key=setting_key, error=error
             )
     await db.commit()
 

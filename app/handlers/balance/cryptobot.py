@@ -227,7 +227,7 @@ async def process_cryptobot_payment_amount(
         await state.clear()
 
         logger.info(
-            'Создан CryptoBot платеж для пользователя ₽ ( USD), ID',
+            'Создан CryptoBot платеж',
             telegram_id=db_user.telegram_id,
             amount_rubles=round(amount_rubles, 0),
             amount_usd=round(amount_usd, 2),

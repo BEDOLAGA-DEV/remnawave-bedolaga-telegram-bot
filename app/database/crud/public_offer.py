@@ -38,7 +38,7 @@ async def upsert_public_offer(
     await db.commit()
     await db.refresh(offer)
 
-    logger.info('✅ Публичная оферта для языка обновлена (ID:)', language=language, offer_id=offer.id)
+    logger.info('✅ Публичная оферта обновлена', language=language, offer_id=offer.id)
 
     return offer
 

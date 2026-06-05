@@ -1043,12 +1043,12 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
 
         user = getattr(ticket_with_user, 'user', None)
         if not user:
-            logger.error('User not found for ticket #', ticket_id=ticket.id)
+            logger.error('User not found for ticket', ticket_id=ticket.id)
             return
 
         if not getattr(user, 'telegram_id', None):
             logger.warning(
-                'Cannot notify ticket # user without telegram_id (username auth_type=)',
+                'Cannot notify ticket user without telegram_id',
                 ticket_id=ticket.id,
                 getattr=getattr(user, 'username', None),
                 getattr_2=getattr(user, 'auth_type', None),
@@ -1112,7 +1112,7 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
             reply_markup=keyboard,
         )
 
-        logger.info('Ticket # reply notification sent to user', ticket_id=ticket.id, chat_id=chat_id)
+        logger.info('Ticket reply notification sent to user', ticket_id=ticket.id, chat_id=chat_id)
 
     except Exception as e:
         logger.error('Error notifying user about ticket reply', error=e)

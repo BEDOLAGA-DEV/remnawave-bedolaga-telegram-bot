@@ -1,3 +1,4 @@
+import hmac
 import secrets
 import string
 from datetime import UTC, datetime, timedelta
@@ -765,7 +766,7 @@ async def subtract_user_balance(
                         log_error=log_error,
                     )
 
-        logger.info('✅ Средства списаны: →', old_balance=old_balance, balance_kopeks=user.balance_kopeks)
+        logger.info('✅ Средства списаны', old_balance=old_balance, balance_kopeks=user.balance_kopeks)
         return True
 
     except Exception as e:
@@ -1482,7 +1483,7 @@ async def verify_and_apply_email_change(db: AsyncSession, user: User, code: str)
         await db.commit()
         return False, 'Verification code has expired'
 
-    if user.email_change_code != code:
+    if not hmac.compare_digest(str(user.email_change_code), str(code)):
         return False, 'Invalid verification code'
 
     # Check if new email is still available
@@ -1632,9 +1633,7 @@ async def create_user_by_oauth(
     await db.refresh(user)
 
     user.promo_group = default_group
-    logger.info(
-        'Created OAuth user via (provider_id=) with id', provider=provider, provider_id=provider_id, user_id=user.id
-    )
+    logger.info('Created OAuth user', provider=provider, provider_id=provider_id, user_id=user.id)
 
     try:
         from app.services.event_emitter import event_emitter

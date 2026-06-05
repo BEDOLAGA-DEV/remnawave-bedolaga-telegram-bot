@@ -1379,12 +1379,12 @@ async def update_user_subscription(
         if tariff.allowed_squads:
             subscription.connected_squads = tariff.allowed_squads
 
-        # Convert trial subscription to paid when switching to a non-trial tariff
-        if subscription.is_trial and not tariff.is_trial_available:
-            subscription.is_trial = False
-            if subscription.end_date and subscription.end_date > datetime.now(UTC):
-                subscription.status = SubscriptionStatus.ACTIVE.value
-            logger.info('Converted trial subscription to paid', user_id=user_id, tariff_name=tariff.name)
+        # NB: changing the tariff is a *relabel*, not a purchase — we deliberately
+        # do NOT flip is_trial here. Bug #629889: flipping a 1-day trial to
+        # is_trial=False left a phantom "paid" subscription that, once its trial
+        # day expired, got picked up by try_auto_extend_expired_after_topup (which
+        # only renews is_trial=False subs) and granted a full ~30-day tariff period.
+        # A trial stays a trial across a tariff change and expires normally.
 
         # Сбрасываем докупленный трафик при смене тарифа
         from sqlalchemy import delete as sql_delete
@@ -2564,7 +2564,6 @@ async def reset_user_trial(
 
     Actions:
     - Delete current subscription if exists
-    - Reset has_used_trial flag to False
     - User can now activate a new trial
     """
     user = await get_user_by_id(db, user_id)
@@ -2598,28 +2597,14 @@ async def reset_user_trial(
                     user_id=user_id,
                 )
             else:
-                # Deactivate in Remnawave panel first
-                from app.services.subscription_service import SubscriptionService
+                # Снос триала — общий код с ботовым bulk-сбросом: удаляет панель-юзера
+                # ПЕРВЫМ (race-safe относительно синк-воскрешения), затем строки в БД и
+                # чистит устаревший single-tariff remnawave_uuid.
+                from app.database.crud.subscription import wipe_trial_subscriptions
 
-                subscription_service = SubscriptionService()
-                for sub in subs_to_delete:
-                    _sub_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
-                    if _sub_uuid:
-                        try:
-                            await subscription_service.disable_remnawave_user(_sub_uuid)
-                        except Exception as e:
-                            logger.warning('Failed to disable Remnawave during trial reset', error=e)
+                wiped = await wipe_trial_subscriptions(db, subs_to_delete)
+                subscription_deleted = wiped > 0
 
-                # Delete only target subscriptions
-                from sqlalchemy import delete
-
-                for sub in subs_to_delete:
-                    await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id == sub.id))
-                    await db.execute(delete(Subscription).where(Subscription.id == sub.id))
-                subscription_deleted = True
-
-    # Reset trial flag
-    user.has_used_trial = False
     user.updated_at = datetime.now(UTC)
 
     await db.commit()

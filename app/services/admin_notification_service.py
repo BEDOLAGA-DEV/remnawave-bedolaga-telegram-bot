@@ -2208,7 +2208,7 @@ class AdminNotificationService:
             runtime_enabled = True
         if not (self._is_enabled() and runtime_enabled):
             logger.info(
-                'Ticket notification skipped: _is_enabled=, runtime_enabled',
+                'Ticket notification skipped',
                 _is_enabled=self._is_enabled(),
                 runtime_enabled=runtime_enabled,
             )

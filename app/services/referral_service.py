@@ -512,9 +512,7 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
         referrer = await get_user_by_id(db, referrer_id)
 
         if not new_user or not referrer:
-            logger.error(
-                'Пользователи не найдены: new_user_id=, referrer_id', new_user_id=new_user_id, referrer_id=referrer_id
-            )
+            logger.error('Пользователи не найдены', new_user_id=new_user_id, referrer_id=referrer_id)
             return False
 
         if new_user.referred_by_id != referrer_id:

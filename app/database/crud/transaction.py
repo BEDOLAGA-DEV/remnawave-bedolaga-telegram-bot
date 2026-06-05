@@ -109,7 +109,7 @@ async def create_transaction(
     await db.refresh(transaction)
 
     logger.info(
-        '💳 Создана транзакция: на ₽ для пользователя',
+        '💳 Создана транзакция',
         type_value=type.value,
         amount_kopeks=stored_amount / 100,
         user_id=user_id,
