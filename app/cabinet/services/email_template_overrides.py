@@ -196,7 +196,7 @@ async def get_rendered_override(
     # Simple variable substitution for context vars like {username}, {verification_url}, etc.
     if context:
         for key, value in context.items():
-            body_html = body_html.replace(f'{{{key}}}', html.escape(str(value)))
+            body_html = body_html.replace(f'{{{key}}}', html.escape(str(value)) if value is not None else '')
 
     rendered = templates._wrap_override_template(body_html, language)
     subject = override['subject']
@@ -204,7 +204,7 @@ async def get_rendered_override(
     # Also substitute in subject
     if context:
         for key, value in context.items():
-            safe_value = str(value).replace('\r', '').replace('\n', '')
+            safe_value = str(value).replace('\r', '').replace('\n', '') if value is not None else ''
             subject = subject.replace(f'{{{key}}}', safe_value)
 
     return (subject, rendered)

@@ -76,7 +76,7 @@ class ButtonConditions(BaseModel):
     is_trial_user: bool | None = Field(default=None, description='Пользователь на пробном периоде')
     has_autopay: bool | None = Field(default=None, description='Автоплатёж включён')
 
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='ignore')
 
 
 class MenuButtonConfig(BaseModel):
@@ -101,8 +101,11 @@ class MenuButtonConfig(BaseModel):
     )
     description: str | None = Field(default=None, max_length=200, description='Описание кнопки для админ-панели')
     sort_order: int | None = Field(default=None, description='Порядок сортировки (для отображения в админке)')
+    icon_custom_emoji_id: str | None = Field(
+        default=None, max_length=100, description='ID кастомного Telegram emoji (Bot API 9.4+)'
+    )
 
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='ignore')
 
 
 class MenuRowConfig(BaseModel):
@@ -113,7 +116,7 @@ class MenuRowConfig(BaseModel):
     conditions: ButtonConditions | None = Field(default=None, description='Условия показа всей строки')
     max_per_row: int = Field(default=2, ge=1, le=4, description='Максимум кнопок в строке')
 
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='ignore')
 
 
 class MenuLayoutConfig(BaseModel):
@@ -123,7 +126,7 @@ class MenuLayoutConfig(BaseModel):
     rows: list[MenuRowConfig] = Field(default_factory=list, description='Строки меню')
     buttons: dict[str, MenuButtonConfig] = Field(default_factory=dict, description='Конфигурации кнопок')
 
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='ignore')
 
 
 # --- Response schemas ---
@@ -183,6 +186,9 @@ class ButtonUpdateRequest(BaseModel):
     webapp_url: str | None = Field(default=None, description='URL для Mini App при open_mode=direct')
     description: str | None = Field(default=None, max_length=200, description='Описание кнопки')
     sort_order: int | None = Field(default=None, description='Порядок сортировки')
+    icon_custom_emoji_id: str | None = Field(
+        default=None, max_length=100, description='ID кастомного Telegram emoji (Bot API 9.4+)'
+    )
 
     model_config = ConfigDict(extra='forbid')
 
@@ -213,13 +219,16 @@ class AddCustomButtonRequest(BaseModel):
     id: str = Field(..., min_length=1, max_length=50, description='ID кнопки (уникальный)')
     type: ButtonType = Field(..., description='Тип кнопки (url, mini_app или callback)')
     text: dict[str, str] = Field(..., description='Локализованные тексты')
-    icon: str | None = Field(default=None, max_length=100, description='Эмодзи/иконка кнопки')
+    icon: str | None = Field(default=None, max_length=10, description='Эмодзи/иконка кнопки')
     action: str = Field(..., min_length=1, description='URL или callback_data')
     visibility: ButtonVisibility = Field(default=ButtonVisibility.ALL, description='Видимость')
     conditions: ButtonConditions | None = Field(default=None, description='Условия показа')
     dynamic_text: bool = Field(default=False, description='Текст содержит плейсхолдеры')
     row_id: str | None = Field(default=None, description='ID строки для добавления кнопки')
     description: str | None = Field(default=None, max_length=200, description='Описание кнопки для админ-панели')
+    icon_custom_emoji_id: str | None = Field(
+        default=None, max_length=100, description='ID кастомного Telegram emoji (Bot API 9.4+)'
+    )
 
     model_config = ConfigDict(extra='forbid')
 

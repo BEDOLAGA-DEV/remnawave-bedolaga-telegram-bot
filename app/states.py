@@ -30,6 +30,10 @@ class SubscriptionStates(StatesGroup):
     selecting_custom_traffic = State()
     confirming_custom_purchase = State()
 
+    # Локальное переименование HWID-устройства (alias). hwid и page/sub_id
+    # передаются через state data, чтобы вернуться к ровно тому же списку.
+    renaming_device = State()
+
 
 class BalanceStates(StatesGroup):
     waiting_for_amount = State()

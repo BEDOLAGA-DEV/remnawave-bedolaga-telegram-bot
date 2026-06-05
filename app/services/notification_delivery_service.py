@@ -15,6 +15,7 @@ from aiogram import Bot
 
 from app.config import settings
 from app.database.models import User, UserStatus
+from app.utils.timezone import format_email_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -220,35 +221,107 @@ class NotificationDeliveryService:
             )
             return False
 
-        try:
-            from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+        from aiogram.exceptions import (
+            TelegramBadRequest,
+            TelegramForbiddenError,
+            TelegramNetworkError,
+            TelegramRetryAfter,
+            TelegramServerError,
+        )
 
-            await asyncio.wait_for(
-                bot.send_message(
-                    chat_id=user.telegram_id,
-                    text=message,
-                    reply_markup=markup,
-                    parse_mode='HTML',
-                ),
-                timeout=15.0,
+        # Retry transient Telegram-side ошибки (network/5xx/flood) с экспоненциальным
+        # бэк-оффом. До этого ConnectionReset уходил в `except Exception` и логировался
+        # как ERROR → летел в админ-чат через TelegramNotifierProcessor каждый раз,
+        # хотя это ожидаемая сетевая транзиент-ошибка.
+        max_attempts = 3
+        last_transient_error: Exception | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await asyncio.wait_for(
+                    bot.send_message(
+                        chat_id=user.telegram_id,
+                        text=message,
+                        reply_markup=markup,
+                        parse_mode='HTML',
+                    ),
+                    timeout=15.0,
+                )
+                return True
+
+            except TimeoutError:
+                logger.warning(
+                    'Timeout при отправке Telegram уведомления пользователю',
+                    telegram_id=user.telegram_id,
+                    attempt=attempt,
+                )
+                last_transient_error = TimeoutError('asyncio.wait_for timeout')
+                if attempt < max_attempts:
+                    await asyncio.sleep(min(2 ** (attempt - 1), 4))
+                    continue
+                break  # exhausted retries → summary log ниже
+
+            except TelegramForbiddenError:
+                logger.warning('Telegram user заблокировал бота', telegram_id=user.telegram_id)
+                return False
+
+            except TelegramBadRequest as e:
+                logger.warning(
+                    'Ошибка отправки Telegram уведомления пользователю',
+                    telegram_id=user.telegram_id,
+                    error=str(e),
+                )
+                return False
+
+            except TelegramRetryAfter as e:
+                # Flood control — ждём, потом ретраим. Cap retry_after, чтобы
+                # не блочить очередь на минуты.
+                retry_after = min(max(1, int(getattr(e, 'retry_after', 1))), 30)
+                logger.warning(
+                    'Telegram flood control при отправке уведомления',
+                    telegram_id=user.telegram_id,
+                    retry_after=retry_after,
+                    attempt=attempt,
+                )
+                last_transient_error = e
+                if attempt < max_attempts:
+                    await asyncio.sleep(retry_after)
+                    continue
+                break
+
+            except (TelegramNetworkError, TelegramServerError) as e:
+                # Транзиентные сетевые/5xx — логируем как warning, не спамим админ-чат
+                last_transient_error = e
+                logger.warning(
+                    'Сетевая ошибка отправки Telegram уведомления (retry)',
+                    telegram_id=user.telegram_id,
+                    error=str(e)[:200],
+                    error_type=type(e).__name__,
+                    attempt=attempt,
+                )
+                if attempt < max_attempts:
+                    await asyncio.sleep(min(2 ** (attempt - 1), 4))
+                    continue
+                break
+
+            except Exception as e:
+                logger.error(
+                    'Неожиданная ошибка при отправке Telegram уведомления',
+                    telegram_id=user.telegram_id,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+                return False
+
+        # Все попытки исчерпаны — итоговый warning без error-уровня
+        if last_transient_error is not None:
+            logger.warning(
+                'Не удалось доставить Telegram уведомление после ретраев',
+                telegram_id=user.telegram_id,
+                attempts=max_attempts,
+                final_error=type(last_transient_error).__name__,
             )
-            return True
-
-        except TimeoutError:
-            logger.warning('Timeout при отправке Telegram уведомления пользователю', telegram_id=user.telegram_id)
-            return False
-
-        except TelegramForbiddenError:
-            logger.warning('Telegram user заблокировал бота', telegram_id=user.telegram_id)
-            return False
-
-        except TelegramBadRequest as e:
-            logger.warning('Ошибка отправки Telegram уведомления пользователю', telegram_id=user.telegram_id, e=e)
-            return False
-
-        except Exception as e:
-            logger.error('Неожиданная ошибка при отправке Telegram уведомления', e=e)
-            return False
+        return False
 
     async def _send_email_notification(
         self,
@@ -268,6 +341,30 @@ class NotificationDeliveryService:
         try:
             # Get email template (check DB override first, then fall back to hardcoded)
             language = user.language or 'ru'
+
+            # Inject common context values used across all email templates
+            context = {
+                'cabinet_url': getattr(settings, 'CABINET_URL', '') or '',
+                **context,
+            }
+
+            # Backwards-compat aliases for DB templates that use shorter
+            # placeholder names than the corresponding notify_* method ships.
+            # E.g. {amount} vs amount_kopeks, {reason} vs comment, {balance}.
+            if 'amount' not in context:
+                if context.get('formatted_amount'):
+                    context['amount'] = context['formatted_amount']
+                elif 'amount_kopeks' in context:
+                    context['amount'] = settings.format_price(context['amount_kopeks'])
+                elif 'bonus_kopeks' in context:
+                    context['amount'] = settings.format_price(context['bonus_kopeks'])
+            if 'balance' not in context:
+                if context.get('formatted_balance'):
+                    context['balance'] = context['formatted_balance']
+                elif 'new_balance_kopeks' in context:
+                    context['balance'] = settings.format_price(context['new_balance_kopeks'])
+            if 'reason' not in context and context.get('comment'):
+                context['reason'] = context['comment']
 
             # Try DB override (get_rendered_override substitutes context vars and wraps in base template)
             template = None
@@ -378,7 +475,10 @@ class NotificationDeliveryService:
         """Notify user about expiring subscription."""
         context = {
             'days_left': days_left,
-            'expires_at': str(expires_at),
+            # Localize + humanize: ``str(datetime)`` used to leak raw
+            # ISO with microseconds and tz offset into the rendered
+            # template body. See app/utils/timezone.py::format_email_datetime.
+            'expires_at': format_email_datetime(expires_at),
         }
 
         return await self.send_notification(
@@ -421,7 +521,8 @@ class NotificationDeliveryService:
             'amount_kopeks': amount_kopeks,
             'amount_rubles': amount_kopeks / 100,
             'formatted_amount': settings.format_price(amount_kopeks),
-            'new_expires_at': str(new_expires_at),
+            # Localize + humanize (see expiring branch above).
+            'new_expires_at': format_email_datetime(new_expires_at),
         }
 
         return await self.send_notification(

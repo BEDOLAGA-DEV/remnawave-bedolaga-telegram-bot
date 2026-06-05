@@ -384,21 +384,24 @@ SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
         'amount_rubles': -200,
         'new_balance_rubles': 1300,
     },
-    'subscription_expiring': {'days_left': 3, 'expires_at': '2025-01-30'},
+    # Sample dates rendered via format_email_datetime — preview shows
+    # what the user actually receives, not raw ISO. If admin changes
+    # EMAIL_DATE_FORMAT, these samples auto-adjust on next render.
+    'subscription_expiring': {'days_left': 3, 'expires_at': '30.01.2026, 23:59'},
     'subscription_expired': {},
     'subscription_renewed': {
-        'new_expires_at': '2025-02-28',
+        'new_expires_at': '28.02.2026, 23:59',
         'tariff_name': 'Premium',
         'traffic_limit_gb': 100,
         'device_limit': 3,
     },
     'subscription_activated': {
-        'expires_at': '2025-02-28',
+        'expires_at': '28.02.2026, 23:59',
         'tariff_name': 'Premium',
         'traffic_limit_gb': 100,
         'device_limit': 3,
     },
-    'autopay_success': {'formatted_amount': '300.00 ₽', 'amount_rubles': 300, 'new_expires_at': '2025-02-28'},
+    'autopay_success': {'formatted_amount': '300.00 ₽', 'amount_rubles': 300, 'new_expires_at': '28.02.2026, 23:59'},
     'autopay_failed': {'reason': 'Card declined'},
     'autopay_insufficient_funds': {'required_amount': '300.00 ₽', 'current_balance': '50.00 ₽'},
     'daily_debit': {

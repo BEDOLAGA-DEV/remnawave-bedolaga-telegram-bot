@@ -354,6 +354,10 @@ class BotConfigurationService:
         'REMNAWAVE_AUTO_SYNC_ENABLED': 'REMNAWAVE',
         'REMNAWAVE_AUTO_SYNC_TIMES': 'REMNAWAVE',
         'CABINET_REMNA_SUB_CONFIG': 'MINIAPP',
+        # Date format applied to email-template variables
+        # (expires_at, new_expires_at). Lives in the TIMEZONE
+        # category so operators find it next to TIMEZONE itself.
+        'EMAIL_DATE_FORMAT': 'TIMEZONE',
     }
 
     CATEGORY_PREFIX_OVERRIDES: dict[str, str] = {
@@ -1824,6 +1828,31 @@ class BotConfigurationService:
                     SupportSettingsService.set_system_mode(str(value))
                 except Exception as error:
                     logger.error('Не удалось синхронизировать SupportSettingsService', error=error)
+            elif key in {
+                'BACKUP_AUTO_ENABLED',
+                'BACKUP_INTERVAL_HOURS',
+                'BACKUP_TIME',
+                'BACKUP_MAX_KEEP',
+                'BACKUP_COMPRESSION',
+                'BACKUP_INCLUDE_LOGS',
+                'BACKUP_LOCATION',
+            }:
+                # Изменения настроек бекапа из кабинета — рестартим scheduler-таску,
+                # чтобы новые BACKUP_TIME/INTERVAL вступили в силу немедленно
+                # (без ожидания следующего цикла или рестарта бота).
+                try:
+                    import asyncio
+
+                    from app.services.backup_service import backup_service
+
+                    backup_service.reload_settings_from_db()
+                    if backup_service._settings.auto_backup_enabled:
+                        # Перезапускаем таску с пересчётом next_run на основе свежих настроек
+                        asyncio.create_task(backup_service.start_auto_backup())
+                    else:
+                        asyncio.create_task(backup_service.stop_auto_backup())
+                except Exception as error:
+                    logger.error('Не удалось применить новые настройки бекапа', error=error)
             elif key in {
                 'REMNAWAVE_API_URL',
                 'REMNAWAVE_API_KEY',

@@ -5,12 +5,13 @@
 """
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from aiogram import Bot
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database.crud.subscription import (
@@ -448,8 +449,11 @@ class DailySubscriptionService:
         """Сбрасывает истекшие докупки трафика у подписки."""
         from app.database.models import TrafficPurchase
 
-        # Получаем подписку
-        subscription_query = select(Subscription).where(Subscription.id == subscription_id)
+        # Получаем подписку вместе с тарифом — тариф нужен для определения
+        # стратегии сброса панели (выравнивание докупки)
+        subscription_query = (
+            select(Subscription).where(Subscription.id == subscription_id).options(selectinload(Subscription.tariff))
+        )
         subscription_result = await db.execute(subscription_query)
         subscription = subscription_result.scalar_one_or_none()
 
@@ -495,10 +499,6 @@ class DailySubscriptionService:
         # Защита от отрицательного базового лимита
         base_limit = max(0, base_limit)
 
-        # Удаляем истекшие записи
-        for purchase in expired_purchases:
-            await db.delete(purchase)
-
         # Рассчитываем новый лимит
         new_purchased = old_purchased - total_expired_gb
         new_limit = base_limit + new_purchased
@@ -512,6 +512,30 @@ class DailySubscriptionService:
             )
             new_limit = base_limit
             new_purchased = 0
+
+        new_limit = max(0, new_limit)
+        new_purchased = max(0, new_purchased)
+
+        # ВЫРАВНИВАНИЕ: не роняем лимит, пока панель сама не обнулит used. Иначе на
+        # тарифах с периодическим сбросом панели (MONTH/MONTH_ROLLING/DAY/WEEK) падение
+        # лимита докупки попадает в середину цикла, used ещё высокий → панель режет
+        # активного юзера. Откладываем понижение до естественного сброса панели — тогда
+        # лимит и used обнуляются согласованно, без окна-режа и без лишнего сброса.
+        # (Для NO_RESET панель used не сбросит — там лимит роняем сразу, а used добиваем
+        # страховкой-clamp ниже.)
+        if await self._should_defer_limit_drop(db, subscription, new_limit, expired_purchases):
+            logger.info(
+                '⏸️ Понижение лимита докупки отложено: ждём периодический сброс used панелью',
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                new_limit_gb=new_limit,
+                current_limit_gb=old_limit,
+            )
+            return
+
+        # Удаляем истекшие записи
+        for purchase in expired_purchases:
+            await db.delete(purchase)
 
         # Обновляем подписку
         subscription.traffic_limit_gb = max(0, new_limit)
@@ -557,7 +581,35 @@ class DailySubscriptionService:
             from app.services.subscription_service import SubscriptionService
 
             subscription_service = SubscriptionService()
-            await subscription_service.update_remnawave_user(db, subscription)
+            updated_user = await subscription_service.update_remnawave_user(db, subscription)
+
+            # Докупка истекла → лимит уронили к базовому. Но used в панели сам по себе
+            # не сбрасывается. Если used уже выше нового лимита, панель МГНОВЕННО
+            # зарежет активного юзера («вылет в лимит после истечения докупки»).
+            # В этом случае честно сбрасываем израсходованный трафик — ровно то, что
+            # обещает уведомление ниже. Сброс делаем только когда он реально нужен,
+            # чтобы не дарить бесплатный трафик тем, кто базу не исчерпал.
+            new_limit_gb = subscription.traffic_limit_gb or 0
+            if (
+                updated_user is not None
+                and new_limit_gb > 0
+                and updated_user.used_traffic_bytes > subscription_service._gb_to_bytes(new_limit_gb)
+            ):
+                logger.warning(
+                    '⚠️ После истечения докупки used превысил новый лимит — сбрасываем трафик, чтобы не зарезать активного юзера',
+                    subscription_id=subscription.id,
+                    user_id=subscription.user_id,
+                    used_bytes=updated_user.used_traffic_bytes,
+                    new_limit_gb=new_limit_gb,
+                )
+                await subscription_service.update_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=True,
+                    reset_reason='истечение докупленного трафика',
+                )
+                subscription.traffic_used_gb = 0.0
+                await db.commit()
         except Exception as e:
             logger.warning('Не удалось синхронизировать с RemnaWave после сброса трафика', error=e)
             from app.services.remnawave_retry_queue import remnawave_retry_queue
@@ -574,6 +626,85 @@ class DailySubscriptionService:
             user = await get_user_by_id(db, subscription.user_id)
             if user:
                 await self._notify_traffic_reset(user, subscription, total_expired_gb)
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        """Гарантирует tz-aware UTC (на случай naive datetime из БД)."""
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+    async def _should_defer_limit_drop(
+        self,
+        db: AsyncSession,
+        subscription: Subscription,
+        new_limit_gb: int,
+        expired_purchases: list,
+    ) -> bool:
+        """Нужно ли отложить понижение лимита докупки до сброса used панелью.
+
+        True — если падение лимита прямо сейчас загонит активного юзера за лимит
+        (used > нового лимита), а панель сама обнулит used позже (MONTH/MONTH_ROLLING/
+        DAY/WEEK). Тогда ждём естественного сброса панели: лимит и used обнулятся
+        согласованно, без окна-режа и без лишнего сброса посреди цикла.
+
+        False — для NO_RESET (панель used не сбрасывает, это делает бот), для безлимита,
+        если used неизвестен, и если докупка просрочена дольше grace (защита от вечного
+        откладывания при рассинхроне стратегий бота и панели).
+        """
+        if new_limit_gb <= 0:
+            return False  # безлимит — за лимит не уйти
+
+        from app.external.remnawave_api import TrafficLimitStrategy
+        from app.services.subscription_service import get_traffic_reset_strategy
+
+        strategy = get_traffic_reset_strategy(subscription.tariff)
+        if strategy == TrafficLimitStrategy.NO_RESET:
+            return False  # панель сама не сбросит — откладывать бессмысленно
+
+        # Защита от вечного откладывания: если докупка просрочена дольше одного
+        # цикла сброса (с запасом), не ждём больше — понижаем лимит, used добьёт clamp.
+        now = datetime.now(UTC)
+        anchors = [self._as_utc(p.expires_at) for p in expired_purchases if getattr(p, 'expires_at', None)]
+        if anchors and (now - max(anchors)) > timedelta(days=40):
+            logger.warning(
+                '⚠️ Докупка просрочена >40д, а used не сброшен панелью — понижаем лимит без откладывания',
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+            )
+            return False
+
+        used_gb = await self._get_panel_used_gb(db, subscription)
+        if used_gb is None:
+            return False  # used неизвестен — применяем понижение, страховка-clamp разрулит
+        return used_gb > new_limit_gb
+
+    async def _get_panel_used_gb(self, db: AsyncSession, subscription: Subscription) -> float | None:
+        """Текущий израсходованный трафик из панели в ГБ. None — если узнать не удалось."""
+        from app.services.subscription_service import SubscriptionService
+
+        service = SubscriptionService()
+        if settings.is_multi_tariff_enabled():
+            uuid = getattr(subscription, 'remnawave_uuid', None)
+        else:
+            user = await get_user_by_id(db, subscription.user_id)
+            uuid = getattr(user, 'remnawave_uuid', None) if user else None
+        if not uuid:
+            return None
+
+        try:
+            async with service.get_api_client() as api:
+                panel_user = await api.get_user_by_uuid(uuid)
+        except Exception as exc:
+            logger.warning(
+                'Не удалось получить used из панели для выравнивания докупки — применим понижение со страховкой',
+                subscription_id=subscription.id,
+                user_id=subscription.user_id,
+                error=exc,
+            )
+            return None
+
+        if panel_user is None:
+            return None
+        return service._bytes_to_gb(panel_user.used_traffic_bytes)
 
     async def _notify_traffic_reset(self, user: User, subscription: Subscription, reset_gb: int):
         """Уведомляет пользователя о сбросе докупленного трафика."""

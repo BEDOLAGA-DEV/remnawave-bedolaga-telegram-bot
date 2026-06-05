@@ -542,8 +542,11 @@ async def revoke_role(
             detail='Cannot revoke a role at or above your own level',
         )
 
-    # Revoke directly on the locked object (avoid CRUD re-fetch without FOR UPDATE)
+    # Revoke directly on the locked object (avoid CRUD re-fetch without FOR UPDATE).
+    # revocation_source='ui' защищает manual decision от автоматической реактивации
+    # bootstrap'ом при следующем рестарте бота (см. _assign_if_missing).
     user_role.is_active = False
+    user_role.revocation_source = 'ui'
     await db.flush()
     await db.commit()
 
@@ -553,6 +556,7 @@ async def revoke_role(
         assignment_id=assignment_id,
         target_user_id=user_role.user_id,
         role_name=role.name,
+        revocation_source='ui',
     )
 
     return {'message': 'Role revoked', 'assignment_id': assignment_id}

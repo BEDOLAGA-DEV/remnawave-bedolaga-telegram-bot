@@ -112,7 +112,17 @@ async def process_recurrent_payments(db: AsyncSession, bot: Bot | None = None) -
         subscriptions = await _find_subscriptions_needing_topup(db)
         stats['checked'] = len(subscriptions)
 
-        for subscription in subscriptions:
+        # _process_single_subscription внутри может flush/commit/savepoint rollback,
+        # после чего subscription.user может стать недоступным (MissingGreenlet при
+        # попытке lazy load вне greenlet'а). Снимаем id-снимок и в каждой итерации
+        # перезагружаем подписку с eager-loaded relationships — N+1, но reliable
+        # и не зависит от состояния сессии.
+        subscription_ids = [sub.id for sub in subscriptions]
+
+        for sub_id in subscription_ids:
+            subscription = await _reload_subscription_with_user(db, sub_id)
+            if not subscription:
+                continue
             user = subscription.user
             if not user:
                 continue
@@ -159,6 +169,26 @@ async def process_recurrent_payments(db: AsyncSession, bot: Bot | None = None) -
         logger.info('Рекуррентные платежи: итоги', **stats)
 
     return stats
+
+
+async def _reload_subscription_with_user(db: AsyncSession, subscription_id: int) -> Subscription | None:
+    """Получить подписку с eager-loaded user/promo_groups/tariff по id.
+
+    Используется в loop'е process_recurrent_payments чтобы избежать MissingGreenlet
+    при доступе к subscription.user после flush/commit/rollback внутри обработчика.
+    """
+    result = await db.execute(
+        select(Subscription)
+        .options(
+            selectinload(Subscription.user).options(
+                selectinload(User.promo_group),
+                selectinload(User.user_promo_groups).selectinload(UserPromoGroup.promo_group),
+            ),
+            selectinload(Subscription.tariff),
+        )
+        .where(Subscription.id == subscription_id)
+    )
+    return result.scalar_one_or_none()
 
 
 async def _find_subscriptions_needing_topup(db: AsyncSession) -> list:

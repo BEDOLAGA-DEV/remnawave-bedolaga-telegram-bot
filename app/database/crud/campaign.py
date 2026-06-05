@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -209,34 +210,72 @@ async def record_campaign_registration(
     subscription_duration_days: int | None = None,
     tariff_id: int | None = None,
     tariff_duration_days: int | None = None,
-) -> AdvertisingCampaignRegistration:
-    existing = await db.execute(
-        select(AdvertisingCampaignRegistration).where(
-            and_(
-                AdvertisingCampaignRegistration.campaign_id == campaign_id,
-                AdvertisingCampaignRegistration.user_id == user_id,
+) -> tuple[AdvertisingCampaignRegistration, bool]:
+    """Создаёт или возвращает запись регистрации в рекламной кампании.
+
+    Returns:
+        (registration, created): второе поле True если запись была создана прямо сейчас,
+        False — если уже существовала (или другая параллельная транзакция её только что
+        создала). Caller использует флаг чтобы понять, нужно ли отправить уведомление
+        в админ-чат (один раз на первую успешную регистрацию).
+
+    Race-safe: если между select() и commit() параллельная транзакция вставила
+    запись с тем же (campaign_id, user_id), мы поймаем IntegrityError на UNIQUE
+    constraint, откатим savepoint и вернём существующую запись с created=False.
+    Это критично для паритета «1 message в чате == 1 row в БД» и для того, чтобы
+    балансный бонус не начислился дважды при concurrent /start от одного юзера.
+    """
+    # Используем savepoint, чтобы IntegrityError не убил внешнюю транзакцию
+    # caller'а, а только нашу попытку INSERT.
+    async with db.begin_nested() as nested:
+        existing = await db.execute(
+            select(AdvertisingCampaignRegistration).where(
+                and_(
+                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                    AdvertisingCampaignRegistration.user_id == user_id,
+                )
             )
         )
-    )
-    registration = existing.scalar_one_or_none()
-    if registration:
-        return registration
+        registration = existing.scalar_one_or_none()
+        if registration:
+            return registration, False
 
-    registration = AdvertisingCampaignRegistration(
-        campaign_id=campaign_id,
-        user_id=user_id,
-        bonus_type=bonus_type,
-        balance_bonus_kopeks=balance_bonus_kopeks or 0,
-        subscription_duration_days=subscription_duration_days,
-        tariff_id=tariff_id,
-        tariff_duration_days=tariff_duration_days,
-    )
-    db.add(registration)
+        registration = AdvertisingCampaignRegistration(
+            campaign_id=campaign_id,
+            user_id=user_id,
+            bonus_type=bonus_type,
+            balance_bonus_kopeks=balance_bonus_kopeks or 0,
+            subscription_duration_days=subscription_duration_days,
+            tariff_id=tariff_id,
+            tariff_duration_days=tariff_duration_days,
+        )
+        db.add(registration)
+        try:
+            await db.flush()
+        except IntegrityError:
+            # Параллельный INSERT успел раньше — откатываем savepoint и читаем
+            # существующую запись.
+            await nested.rollback()
+            existing = await db.execute(
+                select(AdvertisingCampaignRegistration).where(
+                    and_(
+                        AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                        AdvertisingCampaignRegistration.user_id == user_id,
+                    )
+                )
+            )
+            registration = existing.scalar_one_or_none()
+            if registration is None:
+                # Не должно случиться при UNIQUE constraint, но если констрейнта
+                # физически нет (legacy таблица без uq_campaign_user) — re-raise.
+                raise
+            return registration, False
+
     await db.commit()
     await db.refresh(registration)
 
     logger.info('📈 Регистрируем пользователя в кампании', user_id=user_id, campaign_id=campaign_id)
-    return registration
+    return registration, True
 
 
 async def get_campaign_statistics(

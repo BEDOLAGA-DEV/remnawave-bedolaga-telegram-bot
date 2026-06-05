@@ -8,6 +8,7 @@ Admin events (node, service, crm) send alerts to the admin notification chat.
 
 from __future__ import annotations
 
+import asyncio
 import html
 import re
 from datetime import UTC, datetime
@@ -136,9 +137,54 @@ class RemnaWaveWebhookService:
     _INTENTIONAL_PANEL_DELETION_GUARD_SECONDS: int = 300
     _MAX_INTENTIONAL_ENTRIES: int = 10_000
 
+    # Buffers bursts of node.connection_* webhooks (RemnaWave фаерит один
+    # webhook на ноду при цикле websocket'а панели — раз в 3-4 часа это даёт
+    # пик из 7-15 событий за пару секунд и трип flood control в Telegram).
+    # Class-level defaults — fallback на случай если settings ещё не загружены;
+    # __init__ перечитывает их из env REMNAWAVE_WEBHOOK_NODE_* и оверрайдит
+    # на инстансе.
+    _NODE_EVENT_COALESCE_WINDOW_SECONDS: float = 10.0
+    # Жёсткий cap буфера на event_name. Защита от mem-DoS, если кто-то с
+    # валидным REMNAWAVE_WEBHOOK_SECRET начнёт фаерить миллионы уникальных
+    # событий за окно. Дедуп по (name, address) случается только при flush'е.
+    # NB: cap PER event_name, не глобальный. С 2 event_name'ами (lost/restored)
+    # worst-case в памяти ≈ 2× значение × ~3KB payload ≈ ~3MB суммарно.
+    _NODE_EVENT_BUFFER_MAX: int = 500
+    # Cap количества строк в сводном сообщении — у Telegram лимит 4096 символов
+    # на сообщение, длинные списки нод выбивают TelegramBadRequest и теряются.
+    _NODE_EVENT_SUMMARY_MAX_LINES: int = 40
+
     def __init__(self, bot: Bot) -> None:
         self.bot = bot
         self._admin_service = AdminNotificationService(bot)
+
+        # Перечитываем coalescing-knob'ы из настроек (env-tunable, без
+        # перезапуска кода). Class-level defaults остаются как safety net.
+        self._NODE_EVENT_COALESCE_WINDOW_SECONDS = float(
+            getattr(
+                settings, 'REMNAWAVE_WEBHOOK_NODE_COALESCE_WINDOW_SECONDS', self._NODE_EVENT_COALESCE_WINDOW_SECONDS
+            )
+        )
+        self._NODE_EVENT_BUFFER_MAX = int(
+            getattr(settings, 'REMNAWAVE_WEBHOOK_NODE_BUFFER_MAX', self._NODE_EVENT_BUFFER_MAX)
+        )
+
+        # Per-instance coalescing state for node.connection_* events.
+        # `_node_event_flush_task` — текущая «спящая» в окне coalescing задача.
+        # `_node_event_pending_tasks` — strong-ref набор для GC-safety: задача
+        # остаётся в нём до полного завершения коаллбэка через add_done_callback.
+        # Asyncio docs предупреждают, что слабо-ссылочные задачи могут быть
+        # выгружены GC до завершения; на CPython 3.13 риск практически нулевой,
+        # но паттерн с set — канонический.
+        self._node_event_buffer: dict[str, list[dict]] = {}
+        self._node_event_overflow: dict[str, int] = {}
+        self._node_event_flush_task: asyncio.Task[None] | None = None
+        self._node_event_pending_tasks: set[asyncio.Task[None]] = set()
+        self._node_event_lock = asyncio.Lock()
+        # Set by stop(); blocks further enqueues so events arriving after the
+        # graceful-shutdown drain don't create orphaned 10s-sleeping flush
+        # tasks that the event loop will cancel mid-flight anyway.
+        self._stopped: bool = False
 
         # User-scoped handlers: require user resolution
         self._user_handlers: dict[str, Any] = {
@@ -352,6 +398,11 @@ class RemnaWaveWebhookService:
             logger.debug('Admin notifications disabled, skipping event', event_name=event_name)
             return True
 
+        # Coalesce bursts of node.connection_lost / node.connection_restored:
+        # ставим в буфер, через окно вылетает одно сводное сообщение.
+        if event_name in _ADMIN_NODE_CONNECTION_EVENTS:
+            return await self._enqueue_node_event(event_name, data)
+
         title = self._admin_handlers.get(event_name, event_name)
 
         # Build message from event data (escape all untrusted values to prevent HTML injection)
@@ -450,6 +501,199 @@ class RemnaWaveWebhookService:
         except Exception:
             logger.exception('Failed to send admin notification for event', event_name=event_name)
             return False
+
+    # ------------------------------------------------------------------
+    # Node connection event coalescing
+    # ------------------------------------------------------------------
+
+    async def _enqueue_node_event(self, event_name: str, data: dict) -> bool:
+        """Buffer a node connection event for coalesced delivery."""
+        async with self._node_event_lock:
+            if self._stopped:
+                # Бот завершает работу — drain уже прошёл, не плодим новые
+                # фоновые таски, которые event loop всё равно отменит.
+                logger.debug('Ignoring node event after stop()', event_name=event_name)
+                return False
+            bucket = self._node_event_buffer.setdefault(event_name, [])
+            if len(bucket) >= self._NODE_EVENT_BUFFER_MAX:
+                # Buffer overflow: считаем выкинутые события, попадёт в сводку.
+                self._node_event_overflow[event_name] = self._node_event_overflow.get(event_name, 0) + 1
+            else:
+                bucket.append(data)
+            if self._node_event_flush_task is None or self._node_event_flush_task.done():
+                task = asyncio.create_task(self._flush_node_events_after_delay())
+                self._node_event_flush_task = task
+                # Set держит strong-ref всё время жизни таски; коллбэк удалит
+                # её из набора после завершения. Защита от GC, плюс позволяет
+                # aclose() корректно дождаться всех in-flight отправок.
+                self._node_event_pending_tasks.add(task)
+                task.add_done_callback(self._node_event_pending_tasks.discard)
+        return True
+
+    async def _flush_node_events_after_delay(self) -> None:
+        """Sleep for the coalesce window, then flush every buffered event_name as one summary."""
+        try:
+            await asyncio.sleep(self._NODE_EVENT_COALESCE_WINDOW_SECONDS)
+        except asyncio.CancelledError:
+            return
+
+        async with self._node_event_lock:
+            buffer = self._node_event_buffer
+            overflow = self._node_event_overflow
+            self._node_event_buffer = {}
+            self._node_event_overflow = {}
+            self._node_event_flush_task = None
+
+        for event_name, payloads in buffer.items():
+            try:
+                await self._send_coalesced_node_notification(
+                    event_name, payloads, overflow_count=overflow.get(event_name, 0)
+                )
+            except Exception:
+                logger.exception(
+                    'Failed to send coalesced node notification',
+                    event_name=event_name,
+                    count=len(payloads),
+                )
+
+    async def _send_coalesced_node_notification(
+        self,
+        event_name: str,
+        payloads: list[dict],
+        *,
+        overflow_count: int = 0,
+    ) -> None:
+        """Build a single summary message for N node events of the same type."""
+        title = self._admin_handlers.get(event_name, event_name)
+        max_lines = self._NODE_EVENT_SUMMARY_MAX_LINES
+
+        # Dedupe by (name, address) — RemnaWave иногда ретраит один и тот же
+        # webhook, плюс это даёт компактный список даже если ноды действительно
+        # упали все разом.
+        seen: set[tuple[str, str]] = set()
+        node_lines: list[str] = []
+        for data in payloads:
+            name = (data.get('name') or data.get('nodeName') or '').strip()
+            address = (data.get('address') or data.get('ip') or '').strip()
+            key = (name, address)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            if len(node_lines) >= max_lines:
+                # Считаем уникальных дальше, но в текст не добавляем —
+                # лимит 4096 символов у Telegram, длинные списки уйдут в /dev/null.
+                continue
+
+            descr = f'<code>{html.escape(name)}</code>' if name else '<i>без имени</i>'
+            if address:
+                descr += f' (<code>{html.escape(address)}</code>)'
+            node_lines.append(f'• {descr}')
+
+        if not node_lines and not overflow_count:
+            return
+
+        unique_count = len(seen)
+        truncated = unique_count - len(node_lines)
+        if truncated > 0:
+            node_lines.append(f'• <i>… ещё {truncated} нод(ы) (truncated)</i>')
+        if overflow_count > 0:
+            node_lines.append(f'• <i>… ещё {overflow_count} событий отброшено (buffer overflow)</i>')
+
+        total = unique_count + overflow_count
+        header = f'<b>{title}</b>' if total <= 1 else f'<b>{title} × {total}</b>'
+        text = header + '\n' + '\n'.join(node_lines)
+
+        # send_webhook_notification возвращает bool и сама ловит исключения —
+        # отдельный try/except здесь только дублирует логи; внешний
+        # _flush_node_events_after_delay уже ловит любые сюрпризы.
+        await self._admin_service.send_webhook_notification(text)
+
+    # Жёсткий cap на общую длительность stop() — выше container'овского
+    # terminationGracePeriodSeconds выходить нельзя, иначе SIGKILL.
+    _STOP_DRAIN_TIMEOUT_SECONDS: float = 15.0
+    _STOP_CANCEL_TIMEOUT_SECONDS: float = 2.0
+
+    async def stop(self) -> None:
+        """Drain buffered node events before shutdown.
+
+        Cancels the in-flight «sleep + flush» task (если она ещё в окне
+        coalescing'а), потом вручную свопает буфер и шлёт по одному сводному
+        сообщению на event_name. Без этого SIGTERM/lifespan shutdown терял
+        бы до 10 секунд накопленных webhook'ов в памяти.
+
+        Trade-off: если флаш-таска была уже за пределами sleep'а и в момент
+        отмены крутилась внутри `bot.send_message`, её локальный `buffer`
+        теряется вместе с CancelledError, и часть событий из ТОЙ партии
+        может не дойти до Telegram. События, накопившиеся после её свопа,
+        дренируются здесь явно.
+
+        Дрейн ограничен таймаутом, чтобы медленный Telegram не выбил процесс
+        за terminationGracePeriodSeconds.
+
+        После выхода из stop() новые enqueue'ы дропаются (см. `_stopped`),
+        чтобы не плодить orphaned flush-таски, которые event loop отменит.
+        """
+        # Помечаем сервис остановленным под локом, чтобы любой in-flight
+        # enqueue либо успел до нас (и попадёт в drain), либо увидит флаг.
+        async with self._node_event_lock:
+            self._stopped = True
+
+        task = self._node_event_flush_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=self._STOP_CANCEL_TIMEOUT_SECONDS)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception:
+                # Реальная ошибка в задаче — логируем как warning, чтобы
+                # IGNORED_LOGGER_PREFIXES (см. logging_handler.py) не свалил
+                # это обратно в админ-чат через TelegramNotifierProcessor.
+                logger.warning(
+                    'Flush task raised during stop()',
+                    exc_info=True,
+                )
+
+        async with self._node_event_lock:
+            buffer = self._node_event_buffer
+            overflow = self._node_event_overflow
+            self._node_event_buffer = {}
+            self._node_event_overflow = {}
+            self._node_event_flush_task = None
+
+        if not buffer:
+            return
+
+        try:
+            await asyncio.wait_for(
+                self._drain_buffered_events(buffer, overflow),
+                timeout=self._STOP_DRAIN_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                'Node-event drain timed out on stop()',
+                event_types=list(buffer.keys()),
+                total_events=sum(len(payloads) for payloads in buffer.values()),
+            )
+
+    async def _drain_buffered_events(
+        self,
+        buffer: dict[str, list[dict]],
+        overflow: dict[str, int],
+    ) -> None:
+        """Best-effort send of all buffered events; called by stop() under a timeout."""
+        for event_name, payloads in buffer.items():
+            try:
+                await self._send_coalesced_node_notification(
+                    event_name, payloads, overflow_count=overflow.get(event_name, 0)
+                )
+            except Exception:
+                logger.exception(
+                    'Failed to flush node events during shutdown',
+                    event_name=event_name,
+                    count=len(payloads),
+                )
 
     # ------------------------------------------------------------------
     # User resolution

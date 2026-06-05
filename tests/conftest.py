@@ -20,6 +20,16 @@ os.environ.setdefault('DATABASE_MODE', 'postgresql')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://user:pass@localhost/test_db')
 os.environ.setdefault('BOT_TOKEN', 'test-token')
 
+# Module-level singleton `backup_service = BackupService()` в backup_service.py
+# при импорте делает `Path(settings.BACKUP_LOCATION).mkdir(parents=True)`.
+# Дефолт `/app/data/backups` — это путь docker-контейнера, недоступный на dev.
+# Подменяем на temp-директорию ещё до первого импорта приложения, чтобы тест-
+# коллекция не падала с `OSError: Read-only file system: '/app'`.
+import tempfile as _tempfile
+
+
+os.environ.setdefault('BACKUP_LOCATION', _tempfile.mkdtemp(prefix='bedolaga_test_backups_'))
+
 # Создаём заглушки для драйверов, которых может не быть в окружении тестов.
 sys.modules.setdefault('asyncpg', types.ModuleType('asyncpg'))
 sys.modules.setdefault('aiosqlite', types.ModuleType('aiosqlite'))
@@ -29,6 +39,12 @@ if 'redis.asyncio' not in sys.modules:
     redis_module = types.ModuleType('redis')
     redis_async_module = types.ModuleType('redis.asyncio')
     redis_exceptions_module = types.ModuleType('redis.exceptions')
+
+    class _FakeRedisError(Exception):
+        """Base Redis exception for tests."""
+
+    class _FakeNoScriptError(_FakeRedisError):
+        """Redis script cache miss exception for tests."""
 
     class _FakeRedisClient:
         async def ping(self):
@@ -69,6 +85,12 @@ if 'redis.asyncio' not in sys.modules:
     redis_async_module.Redis = _FakeRedisClient
     redis_exceptions_module.NoScriptError = _NoScriptError
     redis_module.exceptions = redis_exceptions_module
+    redis_module.__path__ = []
+    redis_module.asyncio = redis_async_module
+    redis_async_module.from_url = _from_url
+    redis_async_module.Redis = _FakeRedisClient
+    redis_exceptions_module.RedisError = _FakeRedisError
+    redis_exceptions_module.NoScriptError = _FakeNoScriptError
     sys.modules['redis'] = redis_module
     sys.modules['redis.asyncio'] = redis_async_module
     sys.modules['redis.exceptions'] = redis_exceptions_module
@@ -175,6 +197,13 @@ if 'yookassa' not in sys.modules:
 def fixed_datetime() -> datetime:
     """Возвращает фиксированную отметку времени для воспроизводимых проверок."""
     return datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+
+# Auto-load fixture modules so tests don't need explicit imports.
+# Promocode/promo-group tests in tests/services/test_promocode_service.py,
+# tests/crud/test_promocode_crud.py, and tests/integration/test_promocode_promo_group_flow.py
+# all rely on these without importing them directly.
+pytest_plugins = ['tests.fixtures.promocode_fixtures']
 
 
 def pytest_configure(config: pytest.Config) -> None:

@@ -125,7 +125,9 @@ class LavaPaymentMixin:
             data = (api_result.get('data') or api_result) if isinstance(api_result, dict) else {}
             lava_invoice_id = data.get('id') or data.get('invoice_id')
             payment_url = data.get('url') or data.get('payment_url')
-            expired_str = data.get('expired')
+            # В ответе Lava Business поле называется ``expire`` (без d); старое ``expired`` остаётся
+            # как fallback для совместимости со снапшотами от старого gate.lava.ru.
+            expired_str = data.get('expire') or data.get('expired')
 
             if not payment_url:
                 # Без URL у пользователя нет способа оплатить — это аномалия Lava API.

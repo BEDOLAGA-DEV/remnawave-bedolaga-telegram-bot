@@ -2,6 +2,8 @@ import pytest
 
 from app.utils import subscription_utils
 from app.utils.subscription_utils import (
+    coerce_panel_device_limit,
+    device_limit_needs_heal,
     resolve_hwid_device_limit,
     resolve_hwid_device_limit_for_payload,
     resolve_simple_subscription_device_limit,
@@ -165,3 +167,54 @@ def test_resolve_simple_subscription_device_limit(
     )
 
     assert resolve_simple_subscription_device_limit() == expected
+
+
+@pytest.mark.parametrize(
+    'panel_value, expected',
+    [
+        (0, 0),
+        (1, 1),
+        (5, 5),
+        (None, 1),
+        ('', 1),
+        ('5', 1),
+        (True, 1),
+        (False, 1),
+        (-1, 1),
+        (1.5, 1),
+    ],
+)
+def test_coerce_panel_device_limit_preserves_zero_and_rejects_invalid(panel_value, expected):
+    assert coerce_panel_device_limit(panel_value) == expected
+
+
+@pytest.mark.parametrize(
+    'panel_value, default, expected',
+    [
+        (None, 0, 0),
+        (None, 7, 7),
+        (0, 7, 0),
+        ('bad', 9, 9),
+    ],
+)
+def test_coerce_panel_device_limit_honors_default(panel_value, default, expected):
+    assert coerce_panel_device_limit(panel_value, default=default) == expected
+
+
+@pytest.mark.parametrize(
+    'stored_value, needs_heal',
+    [
+        # Legitimate state — DO NOT heal. Without this guard, every sync pass
+        # would revert unlimited-device subscriptions back to 1 device.
+        (0, False),
+        (1, False),
+        (5, False),
+        (100, False),
+        # Structurally invalid — heal back to default.
+        (None, True),
+        (-1, True),
+        (-100, True),
+    ],
+)
+def test_device_limit_needs_heal_preserves_zero(stored_value, needs_heal):
+    assert device_limit_needs_heal(stored_value) is needs_heal

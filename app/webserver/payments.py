@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import json
-from collections.abc import Iterable
 
 import structlog
 from aiogram import Bot
@@ -36,94 +34,56 @@ def _create_cors_response() -> Response:
     )
 
 
-def _extract_header(request: Request, header_names: Iterable[str]) -> str | None:
-    for header_name in header_names:
-        value = request.headers.get(header_name)
-        if value:
-            return value.strip()
-    return None
-
-
 def _verify_mulenpay_signature(request: Request, raw_body: bytes) -> bool:
+    """Verify the MulenPay webhook signature.
+
+    MulenPay places the signature in the JSON body as the ``sign`` field
+    (not in any HTTP header), per the official OpenAPI spec at
+    https://mulenpay.ru/docs/api and the ``mulenpay-api`` Python SDK
+    (``mulenpay_api/utils/calculus.py``). The algorithm is::
+
+        data_str = ''.join(str(v) for v in data.values())  # excluding 'sign'
+        expected = sha1((data_str + secret_key).encode()).hexdigest()
+
+    Until 2.5.7 the legacy aiohttp webhook server bypassed verification
+    altogether (commented-out 401, ``TODO: Включить обратно``). The
+    FastAPI unified server enforces it strictly, so any pre-existing
+    header-based code paths would 401 every real MulenPay callback —
+    which is exactly the incident this function fixes.
+
+    ``request`` is accepted (and unused) to keep the call-site stable.
+    """
     secret_key = settings.MULENPAY_SECRET_KEY
     display_name = settings.get_mulenpay_display_name()
 
     if not secret_key:
-        logger.warning('secret key is not configured', display_name=display_name)
+        logger.warning('MulenPay webhook: secret key is not configured', display_name=display_name)
         return False
 
-    signature = _extract_header(
-        request,
-        (
-            'X-MulenPay-Signature',
-            'X-Mulenpay-Signature',
-            'X-MULENPAY-SIGNATURE',
-            'X-MulenPay-Webhook-Signature',
-            'X-Mulenpay-Webhook-Signature',
-            'X-MULENPAY-WEBHOOK-SIGNATURE',
-            'X-Signature',
-            'Signature',
-            'X-MulenPay-Sign',
-            'X-Mulenpay-Sign',
-            'X-MULENPAY-SIGN',
-            'MulenPay-Signature',
-            'Mulenpay-Signature',
-            'MULENPAY-SIGNATURE',
-            'signature',
-            'sign',
-        ),
-    )
-
-    if signature:
-        normalized_signature = signature
-        if normalized_signature.lower().startswith('sha256='):
-            normalized_signature = normalized_signature.split('=', 1)[1].strip()
-
-        hmac_digest = hmac.new(secret_key.encode('utf-8'), raw_body, hashlib.sha256).digest()
-        expected_hex = hmac_digest.hex()
-        expected_base64 = base64.b64encode(hmac_digest).decode('utf-8').strip()
-        expected_urlsafe = base64.urlsafe_b64encode(hmac_digest).decode('utf-8').strip()
-
-        normalized_lower = normalized_signature.lower()
-        if hmac.compare_digest(normalized_lower, expected_hex.lower()):
-            return True
-
-        normalized_no_padding = normalized_signature.rstrip('=')
-        if hmac.compare_digest(normalized_no_padding, expected_base64.rstrip('=')):
-            return True
-        if hmac.compare_digest(normalized_no_padding, expected_urlsafe.rstrip('=')):
-            return True
-
-        logger.warning('Неверная подпись webhook', display_name=display_name)
+    try:
+        payload = json.loads(raw_body.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        logger.warning('MulenPay webhook: cannot parse JSON body for signature check', display_name=display_name)
         return False
 
-    authorization_header = request.headers.get('Authorization')
-    if authorization_header:
-        scheme, _, value = authorization_header.partition(' ')
-        scheme_lower = scheme.lower()
-        token = value.strip() if value else scheme.strip()
+    if not isinstance(payload, dict) or not payload:
+        logger.warning('MulenPay webhook: payload is not a non-empty JSON object', display_name=display_name)
+        return False
 
-        if scheme_lower in {'bearer', 'token'}:
-            if hmac.compare_digest(token, secret_key):
-                return True
-            logger.warning('Неверный токен webhook', scheme=scheme, display_name=display_name)
-            return False
+    received_sign = payload.get('sign')
+    if not isinstance(received_sign, str) or not received_sign:
+        logger.warning('MulenPay webhook: missing sign field in body', display_name=display_name)
+        return False
 
-        if not value and hmac.compare_digest(token, secret_key):
-            return True
+    # Iterate insertion order (json.loads preserves wire order since Python 3.7),
+    # excluding the 'sign' field itself. Matches official SDK exactly.
+    data_str = ''.join(str(value) for key, value in payload.items() if key != 'sign')
+    expected = hashlib.sha1((data_str + secret_key).encode('utf-8')).hexdigest()
 
-    fallback_token = _extract_header(
-        request,
-        (
-            'X-MulenPay-Token',
-            'X-Mulenpay-Token',
-            'X-Webhook-Token',
-        ),
-    )
-    if fallback_token and hmac.compare_digest(fallback_token, secret_key):
+    if hmac.compare_digest(received_sign.lower(), expected.lower()):
         return True
 
-    logger.warning('Отсутствует подпись webhook', display_name=display_name)
+    logger.warning('MulenPay webhook: invalid signature', display_name=display_name)
     return False
 
 
@@ -176,6 +136,12 @@ async def _parse_pal24_payload(request: Request) -> dict[str, str]:
 def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRouter | None:
     router = APIRouter()
     routes_registered = False
+
+    if settings.is_apple_iap_enabled():
+        from app.webserver.apple_iap import create_apple_iap_router
+
+        router.include_router(create_apple_iap_router(bot))
+        routes_registered = True
 
     if settings.TRIBUTE_ENABLED:
         tribute_service = TributeService(bot)
@@ -973,10 +939,9 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         @router.post(settings.FREEKASSA_WEBHOOK_PATH)
         async def freekassa_webhook(request: Request) -> Response:
-            # Use transport-layer IP as primary source; only trust proxy headers
-            # when the direct connection comes from a known proxy.
-            # This prevents X-Forwarded-For spoofing by external attackers.
-            client_ip = request.client.host if request.client else '127.0.0.1'
+            client_ip = request.headers.get('X-Forwarded-For', '').split(',')[0].strip() or (
+                request.client.host if request.client else '127.0.0.1'
+            )
 
             # Получаем данные формы
             try:
@@ -1751,6 +1716,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
             return JSONResponse(
                 {
                     'status': 'ok',
+                    'apple_iap_enabled': settings.is_apple_iap_enabled(),
                     'tribute_enabled': settings.TRIBUTE_ENABLED,
                     'mulenpay_enabled': settings.is_mulenpay_enabled(),
                     'cryptobot_enabled': settings.is_cryptobot_enabled(),

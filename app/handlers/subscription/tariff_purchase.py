@@ -1360,11 +1360,26 @@ async def select_tariff_period(
             parse_mode='HTML',
         )
 
+    # Resolve target subscription_id at preview time and pin it in FSM.
+    # Without this, ``confirm_tariff_purchase`` re-queries by
+    # ``(user_id, tariff_id)`` and can race with concurrent panel
+    # webhooks that briefly flip the active sub's status — falling
+    # through to ``create_paid_subscription`` and hitting the partial
+    # UNIQUE ``uq_subscriptions_user_tariff_active`` (logs "Тариф уже
+    # активен", refunds, leaves user confused).
+    target_subscription_id: int | None = None
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+        _existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
+        target_subscription_id = _existing_sub.id if _existing_sub else None
+
     await state.update_data(
         selected_tariff_id=tariff_id,
         selected_period=period,
         final_price=final_price,
         tariff_discount_percent=discount_percent,
+        target_subscription_id=target_subscription_id,
     )
     await callback.answer()
 
@@ -1399,11 +1414,42 @@ async def confirm_tariff_purchase(
     # Calculate price via PricingEngine (single source of truth)
     from app.services.pricing_engine import pricing_engine
 
-    # In multi-tariff mode, look for existing subscription for this specific tariff
+    # In multi-tariff mode, prefer the subscription_id pinned in FSM at
+    # preview time — that's the EXACT row the user clicked Renew/Buy on.
+    # Re-querying by ``(user_id, tariff_id)`` here is race-vulnerable:
+    # if a concurrent panel webhook briefly flips the active sub's
+    # status between preview and confirm, this query returns None,
+    # the code falls through to ``create_paid_subscription``, and the
+    # partial UNIQUE ``uq_subscriptions_user_tariff_active`` raises
+    # IntegrityError → user sees "Тариф уже активен" in logs, money
+    # debited then refunded, subscription not extended.
+    #
+    # We fall back to the tariff-level lookup only if FSM has no
+    # pinned ID (old session / direct deep-link / state lost) so
+    # legacy flows continue to work.
     if settings.is_multi_tariff_enabled():
         from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-        existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
+        _state_data = await state.get_data() if state else {}
+        _pinned_sub_id = _state_data.get('target_subscription_id')
+
+        existing_sub = None
+        if _pinned_sub_id:
+            existing_sub = await get_subscription_by_id_for_user(db, int(_pinned_sub_id), db_user.id)
+            # Defence: if admin/user switched tariff between preview
+            # and confirm, the pinned sub may no longer match —
+            # ignore it and fall back to fresh tariff lookup.
+            if existing_sub and existing_sub.tariff_id != tariff_id:
+                logger.warning(
+                    'FSM-pinned subscription tariff diverged from confirm tariff; falling back',
+                    pinned_sub_id=_pinned_sub_id,
+                    pinned_tariff_id=existing_sub.tariff_id,
+                    confirm_tariff_id=tariff_id,
+                    user_id=db_user.id,
+                )
+                existing_sub = None
+        if existing_sub is None:
+            existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
     else:
         existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
@@ -4377,6 +4423,22 @@ async def return_to_saved_tariff_cart(
 
     # Баланс достаточен - показываем подтверждение
     discount_percent = cart_data.get('discount_percent', 0)
+
+    # Pin FSM keys read by confirm_tariff_purchase before showing the
+    # confirm keyboard. Without this, the cart-restore-after-topup path
+    # bypasses select_tariff_period (the normal preview) and confirm
+    # falls back to the race-vulnerable (user_id, tariff_id) lookup —
+    # which is exactly the scenario that produced the user-reported
+    # "Тариф уже активен" bug in the cart-restore flow.
+    if cart_mode in ('tariff_purchase', 'extend'):
+        _period_for_pin = cart_data.get('period_days', 30)
+        await state.update_data(
+            selected_tariff_id=tariff_id,
+            selected_period=_period_for_pin,
+            final_price=total_price,
+            tariff_discount_percent=discount_percent,
+            target_subscription_id=cart_data.get('subscription_id'),
+        )
 
     if cart_mode == 'daily_tariff_purchase':
         daily_price = cart_data.get('daily_price_kopeks', total_price)

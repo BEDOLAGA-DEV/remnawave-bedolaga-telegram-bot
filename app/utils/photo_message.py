@@ -153,6 +153,16 @@ async def edit_or_answer_photo(
 
     media = _resolve_media(callback.message)
 
+    # Logo file unavailable (missing / directory bind-mount) — fall back to text.
+    # See #586617: this used to surface as IsADirectoryError on every callback.
+    if media is None:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await _answer_text(callback, caption, keyboard, resolved_parse_mode)
+        return
+
     # Retry logic для сетевых ошибок
     for attempt in range(MAX_RETRIES):
         try:
@@ -179,6 +189,19 @@ async def edit_or_answer_photo(
                 pass
             await _answer_text(callback, caption, keyboard, resolved_parse_mode)
             return
+        except OSError as os_error:
+            # Logo file became unreadable mid-flight (deleted/replaced by directory).
+            # No point retrying — fall back to text. See #586617.
+            logger.error(
+                'Не удалось прочитать логотип для edit_media — фоллбек на текст',
+                os_error=str(os_error),
+            )
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await _answer_text(callback, caption, keyboard, resolved_parse_mode)
+            return
         except TelegramForbiddenError:
             # Пользователь заблокировал бота — молча игнорируем
             logger.debug('Пользователь заблокировал бота, пропускаем edit_media')
@@ -196,10 +219,14 @@ async def edit_or_answer_photo(
                 await callback.message.delete()
             except Exception:
                 pass
+            logo_media = get_logo_media()
+            if logo_media is None:
+                await _answer_text(callback, caption, keyboard, resolved_parse_mode)
+                return
             try:
                 # Отправим как фото с логотипом
                 result = await callback.message.answer_photo(
-                    photo=get_logo_media(),
+                    photo=logo_media,
                     caption=caption,
                     reply_markup=keyboard,
                     parse_mode=resolved_parse_mode,

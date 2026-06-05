@@ -25,6 +25,7 @@ from app.database.crud.subscription import (
     create_trial_subscription,
     decrement_subscription_server_counts,
     extend_subscription,
+    get_subscription_by_id_for_user,
     get_subscription_by_user_id,
     resolve_wl_traffic_for_tariff,
 )
@@ -51,6 +52,7 @@ from ...schemas.subscription import (
     PurchasePreviewRequest,
     SubscriptionResponse,
     TariffPurchaseRequest,
+    TrialActivateRequest,
     TrialInfoResponse,
 )
 from .helpers import _subscription_to_response
@@ -518,6 +520,20 @@ async def submit_purchase(
         # Refresh expired objects after db.commit() in _record_subscription_event
         await db.refresh(subscription)
 
+        # Persist Yandex CID (if frontend cached it) and fire offline-conv
+        # purchase event — closes the race where the separate /yandex-cid POST
+        # hadn't completed yet. See #558449.
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            await yandex_conv.store_cid_and_fire_purchase(
+                user.id,
+                request.yandex_cid,
+                pricing.final_total,
+            )
+        except Exception as yconv_err:
+            logger.debug('yandex_conv purchase hook failed (non-fatal)', user_id=user.id, error=str(yconv_err))
+
         return {
             'success': True,
             'message': result['message'],
@@ -649,11 +665,39 @@ async def purchase_tariff(
             custom_traffic_gb = request.traffic_gb
             traffic_limit_gb = request.traffic_gb
 
-        # Determine device_limit for renewal pricing
+        # Determine device_limit for renewal pricing.
+        #
+        # When the frontend passes an explicit ``subscription_id`` (the
+        # user clicked "Renew this subscription" rather than a fresh
+        # catalog buy), use it via the ownership-checked lookup. This
+        # is race-resistant: even if a concurrent panel webhook briefly
+        # flips the target sub's status between request arrival and
+        # this query, the ID-based lookup still finds the right row.
+        # Without this pin, the bot was hitting the partial UNIQUE
+        # ``uq_subscriptions_user_tariff_active`` on confirm and
+        # logging "Тариф уже активен" — the exact production scenario
+        # the bot-side fix already closed (commit 5cd53e4c).
+        existing_subscription = None
         if settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+            if request.subscription_id is not None:
+                existing_subscription = await get_subscription_by_id_for_user(db, request.subscription_id, user.id)
+                # If the pinned sub points to a different tariff than
+                # the request carries (admin swap, stale client state),
+                # ignore it and fall back to tariff-level lookup so the
+                # purchase doesn't extend a sub of the wrong tariff.
+                if existing_subscription and existing_subscription.tariff_id != tariff.id:
+                    logger.warning(
+                        'Cabinet purchase: explicit subscription_id has divergent tariff_id; falling back',
+                        request_subscription_id=request.subscription_id,
+                        pinned_tariff_id=existing_subscription.tariff_id,
+                        request_tariff_id=tariff.id,
+                        user_id=user.id,
+                    )
+                    existing_subscription = None
+            if existing_subscription is None:
+                from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-            existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
+                existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
         device_limit = None
@@ -744,7 +788,7 @@ async def purchase_tariff(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     'code': 'insufficient_funds',
-                    'message': f'Недостаточно средств. Не хватает {settings.format_price(missing)}',
+                    'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
                     'missing_amount': missing,
                     'cart_saved': True,
                     'cart_mode': cart_data['cart_mode'],
@@ -949,6 +993,18 @@ async def purchase_tariff(
 
         await db.refresh(user)
         await db.refresh(subscription)
+
+        # Yandex.Metrika offline conversion — see /purchase endpoint for context (#558449).
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            await yandex_conv.store_cid_and_fire_purchase(
+                user.id,
+                request.yandex_cid,
+                price_kopeks,
+            )
+        except Exception as yconv_err:
+            logger.debug('yandex_conv purchase hook failed (non-fatal)', user_id=user.id, error=str(yconv_err))
 
         response: dict[str, Any] = {
             'success': True,
@@ -1214,6 +1270,7 @@ async def get_trial_info(
 
 @router.post('/trial', response_model=SubscriptionResponse)
 async def activate_trial(
+    request: TrialActivateRequest | None = None,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -1378,19 +1435,31 @@ async def activate_trial(
     logger.info('Trial subscription activated for user', user_id=user.id)
 
     # Create RemnaWave user
+    subscription_service = SubscriptionService()
+    panel_user = None
     try:
-        subscription_service = SubscriptionService()
         if subscription_service.is_configured:
-            await subscription_service.create_remnawave_user(db, subscription)
+            panel_user = await subscription_service.create_remnawave_user(db, subscription)
             await db.refresh(subscription)
     except Exception as e:
         logger.error('Failed to create RemnaWave user for trial', error=e)
+
+    # create_remnawave_user проглатывает RemnaWaveAPIError внутри себя и
+    # возвращает None (не пробрасывает) — поэтому одного except недостаточно.
+    # Без явной проверки результата кабинет показывал бы триал «активен» без
+    # subscription_url, а юзер так и не появлялся бы в панели Remnawave.
+    if subscription_service.is_configured and panel_user is None:
         from app.services.remnawave_retry_queue import remnawave_retry_queue
 
         remnawave_retry_queue.enqueue(
             subscription_id=subscription.id,
             user_id=user.id,
             action='create',
+        )
+        logger.warning(
+            'Trial RemnaWave user not provisioned, enqueued for retry',
+            user_id=user.id,
+            subscription_id=subscription.id,
         )
 
     try:
@@ -1429,5 +1498,26 @@ async def activate_trial(
                 await bot.session.close()
     except Exception as e:
         logger.error('Failed to send trial activation notification', error=e)
+
+    # Yandex.Metrika offline conversion — sibling to #558449. Fire two events
+    # when applicable: the regular 'trial-add' for every trial activation,
+    # plus 'purchase' if TRIAL_PAYMENT_ENABLED and money was actually charged.
+    cabinet_cid = request.yandex_cid if request is not None else None
+    try:
+        from app.services import yandex_offline_conv_service as yandex_conv
+
+        await yandex_conv.store_cid_and_fire_trial(user.id, cabinet_cid)
+        if requires_payment and settings.TRIAL_ACTIVATION_PRICE > 0:
+            await yandex_conv.store_cid_and_fire_purchase(
+                user.id,
+                cabinet_cid,
+                settings.TRIAL_ACTIVATION_PRICE,
+            )
+    except Exception as yconv_err:
+        logger.debug(
+            'yandex_conv trial/purchase hook failed (non-fatal)',
+            user_id=user.id,
+            error=str(yconv_err),
+        )
 
     return _subscription_to_response(subscription, user=user)

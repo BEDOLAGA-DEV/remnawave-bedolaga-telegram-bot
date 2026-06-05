@@ -328,13 +328,17 @@ class SubscriptionService:
                     remnawave_uuid=subscription.remnawave_uuid,
                 )
 
-        # New subscription — create a NEW Remnawave user
-        base_username = settings.format_remnawave_username(
+        # New subscription — create a NEW Remnawave user.
+        # short_id (6 hex chars) приклеивается к base; helper гарантирует, что
+        # итоговая длина ≤ REMNAWAVE_USERNAME_MAX_LENGTH (исторический баг с
+        # `didykmarin_email_didykmarin_703_49883b` — 38 chars вместо 36).
+        username = settings.build_remnawave_subscription_username(
             full_name=user.full_name,
             username=user.username,
             telegram_id=user.telegram_id,
             email=user.email,
             user_id=user.id,
+            suffix=f'_{subscription.remnawave_short_id}',
         )
 
         # Legacy fallback: pre-multi-tariff bot created a single Remnawave

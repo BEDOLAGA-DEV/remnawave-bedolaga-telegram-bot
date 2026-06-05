@@ -259,6 +259,29 @@ async def update_countries(
 
     await db.refresh(subscription)
 
+    # Yandex.Metrika offline conversion — only when charges happened (adding
+    # paid countries). Sibling to #558449 — this endpoint uses a free-form
+    # dict body so we read `yandex_cid` defensively (validation matches
+    # the regex used by the typed schemas).
+    if total_cost > 0:
+        raw_cid = request.get('yandex_cid')
+        cid: str | None = None
+        if isinstance(raw_cid, str):
+            import re
+
+            if re.fullmatch(r'[A-Za-z0-9._:-]{4,128}', raw_cid):
+                cid = raw_cid
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            await yandex_conv.store_cid_and_fire_purchase(user.id, cid, total_cost)
+        except Exception as yconv_err:
+            logger.debug(
+                'yandex_conv purchase hook failed (non-fatal)',
+                user_id=user.id,
+                error=str(yconv_err),
+            )
+
     return {
         'message': 'Countries updated successfully',
         'added': added_names,

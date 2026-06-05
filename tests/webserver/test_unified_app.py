@@ -37,6 +37,7 @@ async def test_unified_app_health_reports_features(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(settings, 'WEBHOOK_ENQUEUE_TIMEOUT', 0.0, raising=False)
     monkeypatch.setattr(settings, 'WEBHOOK_WORKER_SHUTDOWN_TIMEOUT', 1.0, raising=False)
     monkeypatch.setattr(settings, 'MINIAPP_STATIC_PATH', str(miniapp_static_dir), raising=False)
+    monkeypatch.setattr(settings, 'BACKUP_LOCATION', str(tmp_path / 'backups'), raising=False)
 
     app = create_unified_app(
         bot,
@@ -53,11 +54,11 @@ async def test_unified_app_health_reports_features(monkeypatch: pytest.MonkeyPat
 
     assert getattr(health_route, 'path', None) == '/health/unified'
 
-    await app.router.startup()
-    try:
+    # FastAPI lifespan заменил deprecated @app.on_event — startup/shutdown
+    # хуки регистрируются через async-контекст. router.startup()/shutdown()
+    # legacy on_event'ов больше не существуют.
+    async with app.router.lifespan_context(app):
         response = await health_route.endpoint()  # type: ignore[func-returns-value]
-    finally:
-        await app.router.shutdown()
 
     payload = json.loads(response.body.decode('utf-8'))  # type: ignore[attr-defined]
 
@@ -89,6 +90,49 @@ def _build_unified_app(monkeypatch: pytest.MonkeyPatch, docs_enabled: bool) -> F
         payment_service,
         enable_telegram_webhook=False,
     )
+
+
+def test_unified_app_apple_iap_only_mounts_only_apple_cabinet_routes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bot = AsyncMock()
+    dispatcher = SimpleNamespace(feed_update=AsyncMock())
+    payment_service = AsyncMock(spec=PaymentService)
+    cert_path = tmp_path / 'apple-root.cer'
+    cert_path.write_bytes(b'dummy-cert')
+
+    monkeypatch.setattr(settings, 'WEB_API_ENABLED', False, raising=False)
+    monkeypatch.setattr(settings, 'CABINET_ENABLED', False, raising=False)
+    monkeypatch.setattr(settings, 'MINIAPP_STATIC_PATH', str(tmp_path / 'missing-miniapp'), raising=False)
+    monkeypatch.setattr(settings, 'MEDIA_UPLOAD_DIR', str(tmp_path / 'uploads'), raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENABLED', True, raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_KEY_ID', 'TEST_KEY_ID', raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ISSUER_ID', 'test-issuer-id', raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_BUNDLE_ID', 'com.org.app', raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_APP_APPLE_ID', 123456789, raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Sandbox', raising=False)
+    monkeypatch.setattr(
+        settings, 'APPLE_IAP_PRIVATE_KEY', '-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----', raising=False
+    )
+    monkeypatch.setattr(settings, 'APPLE_IAP_PRIVATE_KEY_PATH', None, raising=False)
+    monkeypatch.setattr(settings, 'APPLE_IAP_ROOT_CERTS_PATHS', str(cert_path), raising=False)
+
+    app = create_unified_app(
+        bot,
+        dispatcher,  # type: ignore[arg-type]
+        payment_service,
+        enable_telegram_webhook=False,
+    )
+
+    registered_paths = {getattr(route, 'path', None) for route in app.routes}
+
+    assert '/cabinet/apple-iap/account-token' in registered_paths
+    assert '/cabinet/apple-purchase' in registered_paths
+    assert '/cabinet/admin/apple-iap/transactions' in registered_paths
+    assert '/cabinet/subscription' not in registered_paths
+    assert '/cabinet/balance' not in registered_paths
+    assert '/cabinet/admin/users' not in registered_paths
 
 
 @pytest.mark.anyio

@@ -49,6 +49,8 @@ class PartnerSettingsResponse(BaseModel):
     withdrawal_requisites_text: str
     partner_section_visible: bool
     referral_program_enabled: bool
+    first_payment_commission_percent: int | None = None
+    recurring_commission_tiers: str = ''
 
 
 class PartnerSettingsUpdateRequest(BaseModel):
@@ -58,6 +60,8 @@ class PartnerSettingsUpdateRequest(BaseModel):
     withdrawal_requisites_text: str | None = Field(None, max_length=2000)
     partner_section_visible: bool | None = None
     referral_program_enabled: bool | None = None
+    first_payment_commission_percent: int | None = Field(None, ge=0, le=100)
+    recurring_commission_tiers: str | None = Field(None, max_length=500)
 
 
 def _build_partner_settings_response() -> PartnerSettingsResponse:
@@ -68,6 +72,8 @@ def _build_partner_settings_response() -> PartnerSettingsResponse:
         withdrawal_requisites_text=settings.REFERRAL_WITHDRAWAL_REQUISITES_TEXT,
         partner_section_visible=settings.REFERRAL_PARTNER_SECTION_VISIBLE,
         referral_program_enabled=settings.REFERRAL_PROGRAM_ENABLED,
+        first_payment_commission_percent=settings.REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT,
+        recurring_commission_tiers=settings.REFERRAL_RECURRING_COMMISSION_TIERS,
     )
 
 
@@ -101,6 +107,10 @@ async def update_partner_settings(
         settings.REFERRAL_PARTNER_SECTION_VISIBLE = request.partner_section_visible
     if request.referral_program_enabled is not None:
         settings.REFERRAL_PROGRAM_ENABLED = request.referral_program_enabled
+    if request.first_payment_commission_percent is not None:
+        settings.REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT = request.first_payment_commission_percent
+    if request.recurring_commission_tiers is not None:
+        settings.REFERRAL_RECURRING_COMMISSION_TIERS = request.recurring_commission_tiers
 
     # Persist to .env file
     try:
@@ -125,6 +135,13 @@ async def update_partner_settings(
                 updates['REFERRAL_PARTNER_SECTION_VISIBLE'] = str(request.partner_section_visible).lower()
             if request.referral_program_enabled is not None:
                 updates['REFERRAL_PROGRAM_ENABLED'] = str(request.referral_program_enabled).lower()
+            if request.first_payment_commission_percent is not None:
+                updates['REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT'] = str(request.first_payment_commission_percent)
+            if request.recurring_commission_tiers is not None:
+                sanitized_tiers = (
+                    request.recurring_commission_tiers.replace('\r\n', '').replace('\n', '').replace('\r', '')
+                )
+                updates['REFERRAL_RECURRING_COMMISSION_TIERS'] = sanitized_tiers
 
             new_lines = []
             updated_keys: set[str] = set()

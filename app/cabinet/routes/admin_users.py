@@ -9,6 +9,7 @@ from sqlalchemy import Integer, and_, delete as sa_delete, func, literal, or_, s
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.cabinet.utils.device_ownership import verify_hwid_belongs_to_user
 from app.config import settings
 from app.database.crud.campaign import get_campaign_registration_by_user
 from app.database.crud.subscription import (
@@ -27,6 +28,12 @@ from app.database.crud.user import (
     get_users_statistics,
     subtract_user_balance,
 )
+from app.database.crud.user_device_alias import (
+    delete_alias,
+    get_aliases_for_user,
+    normalize_alias,
+    set_alias,
+)
 from app.database.crud.user_promo_group import sync_user_primary_promo_group
 from app.database.models import (
     GuestPurchase,
@@ -44,6 +51,7 @@ from app.database.models import (
     UserStatus,
 )
 from app.services.permission_service import PermissionService
+from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import panel_datetime_to_utc
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -65,6 +73,8 @@ from ..schemas.users import (
     PeriodPriceInfo,
     RemoveReferralResponse,
     RemoveReferrerResponse,
+    RenameDeviceRequest,
+    RenameDeviceResponse,
     ResetDevicesResponse,
     ResetSubscriptionRequest,
     ResetSubscriptionResponse,
@@ -303,12 +313,21 @@ async def _sync_subscription_to_panel(
         if expire_at and expire_at <= datetime.now(UTC):
             expire_at = datetime.now(UTC) + timedelta(minutes=1)
 
-        username = settings.format_remnawave_username(
+        # При multi-tariff create-path ниже приклеивается `_<remnawave_short_id>`.
+        # build_remnawave_subscription_username гарантирует, что итоговая строка
+        # ≤ REMNAWAVE_USERNAME_MAX_LENGTH (исторический баг 38-chars username).
+        username_suffix = (
+            f'_{subscription.remnawave_short_id}'
+            if (settings.is_multi_tariff_enabled() and subscription.remnawave_short_id)
+            else ''
+        )
+        username = settings.build_remnawave_subscription_username(
             full_name=user.full_name,
             username=user.username,
             telegram_id=user.telegram_id,
             email=user.email,
             user_id=user.id,
+            suffix=username_suffix,
         )
 
         description = settings.format_remnawave_user_description(
@@ -422,6 +441,8 @@ async def _sync_subscription_to_panel(
                 # Multi-tariff: use subscription-specific username (sub.id)
                 if settings.is_multi_tariff_enabled() and subscription.id:
                     create_kwargs['username'] = f'{username}_{subscription.id}'
+                # multi-tariff suffix уже встроен в `username` через
+                # build_remnawave_subscription_username — больше ничего не клеим.
 
                 new_panel_user = await api.create_user(**create_kwargs)
                 subscription.remnawave_uuid = new_panel_user.uuid
@@ -2278,6 +2299,19 @@ async def get_user_devices(
         async with service.get_api_client() as api:
             response = await api.get_user_devices_all(_dev_uuid)
 
+            # Aliases per-(user, hwid) — единый дикт на весь список устройств.
+            # Best-effort: при сбое чтения возвращаем девайсы без локальных имён,
+            # чтобы alias-таблица не превращалась в SPOF для админ-листинга.
+            try:
+                aliases = await get_aliases_for_user(db, user_id)
+            except Exception as alias_error:
+                logger.warning(
+                    'Failed to load device aliases, falling back to defaults',
+                    user_id=user_id,
+                    error=str(alias_error)[:200],
+                )
+                aliases = {}
+
             devices = []
             for d in response.get('devices', []):
                 hwid = d.get('hwid') or d.get('deviceId') or d.get('id')
@@ -2289,6 +2323,7 @@ async def get_user_devices(
                         platform=d.get('platform') or d.get('platformType') or '',
                         device_model=d.get('deviceModel') or d.get('model') or d.get('name') or '',
                         created_at=d.get('updatedAt') or d.get('lastSeen') or d.get('createdAt'),
+                        local_name=aliases.get(hwid) or None,
                     )
                 )
 
@@ -2350,6 +2385,53 @@ async def delete_user_device(
     except Exception as e:
         logger.error('Error deleting device for user', hwid=hwid, user_id=user_id, error=e)
         return DeleteDeviceResponse(success=False, message='Ошибка удаления устройства')
+
+
+@router.patch('/{user_id}/devices/{hwid}/name', response_model=RenameDeviceResponse)
+async def rename_user_device(
+    user_id: int,
+    hwid: str,
+    request: RenameDeviceRequest,
+    admin: User = Depends(require_permission('users:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> RenameDeviceResponse:
+    """Set/clear a local alias for a user's HWID device (admin override).
+
+    Alias scope: per-(user, hwid). Admin acts on behalf of the user; the
+    same value would appear in the user's own bot/cabinet view. Empty or
+    null `name` clears the alias.
+    """
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    hwid = (hwid or '').strip()
+    if not hwid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='hwid is required')
+
+    # Best-effort hwid validation across ALL the user's panel UUIDs (multi-tariff
+    # aware). Shared with the user-facing endpoint via cabinet.utils.device_ownership.
+    if not await verify_hwid_belongs_to_user(user, hwid):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Device not found on user account',
+        )
+
+    normalized = normalize_alias(request.name)
+    if normalized:
+        saved = await set_alias(db, user_id, hwid, normalized)
+        logger.info(
+            'Admin renamed device for user',
+            admin_id=admin.id,
+            user_id=user_id,
+            hwid_prefix=hwid[:8],
+            alias_length=len(saved),
+        )
+        return RenameDeviceResponse(hwid=hwid, local_name=saved)
+
+    await delete_alias(db, user_id, hwid)
+    logger.info('Admin cleared device alias for user', admin_id=admin.id, user_id=user_id, hwid_prefix=hwid[:8])
+    return RenameDeviceResponse(hwid=hwid, local_name=None)
 
 
 @router.delete('/{user_id}/devices', response_model=ResetDevicesResponse)
@@ -3152,7 +3234,7 @@ async def sync_user_from_panel(
                 expire_at=panel_datetime_to_utc(panel_user.expire_at) if panel_user.expire_at else None,
                 traffic_limit_gb=panel_user.traffic_limit_bytes / (1024**3) if panel_user.traffic_limit_bytes else 0,
                 traffic_used_gb=panel_user.used_traffic_bytes / (1024**3) if panel_user.used_traffic_bytes else 0,
-                device_limit=panel_user.hwid_device_limit or 1,
+                device_limit=coerce_panel_device_limit(panel_user.hwid_device_limit),
                 subscription_url=panel_user.subscription_url,
                 active_squads=active_squads,
             )
@@ -3223,7 +3305,7 @@ async def sync_user_from_panel(
                     sub.traffic_limit_gb = panel_traffic_limit
 
                 # Update device limit
-                panel_device_limit = panel_user.hwid_device_limit or 1
+                panel_device_limit = coerce_panel_device_limit(panel_user.hwid_device_limit)
                 if sub.device_limit != panel_device_limit:
                     changes['device_limit'] = {'old': sub.device_limit, 'new': panel_device_limit}
                     sub.device_limit = panel_device_limit
@@ -3270,7 +3352,7 @@ async def sync_user_from_panel(
                     user_id=user.id,
                     duration_days=days_remaining,
                     traffic_limit_gb=panel_traffic_limit,
-                    device_limit=panel_user.hwid_device_limit or 1,
+                    device_limit=coerce_panel_device_limit(panel_user.hwid_device_limit),
                     connected_squads=active_squads,
                 )
                 new_sub.remnawave_short_uuid = panel_user.short_uuid
@@ -3377,12 +3459,20 @@ async def sync_user_to_panel(
         if expire_at and expire_at <= datetime.now(UTC):
             expire_at = datetime.now(UTC) + timedelta(minutes=1)
 
-        username = settings.format_remnawave_username(
+        # Same precaution as the per-user sync above: multi-tariff create-path
+        # appends `_<remnawave_short_id>`. Helper resрвирует место.
+        username_suffix = (
+            f'_{sub.remnawave_short_id}'
+            if (settings.is_multi_tariff_enabled() and getattr(sub, 'remnawave_short_id', None))
+            else ''
+        )
+        username = settings.build_remnawave_subscription_username(
             full_name=user.full_name,
             username=user.username,
             telegram_id=user.telegram_id,
             email=user.email,
             user_id=user.id,
+            suffix=username_suffix,
         )
 
         description = settings.format_remnawave_user_description(
@@ -3497,6 +3587,8 @@ async def sync_user_to_panel(
                 # Multi-tariff: subscription-specific username (sub.id)
                 if settings.is_multi_tariff_enabled() and getattr(sub, 'id', None):
                     create_kwargs['username'] = f'{username}_{sub.id}'
+                # multi-tariff suffix уже встроен в `username` через
+                # build_remnawave_subscription_username — больше ничего не клеим.
 
                 new_panel_user = await api.create_user(**create_kwargs)
                 panel_uuid = new_panel_user.uuid

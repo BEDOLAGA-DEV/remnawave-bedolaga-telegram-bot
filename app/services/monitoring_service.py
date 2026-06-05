@@ -71,6 +71,44 @@ from app.utils.subscription_utils import (
 from app.utils.timezone import format_local_datetime
 
 
+def resolve_autopay_period_candidate(candidate, tariff) -> int | None:
+    """Return ``candidate`` only if it is a valid renewal period for ``tariff``.
+
+    Validation is **fail-closed**: we never let an unvalidated period drive
+    autopay extension. Resolution order for the allowlist:
+
+    1. ``tariff.get_available_periods()`` if the tariff exists and has any
+       priced periods.
+    2. ``settings.get_available_renewal_periods()`` as the global allowlist
+       (for tariff-less / classic-mode subscriptions, or tariffs with empty
+       ``period_prices``).
+
+    Returns ``None`` for ``candidate`` that is falsy, non-positive, or not in
+    either allowlist — letting the caller fall through to the next tier
+    (typically ``tariff.get_shortest_period()`` and finally the hard 30-day
+    floor).
+    """
+    if not candidate or candidate <= 0:
+        return None
+
+    available_periods: list[int] = []
+    if tariff is not None:
+        try:
+            available_periods = list(tariff.get_available_periods() or [])
+        except Exception:
+            available_periods = []
+
+    if not available_periods:
+        try:
+            available_periods = list(settings.get_available_renewal_periods() or [])
+        except Exception:
+            available_periods = []
+
+    if not available_periods or candidate not in available_periods:
+        return None
+    return candidate
+
+
 # Кулдаун между повторными уведомлениями об автоплатеже с недостаточным балансом (6 часов)
 AUTOPAY_INSUFFICIENT_BALANCE_COOLDOWN_SECONDS: int = 21600
 
@@ -1032,14 +1070,29 @@ class MonitoringService:
 
                         checked_count += 1
 
-                        # Rate-limited check for ALL channels
+                        # Rate-limited check for ALL channels.
+                        # _rate_limited_check returns Optional[bool] — None means
+                        # "could not determine" (network blip, double rate-limit,
+                        # generic exception). Treat None as "keep the last known
+                        # value" and never feed it into the deactivation path —
+                        # closes the same regression #313502 covered for the
+                        # request-time middleware. This background reconciler
+                        # would otherwise still flip annual paid subs to DISABLED
+                        # on the very next monitoring tick after a transient
+                        # Telegram API hiccup.
                         all_subscribed = True
                         unsubscribed_channels: list[dict] = []
                         for ch in channels:
-                            is_member = await channel_subscription_service._rate_limited_check(
+                            check_result = await channel_subscription_service._rate_limited_check(
                                 user.telegram_id, ch['channel_id']
                             )
-                            # Update DB + cache
+                            if check_result is None:
+                                # Skip DB/cache writes and don't mark as unsubscribed —
+                                # the next reconciler tick (or the next user
+                                # interaction in the request path) will retry.
+                                continue
+                            is_member = check_result
+                            # Update DB + cache only when we have a definitive answer
                             await upsert_user_channel_sub(batch_db, user.telegram_id, ch['channel_id'], is_member)
                             await ChannelSubCache.set_sub_status(user.telegram_id, ch['channel_id'], is_member)
 
@@ -1771,12 +1824,22 @@ class MonitoringService:
 
                     user_identifier = user.telegram_id or f'email:{user.id}'
 
-                    # Определяем период продления: из тарифа (минимальный) или 30 дней по умолчанию
+                    # Период продления выбирается с такой иерархией:
+                    #   1. subscription.autopay_period_days — выбор пользователя/админа
+                    #   2. settings.DEFAULT_AUTOPAY_PERIOD_DAYS — глобальный дефолт из .env
+                    #   3. tariff.get_shortest_period() — самый дешёвый период тарифа (legacy)
+                    #   4. 30 — финальный fallback, если тарифа нет
+                    # resolve_autopay_period_candidate работает fail-closed: пропускает только
+                    # значения из tariff.get_available_periods() или (для классических подписок
+                    # без тарифа) settings.get_available_renewal_periods().
                     tariff = getattr(subscription, 'tariff', None)
-                    if tariff:
-                        autopay_period = tariff.get_shortest_period() or 30
-                    else:
-                        autopay_period = 30
+
+                    autopay_period = (
+                        resolve_autopay_period_candidate(getattr(subscription, 'autopay_period_days', None), tariff)
+                        or resolve_autopay_period_candidate(getattr(settings, 'DEFAULT_AUTOPAY_PERIOD_DAYS', 0), tariff)
+                        or (tariff.get_shortest_period() if tariff else None)
+                        or 30
+                    )
 
                     try:
                         from app.database.crud.user import lock_user_for_pricing

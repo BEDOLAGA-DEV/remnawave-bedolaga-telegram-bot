@@ -17,7 +17,7 @@ from sqlalchemy.exc import MissingGreenlet
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.crud.user import get_user_by_telegram_id
+from app.database.crud.user import get_user_by_id, get_user_by_telegram_id
 from app.database.database import AsyncSessionLocal, get_db
 from app.database.models import Subscription
 from app.localization.texts import get_texts
@@ -26,7 +26,7 @@ from app.services.subscription_checkout_service import (
     should_offer_checkout_resume,
 )
 from app.services.user_cart_service import user_cart_service
-from app.utils.miniapp_buttons import build_miniapp_or_callback_button
+from app.utils.miniapp_buttons import build_main_menu_button, build_miniapp_or_callback_button
 from app.utils.payment_logger import payment_logger as logger
 
 
@@ -128,7 +128,12 @@ class PaymentCommonMixin:
                         ]
                     )
 
-        # Стандартные кнопки быстрого доступа к балансу и главному меню.
+        # «Мой баланс» направляется в соответствующий раздел кабинета
+        # в MAIN_MENU_MODE=cabinet (через build_miniapp_or_callback_button),
+        # потому что баланс — это контентная страница, и юзер ожидает
+        # увидеть детали в том же режиме интерфейса, в котором он
+        # запустил пополнение. Префикс nz!_ маршрутизирует callback
+        # на bot-handler, когда кабинет недоступен.
         keyboard_rows.append(
             [
                 build_miniapp_or_callback_button(
@@ -137,6 +142,12 @@ class PaymentCommonMixin:
                 )
             ]
         )
+        # «Главное меню» — ВСЕГДА callback на bot-handler back_to_menu,
+        # независимо от MAIN_MENU_MODE. Если эта кнопка будет открывать
+        # кабинет (через build_miniapp_or_callback_button), юзер окажется
+        # в бесконечном цикле «хочу в бот → попадаю в кабинет → тапаю
+        # главное меню → снова кабинет». Поэтому используем явный
+        # InlineKeyboardButton с nz!_-префиксом для bot-handler.
         keyboard_rows.append(
             [
                 InlineKeyboardButton(
@@ -213,7 +224,19 @@ class PaymentCommonMixin:
                 reply_markup=keyboard,
             )
         except Exception as error:
-            logger.error('Ошибка отправки уведомления пользователю', telegram_id=telegram_id, error=error)
+            from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramServerError
+
+            # Транзиентные сетевые / forbidden — warning. Платёж уже зачислен,
+            # уведомление пользователя — best-effort, не должно спамить админ-чат.
+            if isinstance(error, (TelegramNetworkError, TelegramServerError, TelegramForbiddenError)):
+                logger.warning(
+                    'Не доставлено уведомление об оплате (транзиент)',
+                    telegram_id=telegram_id,
+                    error=str(error)[:200],
+                    error_type=type(error).__name__,
+                )
+            else:
+                logger.error('Ошибка отправки уведомления пользователю', telegram_id=telegram_id, error=error)
 
     async def _ensure_user_snapshot(
         self,
@@ -309,13 +332,19 @@ async def send_cart_notification_after_topup(
     db: AsyncSession,
     bot: Any | None,
 ) -> bool:
-    """Handle saved cart after balance top-up: try auto-purchase, then send notification.
+    """Run post-topup side-effects: resume daily / auto-purchase saved cart / auto-extend.
 
-    Returns True if a cart notification was sent.
+    Порядок приоритетов: возобновление суточной подписки → авто-покупка
+    сохранённой корзины → авто-продление истёкшей подписки.
+
+    Если сохранённая корзина не была автоматически оплачена (например,
+    баланса всё ещё не хватает), пользователю отправляется уведомление
+    о корзине с кнопкой возврата к оформлению. Возвращает True, если
+    такое уведомление было отправлено, иначе False.
     """
-    from aiogram import types
+    # Сумма пополнения нужна для текста уведомления о сохранённой корзине ниже.
+    topup_amount_kopeks = amount_kopeks
 
-    from app.database.crud.user import get_user_by_id
     from app.services.subscription_auto_purchase_service import (
         auto_purchase_saved_cart_after_topup,
         try_auto_extend_expired_after_topup,
@@ -348,10 +377,13 @@ async def send_cart_notification_after_topup(
             )
             return False
 
-        # Try auto-purchase first
+        # Пробуем сразу оформить подписку из корзины. Если успешно — внутри сервиса
+        # отдельно полетит уведомление пользователю, и второе сообщение не нужно.
+        # Если авто-покупка не прошла (баланса всё ещё не хватает), ниже шлём
+        # пользователю уведомление о сохранённой корзине с кнопкой возврата.
         auto_purchase_success = False
         try:
-            auto_purchase_success = await auto_purchase_saved_cart_after_topup(db, user, bot=bot)
+            auto_purchase_success = bool(await auto_purchase_saved_cart_after_topup(db, user, bot=bot))
         except Exception as auto_error:
             logger.error(
                 'Ошибка автоматической покупки подписки для пользователя',
@@ -378,7 +410,7 @@ async def send_cart_notification_after_topup(
         if balance >= cart_total:
             template = texts.get('BALANCE_TOPPED_UP_CART_SUFFICIENT', '')
             message_text = template.format(
-                amount=fmt(amount_kopeks),
+                amount=fmt(topup_amount_kopeks),
                 balance=fmt(balance),
                 cart_total=cart_total_formatted,
                 total_amount=cart_total_formatted,
@@ -387,7 +419,7 @@ async def send_cart_notification_after_topup(
             missing = cart_total - balance
             template = texts.get('BALANCE_TOPPED_UP_CART_INSUFFICIENT', '')
             message_text = template.format(
-                amount=fmt(amount_kopeks),
+                amount=fmt(topup_amount_kopeks),
                 balance=fmt(balance),
                 cart_total=cart_total_formatted,
                 total_amount=cart_total_formatted,
@@ -400,22 +432,22 @@ async def send_cart_notification_after_topup(
 
         sent = False
         try:
-            keyboard = types.InlineKeyboardMarkup(
+            keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
-                        types.InlineKeyboardButton(
+                        InlineKeyboardButton(
                             text=texts.get('RETURN_TO_SUBSCRIPTION_CHECKOUT', '⬅️ Checkout'),
                             callback_data='nz!_return_to_saved_cart',
                         )
                     ],
                     [
-                        types.InlineKeyboardButton(
+                        InlineKeyboardButton(
                             text=texts.get('MY_BALANCE_BUTTON', '💰 Balance'),
                             callback_data='nz!_menu_balance',
                         )
                     ],
                     [
-                        types.InlineKeyboardButton(
+                        InlineKeyboardButton(
                             text=texts.get('MAIN_MENU_BUTTON', '🏠 Menu'),
                             callback_data='nz!_back_to_menu',
                         )

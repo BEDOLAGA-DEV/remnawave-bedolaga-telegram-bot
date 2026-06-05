@@ -273,6 +273,55 @@ async def store_cid_and_fire_registration(
         logger.warning('Failed to store CID and fire registration', user_id=user_id, error=str(exc))
 
 
+async def store_cid_and_fire_purchase(
+    user_id: int,
+    cid: str | None,
+    amount_kopeks: int,
+    *,
+    source: str = 'cabinet',
+) -> None:
+    """Persist a freshly-provided CID, then fire a purchase event in background.
+
+    Closes the race where the user's first cabinet visit fires the buy request
+    before the separate `/yandex-cid` POST has completed — without this, the
+    backend's CID lookup at purchase time sees no row and skips the event
+    (Telegram bug report #558449). The frontend now passes the locally-cached
+    CID directly in the purchase request body so the backend can persist it
+    synchronously before the event fires.
+    """
+    if not _is_enabled():
+        return
+    try:
+        async with AsyncSessionLocal() as db:
+            if cid:
+                stored = await store_cid(db, user_id, cid, source=source)
+                if stored:
+                    await db.commit()
+        spawn_bg(fire_purchase_bg(user_id, amount_kopeks))
+    except Exception as exc:
+        logger.warning('Failed to store CID and fire purchase', user_id=user_id, error=str(exc))
+
+
+async def store_cid_and_fire_trial(
+    user_id: int,
+    cid: str | None,
+    *,
+    source: str = 'cabinet',
+) -> None:
+    """Same as `store_cid_and_fire_purchase` but for trial activation (#558449)."""
+    if not _is_enabled():
+        return
+    try:
+        async with AsyncSessionLocal() as db:
+            if cid:
+                stored = await store_cid(db, user_id, cid, source=source)
+                if stored:
+                    await db.commit()
+        spawn_bg(fire_trial_bg(user_id))
+    except Exception as exc:
+        logger.warning('Failed to store CID and fire trial', user_id=user_id, error=str(exc))
+
+
 async def on_registration(db: AsyncSession, user_id: int) -> None:
     """Fire registration event (once per user)."""
     if not _is_enabled():

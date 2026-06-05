@@ -45,18 +45,26 @@ class EmailService:
     def use_tls(self) -> bool:
         return settings.SMTP_USE_TLS
 
+    @property
+    def use_ssl(self) -> bool:
+        # Port 465 always implies implicit TLS (SMTPS, RFC 8314).
+        return settings.SMTP_USE_SSL or self.port == 465
+
     def is_configured(self) -> bool:
         """Check if SMTP is properly configured."""
         return settings.is_smtp_configured()
 
     def _get_smtp_connection(self) -> smtplib.SMTP:
         """Create and return SMTP connection."""
-        smtp = smtplib.SMTP(self.host, self.port, timeout=30)
-        smtp.ehlo()
-
-        if self.use_tls:
-            smtp.starttls()
+        if self.use_ssl:
+            smtp: smtplib.SMTP = smtplib.SMTP_SSL(self.host, self.port, timeout=30)
             smtp.ehlo()
+        else:
+            smtp = smtplib.SMTP(self.host, self.port, timeout=30)
+            smtp.ehlo()
+            if self.use_tls:
+                smtp.starttls()
+                smtp.ehlo()
 
         # Only attempt login if credentials are provided AND server supports AUTH
         if self.user and self.password:

@@ -43,12 +43,15 @@ def _make_user(
     referred_by_id: int | None = None,
     remnawave_uuid: str | None = None,
     subscription: object | None = None,
+    subscriptions: list | None = None,
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
     has_had_paid_subscription: bool = False,
     has_made_first_topup: bool = False,
     restriction_topup: bool = False,
     restriction_subscription: bool = False,
+    restriction_reason: str | None = None,
+    used_promocodes: int = 0,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=id,
@@ -71,13 +74,17 @@ def _make_user(
         referred_by_id=referred_by_id,
         remnawave_uuid=remnawave_uuid,
         subscription=subscription,
+        # Production code reads `user.subscriptions` (list). Tests historically
+        # pass a singular `subscription=` for convenience — wrap it.
+        subscriptions=subscriptions if subscriptions is not None else ([subscription] if subscription else []),
         created_at=created_at or datetime(2024, 1, 1, tzinfo=UTC),
         updated_at=updated_at or datetime(2024, 1, 1, tzinfo=UTC),
+        # Fields added to User model after this test was written —
+        # default to the User-model defaults (False/0/None).
         has_had_paid_subscription=has_had_paid_subscription,
         has_made_first_topup=has_made_first_topup,
         restriction_topup=restriction_topup,
         restriction_subscription=restriction_subscription,
-        restriction_reason=None,
         email_change_code=None,
         email_change_expires=None,
         email_change_new=None,
@@ -86,12 +93,17 @@ def _make_user(
         password_reset_token=None,
         password_reset_expires=None,
         full_name=None,
-        used_promocodes=[],
+        restriction_reason=restriction_reason,
+        used_promocodes=used_promocodes,
     )
+
+
+_subscription_id_counter = 100
 
 
 def _make_subscription(
     *,
+    id: int | None = None,
     user_id: int = 1,
     status: str = 'active',
     is_trial: bool = False,
@@ -100,10 +112,18 @@ def _make_subscription(
     traffic_used_gb: float = 10.0,
     device_limit: int = 3,
     tariff_name: str = 'Basic',
+    tariff_id: int | None = None,
     autopay_enabled: bool = False,
+    remnawave_uuid: str | None = None,
 ) -> SimpleNamespace:
+    global _subscription_id_counter
+    resolved_id = id
+    if resolved_id is None:
+        _subscription_id_counter += 1
+        resolved_id = _subscription_id_counter
     tariff = SimpleNamespace(name=tariff_name)
     return SimpleNamespace(
+        id=resolved_id,
         user_id=user_id,
         status=status,
         is_trial=is_trial,
@@ -112,7 +132,9 @@ def _make_subscription(
         traffic_used_gb=traffic_used_gb,
         device_limit=device_limit,
         tariff=tariff,
+        tariff_id=tariff_id,
         autopay_enabled=autopay_enabled,
+        remnawave_uuid=remnawave_uuid,
     )
 
 

@@ -974,6 +974,7 @@ async def _render_user_subscription_overview(
                 types.InlineKeyboardButton(
                     text='🛠️ Лимит WL', callback_data=f'admin_user_wl_traffic_{user_id}{_sid}'
                 ),
+                types.InlineKeyboardButton(text='💳 Автоплатёж', callback_data=f'admin_user_autopay_{user_id}{_sid}'),
             ],
         ]
 
@@ -3825,26 +3826,40 @@ async def start_devices_edit(callback: types.CallbackQuery, db_user: User, state
         else f'admin_user_subscription_{user_id}'
     )
 
+    # По всей кодовой базе MAX_DEVICES_LIMIT=0 трактуется как «без ограничения»
+    # (см. subscription.py, devices.py, inline.py, miniapp.py — 16+ мест).
+    # Если читать буквально — получаем `range(1, 1)` → пустая клавиатура и
+    # промпт "от 1 до 0", который блокирует любой ввод (репорт от 2026-05-16).
+    raw_limit = settings.MAX_DEVICES_LIMIT
+    is_unlimited = raw_limit <= 0
+    # Для quick-pick клавиатуры используем разумный потолок 20 (как в других
+    # местах UI), для текстового ввода админ может задать любое положительное.
+    quick_pick_cap = 20 if is_unlimited else min(raw_limit, 99)
+    limit_display = '∞' if is_unlimited else str(raw_limit)
+
+    device_buttons: list[list[types.InlineKeyboardButton]] = []
+    row: list[types.InlineKeyboardButton] = []
+    for i in range(1, quick_pick_cap + 1):
+        row.append(
+            types.InlineKeyboardButton(
+                text=str(i),
+                callback_data=f'admin_user_devices_set_{user_id}{_sid}_{i}',
+            )
+        )
+        if len(row) == 4:
+            device_buttons.append(row)
+            row = []
+    if row:
+        device_buttons.append(row)
+    device_buttons.append([types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb)])
+    markup = types.InlineKeyboardMarkup(inline_keyboard=device_buttons)
+
     await callback.message.edit_text(
         '📱 <b>Изменение количества устройств</b>\n\n'
-        'Введите новое количество устройств (от 1 до 10):\n'
-        '• Текущее значение будет заменено\n'
-        '• Примеры: 1, 2, 5, 10\n\n'
+        f'Введите новое количество устройств (от 1 до {limit_display}):\n'
+        '• Текущее значение будет заменено\n\n'
         'Или нажмите /cancel для отмены',
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(text='1', callback_data=f'admin_user_devices_set_{user_id}{_sid}_1'),
-                    types.InlineKeyboardButton(text='2', callback_data=f'admin_user_devices_set_{user_id}{_sid}_2'),
-                    types.InlineKeyboardButton(text='3', callback_data=f'admin_user_devices_set_{user_id}{_sid}_3'),
-                ],
-                [
-                    types.InlineKeyboardButton(text='5', callback_data=f'admin_user_devices_set_{user_id}{_sid}_5'),
-                    types.InlineKeyboardButton(text='10', callback_data=f'admin_user_devices_set_{user_id}{_sid}_10'),
-                ],
-                [types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb)],
-            ]
-        ),
+        reply_markup=markup,
     )
 
     await state.set_state(AdminStates.editing_user_devices)
@@ -3914,8 +3929,14 @@ async def process_devices_edit_text(message: types.Message, db_user: User, state
     try:
         devices = int(message.text.strip())
 
-        if devices <= 0 or devices > 10:
-            await message.answer('❌ Количество устройств должно быть от 1 до 10')
+        # MAX_DEVICES_LIMIT=0 ≡ «без ограничения» (та же конвенция, что и в
+        # остальной кодовой базе). До фикса валидатор отвергал любое значение,
+        # потому что `devices > 0` всегда true для положительных чисел.
+        raw_limit = settings.MAX_DEVICES_LIMIT
+        is_unlimited = raw_limit <= 0
+        if devices <= 0 or (not is_unlimited and devices > raw_limit):
+            limit_display = '∞' if is_unlimited else str(raw_limit)
+            await message.answer(f'❌ Количество устройств должно быть от 1 до {limit_display}')
             return
 
         success = await _update_user_devices(db, user_id, devices, db_user.id, subscription_id=subscription_id)
@@ -5077,11 +5098,13 @@ async def admin_buy_subscription_confirm(callback: types.CallbackQuery, db_user:
 
     if target_user.balance_kopeks < price_kopeks:
         missing_kopeks = price_kopeks - target_user.balance_kopeks
+        # Без округления — иначе при не хватке <50 копеек все три суммы покажутся
+        # одинаковыми и админ увидит «не хватает 0 ₽».
         await callback.message.edit_text(
             f'❌ Недостаточно средств на балансе пользователя\n\n'
-            f'💰 Баланс пользователя: {settings.format_price(target_user.balance_kopeks)}\n'
-            f'💳 Стоимость подписки: {settings.format_price(price_kopeks)}\n'
-            f'📉 Не хватает: {settings.format_price(missing_kopeks)}\n\n'
+            f'💰 Баланс пользователя: {settings.format_price(target_user.balance_kopeks, round_kopeks=False)}\n'
+            f'💳 Стоимость подписки: {settings.format_price(price_kopeks, round_kopeks=False)}\n'
+            f'📉 Не хватает: {settings.format_price(missing_kopeks, round_kopeks=False)}\n\n'
             f'Пополните баланс пользователя перед покупкой.',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
@@ -5294,12 +5317,23 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
 
                         remnawave_user = await api.update_user(**update_kwargs)
                 else:
-                    username = settings.format_remnawave_username(
+                    # При multi-tariff подписке username должен включать
+                    # `_<remnawave_short_id>` (как и в трёх других create-path'ах:
+                    # subscription_service, cabinet admin sync, bulk sync) — иначе
+                    # подписки, созданные через админский extend, имеют другой
+                    # формат username'а и не уникальны per-subscription.
+                    username_suffix = (
+                        f'_{subscription.remnawave_short_id}'
+                        if (settings.is_multi_tariff_enabled() and getattr(subscription, 'remnawave_short_id', None))
+                        else ''
+                    )
+                    username = settings.build_remnawave_subscription_username(
                         full_name=target_user.full_name,
                         username=target_user.username,
                         telegram_id=target_user.telegram_id,
                         email=target_user.email,
                         user_id=target_user.id,
+                        suffix=username_suffix,
                     )
                     async with remnawave_service.get_api_client() as api:
                         create_kwargs = dict(
@@ -5554,9 +5588,9 @@ async def admin_buy_tariff_confirm(callback: types.CallbackQuery, db_user: User,
         missing = price_kopeks - target_user.balance_kopeks
         await callback.message.edit_text(
             f'❌ <b>Недостаточно средств</b>\n\n'
-            f'💰 Баланс: {settings.format_price(target_user.balance_kopeks)}\n'
-            f'💳 Стоимость: {settings.format_price(price_kopeks)}\n'
-            f'📉 Не хватает: {settings.format_price(missing)}\n\n'
+            f'💰 Баланс: {settings.format_price(target_user.balance_kopeks, round_kopeks=False)}\n'
+            f'💳 Стоимость: {settings.format_price(price_kopeks, round_kopeks=False)}\n'
+            f'📉 Не хватает: {settings.format_price(missing, round_kopeks=False)}\n\n'
             f'Пополните баланс пользователя перед покупкой.',
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
@@ -6434,6 +6468,257 @@ async def delete_all_user_devices_endpoint(callback: types.CallbackQuery, db_use
     await show_user_devicelist(callback, db_user, db)
 
 
+async def _load_admin_subscription(db: AsyncSession, user_id: int, subscription_id: int | None) -> Subscription | None:
+    """Fetch a subscription for admin actions, respecting multi-tariff mode."""
+    if subscription_id and settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_subscription_by_id_for_user
+
+        return await get_subscription_by_id_for_user(db, subscription_id, user_id)
+
+    profile = await UserService().get_user_profile(db, user_id)
+    if not profile:
+        return None
+    return profile.get('subscription')
+
+
+def _admin_autopay_back_cb(user_id: int, subscription_id: int | None) -> str:
+    return (
+        f'admin_user_sub_select_{user_id}_{subscription_id}'
+        if subscription_id and settings.is_multi_tariff_enabled()
+        else f'admin_user_subscription_{user_id}'
+    )
+
+
+def _admin_autopay_available_periods(subscription: Subscription) -> list[int]:
+    tariff = getattr(subscription, 'tariff', None)
+    if tariff:
+        periods = tariff.get_available_periods() or []
+        if periods:
+            return sorted(periods)
+    return sorted(settings.get_available_renewal_periods())
+
+
+@admin_required
+@error_handler
+async def show_admin_user_autopay(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Admin view of a subscription's autopay settings."""
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+    subscription = await _load_admin_subscription(db, user_id, subscription_id)
+    if subscription is None:
+        await callback.answer('❌ Подписка не найдена', show_alert=True)
+        return
+
+    try:
+        await db.refresh(subscription, ['tariff'])
+    except Exception:
+        pass
+
+    _sid = f'_s{subscription.id}' if subscription_id and settings.is_multi_tariff_enabled() else ''
+    status_text = '✅ Включён' if subscription.autopay_enabled else '❌ Выключен'
+    period_value = getattr(subscription, 'autopay_period_days', None)
+    period_text = f'{period_value} дн.' if period_value else 'по умолчанию (самый дешёвый период тарифа)'
+
+    text = (
+        '💳 <b>Настройки автоплатежа</b>\n\n'
+        f'<b>Статус:</b> {status_text}\n'
+        f'<b>Списание за:</b> {subscription.autopay_days_before} дн. до окончания\n'
+        f'<b>Период продления:</b> {period_text}\n\n'
+        f'Глобальный дефолт периода: '
+        f'{getattr(settings, "DEFAULT_AUTOPAY_PERIOD_DAYS", 0) or "самый короткий период тарифа"}'
+    )
+
+    toggle_label = '❌ Выключить' if subscription.autopay_enabled else '✅ Включить'
+    keyboard = [
+        [types.InlineKeyboardButton(text=toggle_label, callback_data=f'admin_user_autopay_toggle_{user_id}{_sid}')],
+        [
+            types.InlineKeyboardButton(
+                text='⏰ Дни до списания', callback_data=f'admin_user_autopay_days_{user_id}{_sid}'
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
+                text='📅 Период продления', callback_data=f'admin_user_autopay_period_{user_id}{_sid}'
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
+                text='⬅️ К подписке', callback_data=_admin_autopay_back_cb(user_id, subscription_id)
+            )
+        ],
+    ]
+
+    await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def toggle_admin_user_autopay(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Admin: flip autopay_enabled on a subscription."""
+    from app.database.crud.subscription import update_subscription_autopay
+
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+    subscription = await _load_admin_subscription(db, user_id, subscription_id)
+    if subscription is None:
+        await callback.answer('❌ Подписка не найдена', show_alert=True)
+        return
+
+    await update_subscription_autopay(db, subscription, not subscription.autopay_enabled)
+    await callback.answer('✅ Сохранено')
+    callback.data = f'admin_user_autopay_{user_id}' + (
+        f'_s{subscription_id}' if subscription_id and settings.is_multi_tariff_enabled() else ''
+    )
+    await show_admin_user_autopay(callback, db_user, db)
+
+
+@admin_required
+@error_handler
+async def show_admin_user_autopay_days(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Admin: show days-before picker."""
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+    _sid = f'_s{subscription_id}' if subscription_id and settings.is_multi_tariff_enabled() else ''
+
+    keyboard = []
+    for days in [1, 3, 7, 14]:
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=f'{days} дн.', callback_data=f'admin_user_autopay_days_set_{user_id}{_sid}_{days}'
+                )
+            ]
+        )
+    keyboard.append([types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'admin_user_autopay_{user_id}{_sid}')])
+
+    await callback.message.edit_text(
+        '⏰ <b>За сколько дней до окончания списывать средства?</b>',
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def set_admin_user_autopay_days(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Admin: persist days-before choice."""
+    from app.database.crud.subscription import update_subscription_autopay
+
+    parts = callback.data.split('_')
+    days = int(parts[-1])
+    if parts[-2].startswith('s') and parts[-2][1:].isdigit():
+        subscription_id = int(parts[-2][1:])
+        user_id = int(parts[-3])
+    else:
+        subscription_id = None
+        user_id = int(parts[-2])
+
+    subscription = await _load_admin_subscription(db, user_id, subscription_id)
+    if subscription is None:
+        await callback.answer('❌ Подписка не найдена', show_alert=True)
+        return
+
+    await update_subscription_autopay(db, subscription, subscription.autopay_enabled, days_before=days)
+    await callback.answer(f'✅ Установлено: {days} дн.')
+
+    _sid = f'_s{subscription_id}' if subscription_id and settings.is_multi_tariff_enabled() else ''
+    callback.data = f'admin_user_autopay_{user_id}{_sid}'
+    await show_admin_user_autopay(callback, db_user, db)
+
+
+@admin_required
+@error_handler
+async def show_admin_user_autopay_period(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Admin: show period picker."""
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+    subscription = await _load_admin_subscription(db, user_id, subscription_id)
+    if subscription is None:
+        await callback.answer('❌ Подписка не найдена', show_alert=True)
+        return
+
+    try:
+        await db.refresh(subscription, ['tariff'])
+    except Exception:
+        pass
+
+    _sid = f'_s{subscription_id}' if subscription_id and settings.is_multi_tariff_enabled() else ''
+    current = getattr(subscription, 'autopay_period_days', None)
+    periods = _admin_autopay_available_periods(subscription)
+
+    default_label = '⚙️ По умолчанию (самый дешёвый)'
+    if current is None:
+        default_label = f'✅ {default_label}'
+
+    keyboard = [
+        [
+            types.InlineKeyboardButton(
+                text=default_label,
+                callback_data=f'admin_user_autopay_period_set_{user_id}{_sid}_0',
+            )
+        ]
+    ]
+    for days in periods:
+        label = f'{days} дн.'
+        if current == days:
+            label = f'✅ {label}'
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=label, callback_data=f'admin_user_autopay_period_set_{user_id}{_sid}_{days}'
+                )
+            ]
+        )
+    keyboard.append([types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'admin_user_autopay_{user_id}{_sid}')])
+
+    await callback.message.edit_text(
+        '📅 <b>Период автоплатежа</b>\n\n'
+        'Выберите период, на который автоплатёж будет продлевать подписку.\n'
+        '<i>"По умолчанию" — глобальный дефолт из .env, иначе самый дешёвый период тарифа.</i>',
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def set_admin_user_autopay_period(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Admin: persist period choice. Value `0` means clear (use default)."""
+    from app.database.crud.subscription import update_subscription_autopay
+
+    parts = callback.data.split('_')
+    days = int(parts[-1])
+    if parts[-2].startswith('s') and parts[-2][1:].isdigit():
+        subscription_id = int(parts[-2][1:])
+        user_id = int(parts[-3])
+    else:
+        subscription_id = None
+        user_id = int(parts[-2])
+
+    subscription = await _load_admin_subscription(db, user_id, subscription_id)
+    if subscription is None:
+        await callback.answer('❌ Подписка не найдена', show_alert=True)
+        return
+
+    if days == 0:
+        await update_subscription_autopay(db, subscription, subscription.autopay_enabled, period_days=None)
+        await callback.answer('✅ Используется период по умолчанию')
+    else:
+        try:
+            await db.refresh(subscription, ['tariff'])
+        except Exception:
+            pass
+
+        available = _admin_autopay_available_periods(subscription)
+        if days not in available:
+            await callback.answer('❌ Период недоступен для этой подписки', show_alert=True)
+            return
+
+        await update_subscription_autopay(db, subscription, subscription.autopay_enabled, period_days=days)
+        await callback.answer(f'✅ Период: {days} дн.')
+
+    _sid = f'_s{subscription_id}' if subscription_id and settings.is_multi_tariff_enabled() else ''
+    callback.data = f'admin_user_autopay_{user_id}{_sid}'
+    await show_admin_user_autopay(callback, db_user, db)
+
+
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_users_menu, F.data == 'admin_users')
 
@@ -6634,6 +6919,27 @@ def register_handlers(dp: Dispatcher):
     )
 
     dp.callback_query.register(reset_user_devices, F.data.startswith('admin_user_reset_devices_confirm_'))
+
+    # Админ — настройки автоплатежа конкретной подписки
+    # Порядок важен: более специфичные фильтры регистрируем раньше.
+    dp.callback_query.register(set_admin_user_autopay_days, F.data.startswith('admin_user_autopay_days_set_'))
+    dp.callback_query.register(set_admin_user_autopay_period, F.data.startswith('admin_user_autopay_period_set_'))
+    dp.callback_query.register(toggle_admin_user_autopay, F.data.startswith('admin_user_autopay_toggle_'))
+    dp.callback_query.register(
+        show_admin_user_autopay_days,
+        F.data.startswith('admin_user_autopay_days_') & ~F.data.contains('_set_'),
+    )
+    dp.callback_query.register(
+        show_admin_user_autopay_period,
+        F.data.startswith('admin_user_autopay_period_') & ~F.data.contains('_set_'),
+    )
+    dp.callback_query.register(
+        show_admin_user_autopay,
+        F.data.startswith('admin_user_autopay_')
+        & ~F.data.contains('_toggle_')
+        & ~F.data.contains('_days_')
+        & ~F.data.contains('_period_'),
+    )
 
     dp.callback_query.register(change_subscription_type, F.data.startswith('admin_sub_change_type_'))
 

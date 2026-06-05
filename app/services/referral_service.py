@@ -4,7 +4,7 @@ import json
 import redis.asyncio as aioredis
 import structlog
 from aiogram import Bot
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -97,6 +97,282 @@ async def clear_pending_referral(telegram_id: int) -> None:
         await client.delete(f'pending_referral:{telegram_id}')
     except Exception:
         pass
+
+
+def _normalize_percent(percent: int | None, fallback: int) -> int:
+    if percent is None:
+        percent = fallback
+    return max(0, min(100, int(percent)))
+
+
+def _parse_recurring_commission_tiers(raw_tiers: str | None) -> list[tuple[int, int]]:
+    tiers: list[tuple[int, int]] = []
+    if not raw_tiers:
+        return tiers
+
+    for part in raw_tiers.split(','):
+        item = part.strip()
+        if not item or ':' not in item:
+            continue
+        threshold_raw, percent_raw = item.split(':', 1)
+        try:
+            threshold = max(0, int(threshold_raw.strip()))
+            percent = _normalize_percent(int(percent_raw.strip()), settings.REFERRAL_COMMISSION_PERCENT)
+        except ValueError:
+            logger.warning('Invalid referral recurring commission tier skipped', tier=item)
+            continue
+        tiers.append((threshold, percent))
+
+    return sorted(tiers, key=lambda tier: tier[0])
+
+
+async def get_paid_referrals_count(db: AsyncSession, referrer_id: int) -> int:
+    result = await db.execute(
+        select(func.count(User.id)).where(
+            User.referred_by_id == referrer_id,
+            User.has_made_first_topup.is_(True),
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def get_referral_reward_payment_count(db: AsyncSession, referrer_id: int, referral_id: int) -> int:
+    result = await db.execute(
+        select(func.count(ReferralEarning.id)).where(
+            ReferralEarning.user_id == referrer_id,
+            ReferralEarning.referral_id == referral_id,
+            ReferralEarning.reason.in_(['referral_first_topup', 'referral_commission_topup']),
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def calculate_referral_commission_percent(
+    db: AsyncSession,
+    referrer,
+    *,
+    is_first_payment: bool,
+) -> int:
+    base_percent = get_effective_referral_commission_percent(referrer)
+
+    if is_first_payment:
+        return _normalize_percent(settings.REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT, base_percent)
+
+    tiers = _parse_recurring_commission_tiers(settings.REFERRAL_RECURRING_COMMISSION_TIERS)
+    if not tiers:
+        return base_percent
+
+    paid_referrals_count = await get_paid_referrals_count(db, referrer.id)
+    selected_percent = base_percent
+    for threshold, percent in tiers:
+        if paid_referrals_count >= threshold:
+            selected_percent = percent
+        else:
+            break
+
+    logger.debug(
+        'Recurring referral commission tier selected',
+        referrer_id=referrer.id,
+        paid_referrals_count=paid_referrals_count,
+        commission_percent=selected_percent,
+    )
+    return selected_percent
+
+
+async def attach_referrer_if_missing(
+    db: AsyncSession,
+    user: User,
+    *,
+    referral_code: str | None = None,
+    bot: Bot | None = None,
+    source: str,
+) -> int | None:
+    """Eagerly attach a referrer to ``user`` when one isn't already set.
+
+    Resolution order:
+      1. Explicit ``referral_code`` argument (from URL state / FSM /
+         API request body).
+      2. Redis ``pending_referral`` keyed on ``user.telegram_id`` (the
+         /start fallback for the race where the miniapp opens BEFORE
+         the bot's /start handler has finished processing).
+
+    Idempotent: if ``user.referred_by_id`` is already set, returns
+    ``None`` immediately without firing anything. This is the key
+    contract — it lets us call the helper from every entry point
+    (bot /start, cabinet /telegram, widget, OIDC) without worrying
+    about double-firing ``process_referral_registration`` (which would
+    duplicate the ``referral_earning`` audit row).
+
+    Self-referral is blocked at both ID and email level (the email
+    check mirrors the pre-existing logic in
+    ``_process_referral_code``).
+
+    Side effects when the attachment succeeds:
+      * Sets ``user.referred_by_id``, commits, refreshes.
+      * Fires ``process_referral_registration`` (admin notification +
+        ``referral_earning`` row with reason
+        ``referral_registration_pending``).
+      * Clears any matching Redis ``pending_referral`` entry.
+
+    Args:
+        source: short tag for audit logs (``bot_start``,
+            ``cabinet_telegram``, ``cabinet_widget``, ``cabinet_oidc``,
+            etc.). Keep stable so log queries stay useful.
+
+    Returns:
+        The attached ``referrer_id`` on success, ``None`` when nothing
+        was attached (either user already had one, or no valid
+        candidate was found).
+    """
+    if user.referred_by_id is not None:
+        return None
+
+    # ------------------------------------------------------------------
+    # Candidate resolution.
+    # ------------------------------------------------------------------
+    from app.database.crud.user import get_user_by_referral_code as _resolve_by_code
+
+    referrer: User | None = None
+
+    if referral_code:
+        try:
+            referrer = await _resolve_by_code(db, referral_code)
+        except Exception as exc:
+            logger.warning(
+                'attach_referrer_if_missing: failed to resolve referral_code',
+                referral_code=referral_code,
+                source=source,
+                error=str(exc),
+            )
+
+    if referrer is None and user.telegram_id is not None:
+        pending = await get_pending_referral(user.telegram_id)
+        if pending and pending.get('referrer_id'):
+            try:
+                pending_referrer_id = int(pending['referrer_id'])
+            except (TypeError, ValueError):
+                pending_referrer_id = None
+            if pending_referrer_id is not None:
+                referrer = await get_user_by_id(db, pending_referrer_id)
+
+    if referrer is None:
+        return None
+
+    # ------------------------------------------------------------------
+    # Self-referral guards.
+    # ------------------------------------------------------------------
+    if referrer.id == user.id:
+        return None
+    if referrer.telegram_id is not None and user.telegram_id is not None and referrer.telegram_id == user.telegram_id:
+        return None
+    if referrer.email and user.email and referrer.email.lower() == user.email.lower():
+        return None
+
+    # ------------------------------------------------------------------
+    # Atomic compare-and-set. The in-memory ``referred_by_id is None``
+    # check above is per-session, so two concurrent callers (e.g. bot
+    # /start AND cabinet /telegram on a delayed initData call, each
+    # with its own AsyncSessionLocal) could both pass it and race to
+    # write. A naive ``user.referred_by_id = x; await commit()`` would
+    # last-write-win and silently flip an already-attached referrer.
+    #
+    # Use a conditional UPDATE so the DB itself enforces "attach only
+    # when still NULL". ``rowcount == 1`` means we won the race; 0
+    # means another session attached first — treat as no-op.
+    # ------------------------------------------------------------------
+    from sqlalchemy import update as _sa_update
+
+    try:
+        update_stmt = (
+            _sa_update(User).where(User.id == user.id, User.referred_by_id.is_(None)).values(referred_by_id=referrer.id)
+        )
+        result = await db.execute(update_stmt)
+        await db.commit()
+    except Exception as exc:
+        logger.error(
+            'attach_referrer_if_missing: commit failed',
+            user_id=user.id,
+            referrer_id=referrer.id,
+            source=source,
+            error=str(exc),
+        )
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        return None
+
+    # rowcount == 0 means another session beat us to the attach —
+    # don't fire the registration event (the winning session already
+    # did) and don't pretend we attached.
+    if (result.rowcount or 0) == 0:
+        logger.info(
+            'attach_referrer_if_missing: lost the attach race, another session won',
+            user_id=user.id,
+            attempted_referrer_id=referrer.id,
+            source=source,
+        )
+        # Refresh the in-memory object so the caller sees the winning referrer.
+        try:
+            await db.refresh(user)
+        except Exception:
+            pass
+        return None
+
+    # We won. Mirror the write onto the in-memory ORM attribute so the
+    # caller sees the same value as the DB (the conditional UPDATE
+    # bypasses ORM attribute machinery). Then refresh as a belt-and-
+    # suspenders to surface any server-side defaults (updated_at, etc.).
+    user.referred_by_id = referrer.id
+    try:
+        await db.refresh(user)
+    except Exception:
+        # Refresh failures are non-fatal — the write committed. Worst
+        # case the caller's ORM-attached user shows a stale value
+        # until next refetch.
+        pass
+
+    logger.info(
+        'Referrer attached',
+        user_id=user.id,
+        referrer_id=referrer.id,
+        source=source,
+        had_explicit_code=referral_code is not None,
+    )
+
+    # Best-effort: clear the Redis pending row so a stale entry can't
+    # double-attach via another entry point later.
+    if user.telegram_id is not None:
+        await clear_pending_referral(user.telegram_id)
+
+    # Fire the registration event. We swallow exceptions because the
+    # attachment itself is the load-bearing part — losing the
+    # notification or the audit row is a softer failure than losing
+    # the referrer link, and the audit row can be reconstructed
+    # offline from ``users.referred_by_id``.
+    #
+    # When the caller didn't pass a bot (cabinet/FastAPI routes don't
+    # have one in scope), lazy-create one via ``create_bot()`` so the
+    # referrer still receives the Telegram notification. Same pattern
+    # as ``_process_referral_code`` in app/cabinet/routes/auth.py.
+    try:
+        if bot is None:
+            from app.bot_factory import create_bot
+
+            async with create_bot() as event_bot:
+                await process_referral_registration(db, user.id, referrer.id, bot=event_bot)
+        else:
+            await process_referral_registration(db, user.id, referrer.id, bot=bot)
+    except Exception as exc:
+        logger.error(
+            'attach_referrer_if_missing: process_referral_registration failed (referrer still attached)',
+            user_id=user.id,
+            referrer_id=referrer.id,
+            source=source,
+            error=str(exc),
+        )
+
+    return referrer.id
 
 
 # ---------------------------------------------------------------------------
@@ -245,15 +521,65 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
             logger.error('Пользователь не привязан к рефереру', new_user_id=new_user_id, referrer_id=referrer_id)
             return False
 
-        campaign_id = await get_user_campaign_id(db, new_user_id)
-        await create_referral_earning(
-            db=db,
-            user_id=referrer_id,
-            referral_id=new_user_id,
-            amount_kopeks=0,
-            reason='referral_registration_pending',
-            campaign_id=campaign_id,
+        # Cross-session de-dup. Bot and cabinet run on separate
+        # ``AsyncSessionLocal`` instances; the per-session idempotency
+        # guard in ``attach_referrer_if_missing`` is not enough on its
+        # own. Two layers protect the audit row:
+        #
+        #   1. Fast-path SELECT below — handles the common case
+        #      cheaply, no exception machinery.
+        #   2. Partial UNIQUE index ``uq_referral_earnings_registration_pending``
+        #      (Alembic 0085) — catches the sub-millisecond window
+        #      where both sessions pass the SELECT before either
+        #      INSERT commits. On collision the second INSERT raises
+        #      ``IntegrityError``, which we swallow as a duplicate.
+        #
+        # Only the ``referral_registration_pending`` reason is deduped.
+        # Bonus rows (``referral_first_topup_bonus``,
+        # ``referral_commission_topup``, etc.) are intentionally
+        # allowed to repeat and are protected at their own call sites.
+        from sqlalchemy import select as _select
+        from sqlalchemy.exc import IntegrityError as _IntegrityError
+
+        existing = await db.execute(
+            _select(ReferralEarning.id)
+            .where(
+                ReferralEarning.user_id == referrer_id,
+                ReferralEarning.referral_id == new_user_id,
+                ReferralEarning.reason == 'referral_registration_pending',
+            )
+            .limit(1)
         )
+        if existing.scalar_one_or_none() is not None:
+            logger.info(
+                'Referral registration already recorded, skipping duplicate',
+                new_user_id=new_user_id,
+                referrer_id=referrer_id,
+            )
+            return True
+
+        campaign_id = await get_user_campaign_id(db, new_user_id)
+        try:
+            await create_referral_earning(
+                db=db,
+                user_id=referrer_id,
+                referral_id=new_user_id,
+                amount_kopeks=0,
+                reason='referral_registration_pending',
+                campaign_id=campaign_id,
+            )
+        except _IntegrityError:
+            # Lost the race against a concurrent session AFTER our
+            # SELECT but BEFORE our commit — the unique index caught it.
+            # Roll back so the session is usable for the notification
+            # block below.
+            await db.rollback()
+            logger.info(
+                'Referral registration race caught by unique index, treating as duplicate',
+                new_user_id=new_user_id,
+                referrer_id=referrer_id,
+            )
+            return True
 
         try:
             from app.services.referral_contest_service import referral_contest_service
@@ -328,7 +654,12 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
             return False
 
         campaign_id = await get_user_campaign_id(db, user.id)
-        commission_percent = get_effective_referral_commission_percent(referrer)
+        prior_reward_payments = await get_referral_reward_payment_count(db, referrer.id, user.id)
+        commission_percent = await calculate_referral_commission_percent(
+            db,
+            referrer,
+            is_first_payment=prior_reward_payments == 0,
+        )
 
         logger.info(
             'Обработка реферального пополнения',

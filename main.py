@@ -16,7 +16,7 @@ from app.database.database import sync_postgres_sequences
 from app.database.migrations import run_alembic_upgrade
 from app.database.models import PaymentMethod
 from app.localization.loader import ensure_locale_templates
-from app.logging_config import setup_logging
+from app.logging_config import _resolve_log_level, setup_logging
 from app.services.backup_service import backup_service
 from app.services.ban_notification_service import ban_notification_service
 from app.services.broadcast_service import broadcast_service
@@ -120,7 +120,7 @@ async def main():
         log_handlers.append(stream_handler)
 
         logging.basicConfig(
-            level=getattr(logging, settings.LOG_LEVEL),
+            level=_resolve_log_level(settings.LOG_LEVEL),
             handlers=log_handlers,
             force=True,
         )
@@ -139,7 +139,7 @@ async def main():
         log_handlers.append(stream_handler)
 
         logging.basicConfig(
-            level=getattr(logging, settings.LOG_LEVEL),
+            level=_resolve_log_level(settings.LOG_LEVEL),
             handlers=log_handlers,
             force=True,
         )
@@ -532,6 +532,7 @@ async def main():
                 settings.is_pal24_enabled(),
                 settings.is_wata_enabled(),
                 settings.is_heleket_enabled(),
+                settings.is_apple_iap_enabled(),
             ]
         )
 
@@ -739,6 +740,8 @@ async def main():
             webhook_lines.append(f'WATA: {_fmt(settings.WATA_WEBHOOK_PATH)}')
         if settings.is_heleket_enabled():
             webhook_lines.append(f'Heleket: {_fmt(settings.HELEKET_WEBHOOK_PATH)}')
+        if settings.is_apple_iap_enabled():
+            webhook_lines.append(f'Apple IAP: {_fmt(settings.APPLE_IAP_WEBHOOK_PATH)}')
         if settings.is_platega_enabled():
             webhook_lines.append(f'Platega: {_fmt(settings.PLATEGA_WEBHOOK_PATH)}')
         if settings.is_cloudpayments_enabled():

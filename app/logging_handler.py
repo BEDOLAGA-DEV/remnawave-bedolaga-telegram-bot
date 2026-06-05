@@ -48,6 +48,11 @@ IGNORED_LOGGER_PREFIXES: Final[tuple[str, ...]] = (
     'uvicorn.protocols',
     'websockets',
     'asyncio',
+    # Сам сервис админ-уведомлений: если он логирует error при ошибке отправки
+    # в админ-чат, нельзя пересылать эту ошибку обратно в тот же чат — иначе
+    # на каждом флуд-контроле получаем петлю усиления. Сервис уже использует
+    # logger.warning для транзиентных ошибок, этот фильтр — belt-and-suspenders.
+    'app.services.admin_notification_service',
     # Payment modules — isolated to payments.log, must not leak to Telegram
     'app.payments',
     'app.services.payment',
@@ -241,6 +246,12 @@ class TelegramNotifierProcessor:
             # Lazy import to avoid circular dependencies at startup
             from app.middlewares.global_error import send_error_to_admin_chat
 
+            # Defense-in-depth: на случай, если когда-то aiogram/httpx
+            # начнёт включать URL `https://api.telegram.org/bot<TOKEN>/...`
+            # в str(exc) (сейчас 3.x не включает), redact на финальной точке
+            # перед отправкой в админ-чат.
+            from app.services.admin_notification_service import _redact_telegram_secrets
+
             # Build a pseudo-Exception from the event_dict
             error = _make_event_dict_error(event_dict)
 
@@ -257,7 +268,7 @@ class TelegramNotifierProcessor:
                     user_str += f' (@{username})'
                 context_parts.append(user_str)
 
-            context = '\n'.join(context_parts)
+            context = _redact_telegram_secrets('\n'.join(context_parts))
 
             # Extract traceback from exc_info if present
             tb_override: str | None = None
@@ -277,9 +288,13 @@ class TelegramNotifierProcessor:
                             real_exc = val
                             break
                 if real_exc is not None and real_exc.__traceback__ is not None:
-                    tb_override = ''.join(
-                        traceback.format_exception(type(real_exc), real_exc, real_exc.__traceback__)
+                    tb_override = _redact_telegram_secrets(
+                        ''.join(traceback.format_exception(type(real_exc), real_exc, real_exc.__traceback__))
                     )
+
+            # Также redact в самом сообщении ошибки (event string).
+            if error.args:
+                error.args = tuple(_redact_telegram_secrets(arg) if isinstance(arg, str) else arg for arg in error.args)
 
             await send_error_to_admin_chat(bot, error, context, tb_override=tb_override)
 

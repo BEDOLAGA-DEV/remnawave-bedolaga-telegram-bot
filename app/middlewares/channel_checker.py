@@ -333,6 +333,12 @@ class ChannelCheckerMiddleware(BaseMiddleware):
 
                 user = await get_user_by_telegram_id(db, telegram_user.id)
 
+                # Visit-уведомление шлём только для новых юзеров (user is None).
+                # Для existing-юзеров будет «РЕГИСТРАЦИЯ ПО РК» через bot-flow
+                # (_apply_campaign_bonus_if_needed) — паритет с числом записей в БД.
+                if user is not None:
+                    return
+
                 notification_service = AdminNotificationService(bot)
                 sent = await notification_service.send_campaign_link_visit_notification(
                     db,
