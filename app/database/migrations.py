@@ -87,6 +87,26 @@ async def run_alembic_upgrade() -> None:
     await loop.run_in_executor(None, command.upgrade, cfg, 'head')
     logger.info('Alembic миграции применены')
 
+    # Defensive drift reconcile: some DBs have alembic_version ahead of the
+    # real schema (stamped/restored past CREATE migrations whose DDL never
+    # materialized -> UndefinedTable/UndefinedColumn at runtime). create_all
+    # with checkfirst=True only creates objects that are missing, so it is a
+    # no-op on healthy DBs and a repair on drifted ones.
+    await _reconcile_missing_tables()
+
+
+async def _reconcile_missing_tables() -> None:
+    """Create any model table missing from the DB (idempotent, no-op if healthy)."""
+    from app.database.database import engine
+    from app.database.models import Base
+
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all, checkfirst=True)
+        logger.info('Alembic: проверка дрейфа схемы завершена (create_all checkfirst)')
+    except Exception as exc:  # never block startup on the reconcile pass
+        logger.warning('Не удалось выполнить reconcile дрейфа схемы', error=exc)
+
 
 async def stamp_alembic_head() -> None:
     """Stamp the DB as being at head without running migrations (for existing DBs)."""

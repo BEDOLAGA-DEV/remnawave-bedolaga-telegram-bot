@@ -81,11 +81,14 @@ services:
     networks:
       - bot_network
     healthcheck:
-      test: [ 'CMD-SHELL', 'python -c "import requests, os; requests.get(f\"http://localhost:{os.environ.get(''WEB_API_PORT'', ''8080'')}/health\", headers={''X-API-Key'': os.environ.get(''WEB_API_DEFAULT_TOKEN'')}, timeout=5) or exit(1)"' ]
+      # Hit the auth-free unified health endpoint on the real API port (127.0.0.1
+      # to force IPv4). The old check used default port 8080 (not WEB_API_PORT)
+      # and an empty X-API-Key -> connection refused / 401 -> false-unhealthy.
+      test: [ 'CMD-SHELL', 'python -c "import os,urllib.request; urllib.request.urlopen(f''http://127.0.0.1:{os.environ.get(\"WEB_API_PORT\",\"8181\")}/health/unified'', timeout=5)"' ]
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 40s
 
   cabinet-frontend:
     # Web cabinet (React SPA) served by nginx.
@@ -116,7 +119,7 @@ services:
     networks:
       - bot_network
     healthcheck:
-      test: [ 'CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:80/' ]
+      test: [ 'CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://127.0.0.1:80/' ]
       interval: 30s
       timeout: 5s
       retries: 3

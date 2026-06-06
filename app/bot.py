@@ -138,7 +138,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
             from app.services.system_settings_service import bot_configuration_service
 
             async with AsyncSessionLocal() as db:
-                await bot_configuration_service.update_setting(db, 'BOT_USERNAME', bot_info.username)
+                await bot_configuration_service.set_value(db, 'BOT_USERNAME', bot_info.username, force=True)
                 await db.commit()
             logger.info('Username бота автоматически зарегистрирован', username=bot_info.username)
     except Exception as e:
