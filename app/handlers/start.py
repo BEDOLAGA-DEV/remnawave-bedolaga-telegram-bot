@@ -58,10 +58,6 @@ from app.services.subscription_service import SubscriptionService
 from app.services.support_settings_service import SupportSettingsService
 from app.services.web_auth_service import WEB_AUTH_TOKEN_MIN_LENGTH, link_web_auth_token
 from app.states import RegistrationStates
-from app.utils.promo_offer import (
-    build_promo_offer_hint,
-    build_test_access_hint,
-)
 from app.utils.timezone import format_local_datetime
 from app.utils.user_utils import generate_unique_referral_code
 
@@ -2460,50 +2456,11 @@ def get_referral_code_keyboard(language: str):
 
 
 async def get_main_menu_text(user, texts, db: AsyncSession):
-    base_text = texts.MAIN_MENU.format(
-        user_name=html.escape(user.full_name or ''), subscription_status=_get_subscription_status(user, texts)
-    )
+    # Единый источник вида главного меню — реализация в app.handlers.menu
+    # (дашборд + multi-tariff + подсказки). Ленивый импорт во избежание циклов.
+    from app.handlers.menu import get_main_menu_text as _build_main_menu_text
 
-    action_prompt = texts.t('MAIN_MENU_ACTION_PROMPT', 'Выберите действие:')
-
-    info_sections: list[str] = []
-
-    try:
-        promo_hint = await build_promo_offer_hint(db, user, texts)
-        if promo_hint:
-            info_sections.append(promo_hint.strip())
-    except Exception as hint_error:
-        logger.debug(
-            'Не удалось построить подсказку промо-предложения для пользователя',
-            getattr=getattr(user, 'id', None),
-            hint_error=hint_error,
-        )
-
-    try:
-        test_access_hint = await build_test_access_hint(db, user, texts)
-        if test_access_hint:
-            info_sections.append(test_access_hint.strip())
-    except Exception as test_error:
-        logger.debug(
-            'Не удалось построить подсказку тестового доступа для пользователя',
-            getattr=getattr(user, 'id', None),
-            test_error=test_error,
-        )
-
-    if info_sections:
-        extra_block = '\n\n'.join(section for section in info_sections if section)
-        if extra_block:
-            base_text = _insert_random_message(base_text, extra_block, action_prompt)
-
-    try:
-        random_message = await get_random_active_message(db)
-        if random_message:
-            return _insert_random_message(base_text, random_message, action_prompt)
-
-    except Exception as e:
-        logger.error('Ошибка получения случайного сообщения', error=e)
-
-    return base_text
+    return await _build_main_menu_text(user, texts, db)
 
 
 async def get_main_menu_text_simple(user_name, texts, db: AsyncSession):

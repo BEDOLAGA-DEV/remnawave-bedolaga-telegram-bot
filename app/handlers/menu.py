@@ -1206,31 +1206,30 @@ async def _get_multi_tariff_status(user, texts, db: AsyncSession) -> tuple[str, 
 
         lines.append(f'{emoji} <b>{tariff_name}</b>{status_suffix}')
 
-    status_text = '\n<blockquote>' + '\n'.join(lines) + '</blockquote>'
-    return status_text, ''
+    # Возвращаем «сырые» строки без обёртки blockquote — карточку дашборда
+    # собирает build_main_menu_dashboard.
+    return '\n'.join(lines), ''
 
 
 async def get_main_menu_text(user, texts, db: AsyncSession):
     from app.config import settings
 
-    # Multi-tariff: show summary of all subscriptions
+    from app.utils.main_menu_dashboard import build_main_menu_dashboard
+
+    # Multi-tariff: показываем сводку по всем подпискам единым списком в карточке.
     if settings.is_multi_tariff_enabled():
-        subscriptions_status, tariff_info_block = await _get_multi_tariff_status(user, texts, db)
-
-        base_text = texts.MAIN_MENU.format(
-            user_name=html.escape(user.full_name or ''),
+        subscriptions_status, _ = await _get_multi_tariff_status(user, texts, db)
+        base_text = await build_main_menu_dashboard(
+            user,
+            texts,
+            db,
             subscription_status=subscriptions_status,
+            include_traffic=False,
         )
-
-        if tariff_info_block:
-            action_prompt_text = texts.t('MAIN_MENU_ACTION_PROMPT', 'Выберите действие:')
-            if action_prompt_text in base_text:
-                base_text = base_text.replace(action_prompt_text, f'{tariff_info_block}\n\n{action_prompt_text}')
     else:
-        # Single-tariff mode: legacy behavior
-        tariff = None
+        # Single-tariff: статус одной подписки + (опционально) название тарифа.
         is_daily_tariff = False
-        tariff_info_block = ''
+        tariff_line = ''
 
         subscription = getattr(user, 'subscription', None)
         if settings.is_tariffs_mode() and subscription and subscription.tariff_id:
@@ -1240,19 +1239,21 @@ async def get_main_menu_text(user, texts, db: AsyncSession):
                 tariff = await get_tariff_by_id(db, subscription.tariff_id)
                 if tariff:
                     is_daily_tariff = getattr(tariff, 'is_daily', False)
-                    tariff_info_block = f'\n📦 Тариф: {html.escape(tariff.name)}'
+                    tariff_line = '📦 ' + texts.t('MENU_DASH_TARIFF', 'Тариф') + f': {html.escape(tariff.name)}'
             except Exception as e:
                 logger.debug('Не удалось загрузить тариф для главного меню', error=e)
 
-        base_text = texts.MAIN_MENU.format(
-            user_name=html.escape(user.full_name or ''),
-            subscription_status=_get_subscription_status(user, texts, is_daily_tariff),
-        )
+        subscription_status = _get_subscription_status(user, texts, is_daily_tariff)
+        if tariff_line:
+            subscription_status = f'{subscription_status}\n{tariff_line}'
 
-        if tariff_info_block:
-            action_prompt_text = texts.t('MAIN_MENU_ACTION_PROMPT', 'Выберите действие:')
-            if action_prompt_text in base_text:
-                base_text = base_text.replace(action_prompt_text, f'{tariff_info_block}\n\n{action_prompt_text}')
+        base_text = await build_main_menu_dashboard(
+            user,
+            texts,
+            db,
+            subscription_status=subscription_status,
+            include_traffic=True,
+        )
 
     action_prompt = texts.t('MAIN_MENU_ACTION_PROMPT', 'Выберите действие:')
 
