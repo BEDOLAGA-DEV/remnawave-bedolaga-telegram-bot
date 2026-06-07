@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.server_squad import get_all_server_squads
 from app.database.crud.user import get_user_by_id
+from app.database.database import AsyncSessionLocal
 from app.database.models import Subscription, SubscriptionStatus, User
 from app.external.remnawave_api import RemnaWaveAPI, RemnaWaveAPIError, RemnaWaveUser, TrafficLimitStrategy, UserStatus
 from app.utils.subscription_utils import (
@@ -67,6 +68,50 @@ class PropagateSquadsResult:
     total: int = 0
     synced: int = 0
     failed_ids: list[int] = field(default_factory=list)
+
+
+@dataclass
+class RemnaWaveUpdateContext:
+    """Snapshot for RemnaWave panel sync without holding a DB session during HTTP."""
+
+    subscription_id: int
+    user_id: int
+    remnawave_uuid: str
+    reset_traffic_uuid: str | None
+    is_actually_active: bool
+    expire_at: datetime
+    traffic_limit_gb: int | None
+    traffic_reset_strategy: TrafficLimitStrategy
+    telegram_id: int | None
+    email: str | None
+    description: str
+    connected_squads: list[str] | None
+    user_tag: str | None
+    hwid_limit: int | None
+    ext_squad_uuid: str | None
+    sync_squads: bool
+    reset_traffic: bool
+    reset_reason: str | None
+    user_log_label: str
+
+
+@dataclass
+class RemnaWaveCreateContext:
+    """Snapshot for RemnaWave user create/update without holding a DB session during HTTP."""
+
+    subscription_id: int
+    user_id: int
+    multi_tariff: bool
+    remnawave_short_id: str | None
+    remnawave_uuid: str | None
+    user_remnawave_uuid: str | None
+    user_tag: str | None
+    hwid_limit: int | None
+    ext_squad_uuid: str | None
+    reset_traffic: bool
+    reset_reason: str | None
+    user: User
+    subscription: Subscription
 
 
 class SubscriptionService:
@@ -172,59 +217,43 @@ class SubscriptionService:
                 logger.error('Ошибка валидации подписки для пользователя', _format_user_log=self._format_user_log(user))
                 return None
 
-            # Загружаем tariff заранее, чтобы избежать lazy loading в async контексте
             try:
                 await db.refresh(subscription, ['tariff'])
             except Exception:
-                pass  # tariff может быть None или уже загружен
+                pass
 
             user_tag = self._resolve_user_tag(subscription)
-
-            # Определяем внешний сквад из тарифа
             ext_squad_uuid = subscription.tariff.external_squad_uuid if subscription.tariff else None
+            hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
 
-            async with self.get_api_client() as api:
-                hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
+            create_ctx = RemnaWaveCreateContext(
+                subscription_id=subscription.id,
+                user_id=user.id,
+                multi_tariff=settings.is_multi_tariff_enabled(),
+                remnawave_short_id=subscription.remnawave_short_id,
+                remnawave_uuid=subscription.remnawave_uuid,
+                user_remnawave_uuid=user.remnawave_uuid,
+                user_tag=user_tag,
+                hwid_limit=hwid_limit,
+                ext_squad_uuid=ext_squad_uuid,
+                reset_traffic=reset_traffic,
+                reset_reason=reset_reason,
+                user=user,
+                subscription=subscription,
+            )
 
-                # Multi-tariff mode: each subscription has its own Remnawave user
-                if settings.is_multi_tariff_enabled():
-                    updated_user = await self._create_or_update_remnawave_user_multi(
-                        api,
-                        user,
-                        subscription,
-                        user_tag=user_tag,
-                        hwid_limit=hwid_limit,
-                        ext_squad_uuid=ext_squad_uuid,
-                        reset_traffic=reset_traffic,
-                        reset_reason=reset_reason,
-                    )
-                else:
-                    updated_user = await self._create_or_update_remnawave_user_single(
-                        api,
-                        user,
-                        subscription,
-                        user_tag=user_tag,
-                        hwid_limit=hwid_limit,
-                        ext_squad_uuid=ext_squad_uuid,
-                        reset_traffic=reset_traffic,
-                        reset_reason=reset_reason,
-                    )
+            updated_user = await self._execute_remnawave_create_api(create_ctx)
+            if not updated_user:
+                return None
 
-                subscription.remnawave_short_uuid = updated_user.short_uuid
-                subscription.subscription_url = updated_user.subscription_url
-                subscription.subscription_crypto_link = updated_user.happ_crypto_link
-                subscription.remnawave_uuid = updated_user.uuid
-                # Legacy field — keep in sync for single-mode backward compat
-                if not settings.is_multi_tariff_enabled():
-                    user.remnawave_uuid = updated_user.uuid
+            await self._persist_remnawave_create_result(create_ctx, updated_user)
+            self._apply_create_result_to_memory(subscription, user, updated_user, create_ctx.multi_tariff)
 
-                await db.commit()
-
-                logger.info('✅ Создан/обновлен RemnaWave пользователь для подписки', subscription_id=subscription.id)
-                logger.info('🔗 Ссылка на подписку', subscription_url=updated_user.subscription_url)
-                strategy_name = settings.DEFAULT_TRAFFIC_RESET_STRATEGY
-                logger.info('📊 Стратегия сброса трафика', strategy_name=strategy_name)
-                return updated_user
+            logger.info('✅ Создан/обновлен RemnaWave пользователь для подписки', subscription_id=subscription.id)
+            logger.info('🔗 Ссылка на подписку', subscription_url=updated_user.subscription_url)
+            strategy_name = settings.DEFAULT_TRAFFIC_RESET_STRATEGY
+            logger.info('📊 Стратегия сброса трафика', strategy_name=strategy_name)
+            return updated_user
 
         except RemnaWaveAPIError as e:
             logger.error('Ошибка RemnaWave API', error=e)
@@ -232,6 +261,199 @@ class SubscriptionService:
         except Exception as e:
             logger.error('Ошибка создания RemnaWave пользователя', error=e)
             return None
+
+    async def _execute_remnawave_create_api(self, ctx: RemnaWaveCreateContext) -> RemnaWaveUser | None:
+        async with self.get_api_client() as api:
+            if ctx.multi_tariff:
+                return await self._create_or_update_remnawave_user_multi(
+                    api,
+                    ctx.user,
+                    ctx.subscription,
+                    user_tag=ctx.user_tag,
+                    hwid_limit=ctx.hwid_limit,
+                    ext_squad_uuid=ctx.ext_squad_uuid,
+                    reset_traffic=ctx.reset_traffic,
+                    reset_reason=ctx.reset_reason,
+                )
+            return await self._create_or_update_remnawave_user_single(
+                api,
+                ctx.user,
+                ctx.subscription,
+                user_tag=ctx.user_tag,
+                hwid_limit=ctx.hwid_limit,
+                ext_squad_uuid=ctx.ext_squad_uuid,
+                reset_traffic=ctx.reset_traffic,
+                reset_reason=ctx.reset_reason,
+            )
+
+    async def _persist_remnawave_create_result(self, ctx: RemnaWaveCreateContext, updated_user: RemnaWaveUser) -> None:
+        async with AsyncSessionLocal() as write_db:
+            subscription = await write_db.get(Subscription, ctx.subscription_id)
+            if subscription is None:
+                logger.error('Подписка не найдена при сохранении RemnaWave', subscription_id=ctx.subscription_id)
+                return
+
+            subscription.remnawave_short_uuid = updated_user.short_uuid
+            subscription.subscription_url = updated_user.subscription_url
+            subscription.subscription_crypto_link = updated_user.happ_crypto_link
+            subscription.remnawave_uuid = updated_user.uuid
+
+            if not ctx.multi_tariff:
+                user = await write_db.get(User, ctx.user_id)
+                if user is not None:
+                    user.remnawave_uuid = updated_user.uuid
+
+            await write_db.commit()
+
+    @staticmethod
+    def _apply_create_result_to_memory(
+        subscription: Subscription,
+        user: User,
+        updated_user: RemnaWaveUser,
+        multi_tariff: bool,
+    ) -> None:
+        subscription.remnawave_short_uuid = updated_user.short_uuid
+        subscription.subscription_url = updated_user.subscription_url
+        subscription.subscription_crypto_link = updated_user.happ_crypto_link
+        subscription.remnawave_uuid = updated_user.uuid
+        if not multi_tariff:
+            user.remnawave_uuid = updated_user.uuid
+
+    def _build_remnawave_update_context(
+        self,
+        subscription: Subscription,
+        user: User,
+        *,
+        reset_traffic: bool,
+        reset_reason: str | None,
+        sync_squads: bool,
+    ) -> RemnaWaveUpdateContext | None:
+        if settings.is_multi_tariff_enabled():
+            remnawave_uuid = subscription.remnawave_uuid
+            reset_traffic_uuid = subscription.remnawave_uuid
+            if not remnawave_uuid:
+                logger.warning(
+                    'Multi-tariff: subscription has no remnawave_uuid, cannot update panel',
+                    subscription_id=subscription.id,
+                    user_id=subscription.user_id,
+                )
+                return None
+        else:
+            remnawave_uuid = user.remnawave_uuid
+            reset_traffic_uuid = user.remnawave_uuid
+            if not remnawave_uuid:
+                logger.error('RemnaWave UUID не найден для пользователя', user_id=subscription.user_id)
+                return None
+
+        current_time = datetime.now(UTC)
+        is_actually_active = (
+            subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
+            and subscription.end_date > current_time
+        )
+
+        if (
+            subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
+            and subscription.end_date <= current_time
+        ):
+            logger.warning(
+                '⚠️ update_remnawave_user: подписка имеет статус ACTIVE, но end_date <= now. '
+                'Отправляем в RemnaWave как DISABLED, но НЕ меняем статус в БД.',
+                subscription_id=subscription.id,
+                end_date=subscription.end_date,
+                current_time=current_time,
+            )
+
+        user_tag = self._resolve_user_tag(subscription)
+        ext_squad_uuid = subscription.tariff.external_squad_uuid if subscription.tariff else None
+        expire_at = (
+            subscription.end_date
+            if is_actually_active
+            else max(subscription.end_date, current_time + timedelta(minutes=1))
+        )
+
+        return RemnaWaveUpdateContext(
+            subscription_id=subscription.id,
+            user_id=user.id,
+            remnawave_uuid=remnawave_uuid,
+            reset_traffic_uuid=reset_traffic_uuid,
+            is_actually_active=is_actually_active,
+            expire_at=expire_at,
+            traffic_limit_gb=subscription.traffic_limit_gb,
+            traffic_reset_strategy=get_traffic_reset_strategy(subscription.tariff),
+            telegram_id=user.telegram_id,
+            email=user.email,
+            description=settings.format_remnawave_user_description(
+                full_name=user.full_name,
+                username=user.username,
+                telegram_id=user.telegram_id,
+                email=user.email,
+                user_id=user.id,
+            ),
+            connected_squads=list(subscription.connected_squads) if subscription.connected_squads else None,
+            user_tag=user_tag,
+            hwid_limit=resolve_hwid_device_limit_for_payload(subscription),
+            ext_squad_uuid=ext_squad_uuid,
+            sync_squads=sync_squads,
+            reset_traffic=reset_traffic,
+            reset_reason=reset_reason,
+            user_log_label=self._format_user_log(user),
+        )
+
+    async def _execute_remnawave_update_api(
+        self,
+        ctx: RemnaWaveUpdateContext,
+        user: User,
+    ) -> RemnaWaveUser | None:
+        async with self.get_api_client() as api:
+            update_kwargs = dict(
+                uuid=ctx.remnawave_uuid,
+                status=UserStatus.ACTIVE if ctx.is_actually_active else UserStatus.DISABLED,
+                expire_at=ctx.expire_at,
+                traffic_limit_bytes=self._gb_to_bytes(ctx.traffic_limit_gb),
+                traffic_limit_strategy=ctx.traffic_reset_strategy,
+                telegram_id=ctx.telegram_id,
+                email=ctx.email,
+                description=ctx.description,
+            )
+
+            if ctx.sync_squads and ctx.connected_squads:
+                update_kwargs['active_internal_squads'] = ctx.connected_squads
+
+            if ctx.user_tag is not None:
+                update_kwargs['tag'] = ctx.user_tag
+
+            if ctx.hwid_limit is not None:
+                update_kwargs['hwid_device_limit'] = ctx.hwid_limit
+
+            if ctx.sync_squads and ctx.ext_squad_uuid is not None:
+                update_kwargs['external_squad_uuid'] = ctx.ext_squad_uuid
+
+            updated_user = await api.update_user(**update_kwargs)
+
+            if ctx.reset_traffic and ctx.reset_traffic_uuid:
+                await self._reset_user_traffic(api, ctx.reset_traffic_uuid, user, ctx.reset_reason)
+
+            return updated_user
+
+    async def _persist_remnawave_update_result(
+        self,
+        ctx: RemnaWaveUpdateContext,
+        updated_user: RemnaWaveUser,
+    ) -> None:
+        async with AsyncSessionLocal() as write_db:
+            subscription = await write_db.get(Subscription, ctx.subscription_id)
+            if subscription is None:
+                logger.error('Подписка не найдена при сохранении RemnaWave', subscription_id=ctx.subscription_id)
+                return
+
+            subscription.subscription_url = updated_user.subscription_url
+            subscription.subscription_crypto_link = updated_user.happ_crypto_link
+            await write_db.commit()
+
+    @staticmethod
+    def _apply_update_result_to_memory(subscription: Subscription, updated_user: RemnaWaveUser) -> None:
+        subscription.subscription_url = updated_user.subscription_url
+        subscription.subscription_crypto_link = updated_user.happ_crypto_link
 
     async def _create_or_update_remnawave_user_multi(
         self,
@@ -406,132 +628,42 @@ class SubscriptionService:
         sync_squads: bool = True,
     ) -> RemnaWaveUser | None:
         try:
-            user = await get_user_by_id(db, subscription.user_id)
+            user = subscription.user or await get_user_by_id(db, subscription.user_id)
             if not user:
                 logger.error('Пользователь не найден', user_id=subscription.user_id)
                 return None
 
-            # Resolve the Remnawave UUID: prefer subscription-level in multi-tariff mode
-            if settings.is_multi_tariff_enabled():
-                remnawave_uuid = subscription.remnawave_uuid
-                if not remnawave_uuid:
-                    logger.warning(
-                        'Multi-tariff: subscription has no remnawave_uuid, cannot update panel',
-                        subscription_id=subscription.id,
-                        user_id=subscription.user_id,
-                    )
-                    return None
-            else:
-                remnawave_uuid = user.remnawave_uuid
-            if not remnawave_uuid:
-                logger.error('RemnaWave UUID не найден для пользователя', user_id=subscription.user_id)
-                return None
-
-            # Загружаем tariff заранее, чтобы избежать lazy loading в async контексте
             try:
                 await db.refresh(subscription, ['tariff'])
             except Exception:
-                pass  # tariff может быть None или уже загружен
+                pass
 
-            current_time = datetime.now(UTC)
-            # Определяем актуальный статус для отправки в RemnaWave
-            # НЕ меняем статус подписки здесь - это задача scheduled job
-            is_actually_active = (
-                subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
-                and subscription.end_date > current_time
+            update_ctx = self._build_remnawave_update_context(
+                subscription,
+                user,
+                reset_traffic=reset_traffic,
+                reset_reason=reset_reason,
+                sync_squads=sync_squads,
             )
+            if update_ctx is None:
+                return None
 
-            # Логируем если статус и end_date не согласованы (для отладки)
-            if (
-                subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
-                and subscription.end_date <= current_time
-            ):
-                logger.warning(
-                    '⚠️ update_remnawave_user: подписка имеет статус ACTIVE, но end_date <= now. Отправляем в RemnaWave как DISABLED, но НЕ меняем статус в БД.',
-                    subscription_id=subscription.id,
-                    end_date=subscription.end_date,
-                    current_time=current_time,
-                )
+            updated_user = await self._execute_remnawave_update_api(update_ctx, user)
+            if updated_user is None:
+                return None
 
-            user_tag = self._resolve_user_tag(subscription)
+            await self._persist_remnawave_update_result(update_ctx, updated_user)
+            self._apply_update_result_to_memory(subscription, updated_user)
 
-            # Определяем внешний сквад из тарифа
-            ext_squad_uuid = subscription.tariff.external_squad_uuid if subscription.tariff else None
-
-            async with self.get_api_client() as api:
-                hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
-
-                update_kwargs = dict(
-                    uuid=remnawave_uuid,
-                    status=UserStatus.ACTIVE if is_actually_active else UserStatus.DISABLED,
-                    expire_at=subscription.end_date
-                    if is_actually_active
-                    else max(subscription.end_date, current_time + timedelta(minutes=1)),
-                    traffic_limit_bytes=self._gb_to_bytes(subscription.traffic_limit_gb),
-                    traffic_limit_strategy=get_traffic_reset_strategy(subscription.tariff),
-                    telegram_id=user.telegram_id,
-                    email=user.email,
-                    description=settings.format_remnawave_user_description(
-                        full_name=user.full_name,
-                        username=user.username,
-                        telegram_id=user.telegram_id,
-                        email=user.email,
-                        user_id=user.id,
-                    ),
-                )
-
-                # Сквады отправляем только при явном sync_squads=True (propagate_squads и пр.)
-                # В рутинных обновлениях пропускаем — сквады уже назначены при создании подписки,
-                # а пересылка стейловых UUID вызывает FK violation → A039 в RemnaWave
-                if sync_squads and subscription.connected_squads:
-                    update_kwargs['active_internal_squads'] = subscription.connected_squads
-
-                if user_tag is not None:
-                    update_kwargs['tag'] = user_tag
-
-                if hwid_limit is not None:
-                    update_kwargs['hwid_device_limit'] = hwid_limit
-
-                # Внешний сквад НЕ пересылаем в рутинных обновлениях — он уже назначен
-                # при создании подписки. Стейловый UUID вызывает FK violation → A039.
-                # Синхронизация сквадов происходит только при sync_squads=True.
-                if sync_squads and ext_squad_uuid is not None:
-                    update_kwargs['external_squad_uuid'] = ext_squad_uuid
-
-                updated_user = await api.update_user(**update_kwargs)
-
-                if reset_traffic:
-                    if settings.is_multi_tariff_enabled():
-                        reset_uuid = subscription.remnawave_uuid
-                        if not reset_uuid:
-                            logger.warning(
-                                'Multi-tariff: subscription has no remnawave_uuid, skipping traffic reset',
-                                subscription_id=subscription.id,
-                                user_id=subscription.user_id,
-                            )
-                    else:
-                        reset_uuid = user.remnawave_uuid
-                    if reset_uuid:
-                        await self._reset_user_traffic(
-                            api,
-                            reset_uuid,
-                            user,
-                            reset_reason,
-                        )
-
-                subscription.subscription_url = updated_user.subscription_url
-                subscription.subscription_crypto_link = updated_user.happ_crypto_link
-                await db.commit()
-
-                status_text = 'активным' if is_actually_active else 'истёкшим'
-                logger.info(
-                    '✅ Обновлен RemnaWave пользователь со статусом',
-                    remnawave_uuid=remnawave_uuid,
-                    status_text=status_text,
-                )
-                strategy_name = settings.DEFAULT_TRAFFIC_RESET_STRATEGY
-                logger.info('📊 Стратегия сброса трафика', strategy_name=strategy_name)
-                return updated_user
+            status_text = 'активным' if update_ctx.is_actually_active else 'истёкшим'
+            logger.info(
+                '✅ Обновлен RemnaWave пользователь со статусом',
+                remnawave_uuid=update_ctx.remnawave_uuid,
+                status_text=status_text,
+            )
+            strategy_name = settings.DEFAULT_TRAFFIC_RESET_STRATEGY
+            logger.info('📊 Стратегия сброса трафика', strategy_name=strategy_name)
+            return updated_user
 
         except RemnaWaveAPIError as e:
             logger.error('Ошибка RemnaWave API', error=e)
