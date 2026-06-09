@@ -380,12 +380,12 @@ async def purchase_traffic(
 
     # Отправляем уведомление админам
     try:
-        from aiogram import Bot
+        from app.bot_factory import create_bot
 
         from app.services.admin_notification_service import AdminNotificationService
 
-        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
+        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+            bot = create_bot()
             try:
                 notification_service = AdminNotificationService(bot)
                 old_traffic = subscription.traffic_limit_gb - request.gb

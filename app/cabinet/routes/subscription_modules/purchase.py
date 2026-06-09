@@ -492,12 +492,11 @@ async def submit_purchase(
 
         # Отправляем уведомление админам о покупке подписки
         try:
-            from aiogram import Bot
-
+            from app.bot_factory import create_bot
             from app.services.admin_notification_service import AdminNotificationService
 
-            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-                bot = Bot(token=settings.BOT_TOKEN)
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                bot = create_bot()
                 try:
                     notification_service = AdminNotificationService(bot)
                     is_new_subscription = result.get('was_trial_conversion') or not context.subscription
@@ -1061,12 +1060,11 @@ async def purchase_tariff(
 
         # Отправляем уведомление админам о покупке/продлении тарифа
         try:
-            from aiogram import Bot
-
+            from app.bot_factory import create_bot
             from app.services.admin_notification_service import AdminNotificationService
 
-            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-                bot = Bot(token=settings.BOT_TOKEN)
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                bot = create_bot()
                 try:
                     notification_service = AdminNotificationService(bot)
                     # Определяем тип покупки: новая подписка или продление
@@ -1356,12 +1354,11 @@ async def activate_trial(
 
     # Send admin notification about trial activation
     try:
-        from aiogram import Bot
-
+        from app.bot_factory import create_bot
         from app.services.admin_notification_service import AdminNotificationService
 
-        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
+        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+            bot = create_bot()
             try:
                 notification_service = AdminNotificationService(bot)
                 charged_amount = settings.TRIAL_ACTIVATION_PRICE if requires_payment else None
