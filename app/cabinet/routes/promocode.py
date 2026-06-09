@@ -69,13 +69,13 @@ async def activate_promocode(
         balance_after_rubles = result.get('balance_after_kopeks', 0) / 100
 
         # Send admin notification (same as bot handler)
-        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
+        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
             try:
-                from aiogram import Bot
+                from app.bot_factory import create_bot
 
                 from app.services.admin_notification_service import AdminNotificationService
 
-                bot = Bot(token=settings.BOT_TOKEN)
+                bot = create_bot()
                 try:
                     notification_service = AdminNotificationService(bot)
                     await notification_service.send_promocode_activation_notification(

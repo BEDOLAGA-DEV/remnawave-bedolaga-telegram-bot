@@ -511,12 +511,12 @@ async def switch_tariff(
 
     # Отправляем уведомление админам о смене тарифа
     try:
-        from aiogram import Bot
+        from app.bot_factory import create_bot
 
         from app.services.admin_notification_service import AdminNotificationService
 
-        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
+        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+            bot = create_bot()
             try:
                 notification_service = AdminNotificationService(bot)
                 await notification_service.send_subscription_purchase_notification(
