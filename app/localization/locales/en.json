@@ -819,6 +819,8 @@
   "ADMIN_USER_MANAGEMENT_PROMO_GROUP": "<b>Promo group:</b>\n• Name: {name}\n• Server discount: {server_discount}%\n• Traffic discount: {traffic_discount}%\n• Device discount: {device_discount}%",
   "ADMIN_USER_MANAGEMENT_PROMO_GROUP_NONE": "<b>Promo group:</b> Not assigned",
   "ADMIN_USER_MANAGEMENT_SUBSCRIPTION": "<b>Subscription:</b>\n• Type: {type}\n• Status: {status}\n• Until: {end_date}\n• Traffic: {traffic}\n• Devices: {devices}\n• Countries: {countries}",
+  "ADMIN_USER_MANAGEMENT_SUBSCRIPTIONS_HEADER": "<b>Subscriptions ({count}):</b>",
+  "ADMIN_USER_MANAGEMENT_SUBSCRIPTION_ITEM": "▫️ <b>#{index}{tariff}</b>\n• Type: {type}\n• Status: {status}\n• Until: {end_date}\n• Traffic: {traffic}\n• Devices: {devices}\n• Countries: {countries}",
   "ADMIN_USER_MANAGEMENT_SUBSCRIPTION_NONE": "<b>Subscription:</b> None",
   "ADMIN_USER_PROMO_GROUP_ALREADY": "ℹ️ The user is already in this promo group.",
   "ADMIN_USER_PROMO_GROUP_BACK": "⬅️ Back to user",
