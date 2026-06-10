@@ -34,6 +34,7 @@ MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 
 _CID_RE = re.compile(r'^[A-Za-z0-9._:-]{4,128}$')
+_YCLID_RE = re.compile(r'^[0-9]{1,64}$')
 _http_client: httpx.AsyncClient | None = None
 
 
@@ -65,6 +66,21 @@ def _mask_cid(cid: str) -> str:
     if len(cid) <= 4:
         return '****'
     return '*' * (len(cid) - 4) + cid[-4:]
+
+
+def _normalize_yclid(yclid: str | None) -> str | None:
+    if not isinstance(yclid, str):
+        return None
+    yclid = yclid.strip()
+    if not yclid or not _YCLID_RE.match(yclid):
+        return None
+    return yclid
+
+
+def _mask_yclid(yclid: str) -> str:
+    if len(yclid) <= 4:
+        return '****'
+    return '*' * (len(yclid) - 4) + yclid[-4:]
 
 
 def _base_payload(cid: str) -> dict[str, str]:
@@ -236,14 +252,22 @@ async def store_cid(
     user_id: int,
     cid: str | None,
     source: str = 'web',
+    yclid: str | None = None,
 ) -> bool:
-    """Store Yandex ClientID for a user. Returns True if stored."""
+    """Store Yandex ClientID (and optional yclid) for a user. Returns True if stored."""
     normalized = _normalize_cid(cid)
     if not normalized:
         return False
 
     try:
-        await upsert_cid(db, user_id, normalized, source=source, counter_id=settings.YANDEX_OFFLINE_CONV_COUNTER_ID)
+        await upsert_cid(
+            db,
+            user_id,
+            normalized,
+            source=source,
+            counter_id=settings.YANDEX_OFFLINE_CONV_COUNTER_ID,
+            yclid=_normalize_yclid(yclid),
+        )
         logger.info('stored CID', user_id=user_id, source=source)
         return True
     except Exception as exc:
@@ -364,6 +388,77 @@ async def on_trial(db: AsyncSession, user_id: int) -> None:
         logger.error('trial-add event failed', user_id=user_id, error=str(exc))
 
 
+async def _upload_offline_conversion_yclid(yclid: str, amount_rubles: float, ts: int) -> bool:
+    """Upload a single offline conversion to the Metrika Offline Conversions API.
+
+    Keyed by yclid (session-independent), so repeat purchases by the same user
+    keep their Yandex Direct attribution — unlike the ClientID-based
+    Measurement Protocol collect, which only attributes the first purchase.
+    Returns True when Metrika accepts the upload (response contains 'uploading').
+    """
+    token = getattr(settings, 'YANDEX_OFFLINE_CONV_OAUTH_TOKEN', '') or ''
+    counter = str(getattr(settings, 'YANDEX_OFFLINE_CONV_COUNTER_ID', '') or '')
+    goal = str(getattr(settings, 'YANDEX_OFFLINE_CONV_PURCHASE_GOAL_ID', '') or '')
+    if not (token and counter and goal and yclid):
+        return False
+
+    currency = getattr(settings, 'YANDEX_OFFLINE_CONV_CURRENCY', '') or 'RUB'
+    csv = f'Yclid,Target,DateTime,Price,Currency\n{yclid},{goal},{ts},{amount_rubles},{currency}\n'
+    url = (
+        f'https://api-metrika.yandex.net/management/v1/counter/{counter}'
+        f'/offline_conversions/upload?client_id_type=YCLID'
+    )
+    masked = _mask_yclid(yclid)
+    headers = {'Authorization': f'OAuth {token}'}
+    files = {'file': ('conv.csv', csv, 'text/csv')}
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            client = _get_client()
+            resp = await client.post(url, headers=headers, files=files)
+
+            if 200 <= resp.status_code < 300:
+                ok = False
+                try:
+                    ok = 'uploading' in (resp.json() or {})
+                except Exception:
+                    ok = False
+                if ok:
+                    logger.info('offline conversion uploaded', yclid=masked, amount=amount_rubles)
+                    return True
+                logger.error(
+                    'offline conversion not accepted', yclid=masked, status=resp.status_code, body=resp.text[:200]
+                )
+                return False
+
+            if 500 <= resp.status_code < 600 and attempt < MAX_RETRIES:
+                logger.warning(
+                    'offline conversion server error',
+                    attempt=attempt,
+                    max=MAX_RETRIES,
+                    yclid=masked,
+                    status=resp.status_code,
+                )
+                await asyncio.sleep(RETRY_DELAY)
+                continue
+
+            logger.error(
+                'offline conversion rejected', yclid=masked, status=resp.status_code, body=resp.text[:200]
+            )
+            return False
+
+        except Exception as exc:
+            logger.warning(
+                'offline conversion request error', attempt=attempt, max=MAX_RETRIES, yclid=masked, error=str(exc)
+            )
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY)
+                continue
+            return False
+
+    return False
+
+
 async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> None:
     """Fire ecommerce purchase event (every payment)."""
     if not _is_enabled():
@@ -383,6 +478,19 @@ async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> Non
             logger.info('purchase event sent', user_id=user_id, amount=amount_rubles)
     except Exception as exc:
         logger.error('purchase event failed', user_id=user_id, error=str(exc))
+
+    # Additive: yclid-keyed offline conversion (session-independent → repeat
+    # purchases attribute correctly to Yandex Direct). Only fires when a yclid
+    # was captured for this user. Never blocks the ClientID collect above.
+    try:
+        row = locals().get('row')
+        if row is None:
+            row = await get_cid(db, user_id)
+        yclid = _normalize_yclid(getattr(row, 'yclid', None)) if row else None
+        if yclid:
+            await _upload_offline_conversion_yclid(yclid, amount_kopeks / 100, int(time.time()))
+    except Exception as exc:
+        logger.error('purchase offline conversion (yclid) failed', user_id=user_id, error=str(exc))
 
 
 def parse_cid_from_start_param(param: str) -> tuple[str | None, str]:

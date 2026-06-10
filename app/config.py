@@ -658,6 +658,9 @@ class Settings(BaseSettings):
     YANDEX_OFFLINE_CONV_DL: str = ''
     YANDEX_OFFLINE_CONV_DT: str = ''
     YANDEX_OFFLINE_CONV_CURRENCY: str = 'RUB'
+    # Offline Conversions API (mc.yandex.ru via OAuth, yclid-keyed)
+    YANDEX_OFFLINE_CONV_OAUTH_TOKEN: str = ''
+    YANDEX_OFFLINE_CONV_PURCHASE_GOAL_ID: str = ''
 
     # ── S2S Postback (server-to-server affiliate notifications) ──
     S2S_POSTBACK_ENABLED: bool = False
