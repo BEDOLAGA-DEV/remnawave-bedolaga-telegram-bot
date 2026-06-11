@@ -25,6 +25,7 @@ MASK = svc.SECRET_MASK
         'SMTP_PASSWORD',
         'REMNAWAVE_API_KEY',
         'BOT_TOKEN',
+        'OVERPAY_P12_PASSPHRASE',
     ],
 )
 def test_is_secret_key_matches_secret_names(key: str) -> None:
