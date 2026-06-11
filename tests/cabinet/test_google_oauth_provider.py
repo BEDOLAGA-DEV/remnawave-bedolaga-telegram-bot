@@ -214,7 +214,9 @@ async def test_validate_google_id_token_rejects_unknown_kid(monkeypatch: pytest.
 
 
 @pytest.mark.asyncio
-async def test_google_get_user_info_uses_native_id_token_claims(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_google_get_user_info_uses_web_audience_for_android_credential_manager_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = _provider()
     validate = AsyncMock(
         return_value={
@@ -232,7 +234,7 @@ async def test_google_get_user_info_uses_native_id_token_claims(monkeypatch: pyt
         {'id_token': 'id-token', '_google_client_type': 'android', '_google_nonce': 'backend-nonce'}
     )
 
-    validate.assert_awaited_once_with('id-token', 'android-client', 'backend-nonce')
+    validate.assert_awaited_once_with('id-token', 'web-client', 'backend-nonce')
     assert info.provider == 'google'
     assert info.provider_id == 'google-sub'
     assert info.email == 'alice@example.com'

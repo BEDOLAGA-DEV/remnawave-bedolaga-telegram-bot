@@ -294,6 +294,13 @@ class GoogleProvider(OAuthProvider):
             return self.web_client_id
         raise ValueError('Unsupported Google client type')
 
+    def _id_token_audience_for(self, client_type: str | None) -> str:
+        if client_type == 'android':
+            # Android Credential Manager issues Google ID tokens for the backend server audience.
+            self._client_id_for('android')
+            return self._client_id_for('web')
+        return self._client_id_for(client_type)
+
     def ensure_client_type_configured(self, client_type: str | None) -> None:
         self._client_id_for(client_type)
 
@@ -334,7 +341,7 @@ class GoogleProvider(OAuthProvider):
             if not id_token:
                 raise ValueError('Google token response missing access_token or id_token')
 
-            client_id = self._client_id_for(token_data.get('_google_client_type', 'web'))
+            client_id = self._id_token_audience_for(token_data.get('_google_client_type', 'web'))
             claims = await validate_google_id_token(id_token, client_id, token_data.get('_google_nonce'))
             if not claims:
                 raise ValueError('Google id_token validation failed')
