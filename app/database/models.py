@@ -4196,6 +4196,7 @@ class YandexClientIdMap(Base):
     registration_sent = Column(Boolean, default=False, server_default=text('false'), nullable=False)
     trial_sent = Column(Boolean, default=False, server_default=text('false'), nullable=False)
     subid = Column(String(255), nullable=True)
+    yclid = Column(String(64), nullable=True)
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
 

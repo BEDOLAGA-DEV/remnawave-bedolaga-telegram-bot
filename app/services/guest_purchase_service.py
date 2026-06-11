@@ -495,8 +495,11 @@ async def fulfill_purchase(
             from app.utils.cache import cache
 
             _cached_cid = await cache.get(f'yacid:purchase:{purchase.token}')
+            _cached_yclid = await cache.get(f'yclid:purchase:{purchase.token}')
             if _cached_cid:
-                await yandex_conv.store_cid(db, user.id, _cached_cid, source='landing')
+                await yandex_conv.store_cid(
+                    db, user.id, _cached_cid, source='landing', yclid=_cached_yclid
+                )
                 await db.commit()
         except Exception:
             logger.debug('Failed to save CID from Redis')
