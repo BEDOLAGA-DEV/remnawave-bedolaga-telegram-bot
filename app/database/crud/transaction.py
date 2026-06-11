@@ -159,6 +159,19 @@ async def create_transaction(
             except Exception as exc:
                 logger.debug('Не удалось записать событие конкурса для пользователя', user_id=user_id, exc=exc)
 
+            # Yandex.Metrika offline conversion — central chokepoint.
+            # Every completed SUBSCRIPTION_PAYMENT (cabinet, bot handlers, guest,
+            # stars, trial→paid conversion, autopay/recurring, IAP, webhooks)
+            # passes through here, so the purchase event fires exactly once per
+            # paid purchase. Background task with its own DB session; no-ops when
+            # the service is disabled or no CID is stored.
+            try:
+                from app.services import yandex_offline_conv_service as yandex_conv
+
+                yandex_conv.spawn_bg(yandex_conv.fire_purchase_bg(user_id, abs(amount_kopeks)))
+            except Exception as exc:
+                logger.debug('Не удалось отправить Yandex purchase для пользователя', user_id=user_id, exc=exc)
+
     return transaction
 
 
@@ -219,6 +232,17 @@ async def emit_transaction_side_effects(
             )
         except Exception as exc:
             logger.debug('Не удалось записать событие конкурса для пользователя', user_id=user_id, exc=exc)
+
+        # Yandex.Metrika offline conversion — central chokepoint (deferred path
+        # for create_transaction(commit=False) callers). Fires the purchase event
+        # exactly once per completed SUBSCRIPTION_PAYMENT. Background task with
+        # its own DB session; no-ops when disabled or no CID stored.
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            yandex_conv.spawn_bg(yandex_conv.fire_purchase_bg(user_id, abs(amount_kopeks)))
+        except Exception as exc:
+            logger.debug('Не удалось отправить Yandex purchase для пользователя', user_id=user_id, exc=exc)
 
 
 async def get_transaction_by_id(db: AsyncSession, transaction_id: int) -> Transaction | None:

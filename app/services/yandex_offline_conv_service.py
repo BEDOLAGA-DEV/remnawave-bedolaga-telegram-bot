@@ -302,6 +302,32 @@ async def store_cid_and_fire_purchase(
         logger.warning('Failed to store CID and fire purchase', user_id=user_id, error=str(exc))
 
 
+async def store_cid_only(
+    user_id: int,
+    cid: str | None,
+    *,
+    source: str = 'cabinet',
+) -> None:
+    """Persist a freshly-provided CID WITHOUT firing a purchase event.
+
+    Used by purchase endpoints that previously called
+    ``store_cid_and_fire_purchase``. The actual purchase event now fires
+    exactly once from the central ``create_transaction`` chokepoint (every
+    completed SUBSCRIPTION_PAYMENT), so these call sites only need to close
+    the CID-persist race documented in #558449 by storing the request-body
+    CID synchronously before that central hook runs.
+    """
+    if not _is_enabled() or not cid:
+        return
+    try:
+        async with AsyncSessionLocal() as db:
+            stored = await store_cid(db, user_id, cid, source=source)
+            if stored:
+                await db.commit()
+    except Exception as exc:
+        logger.warning('Failed to store CID', user_id=user_id, error=str(exc))
+
+
 async def store_cid_and_fire_trial(
     user_id: int,
     cid: str | None,
@@ -375,6 +401,14 @@ async def on_purchase(db: AsyncSession, user_id: int, amount_kopeks: int) -> Non
             return
         if not row.yandex_cid or row.yandex_cid.startswith('_'):
             return  # placeholder row — real CID not yet received
+
+        # Best-effort pageview refresh so Metrika keeps the visit/session alive
+        # before the ecommerce purchase hit. Must never block or fail the
+        # purchase send.
+        try:
+            await _post_collect(_pageview_payload(row.yandex_cid), 'pageview', row.yandex_cid)
+        except Exception:
+            pass
 
         amount_rubles = amount_kopeks / 100
         payload = _ecommerce_purchase_payload(row.yandex_cid, amount_rubles)

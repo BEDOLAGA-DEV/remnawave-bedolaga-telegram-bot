@@ -407,10 +407,11 @@ async def purchase_traffic(
     try:
         from app.services import yandex_offline_conv_service as yandex_conv
 
-        await yandex_conv.store_cid_and_fire_purchase(
+        # Purchase event fires centrally from create_transaction; here we only
+        # persist the request-body CID synchronously (#558449).
+        await yandex_conv.store_cid_only(
             user.id,
             request.yandex_cid,
-            final_price,
         )
     except Exception as yconv_err:
         logger.debug('yandex_conv purchase hook failed (non-fatal)', user_id=user.id, error=str(yconv_err))
@@ -682,10 +683,11 @@ async def switch_traffic_package(
         try:
             from app.services import yandex_offline_conv_service as yandex_conv
 
-            await yandex_conv.store_cid_and_fire_purchase(
+            # Purchase event fires centrally from create_transaction; here we
+            # only persist the request-body CID synchronously (#558449).
+            await yandex_conv.store_cid_only(
                 user.id,
                 request.yandex_cid,
-                charged,
             )
         except Exception as yconv_err:
             logger.debug(
