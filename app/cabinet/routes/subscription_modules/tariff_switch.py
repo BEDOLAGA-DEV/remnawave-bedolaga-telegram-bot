@@ -373,6 +373,26 @@ async def switch_tariff(
                 detail='Failed to charge balance',
             )
 
+        # Persist the request-body CID BEFORE create_transaction. The
+        # SUBSCRIPTION_PAYMENT below fires the purchase event centrally via
+        # emit_transaction_side_effects -> background fire_purchase_bg, which
+        # reads the CID from the DB. Storing (and committing) the CID first
+        # closes the race where the background fire would see no CID and no-op
+        # (#558449).
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            await yandex_conv.store_cid_only(
+                user.id,
+                request.yandex_cid,
+            )
+        except Exception as yconv_err:
+            logger.debug(
+                'yandex_conv CID persist (pre-transaction) failed (non-fatal)',
+                user_id=user.id,
+                error=str(yconv_err),
+            )
+
         # Create transaction (commit=False to keep FOR UPDATE lock held)
         switch_transaction = await create_transaction(
             db=db,
@@ -538,27 +558,10 @@ async def switch_tariff(
     await db.refresh(subscription)
     await db.refresh(user)
 
-    # Yandex.Metrika offline conversion. Tariff switch is a paid purchase event
-    # when upgrade_cost > 0 — without this call paid upgrades wouldn't appear in
-    # offline-conv reports even though the user paid. Skip on free downgrades.
-    # Sibling to #558449 (the broader yandex-conv fix missed this path).
-    if upgrade_cost > 0:
-        try:
-            from app.services import yandex_offline_conv_service as yandex_conv
-
-            # Purchase event fires centrally from create_transaction (the
-            # SUBSCRIPTION_PAYMENT created above); here we only persist the
-            # request-body CID synchronously (#558449).
-            await yandex_conv.store_cid_only(
-                user.id,
-                request.yandex_cid,
-            )
-        except Exception as yconv_err:
-            logger.debug(
-                'yandex_conv purchase hook failed (non-fatal)',
-                user_id=user.id,
-                error=str(yconv_err),
-            )
+    # Yandex.Metrika offline conversion: the request-body CID for a paid tariff
+    # switch (upgrade_cost > 0) is now persisted BEFORE create_transaction above,
+    # so the central purchase event fired by the SUBSCRIPTION_PAYMENT sees the
+    # CID and does not race it (#558449). Nothing to do here.
 
     response: dict[str, Any] = {
         'success': True,

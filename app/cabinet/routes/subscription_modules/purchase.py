@@ -1253,6 +1253,24 @@ async def activate_trial(
                 detail='Failed to charge trial activation fee',
             )
 
+        # Persist the request-body CID BEFORE create_transaction. The
+        # SUBSCRIPTION_PAYMENT below fires the purchase event centrally
+        # (background fire_purchase_bg reads the CID from the DB), so the CID
+        # must be stored and committed first or the fire races it and no-ops
+        # (#558449). store_cid_and_fire_trial below still handles the separate
+        # 'trial-add' event.
+        cabinet_cid = request.yandex_cid if request is not None else None
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            await yandex_conv.store_cid_only(user.id, cabinet_cid)
+        except Exception as yconv_err:
+            logger.debug(
+                'yandex_conv CID persist (pre-transaction) failed (non-fatal)',
+                user_id=user.id,
+                error=str(yconv_err),
+            )
+
         # Создаём транзакцию для учёта списания за триал
         await create_transaction(
             db,
