@@ -102,7 +102,7 @@ class BotConfigurationService:
         """
         if key in cls.PLAIN_TEXT_KEYS:
             return False
-        return any(keyword in key.upper() for keyword in ('TOKEN', 'SECRET', 'PASSWORD', 'KEY'))
+        return any(keyword in key.upper() for keyword in ('TOKEN', 'SECRET', 'PASSWORD', 'PASSPHRASE', 'KEY'))
 
     @classmethod
     def is_masked_secret(cls, key: str, value: Any) -> bool:
@@ -1179,8 +1179,8 @@ class BotConfigurationService:
                 return '—'
             if key in cls.PLAIN_TEXT_KEYS:
                 return cleaned
-            if any(keyword in key.upper() for keyword in ('TOKEN', 'SECRET', 'PASSWORD', 'KEY')):
-                return '••••••••'
+            if cls.is_secret_key(key):
+                return cls.SECRET_MASK
             items = cls._split_comma_values(cleaned)
             if items:
                 return ', '.join(items)

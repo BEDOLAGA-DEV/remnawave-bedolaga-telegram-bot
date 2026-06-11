@@ -60,7 +60,7 @@ async def upload_certificate(
 
     if len(data) > overpay_certificate_service.MAX_P12_SIZE:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail='File too large. Maximum size: 1 MB',
         )
 

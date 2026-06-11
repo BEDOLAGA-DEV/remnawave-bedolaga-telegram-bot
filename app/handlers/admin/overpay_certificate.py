@@ -3,7 +3,7 @@ import io
 
 import structlog
 from aiogram import Dispatcher, F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -172,7 +172,7 @@ async def process_certificate_passphrase(message: Message, state: FSMContext, **
 
     try:
         await message.delete()
-    except TelegramBadRequest:
+    except TelegramAPIError:
         pass
 
     data = await state.get_data()
