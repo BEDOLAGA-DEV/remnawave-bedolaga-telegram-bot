@@ -70,9 +70,10 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
       - ./uploads:/app/uploads:rw
-      - ./vpn_logo.png:/app/vpn_logo.png:ro
+      # Логотип для сообщений (раскомментируйте, если файл существует)
+      # - ./vpn_logo.png:/app/vpn_logo.png:ro
     ports:
-      - '${WEB_API_PORT:-8080}:8080'
+      - '${WEB_API_PORT:-8181}:${WEB_API_PORT:-8181}'
     networks:
       - bot_network
       - remnawave-network # Подключаем к сети панели
@@ -80,7 +81,7 @@ services:
       test:
         [
           'CMD-SHELL',
-          'python -c "import requests, os; requests.get(''http://localhost:8080/health'', headers={''X-API-Key'': os.environ.get(''WEB_API_DEFAULT_TOKEN'')}, timeout=5) or exit(1)"',
+          'python -c "import os,urllib.request; urllib.request.urlopen(f''http://127.0.0.1:{os.environ.get(\"WEB_API_PORT\",\"8181\")}/health/unified'', timeout=5)"',
         ]
       interval: 60s
       timeout: 10s

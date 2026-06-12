@@ -151,13 +151,16 @@ async def test_unified_app_health_path_without_admin(monkeypatch: pytest.MonkeyP
         enable_telegram_webhook=False,
     )
 
-    health_route = next(
-        route
+    health_paths = {
+        getattr(route, 'path', None)
         for route in app.routes
         if getattr(route, 'endpoint', None) and getattr(route.endpoint, '__name__', '') == 'unified_health'
-    )
+    }
 
-    assert getattr(health_route, 'path', None) == '/health'
+    # /health/unified is always registered so container healthchecks have a
+    # stable auth-free probe; when the web API is off it is also aliased at /health.
+    assert '/health/unified' in health_paths
+    assert '/health' in health_paths
 
 
 def test_unified_app_docs_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

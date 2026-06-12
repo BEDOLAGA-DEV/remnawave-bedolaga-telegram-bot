@@ -17,6 +17,8 @@ from app.services.disposable_email_service import disposable_email_service
 from app.services.payment_service import PaymentService
 from app.webapi.docs import add_redoc_endpoint
 
+from app.cabinet.routes import router as cabinet_router
+
 from . import payments, telegram
 from .partner_promo import router as partner_promo_router
 
@@ -302,9 +304,14 @@ def create_unified_app(
             headers={'Cache-Control': 'no-store'},
         )
 
-    unified_health_path = '/health/unified' if settings.is_web_api_enabled() else '/health'
+    # Always register /health/unified so container healthchecks have a stable,
+    # auth-free probe regardless of WEB_API_ENABLED. When the web API is off we
+    # additionally alias it at /health (the web API owns /health when enabled).
+    health_paths = ['/health/unified']
+    if not settings.is_web_api_enabled():
+        health_paths.append('/health')
 
-    @app.get(unified_health_path)
+    @app.get(health_paths[0])
     async def unified_health() -> JSONResponse:
         webhook_path = settings.get_telegram_webhook_path() if enable_telegram_webhook else None
 
@@ -344,5 +351,9 @@ def create_unified_app(
                 'miniapp_static': miniapp_state,
             }
         )
+
+    # Register any additional alias paths (e.g. /health when web API is off)
+    for alias in health_paths[1:]:
+        app.add_api_route(alias, unified_health, methods=['GET'])
 
     return app

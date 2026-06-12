@@ -54,6 +54,6 @@ LABEL org.opencontainers.image.title="NoZapret RemnaWave Bot" \
     org.opencontainers.image.revision="${VCS_REF}"
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" || exit 1
+    CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"WEB_API_PORT\",\"8181\")}/health/unified', timeout=5)" || exit 1
 
 CMD ["python", "main.py"]
