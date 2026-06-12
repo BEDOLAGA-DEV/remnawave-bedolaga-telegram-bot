@@ -79,7 +79,7 @@ class EtoplatezhiPaymentMixin:
         payment_module = import_module('app.services.payment_service')
         if user_id is not None:
             user = await payment_module.get_user_by_id(db, user_id)
-            tg_id = user.telegram_id if user else user_id
+            tg_id = user_id
         else:
             user = None
             tg_id = 'guest'
