@@ -775,6 +775,8 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 db, pending_start_payload, only_active=True
             )
             payload_is_campaign = bool(pending_first_touch_campaign)
+            if payload_is_campaign:
+                await state.update_data(pending_payload_is_campaign=True)
         if payload_is_campaign:
             start_parameter = pending_start_payload
             logger.info(

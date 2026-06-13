@@ -386,7 +386,11 @@ async def attach_referrer_if_missing(
 _PENDING_CAMPAIGN_TTL = 7 * 24 * 3600  # 7 days
 
 
-async def save_pending_campaign(telegram_id: int, campaign_slug: str, campaign_id: int) -> bool:
+async def save_pending_campaign(
+    telegram_id: int,
+    campaign_slug: str,
+    campaign_id: int,
+) -> bool | None:
     """Save pending campaign attribution to Redis for a not-yet-registered user.
 
     Called from /start handler immediately after resolving an advertising campaign.
@@ -399,15 +403,13 @@ async def save_pending_campaign(telegram_id: int, campaign_slug: str, campaign_i
 
     Returns:
         ``True``  — ключ успешно записан (кампания сохранена).
-        ``False`` — ключ уже существовал (первое касание уже застолблено,
-                    запись пропущена) **или** произошла ошибка Redis.
-                    Вызывающий код не должен интерпретировать ``False``
-                    как признак сбоя — это штатное поведение защиты
-                    первого касания.
+        ``False`` — ключ уже существовал, запись пропущена
+                    (штатное поведение защиты первого касания).
+        ``None``  — ошибка Redis; атрибуция могла не сохраниться.
     """
     client = _get_redis()
     if client is None:
-        return False
+        return None
     try:
         key = f'pending_campaign:{telegram_id}'
         data = json.dumps({'campaign_slug': campaign_slug, 'campaign_id': campaign_id})
@@ -426,11 +428,12 @@ async def save_pending_campaign(telegram_id: int, campaign_slug: str, campaign_i
             logger.info(
                 'Campaign is already set in Redis, skipping (first-touch protection)',
                 telegram_id=telegram_id,
-                new_campaign_slug=campaign_slug,
+                skipped_campaign_slug=campaign_slug,
+                skipped_campaign_id=campaign_id,
             )
     except Exception as exc:
         logger.warning('Failed to save pending campaign to Redis', error=exc)
-        return False
+        return None
     else:
         return bool(result)
 
