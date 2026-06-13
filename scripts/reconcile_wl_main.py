@@ -58,6 +58,8 @@ import logging
 import sys
 from pathlib import Path
 
+import structlog
+
 # Make repo root importable when running as `python scripts/reconcile_wl_main.py`.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -205,10 +207,14 @@ async def main() -> int:
     mode = 'APPLY' if args.apply else 'DRY-RUN'
     dup_action = 'DELETE' if args.delete_duplicates else 'DISABLE'
 
-    # Quiet the expected 404 noise: looking up a legacy '<base>' account that
-    # does not exist logs a WARNING per miss. The script reports via print(), so
-    # silencing WARNING-and-below keeps real ERRORs visible without the spam.
+    # Quiet logs. The app uses structlog (stdlib logging.disable alone does not
+    # affect it), and lookups would otherwise log expected 404 misses. Raise the
+    # structlog level to ERROR for this CLI run; the script reports via print().
     logging.disable(logging.WARNING)
+    try:
+        structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.ERROR))
+    except Exception:
+        pass
 
     # Apply admin-panel (DB) setting overrides onto the `settings` object — this
     # is a separate process from the bot, so MULTI_TARIFF_ENABLED,
@@ -240,6 +246,13 @@ async def main() -> int:
         print(f'Scanning {len(subs)} active/trial subscription(s) with a panel main account...\n')
 
         async with svc.get_api_client() as api:
+            # Skip the per-lookup happ crypto-link fetch (a slow network call to
+            # crypto.happ.su that also floods the log) — irrelevant to reconciliation.
+            async def _skip_enrich(u, *a, **k):
+                return u
+
+            api.enrich_user_with_happ_link = _skip_enrich  # type: ignore[assignment]
+
             if args.diagnose:
                 for sub in subs:
                     user = sub.user
