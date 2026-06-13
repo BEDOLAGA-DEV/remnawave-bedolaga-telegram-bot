@@ -47,9 +47,10 @@ def _recurring_method_code_from_payment(payment, payload):
 
     Reliable source is the original payment.payment_method (set at creation
     from the forced method); callback terminal.method_code is a fallback.
-    Maps to the recurring endpoint key (card-partner/sberpay/yoomoney-wallet).
-    Returns None when unknown. Fixes NULL method_code -> card-partner default
-    -> error 3061 for sberpay-registered tokens.
+    Maps to the recurring endpoint key
+    (card-partner/sberpay/sbp-qr/yoomoney-wallet). Returns None when unknown.
+    Fixes NULL method_code -> card-partner default -> error 3061 for tokens
+    registered via a non-card method.
     """
     pm = (getattr(payment, 'payment_method', None) or '').lower()
     code = _RECURRING_METHOD_CODE_MAP.get(pm)
@@ -466,8 +467,8 @@ class EtoplatezhiPaymentMixin:
                     existing_metadata = {}
                 existing_metadata['recurring'] = recurring
                 existing_metadata['account'] = payload.get('account') if isinstance(payload, dict) else None
-                # Capture terminal.method_code too — guest fulfillment uses it to
-                # pick the correct recurring endpoint (card-partner/sberpay/yoomoney).
+                # Resolve the recurring endpoint key from the original payment
+                # method (payment.payment_method); guest fulfillment reuses it.
                 _mc = _recurring_method_code_from_payment(payment, payload)
                 if _mc:
                     existing_metadata['method_code'] = _mc
@@ -494,8 +495,8 @@ class EtoplatezhiPaymentMixin:
             account = {}
 
         # EtoPlatezhi has distinct recurring endpoints per payment method —
-        # capture terminal.method_code so the recurring provider can route
-        # charges correctly (card-partner / sberpay / yoomoney-wallet).
+        # resolve the endpoint key from payment.payment_method so the recurring
+        # provider can route (card-partner / sberpay / sbp-qr / yoomoney-wallet).
         method_code = _recurring_method_code_from_payment(payment, payload)
 
         number = account.get('number') or ''
