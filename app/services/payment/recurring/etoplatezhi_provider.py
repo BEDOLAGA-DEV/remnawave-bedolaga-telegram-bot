@@ -38,6 +38,7 @@ DEFAULT_METHOD_CODE = 'card-partner'
 _METHOD_ENDPOINTS: dict[str, str] = {
     'card-partner': '/v2/payment/card-partner/recurring',
     'sberpay': '/v2/payment/sberpay/recurring',
+    'sbp-qr': '/v2/payment/sbp-qr/recurring',
     'yoomoney-wallet': '/v2/payment/wallet/yoomoney/recurring',
 }
 

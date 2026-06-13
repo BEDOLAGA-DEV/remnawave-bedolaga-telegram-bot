@@ -36,7 +36,7 @@ ETOPLATEZHI_STATUS_MAP: dict[str, tuple[str, bool]] = {
 
 _RECURRING_METHOD_CODE_MAP = {
     'sberpay': 'sberpay',
-    'sbp': 'sberpay',
+    'sbp': 'sbp-qr',
     'card': 'card-partner',
     'yoomoney': 'yoomoney-wallet',
 }

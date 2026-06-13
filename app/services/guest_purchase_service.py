@@ -271,7 +271,7 @@ async def _maybe_save_etoplatezhi_card_from_guest_payment(
         if not method_code:
             _pm = (getattr(eto_payment, 'payment_method', None) or '').lower()
             method_code = {
-                'sberpay': 'sberpay', 'sbp': 'sberpay',
+                'sberpay': 'sberpay', 'sbp': 'sbp-qr',
                 'card': 'card-partner', 'yoomoney': 'yoomoney-wallet',
             }.get(_pm) or None
         saved = await create_saved_payment_method(
