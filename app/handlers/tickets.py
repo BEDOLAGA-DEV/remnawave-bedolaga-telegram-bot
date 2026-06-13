@@ -16,6 +16,7 @@ from app.database.models import Ticket, TicketStatus, User
 from app.keyboards.inline import (
     get_my_tickets_keyboard,
     get_ticket_cancel_keyboard,
+    get_ticket_notification_keyboard,
     get_ticket_reply_cancel_keyboard,
     get_ticket_view_keyboard,
 )
@@ -994,6 +995,29 @@ async def close_ticket_notification(callback: types.CallbackQuery, db_user: User
     await callback.answer(texts.t('NOTIFICATION_CLOSED', 'Уведомление закрыто.'))
 
 
+def _build_ticket_notification_keyboard(service: AdminNotificationService, ticket: Ticket, user: User | None):
+    """Собирает клавиатуру действий для уведомления о тикете по роли получателя.
+
+    Возвращает None, если получатель не админ/модератор (группа, канал,
+    посторонний) — в этом случае кнопки не показываются.
+    """
+    from app.config import settings
+
+    role = service.resolve_recipient_role()
+    if role not in ('admin', 'moderator'):
+        return None
+    return get_ticket_notification_keyboard(
+        ticket.id,
+        user_id=user.id if user else None,
+        telegram_id=user.telegram_id if user else None,
+        username=user.username if user else None,
+        is_closed=ticket.is_closed,
+        is_user_blocked=getattr(ticket, 'is_user_reply_blocked', False),
+        is_admin=(role == 'admin'),
+        language=settings.DEFAULT_LANGUAGE,
+    )
+
+
 async def notify_admins_about_new_ticket(ticket: Ticket, db: AsyncSession):
     """Уведомить админов о новом тикете"""
     try:
@@ -1054,8 +1078,13 @@ async def notify_admins_about_new_ticket(ticket: Ticket, db: AsyncSession):
             return
 
         service = AdminNotificationService(bot)
+
+        # Определяем роль получателя до отправки (без I/O — данные в памяти).
+        # В личном чате chat_id == telegram_id, что позволяет проверить права заранее.
+        keyboard = _build_ticket_notification_keyboard(service, ticket, user)
+
         await service.send_ticket_event_notification(
-            notification_text, None, media_file_id=media_file_id, media_type=media_type
+            notification_text, keyboard, media_file_id=media_file_id, media_type=media_type
         )
     except Exception as e:
         logger.error('Error notifying admins about new ticket', error=e)
@@ -1111,8 +1140,11 @@ async def notify_admins_about_ticket_reply(
             return
 
         service = AdminNotificationService(bot)
+
+        keyboard = _build_ticket_notification_keyboard(service, ticket, user)
+
         result = await service.send_ticket_event_notification(
-            notification_text, None, media_file_id=media_file_id, media_type=media_type
+            notification_text, keyboard, media_file_id=media_file_id, media_type=media_type
         )
         logger.info('Ticket reply notification sent', ticket_id=ticket.id, result=result)
     except Exception as e:

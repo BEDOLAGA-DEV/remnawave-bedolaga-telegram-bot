@@ -1421,6 +1421,34 @@ class AdminNotificationService:
                 return topic
         return self.topic_id
 
+    def resolve_recipient_role(self) -> str:
+        """Определяет роль получателя уведомления по chat_id.
+
+        В личном чате chat_id совпадает с telegram_id получателя, что позволяет
+        проверить права до отправки без I/O (данные читаются из памяти).
+
+        Returns:
+            'admin'     — полный набор кнопок;
+            'moderator' — набор без «👤 К пользователю» (@admin_required);
+            'none'      — без кнопок (группа/канал, посторонний,
+                          или ADMIN_NOTIFICATIONS_CHAT_ID задан строкой @username).
+        """
+        try:
+            chat_id = int(self.chat_id)
+        except (TypeError, ValueError):
+            return 'none'  # строка @username или None — тип чата не определить
+        if chat_id <= 0:
+            return 'none'  # супергруппа / канал / старая группа — FSM-кнопки опасны
+        if settings.is_admin(chat_id):
+            return 'admin'
+
+        from app.services.support_settings_service import SupportSettingsService
+
+        if SupportSettingsService.is_moderator(chat_id):
+            return 'moderator'
+
+        return 'none'  # личка постороннего — не показываем кнопки
+
     async def _send_message(
         self,
         text: str,
