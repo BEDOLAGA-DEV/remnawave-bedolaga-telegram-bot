@@ -34,6 +34,35 @@ ETOPLATEZHI_STATUS_MAP: dict[str, tuple[str, bool]] = {
 }
 
 
+_RECURRING_METHOD_CODE_MAP = {
+    'sberpay': 'sberpay',
+    'sbp': 'sberpay',
+    'card': 'card-partner',
+    'yoomoney': 'yoomoney-wallet',
+}
+
+
+def _recurring_method_code_from_payment(payment, payload):
+    """Resolve EtoPlatezhi recurring endpoint key from the payment method.
+
+    Reliable source is the original payment.payment_method (set at creation
+    from the forced method); callback terminal.method_code is a fallback.
+    Maps to the recurring endpoint key (card-partner/sberpay/yoomoney-wallet).
+    Returns None when unknown. Fixes NULL method_code -> card-partner default
+    -> error 3061 for sberpay-registered tokens.
+    """
+    pm = (getattr(payment, 'payment_method', None) or '').lower()
+    code = _RECURRING_METHOD_CODE_MAP.get(pm)
+    if code:
+        return code
+    if isinstance(payload, dict):
+        terminal = payload.get('terminal')
+        if isinstance(terminal, dict):
+            raw = (terminal.get('method_code') or '').lower()
+            return _RECURRING_METHOD_CODE_MAP.get(raw) or (terminal.get('method_code') or None)
+    return None
+
+
 class EtoplatezhiPaymentMixin:
     """Mixin для работы с платежами Etoplatezhi."""
 
@@ -439,9 +468,9 @@ class EtoplatezhiPaymentMixin:
                 existing_metadata['account'] = payload.get('account') if isinstance(payload, dict) else None
                 # Capture terminal.method_code too — guest fulfillment uses it to
                 # pick the correct recurring endpoint (card-partner/sberpay/yoomoney).
-                terminal_stash = payload.get('terminal') if isinstance(payload, dict) else None
-                if isinstance(terminal_stash, dict) and terminal_stash.get('method_code'):
-                    existing_metadata['method_code'] = terminal_stash.get('method_code')
+                _mc = _recurring_method_code_from_payment(payment, payload)
+                if _mc:
+                    existing_metadata['method_code'] = _mc
                 payment.metadata_json = existing_metadata
                 # Explicit flush — AsyncSessionLocal uses autoflush=False, so
                 # the subsequent SELECT in _maybe_save_etoplatezhi_card_from_guest_payment
@@ -467,10 +496,7 @@ class EtoplatezhiPaymentMixin:
         # EtoPlatezhi has distinct recurring endpoints per payment method —
         # capture terminal.method_code so the recurring provider can route
         # charges correctly (card-partner / sberpay / yoomoney-wallet).
-        terminal = payload.get('terminal') if isinstance(payload, dict) else None
-        method_code = None
-        if isinstance(terminal, dict):
-            method_code = terminal.get('method_code') or None
+        method_code = _recurring_method_code_from_payment(payment, payload)
 
         number = account.get('number') or ''
         card_first6 = number[:6] if len(number) >= 6 else None

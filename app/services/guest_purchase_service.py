@@ -268,6 +268,12 @@ async def _maybe_save_etoplatezhi_card_from_guest_payment(
         from app.database.crud.saved_payment_method import create_saved_payment_method
 
         method_code = metadata.get('method_code') if isinstance(metadata, dict) else None
+        if not method_code:
+            _pm = (getattr(eto_payment, 'payment_method', None) or '').lower()
+            method_code = {
+                'sberpay': 'sberpay', 'sbp': 'sberpay',
+                'card': 'card-partner', 'yoomoney': 'yoomoney-wallet',
+            }.get(_pm) or None
         saved = await create_saved_payment_method(
             db=db,
             user_id=user.id,
