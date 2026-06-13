@@ -367,10 +367,7 @@ async def reply_to_admin_ticket(callback: types.CallbackQuery, state: FSMContext
         return
     ticket_id = int(callback.data.replace('admin_reply_ticket_', ''))
 
-    await state.update_data(ticket_id=ticket_id, reply_mode=True)
     texts = get_texts(db_user.language)
-    reply_text = texts.t('ADMIN_TICKET_REPLY_INPUT', 'Введите ответ от поддержки:')
-    reply_markup = get_admin_ticket_reply_cancel_keyboard(db_user.language)
     message = callback.message
     if not isinstance(message, types.Message):
         # None или InaccessibleMessage (например, уведомление старше 48ч) — редактировать нельзя
@@ -378,6 +375,11 @@ async def reply_to_admin_ticket(callback: types.CallbackQuery, state: FSMContext
             texts.t('MESSAGE_TOO_OLD', '⚠️ Сообщение устарело, откройте тикет в панели.'), show_alert=True
         )
         return
+
+    # Изменяем состояние только если сообщение доступно
+    await state.update_data(ticket_id=ticket_id, reply_mode=True)
+    reply_text = texts.t('ADMIN_TICKET_REPLY_INPUT', 'Введите ответ от поддержки:')
+    reply_markup = get_admin_ticket_reply_cancel_keyboard(db_user.language)
     try:
         await message.edit_text(reply_text, reply_markup=reply_markup)
     except TelegramBadRequest:
