@@ -1,6 +1,5 @@
 import html
 import re
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -8,7 +7,7 @@ from typing import Any
 
 import structlog
 from aiogram import Dispatcher, F, types
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +49,7 @@ from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.formatters import format_datetime, format_time_ago
 from app.utils.formatting import user_html_link
+from app.utils.photo_message import safe_edit_or_resend
 from app.utils.subscription_utils import (
     resolve_hwid_device_limit_for_payload,
 )
@@ -1409,13 +1409,7 @@ async def show_user_management(callback: types.CallbackQuery, db_user: User, db:
             texts.t('MESSAGE_TOO_OLD', '⚠️ Сообщение устарело, откройте тикет в панели.'), show_alert=True
         )
         return
-    try:
-        await message.edit_text(text, reply_markup=kb)
-    except TelegramBadRequest:
-        # Переход из уведомления-фото: edit_text недоступен — удаляем и шлём новым
-        with suppress(TelegramAPIError):
-            await message.delete()
-        await message.answer(text, reply_markup=kb)
+    await safe_edit_or_resend(message, text, kb)
     await callback.answer()
 
 

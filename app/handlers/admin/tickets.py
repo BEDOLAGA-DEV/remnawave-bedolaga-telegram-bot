@@ -1,11 +1,10 @@
 import html
 import time
-from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
 import structlog
 from aiogram import Bot, Dispatcher, F, types
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +20,7 @@ from app.localization.texts import get_texts
 from app.services.support_settings_service import SupportSettingsService
 from app.states import AdminTicketStates
 from app.utils.cache import RateLimitCache
+from app.utils.photo_message import safe_edit_or_resend
 
 
 logger = structlog.get_logger(__name__)
@@ -380,13 +380,7 @@ async def reply_to_admin_ticket(callback: types.CallbackQuery, state: FSMContext
     await state.update_data(ticket_id=ticket_id, reply_mode=True)
     reply_text = texts.t('ADMIN_TICKET_REPLY_INPUT', 'Введите ответ от поддержки:')
     reply_markup = get_admin_ticket_reply_cancel_keyboard(db_user.language)
-    try:
-        await message.edit_text(reply_text, reply_markup=reply_markup)
-    except TelegramBadRequest:
-        # Уведомление-фото: edit_text недоступен — удаляем и отправляем новым сообщением
-        with suppress(TelegramAPIError):
-            await message.delete()
-        await message.answer(reply_text, reply_markup=reply_markup)
+    await safe_edit_or_resend(message, reply_text, reply_markup)
 
     await state.set_state(AdminTicketStates.waiting_for_reply)
     await callback.answer()
@@ -746,13 +740,7 @@ async def block_user_in_ticket(callback: types.CallbackQuery, state: FSMContext,
             ]
         ]
     )
-    try:
-        await message.edit_text(block_prompt, reply_markup=block_markup)
-    except TelegramBadRequest:
-        # Уведомление-фото: edit_text недоступен — удаляем и отправляем новым сообщением
-        with suppress(TelegramAPIError):
-            await message.delete()
-        await message.answer(block_prompt, reply_markup=block_markup)
+    await safe_edit_or_resend(message, block_prompt, block_markup)
     await state.update_data(ticket_id=ticket_id)
     await state.set_state(AdminTicketStates.waiting_for_block_duration)
     await callback.answer()
