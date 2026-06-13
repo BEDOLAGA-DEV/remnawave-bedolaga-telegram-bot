@@ -368,7 +368,8 @@ async def test_cryptobot_renewal_uses_pricing_snapshot(monkeypatch):
     mixin = CryptoBotPaymentMixin()
 
     subscription = types.SimpleNamespace(
-        id=77, connected_squads=[], traffic_limit_gb=100, device_limit=5, tariff=None, tariff_id=None
+        id=77, connected_squads=[], traffic_limit_gb=100, device_limit=5, tariff=None, tariff_id=None,
+        purchased_traffic_gb=0,
     )
     user = types.SimpleNamespace(id=5, balance_kopeks=7000, subscription=subscription)
 
@@ -403,6 +404,21 @@ async def test_cryptobot_renewal_uses_pricing_snapshot(monkeypatch):
 
     monkeypatch.setitem(
         sys.modules, 'app.services.payment_service', types.SimpleNamespace(get_user_by_id=fake_get_user_by_id)
+    )
+
+    # Production now loads the subscription via CRUD (IDOR-safe ownership check)
+    # instead of reading user.subscription. Patch it on the real module since it
+    # is imported locally at call time.
+    import app.database.crud.subscription as subscription_crud
+
+    async def fake_get_subscription_by_id_for_user(db, subscription_id, user_id):
+        return subscription if subscription_id == 77 and user_id == 5 else None
+
+    monkeypatch.setattr(
+        subscription_crud,
+        'get_subscription_by_id_for_user',
+        fake_get_subscription_by_id_for_user,
+        raising=False,
     )
 
     async def fail_calculate(*args, **kwargs):
@@ -453,7 +469,8 @@ async def test_cryptobot_renewal_accepts_changed_pricing_without_snapshot(monkey
     mixin = CryptoBotPaymentMixin()
 
     subscription = types.SimpleNamespace(
-        id=55, connected_squads=[], traffic_limit_gb=50, device_limit=3, tariff=None, tariff_id=None
+        id=55, connected_squads=[], traffic_limit_gb=50, device_limit=3, tariff=None, tariff_id=None,
+        purchased_traffic_gb=0,
     )
     user = types.SimpleNamespace(id=8, balance_kopeks=4000, subscription=subscription)
 
@@ -472,6 +489,21 @@ async def test_cryptobot_renewal_accepts_changed_pricing_without_snapshot(monkey
 
     monkeypatch.setitem(
         sys.modules, 'app.services.payment_service', types.SimpleNamespace(get_user_by_id=fake_get_user_by_id)
+    )
+
+    # Production now loads the subscription via CRUD (IDOR-safe ownership check)
+    # instead of reading user.subscription. Patch it on the real module since it
+    # is imported locally at call time.
+    import app.database.crud.subscription as subscription_crud
+
+    async def fake_get_subscription_by_id_for_user(db, subscription_id, user_id):
+        return subscription if subscription_id == 55 and user_id == 8 else None
+
+    monkeypatch.setattr(
+        subscription_crud,
+        'get_subscription_by_id_for_user',
+        fake_get_subscription_by_id_for_user,
+        raising=False,
     )
 
     # Recalculated price is LOWER than descriptor — user benefits, should proceed
@@ -535,7 +567,8 @@ async def test_cryptobot_webhook_uses_inline_payload_when_db_missing(monkeypatch
     mixin = CryptoBotPaymentMixin()
 
     subscription = types.SimpleNamespace(
-        id=91, connected_squads=[], traffic_limit_gb=80, device_limit=4, tariff=None, tariff_id=None
+        id=91, connected_squads=[], traffic_limit_gb=80, device_limit=4, tariff=None, tariff_id=None,
+        purchased_traffic_gb=0,
     )
     user = types.SimpleNamespace(id=21, balance_kopeks=6000, subscription=subscription)
 
@@ -587,6 +620,21 @@ async def test_cryptobot_webhook_uses_inline_payload_when_db_missing(monkeypatch
         types.SimpleNamespace(get_user_by_id=fake_get_user_by_id),
     )
 
+    # Production now loads the subscription via CRUD (IDOR-safe ownership check)
+    # instead of reading user.subscription. Patch it on the real module since it
+    # is imported locally at call time.
+    import app.database.crud.subscription as subscription_crud
+
+    async def fake_get_subscription_by_id_for_user(db, subscription_id, user_id):
+        return subscription if subscription_id == 91 and user_id == 21 else None
+
+    monkeypatch.setattr(
+        subscription_crud,
+        'get_subscription_by_id_for_user',
+        fake_get_subscription_by_id_for_user,
+        raising=False,
+    )
+
     async def fail_calculate(*args, **kwargs):
         raise AssertionError('PricingEngine.calculate_renewal_price should not be called')
 
@@ -614,6 +662,11 @@ async def test_cryptobot_webhook_uses_inline_payload_when_db_missing(monkeypatch
     async def fake_get(db, invoice_id):
         return payment if invoice_id == payment.invoice_id else None
 
+    async def fake_get_for_update(db, invoice_id):
+        # Production now FOR-UPDATE locks the payment row before processing
+        # to prevent concurrent webhook TOCTOU races.
+        return payment if invoice_id == payment.invoice_id else None
+
     async def fake_update(db, invoice_id, status, paid_at):
         if invoice_id == payment.invoice_id:
             payment.status = status
@@ -629,10 +682,23 @@ async def test_cryptobot_webhook_uses_inline_payload_when_db_missing(monkeypatch
         'app.database.crud.cryptobot',
         types.SimpleNamespace(
             get_cryptobot_payment_by_invoice_id=fake_get,
+            get_cryptobot_payment_by_invoice_id_for_update=fake_get_for_update,
             update_cryptobot_payment_status=fake_update,
             link_cryptobot_payment_to_transaction=fake_link,
         ),
     )
+
+    # Production inline-updates the locked payment and flushes (no commit that
+    # would release the FOR UPDATE lock), so the fake session needs flush/commit.
+    class _WebhookSession:
+        async def flush(self):
+            return None
+
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
 
     webhook_payload = {
         'update_type': 'invoice_paid',
@@ -643,7 +709,7 @@ async def test_cryptobot_webhook_uses_inline_payload_when_db_missing(monkeypatch
         },
     }
 
-    result = await mixin.process_cryptobot_webhook(types.SimpleNamespace(), webhook_payload)
+    result = await mixin.process_cryptobot_webhook(_WebhookSession(), webhook_payload)
 
     assert result is True
     assert captured['pricing'].final_total == 9000
@@ -679,7 +745,7 @@ async def test_create_payment_link_pal24_uses_selected_option(monkeypatch):
             }
 
     async def fake_resolve_user(db, init_data):
-        return types.SimpleNamespace(id=123, language='ru'), {}
+        return types.SimpleNamespace(id=123, telegram_id=123123, language='ru'), {}
 
     monkeypatch.setattr(miniapp, 'PaymentService', lambda *args, **kwargs: DummyPaymentService())
     monkeypatch.setattr(miniapp, '_resolve_user_from_init_data', fake_resolve_user)
@@ -724,7 +790,7 @@ async def test_create_payment_link_wata_returns_payload(monkeypatch):
             }
 
     async def fake_resolve_user(db, init_data):
-        return types.SimpleNamespace(id=555, language='ru'), {}
+        return types.SimpleNamespace(id=555, telegram_id=555555, language='ru'), {}
 
     monkeypatch.setattr(miniapp, 'PaymentService', lambda *args, **kwargs: DummyPaymentService())
     monkeypatch.setattr(miniapp, '_resolve_user_from_init_data', fake_resolve_user)
@@ -1058,10 +1124,14 @@ async def test_create_payment_link_stars_normalizes_amount(monkeypatch):
             self.session = DummySession()
 
     async def fake_resolve_user(db, init_data):
-        return types.SimpleNamespace(id=7, language='ru'), {}
+        return types.SimpleNamespace(id=7, telegram_id=777, language='ru'), {}
 
     monkeypatch.setattr(miniapp, 'PaymentService', DummyPaymentService)
-    monkeypatch.setattr(miniapp, 'Bot', DummyBot)
+    # Production now builds the bot via create_bot() (no positional token arg),
+    # which defaults the token to settings.BOT_TOKEN. Patch create_bot to a
+    # factory that constructs the DummyBot with the configured token so the
+    # token assertion stays meaningful.
+    monkeypatch.setattr(miniapp, 'create_bot', lambda *args, **kwargs: DummyBot(settings.BOT_TOKEN))
     monkeypatch.setattr(miniapp, '_resolve_user_from_init_data', fake_resolve_user)
 
     payload = MiniAppPaymentCreateRequest(

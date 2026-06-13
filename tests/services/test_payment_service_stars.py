@@ -102,6 +102,10 @@ class DummyUser:
         self.language = 'ru'
         self.balance_kopeks = 0
         self.has_made_first_topup = False
+        # Новый код stars.py читает этот флаг, чтобы определить purchase_type
+        # ('renewal' vs 'first_purchase'). У пользователя ещё нет оплаченной
+        # подписки (только pending), поэтому корректное значение — False.
+        self.has_had_paid_subscription = False
         self.promo_group = None
         self.subscription = None
 
@@ -253,6 +257,7 @@ async def test_process_stars_payment_simple_subscription_success(
         db: Any,
         user_id: int,
         period_days: int | None = None,
+        subscription_id: int | None = None,
     ) -> DummySubscription:
         activated_subscription.start_date = pending_subscription.start_date
         activated_subscription.end_date = activated_subscription.start_date + timedelta(days=period_days or 30)

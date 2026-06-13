@@ -30,6 +30,9 @@ class DummySession:
     async def refresh(self, *_args: Any, **_kwargs: Any) -> None:
         return None
 
+    async def flush(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
 
 class DummyLocalPayment:
     def __init__(self, payment_id: int = 501) -> None:
@@ -155,6 +158,7 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
 
     class DummyPayment:
         def __init__(self) -> None:
+            self.id = 501
             self.user_id = 42
             self.amount_kopeks = 1500
             self.description = 'Пополнение'
@@ -163,8 +167,23 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
             self.mulen_payment_id: int | None = None
             self.status = 'created'
             self.is_paid = False
+            self.paid_at: datetime | None = None
+            self.callback_payload: dict[str, Any] | None = None
+            self.metadata_json: dict[str, Any] = {}
+            self.created_at = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+            self.updated_at = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
 
     payment = DummyPayment()
+
+    # Production locks the payment row FOR UPDATE before mutating it
+    # (TOCTOU guard added in the v3.54->v3.57 merge). The lock CRUD is
+    # imported fresh from app.database.crud.mulenpay at call time, so it
+    # must be patched on the real module rather than payment_service_module.
+    async def fake_get_mulenpay_payment_by_id_for_update(
+        _db: DummySession, payment_id: int
+    ) -> DummyPayment:
+        assert payment_id == payment.id
+        return payment
 
     async def fake_get_mulenpay_payment_by_uuid(_db: DummySession, uuid: str) -> DummyPayment:
         assert uuid == payment.uuid
@@ -199,6 +218,7 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
             self.promo_group = None
             self.subscription = None
             self.user_promo_groups = []
+            self.referred_by_id = None
 
         def get_primary_promo_group(self):
             return self.promo_group
@@ -209,52 +229,76 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
         assert user_id == payment.user_id
         return dummy_user
 
-    balance_call: dict[str, Any] = {}
-
-    async def fake_add_user_balance(
-        _db: DummySession,
-        user: DummyUser,
-        amount_kopeks: int,
-        description: str,
-        *,
-        create_transaction: bool = True,
-        **_kwargs: Any,
-    ) -> bool:
-        balance_call.update(
-            {
-                'create_transaction': create_transaction,
-                'description': description,
-                'amount_kopeks': amount_kopeks,
-            }
-        )
-        user.balance_kopeks += amount_kopeks
-        return True
-
     async def fake_process_referral_topup(*_args: Any, **_kwargs: Any) -> None:
         return None
 
     async def fake_auto_purchase_saved_cart_after_topup(*_args: Any, **_kwargs: Any) -> bool:
         return False
 
+    async def fake_try_auto_extend_expired_after_topup(*_args: Any, **_kwargs: Any) -> bool:
+        return False
+
+    async def fake_try_resume_disabled_daily_after_topup(*_args: Any, **_kwargs: Any) -> bool:
+        return False
+
     async def fake_has_user_cart(*_args: Any, **_kwargs: Any) -> bool:
         return False
+
+    async def fake_get_user_cart(*_args: Any, **_kwargs: Any) -> None:
+        return None
 
     referral_module = ModuleType('app.services.referral_service')
     referral_module.process_referral_topup = fake_process_referral_topup  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, 'app.services.referral_service', referral_module)
 
+    # send_cart_notification_after_topup (run on the success path after commit)
+    # imports three helpers from this module, so the stub must expose all of them
+    # or the helper raises ImportError (swallowed by production, but it pollutes
+    # the path we are asserting on).
     auto_module = ModuleType('app.services.subscription_auto_purchase_service')
     auto_module.auto_purchase_saved_cart_after_topup = (  # type: ignore[attr-defined]
         fake_auto_purchase_saved_cart_after_topup
+    )
+    auto_module.try_auto_extend_expired_after_topup = (  # type: ignore[attr-defined]
+        fake_try_auto_extend_expired_after_topup
+    )
+    auto_module.try_resume_disabled_daily_after_topup = (  # type: ignore[attr-defined]
+        fake_try_resume_disabled_daily_after_topup
     )
     monkeypatch.setitem(sys.modules, 'app.services.subscription_auto_purchase_service', auto_module)
 
     user_cart_module = ModuleType('app.services.user_cart_service')
     user_cart_module.user_cart_service = SimpleNamespace(  # type: ignore[attr-defined]
-        has_user_cart=fake_has_user_cart
+        has_user_cart=fake_has_user_cart,
+        get_user_cart=fake_get_user_cart,
     )
     monkeypatch.setitem(sys.modules, 'app.services.user_cart_service', user_cart_module)
 
+    # Patch the lock CRUD on its real module — production imports it fresh via
+    # import_module('app.database.crud.mulenpay') at call time.
+    import app.database.crud.mulenpay as mulenpay_crud_module
+
+    monkeypatch.setattr(
+        mulenpay_crud_module,
+        'get_mulenpay_payment_by_id_for_update',
+        fake_get_mulenpay_payment_by_id_for_update,
+        raising=False,
+    )
+
+    # Production also FOR-UPDATE-locks the user row before crediting balance
+    # (race guard added in the v3.54->v3.57 merge); the lock CRUD is imported
+    # locally from app.database.crud.user at call time.
+    async def fake_lock_user_for_update(_db: DummySession, user: DummyUser) -> DummyUser:
+        return user
+
+    import app.database.crud.user as user_crud_module
+
+    monkeypatch.setattr(
+        user_crud_module,
+        'lock_user_for_update',
+        fake_lock_user_for_update,
+        raising=False,
+    )
     monkeypatch.setattr(
         payment_service_module,
         'get_mulenpay_payment_by_uuid',
@@ -285,12 +329,6 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
         fake_get_user_by_id,
         raising=False,
     )
-    monkeypatch.setattr(
-        payment_service_module,
-        'add_user_balance',
-        fake_add_user_balance,
-        raising=False,
-    )
 
     result = await service.process_mulenpay_callback(
         db,
@@ -298,7 +336,13 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
     )
 
     assert result is True
-    assert transaction_calls, 'create_transaction should be called'
-    assert balance_call['create_transaction'] is False
+    # Exactly one transaction is created — the core "avoids duplicate" guarantee.
+    assert len(transaction_calls) == 1, 'create_transaction should be called exactly once'
+    # Production credits the balance DIRECTLY (user.balance_kopeks += amount, no
+    # add_user_balance on this path), so the balance lands at exactly the payment
+    # amount — credited once, never twice.
     assert dummy_user.balance_kopeks == payment.amount_kopeks
+    # The single transaction is linked back to the payment, which is what guards
+    # the early-return short-circuit against a duplicate transaction on replay.
     assert payment.transaction_id is not None
+    assert transaction_calls[0]['amount_kopeks'] == payment.amount_kopeks

@@ -80,6 +80,10 @@ def test_verify_webhook_signature(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_verify_webhook_signature_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Security hardening (commit 8175bc8b): when no API token is configured the
+    # webhook signature cannot be verified, so the webhook must be REJECTED
+    # rather than blindly trusted. Previously this returned True (skip check),
+    # which accepted any unsigned webhook.
     monkeypatch.setattr(settings, 'CRYPTOBOT_API_TOKEN', '', raising=False)
     service = CryptoBotService()
-    assert service.verify_webhook_signature('{}', 'anything') is True
+    assert service.verify_webhook_signature('{}', 'anything') is False

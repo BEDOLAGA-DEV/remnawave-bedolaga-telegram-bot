@@ -64,6 +64,11 @@ def _build_request(
 @pytest.mark.anyio
 async def test_tribute_webhook_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'TRIBUTE_ENABLED', True, raising=False)
+    # Security hardening in v3.54->v3.57 (commit 8175bc8b) now rejects the
+    # webhook with 503 service_not_configured when TRIBUTE_API_KEY is unset,
+    # *before* the signature check runs. A configured key is therefore required
+    # to reach the processing path this test exercises.
+    monkeypatch.setattr(settings, 'TRIBUTE_API_KEY', 'configured-key', raising=False)
 
     process_mock = AsyncMock(return_value={'status': 'ok'})
 
@@ -432,6 +437,22 @@ async def test_yookassa_webhook_with_signature(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr('app.webserver.payments.get_db', fake_get_db)
 
+    # When a Signature header is present the endpoint emits
+    #   logger.info('ℹ️ Получена подпись YooKassa', signature=...)
+    # The emoji/Cyrillic text crashes structlog's PrintLogger when pytest runs
+    # with -s on a cp1252 Windows console (UnicodeEncodeError) — a console
+    # encoding artifact, not production behaviour (prod logs UTF-8 on Linux).
+    # Swap the module logger for a recording stub so the signature branch runs
+    # fully and we can assert it was actually taken.
+    info_calls: list[tuple] = []
+    recording_logger = SimpleNamespace(
+        info=lambda *a, **k: info_calls.append((a, k)),
+        error=lambda *a, **k: None,
+        warning=lambda *a, **k: None,
+        exception=lambda *a, **k: None,
+    )
+    monkeypatch.setattr('app.webserver.payments.logger', recording_logger, raising=False)
+
     process_mock = AsyncMock(return_value=True)
     service = SimpleNamespace(process_yookassa_webhook=process_mock)
 
@@ -453,6 +474,8 @@ async def test_yookassa_webhook_with_signature(monkeypatch: pytest.MonkeyPatch) 
     payload = json.loads(response.body.decode('utf-8'))
     assert payload['status'] == 'ok'
     process_mock.assert_awaited_once()
+    # The supplied signature was observed and logged before processing.
+    assert any(call[1].get('signature') == 'dummy' for call in info_calls)
 
 
 @pytest.mark.anyio

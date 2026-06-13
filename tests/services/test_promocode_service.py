@@ -12,6 +12,24 @@ from app.services.promocode_service import PromoCodeService
 # Import fixtures
 
 
+def _patch_recent_activations(monkeypatch, count=0):
+    """Patch the anti-stacking guard.
+
+    activate_promocode performs `from app.database.crud.promocode import
+    count_user_recent_activations` locally at call time, so the patch must land
+    on the real crud module (not the service namespace). Returning a low count
+    keeps activations under the daily-limit threshold so the happy path runs.
+    """
+    import app.database.crud.promocode as promocode_crud
+
+    monkeypatch.setattr(
+        promocode_crud,
+        'count_user_recent_activations',
+        AsyncMock(return_value=count),
+        raising=False,
+    )
+
+
 async def test_activate_promo_group_promocode_success(
     monkeypatch,
     sample_user,
@@ -41,6 +59,8 @@ async def test_activate_promo_group_promocode_success(
     check_usage_mock = AsyncMock(return_value=False)
     monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', check_usage_mock)
 
+    _patch_recent_activations(monkeypatch)
+
     get_promo_group_mock = AsyncMock(return_value=sample_promo_group)
     monkeypatch.setattr('app.services.promocode_service.get_promo_group_by_id', get_promo_group_mock)
 
@@ -68,16 +88,22 @@ async def test_activate_promo_group_promocode_success(
     # Verify user promo group check
     has_promo_group_mock.assert_awaited_once_with(mock_db_session, sample_user.id, sample_promo_group.id)
 
-    # Verify promo group assignment
+    # Verify promo group assignment. Production now defers the commit to the
+    # single atomic transaction at the end of activate_promocode, so it passes
+    # commit=False to add_user_to_promo_group.
     add_promo_group_mock.assert_awaited_once_with(
-        mock_db_session, sample_user.id, sample_promo_group.id, assigned_by='promocode'
+        mock_db_session, sample_user.id, sample_promo_group.id, assigned_by='promocode', commit=False
     )
 
     # Verify usage recorded
     create_usage_mock.assert_awaited_once_with(mock_db_session, sample_promocode_promo_group.id, sample_user.id)
 
-    # Verify counter incremented
-    assert sample_promocode_promo_group.current_uses == 21
+    # Verify counter incremented. Production now increments current_uses via an
+    # atomic SQL UPDATE (PromoCode.current_uses + 1) instead of mutating the
+    # in-memory object, then reports the incremented value in the result payload
+    # (fixture starts at 20 -> reported 21). The ORM object itself is unchanged.
+    assert result['promocode']['current_uses'] == 21
+    assert sample_promocode_promo_group.current_uses == 20
     mock_db_session.commit.assert_awaited()
 
 
@@ -108,6 +134,8 @@ async def test_activate_promo_group_user_already_has_group(
 
     check_usage_mock = AsyncMock(return_value=False)
     monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', check_usage_mock)
+
+    _patch_recent_activations(monkeypatch)
 
     # User ALREADY HAS the promo group
     has_promo_group_mock = AsyncMock(return_value=True)
@@ -159,6 +187,8 @@ async def test_activate_promo_group_group_not_found(
 
     check_usage_mock = AsyncMock(return_value=False)
     monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', check_usage_mock)
+
+    _patch_recent_activations(monkeypatch)
 
     has_promo_group_mock = AsyncMock(return_value=False)
     monkeypatch.setattr('app.services.promocode_service.has_user_promo_group', has_promo_group_mock)
@@ -217,6 +247,8 @@ async def test_activate_promo_group_assignment_error(
     check_usage_mock = AsyncMock(return_value=False)
     monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', check_usage_mock)
 
+    _patch_recent_activations(monkeypatch)
+
     get_promo_group_mock = AsyncMock(return_value=sample_promo_group)
     monkeypatch.setattr('app.services.promocode_service.get_promo_group_by_id', get_promo_group_mock)
 
@@ -269,6 +301,8 @@ async def test_activate_promo_group_assigned_by_value(
     check_usage_mock = AsyncMock(return_value=False)
     monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', check_usage_mock)
 
+    _patch_recent_activations(monkeypatch)
+
     get_promo_group_mock = AsyncMock(return_value=sample_promo_group)
     monkeypatch.setattr('app.services.promocode_service.get_promo_group_by_id', get_promo_group_mock)
 
@@ -285,12 +319,14 @@ async def test_activate_promo_group_assigned_by_value(
     service = PromoCodeService()
     await service.activate_promocode(mock_db_session, sample_user.id, 'VIPGROUP')
 
-    # Verify assigned_by="promocode"
+    # Verify assigned_by="promocode" (production also passes commit=False so the
+    # assignment participates in the single end-of-activation transaction).
     add_promo_group_mock.assert_awaited_once_with(
         mock_db_session,
         sample_user.id,
         sample_promo_group.id,
         assigned_by='promocode',  # Critical assertion
+        commit=False,
     )
 
 
@@ -318,6 +354,8 @@ async def test_activate_promo_group_description_includes_group_name(
 
     check_usage_mock = AsyncMock(return_value=False)
     monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', check_usage_mock)
+
+    _patch_recent_activations(monkeypatch)
 
     get_promo_group_mock = AsyncMock(return_value=sample_promo_group)
     monkeypatch.setattr('app.services.promocode_service.get_promo_group_by_id', get_promo_group_mock)
@@ -363,6 +401,8 @@ async def test_promocode_data_includes_promo_group_id(
 
     check_usage_mock = AsyncMock(return_value=False)
     monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', check_usage_mock)
+
+    _patch_recent_activations(monkeypatch)
 
     get_promo_group_mock = AsyncMock(return_value=sample_promo_group)
     monkeypatch.setattr('app.services.promocode_service.get_promo_group_by_id', get_promo_group_mock)

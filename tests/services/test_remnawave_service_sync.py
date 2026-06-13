@@ -1,7 +1,7 @@
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +19,39 @@ def _create_service() -> RemnaWaveService:
     service._panel_timezone = ZoneInfo('UTC')
     service._utc_timezone = ZoneInfo('UTC')
     return service
+
+
+class _SavepointCM:
+    """Async context manager standing in for ``db.begin_nested()`` (a SAVEPOINT).
+
+    Production wraps ``create_user_no_commit`` in ``async with db.begin_nested():``
+    so that an IntegrityError rolls back only the nested transaction. The
+    SAVEPOINT swallows nothing — any exception raised in the body propagates,
+    which is what the IntegrityError test relies on. We record enter/exit so the
+    test can assert the savepoint was actually used.
+    """
+
+    def __init__(self) -> None:
+        self.entered = 0
+        self.exited = 0
+
+    async def __aenter__(self):
+        self.entered += 1
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.exited += 1
+        return False  # never suppress — let IntegrityError reach the handler
+
+
+def _make_db_with_savepoint() -> tuple[AsyncMock, _SavepointCM]:
+    """AsyncMock session whose ``begin_nested()`` yields a real SAVEPOINT CM."""
+    db = AsyncMock()
+    savepoint = _SavepointCM()
+    # begin_nested() is called synchronously as a context-manager factory, so it
+    # must return the CM object directly (not a coroutine).
+    db.begin_nested = MagicMock(return_value=savepoint)
+    return db, savepoint
 
 
 def _make_panel_user(telegram_id: int, expire_at: str, status: str = 'ACTIVE') -> dict:
@@ -68,16 +101,15 @@ def test_deduplicate_ignores_records_without_expire_date():
 
 async def test_get_or_create_user_handles_unique_violation(monkeypatch):
     service = _create_service()
-    db = AsyncMock()
+    # Production now wraps create_user_no_commit in `async with db.begin_nested()`
+    # (a SAVEPOINT), so the session mock must expose a working async CM.
+    db, savepoint = _make_db_with_savepoint()
 
     panel_user = {'telegramId': 555, 'username': 'existing'}
     existing_user = object()
 
     create_user_mock = AsyncMock(side_effect=IntegrityError('stmt', 'params', Exception('unique')))
     get_user_mock = AsyncMock(return_value=existing_user)
-    rollback_mock = AsyncMock()
-
-    db.rollback = rollback_mock
 
     monkeypatch.setattr('app.services.remnawave_service.create_user_no_commit', create_user_mock)
     monkeypatch.setattr(
@@ -91,12 +123,19 @@ async def test_get_or_create_user_handles_unique_violation(monkeypatch):
     assert created is False
     create_user_mock.assert_awaited_once()
     get_user_mock.assert_awaited_once_with(db, 555)
-    rollback_mock.assert_awaited()
+    # The SAVEPOINT is opened once and rolled back via __aexit__ on the
+    # IntegrityError — no full db.rollback() is issued anymore (that would
+    # expire every ORM object in the session).
+    db.begin_nested.assert_called_once()
+    assert savepoint.entered == 1
+    assert savepoint.exited == 1
+    db.rollback.assert_not_awaited()
 
 
 async def test_get_or_create_user_creates_new(monkeypatch):
     service = _create_service()
-    db = AsyncMock()
+    # create_user_no_commit now runs inside `async with db.begin_nested()`.
+    db, savepoint = _make_db_with_savepoint()
 
     panel_user = {'telegramId': 777, 'username': 'new_user'}
     new_user = object()
@@ -117,3 +156,7 @@ async def test_get_or_create_user_creates_new(monkeypatch):
         last_name=None,
         language='ru',
     )
+    # The user is created inside a single SAVEPOINT that commits cleanly.
+    db.begin_nested.assert_called_once()
+    assert savepoint.entered == 1
+    assert savepoint.exited == 1

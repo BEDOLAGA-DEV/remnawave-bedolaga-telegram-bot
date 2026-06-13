@@ -1191,6 +1191,7 @@ async def create_payment_link(
                 amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
             ),
             language=user.language or settings.DEFAULT_LANGUAGE,
+            payment_method=option,
         )
         if not result:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail='Failed to create payment')
@@ -1220,7 +1221,7 @@ async def create_payment_link(
                 'local_payment_id': result.get('local_payment_id'),
                 'bill_id': result.get('bill_id'),
                 'order_id': result.get('order_id'),
-                'payment_method': result.get('payment_method') or provider_method,
+                'payment_method': result.get('payment_method') or option,
                 'sbp_url': result.get('sbp_url') or result.get('transfer_url'),
                 'card_url': result.get('card_url'),
                 'link_url': result.get('link_url'),

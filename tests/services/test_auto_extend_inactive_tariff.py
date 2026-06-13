@@ -63,7 +63,11 @@ async def test_try_auto_extend_skips_when_target_tariff_is_inactive(monkeypatch)
     # never reached — that is exactly the bug we're guarding against.
     pricing_engine_spy = AsyncMock()
     subtract_balance_spy = AsyncMock()
-    monkeypatch.setattr(svc.pricing_engine, 'calculate_renewal_price', pricing_engine_spy)
+    # Patch the CLASS, not the shared singleton instance. ``calculate_renewal_price``
+    # is defined on PricingEngine, so ``setattr(svc.pricing_engine, ...)`` would write
+    # the original bound method back into the singleton's ``__dict__`` on teardown,
+    # permanently shadowing the class method and leaking into later tests.
+    monkeypatch.setattr(svc.PricingEngine, 'calculate_renewal_price', pricing_engine_spy)
     monkeypatch.setattr(svc, 'subtract_user_balance', subtract_balance_spy)
 
     user = MagicMock()
@@ -109,7 +113,9 @@ async def test_try_auto_extend_skips_inactive_tariff_in_multi_tariff_mode(monkey
 
     pricing_engine_spy = AsyncMock()
     subtract_balance_spy = AsyncMock()
-    monkeypatch.setattr(svc.pricing_engine, 'calculate_renewal_price', pricing_engine_spy)
+    # Patch the CLASS, not the shared singleton instance (see note above) to avoid
+    # leaking a shadowing instance attribute onto ``pricing_engine``.
+    monkeypatch.setattr(svc.PricingEngine, 'calculate_renewal_price', pricing_engine_spy)
     monkeypatch.setattr(svc, 'subtract_user_balance', subtract_balance_spy)
 
     user = MagicMock()
@@ -166,8 +172,10 @@ async def test_prepare_auto_extend_context_skips_inactive_target_tariff(monkeypa
     )
 
     # The guard short-circuits before any pricing call — these spies must stay clean.
+    # Patch the CLASS, not the shared singleton instance (see note above) to avoid
+    # leaking a shadowing instance attribute onto ``pricing_engine``.
     pricing_engine_spy = AsyncMock()
-    monkeypatch.setattr(svc.pricing_engine, 'calculate_renewal_price', pricing_engine_spy)
+    monkeypatch.setattr(svc.PricingEngine, 'calculate_renewal_price', pricing_engine_spy)
 
     user = MagicMock()
     user.id = 7

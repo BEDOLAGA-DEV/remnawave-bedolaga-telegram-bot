@@ -25,6 +25,87 @@ class DummyTexts:
         return f'{value / 100:.0f} ₽'
 
 
+def _make_renewal_pricing(final_total: int):
+    """Build a RenewalPricing result for the unified PricingEngine.
+
+    После апстрим-мержа цена продления берётся из
+    ``pricing_engine.calculate_renewal_price`` (а НЕ из ``cart_data['total_price']``),
+    поэтому тесты мокают движок и фиксируют детерминированную цену.
+    """
+    from app.services.pricing_engine import RenewalPricing
+
+    return RenewalPricing(
+        base_price=final_total,
+        servers_price=0,
+        traffic_price=0,
+        devices_price=0,
+        promo_group_discount=0,
+        promo_offer_discount=0,
+        final_total=final_total,
+        period_days=30,
+        is_tariff_mode=False,
+        breakdown={},
+    )
+
+
+def _patch_extend_common(monkeypatch, *, subscription, user, price_kopeks):
+    """Общие моки для пути продления (_process_single_cart -> _auto_extend_subscription).
+
+    Возвращает dict с управляемыми моками для ассертов в тесте.
+    """
+    # 1. Нет per-subscription корзин (иначе реальный Redis-scan падает на _FakeRedisClient).
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.get_all_subscription_carts',
+        AsyncMock(return_value=[]),
+    )
+
+    # 2. CRUD загрузки подписки (одиночный тариф) + проверки DISABLED/race по subscription_id.
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_subscription_by_user_id',
+        AsyncMock(return_value=subscription),
+    )
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_subscription_by_id_for_user',
+        AsyncMock(return_value=subscription),
+    )
+
+    # 3. Блокировка пользователя для ценообразования (TOCTOU-защита) — возвращаем того же user.
+    monkeypatch.setattr(
+        'app.database.crud.user.lock_user_for_pricing',
+        AsyncMock(return_value=user),
+    )
+
+    # 4. Единый PricingEngine — цена продления теперь приходит отсюда.
+    # Патчим МЕТОД КЛАССА, а не singleton-инстанс. ``calculate_renewal_price``
+    # объявлен на ``PricingEngine``; патч инстанса (``...pricing_engine.calculate_renewal_price``)
+    # на teardown записал бы исходный bound-метод в ``__dict__`` синглтона, навсегда
+    # затенив метод класса и протекая в другие тесты (cross-file pollution).
+    pricing_mock = AsyncMock(return_value=_make_renewal_pricing(price_kopeks))
+    monkeypatch.setattr(
+        'app.services.pricing_engine.PricingEngine.calculate_renewal_price',
+        pricing_mock,
+    )
+
+    # 5. Уведомление администраторов о продлении идёт через with_admin_notification_service
+    #    (ленивый импорт из subscription_renewal_service), а НЕ через AdminNotificationService
+    #    напрямую. Патчим на реальном модуле и выполняем handler с мок-сервисом.
+    admin_notify_service = MagicMock()
+    admin_notify_service.send_subscription_extension_notification = AsyncMock()
+
+    async def _run_with_admin(handler):
+        await handler(admin_notify_service)
+
+    monkeypatch.setattr(
+        'app.services.subscription_renewal_service.with_admin_notification_service',
+        _run_with_admin,
+    )
+
+    return {
+        'pricing_mock': pricing_mock,
+        'admin_notify_service': admin_notify_service,
+    }
+
+
 async def test_auto_purchase_saved_cart_after_topup_success(monkeypatch):
     monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
 
@@ -143,6 +224,11 @@ async def test_auto_purchase_saved_cart_after_topup_success(monkeypatch):
         'app.services.subscription_auto_purchase_service.MiniAppSubscriptionPurchaseService',
         DummyMiniAppService,
     )
+    # Нет per-subscription корзин — только глобальная (legacy generic cart)
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.get_all_subscription_carts',
+        AsyncMock(return_value=[]),
+    )
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.user_cart_service.get_user_cart',
         AsyncMock(return_value=cart_data),
@@ -172,9 +258,11 @@ async def test_auto_purchase_saved_cart_after_topup_success(monkeypatch):
         'app.services.subscription_auto_purchase_service.AdminNotificationService',
         lambda bot: admin_service_mock,
     )
-    # Мокаем get_user_by_id чтобы вернуть того же user
+    # Производство теперь блокирует пользователя через lock_user_for_pricing
+    # (импортируется внутри _prepare_auto_purchase) вместо get_user_by_id.
+    # Патчим на РЕАЛЬНОМ модуле, возвращаем того же user.
     monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.get_user_by_id',
+        'app.database.crud.user.lock_user_for_pricing',
         AsyncMock(return_value=user),
     )
 
@@ -201,6 +289,8 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
     subscription.device_limit = 1
     subscription.traffic_limit_gb = 100
     subscription.connected_squads = ['squad-a']
+    subscription.tariff_id = 1  # платный тариф (режим тарифов включён)
+    subscription.updated_at = None  # race-guard: пропускаем проверку "недавно обновлено"
 
     user = MagicMock(spec=User)
     user.id = 7
@@ -209,6 +299,10 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
     user.language = 'ru'
     user.subscription = subscription
     user.get_primary_promo_group = MagicMock(return_value=None)
+    # Нет активной промо-скидки -> consume_promo_offer выводится в False
+    user.promo_offer_discount_percent = 0
+    user.promo_offer_discount_expires_at = None
+    user.promo_offer_discount_source = None
 
     cart_data = {
         'cart_mode': 'extend',
@@ -221,6 +315,12 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
         'squad_uuid': 'squad-b',
         'consume_promo_offer': True,
     }
+
+    # Цена продления теперь приходит из PricingEngine; фиксируем её детерминированно.
+    price_kopeks = 31_000
+    common = _patch_extend_common(
+        monkeypatch, subscription=subscription, user=user, price_kopeks=price_kopeks
+    )
 
     subtract_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(
@@ -254,10 +354,17 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
         'app.services.subscription_auto_purchase_service.user_cart_service.get_user_cart',
         AsyncMock(return_value=cart_data),
     )
-    delete_cart_mock = AsyncMock()
+    # Корзина привязана к subscription_id -> удаляется через delete_subscription_cart,
+    # а НЕ delete_user_cart. _delete_cart_for_subscription также читает глобальную корзину
+    # и (т.к. subscription_id совпадает) чистит глобальный ключ.
+    delete_sub_cart_mock = AsyncMock()
     monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.user_cart_service.delete_user_cart',
-        delete_cart_mock,
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_subscription_cart',
+        delete_sub_cart_mock,
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_global_cart_only',
+        AsyncMock(),
     )
     clear_draft_mock = AsyncMock()
     monkeypatch.setattr(
@@ -273,18 +380,9 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
         'app.services.subscription_auto_purchase_service.format_period_description',
         lambda days, lang: f'{days} дней',
     )
-
-    admin_service_mock = MagicMock()
-    admin_service_mock.send_subscription_extension_notification = AsyncMock()
     monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.AdminNotificationService',
-        lambda bot: admin_service_mock,
-    )
-
-    # Мок для get_subscription_by_user_id
-    monkeypatch.setattr(
-        'app.database.crud.subscription.get_subscription_by_user_id',
-        AsyncMock(return_value=subscription),
+        'app.services.subscription_auto_purchase_service.format_local_datetime',
+        lambda dt, fmt: dt.strftime(fmt) if dt else '',
     )
 
     bot = AsyncMock()
@@ -293,19 +391,24 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
     result = await auto_purchase_saved_cart_after_topup(db_session, user, bot=bot)
 
     assert result is True
+    # consume_promo_offer теперь выводится из активной промо-скидки пользователя
+    # (get_user_active_promo_discount_percent), а не из cart_data; у mock-пользователя
+    # активной скидки нет -> False. Списывается цена из PricingEngine,
+    # с новым флагом mark_as_paid_subscription=True.
     subtract_mock.assert_awaited_once_with(
         db_session,
         user,
-        cart_data['total_price'],
+        price_kopeks,
         cart_data['description'],
-        consume_promo_offer=True,
+        consume_promo_offer=False,
+        mark_as_paid_subscription=True,
     )
     assert subscription.device_limit == 2
     assert subscription.traffic_limit_gb == 500
     assert 'squad-b' in subscription.connected_squads
-    delete_cart_mock.assert_awaited_once_with(user.id)
+    delete_sub_cart_mock.assert_awaited_once_with(user.id, subscription.id)
     clear_draft_mock.assert_awaited_once_with(user.id)
-    admin_service_mock.send_subscription_extension_notification.assert_awaited()
+    common['admin_notify_service'].send_subscription_extension_notification.assert_awaited()
     bot.send_message.assert_awaited()
     service_mock.update_remnawave_user.assert_awaited()
     create_transaction_mock.assert_awaited()
@@ -323,16 +426,22 @@ async def test_auto_purchase_trial_preserved_on_insufficient_balance(monkeypatch
     subscription.device_limit = 1
     subscription.traffic_limit_gb = 10
     subscription.connected_squads = []
+    subscription.tariff_id = 1
+    subscription.updated_at = None
 
     user = MagicMock(spec=User)
     user.id = 99
     user.telegram_id = 9999
-    # ИСПРАВЛЕНО: Баланс достаточный для первой проверки (строка 243),
-    # но subtract_user_balance вернёт False (симуляция неудачи списания)
+    # Баланс достаточный, чтобы пройти предварительную проверку
+    # (user.balance_kopeks >= price_kopeks), но subtract_user_balance вернёт False
+    # (симуляция неудачи списания), поэтому продление должно прерваться.
     user.balance_kopeks = 60_000
     user.language = 'ru'
     user.subscription = subscription
     user.get_primary_promo_group = MagicMock(return_value=None)
+    user.promo_offer_discount_percent = 0
+    user.promo_offer_discount_expires_at = None
+    user.promo_offer_discount_source = None
 
     cart_data = {
         'cart_mode': 'extend',
@@ -346,7 +455,10 @@ async def test_auto_purchase_trial_preserved_on_insufficient_balance(monkeypatch
         'consume_promo_offer': False,
     }
 
-    # Mock: недостаточно денег, списание не удалось
+    # Цена продления из PricingEngine (<= баланса, чтобы дойти до списания).
+    _patch_extend_common(monkeypatch, subscription=subscription, user=user, price_kopeks=50_000)
+
+    # Mock: списание не удалось -> продление прерывается, триал сохраняется.
     subtract_mock = AsyncMock(return_value=False)
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.subtract_user_balance',
@@ -369,19 +481,6 @@ async def test_auto_purchase_trial_preserved_on_insufficient_balance(monkeypatch
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.format_local_datetime',
         lambda dt, fmt: dt.strftime(fmt) if dt else '',
-    )
-
-    admin_service_mock = MagicMock()
-    admin_service_mock.send_subscription_extension_notification = AsyncMock()
-    monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.AdminNotificationService',
-        lambda bot: admin_service_mock,
-    )
-
-    # Мок для get_subscription_by_user_id
-    monkeypatch.setattr(
-        'app.database.crud.subscription.get_subscription_by_user_id',
-        AsyncMock(return_value=subscription),
     )
 
     db_session = AsyncMock(spec=AsyncSession)
@@ -407,6 +506,8 @@ async def test_auto_purchase_trial_converted_after_successful_extension(monkeypa
     subscription.device_limit = 1
     subscription.traffic_limit_gb = 10
     subscription.connected_squads = []
+    subscription.tariff_id = 1
+    subscription.updated_at = None
 
     user = MagicMock(spec=User)
     user.id = 88
@@ -415,6 +516,9 @@ async def test_auto_purchase_trial_converted_after_successful_extension(monkeypa
     user.language = 'ru'
     user.subscription = subscription
     user.get_primary_promo_group = MagicMock(return_value=None)
+    user.promo_offer_discount_percent = 0
+    user.promo_offer_discount_expires_at = None
+    user.promo_offer_discount_source = None
 
     cart_data = {
         'cart_mode': 'extend',
@@ -427,6 +531,9 @@ async def test_auto_purchase_trial_converted_after_successful_extension(monkeypa
         'squad_uuid': None,
         'consume_promo_offer': False,
     }
+
+    # Цена продления из PricingEngine (<= баланса) + общие моки пути продления.
+    _patch_extend_common(monkeypatch, subscription=subscription, user=user, price_kopeks=100_000)
 
     # Mock: деньги списались успешно
     subtract_mock = AsyncMock(return_value=True)
@@ -462,8 +569,13 @@ async def test_auto_purchase_trial_converted_after_successful_extension(monkeypa
         'app.services.subscription_auto_purchase_service.user_cart_service.get_user_cart',
         AsyncMock(return_value=cart_data),
     )
+    # Корзина привязана к subscription_id -> delete_subscription_cart (+ глобальная очистка).
     monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.user_cart_service.delete_user_cart',
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_subscription_cart',
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_global_cart_only',
         AsyncMock(),
     )
     monkeypatch.setattr(
@@ -478,23 +590,9 @@ async def test_auto_purchase_trial_converted_after_successful_extension(monkeypa
         'app.services.subscription_auto_purchase_service.format_period_description',
         lambda days, lang: f'{days} дней',
     )
-    # ИСПРАВЛЕНО: Добавлен мок для format_local_datetime
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.format_local_datetime',
         lambda dt, fmt: dt.strftime(fmt) if dt else '',
-    )
-
-    admin_service_mock = MagicMock()
-    admin_service_mock.send_subscription_extension_notification = AsyncMock()
-    monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.AdminNotificationService',
-        lambda bot: admin_service_mock,
-    )
-
-    # Мок для get_subscription_by_user_id
-    monkeypatch.setattr(
-        'app.database.crud.subscription.get_subscription_by_user_id',
-        AsyncMock(return_value=subscription),
     )
 
     db_session = AsyncMock(spec=AsyncSession)
@@ -523,6 +621,8 @@ async def test_auto_purchase_trial_preserved_on_extension_failure(monkeypatch):
     subscription.device_limit = 1
     subscription.traffic_limit_gb = 10
     subscription.connected_squads = []
+    subscription.tariff_id = 1
+    subscription.updated_at = None
 
     user = MagicMock(spec=User)
     user.id = 77
@@ -531,6 +631,9 @@ async def test_auto_purchase_trial_preserved_on_extension_failure(monkeypatch):
     user.language = 'ru'
     user.subscription = subscription
     user.get_primary_promo_group = MagicMock(return_value=None)
+    user.promo_offer_discount_percent = 0
+    user.promo_offer_discount_expires_at = None
+    user.promo_offer_discount_source = None
 
     cart_data = {
         'cart_mode': 'extend',
@@ -543,6 +646,9 @@ async def test_auto_purchase_trial_preserved_on_extension_failure(monkeypatch):
         'squad_uuid': None,
         'consume_promo_offer': False,
     }
+
+    # Цена продления из PricingEngine (<= баланса) + общие моки пути продления.
+    _patch_extend_common(monkeypatch, subscription=subscription, user=user, price_kopeks=100_000)
 
     # Mock: деньги списались успешно
     subtract_mock = AsyncMock(return_value=True)
@@ -559,13 +665,18 @@ async def test_auto_purchase_trial_preserved_on_extension_failure(monkeypatch):
         'app.services.subscription_auto_purchase_service.extend_subscription',
         extend_error,
     )
+    # Компенсирующий возврат после ошибки идёт через add_user_balance (ленивый импорт);
+    # подменяем на реальном модуле, чтобы не трогать реальную БД.
+    monkeypatch.setattr(
+        'app.database.crud.user.add_user_balance',
+        AsyncMock(return_value=True),
+    )
 
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.user_cart_service.get_user_cart',
         AsyncMock(return_value=cart_data),
     )
 
-    # ИСПРАВЛЕНО: Добавлены недостающие моки
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.get_texts',
         lambda lang: DummyTexts(),
@@ -577,19 +688,6 @@ async def test_auto_purchase_trial_preserved_on_extension_failure(monkeypatch):
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.format_local_datetime',
         lambda dt, fmt: dt.strftime(fmt) if dt else '',
-    )
-
-    admin_service_mock = MagicMock()
-    admin_service_mock.send_subscription_extension_notification = AsyncMock()
-    monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.AdminNotificationService',
-        lambda bot: admin_service_mock,
-    )
-
-    # Мок для get_subscription_by_user_id
-    monkeypatch.setattr(
-        'app.database.crud.subscription.get_subscription_by_user_id',
-        AsyncMock(return_value=subscription),
     )
 
     db_session = AsyncMock(spec=AsyncSession)
@@ -609,6 +707,10 @@ async def test_auto_purchase_trial_remaining_days_transferred(monkeypatch):
     """Тест: остаток триала переносится на платную подписку при TRIAL_ADD_REMAINING_DAYS_TO_PAID=True"""
     monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
     monkeypatch.setattr(settings, 'TRIAL_ADD_REMAINING_DAYS_TO_PAID', True)  # Включено!
+    # Классический триал без тарифа: в режиме 'tariffs' автопродление классических
+    # подписок блокируется (_prepare_auto_extend_context), поэтому для этого сценария
+    # — конверсия классического триала в платную подписку — выставляем классический режим.
+    monkeypatch.setattr(settings, 'SALES_MODE', 'classic')
 
     now = datetime.now(UTC)
     trial_end = now + timedelta(days=2)  # Осталось 2 дня триала
@@ -623,6 +725,7 @@ async def test_auto_purchase_trial_remaining_days_transferred(monkeypatch):
     subscription.traffic_limit_gb = 10
     subscription.connected_squads = []
     subscription.tariff_id = None  # Триал без тарифа
+    subscription.updated_at = None
 
     user = MagicMock(spec=User)
     user.id = 66
@@ -631,6 +734,9 @@ async def test_auto_purchase_trial_remaining_days_transferred(monkeypatch):
     user.language = 'ru'
     user.subscription = subscription
     user.get_primary_promo_group = MagicMock(return_value=None)
+    user.promo_offer_discount_percent = 0
+    user.promo_offer_discount_expires_at = None
+    user.promo_offer_discount_source = None
 
     cart_data = {
         'cart_mode': 'extend',
@@ -643,6 +749,9 @@ async def test_auto_purchase_trial_remaining_days_transferred(monkeypatch):
         'squad_uuid': None,
         'consume_promo_offer': False,
     }
+
+    # Цена продления из PricingEngine (<= баланса) + общие моки пути продления.
+    _patch_extend_common(monkeypatch, subscription=subscription, user=user, price_kopeks=100_000)
 
     subtract_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(
@@ -698,7 +807,11 @@ async def test_auto_purchase_trial_remaining_days_transferred(monkeypatch):
         AsyncMock(return_value=cart_data),
     )
     monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.user_cart_service.delete_user_cart',
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_subscription_cart',
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_global_cart_only',
         AsyncMock(),
     )
     monkeypatch.setattr(
@@ -716,19 +829,6 @@ async def test_auto_purchase_trial_remaining_days_transferred(monkeypatch):
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.format_local_datetime',
         lambda dt, fmt: dt.strftime(fmt),
-    )
-
-    admin_service_mock = MagicMock()
-    admin_service_mock.send_subscription_extension_notification = AsyncMock()
-    monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.AdminNotificationService',
-        lambda bot: admin_service_mock,
-    )
-
-    # Мок для get_subscription_by_user_id
-    monkeypatch.setattr(
-        'app.database.crud.subscription.get_subscription_by_user_id',
-        AsyncMock(return_value=subscription),
     )
 
     db_session = AsyncMock(spec=AsyncSession)

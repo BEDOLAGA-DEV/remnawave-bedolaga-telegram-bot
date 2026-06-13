@@ -398,7 +398,13 @@ async def test_handle_subscription_cancel_clears_saved_cart(mock_callback_query,
         patch('app.localization.texts.get_texts', return_value=MagicMock()) as _,
         patch('app.handlers.menu.show_main_menu', new=mock_show_main_menu),
     ):
+        # Multi-tariff safe cancel: production now first reads the cart via
+        # get_user_cart. With no subscription_id present it falls back to
+        # deleting the global cart via delete_user_cart (the path this test verifies).
+        mock_cart_service.get_user_cart = AsyncMock(return_value={})
         mock_cart_service.delete_user_cart = AsyncMock(return_value=True)
+        mock_cart_service.delete_subscription_cart = AsyncMock(return_value=True)
+        mock_cart_service.delete_global_cart_only = AsyncMock(return_value=True)
 
         await handle_subscription_cancel(mock_callback_query, mock_state, mock_user, mock_db)
 

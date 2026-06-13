@@ -32,18 +32,35 @@ class StubSettings:
     def is_devices_selection_enabled(self) -> bool:
         return self._enabled
 
+    @staticmethod
+    def _normalize_forced_amount(raw_value):
+        # Mirror app.config.Settings.get_devices_selection_disabled_amount:
+        # blank/None and any value <= 0 mean "no override" and collapse to None.
+        if raw_value in (None, ''):
+            return None
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            return None
+        if value <= 0:
+            return None
+        return value
+
     def get_disabled_mode_device_limit(self):
-        return self._disabled_amount
+        return self._normalize_forced_amount(self._disabled_amount)
 
     def get_devices_selection_disabled_amount(self):
-        return self._disabled_selection_amount
+        return self._normalize_forced_amount(self._disabled_selection_amount)
 
 
 @pytest.mark.parametrize(
     'forced_amount, expected',
     [
-        (None, None),
-        (0, 0),
+        # No usable override (None / non-positive collapse to "unset" in the real
+        # config) -> fall through to the subscription's stored device_limit (42).
+        (None, 42),
+        (0, 42),
+        # A positive override wins.
         (5, 5),
     ],
 )
@@ -96,7 +113,9 @@ def test_resolve_hwid_device_limit_for_payload_returns_subscription_limit(monkey
         StubSettings(enabled=False, disabled_amount=None, disabled_selection_amount=None),
     )
 
-    assert resolve_hwid_device_limit(subscription) is None
+    # With selection disabled and no override, the subscription's stored limit now
+    # flows straight through (no longer suppressed to None) so the panel stays aligned.
+    assert resolve_hwid_device_limit(subscription) == 42
     assert resolve_hwid_device_limit_for_payload(subscription) == 42
 
 
@@ -134,8 +153,10 @@ def test_resolve_hwid_device_limit_for_payload_handles_zero(monkeypatch):
         StubSettings(enabled=False, disabled_amount=0, disabled_selection_amount=0),
     )
 
-    assert resolve_hwid_device_limit(subscription) == 0
-    assert resolve_hwid_device_limit_for_payload(subscription) == 0
+    # A forced amount of 0 is normalized to "no override" by the real config, so the
+    # subscription's stored limit (42) is used rather than being suppressed to 0.
+    assert resolve_hwid_device_limit(subscription) == 42
+    assert resolve_hwid_device_limit_for_payload(subscription) == 42
 
 
 @pytest.mark.parametrize(
@@ -143,7 +164,8 @@ def test_resolve_hwid_device_limit_for_payload_handles_zero(monkeypatch):
     [
         (True, 4, None, None, 4),
         (False, 4, None, None, 4),
-        (False, 4, 0, 0, 0),
+        # A forced amount of 0 normalizes to "no override" -> simple limit (4) is used.
+        (False, 4, 0, 0, 4),
         (False, 4, 7, 7, 7),
     ],
 )

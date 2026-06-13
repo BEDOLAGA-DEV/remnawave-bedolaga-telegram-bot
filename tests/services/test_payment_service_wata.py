@@ -25,7 +25,34 @@ def anyio_backend() -> str:
     return 'asyncio'
 
 
+class FakeResult:
+    """Minimal emulation of a SQLAlchemy Result for the FOR UPDATE lock query."""
+
+    def __init__(self, value: Any) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self) -> Any:
+        return self._value
+
+    def scalar_one(self) -> Any:
+        return self._value
+
+
 class DummySession:
+    def __init__(self) -> None:
+        # Value returned by get_wata_payment_by_id_for_update's
+        # ``result.scalar_one_or_none()`` row-lock query. Tests set this to the
+        # payment they expect to be locked.
+        self.lock_result: Any = None
+
+    async def execute(self, *_: Any, **__: Any) -> FakeResult:
+        # Production's get_wata_payment_by_id_for_update issues a
+        # ``select(...).with_for_update()`` and reads ``scalar_one_or_none()``.
+        return FakeResult(self.lock_result)
+
+    async def flush(self) -> None:  # pragma: no cover - no logic required
+        return None
+
     async def commit(self) -> None:  # pragma: no cover - no logic required
         return None
 
@@ -185,6 +212,10 @@ async def test_process_wata_webhook_updates_status(monkeypatch: pytest.MonkeyPat
     service = _make_service(None)
     db = DummySession()
     payment = DummyWataPayment()
+    # Production locks the row via get_wata_payment_by_id_for_update -> db.execute
+    # then replaces ``payment`` with the locked row; emulate that returning the
+    # same instance the lookups resolved.
+    db.lock_result = payment
     update_kwargs: dict[str, Any] = {}
     link_lookup_called = False
 
@@ -261,6 +292,9 @@ async def test_process_wata_webhook_finalizes_paid(monkeypatch: pytest.MonkeyPat
     service = _make_service(None)
     db = DummySession()
     payment = DummyWataPayment()
+    # Row-lock query (get_wata_payment_by_id_for_update -> db.execute) returns
+    # the same payment instance the order/link lookups resolved.
+    db.lock_result = payment
     finalize_called = False
 
     async def fake_get_by_order_id(*_: Any, **__: Any) -> DummyWataPayment:
