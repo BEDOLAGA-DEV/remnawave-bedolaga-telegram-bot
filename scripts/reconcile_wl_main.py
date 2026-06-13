@@ -69,6 +69,7 @@ from app.config import settings  # noqa: E402
 from app.database.database import AsyncSessionLocal  # noqa: E402
 from app.database.models import Subscription, SubscriptionStatus  # noqa: E402
 from app.services.subscription_service import SubscriptionService  # noqa: E402
+from app.services.system_settings_service import SystemSettingsService  # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:
@@ -109,9 +110,20 @@ async def main() -> int:
     mode = 'APPLY' if args.apply else 'DRY-RUN'
     dup_action = 'DELETE' if args.delete_duplicates else 'DISABLE'
 
+    # Apply admin-panel (DB) setting overrides onto the `settings` object — this
+    # is a separate process from the bot, so MULTI_TARIFF_ENABLED,
+    # REMNAWAVE_USER_USERNAME_TEMPLATE, etc. would otherwise be the static env
+    # defaults rather than the values configured from the bot admin panel.
+    await SystemSettingsService.initialize()
+
     if not settings.is_multi_tariff_enabled():
-        print('Multi-tariff mode is disabled — this bug class does not apply. Nothing to do.')
+        print(
+            'Multi-tariff mode is disabled — this bug class does not apply. Nothing to do.\n'
+            f'(effective: MULTI_TARIFF_ENABLED={settings.MULTI_TARIFF_ENABLED}, SALES_MODE={settings.SALES_MODE!r})'
+        )
         return 0
+
+    print(f'(template: {settings.REMNAWAVE_USER_USERNAME_TEMPLATE!r})')
 
     print(f'=== reconcile_wl_main [{mode}] — duplicates will be {dup_action}d ===\n')
 
