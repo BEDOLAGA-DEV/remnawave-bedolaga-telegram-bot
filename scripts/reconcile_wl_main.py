@@ -92,6 +92,33 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _legacy_bases(user) -> list[str]:
+    """Candidate legacy MAIN usernames, in priority order, deduped.
+
+    Deployments that changed REMNAWAVE_USER_USERNAME_TEMPLATE have a MIX of
+    accounts: the current template form (e.g. 'u_<tg>') and the historical
+    default 'user_<tg>'. Both must be considered.
+    """
+    bases: list[str] = []
+    try:
+        tpl = settings.format_remnawave_username(
+            full_name=user.full_name,
+            username=user.username,
+            telegram_id=user.telegram_id,
+            email=user.email,
+            user_id=user.id,
+        )
+        if tpl:
+            bases.append(tpl)
+    except Exception:
+        pass
+    if user.telegram_id:
+        legacy = f'user_{user.telegram_id}'
+        if legacy not in bases:
+            bases.append(legacy)
+    return bases
+
+
 async def _load_candidates(db, telegram_ids: list[int] | None) -> list[Subscription]:
     """Active/trial subscriptions that have a panel main account, with user+tariff loaded."""
     stmt = (
@@ -163,15 +190,12 @@ async def main() -> int:
                         wl = await api.get_user_by_username(wl_name)
                         print(f'   paired _wl (<main>_wl): {wl_name!r} exists={bool(wl)} uuid={getattr(wl, "uuid", None)}')
                     if user and user.telegram_id:
-                        legacy_name = settings.format_remnawave_username(
-                            full_name=user.full_name, username=user.username,
-                            telegram_id=user.telegram_id, email=user.email, user_id=user.id,
-                        )
-                        legacy = await api.get_user_by_username(legacy_name)
-                        print(f'   legacy template acct:  {legacy_name!r} exists={bool(legacy)} uuid={getattr(legacy, "uuid", None)}')
-                        legacy_wl_name = svc._derive_wl_username(legacy_name, None, None)
-                        legacy_wl = await api.get_user_by_username(legacy_wl_name)
-                        print(f'   legacy _wl:            {legacy_wl_name!r} exists={bool(legacy_wl)} uuid={getattr(legacy_wl, "uuid", None)}')
+                        for base in _legacy_bases(user):
+                            acc = await api.get_user_by_username(base)
+                            print(f'   legacy acct:           {base!r} exists={bool(acc)} uuid={getattr(acc, "uuid", None)}')
+                            base_wl = svc._derive_wl_username(base, None, None)
+                            acc_wl = await api.get_user_by_username(base_wl)
+                            print(f'   legacy _wl:            {base_wl!r} exists={bool(acc_wl)} uuid={getattr(acc_wl, "uuid", None)}')
                 return 0
 
             for sub in subs:
@@ -179,45 +203,51 @@ async def main() -> int:
                 if not user or not user.telegram_id:
                     continue  # telegram_id users only
 
-                try:
-                    legacy_name = settings.format_remnawave_username(
-                        full_name=user.full_name,
-                        username=user.username,
-                        telegram_id=user.telegram_id,
-                        email=user.email,
-                        user_id=user.id,
-                    )
-                except Exception as e:  # pragma: no cover - defensive
-                    print(f'  sub {sub.id} (tg {user.telegram_id}): could not build legacy name: {e}')
-                    continue
+                # Resolve candidate legacy accounts — BOTH the current template
+                # form ('u_<tg>') and the historical default ('user_<tg>').
+                existing: list[tuple[str, object]] = []
+                for base in _legacy_bases(user):
+                    try:
+                        acc = await api.get_user_by_username(base)
+                    except Exception as e:
+                        print(f'  sub {sub.id} (tg {user.telegram_id}): legacy lookup {base!r} failed: {e}')
+                        continue
+                    if acc and getattr(acc, 'uuid', None):
+                        existing.append((base, acc))
 
-                try:
-                    legacy_user = await api.get_user_by_username(legacy_name)
-                except Exception as e:
-                    print(f'  sub {sub.id} (tg {user.telegram_id}): legacy lookup {legacy_name!r} failed: {e}')
-                    continue
-                if not legacy_user or not getattr(legacy_user, 'uuid', None):
+                if not existing:
                     continue  # no legacy account — nothing to reconcile
 
-                if legacy_user.uuid == sub.remnawave_uuid:
-                    continue  # already correctly bound — idempotent skip
+                # Already bound to one of the real legacy accounts -> correct.
+                if any(acc.uuid == sub.remnawave_uuid for _, acc in existing):
+                    continue
 
-                # Ownership guard.
-                ltg = getattr(legacy_user, 'telegram_id', None)
-                if ltg is not None and str(ltg) != str(user.telegram_id):
+                # Keep only ownership-valid candidates.
+                valid = [
+                    (base, acc)
+                    for base, acc in existing
+                    if getattr(acc, 'telegram_id', None) is None
+                    or str(getattr(acc, 'telegram_id', None)) == str(user.telegram_id)
+                ]
+                if not valid:
                     skipped_owner += 1
-                    print(
-                        f'  sub {sub.id} (tg {user.telegram_id}): legacy {legacy_name!r} belongs to tg {ltg} '
-                        f'— SKIP (ownership mismatch).'
-                    )
+                    print(f'  sub {sub.id} (tg {user.telegram_id}): legacy account(s) belong to another telegram_id — SKIP.')
                     continue
 
                 victims += 1
+                cand_desc = ', '.join(f'{b!r}->{a.uuid}' for b, a in valid)
                 print(
                     f'  VICTIM sub {sub.id} (tg {user.telegram_id}):\n'
-                    f'      bound to duplicate uuid {sub.remnawave_uuid}\n'
-                    f'      real legacy account  {legacy_name!r} -> uuid {legacy_user.uuid}'
+                    f'      bound to            {sub.remnawave_uuid}\n'
+                    f'      legacy candidate(s) {cand_desc}'
                 )
+
+                if len(valid) > 1:
+                    ambiguous += 1
+                    print('      AMBIGUOUS: multiple legacy accounts exist — manual review (cannot tell which is in the VPN).')
+                    continue
+
+                legacy_name, legacy_user = valid[0]
 
                 if legacy_user.uuid in claimed_legacy:
                     ambiguous += 1
