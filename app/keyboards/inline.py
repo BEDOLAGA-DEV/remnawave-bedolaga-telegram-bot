@@ -3609,6 +3609,103 @@ def get_admin_ticket_view_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def get_ticket_notification_keyboard(
+    ticket_id: int,
+    *,
+    user_id: int | None = None,
+    telegram_id: str | int | None = None,
+    username: str | None = None,
+    is_closed: bool = False,
+    is_user_blocked: bool = False,
+    is_admin: bool = False,
+    language: str = DEFAULT_LANGUAGE,
+) -> InlineKeyboardMarkup:
+    """Клавиатура для уведомления о тикете в личном чате.
+
+    Отображает кнопки действий без «⬅️ Назад» — она не имеет смысла вне
+    контекста админки. Набор кнопок зависит от роли получателя:
+    - is_admin=True  → полный набор (включая «👤 К пользователю»);
+    - is_admin=False → набор без «👤 К пользователю» (@admin_required).
+
+    Args:
+        ticket_id: ID тикета.
+        user_id: DB-id пользователя (для callback «К пользователю»).
+        telegram_id: Telegram-id автора тикета (для URL-кнопки «Профиль»).
+        username: username автора тикета без @ (для URL-кнопки «ЛС»).
+        is_closed: тикет уже закрыт — скрываем «Ответить» и «Закрыть».
+        is_user_blocked: показываем «Разблокировать» вместо блок-контролов.
+        is_admin: получатель — полный админ (не модератор).
+        language: язык локализации.
+    """
+    texts = get_texts(language)
+    keyboard: list[list[InlineKeyboardButton]] = []
+
+    # URL-кнопки: не требуют прав, опциональны по наличию данных
+    url_row: list[InlineKeyboardButton] = []
+    if username:
+        safe_username = username.lstrip('@')
+        url_row.append(InlineKeyboardButton(text='✉ ЛС', url=f'tg://resolve?domain={safe_username}'))
+    if telegram_id:
+        url_row.append(InlineKeyboardButton(text='👤 Профиль', url=f'tg://user?id={telegram_id}'))
+    if url_row:
+        keyboard.append(url_row)
+
+    # «К пользователю» — только для полного админа (@admin_required)
+    if is_admin and user_id:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text='👤 К пользователю',
+                    callback_data=f'admin_user_manage_{user_id}_from_ticket_{ticket_id}',
+                )
+            ]
+        )
+
+    if not is_closed:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('REPLY_TO_TICKET', '💬 Ответить'),
+                    callback_data=f'admin_reply_ticket_{ticket_id}',
+                )
+            ]
+        )
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('CLOSE_TICKET', '🔒 Закрыть тикет'),
+                    callback_data=f'admin_close_ticket_{ticket_id}',
+                )
+            ]
+        )
+
+    # Блок-контролы
+    if is_user_blocked:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('UNBLOCK', '✅ Разблокировать'),
+                    callback_data=f'admin_unblock_user_ticket_{ticket_id}',
+                )
+            ]
+        )
+    else:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('BLOCK_FOREVER', '🚫 Заблокировать'),
+                    callback_data=f'admin_block_user_perm_ticket_{ticket_id}',
+                ),
+                InlineKeyboardButton(
+                    text=texts.t('BLOCK_BY_TIME', '⏳ Блок по времени'),
+                    callback_data=f'admin_block_user_ticket_{ticket_id}',
+                ),
+            ]
+        )
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 def get_admin_ticket_reply_cancel_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
     texts = get_texts(language)
     return InlineKeyboardMarkup(
