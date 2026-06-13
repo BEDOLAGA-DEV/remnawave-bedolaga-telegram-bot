@@ -69,7 +69,7 @@ from app.config import settings  # noqa: E402
 from app.database.database import AsyncSessionLocal  # noqa: E402
 from app.database.models import Subscription, SubscriptionStatus  # noqa: E402
 from app.services.subscription_service import SubscriptionService  # noqa: E402
-from app.services.system_settings_service import SystemSettingsService  # noqa: E402
+from app.services.system_settings_service import bot_configuration_service  # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:
@@ -114,7 +114,7 @@ async def main() -> int:
     # is a separate process from the bot, so MULTI_TARIFF_ENABLED,
     # REMNAWAVE_USER_USERNAME_TEMPLATE, etc. would otherwise be the static env
     # defaults rather than the values configured from the bot admin panel.
-    await SystemSettingsService.initialize()
+    await bot_configuration_service.initialize()
 
     if not settings.is_multi_tariff_enabled():
         print(
