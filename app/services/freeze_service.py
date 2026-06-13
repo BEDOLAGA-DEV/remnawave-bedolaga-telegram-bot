@@ -72,6 +72,8 @@ class FreezeService:
 
         uuid = getattr(subscription, 'remnawave_uuid', None)
         if uuid:
+            # disable_remnawave_user also disables the paired _wl (БС-трафик)
+            # account, so the freeze covers both the main and БС access.
             ok = await self._subscription_service.disable_remnawave_user(uuid)
             if not ok:
                 subscription.frozen_at = None
@@ -120,6 +122,8 @@ class FreezeService:
 
         uuid = getattr(subscription, 'remnawave_uuid', None)
         if uuid:
+            # enable_remnawave_user also re-enables the paired _wl (БС-трафик)
+            # account, so resume restores both the main and БС access.
             ok = await self._subscription_service.enable_remnawave_user(uuid)
             if not ok:
                 remnawave_retry_queue.enqueue(

@@ -884,7 +884,15 @@ class UserService:
                             remnawave_service = RemnaWaveService()
 
                             if delete_mode == 'delete':
+                                from app.services.subscription_service import SubscriptionService
+
+                                _sub_svc = SubscriptionService()
                                 async with remnawave_service.get_api_client() as api:
+                                    # Resolve the paired _wl (БС-трафик) account
+                                    # BEFORE deleting the main — its name derives
+                                    # from the main username, which disappears once
+                                    # the main account is gone.
+                                    wl_uuid = await _sub_svc._resolve_paired_wl_uuid(api, panel_uuid)
                                     delete_success = await api.delete_user(panel_uuid)
                                     if delete_success:
                                         result.panel_deleted = True
@@ -898,6 +906,19 @@ class UserService:
                                             '⚠️ Не удалось удалить пользователя из панели Remnawave',
                                             remnawave_uuid=panel_uuid,
                                         )
+                                    # Mirror the delete onto the paired _wl account
+                                    # so it is not orphaned. Mark it intentional too
+                                    # to suppress phantom-deletion webhooks.
+                                    if wl_uuid:
+                                        try:
+                                            RemnaWaveWebhookService.mark_intentional_panel_deletion(
+                                                panel_uuids=[wl_uuid],
+                                                telegram_id=int(user.telegram_id) if user.telegram_id else None,
+                                            )
+                                            await api.delete_user(wl_uuid)
+                                            logger.info('🗑 Удалён парный _wl пользователь', wl_uuid=wl_uuid)
+                                        except Exception as wl_err:
+                                            logger.warning('⚠️ Не удалось удалить парный _wl', wl_uuid=wl_uuid, error=wl_err)
                             else:
                                 from app.services.subscription_service import SubscriptionService
 

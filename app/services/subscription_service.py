@@ -231,9 +231,13 @@ class SubscriptionService:
                     )
 
                 current_time = datetime.now(UTC)
+                # frozen_at guard: a frozen subscription must stay DISABLED on
+                # panel for the paired _wl too, even when (re)created via the
+                # update->create 404 fallback. See update_remnawave_user.
                 is_actually_active = (
-                    subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value) 
+                    subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
                     and subscription.end_date > current_time
+                    and getattr(subscription, 'frozen_at', None) is None
                 )
                 main_username_for_wl = updated_user.username if updated_user else ''
                 await self._ensure_wl_user_synced(
@@ -245,6 +249,13 @@ class SubscriptionService:
                     reset_traffic=reset_traffic,
                     reset_reason=reset_reason,
                 )
+
+                # The create path builds the main account with status=ACTIVE.
+                # If this is a frozen subscription being (re)created (e.g. via
+                # the update->create 404 fallback), disable the main again so the
+                # freeze holds. disable_remnawave_user also mirrors the _wl.
+                if getattr(subscription, 'frozen_at', None) is not None and getattr(updated_user, 'uuid', None):
+                    await self.disable_remnawave_user(updated_user.uuid)
 
                 subscription.remnawave_short_uuid = updated_user.short_uuid
                 subscription.subscription_url = updated_user.subscription_url
@@ -352,19 +363,60 @@ class SubscriptionService:
         # first; if it exists, adopt it (caller saves uuid into subscription)
         # and update in place instead of duplicating.
         if user.telegram_id:
-            legacy_main = f'user_{user.telegram_id}'
+            # Adopt a pre-existing legacy main account instead of creating a
+            # duplicate. Candidates, in priority order:
+            #   1) the CURRENT template's base name (no per-subscription suffix)
+            #      — e.g. 'u_<tg>' when REMNAWAVE_USER_USERNAME_TEMPLATE is
+            #      'u_{telegram_id}'. This is the real account name for any
+            #      deployment that customised the template.
+            #   2) the historical hardcoded default 'user_<tg>'.
+            # Using only (2) silently missed custom-template deployments and
+            # created a duplicate 'u_<tg>_<short>' main + '<...>_wl', orphaning
+            # the user's real in-VPN 'u_<tg>' / 'u_<tg>_wl' pair.
+            legacy_candidates: list[str] = []
             try:
-                legacy_user = await api.get_user_by_username(legacy_main)
-            except Exception as legacy_err:
-                logger.warning(
-                    'Legacy main lookup failed', legacy=legacy_main, error=legacy_err
+                template_base = settings.format_remnawave_username(
+                    full_name=user.full_name,
+                    username=user.username,
+                    telegram_id=user.telegram_id,
+                    email=user.email,
+                    user_id=user.id,
                 )
-                legacy_user = None
+                if template_base:
+                    legacy_candidates.append(template_base)
+            except Exception as tmpl_err:
+                logger.warning('Legacy template base build failed', error=tmpl_err)
+            if f'user_{user.telegram_id}' not in legacy_candidates:
+                legacy_candidates.append(f'user_{user.telegram_id}')
+
+            legacy_user = None
+            matched_legacy = None
+            for candidate in legacy_candidates:
+                try:
+                    found = await api.get_user_by_username(candidate)
+                except Exception as legacy_err:
+                    logger.warning('Legacy main lookup failed', legacy=candidate, error=legacy_err)
+                    continue
+                if not found:
+                    continue
+                # Ownership guard: only adopt an account that belongs to this
+                # user. Names encode telegram_id so collisions are unlikely, but
+                # for non-tg templates verify the panel account's telegram_id.
+                found_tg = getattr(found, 'telegram_id', None)
+                if found_tg is not None and str(found_tg) != str(user.telegram_id):
+                    logger.warning(
+                        '⚠️ Legacy main candidate belongs to another telegram_id, skipping',
+                        legacy=candidate, found_tg=found_tg, user_tg=user.telegram_id,
+                    )
+                    continue
+                legacy_user = found
+                matched_legacy = candidate
+                break
 
             if legacy_user:
                 logger.info(
                     '♻️ Found legacy main user, adopting',
-                    legacy=legacy_main,
+                    legacy=matched_legacy,
                     uuid=legacy_user.uuid,
                     subscription_id=subscription.id,
                 )
@@ -525,9 +577,16 @@ class SubscriptionService:
             current_time = datetime.now(UTC)
             # Определяем актуальный статус для отправки в RemnaWave
             # НЕ меняем статус подписки здесь - это задача scheduled job
+            #
+            # Заморожённая подписка (frozen_at установлен) должна оставаться
+            # DISABLED на панели, иначе любое обновление (автоплатёж, мониторинг,
+            # retry-queue) молча разморозит и main, и парный _wl аккаунт. Статус
+            # подписки при заморозке не меняется (остаётся ACTIVE), поэтому
+            # проверяем frozen_at явно.
             is_actually_active = (
                 subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
                 and subscription.end_date > current_time
+                and getattr(subscription, 'frozen_at', None) is None
             )
 
             # Логируем если статус и end_date не согласованы (для отладки)
@@ -714,12 +773,19 @@ class SubscriptionService:
     ) -> None:
         """Delete other-format WL accounts for this user.
 
-        Iterates known WL naming conventions (legacy 'user_<tg>_wl', new
-        'u_<tg>_<sub_id>_wl' for the current subscription, and the
-        template-based name derived from `format_remnawave_username`).
-        Anything that is NOT primary_wl and does NOT share primary_uuid gets
-        deleted. Lookup 404s are expected; delete failures are logged and
-        swallowed so the main sync keeps working.
+        Iterates known stale WL naming conventions (legacy 'user_<tg>_wl' and
+        the per-subscription 'u_<tg>_<sub_id>_wl' form). Anything that is NOT
+        primary_wl and does NOT share primary_uuid gets deleted. Lookup 404s
+        are expected; delete failures are logged and swallowed so the main sync
+        keeps working.
+
+        NB: the template-based candidate ('<format_remnawave_username base>_wl')
+        was intentionally REMOVED. For a correctly-adopted main it equals
+        primary_wl (a no-op), but for a subscription that was mis-bound to a
+        duplicate '<base>_<short>' main it equals the user's REAL in-VPN
+        '<base>_wl' account — and this routine would then DELETE the account the
+        client actually uses. Dropping the candidate stops that destruction; the
+        legitimate '<base>_wl' is preserved (it IS primary_wl after adoption).
         """
         if not user.telegram_id:
             return
@@ -740,19 +806,6 @@ class SubscriptionService:
         sub_id = getattr(subscription, 'id', None)
         if sub_id:
             candidates.add(f'u_{user.telegram_id}_{sub_id}_wl')
-
-        # Template-based form (whatever the current template would generate).
-        try:
-            base = settings.format_remnawave_username(
-                full_name=user.full_name,
-                username=user.username,
-                telegram_id=user.telegram_id,
-                email=user.email,
-                user_id=user.id,
-            )
-            candidates.add(f'{base[:33].rstrip("_-")}_wl')
-        except Exception as fmt_err:
-            logger.warning('WL cleanup: template format failed', error=fmt_err)
 
         for candidate in candidates:
             if candidate == primary_wl:
@@ -914,11 +967,62 @@ class SubscriptionService:
                 '⚠️ Не удалось сбросить трафик RemnaWave для', _format_user_log=self._format_user_log(user), error=exc
             )
 
+    async def _resolve_paired_wl_uuid(self, api, main_uuid: str | None) -> str | None:
+        """Return the uuid of the paired _wl account for a main account, or None.
+
+        The _wl (БС-трафик) account is a separate RemnaWave user named
+        '<main_username>_wl'. Its name is derived from the main account's
+        CURRENT panel username (the single source of truth, matching
+        _ensure_wl_user_synced), so multi-tariff and template-named mains both
+        map correctly. Returns None on any lookup miss/error so callers can
+        treat _wl mirroring as best-effort.
+        """
+        if not main_uuid:
+            return None
+        try:
+            main_user = await api.get_user_by_uuid(main_uuid)
+            if not main_user or not getattr(main_user, 'username', None):
+                return None
+            wl_username = self._derive_wl_username(main_user.username, None, None)
+            wl_user = await api.get_user_by_username(wl_username)
+            if not wl_user:
+                return None
+            return getattr(wl_user, 'uuid', None)
+        except Exception as e:
+            logger.warning('WL resolve failed', main_uuid=main_uuid, error=e)
+            return None
+
+    async def _mirror_wl_status(self, api, main_uuid: str, *, enable: bool) -> None:
+        """Best-effort enable/disable of the paired _wl account, mirroring the main.
+
+        Keeps the БС-трафик account in lockstep with the main account for ALL
+        callers of enable_remnawave_user/disable_remnawave_user (freeze/resume,
+        admin, cabinet, webapi, channel checks, block/unblock, monitoring) —
+        without each call site having to know about _wl.
+        """
+        wl_uuid = await self._resolve_paired_wl_uuid(api, main_uuid)
+        if not wl_uuid:
+            return
+        try:
+            if enable:
+                await api.enable_user(wl_uuid)
+            else:
+                await api.disable_user(wl_uuid)
+            logger.info('✅ WL mirror', action='enable' if enable else 'disable', wl_uuid=wl_uuid)
+        except Exception as e:
+            msg = str(e).lower()
+            if 'already' in msg or 'not found' in msg or '404' in msg or 'a025' in msg:
+                return
+            logger.warning('WL mirror status failed', wl_uuid=wl_uuid, enable=enable, error=e)
+
     async def disable_remnawave_user(self, user_uuid: str) -> bool:
         try:
             async with self.get_api_client() as api:
                 await api.disable_user(user_uuid)
                 logger.info('✅ Отключен RemnaWave пользователь', user_uuid=user_uuid)
+                # Mirror onto the paired _wl (БС-трафик) account so it follows
+                # the main account everywhere this is called.
+                await self._mirror_wl_status(api, user_uuid, enable=False)
                 return True
 
         except Exception as e:
@@ -938,8 +1042,20 @@ class SubscriptionService:
         """Полное удаление пользователя из панели RemnaWave (хуки прекращаются)."""
         try:
             async with self.get_api_client() as api:
+                # Resolve the paired _wl account FIRST — its name is derived from
+                # the main account's username, which disappears once the main is
+                # deleted. Then delete both.
+                wl_uuid = await self._resolve_paired_wl_uuid(api, user_uuid)
                 await api.delete_user(user_uuid)
                 logger.info('🗑 Удалён RemnaWave пользователь', user_uuid=user_uuid)
+                if wl_uuid:
+                    try:
+                        await api.delete_user(wl_uuid)
+                        logger.info('🗑 Удалён парный _wl пользователь', wl_uuid=wl_uuid)
+                    except Exception as wl_err:
+                        wl_msg = str(wl_err).lower()
+                        if not ('not found' in wl_msg or 'not exist' in wl_msg):
+                            logger.warning('⚠️ Не удалось удалить парный _wl', wl_uuid=wl_uuid, error=wl_err)
                 return True
 
         except Exception as e:
@@ -956,6 +1072,8 @@ class SubscriptionService:
             async with self.get_api_client() as api:
                 await api.enable_user(user_uuid)
                 logger.info('✅ Включен RemnaWave пользователь', user_uuid=user_uuid)
+                # Mirror onto the paired _wl (БС-трафик) account.
+                await self._mirror_wl_status(api, user_uuid, enable=True)
                 return True
 
         except Exception as e:
@@ -1013,6 +1131,16 @@ class SubscriptionService:
 
             async with self.get_api_client() as api:
                 updated_user = await api.revoke_user_subscription(revoke_uuid)
+
+                # Mirror the reissue onto the paired _wl (БС-трафик) account so
+                # its old link/credentials are invalidated too — otherwise a
+                # previously distributed _wl link stays valid after revoke.
+                wl_uuid = await self._resolve_paired_wl_uuid(api, revoke_uuid)
+                if wl_uuid:
+                    try:
+                        await api.revoke_user_subscription(wl_uuid)
+                    except Exception as wl_err:
+                        logger.warning('⚠️ Не удалось перевыпустить парный _wl', wl_uuid=wl_uuid, error=wl_err)
 
                 subscription.remnawave_short_uuid = updated_user.short_uuid
                 subscription.subscription_url = updated_user.subscription_url
@@ -1405,9 +1533,13 @@ class SubscriptionService:
                             return False
 
                         current_time = datetime.now(UTC)
+                        # frozen_at guard: squad propagation (admin tariff-server
+                        # edit) must not re-activate a frozen subscription on the
+                        # panel. Frozen subs keep status=ACTIVE, so check frozen_at.
                         is_actually_active = (
                             sub.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
                             and sub.end_date > current_time
+                            and getattr(sub, 'frozen_at', None) is None
                         )
 
                         user_tag = self._resolve_user_tag(sub)

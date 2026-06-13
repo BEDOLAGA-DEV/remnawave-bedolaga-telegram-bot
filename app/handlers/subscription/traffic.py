@@ -688,7 +688,7 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
             else db_user.remnawave_uuid
         )
-        if _en_uuid and subscription.status == 'active':
+        if _en_uuid and subscription.status == 'active' and getattr(subscription, 'frozen_at', None) is None:
             await subscription_service.enable_remnawave_user(_en_uuid)
 
         await create_transaction(
@@ -992,7 +992,7 @@ async def execute_switch_traffic(
             if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
             else db_user.remnawave_uuid
         )
-        if _en_uuid and subscription.status == 'active':
+        if _en_uuid and subscription.status == 'active' and getattr(subscription, 'frozen_at', None) is None:
             await subscription_service.enable_remnawave_user(_en_uuid)
 
         await db.refresh(db_user)

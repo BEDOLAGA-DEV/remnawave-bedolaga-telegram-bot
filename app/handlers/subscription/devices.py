@@ -690,7 +690,7 @@ async def execute_change_devices(
 
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
         remnawave_uuid = _get_remnawave_uuid(subscription, db_user)
-        if remnawave_uuid and subscription.status == 'active':
+        if remnawave_uuid and subscription.status == 'active' and getattr(subscription, 'frozen_at', None) is None:
             await subscription_service.enable_remnawave_user(remnawave_uuid)
 
         # При уменьшении лимита - удалить лишние устройства (последние подключённые)
@@ -1629,7 +1629,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
 
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
         remnawave_uuid = _get_remnawave_uuid(subscription, db_user)
-        if remnawave_uuid and subscription.status == 'active':
+        if remnawave_uuid and subscription.status == 'active' and getattr(subscription, 'frozen_at', None) is None:
             await subscription_service.enable_remnawave_user(remnawave_uuid)
 
         await create_transaction(

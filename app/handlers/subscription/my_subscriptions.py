@@ -488,7 +488,8 @@ async def handle_subscription_delete_execute(
         await callback.answer('Можно удалить только истекшую или отключённую подписку', show_alert=True)
         return
 
-    # Delete from RemnaWave panel (stops webhooks / phantom notifications)
+    # Delete from RemnaWave panel (stops webhooks / phantom notifications).
+    # delete_remnawave_user also removes the paired _wl (БС-трафик) account.
     if subscription.remnawave_uuid:
         try:
             service = SubscriptionService()
