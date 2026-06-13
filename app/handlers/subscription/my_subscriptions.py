@@ -147,6 +147,18 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
             ]
         )
 
+    # Freeze (vacation) — same single source of truth as the bot/cabinet gates:
+    # the admin freeze panel toggle (FreezeSettingsService). The freeze/resume
+    # callbacks are id-less; the handler resolves the user's active sub itself.
+    if not is_inactive:
+        from app.services.freeze_settings_service import FreezeSettingsService
+
+        if FreezeSettingsService.is_enabled():
+            if sub is not None and getattr(sub, 'frozen_at', None) is not None:
+                buttons.append([types.InlineKeyboardButton(text='▶️ Разморозить', callback_data='nz!_resume_sub')])
+            else:
+                buttons.append([types.InlineKeyboardButton(text='❄️ Заморозить', callback_data='nz!_freeze_sub')])
+
     buttons.append([types.InlineKeyboardButton(text='◀️ К списку подписок', callback_data='nz!_my_subscriptions')])
 
     return types.InlineKeyboardMarkup(inline_keyboard=buttons)
