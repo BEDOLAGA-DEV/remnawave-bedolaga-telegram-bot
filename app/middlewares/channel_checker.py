@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -286,12 +287,95 @@ class ChannelCheckerMiddleware(BaseMiddleware):
         # Save to FSM state
         if state:
             state_data = await state.get_data() or {}
-            if state_data.get('pending_start_payload') != payload:
+            existing_payload = state_data.get('pending_start_payload')
+
+            # Защита первого касания: если в FSM уже хранится payload
+            # активной рекламной кампании — не перезаписываем его.
+            # Сценарий: пользователь кликнул ?start=ads_1, был
+            # заблокирован каналом, затем перешёл по ?start=channel
+            # до регистрации — нужно сохранить ads_1 для атрибуции.
+            #
+            # Оптимизация: FSM-флаг 'pending_payload_is_campaign' выставляется
+            # при первом подтверждении кампании, чтобы последующие /start
+            # не делали лишний запрос в БД.
+            if existing_payload and existing_payload != payload:
+                # Быстрый путь: флаг уже выставлен при первом сохранении.
+                existing_is_campaign = state_data.get('pending_payload_is_campaign', False)
+
+                if not existing_is_campaign:
+                    # Медленный путь: выполняется максимум один раз для текущего
+                    # existing_payload — только если он ещё не подтверждён как кампания.
+                    # Если payload не является кампанией, флаг не выставляется,
+                    # и при следующей смене payload проверка повторится уже для нового значения.
+                    _db_check_failed = False
+                    async with AsyncSessionLocal() as db_check:
+                        try:
+                            _campaign = await get_campaign_by_start_parameter(
+                                db_check,
+                                existing_payload,
+                                only_active=True,
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as _check_err:
+                            logger.warning(
+                                'Не удалось проверить кампанию payload (первое касание)',
+                                existing_payload=existing_payload,
+                                error=_check_err,
+                            )
+                            _db_check_failed = True
+                            _campaign = None
+
+                    # Fail-closed: при ошибке БД не перезаписываем existing_payload —
+                    # он может быть кампанией. Выходим без изменений.
+                    if _db_check_failed:
+                        return
+
+                    if _campaign:
+                        # Сохраняем флаг, чтобы следующие вызовы не ходили в БД.
+                        state_data['pending_payload_is_campaign'] = True
+                        await state.set_data(state_data)
+                        existing_is_campaign = True
+
+                if existing_is_campaign:
+                    logger.info(
+                        '🔒 Payload кампании сохранён, перезапись пропущена',
+                        existing_payload=existing_payload,
+                        new_payload=payload,
+                        telegram_id=telegram_id,
+                    )
+                    # Обновляем Redis-бэкап первого касания, чтобы он не протух
+                    # пока пользователь заблокирован каналом.
+                    if telegram_id:
+                        await save_pending_payload_to_redis(telegram_id, existing_payload)
+                    # Уведомление о визите по новому payload отправляем
+                    # в том случае, если он тоже является кампанией.
+                    if bot and message.from_user and state:
+                        await self._try_send_campaign_visit_notification(
+                            bot=bot,
+                            telegram_user=message.from_user,
+                            state=state,
+                            payload=payload,
+                        )
+                    # Первое касание уже застолблено — выходим.
+                    return
+
+            if existing_payload != payload:
                 state_data['pending_start_payload'] = payload
+                # Сбрасываем флаг кампании — для нового payload он будет
+                # проверен заново при следующей попытке /start.
+                state_data.pop('pending_payload_is_campaign', None)
                 await state.set_data(state_data)
-                logger.info('Saved start payload for user (FSM)', payload=payload, telegram_id=telegram_id)
+                logger.info(
+                    'Saved start payload for user (FSM)',
+                    payload=payload,
+                    telegram_id=telegram_id,
+                )
         else:
-            logger.warning('_capture_start_payload: state=None for user', telegram_id=telegram_id)
+            logger.warning(
+                '_capture_start_payload: state=None for user',
+                telegram_id=telegram_id,
+            )
 
         # Also save to Redis as backup (in case FSM state is lost)
         if telegram_id:

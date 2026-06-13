@@ -386,30 +386,70 @@ async def attach_referrer_if_missing(
 _PENDING_CAMPAIGN_TTL = 7 * 24 * 3600  # 7 days
 
 
-async def save_pending_campaign(telegram_id: int, campaign_slug: str, campaign_id: int) -> bool:
-    """Save pending campaign attribution to Redis for a not-yet-registered user.
+async def save_pending_campaign(
+    telegram_id: int,
+    campaign_slug: str,
+    campaign_id: int,
+) -> bool | None:
+    """Сохранить атрибуцию кампании в Redis для ещё не зарегистрированного пользователя.
 
-    Called from /start handler immediately after resolving an advertising campaign.
-    Picked up by the cabinet auth route if the user opens the WebApp before
-    completing the bot registration flow.
+    Вызывается из обработчика /start сразу после определения рекламной кампании.
+    Считывается маршрутом авторизации кабинета, если пользователь открыл WebApp
+    до завершения регистрации через бот.
+
+    Использует SET NX (set-if-not-exists), чтобы первая кампания, по которой
+    перешёл пользователь, не перезаписывалась последующими /start-ссылками
+    (защита первого касания).
+
+    При пропуске NX обновляет TTL ключа через EXPIRE, чтобы атрибуция
+    не протухала, пока пользователь продолжает взаимодействовать с ботом.
+
+    Возвращает:
+        ``True``  — ключ успешно записан (кампания сохранена).
+        ``False`` — ключ уже существовал, запись пропущена
+                    (штатное поведение защиты первого касания).
+        ``None``  — ошибка Redis; атрибуция могла не сохраниться.
     """
     client = _get_redis()
     if client is None:
-        return False
+        logger.warning(
+            'Redis-клиент недоступен, pending campaign не сохранена',
+            telegram_id=telegram_id,
+            campaign_id=campaign_id,
+        )
+        return None
     try:
         key = f'pending_campaign:{telegram_id}'
         data = json.dumps({'campaign_slug': campaign_slug, 'campaign_id': campaign_id})
-        await client.setex(key, _PENDING_CAMPAIGN_TTL, data)
-        logger.info(
-            'Saved pending campaign to Redis',
-            telegram_id=telegram_id,
-            campaign_slug=campaign_slug,
-            campaign_id=campaign_id,
-        )
-        return True
+
+        # SET NX: ключ записывается только при первом обращении,
+        # чтобы первая кампания не перезаписывалась последующей.
+        result = await client.set(key, data, ex=_PENDING_CAMPAIGN_TTL, nx=True)
+        if result:
+            logger.info(
+                'Saved pending campaign to Redis',
+                telegram_id=telegram_id,
+                campaign_slug=campaign_slug,
+                campaign_id=campaign_id,
+            )
+        else:
+            # Ключ уже существует — обновляем TTL, чтобы первое касание
+            # не протухло, пока пользователь продолжает взаимодействие.
+            try:
+                await client.expire(key, _PENDING_CAMPAIGN_TTL)
+            except Exception as _expire_err:
+                logger.warning('Failed to refresh TTL for pending campaign', error=_expire_err)
+            logger.info(
+                'Campaign is already set in Redis, skipping (first-touch protection)',
+                telegram_id=telegram_id,
+                skipped_campaign_slug=campaign_slug,
+                skipped_campaign_id=campaign_id,
+            )
     except Exception as exc:
         logger.warning('Failed to save pending campaign to Redis', error=exc)
-        return False
+        return None
+    else:
+        return bool(result)
 
 
 async def get_pending_campaign(telegram_id: int) -> dict[str, str | int] | None:
