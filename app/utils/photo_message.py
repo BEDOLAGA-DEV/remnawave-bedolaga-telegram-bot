@@ -72,7 +72,11 @@ async def safe_edit_or_resend(
     """
     try:
         await message.edit_text(text, reply_markup=reply_markup)
-    except TelegramBadRequest:
+    except TelegramBadRequest as error:
+        # Контент не изменился (повторное нажатие кнопки) — ничего не делаем,
+        # иначе будем без нужды пересоздавать сообщение и спамить чат.
+        if 'message is not modified' in str(error).lower():
+            return
         # Уведомление-фото или недоступное сообщение: edit_text не работает
         # Удаляем исходное и отправляем новое
         with suppress(TelegramAPIError):
