@@ -1011,7 +1011,7 @@ def _build_ticket_notification_keyboard(service: AdminNotificationService, ticke
         user_id=user.id if user else None,
         telegram_id=user.telegram_id if user else None,
         username=user.username if user else None,
-        is_closed=False,
+        is_closed=ticket.is_closed,
         is_user_blocked=getattr(ticket, 'is_user_reply_blocked', False),
         is_admin=(role == 'admin'),
         language=settings.DEFAULT_LANGUAGE,
