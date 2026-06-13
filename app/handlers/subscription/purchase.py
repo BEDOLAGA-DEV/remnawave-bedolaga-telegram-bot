@@ -4367,8 +4367,12 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(add_wl_traffic, F.data.startswith('nz!_confirm_wl_traffic_'))
     dp.callback_query.register(handle_simple_subscription_purchase, F.data == 'nz!_simple_subscription_purchase')
 
-    dp.callback_query.register(handle_freeze_subscription, F.data == 'nz!_freeze_sub')
-    dp.callback_query.register(handle_resume_subscription, F.data == 'nz!_resume_sub')
+    # startswith (not ==) so both the new per-subscription callbacks
+    # (nz!_freeze_sub:<id>) and legacy id-less ones from stale inline
+    # keyboards (nz!_freeze_sub) are routed. No other callback shares either
+    # prefix, so there is no collision.
+    dp.callback_query.register(handle_freeze_subscription, F.data.startswith('nz!_freeze_sub'))
+    dp.callback_query.register(handle_resume_subscription, F.data.startswith('nz!_resume_sub'))
 
 
 async def handle_simple_subscription_purchase(

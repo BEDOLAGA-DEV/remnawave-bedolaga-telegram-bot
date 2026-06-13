@@ -1521,12 +1521,19 @@ def get_subscription_keyboard(
             from app.services.freeze_settings_service import FreezeSettingsService
 
             if FreezeSettingsService.is_enabled():
+                # Reuse the same multi-tariff-gated suffix as every other button
+                # in this keyboard (_sub_suffix). In classic (single-sub) mode it
+                # is empty, so the callback stays id-less and the post-action
+                # refresh re-renders THIS classic view via show_subscription_info.
+                # In multi-tariff mode it carries ':<id>' so the handler freezes
+                # the specific subscription. (This keyboard only actually renders
+                # in classic mode today, but staying consistent avoids surprises.)
                 if subscription and getattr(subscription, 'frozen_at', None) is not None:
                     keyboard.append(
                         [
                             InlineKeyboardButton(
                                 text='▶️ Разморозить',
-                                callback_data='nz!_resume_sub',
+                                callback_data=f'nz!_resume_sub{_sub_suffix}',
                                 style='primary',
                             )
                         ]
@@ -1536,7 +1543,7 @@ def get_subscription_keyboard(
                         [
                             InlineKeyboardButton(
                                 text='❄️ Заморозить',
-                                callback_data='nz!_freeze_sub',
+                                callback_data=f'nz!_freeze_sub{_sub_suffix}',
                                 style='primary',
                             )
                         ]

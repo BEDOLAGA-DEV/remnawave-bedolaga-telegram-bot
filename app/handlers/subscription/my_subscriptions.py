@@ -155,9 +155,9 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
 
         if FreezeSettingsService.is_enabled():
             if sub is not None and getattr(sub, 'frozen_at', None) is not None:
-                buttons.append([types.InlineKeyboardButton(text='▶️ Разморозить', callback_data='nz!_resume_sub')])
+                buttons.append([types.InlineKeyboardButton(text='▶️ Разморозить', callback_data=f'nz!_resume_sub:{sub_id}')])
             else:
-                buttons.append([types.InlineKeyboardButton(text='❄️ Заморозить', callback_data='nz!_freeze_sub')])
+                buttons.append([types.InlineKeyboardButton(text='❄️ Заморозить', callback_data=f'nz!_freeze_sub:{sub_id}')])
 
     buttons.append([types.InlineKeyboardButton(text='◀️ К списку подписок', callback_data='nz!_my_subscriptions')])
 
