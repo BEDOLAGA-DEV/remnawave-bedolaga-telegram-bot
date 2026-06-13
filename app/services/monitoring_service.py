@@ -286,6 +286,7 @@ class MonitoringService:
                 await self._check_prerenew_save_offers(db)
                 await self._check_traffic_usage_warnings(db)
                 await self._check_trial_expiring_soon(db)
+                await self._check_trial_onboarding_nudge(db)
                 await self._check_trial_channel_subscriptions(db)
                 await self._check_expired_subscription_followups(db)
                 await self._check_frozen_subscriptions(db)
@@ -956,6 +957,159 @@ class MonitoringService:
 
         except Exception as e:
             logger.error('Ошибка проверки истекающих тестовых подписок', error=e)
+
+    async def _trial_user_connected(self, subscription: Subscription) -> bool | None:
+        """Return True if the trial user has connected, False if not, None on error.
+
+        Combo signal: connected == (lifetime traffic > threshold) OR (>=1 hwid
+        device). On any panel error returns None so the caller skips this tick
+        without recording a notification (we retry next time).
+        """
+        remnawave_uuid = subscription.remnawave_uuid or getattr(subscription.user, 'remnawave_uuid', None)
+        if not remnawave_uuid:
+            return None
+        threshold = int(getattr(settings, 'TRIAL_ONBOARD_USED_BYTES_THRESHOLD', 1048576))
+        try:
+            async with self.subscription_service.get_api_client() as api:
+                panel_user = await api.get_user_by_uuid(remnawave_uuid)
+                if panel_user is None:
+                    return None
+                lifetime = int(getattr(panel_user, 'lifetime_used_traffic_bytes', 0) or 0)
+                if lifetime > threshold:
+                    return True
+                devices = await api.get_user_devices(remnawave_uuid)
+                total_devices = int((devices or {}).get('total', 0) or 0)
+                return total_devices > 0
+        except Exception as e:
+            logger.warning('Trial-onboard: не удалось проверить подключение через панель', error=e)
+            return None
+
+    async def _check_trial_onboarding_nudge(self, db: AsyncSession):
+        """Nudge trial users who got a trial but never connected (3h / 12h)."""
+        try:
+            if not NotificationSettingsService.are_notifications_globally_enabled():
+                return
+            if not NotificationSettingsService.is_trial_onboard_enabled():
+                return
+
+            first_hours = NotificationSettingsService.get_trial_onboard_first_hours()
+            second_hours = NotificationSettingsService.get_trial_onboard_second_hours()
+            now = datetime.now(UTC)
+            first_cutoff = now - timedelta(hours=first_hours)
+
+            result = await db.execute(
+                select(Subscription)
+                .join(Subscription.user)
+                .options(
+                    selectinload(Subscription.tariff),
+                    selectinload(Subscription.user),
+                )
+                .where(
+                    and_(
+                        Subscription.status == SubscriptionStatus.ACTIVE.value,
+                        Subscription.is_trial == True,
+                        Subscription.end_date > now,
+                        Subscription.created_at <= first_cutoff,
+                        User.status == UserStatus.ACTIVE.value,
+                    )
+                )
+            )
+            candidates = result.scalars().all()
+
+            from app.utils.notification_prefs import is_promo_offers_enabled
+
+            sent_count = 0
+            for subscription in candidates:
+                user = subscription.user
+                if not user or not user.telegram_id:
+                    continue
+                if not is_promo_offers_enabled(user):
+                    continue
+
+                # Decide which stage applies (12h takes priority once reached).
+                second_cutoff = now - timedelta(hours=second_hours)
+                created = subscription.created_at
+                if created is not None and created.tzinfo is None:
+                    created = created.replace(tzinfo=UTC)
+
+                if created is not None and created <= second_cutoff:
+                    stage, key = 'second', 'trial_onboard_12h'
+                else:
+                    stage, key = 'first', 'trial_onboard_3h'
+
+                if await notification_sent(db, user.id, subscription.id, key):
+                    continue
+
+                connected = await self._trial_user_connected(subscription)
+                if connected is None:
+                    continue  # panel error — retry next tick, do not record
+                if connected:
+                    # User already connected — mark both stages done so we stop
+                    # hitting the panel for this subscription.
+                    await record_notification(db, user.id, subscription.id, 'trial_onboard_3h')
+                    await record_notification(db, user.id, subscription.id, 'trial_onboard_12h')
+                    continue
+
+                if self.bot:
+                    success = await self._send_trial_onboarding_notification(user, subscription, stage)
+                    if success:
+                        await record_notification(db, user.id, subscription.id, key)
+                        sent_count += 1
+                        logger.info(
+                            '🚀 Отправлен trial-onboarding nudge',
+                            telegram_id=user.telegram_id,
+                            stage=stage,
+                        )
+
+            if sent_count:
+                await self._log_monitoring_event(
+                    db,
+                    'trial_onboard_nudges_sent',
+                    f'Отправлено {sent_count} trial-onboarding напоминаний',
+                    {'count': sent_count},
+                )
+        except Exception as e:
+            logger.error('Ошибка проверки trial-onboarding nudge', error=e)
+
+    async def _send_trial_onboarding_notification(self, user: User, subscription: Subscription, stage: str) -> bool:
+        try:
+            texts = get_texts(user.language)
+            message = texts.t(
+                'TRIAL_ONBOARD_NUDGE',
+                '👋 <b>Вы активировали тестовую подписку, но ещё не подключились.</b>\n\n'
+                'Что-то пошло не так или нужна помощь с настройкой?\n\n'
+                '📲 Подключение занимает пару минут:\n'
+                '1. Нажмите «🔗 Подключиться» ниже\n'
+                '2. Установите приложение по инструкции\n'
+                '3. Импортируйте конфиг — и VPN готов!\n\n'
+                'Не теряйте время тестового периода 🚀',
+            )
+
+            from aiogram.types import InlineKeyboardMarkup
+
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [build_miniapp_or_callback_button(text='🔗 Подключиться', callback_data='nz!_subscription_connect')],
+                ]
+            )
+
+            await self._send_message_with_logo(
+                chat_id=user.telegram_id,
+                text=message,
+                parse_mode='HTML',
+                reply_markup=keyboard,
+                user=user,
+            )
+            return True
+
+        except (TelegramForbiddenError, TelegramBadRequest) as exc:
+            if await self._handle_unreachable_user(user, exc, 'trial-onboarding nudge'):
+                return True
+            logger.error('Ошибка Telegram API при отправке trial-onboarding nudge', telegram_id=user.telegram_id, error=exc)
+            return False
+        except Exception as e:
+            logger.error('Ошибка отправки trial-onboarding nudge', telegram_id=user.telegram_id, error=e)
+            return False
 
     async def _check_trial_channel_subscriptions(self, db: AsyncSession):
         """Background reconciliation of channel subscriptions (rate-limited).

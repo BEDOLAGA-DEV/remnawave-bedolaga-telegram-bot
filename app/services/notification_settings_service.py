@@ -38,6 +38,11 @@ class NotificationSettingsService:
             'valid_hours': 24,
             'trigger_hours': 36,
         },
+        'trial_onboard': {
+            'enabled': False,
+            'first_hours': 3,
+            'second_hours': 12,
+        },
     }
 
     @classmethod
@@ -239,6 +244,47 @@ class NotificationSettingsService:
         except (TypeError, ValueError):
             return False
         return cls._set_field('prerenew_save', 'trigger_hours', hours_int)
+
+    # Trial onboarding nudge (user got a trial but never connected)
+    @classmethod
+    def is_trial_onboard_enabled(cls) -> bool:
+        return cls.is_enabled('trial_onboard')
+
+    @classmethod
+    def set_trial_onboard_enabled(cls, enabled: bool) -> bool:
+        return cls.set_enabled('trial_onboard', enabled)
+
+    @classmethod
+    def get_trial_onboard_first_hours(cls) -> int:
+        value = cls._get('trial_onboard').get('first_hours', 3)
+        try:
+            return max(1, min(168, int(value)))
+        except (TypeError, ValueError):
+            return 3
+
+    @classmethod
+    def set_trial_onboard_first_hours(cls, hours: int) -> bool:
+        try:
+            hours_int = max(1, min(168, int(hours)))
+        except (TypeError, ValueError):
+            return False
+        return cls._set_field('trial_onboard', 'first_hours', hours_int)
+
+    @classmethod
+    def get_trial_onboard_second_hours(cls) -> int:
+        value = cls._get('trial_onboard').get('second_hours', 12)
+        try:
+            return max(1, min(168, int(value)))
+        except (TypeError, ValueError):
+            return 12
+
+    @classmethod
+    def set_trial_onboard_second_hours(cls, hours: int) -> bool:
+        try:
+            hours_int = max(1, min(168, int(hours)))
+        except (TypeError, ValueError):
+            return False
+        return cls._set_field('trial_onboard', 'second_hours', hours_int)
 
     @classmethod
     def is_third_wave_enabled(cls) -> bool:

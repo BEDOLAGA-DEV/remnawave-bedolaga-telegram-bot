@@ -166,6 +166,9 @@ class Settings(BaseSettings):
     TRIAL_INVITE_ENABLED: bool = False
     TRIAL_INVITE_EXTEND_DAYS: int = 3
     TRIAL_INVITE_MAX_EXTENSION_DAYS: int = 14
+    # B7 trial-onboarding nudge: lifetime traffic at or below this (bytes) counts
+    # as "never connected" (1 MiB filters out handshake/service traffic).
+    TRIAL_ONBOARD_USED_BYTES_THRESHOLD: int = 1048576
     TRIAL_DEVICE_LIMIT: int = 2
     TRIAL_ADD_REMAINING_DAYS_TO_PAID: bool = False
     TRIAL_PAYMENT_ENABLED: bool = False

@@ -44,12 +44,15 @@ def _build_notification_settings_view(language: str):
     prerenew_percent = NotificationSettingsService.get_prerenew_save_discount_percent()
     prerenew_hours = NotificationSettingsService.get_prerenew_save_valid_hours()
     prerenew_trigger = NotificationSettingsService.get_prerenew_save_trigger_hours()
+    onboard_first = NotificationSettingsService.get_trial_onboard_first_hours()
+    onboard_second = NotificationSettingsService.get_trial_onboard_second_hours()
 
     trial_channel_status = _format_toggle(config.get('trial_channel_unsubscribed', {}).get('enabled', True))
     expired_1d_status = _format_toggle(config['expired_1d'].get('enabled', True))
     second_wave_status = _format_toggle(config['expired_second_wave'].get('enabled', True))
     third_wave_status = _format_toggle(config['expired_third_wave'].get('enabled', True))
     prerenew_status = _format_toggle(config['prerenew_save'].get('enabled', False))
+    onboard_status = _format_toggle(config.get('trial_onboard', {}).get('enabled', False))
 
     summary_text = (
         '🔔 <b>Уведомления пользователям</b>\n\n'
@@ -57,7 +60,8 @@ def _build_notification_settings_view(language: str):
         f'• 1 день после истечения: {expired_1d_status}\n'
         f'• 2-3 дня (скидка {second_percent}% / {second_hours} ч): {second_wave_status}\n'
         f'• {third_days} дней (скидка {third_percent}% / {third_hours} ч): {third_wave_status}\n'
-        f'• Churn-save (до истечения, скидка {prerenew_percent}% / {prerenew_hours} ч, за {prerenew_trigger} ч): {prerenew_status}'
+        f'• Churn-save (до истечения, скидка {prerenew_percent}% / {prerenew_hours} ч, за {prerenew_trigger} ч): {prerenew_status}\n'
+        f'• Trial-онбординг (напоминание не подключившимся, {onboard_first} ч / {onboard_second} ч): {onboard_status}'
     )
 
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -157,6 +161,29 @@ def _build_notification_settings_view(language: str):
                 InlineKeyboardButton(
                     text=f'📆 Слать за: {prerenew_trigger} ч до истечения',
                     callback_data='admin_mon_notify_edit_prerenew_trigger',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f'{onboard_status} • Trial-онбординг (не подключились)',
+                    callback_data='admin_mon_notify_toggle_trial_onboard',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f'⏱️ 1-е напоминание: через {onboard_first} ч',
+                    callback_data='admin_mon_notify_edit_trial_onboard_first',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f'⏱️ 2-е напоминание: через {onboard_second} ч',
+                    callback_data='admin_mon_notify_edit_trial_onboard_second',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text='🧪 Тест: trial-онбординг', callback_data='admin_mon_notify_preview_trial_onboard'
                 )
             ],
             [InlineKeyboardButton(text='🧪 Отправить все тесты', callback_data='admin_mon_notify_preview_all')],
@@ -315,6 +342,27 @@ async def _build_notification_preview_message(language: str, notification_type: 
                     InlineKeyboardButton(
                         text=texts.t('SUPPORT_BUTTON', '🆘 Поддержка'),
                         callback_data='nz!_menu_support',
+                    )
+                ],
+            ]
+        )
+    elif notification_type == 'trial_onboard':
+        message = texts.t(
+            'TRIAL_ONBOARD_NUDGE',
+            '👋 <b>Вы активировали тестовую подписку, но ещё не подключились.</b>\n\n'
+            'Что-то пошло не так или нужна помощь с настройкой?\n\n'
+            '📲 Подключение занимает пару минут:\n'
+            '1. Нажмите «🔗 Подключиться» ниже\n'
+            '2. Установите приложение по инструкции\n'
+            '3. Импортируйте конфиг — и VPN готов!\n\n'
+            'Не теряйте время тестового периода 🚀',
+        )
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text='🔗 Подключиться',
+                        callback_data='nz!_subscription_connect',
                     )
                 ],
             ]
@@ -541,6 +589,53 @@ async def toggle_prerenew_save_notification(callback: CallbackQuery):
     NotificationSettingsService.set_prerenew_save_enabled(not enabled)
     await callback.answer('✅ Включено' if not enabled else '⏸️ Отключено')
     await _render_notification_settings(callback)
+
+
+@router.callback_query(F.data == 'admin_mon_notify_toggle_trial_onboard')
+@admin_required
+async def toggle_trial_onboard_notification(callback: CallbackQuery):
+    enabled = NotificationSettingsService.is_trial_onboard_enabled()
+    NotificationSettingsService.set_trial_onboard_enabled(not enabled)
+    await callback.answer('✅ Включено' if not enabled else '⏸️ Отключено')
+    await _render_notification_settings(callback)
+
+
+@router.callback_query(F.data == 'admin_mon_notify_edit_trial_onboard_first')
+@admin_required
+async def edit_trial_onboard_first(callback: CallbackQuery, state: FSMContext):
+    await _start_notification_value_edit(
+        callback,
+        state,
+        'trial_onboard',
+        'first',
+        'NOTIFY_PROMPT_TRIAL_ONBOARD_FIRST',
+        'Через сколько часов после выдачи триала слать 1-е напоминание? (1-168):',
+    )
+
+
+@router.callback_query(F.data == 'admin_mon_notify_edit_trial_onboard_second')
+@admin_required
+async def edit_trial_onboard_second(callback: CallbackQuery, state: FSMContext):
+    await _start_notification_value_edit(
+        callback,
+        state,
+        'trial_onboard',
+        'second',
+        'NOTIFY_PROMPT_TRIAL_ONBOARD_SECOND',
+        'Через сколько часов слать 2-е напоминание? (1-168):',
+    )
+
+
+@router.callback_query(F.data == 'admin_mon_notify_preview_trial_onboard')
+@admin_required
+async def preview_trial_onboard_notification(callback: CallbackQuery):
+    try:
+        language = callback.from_user.language_code or settings.DEFAULT_LANGUAGE
+        await _send_notification_preview(callback.bot, callback.from_user.id, language, 'trial_onboard')
+        await callback.answer('✅ Пример отправлен')
+    except Exception as exc:
+        logger.error('Failed to send trial-onboard preview', exc=exc)
+        await callback.answer('❌ Не удалось отправить тест', show_alert=True)
 
 
 @router.callback_query(F.data == 'admin_mon_notify_preview_expired_nd')
@@ -1767,6 +1862,10 @@ async def process_notification_value_input(message: Message, state: FSMContext):
         if value < 1 or value > 168:
             await message.answer('❌ Количество часов должно быть от 1 до 168.')
             return
+    elif key == 'trial_onboard' and field in ('first', 'second'):
+        if value < 1 or value > 168:
+            await message.answer('❌ Количество часов должно быть от 1 до 168.')
+            return
 
     success = False
     if key == 'expired_second_wave' and field == 'percent':
@@ -1785,6 +1884,10 @@ async def process_notification_value_input(message: Message, state: FSMContext):
         success = NotificationSettingsService.set_prerenew_save_valid_hours(value)
     elif key == 'prerenew_save' and field == 'trigger':
         success = NotificationSettingsService.set_prerenew_save_trigger_hours(value)
+    elif key == 'trial_onboard' and field == 'first':
+        success = NotificationSettingsService.set_trial_onboard_first_hours(value)
+    elif key == 'trial_onboard' and field == 'second':
+        success = NotificationSettingsService.set_trial_onboard_second_hours(value)
 
     if not success:
         await message.answer(texts.get('NOTIFICATION_VALUE_INVALID', '❌ Некорректное значение, попробуйте снова.'))
