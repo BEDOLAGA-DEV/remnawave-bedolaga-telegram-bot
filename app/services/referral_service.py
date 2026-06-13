@@ -391,17 +391,20 @@ async def save_pending_campaign(
     campaign_slug: str,
     campaign_id: int,
 ) -> bool | None:
-    """Save pending campaign attribution to Redis for a not-yet-registered user.
+    """Сохранить атрибуцию кампании в Redis для ещё не зарегистрированного пользователя.
 
-    Called from /start handler immediately after resolving an advertising campaign.
-    Picked up by the cabinet auth route if the user opens the WebApp before
-    completing the bot registration flow.
+    Вызывается из обработчика /start сразу после определения рекламной кампании.
+    Считывается маршрутом авторизации кабинета, если пользователь открыл WebApp
+    до завершения регистрации через бот.
 
-    Uses SET NX (set-if-not-exists) so the first campaign the user clicked
-    is never overwritten by a subsequent /start link, preserving first-touch
-    attribution.
+    Использует SET NX (set-if-not-exists), чтобы первая кампания, по которой
+    перешёл пользователь, не перезаписывалась последующими /start-ссылками
+    (защита первого касания).
 
-    Returns:
+    При пропуске NX обновляет TTL ключа через EXPIRE, чтобы атрибуция
+    не протухала, пока пользователь продолжает взаимодействовать с ботом.
+
+    Возвращает:
         ``True``  — ключ успешно записан (кампания сохранена).
         ``False`` — ключ уже существовал, запись пропущена
                     (штатное поведение защиты первого касания).
@@ -409,6 +412,11 @@ async def save_pending_campaign(
     """
     client = _get_redis()
     if client is None:
+        logger.warning(
+            'Redis-клиент недоступен, pending campaign не сохранена',
+            telegram_id=telegram_id,
+            campaign_id=campaign_id,
+        )
         return None
     try:
         key = f'pending_campaign:{telegram_id}'
@@ -425,6 +433,12 @@ async def save_pending_campaign(
                 campaign_id=campaign_id,
             )
         else:
+            # Ключ уже существует — обновляем TTL, чтобы первое касание
+            # не протухло, пока пользователь продолжает взаимодействие.
+            try:
+                await client.expire(key, _PENDING_CAMPAIGN_TTL)
+            except Exception as _expire_err:
+                logger.warning('Failed to refresh TTL for pending campaign', error=_expire_err)
             logger.info(
                 'Campaign is already set in Redis, skipping (first-touch protection)',
                 telegram_id=telegram_id,

@@ -307,6 +307,7 @@ class ChannelCheckerMiddleware(BaseMiddleware):
                     # existing_payload — только если он ещё не подтверждён как кампания.
                     # Если payload не является кампанией, флаг не выставляется,
                     # и при следующей смене payload проверка повторится уже для нового значения.
+                    _db_check_failed = False
                     async with AsyncSessionLocal() as db_check:
                         try:
                             _campaign = await get_campaign_by_start_parameter(
@@ -322,7 +323,13 @@ class ChannelCheckerMiddleware(BaseMiddleware):
                                 existing_payload=existing_payload,
                                 error=_check_err,
                             )
+                            _db_check_failed = True
                             _campaign = None
+
+                    # Fail-closed: при ошибке БД не перезаписываем existing_payload —
+                    # он может быть кампанией. Выходим без изменений.
+                    if _db_check_failed:
+                        return
 
                     if _campaign:
                         # Сохраняем флаг, чтобы следующие вызовы не ходили в БД.
