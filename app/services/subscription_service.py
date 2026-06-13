@@ -377,12 +377,10 @@ class SubscriptionService:
                     await self._reset_user_traffic(api, updated_user.uuid, user, reset_reason)
                 return updated_user
 
-        # Use subscription.id as suffix — short, readable, mirrors WL naming
-        # (user_<tg>_<sub.id> + _wl). Legacy accounts may still have the
-        # remnawave_short_id hex suffix; they're tracked via remnawave_uuid
-        # so existing panel records stay linked.
-        username = f'{base_username}_{subscription.id}'
-
+        # ``username`` is already built above via
+        # build_remnawave_subscription_username (base + _<remnawave_short_id>),
+        # length-clamped to the API limit. No legacy main account matched, so
+        # create a fresh per-subscription Remnawave user with that name.
         updated_user = await api.create_user(username=username, **common_kwargs)
         if reset_traffic:
             await self._reset_user_traffic(api, updated_user.uuid, user, reset_reason)
