@@ -3609,6 +3609,19 @@ def get_admin_ticket_view_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def _coerce_tg_user_id(telegram_id: str | int | None) -> int | None:
+    """Приводит telegram_id к положительному int или возвращает None.
+
+    URL `tg://user?id=` принимает только числовой ID, поэтому строки вроде
+    email или нечисловые значения отбрасываются.
+    """
+    try:
+        numeric_id = int(telegram_id)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return numeric_id if numeric_id > 0 else None
+
+
 def get_ticket_notification_keyboard(
     ticket_id: int,
     *,
@@ -3645,8 +3658,8 @@ def get_ticket_notification_keyboard(
     if username:
         safe_username = username.lstrip('@')
         url_row.append(InlineKeyboardButton(text='✉ ЛС', url=f'tg://resolve?domain={safe_username}'))
-    if telegram_id:
-        url_row.append(InlineKeyboardButton(text='👤 Профиль', url=f'tg://user?id={telegram_id}'))
+    if (tg_id := _coerce_tg_user_id(telegram_id)) is not None:
+        url_row.append(InlineKeyboardButton(text='👤 Профиль', url=f'tg://user?id={tg_id}'))
     if url_row:
         keyboard.append(url_row)
 
