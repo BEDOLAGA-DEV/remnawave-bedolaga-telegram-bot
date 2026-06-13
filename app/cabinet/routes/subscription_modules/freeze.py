@@ -8,9 +8,9 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query as QueryParam, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database.models import User
 from app.services.freeze_service import FreezeError, FreezeService
+from app.services.freeze_settings_service import FreezeSettingsService
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from .helpers import resolve_subscription
@@ -35,7 +35,10 @@ _CODE_TO_STATUS = {
 
 
 def _guard_enabled() -> None:
-    if not settings.SUBSCRIPTION_FREEZE_ENABLED:
+    # Controlled solely by the admin freeze panel toggle (FreezeSettingsService)
+    # so it can be enabled/disabled from the bot, consistent with the bot-side
+    # gate and the freeze service itself.
+    if not FreezeSettingsService.is_enabled():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Freeze disabled')
 
 

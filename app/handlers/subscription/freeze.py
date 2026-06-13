@@ -9,10 +9,13 @@ from app.database.models import User
 
 
 def _freeze_available() -> bool:
-    from app.config import settings
+    # Single source of truth: the admin freeze panel toggle
+    # (FreezeSettingsService, stored in data/freeze_settings.json) so the
+    # feature can be turned on/off entirely from the bot admin panel without
+    # the legacy env flag SUBSCRIPTION_FREEZE_ENABLED.
     from app.services.freeze_settings_service import FreezeSettingsService
 
-    return bool(settings.SUBSCRIPTION_FREEZE_ENABLED) and FreezeSettingsService.is_enabled()
+    return FreezeSettingsService.is_enabled()
 
 
 async def handle_freeze_subscription(

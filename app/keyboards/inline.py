@@ -1518,7 +1518,9 @@ def get_subscription_keyboard(
                     ]
                 )
 
-            if getattr(settings, 'SUBSCRIPTION_FREEZE_ENABLED', False):
+            from app.services.freeze_settings_service import FreezeSettingsService
+
+            if FreezeSettingsService.is_enabled():
                 if subscription and getattr(subscription, 'frozen_at', None) is not None:
                     keyboard.append(
                         [
