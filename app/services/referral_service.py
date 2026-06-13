@@ -392,6 +392,10 @@ async def save_pending_campaign(telegram_id: int, campaign_slug: str, campaign_i
     Called from /start handler immediately after resolving an advertising campaign.
     Picked up by the cabinet auth route if the user opens the WebApp before
     completing the bot registration flow.
+
+    Uses SET NX (set-if-not-exists) so the first campaign the user clicked
+    is never overwritten by a subsequent /start link, preserving first-touch
+    attribution.
     """
     client = _get_redis()
     if client is None:
@@ -399,17 +403,28 @@ async def save_pending_campaign(telegram_id: int, campaign_slug: str, campaign_i
     try:
         key = f'pending_campaign:{telegram_id}'
         data = json.dumps({'campaign_slug': campaign_slug, 'campaign_id': campaign_id})
-        await client.setex(key, _PENDING_CAMPAIGN_TTL, data)
-        logger.info(
-            'Saved pending campaign to Redis',
-            telegram_id=telegram_id,
-            campaign_slug=campaign_slug,
-            campaign_id=campaign_id,
-        )
-        return True
+
+        # SET NX: ключ записывается только при первом обращении,
+        # чтобы первая кампания не перезаписывалась последующей.
+        result = await client.set(key, data, ex=_PENDING_CAMPAIGN_TTL, nx=True)
+        if result:
+            logger.info(
+                'Saved pending campaign to Redis',
+                telegram_id=telegram_id,
+                campaign_slug=campaign_slug,
+                campaign_id=campaign_id,
+            )
+        else:
+            logger.info(
+                'Campaign is already set in Redis, skipping (first-touch protection)',
+                telegram_id=telegram_id,
+                new_campaign_slug=campaign_slug,
+            )
     except Exception as exc:
         logger.warning('Failed to save pending campaign to Redis', error=exc)
         return False
+    else:
+        return bool(result)
 
 
 async def get_pending_campaign(telegram_id: int) -> dict[str, str | int] | None:

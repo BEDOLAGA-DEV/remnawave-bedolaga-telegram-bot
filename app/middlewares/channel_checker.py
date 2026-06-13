@@ -286,12 +286,63 @@ class ChannelCheckerMiddleware(BaseMiddleware):
         # Save to FSM state
         if state:
             state_data = await state.get_data() or {}
-            if state_data.get('pending_start_payload') != payload:
+            existing_payload = state_data.get('pending_start_payload')
+
+            # Защита первого касания: если в FSM уже хранится payload
+            # активной рекламной кампании — не перезаписываем его.
+            # Сценарий: пользователь кликнул ?start=ads_1, был
+            # заблокирован каналом, затем перешёл по ?start=channel
+            # до регистрации — нужно сохранить ads_1 для атрибуции.
+            if existing_payload and existing_payload != payload:
+                async with AsyncSessionLocal() as db_check:
+                    try:
+                        existing_campaign = (
+                            await get_campaign_by_start_parameter(
+                                db_check,
+                                existing_payload,
+                                only_active=True,
+                            )
+                        )
+                    except Exception as _check_err:
+                        logger.warning(
+                            'Не удалось проверить кампанию payload (первое касание)',
+                            existing_payload=existing_payload,
+                            error=_check_err,
+                        )
+                        existing_campaign = None
+
+                if existing_campaign:
+                    logger.info(
+                        '🔒 Payload кампании сохранён, перезапись пропущена',
+                        existing_payload=existing_payload,
+                        new_payload=payload,
+                        telegram_id=telegram_id,
+                    )
+                    # Уведомление о визите по новому payload отправляем
+                    # в том случае, если он тоже является кампанией.
+                    if bot and message.from_user and state:
+                        await self._try_send_campaign_visit_notification(
+                            bot=bot,
+                            telegram_user=message.from_user,
+                            state=state,
+                            payload=payload,
+                        )
+                    # Первое касание уже застолблено — выходим.
+                    return
+
+            if existing_payload != payload:
                 state_data['pending_start_payload'] = payload
                 await state.set_data(state_data)
-                logger.info('Saved start payload for user (FSM)', payload=payload, telegram_id=telegram_id)
+                logger.info(
+                    'Saved start payload for user (FSM)',
+                    payload=payload,
+                    telegram_id=telegram_id,
+                )
         else:
-            logger.warning('_capture_start_payload: state=None for user', telegram_id=telegram_id)
+            logger.warning(
+                '_capture_start_payload: state=None for user',
+                telegram_id=telegram_id,
+            )
 
         # Also save to Redis as backup (in case FSM state is lost)
         if telegram_id:

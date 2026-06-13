@@ -754,8 +754,33 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
     start_args = message.text.split()
     start_parameter = None
 
-    if len(start_args) > 1:
-        start_parameter = start_args[1]
+    msg_start_arg = start_args[1] if len(start_args) > 1 else None
+
+    if (
+        pending_start_payload
+        and msg_start_arg
+        and pending_start_payload != msg_start_arg
+    ):
+        # Одновременно есть аргумент из сообщения и pending payload.
+        # Payload был сохранён при блокировке каналом — это источник
+        # первого касания. Если он является активной кампанией —
+        # он побеждает над свежим аргументом из ссылки в атрибуции.
+        _pending_first_touch = await get_campaign_by_start_parameter(
+            db, pending_start_payload, only_active=True
+        )
+        if _pending_first_touch:
+            start_parameter = pending_start_payload
+            logger.info(
+                '📦 START: pending_start_payload — '
+                'кампания первого касания, '
+                'приоритет над новым аргументом',
+                pending_start_payload=pending_start_payload,
+                message_arg=msg_start_arg,
+            )
+        else:
+            start_parameter = msg_start_arg
+    elif msg_start_arg:
+        start_parameter = msg_start_arg
     elif pending_start_payload:
         start_parameter = pending_start_payload
         logger.info('📦 START: Используем сохраненный payload', pending_start_payload=pending_start_payload)
