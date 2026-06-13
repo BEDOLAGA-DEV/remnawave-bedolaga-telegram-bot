@@ -424,7 +424,7 @@ async def save_pending_campaign(telegram_id: int, campaign_slug: str, campaign_i
         logger.warning('Failed to save pending campaign to Redis', error=exc)
         return False
     else:
-        return bool(result)
+        return True
 
 
 async def get_pending_campaign(telegram_id: int) -> dict[str, str | int] | None:
