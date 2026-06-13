@@ -396,6 +396,14 @@ async def save_pending_campaign(telegram_id: int, campaign_slug: str, campaign_i
     Uses SET NX (set-if-not-exists) so the first campaign the user clicked
     is never overwritten by a subsequent /start link, preserving first-touch
     attribution.
+
+    Returns:
+        ``True``  — ключ успешно записан (кампания сохранена).
+        ``False`` — ключ уже существовал (первое касание уже застолблено,
+                    запись пропущена) **или** произошла ошибка Redis.
+                    Вызывающий код не должен интерпретировать ``False``
+                    как признак сбоя — это штатное поведение защиты
+                    первого касания.
     """
     client = _get_redis()
     if client is None:
@@ -424,7 +432,7 @@ async def save_pending_campaign(telegram_id: int, campaign_slug: str, campaign_i
         logger.warning('Failed to save pending campaign to Redis', error=exc)
         return False
     else:
-        return True
+        return bool(result)
 
 
 async def get_pending_campaign(telegram_id: int) -> dict[str, str | int] | None:

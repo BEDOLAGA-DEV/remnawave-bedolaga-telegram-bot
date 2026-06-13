@@ -303,7 +303,10 @@ class ChannelCheckerMiddleware(BaseMiddleware):
                 existing_is_campaign = state_data.get('pending_payload_is_campaign', False)
 
                 if not existing_is_campaign:
-                    # Медленный путь (выполняется максимум один раз на пользователя): проверяем в БД.
+                    # Медленный путь: выполняется максимум один раз для текущего
+                    # existing_payload — только если он ещё не подтверждён как кампания.
+                    # Если payload не является кампанией, флаг не выставляется,
+                    # и при следующей смене payload проверка повторится уже для нового значения.
                     async with AsyncSessionLocal() as db_check:
                         try:
                             _campaign = await get_campaign_by_start_parameter(

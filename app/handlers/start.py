@@ -765,10 +765,17 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         # Payload был сохранён при блокировке каналом — это источник
         # первого касания. Если он является активной кампанией —
         # он побеждает над свежим аргументом из ссылки в атрибуции.
-        _pending_first_touch = await get_campaign_by_start_parameter(
-            db, pending_start_payload, only_active=True
-        )
-        if _pending_first_touch:
+        #
+        # Оптимизация: middleware уже проверил payload через БД и выставил
+        # FSM-флаг 'pending_payload_is_campaign'. Используем его, чтобы
+        # не делать повторный запрос в БД на каждом /start.
+        payload_is_campaign = data.get('pending_payload_is_campaign', False)
+        if not payload_is_campaign:
+            pending_first_touch_campaign = await get_campaign_by_start_parameter(
+                db, pending_start_payload, only_active=True
+            )
+            payload_is_campaign = bool(pending_first_touch_campaign)
+        if payload_is_campaign:
             start_parameter = pending_start_payload
             logger.info(
                 '📦 START: pending_start_payload — '
