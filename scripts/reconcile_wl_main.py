@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
@@ -75,6 +76,11 @@ from app.services.system_settings_service import bot_configuration_service  # no
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description='Reconcile subscriptions bound to a duplicate RemnaWave main account.')
     p.add_argument('--apply', action='store_true', help='Apply changes (default: dry-run, report only).')
+    p.add_argument(
+        '--diagnose', action='store_true',
+        help='Read-only: dump the panel state (main, its _wl, legacy account, legacy _wl) for the selected '
+        'subscriptions and exit. Best combined with --telegram-id.',
+    )
     p.add_argument(
         '--telegram-id', type=int, action='append', default=None,
         help='Limit to specific telegram_id(s). Repeatable. Default: all users.',
@@ -110,6 +116,11 @@ async def main() -> int:
     mode = 'APPLY' if args.apply else 'DRY-RUN'
     dup_action = 'DELETE' if args.delete_duplicates else 'DISABLE'
 
+    # Quiet the expected 404 noise: looking up a legacy '<base>' account that
+    # does not exist logs a WARNING per miss. The script reports via print(), so
+    # silencing WARNING-and-below keeps real ERRORs visible without the spam.
+    logging.disable(logging.WARNING)
+
     # Apply admin-panel (DB) setting overrides onto the `settings` object — this
     # is a separate process from the bot, so MULTI_TARIFF_ENABLED,
     # REMNAWAVE_USER_USERNAME_TEMPLATE, etc. would otherwise be the static env
@@ -139,6 +150,30 @@ async def main() -> int:
         print(f'Scanning {len(subs)} active/trial subscription(s) with a panel main account...\n')
 
         async with svc.get_api_client() as api:
+            if args.diagnose:
+                for sub in subs:
+                    user = sub.user
+                    print(f'\nsub {sub.id}  tg={getattr(user, "telegram_id", None)}  status={sub.status}')
+                    print(f'   subscription.remnawave_uuid = {sub.remnawave_uuid}')
+                    main_user = await api.get_user_by_uuid(sub.remnawave_uuid) if sub.remnawave_uuid else None
+                    main_name = getattr(main_user, 'username', None)
+                    print(f'   main on panel:         username={main_name!r} uuid={getattr(main_user, "uuid", None)}')
+                    if main_name:
+                        wl_name = svc._derive_wl_username(main_name, None, None)
+                        wl = await api.get_user_by_username(wl_name)
+                        print(f'   paired _wl (<main>_wl): {wl_name!r} exists={bool(wl)} uuid={getattr(wl, "uuid", None)}')
+                    if user and user.telegram_id:
+                        legacy_name = settings.format_remnawave_username(
+                            full_name=user.full_name, username=user.username,
+                            telegram_id=user.telegram_id, email=user.email, user_id=user.id,
+                        )
+                        legacy = await api.get_user_by_username(legacy_name)
+                        print(f'   legacy template acct:  {legacy_name!r} exists={bool(legacy)} uuid={getattr(legacy, "uuid", None)}')
+                        legacy_wl_name = svc._derive_wl_username(legacy_name, None, None)
+                        legacy_wl = await api.get_user_by_username(legacy_wl_name)
+                        print(f'   legacy _wl:            {legacy_wl_name!r} exists={bool(legacy_wl)} uuid={getattr(legacy_wl, "uuid", None)}')
+                return 0
+
             for sub in subs:
                 user = sub.user
                 if not user or not user.telegram_id:
