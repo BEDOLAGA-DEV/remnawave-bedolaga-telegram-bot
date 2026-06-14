@@ -228,6 +228,37 @@ async def _prompt_broadcast_compose(callback: types.CallbackQuery, state: FSMCon
         await state.set_state(AdminStates.waiting_for_broadcast_message)
 
 
+def _delivery_kwargs_from_state(data: dict, language: str) -> dict:
+    """Build _deliver_broadcast_to kwargs from FSM state (shared by test-send)."""
+    return dict(
+        mode=data.get('broadcast_mode', 'html'),
+        message_text=data.get('broadcast_message', ''),
+        media_type=data.get('media_type'),
+        media_file_id=data.get('media_file_id') if data.get('has_media') else None,
+        copy_from_chat_id=data.get('copy_from_chat_id'),
+        copy_source_message_id=data.get('copy_source_message_id'),
+        reply_markup=create_broadcast_keyboard(
+            data.get('selected_buttons') or list(DEFAULT_SELECTED_BUTTONS), language
+        ),
+    )
+
+
+async def _send_test_broadcast(bot, telegram_id: int, **delivery_kwargs) -> tuple[bool, str]:
+    """Deliver one message to telegram_id as a preview. Returns (ok, reason)."""
+    try:
+        await _deliver_broadcast_to(bot, telegram_id, **delivery_kwargs)
+        return True, ''
+    except TelegramForbiddenError:
+        return False, 'Пользователь не найден или не запускал бота'
+    except TelegramBadRequest as e:
+        err = str(e).lower()
+        if 'chat not found' in err or 'user is deactivated' in err:
+            return False, 'Пользователь не найден или не запускал бота'
+        return False, f'Ошибка: {e}'
+    except Exception as e:
+        return False, f'Ошибка: {e}'
+
+
 async def _persist_broadcast_result(
     broadcast_id: int,
     sent_count: int,
@@ -1208,13 +1239,40 @@ async def confirm_button_selection(callback: types.CallbackQuery, db_user: User,
         [
             types.InlineKeyboardButton(text='✅ Отправить', callback_data='admin_confirm_broadcast'),
             types.InlineKeyboardButton(text='📘 Изменить кнопки', callback_data='nz!_edit_buttons'),
-        ]
+        ],
+        [
+            types.InlineKeyboardButton(text='🧪 Тест себе', callback_data='nz!_bcast_test_self'),
+            types.InlineKeyboardButton(text='🧪 Тест пользователю', callback_data='nz!_bcast_test_user'),
+        ],
     ]
 
     if has_media:
         keyboard.append([types.InlineKeyboardButton(text='🖼️ Изменить медиа', callback_data='nz!_change_media')])
 
     keyboard.append([types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')])
+
+    # Copy mode: don't render message_text (it's only a placeholder). Show the
+    # audience summary, then copy the source message back to the admin as a
+    # faithful 1:1 preview (with the same inline keyboard recipients will get).
+    if data.get('broadcast_mode') == 'copy':
+        summary = (
+            '📨 <b>Предпросмотр рассылки копией</b>\n\n'
+            f'🎯 <b>Аудитория:</b> {target_display}\n'
+            f'👥 <b>Получателей:</b> {user_count}'
+            f'{buttons_info}\n\n'
+            '👇 Так выглядит сообщение (точная копия). Подтвердить отправку?'
+        )
+        await safe_edit_or_send_text(
+            callback, summary, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode='HTML'
+        )
+        await callback.bot.copy_message(
+            chat_id=callback.message.chat.id,
+            from_chat_id=data['copy_from_chat_id'],
+            message_id=data['copy_source_message_id'],
+            reply_markup=create_broadcast_keyboard(selected_buttons, db_user.language),
+        )
+        await callback.answer()
+        return
 
     # Если есть медиа, показываем его с загруженным фото, иначе обычное текстовое сообщение
     if has_media and media_type == 'photo':
@@ -1261,6 +1319,40 @@ async def confirm_button_selection(callback: types.CallbackQuery, db_user: User,
         )
 
     await callback.answer()
+
+
+@admin_required
+@error_handler
+async def test_broadcast_self(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    """Send the composed message (exact delivery + keyboard) to the admin as a preview."""
+    data = await state.get_data()
+    kw = _delivery_kwargs_from_state(data, db_user.language)
+    ok, reason = await _send_test_broadcast(callback.bot, db_user.telegram_id, **kw)
+    await callback.answer('✅ Тест отправлен' if ok else f'❌ {reason}', show_alert=not ok)
+
+
+@admin_required
+@error_handler
+async def prompt_test_user(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    """Ask for a telegram_id to test-send to."""
+    await state.set_state(AdminStates.waiting_for_broadcast_test_user_id)
+    await callback.message.answer('Введите telegram_id пользователя для теста (число):')
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def process_test_user_id(message: types.Message, db_user: User, state: FSMContext):
+    """Test-send to the entered numeric telegram_id, then return to the confirm screen."""
+    raw = (message.text or '').strip()
+    if not raw.isdigit():
+        await message.answer('❌ Нужен числовой telegram_id. Попробуйте ещё раз:')
+        return
+    data = await state.get_data()
+    kw = _delivery_kwargs_from_state(data, db_user.language)
+    ok, reason = await _send_test_broadcast(message.bot, int(raw), **kw)
+    await message.answer('✅ Тест отправлен' if ok else f'❌ {reason}')
+    await state.set_state(AdminStates.confirming_broadcast)
 
 
 @admin_required
@@ -2111,6 +2203,8 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_pinned_broadcast_skip, F.data.startswith('admin_pinned_broadcast_skip:'))
     dp.callback_query.register(show_broadcast_targets, F.data.in_(['admin_msg_all', 'admin_msg_by_sub']))
     dp.callback_query.register(start_copy_broadcast, F.data == 'admin_msg_copy')
+    dp.callback_query.register(test_broadcast_self, F.data == 'nz!_bcast_test_self')
+    dp.callback_query.register(prompt_test_user, F.data == 'nz!_bcast_test_user')
     dp.callback_query.register(show_tariff_filter, F.data == 'nz!_broadcast_by_tariff')
     dp.callback_query.register(select_broadcast_target, F.data.startswith('nz!_broadcast_'))
     dp.callback_query.register(confirm_broadcast, F.data == 'admin_confirm_broadcast')
@@ -2129,4 +2223,5 @@ def register_handlers(dp: Dispatcher):
     dp.message.register(process_broadcast_message, AdminStates.waiting_for_broadcast_message)
     dp.message.register(process_broadcast_media, AdminStates.waiting_for_broadcast_media)
     dp.message.register(process_broadcast_copy_source, AdminStates.waiting_for_broadcast_copy_source)
+    dp.message.register(process_test_user_id, AdminStates.waiting_for_broadcast_test_user_id)
     dp.message.register(process_pinned_message_update, AdminStates.editing_pinned_message)
