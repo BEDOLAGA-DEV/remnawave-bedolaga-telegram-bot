@@ -55,6 +55,7 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_daily_contests', 'promos'),
     ('admin_polls', 'promos'),
     ('admin_scheduled_promos', 'promos'),
+    ('admin_partner_promos', 'promos'),
     ('admin_reviews', 'promos'),
     ('admin_review_', 'promos'),
     ('admin_achievements', 'promos'),
