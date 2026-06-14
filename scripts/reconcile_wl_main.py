@@ -62,7 +62,7 @@ from sqlalchemy.orm import selectinload  # noqa: E402
 
 from app.config import settings  # noqa: E402
 from app.database.database import AsyncSessionLocal  # noqa: E402
-from app.database.models import Subscription, SubscriptionStatus  # noqa: E402
+from app.database.models import Subscription, SubscriptionStatus, User  # noqa: E402
 from app.external.remnawave_api import UserStatus  # noqa: E402
 from app.services.subscription_service import SubscriptionService  # noqa: E402
 from app.services.system_settings_service import bot_configuration_service  # noqa: E402
@@ -125,6 +125,30 @@ async def _load_candidates(db, telegram_ids: list[int] | None) -> list[Subscript
         wanted = {int(t) for t in telegram_ids}
         subs = [s for s in subs if s.user and s.user.telegram_id in wanted]
     return subs
+
+
+async def _all_ids_by_tg(db, telegram_ids) -> dict:
+    """Map telegram_id -> (set of ALL sub ids, set of ALL short ids) for the users.
+
+    Includes inactive/expired/disabled subscriptions, so the orphan enumeration
+    can reconstruct _wl names like 'u_<tg>_<sub_id>_wl' that belong to a sub which
+    is no longer active (those ids are absent from the active-only candidate set).
+    """
+    out: dict = defaultdict(lambda: (set(), set()))
+    tg_list = [int(t) for t in telegram_ids]
+    if not tg_list:
+        return out
+    stmt = (
+        select(Subscription.id, Subscription.remnawave_short_id, User.telegram_id)
+        .join(User, Subscription.user_id == User.id)
+        .where(User.telegram_id.in_(tg_list))
+    )
+    for sub_id, short_id, tg in (await db.execute(stmt)).all():
+        ids, shids = out[tg]
+        ids.add(sub_id)
+        if short_id:
+            shids.add(short_id)
+    return out
 
 
 def _candidate_wl_names(tg: int, sub_ids: set, short_ids: set) -> list[str]:
@@ -216,6 +240,11 @@ async def main() -> int:
                 if sub.user and sub.user.telegram_id:
                     by_user[sub.user.telegram_id].append(sub)
 
+            # All sub ids / short ids per user across ANY status, so orphans tied
+            # to an inactive subscription (e.g. 'u_<tg>_<old_sub_id>_wl') are
+            # enumerated even though only active subs build the keeper set.
+            all_ids = await _all_ids_by_tg(db, list(by_user.keys()))
+
             for tg, usubs in sorted(by_user.items()):
                 # 1. Build the keeper _wl uuid set from every active sub's bound main.
                 keeper_wl: set[str] = set()
@@ -257,9 +286,13 @@ async def main() -> int:
                 #    prior `--apply` (disable) sweep can be finalised later with
                 #    `--apply --delete` — otherwise the disabled orphans would be
                 #    invisible to the delete pass.
+                cand_sub_ids, cand_short_ids = all_ids.get(tg, (set(), set()))
+                cand_sub_ids = cand_sub_ids | sub_ids
+                cand_short_ids = cand_short_ids | short_ids
+
                 seen: set[str] = set()
                 orphans: list = []
-                for name in _candidate_wl_names(tg, sub_ids, short_ids):
+                for name in _candidate_wl_names(tg, cand_sub_ids, cand_short_ids):
                     try:
                         acc = await api.get_user_by_username(name)
                     except Exception:
