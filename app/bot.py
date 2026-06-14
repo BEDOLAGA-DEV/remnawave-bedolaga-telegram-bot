@@ -47,6 +47,7 @@ from app.handlers.admin import (
     pricing as admin_pricing,
     privacy_policy as admin_privacy_policy,
     promo_groups as admin_promo_groups,
+    partner_promos as admin_partner_promos,
     promo_offers as admin_promo_offers,
     promocodes as admin_promocodes,
     public_offer as admin_public_offer,
@@ -225,6 +226,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_contests.register_handlers(dp)
     admin_daily_contests.register_handlers(dp)
     admin_promo_offers.register_handlers(dp)
+    admin_partner_promos.register_handlers(dp)
     admin_maintenance.register_handlers(dp)
     admin_user_messages.register_handlers(dp)
     admin_updates.register_handlers(dp)

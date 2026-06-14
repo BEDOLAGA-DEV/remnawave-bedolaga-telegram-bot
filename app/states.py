@@ -152,6 +152,12 @@ class AdminStates(StatesGroup):
     creating_faq_content = State()
     editing_faq_title = State()
     editing_faq_content = State()
+    creating_partner_promo_title = State()
+    creating_partner_promo_url = State()
+    editing_partner_promo_title = State()
+    editing_partner_promo_url = State()
+    editing_partner_promo_description = State()
+    editing_partner_promo_image = State()
     editing_notification_value = State()
     editing_traffic_setting = State()
 

@@ -161,6 +161,12 @@ def get_admin_communications_submenu_keyboard(language: str = 'ru') -> InlineKey
             ],
             [
                 InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_COMMUNICATIONS_PARTNER_PROMOS', '🤝 Партнёрские офферы'),
+                    callback_data='admin_partner_promos',
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_COMMUNICATIONS_WELCOME_TEXT', '👋 Приветственный текст'),
                     callback_data='nz!_welcome_text_panel',
                 ),

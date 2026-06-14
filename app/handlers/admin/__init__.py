@@ -14,6 +14,7 @@ from . import (
     maintenance,
     messages,
     monitoring,
+    partner_promos,
     payments,
     polls,
     pricing,
