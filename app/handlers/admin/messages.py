@@ -157,11 +157,13 @@ async def _deliver_broadcast_to(
     copy_from_chat_id: int | None,
     copy_source_message_id: int | None,
     reply_markup=None,
+    disable_notification: bool = False,
 ) -> None:
     """Deliver ONE broadcast message to a recipient. Raises Telegram errors to the caller.
 
     mode == 'copy' -> bot.copy_message (1:1 copy of an admin-composed source message).
     mode == 'html' -> send_message / send_<media> with parse_mode='HTML' (legacy text mode).
+    disable_notification -> send silently (no buzz) when the admin toggled it off.
     """
     if mode == 'copy':
         await bot.copy_message(
@@ -169,6 +171,7 @@ async def _deliver_broadcast_to(
             from_chat_id=copy_from_chat_id,
             message_id=copy_source_message_id,
             reply_markup=reply_markup,
+            disable_notification=disable_notification,
         )
         return
 
@@ -187,16 +190,27 @@ async def _deliver_broadcast_to(
                 caption=message_text,
                 parse_mode='HTML',
                 reply_markup=reply_markup,
+                disable_notification=disable_notification,
             )
         else:
-            await send_method(chat_id=telegram_id, **{media_kwarg: media_file_id})
+            await send_method(
+                chat_id=telegram_id, **{media_kwarg: media_file_id}, disable_notification=disable_notification
+            )
             await bot.send_message(
-                chat_id=telegram_id, text=message_text, parse_mode='HTML', reply_markup=reply_markup
+                chat_id=telegram_id,
+                text=message_text,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+                disable_notification=disable_notification,
             )
         return
 
     await bot.send_message(
-        chat_id=telegram_id, text=message_text, parse_mode='HTML', reply_markup=reply_markup
+        chat_id=telegram_id,
+        text=message_text,
+        parse_mode='HTML',
+        reply_markup=reply_markup,
+        disable_notification=disable_notification,
     )
 
 
@@ -240,6 +254,7 @@ def _delivery_kwargs_from_state(data: dict, language: str) -> dict:
         reply_markup=create_broadcast_keyboard(
             data.get('selected_buttons') or list(DEFAULT_SELECTED_BUTTONS), language
         ),
+        disable_notification=bool(data.get('broadcast_silent', False)),
     )
 
 
@@ -1247,6 +1262,12 @@ async def confirm_button_selection(callback: types.CallbackQuery, db_user: User,
             types.InlineKeyboardButton(text='🧪 Тест себе', callback_data='nz!_bcast_test_self'),
             types.InlineKeyboardButton(text='🧪 Тест пользователю', callback_data='nz!_bcast_test_user'),
         ],
+        [
+            types.InlineKeyboardButton(
+                text=('🔕 Уведомления: выкл' if data.get('broadcast_silent') else '🔔 Уведомления: вкл'),
+                callback_data='nz!_bcast_toggle_silent',
+            ),
+        ],
     ]
 
     if has_media:
@@ -1360,6 +1381,15 @@ async def process_test_user_id(message: types.Message, db_user: User, state: FSM
 
 @admin_required
 @error_handler
+async def toggle_broadcast_silent(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
+    """Flip the silent-delivery flag and re-render the confirm screen."""
+    data = await state.get_data()
+    await state.update_data(broadcast_silent=not data.get('broadcast_silent', False))
+    await confirm_button_selection(callback, db_user, state, db)
+
+
+@admin_required
+@error_handler
 async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
     data = await state.get_data()
     target = data.get('broadcast_target')
@@ -1374,6 +1404,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
     broadcast_mode = data.get('broadcast_mode', 'html')
     copy_from_chat_id = data.get('copy_from_chat_id')
     copy_source_message_id = data.get('copy_source_message_id')
+    broadcast_silent = bool(data.get('broadcast_silent', False))
 
     # =========================================================================
     # КРИТИЧНО: Извлекаем ВСЕ скалярные значения из ORM-объектов СЕЙЧАС,
@@ -1476,6 +1507,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
                     copy_from_chat_id=copy_from_chat_id,
                     copy_source_message_id=copy_source_message_id,
                     reply_markup=broadcast_keyboard,
+                    disable_notification=broadcast_silent,
                 )
                 return 'sent'
 
@@ -2207,6 +2239,7 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_broadcast_targets, F.data.in_(['admin_msg_all', 'admin_msg_by_sub']))
     dp.callback_query.register(start_copy_broadcast, F.data == 'admin_msg_copy')
     dp.callback_query.register(test_broadcast_self, F.data == 'nz!_bcast_test_self')
+    dp.callback_query.register(toggle_broadcast_silent, F.data == 'nz!_bcast_toggle_silent')
     dp.callback_query.register(prompt_test_user, F.data == 'nz!_bcast_test_user')
     dp.callback_query.register(show_tariff_filter, F.data == 'nz!_broadcast_by_tariff')
     dp.callback_query.register(select_broadcast_target, F.data.startswith('nz!_broadcast_'))
