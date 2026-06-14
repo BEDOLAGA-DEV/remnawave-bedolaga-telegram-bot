@@ -692,8 +692,8 @@ async def get_payment_methods(
             )
         )
 
-    if settings.is_yookassa_enabled():
-        if getattr(settings, 'YOOKASSA_SBP_ENABLED', False):
+    if settings.is_yookassa_enabled('cabinet'):
+        if settings.is_yookassa_sbp_enabled('cabinet'):
             methods.append(
                 MiniAppPaymentMethod(
                     id='yookassa_sbp',
@@ -973,7 +973,7 @@ async def create_payment_link(
         )
 
     if method == 'yookassa_sbp':
-        if not settings.is_yookassa_enabled() or not getattr(settings, 'YOOKASSA_SBP_ENABLED', False):
+        if not settings.is_yookassa_enabled('cabinet') or not settings.is_yookassa_sbp_enabled('cabinet'):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Payment method is unavailable')
         if amount_kopeks is None or amount_kopeks <= 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount must be positive')
@@ -990,6 +990,7 @@ async def create_payment_link(
             description=settings.get_balance_payment_description(
                 amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
             ),
+            yookassa_scope='cabinet',
         )
         confirmation_url = result.get('confirmation_url') if result else None
         if not result or not confirmation_url:
@@ -1013,7 +1014,7 @@ async def create_payment_link(
         )
 
     if method == 'yookassa':
-        if not settings.is_yookassa_enabled():
+        if not settings.is_yookassa_enabled('cabinet'):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Payment method is unavailable')
         if amount_kopeks is None or amount_kopeks <= 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount must be positive')
@@ -1030,6 +1031,7 @@ async def create_payment_link(
             description=settings.get_balance_payment_description(
                 amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
             ),
+            yookassa_scope='cabinet',
         )
         if not result or not result.get('confirmation_url'):
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail='Failed to create payment')

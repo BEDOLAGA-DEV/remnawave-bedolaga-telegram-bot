@@ -40,7 +40,7 @@ async def start_yookassa_payment(callback: types.CallbackQuery, db_user: User, s
         await callback.answer()
         return
 
-    if not settings.is_yookassa_enabled():
+    if not settings.is_yookassa_enabled('bot'):
         await callback.answer('❌ Оплата картой через YooKassa временно недоступна', show_alert=True)
         return
 
@@ -86,7 +86,7 @@ async def start_yookassa_sbp_payment(callback: types.CallbackQuery, db_user: Use
         await callback.answer()
         return
 
-    if not settings.is_yookassa_enabled() or not settings.YOOKASSA_SBP_ENABLED:
+    if not settings.is_yookassa_enabled('bot') or not settings.is_yookassa_sbp_enabled('bot'):
         await callback.answer('❌ Оплата через СБП временно недоступна', show_alert=True)
         return
 
@@ -137,7 +137,7 @@ async def process_yookassa_payment_amount(
 
     texts = get_texts(db_user.language)
 
-    if not settings.is_yookassa_enabled():
+    if not settings.is_yookassa_enabled('bot'):
         await message.answer('❌ Оплата через YooKassa временно недоступна')
         return
 
@@ -172,6 +172,7 @@ async def process_yookassa_payment_amount(
                 'user_username': db_user.username or '',
                 'purpose': 'balance_topup',
             },
+            yookassa_scope='bot',
         )
 
         if not payment_result:
@@ -292,7 +293,7 @@ async def process_yookassa_sbp_payment_amount(
 
     texts = get_texts(db_user.language)
 
-    if not settings.is_yookassa_enabled() or not settings.YOOKASSA_SBP_ENABLED:
+    if not settings.is_yookassa_enabled('bot') or not settings.is_yookassa_sbp_enabled('bot'):
         await message.answer('❌ Оплата через СБП временно недоступна')
         return
 
@@ -327,6 +328,7 @@ async def process_yookassa_sbp_payment_amount(
                 'user_username': db_user.username or '',
                 'purpose': 'balance_topup_sbp',
             },
+            yookassa_scope='bot',
         )
 
         if not payment_result:

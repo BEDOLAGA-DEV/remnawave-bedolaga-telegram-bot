@@ -64,6 +64,19 @@ class NaloGoService:
                 self.configured = False
 
     @staticmethod
+    def build_receipt_cache_key(
+        kind: str,
+        payment_id: str,
+        payment_provider: str | None = None,
+        payment_scope: str | None = None,
+        external_payment_id: str | None = None,
+    ) -> str:
+        scoped_payment_id = external_payment_id or payment_id
+        if payment_provider and payment_scope and scoped_payment_id:
+            return f'nalogo:{kind}:{payment_provider}:{payment_scope}:{scoped_payment_id}'
+        return f'nalogo:{kind}:{payment_id}'
+
+    @staticmethod
     def _is_service_unavailable(error: Exception) -> bool:
         """Проверяет, является ли ошибка временной недоступностью сервиса."""
         error_str = str(error).lower()
@@ -95,11 +108,20 @@ class NaloGoService:
         payment_id: str | None = None,
         telegram_user_id: int | None = None,
         amount_kopeks: int | None = None,
+        payment_provider: str | None = None,
+        payment_scope: str | None = None,
+        external_payment_id: str | None = None,
     ) -> bool:
         """Добавить чек в очередь для отложенной отправки."""
         if payment_id:
             # Защита от дубликатов: проверяем не был ли чек уже создан
-            created_key = f'nalogo:created:{payment_id}'
+            created_key = self.build_receipt_cache_key(
+                'created',
+                payment_id,
+                payment_provider=payment_provider,
+                payment_scope=payment_scope,
+                external_payment_id=external_payment_id,
+            )
             already_created = await cache.get(created_key)
             if already_created:
                 logger.info(
@@ -110,7 +132,13 @@ class NaloGoService:
                 return False
 
             # Атомарная проверка и установка флага "в очереди" (защита от race condition)
-            queued_key = f'nalogo:queued:{payment_id}'
+            queued_key = self.build_receipt_cache_key(
+                'queued',
+                payment_id,
+                payment_provider=payment_provider,
+                payment_scope=payment_scope,
+                external_payment_id=external_payment_id,
+            )
             lock_acquired = await cache.setnx(queued_key, 'queued', expire=7 * 24 * 3600)
             if not lock_acquired:
                 # Ключ уже существует — чек уже в очереди
@@ -123,6 +151,9 @@ class NaloGoService:
             'quantity': quantity,
             'client_info': client_info,
             'payment_id': payment_id,
+            'payment_provider': payment_provider,
+            'payment_scope': payment_scope,
+            'external_payment_id': external_payment_id,
             'telegram_user_id': telegram_user_id,
             'amount_kopeks': amount_kopeks,
             'created_at': datetime.now(UTC).isoformat(),
@@ -139,7 +170,13 @@ class NaloGoService:
             )
         # Если не удалось добавить в очередь — удаляем флаг
         elif payment_id:
-            queued_key = f'nalogo:queued:{payment_id}'
+            queued_key = self.build_receipt_cache_key(
+                'queued',
+                payment_id,
+                payment_provider=payment_provider,
+                payment_scope=payment_scope,
+                external_payment_id=external_payment_id,
+            )
             await cache.delete(queued_key)
         return success
 
@@ -153,6 +190,9 @@ class NaloGoService:
         telegram_user_id: int | None,
         amount_kopeks: int | None,
         error_message: str,
+        payment_provider: str | None = None,
+        payment_scope: str | None = None,
+        external_payment_id: str | None = None,
     ) -> bool:
         """Сохранить чек в очередь ожидающих проверки.
 
@@ -165,6 +205,9 @@ class NaloGoService:
             'quantity': quantity,
             'client_info': client_info,
             'payment_id': payment_id,
+            'payment_provider': payment_provider,
+            'payment_scope': payment_scope,
+            'external_payment_id': external_payment_id,
             'telegram_user_id': telegram_user_id,
             'amount_kopeks': amount_kopeks,
             'created_at': datetime.now(UTC).isoformat(),
@@ -215,7 +258,13 @@ class NaloGoService:
                 removed_receipt = receipt
                 if was_created and receipt_uuid:
                     # Сохраняем что чек создан
-                    created_key = f'nalogo:created:{payment_id}'
+                    created_key = self.build_receipt_cache_key(
+                        'created',
+                        payment_id,
+                        payment_provider=receipt.get('payment_provider'),
+                        payment_scope=receipt.get('payment_scope'),
+                        external_payment_id=receipt.get('external_payment_id'),
+                    )
                     await cache.set(created_key, receipt_uuid, expire=30 * 24 * 3600)
                     logger.info('Чек помечен как созданный', payment_id=payment_id, receipt_uuid=receipt_uuid)
             else:
@@ -260,6 +309,9 @@ class NaloGoService:
             queue_on_failure=False,  # Не добавлять обратно в очередь
             telegram_user_id=target_receipt.get('telegram_user_id'),
             amount_kopeks=target_receipt.get('amount_kopeks'),
+            payment_provider=target_receipt.get('payment_provider'),
+            payment_scope=target_receipt.get('payment_scope'),
+            external_payment_id=target_receipt.get('external_payment_id'),
         )
 
         if receipt_uuid:
@@ -305,6 +357,9 @@ class NaloGoService:
         telegram_user_id: int | None = None,
         amount_kopeks: int | None = None,
         operation_time: datetime | None = None,
+        payment_provider: str | None = None,
+        payment_scope: str | None = None,
+        external_payment_id: str | None = None,
     ) -> str | None:
         """Создание чека о доходе.
 
@@ -318,6 +373,9 @@ class NaloGoService:
             telegram_user_id: Telegram ID пользователя для формирования описания
             amount_kopeks: Сумма в копейках для формирования описания
             operation_time: Время операции (по умолчанию текущее)
+            payment_provider: Провайдер платежа для scoped dedup ключей
+            payment_scope: Scope/surface платежа для scoped dedup ключей
+            external_payment_id: ID платежа у провайдера, если отличается от payment_id
 
         Returns:
             UUID чека или None при ошибке
@@ -328,7 +386,13 @@ class NaloGoService:
 
         # Защита от дублей: проверяем не был ли уже создан чек для этого payment_id
         if payment_id:
-            created_key = f'nalogo:created:{payment_id}'
+            created_key = self.build_receipt_cache_key(
+                'created',
+                payment_id,
+                payment_provider=payment_provider,
+                payment_scope=payment_scope,
+                external_payment_id=external_payment_id,
+            )
             already_created = await cache.get(created_key)
             if already_created:
                 logger.info(
@@ -347,7 +411,16 @@ class NaloGoService:
                     # Аутентификация не прошла — чек не создавался, безопасно в очередь
                     if queue_on_failure:
                         await self._queue_receipt(
-                            name, amount, quantity, client_info, payment_id, telegram_user_id, amount_kopeks
+                            name,
+                            amount,
+                            quantity,
+                            client_info,
+                            payment_id,
+                            telegram_user_id,
+                            amount_kopeks,
+                            payment_provider=payment_provider,
+                            payment_scope=payment_scope,
+                            external_payment_id=external_payment_id,
                         )
                     return None
         except Exception as auth_error:
@@ -360,7 +433,16 @@ class NaloGoService:
                 )
                 if queue_on_failure:
                     await self._queue_receipt(
-                        name, amount, quantity, client_info, payment_id, telegram_user_id, amount_kopeks
+                        name,
+                        amount,
+                        quantity,
+                        client_info,
+                        payment_id,
+                        telegram_user_id,
+                        amount_kopeks,
+                        payment_provider=payment_provider,
+                        payment_scope=payment_scope,
+                        external_payment_id=external_payment_id,
                     )
             else:
                 logger.error('Ошибка аутентификации NaloGO', auth_error=sanitize_proxy_error(auth_error))
@@ -397,7 +479,13 @@ class NaloGoService:
 
                 # Сохраняем в Redis чтобы предотвратить дубли (TTL 30 дней)
                 if payment_id:
-                    created_key = f'nalogo:created:{payment_id}'
+                    created_key = self.build_receipt_cache_key(
+                        'created',
+                        payment_id,
+                        payment_provider=payment_provider,
+                        payment_scope=payment_scope,
+                        external_payment_id=external_payment_id,
+                    )
                     await cache.set(created_key, receipt_uuid, expire=30 * 24 * 3600)
 
                 return receipt_uuid
@@ -424,6 +512,9 @@ class NaloGoService:
                     telegram_user_id=telegram_user_id,
                     amount_kopeks=amount_kopeks,
                     error_message=error_msg,
+                    payment_provider=payment_provider,
+                    payment_scope=payment_scope,
+                    external_payment_id=external_payment_id,
                 )
             else:
                 logger.error('Ошибка создания чека в NaloGO', error=sanitize_proxy_error(error))

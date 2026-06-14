@@ -206,9 +206,11 @@ class WheelSpinPaymentType(Enum):
 
 class YooKassaPayment(Base):
     __tablename__ = 'yookassa_payments'
+    __table_args__ = (Index('ix_yookassa_payments_scope_payment_id', 'yookassa_scope', 'yookassa_payment_id'),)
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
+    yookassa_scope = Column(String(32), nullable=True)
     yookassa_payment_id = Column(String(255), unique=True, nullable=False, index=True)
     amount_kopeks = Column(Integer, nullable=False)
     currency = Column(String(3), default='RUB', nullable=False)
@@ -255,10 +257,14 @@ class YooKassaPayment(Base):
 
 class SavedPaymentMethod(Base):
     __tablename__ = 'saved_payment_methods'
-    __table_args__ = (Index('ix_saved_payment_methods_user_active', 'user_id', 'is_active'),)
+    __table_args__ = (
+        Index('ix_saved_payment_methods_user_active', 'user_id', 'is_active'),
+        Index('ix_saved_payment_methods_user_scope_active', 'user_id', 'yookassa_scope', 'is_active'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    yookassa_scope = Column(String(32), nullable=True)
 
     # YooKassa payment_method.id — ключ для рекуррентных списаний
     yookassa_payment_method_id = Column(String(255), unique=True, nullable=False, index=True)

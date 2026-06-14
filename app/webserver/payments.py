@@ -92,6 +92,7 @@ async def _process_payment_service_callback(
     payment_service: PaymentService,
     payload: dict,
     method_name: str,
+    **kwargs,
 ) -> bool:
     db_generator = get_db()
     try:
@@ -101,7 +102,7 @@ async def _process_payment_service_callback(
 
     try:
         process_callback = getattr(payment_service, method_name)
-        return await process_callback(db, payload)
+        return await process_callback(db, payload, **kwargs)
     finally:
         try:
             await db_generator.__anext__()
@@ -333,10 +334,15 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
-    if settings.is_yookassa_enabled():
+    yookassa_enabled = (
+        settings.is_yookassa_enabled()
+        or settings.is_yookassa_enabled('bot')
+        or settings.is_yookassa_enabled('cabinet')
+    )
 
-        @router.options(settings.YOOKASSA_WEBHOOK_PATH)
-        async def yookassa_options() -> Response:
+    if yookassa_enabled:
+
+        def _yookassa_options_response() -> Response:
             return Response(
                 status_code=status.HTTP_200_OK,
                 headers={
@@ -346,18 +352,20 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 },
             )
 
-        @router.get(settings.YOOKASSA_WEBHOOK_PATH)
-        async def yookassa_health() -> JSONResponse:
+        def _yookassa_health_response(yookassa_scope: str | None = None) -> JSONResponse:
             return JSONResponse(
                 {
                     'status': 'ok',
                     'service': 'yookassa_webhook',
-                    'enabled': settings.is_yookassa_enabled(),
+                    'enabled': yookassa_enabled,
+                    'scope': yookassa_scope,
                 }
             )
 
-        @router.post(settings.YOOKASSA_WEBHOOK_PATH)
-        async def yookassa_webhook(request: Request) -> JSONResponse:
+        async def _handle_yookassa_webhook(
+            request: Request,
+            yookassa_scope: str | None = None,
+        ) -> JSONResponse:
             header_ip_candidates = yookassa_webhook_module.collect_yookassa_ip_candidates(
                 request.headers.get('X-Forwarded-For'),
                 request.headers.get('X-Real-IP'),
@@ -420,6 +428,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     payment_service,
                     webhook_data,
                     'process_yookassa_webhook',
+                    yookassa_scope=yookassa_scope,
                 )
                 if success:
                     return JSONResponse({'status': 'ok'})
@@ -436,6 +445,42 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     {'status': 'error', 'reason': 'processing_failed'},
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
+
+        @router.options(settings.YOOKASSA_WEBHOOK_PATH)
+        async def yookassa_options() -> Response:
+            return _yookassa_options_response()
+
+        @router.options(f'{settings.YOOKASSA_WEBHOOK_PATH}/bot')
+        async def yookassa_bot_options() -> Response:
+            return _yookassa_options_response()
+
+        @router.options(f'{settings.YOOKASSA_WEBHOOK_PATH}/cabinet')
+        async def yookassa_cabinet_options() -> Response:
+            return _yookassa_options_response()
+
+        @router.get(settings.YOOKASSA_WEBHOOK_PATH)
+        async def yookassa_health() -> JSONResponse:
+            return _yookassa_health_response()
+
+        @router.get(f'{settings.YOOKASSA_WEBHOOK_PATH}/bot')
+        async def yookassa_bot_health() -> JSONResponse:
+            return _yookassa_health_response('bot')
+
+        @router.get(f'{settings.YOOKASSA_WEBHOOK_PATH}/cabinet')
+        async def yookassa_cabinet_health() -> JSONResponse:
+            return _yookassa_health_response('cabinet')
+
+        @router.post(settings.YOOKASSA_WEBHOOK_PATH)
+        async def yookassa_webhook(request: Request) -> JSONResponse:
+            return await _handle_yookassa_webhook(request)
+
+        @router.post(f'{settings.YOOKASSA_WEBHOOK_PATH}/bot')
+        async def yookassa_bot_webhook(request: Request) -> JSONResponse:
+            return await _handle_yookassa_webhook(request, 'bot')
+
+        @router.post(f'{settings.YOOKASSA_WEBHOOK_PATH}/cabinet')
+        async def yookassa_cabinet_webhook(request: Request) -> JSONResponse:
+            return await _handle_yookassa_webhook(request, 'cabinet')
 
         routes_registered = True
 

@@ -1551,7 +1551,7 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
             InlineKeyboardButton(text=texts.BALANCE_TOP_UP, callback_data='balance_topup'),
         ],
     ]
-    if settings.YOOKASSA_RECURRENT_ENABLED:
+    if settings.is_yookassa_recurrent_enabled('bot'):
         keyboard.append(
             [
                 InlineKeyboardButton(
@@ -1587,8 +1587,8 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
-    if settings.is_yookassa_enabled():
-        if settings.YOOKASSA_SBP_ENABLED:
+    if settings.is_yookassa_enabled('bot'):
+        if settings.is_yookassa_sbp_enabled('bot'):
             keyboard.append(
                 [
                     InlineKeyboardButton(

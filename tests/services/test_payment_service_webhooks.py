@@ -877,6 +877,143 @@ async def test_process_yookassa_webhook_handles_cancellation(monkeypatch: pytest
 
 
 @pytest.mark.anyio('asyncio')
+async def test_process_yookassa_webhook_uses_path_scope_for_lookup_and_remote_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, 'YOOKASSA_CABINET_ENABLED', True, raising=False)
+    monkeypatch.setattr(settings, 'YOOKASSA_CABINET_SHOP_ID', 'cabinet-shop', raising=False)
+    monkeypatch.setattr(settings, 'YOOKASSA_CABINET_SECRET_KEY', 'cabinet-secret', raising=False)
+    bot = DummyBot()
+    service = _make_service(bot)
+    fake_session = FakeSession()
+    payment = SimpleNamespace(
+        yookassa_payment_id='yk_cabinet_cancel',
+        yookassa_scope='cabinet',
+        user_id=77,
+        amount_kopeks=5000,
+        transaction_id=None,
+        status='pending',
+        is_paid=False,
+        captured_at=None,
+        payment_method_type=None,
+    )
+    lookup_scopes: list[str | None] = []
+    created_scopes: list[str | None] = []
+
+    async def fake_get_payment(db, payment_id, yookassa_scope=None):
+        lookup_scopes.append(yookassa_scope)
+        return payment
+
+    class ScopedYooKassaService:
+        def __init__(self, scope: str | None = None):
+            created_scopes.append(scope)
+            self.scope = scope
+
+        async def get_payment_info(self, payment_id: str) -> dict[str, Any]:
+            assert payment_id == 'yk_cabinet_cancel'
+            return {
+                'id': payment_id,
+                'status': 'canceled',
+                'paid': False,
+                'amount_value': 50.0,
+                'amount_currency': 'RUB',
+                'payment_method_type': 'bank_card',
+            }
+
+    monkeypatch.setattr(payment_service_module, 'get_yookassa_payment_by_id', fake_get_payment)
+    monkeypatch.setattr('app.services.yookassa_service.YooKassaService', ScopedYooKassaService)
+
+    payload = {
+        'object': {
+            'id': 'yk_cabinet_cancel',
+            'status': 'pending',
+            'paid': False,
+        }
+    }
+
+    result = await service.process_yookassa_webhook(fake_session, payload, yookassa_scope='cabinet')
+
+    assert result is True
+    assert lookup_scopes == ['cabinet']
+    assert created_scopes == ['cabinet']
+    assert payment.status == 'canceled'
+
+
+@pytest.mark.anyio('asyncio')
+async def test_save_payment_method_uses_payment_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _make_service(DummyBot())
+    payment = SimpleNamespace(
+        user_id=77,
+        yookassa_payment_id='yk_saved_card',
+        yookassa_scope='cabinet',
+    )
+    existing_lookup_scopes: list[str | None] = []
+    create_kwargs: dict[str, Any] = {}
+
+    async def fake_get_payment_method_by_yookassa_id(
+        db,
+        payment_method_id: str,
+        include_inactive: bool = False,
+        yookassa_scope: str | None = None,
+    ):
+        assert payment_method_id == 'pm_cabinet_card'
+        assert include_inactive is True
+        existing_lookup_scopes.append(yookassa_scope)
+
+    async def fake_create_saved_payment_method(**kwargs: Any):
+        create_kwargs.update(kwargs)
+        return SimpleNamespace(id=123)
+
+    monkeypatch.setattr(
+        'app.database.crud.saved_payment_method.get_payment_method_by_yookassa_id',
+        fake_get_payment_method_by_yookassa_id,
+    )
+    monkeypatch.setattr(
+        'app.database.crud.saved_payment_method.create_saved_payment_method',
+        fake_create_saved_payment_method,
+    )
+
+    await service._save_payment_method_if_available(
+        FakeSession(),
+        payment,
+        {
+            'payment_method': {
+                'id': 'pm_cabinet_card',
+                'type': 'bank_card',
+                'saved': True,
+                'card': {'first6': '411111', 'last4': '1111', 'card_type': 'Visa'},
+            }
+        },
+    )
+
+    assert existing_lookup_scopes == ['cabinet']
+    assert create_kwargs['yookassa_scope'] == 'cabinet'
+
+
+@pytest.mark.anyio('asyncio')
+async def test_create_nalogo_receipt_passes_yookassa_scope() -> None:
+    service = _make_service(DummyBot())
+    create_kwargs: dict[str, Any] = {}
+
+    class FakeNaloGoService:
+        async def create_receipt(self, **kwargs: Any):
+            create_kwargs.update(kwargs)
+
+    service.nalogo_service = FakeNaloGoService()
+    payment = SimpleNamespace(
+        yookassa_payment_id='yk_cabinet_receipt',
+        yookassa_scope='cabinet',
+        amount_kopeks=10000,
+    )
+
+    await service._create_nalogo_receipt(FakeSession(), payment, telegram_user_id=1234)
+
+    assert create_kwargs['payment_provider'] == 'yookassa'
+    assert create_kwargs['payment_scope'] == 'cabinet'
+    assert create_kwargs['external_payment_id'] == 'yk_cabinet_receipt'
+
+
+@pytest.mark.anyio('asyncio')
 async def test_process_yookassa_webhook_restores_missing_payment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

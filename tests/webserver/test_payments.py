@@ -390,6 +390,42 @@ async def test_yookassa_webhook_success(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.mark.anyio
+async def test_yookassa_scoped_webhook_route_passes_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, 'YOOKASSA_ENABLED', False, raising=False)
+    monkeypatch.setattr(settings, 'YOOKASSA_BOT_ENABLED', False, raising=False)
+    monkeypatch.setattr(settings, 'YOOKASSA_CABINET_ENABLED', True, raising=False)
+    monkeypatch.setattr(settings, 'YOOKASSA_CABINET_SHOP_ID', 'cabinet-shop', raising=False)
+    monkeypatch.setattr(settings, 'YOOKASSA_CABINET_SECRET_KEY', 'cabinet-secret', raising=False)
+
+    async def fake_get_db():
+        yield SimpleNamespace()
+
+    monkeypatch.setattr('app.webserver.payments.get_db', fake_get_db)
+
+    process_mock = AsyncMock(return_value=True)
+    service = SimpleNamespace(process_yookassa_webhook=process_mock)
+
+    router = create_payment_router(DummyBot(), service)
+    assert router is not None
+
+    route = _get_route(router, f'{settings.YOOKASSA_WEBHOOK_PATH}/cabinet')
+    payload = {'event': 'payment.succeeded', 'object': {'id': 'yk_cabinet'}}
+    request = _build_request(
+        f'{settings.YOOKASSA_WEBHOOK_PATH}/cabinet',
+        body=json.dumps(payload).encode('utf-8'),
+        headers={},
+    )
+
+    response = await route.endpoint(request)
+
+    assert response.status_code == 200
+    process_mock.assert_awaited_once()
+    _, webhook_payload = process_mock.await_args.args
+    assert webhook_payload == payload
+    assert process_mock.await_args.kwargs == {'yookassa_scope': 'cabinet'}
+
+
+@pytest.mark.anyio
 async def test_yookassa_webhook_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'YOOKASSA_ENABLED', True, raising=False)
 

@@ -732,9 +732,9 @@ def _get_trial_payment_keyboard(language: str, can_pay_from_balance: bool = Fals
     if settings.TELEGRAM_STARS_ENABLED:
         keyboard.append([types.InlineKeyboardButton(text='⭐ Telegram Stars', callback_data='trial_payment_stars')])
 
-    if settings.is_yookassa_enabled():
+    if settings.is_yookassa_enabled('bot'):
         yookassa_methods = []
-        if settings.YOOKASSA_SBP_ENABLED:
+        if settings.is_yookassa_sbp_enabled('bot'):
             yookassa_methods.append(
                 types.InlineKeyboardButton(text='🏦 YooKassa (СБП)', callback_data='trial_payment_yookassa_sbp')
             )
@@ -3747,6 +3747,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                     'subscription_id': pending_subscription.id,
                     'user_id': db_user.id,
                 },
+                yookassa_scope='bot',
             )
 
             if not payment_result or not payment_result.get('confirmation_url'):
@@ -3785,6 +3786,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                     'subscription_id': pending_subscription.id,
                     'user_id': db_user.id,
                 },
+                yookassa_scope='bot',
             )
 
             if not payment_result or not payment_result.get('confirmation_url'):

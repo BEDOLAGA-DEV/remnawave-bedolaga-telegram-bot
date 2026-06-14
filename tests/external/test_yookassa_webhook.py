@@ -220,3 +220,26 @@ async def test_handle_webhook_accepts_canceled_event(monkeypatch: pytest.MonkeyP
 
     assert status == 200
     process_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_scoped_webhook_passes_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_get_db(monkeypatch)
+
+    process_mock = AsyncMock(return_value=True)
+    service = SimpleNamespace(process_yookassa_webhook=process_mock)
+
+    app = create_yookassa_webhook_app(service)
+    async with TestClient(TestServer(app)) as client:
+        payload = {'event': 'payment.canceled', 'object': {'id': 'yk_cabinet'}}
+        response = await client.post(
+            f'{settings.YOOKASSA_WEBHOOK_PATH}/cabinet',
+            data=json.dumps(payload).encode('utf-8'),
+            headers=_build_headers(),
+        )
+
+        status = response.status
+
+    assert status == 200
+    process_mock.assert_awaited_once()
+    assert process_mock.await_args.kwargs == {'yookassa_scope': 'cabinet'}

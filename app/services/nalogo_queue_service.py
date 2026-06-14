@@ -166,7 +166,13 @@ class NalogoQueueService:
                 )
                 # Удаляем метку "в очереди" — чек больше не будет обрабатываться
                 if payment_id and payment_id != 'unknown':
-                    queued_key = f'nalogo:queued:{payment_id}'
+                    queued_key = NaloGoService.build_receipt_cache_key(
+                        'queued',
+                        payment_id,
+                        payment_provider=receipt_data.get('payment_provider'),
+                        payment_scope=receipt_data.get('payment_scope'),
+                        external_payment_id=receipt_data.get('external_payment_id'),
+                    )
                     await cache.delete(queued_key)
                 failed += 1
                 continue
@@ -212,6 +218,9 @@ class NalogoQueueService:
                     telegram_user_id=telegram_user_id,
                     amount_kopeks=amount_kopeks,
                     operation_time=operation_time,  # Время оплаты, а не отправки
+                    payment_provider=receipt_data.get('payment_provider'),
+                    payment_scope=receipt_data.get('payment_scope'),
+                    external_payment_id=receipt_data.get('external_payment_id'),
                 )
 
                 if receipt_uuid:
@@ -220,7 +229,13 @@ class NalogoQueueService:
 
                     # Удаляем метку "в очереди" (чек создан успешно)
                     if payment_id:
-                        queued_key = f'nalogo:queued:{payment_id}'
+                        queued_key = NaloGoService.build_receipt_cache_key(
+                            'queued',
+                            payment_id,
+                            payment_provider=receipt_data.get('payment_provider'),
+                            payment_scope=receipt_data.get('payment_scope'),
+                            external_payment_id=receipt_data.get('external_payment_id'),
+                        )
                         await cache.delete(queued_key)
 
                     logger.info(

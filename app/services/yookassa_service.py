@@ -1,19 +1,17 @@
-import asyncio
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 import structlog
-from yookassa import Configuration, Payment as YooKassaPayment
-from yookassa.domain.common.confirmation_type import ConfirmationType
-from yookassa.domain.exceptions.not_found_error import NotFoundError as YooKassaNotFoundError
-from yookassa.domain.request.payment_request_builder import PaymentRequestBuilder
 
 from app.config import settings
 
 
 logger = structlog.get_logger(__name__)
+
+YOOKASSA_API_BASE_URL = 'https://api.yookassa.ru/v3'
 
 
 # ---------------------------------------------------------------------------
@@ -143,25 +141,24 @@ class YooKassaService:
         secret_key: str | None = None,
         configured_return_url: str | None = None,
         bot_username_for_default_return: str | None = None,
+        scope: str | None = None,
     ):
-        shop_id = shop_id or getattr(settings, 'YOOKASSA_SHOP_ID', None)
-        secret_key = secret_key or getattr(settings, 'YOOKASSA_SECRET_KEY', None)
-        configured_return_url = configured_return_url or getattr(settings, 'YOOKASSA_RETURN_URL', None)
+        yookassa_config = settings.get_yookassa_config(scope)
+        shop_id = shop_id or yookassa_config.shop_id
+        secret_key = secret_key or yookassa_config.secret_key
+        configured_return_url = configured_return_url or yookassa_config.return_url
 
-        self.configured = False
+        self.shop_id = shop_id
+        self.secret_key = secret_key
+        self.scope = scope
+        self.configured = bool(shop_id and secret_key)
 
         if not shop_id or not secret_key:
             logger.warning(
                 'YooKassa SHOP_ID или SECRET_KEY не настроены в settings. Функционал платежей будет ОТКЛЮЧЕН.'
             )
         else:
-            try:
-                Configuration.configure(shop_id, secret_key)
-                self.configured = True
-                logger.info('YooKassa SDK сконфигурирован для shop_id: ...', shop_id=shop_id[:5])
-            except Exception as error:
-                logger.error('Ошибка конфигурации YooKassa SDK', error=error, exc_info=True)
-                self.configured = False
+            logger.info('YooKassa HTTP client configured for shop_id prefix', shop_id_prefix=shop_id[:5], scope=scope)
 
         if not self.configured:
             self.return_url = 'https://t.me/'
@@ -180,6 +177,101 @@ class YooKassaService:
 
         logger.info('YooKassa Service return_url', return_url=self.return_url)
 
+    def _auth(self) -> httpx.BasicAuth:
+        return httpx.BasicAuth(self.shop_id or '', self.secret_key or '')
+
+    def _timeout_seconds(self) -> float:
+        read_timeout = max(1, int(getattr(settings, 'YOOKASSA_HTTP_READ_TIMEOUT', 15) or 15))
+        connect_timeout = max(1, int(getattr(settings, 'YOOKASSA_HTTP_CONNECT_TIMEOUT', 5) or 5))
+        return float(max(read_timeout, connect_timeout))
+
+    @staticmethod
+    def _amount_value(amount: float) -> str:
+        return f'{amount:.2f}'
+
+    @staticmethod
+    def _payment_response_to_dict(data: dict[str, Any]) -> dict[str, Any]:
+        amount = data.get('amount') or {}
+        confirmation = data.get('confirmation') or {}
+        payment_method = data.get('payment_method') or {}
+        payment_card = payment_method.get('card') if isinstance(payment_method, dict) else None
+
+        result = {
+            'id': data.get('id'),
+            'confirmation_url': confirmation.get('confirmation_url'),
+            'qr_confirmation_data': confirmation.get('confirmation_data'),
+            'confirmation': confirmation,
+            'status': data.get('status'),
+            'metadata': data.get('metadata') or {},
+            'amount_value': float(amount.get('value', 0) or 0),
+            'amount_currency': amount.get('currency'),
+            'paid': bool(data.get('paid', False)),
+            'refundable': bool(data.get('refundable', False)),
+            'created_at': data.get('created_at'),
+            'captured_at': data.get('captured_at'),
+            'description_from_yk': data.get('description'),
+            'description': data.get('description'),
+            'test_mode': data.get('test'),
+        }
+
+        if payment_method:
+            result.update(
+                {
+                    'payment_method_type': payment_method.get('type'),
+                    'payment_method_id': payment_method.get('id'),
+                    'payment_method_saved': bool(payment_method.get('saved', False)),
+                    'payment_method_card': payment_card,
+                }
+            )
+
+        return result
+
+    def _receipt_data(
+        self,
+        amount: float,
+        currency: str,
+        description: str,
+        receipt_email: str | None,
+        receipt_phone: str | None,
+    ) -> dict[str, Any] | None:
+        customer_contact_for_receipt = {}
+        if receipt_email:
+            customer_contact_for_receipt['email'] = receipt_email
+        elif receipt_phone:
+            customer_contact_for_receipt['phone'] = receipt_phone
+        elif hasattr(settings, 'YOOKASSA_DEFAULT_RECEIPT_EMAIL') and settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL:
+            customer_contact_for_receipt['email'] = settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL
+        else:
+            logger.error(
+                'КРИТИЧНО: Не предоставлен email/телефон для чека YooKassa и YOOKASSA_DEFAULT_RECEIPT_EMAIL не установлен.'
+            )
+            return None
+
+        return {
+            'customer': customer_contact_for_receipt,
+            'items': [
+                {
+                    'description': description[:128],
+                    'quantity': '1.00',
+                    'amount': {'value': self._amount_value(amount), 'currency': currency.upper()},
+                    'vat_code': int(getattr(settings, 'YOOKASSA_VAT_CODE', 1)),
+                    'payment_mode': getattr(settings, 'YOOKASSA_PAYMENT_MODE', 'full_payment'),
+                    'payment_subject': getattr(settings, 'YOOKASSA_PAYMENT_SUBJECT', 'service'),
+                }
+            ],
+        }
+
+    async def _post_payment(self, payload: dict[str, Any], idempotence_key: str) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=self._timeout_seconds()) as client:
+            response = await client.post(
+                f'{YOOKASSA_API_BASE_URL}/payments',
+                json=payload,
+                headers={'Idempotence-Key': idempotence_key},
+                auth=self._auth(),
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def create_payment(
         self,
         amount: float,
@@ -196,53 +288,25 @@ class YooKassaService:
             logger.error('YooKassa не сконфигурирован. Невозможно создать платеж.')
             return None
 
-        customer_contact_for_receipt = {}
-        if receipt_email:
-            customer_contact_for_receipt['email'] = receipt_email
-        elif receipt_phone:
-            customer_contact_for_receipt['phone'] = receipt_phone
-        elif hasattr(settings, 'YOOKASSA_DEFAULT_RECEIPT_EMAIL') and settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL:
-            customer_contact_for_receipt['email'] = settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL
-        else:
-            logger.error(
-                'КРИТИЧНО: Не предоставлен email/телефон для чека YooKassa и YOOKASSA_DEFAULT_RECEIPT_EMAIL не установлен.'
-            )
+        receipt_data_dict = self._receipt_data(amount, currency, description, receipt_email, receipt_phone)
+        if receipt_data_dict is None:
             return {
                 'error': True,
                 'internal_message': 'Отсутствуют контактные данные для чека YooKassa и не настроен email по умолчанию.',
             }
 
         try:
-            builder = PaymentRequestBuilder()
-            builder.set_amount({'value': str(round(amount, 2)), 'currency': currency.upper()})
-            builder.set_capture(True)
-            builder.set_confirmation({'type': ConfirmationType.REDIRECT, 'return_url': return_url or self.return_url})
-            builder.set_description(description)
-            builder.set_metadata(metadata)
-
-            receipt_items_list: list[dict[str, Any]] = [
-                {
-                    'description': description[:128],
-                    'quantity': '1.00',
-                    'amount': {'value': str(round(amount, 2)), 'currency': currency.upper()},
-                    'vat_code': int(getattr(settings, 'YOOKASSA_VAT_CODE', 1)),
-                    'payment_mode': getattr(settings, 'YOOKASSA_PAYMENT_MODE', 'full_payment'),
-                    'payment_subject': getattr(settings, 'YOOKASSA_PAYMENT_SUBJECT', 'service'),
-                }
-            ]
-
-            receipt_data_dict: dict[str, Any] = {'customer': customer_contact_for_receipt, 'items': receipt_items_list}
-
-            builder.set_receipt(receipt_data_dict)
-
-            # Рекуррентные платежи: сохранение карты
-            if settings.YOOKASSA_RECURRENT_ENABLED:
-                if settings.YOOKASSA_RECURRENT_REQUIRED:
-                    builder.set_save_payment_method(True)
-                # Если не required — не устанавливаем, YooKassa покажет чекбокс
-
             idempotence_key = str(uuid.uuid4())
-            payment_request = builder.build()
+            payload: dict[str, Any] = {
+                'amount': {'value': self._amount_value(amount), 'currency': currency.upper()},
+                'capture': True,
+                'confirmation': {'type': 'redirect', 'return_url': return_url or self.return_url},
+                'description': description,
+                'metadata': metadata,
+                'receipt': receipt_data_dict,
+            }
+            if settings.is_yookassa_recurrent_enabled(self.scope) and settings.YOOKASSA_RECURRENT_REQUIRED:
+                payload['save_payment_method'] = True
 
             logger.info(
                 'Создание платежа YooKassa',
@@ -253,35 +317,18 @@ class YooKassaService:
                 receipt_data_dict=receipt_data_dict,
             )
 
-            loop = asyncio.get_running_loop()
-            async with asyncio.timeout(30):
-                response = await loop.run_in_executor(
-                    _yookassa_executor, lambda: YooKassaPayment.create(payment_request, idempotence_key)
-                )
+            response_data = await self._post_payment(payload, idempotence_key)
 
             logger.info(
-                'Ответ YooKassa Payment.create',
-                response_id=response.id,
-                status=response.status,
-                paid=response.paid,
+                'Ответ YooKassa HTTP create payment',
+                response_id=response_data.get('id'),
+                status=response_data.get('status'),
+                paid=response_data.get('paid'),
             )
 
-            return {
-                'id': response.id,
-                'confirmation_url': response.confirmation.confirmation_url if response.confirmation else None,
-                'status': response.status,
-                'metadata': response.metadata,
-                'amount_value': float(response.amount.value),
-                'amount_currency': response.amount.currency,
-                'idempotence_key_used': idempotence_key,
-                'paid': response.paid,
-                'refundable': response.refundable,
-                'created_at': response.created_at.isoformat()
-                if hasattr(response.created_at, 'isoformat')
-                else str(response.created_at),
-                'description_from_yk': response.description,
-                'test_mode': response.test if hasattr(response, 'test') else None,
-            }
+            result = self._payment_response_to_dict(response_data)
+            result['idempotence_key_used'] = idempotence_key
+            return result
         except Exception as e:
             logger.error('Ошибка создания платежа YooKassa', error=e, exc_info=True)
             return None
@@ -300,58 +347,24 @@ class YooKassaService:
             logger.error('YooKassa не сконфигурирован. Невозможно создать платеж через СБП.')
             return None
 
-        customer_contact_for_receipt = {}
-        if receipt_email:
-            customer_contact_for_receipt['email'] = receipt_email
-        elif receipt_phone:
-            customer_contact_for_receipt['phone'] = receipt_phone
-        elif hasattr(settings, 'YOOKASSA_DEFAULT_RECEIPT_EMAIL') and settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL:
-            customer_contact_for_receipt['email'] = settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL
-        else:
-            logger.error(
-                'КРИТИЧНО: Не предоставлен email/телефон для чека YooKassa и YOOKASSA_DEFAULT_RECEIPT_EMAIL не установлен.'
-            )
+        receipt_data_dict = self._receipt_data(amount, currency, description, receipt_email, receipt_phone)
+        if receipt_data_dict is None:
             return {
                 'error': True,
                 'internal_message': 'Отсутствуют контактные данные для чека YooKassa и не настроен email по умолчанию.',
             }
 
         try:
-            # Создаем один платеж с подтверждением через QR
-            # Это позволит получить QR-код для пользователя
-            builder = PaymentRequestBuilder()
-
-            builder.set_amount({'value': str(round(amount, 2)), 'currency': currency.upper()})
-
-            builder.set_capture(True)
-
-            # Устанавливаем подтверждение через redirect для получения вебхуков
-            builder.set_confirmation({'type': 'redirect', 'return_url': return_url or self.return_url})
-
-            builder.set_description(description)
-
-            builder.set_metadata(metadata)
-
-            builder.set_payment_method_data({'type': 'sbp'})
-
-            receipt_items_list: list[dict[str, Any]] = [
-                {
-                    'description': description[:128],
-                    'quantity': '1.00',
-                    'amount': {'value': str(round(amount, 2)), 'currency': currency.upper()},
-                    'vat_code': int(getattr(settings, 'YOOKASSA_VAT_CODE', 1)),
-                    'payment_mode': getattr(settings, 'YOOKASSA_PAYMENT_MODE', 'full_payment'),
-                    'payment_subject': getattr(settings, 'YOOKASSA_PAYMENT_SUBJECT', 'service'),
-                }
-            ]
-
-            receipt_data_dict: dict[str, Any] = {'customer': customer_contact_for_receipt, 'items': receipt_items_list}
-
-            builder.set_receipt(receipt_data_dict)
-
             idempotence_key = str(uuid.uuid4())
-
-            payment_request = builder.build()
+            payload = {
+                'amount': {'value': self._amount_value(amount), 'currency': currency.upper()},
+                'capture': True,
+                'confirmation': {'type': 'redirect', 'return_url': return_url or self.return_url},
+                'description': description,
+                'metadata': metadata,
+                'payment_method_data': {'type': 'sbp'},
+                'receipt': receipt_data_dict,
+            }
 
             logger.info(
                 'Создание платежа YooKassa СБП с подтверждением redirect',
@@ -362,42 +375,18 @@ class YooKassaService:
                 receipt_data_dict=receipt_data_dict,
             )
 
-            loop = asyncio.get_running_loop()
-            async with asyncio.timeout(30):
-                response = await loop.run_in_executor(
-                    _yookassa_executor, lambda: YooKassaPayment.create(payment_request, idempotence_key)
-                )
+            response_data = await self._post_payment(payload, idempotence_key)
 
             logger.info(
-                'Ответ YooKassa Payment.create (СБП, redirect)',
-                response_id=response.id,
-                status=response.status,
-                paid=response.paid,
+                'Ответ YooKassa HTTP create payment (СБП, redirect)',
+                response_id=response_data.get('id'),
+                status=response_data.get('status'),
+                paid=response_data.get('paid'),
             )
 
-            # Возвращаем данные платежа с redirect-подтверждением
-            # YooKassa покажет QR на десктопе или список банков на мобильном
-            return {
-                'id': response.id,
-                'qr_confirmation_data': response.confirmation.confirmation_data
-                if response.confirmation and hasattr(response.confirmation, 'confirmation_data')
-                else None,
-                'confirmation_url': response.confirmation.confirmation_url
-                if response.confirmation and hasattr(response.confirmation, 'confirmation_url')
-                else None,
-                'status': response.status,
-                'metadata': response.metadata,
-                'amount_value': float(response.amount.value),
-                'amount_currency': response.amount.currency,
-                'idempotence_key_used': idempotence_key,
-                'paid': response.paid,
-                'refundable': response.refundable,
-                'created_at': response.created_at.isoformat()
-                if hasattr(response.created_at, 'isoformat')
-                else str(response.created_at),
-                'description_from_yk': response.description,
-                'test_mode': response.test if hasattr(response, 'test') else None,
-            }
+            result = self._payment_response_to_dict(response_data)
+            result['idempotence_key_used'] = idempotence_key
+            return result
         except Exception as e:
             logger.error('Ошибка создания платежа YooKassa СБП', error=e, exc_info=True)
             return None
@@ -410,61 +399,29 @@ class YooKassaService:
         try:
             logger.info('Получение информации о платеже YooKassa', payment_id_in_yookassa=payment_id_in_yookassa)
 
-            loop = asyncio.get_running_loop()
-            async with asyncio.timeout(30):
-                payment_info_yk = await loop.run_in_executor(
-                    _yookassa_executor, lambda: YooKassaPayment.find_one(payment_id_in_yookassa)
+            async with httpx.AsyncClient(timeout=self._timeout_seconds()) as client:
+                response = await client.get(
+                    f'{YOOKASSA_API_BASE_URL}/payments/{payment_id_in_yookassa}',
+                    auth=self._auth(),
                 )
+                if response.status_code == 404:
+                    logger.warning(
+                        'Платеж не найден в YooKassa (404)',
+                        payment_id_in_yookassa=payment_id_in_yookassa,
+                    )
+                    return None
+                response.raise_for_status()
+                payment_info_yk = response.json()
 
             if payment_info_yk:
                 logger.info(
                     'Информация о платеже YooKassa',
                     payment_id_in_yookassa=payment_id_in_yookassa,
-                    status=payment_info_yk.status,
-                    paid=payment_info_yk.paid,
+                    status=payment_info_yk.get('status'),
+                    paid=payment_info_yk.get('paid'),
                 )
-                return {
-                    'id': payment_info_yk.id,
-                    'status': payment_info_yk.status,
-                    'paid': payment_info_yk.paid,
-                    'amount_value': float(payment_info_yk.amount.value),
-                    'amount_currency': payment_info_yk.amount.currency,
-                    'metadata': payment_info_yk.metadata,
-                    'description': payment_info_yk.description,
-                    'refundable': payment_info_yk.refundable,
-                    'created_at': payment_info_yk.created_at.isoformat()
-                    if hasattr(payment_info_yk.created_at, 'isoformat')
-                    else str(payment_info_yk.created_at),
-                    'captured_at': payment_info_yk.captured_at.isoformat()
-                    if payment_info_yk.captured_at and hasattr(payment_info_yk.captured_at, 'isoformat')
-                    else None,
-                    'payment_method_type': payment_info_yk.payment_method.type
-                    if payment_info_yk.payment_method
-                    else None,
-                    'payment_method_id': payment_info_yk.payment_method.id if payment_info_yk.payment_method else None,
-                    'payment_method_saved': payment_info_yk.payment_method.saved
-                    if payment_info_yk.payment_method and hasattr(payment_info_yk.payment_method, 'saved')
-                    else False,
-                    'payment_method_card': {
-                        'first6': payment_info_yk.payment_method.card.first6,
-                        'last4': payment_info_yk.payment_method.card.last4,
-                        'card_type': payment_info_yk.payment_method.card.card_type,
-                        'expiry_month': payment_info_yk.payment_method.card.expiry_month,
-                        'expiry_year': payment_info_yk.payment_method.card.expiry_year,
-                    }
-                    if payment_info_yk.payment_method
-                    and hasattr(payment_info_yk.payment_method, 'card')
-                    and payment_info_yk.payment_method.card
-                    else None,
-                    'test_mode': payment_info_yk.test if hasattr(payment_info_yk, 'test') else None,
-                }
+                return self._payment_response_to_dict(payment_info_yk)
             logger.warning('Платеж не найден в YooKassa', payment_id_in_yookassa=payment_id_in_yookassa)
-            return None
-        except YooKassaNotFoundError:
-            logger.warning(
-                'Платеж не найден в YooKassa (404)',
-                payment_id_in_yookassa=payment_id_in_yookassa,
-            )
             return None
         except Exception as e:
             logger.error(
@@ -506,30 +463,30 @@ class YooKassaService:
             return None
 
         try:
-            builder = PaymentRequestBuilder()
-            builder.set_amount({'value': str(round(amount, 2)), 'currency': currency.upper()})
-            builder.set_capture(True)
-            builder.set_payment_method_id(payment_method_id)
-            builder.set_description(description)
-            builder.set_metadata(metadata)
-
-            receipt_items_list: list[dict[str, Any]] = [
-                {
-                    'description': description[:128],
-                    'quantity': '1.00',
-                    'amount': {'value': str(round(amount, 2)), 'currency': currency.upper()},
-                    'vat_code': str(getattr(settings, 'YOOKASSA_VAT_CODE', 1)),
-                    'payment_mode': getattr(settings, 'YOOKASSA_PAYMENT_MODE', 'full_payment'),
-                    'payment_subject': getattr(settings, 'YOOKASSA_PAYMENT_SUBJECT', 'service'),
-                }
-            ]
-            receipt_data_dict: dict[str, Any] = {'customer': customer_contact_for_receipt, 'items': receipt_items_list}
-            builder.set_receipt(receipt_data_dict)
-
             if not idempotence_key:
                 sub_id = metadata.get('subscription_id', uuid.uuid4())
                 idempotence_key = f'autopay_{sub_id}_{datetime.now(UTC).strftime("%Y-%m-%d")}'
-            payment_request = builder.build()
+            receipt_data_dict = {
+                'customer': customer_contact_for_receipt,
+                'items': [
+                    {
+                        'description': description[:128],
+                        'quantity': '1.00',
+                        'amount': {'value': self._amount_value(amount), 'currency': currency.upper()},
+                        'vat_code': int(getattr(settings, 'YOOKASSA_VAT_CODE', 1)),
+                        'payment_mode': getattr(settings, 'YOOKASSA_PAYMENT_MODE', 'full_payment'),
+                        'payment_subject': getattr(settings, 'YOOKASSA_PAYMENT_SUBJECT', 'service'),
+                    }
+                ],
+            }
+            payload = {
+                'amount': {'value': self._amount_value(amount), 'currency': currency.upper()},
+                'capture': True,
+                'payment_method_id': payment_method_id,
+                'description': description,
+                'metadata': metadata,
+                'receipt': receipt_data_dict,
+            }
 
             logger.info(
                 'Создание автоплатежа YooKassa',
@@ -540,34 +497,18 @@ class YooKassaService:
                 idempotence_key=idempotence_key,
             )
 
-            loop = asyncio.get_running_loop()
-            async with asyncio.timeout(30):
-                response = await loop.run_in_executor(
-                    _yookassa_executor, lambda: YooKassaPayment.create(payment_request, idempotence_key)
-                )
+            response_data = await self._post_payment(payload, idempotence_key)
 
             logger.info(
                 'Ответ YooKassa автоплатёж',
-                response_id=response.id,
-                status=response.status,
-                paid=response.paid,
+                response_id=response_data.get('id'),
+                status=response_data.get('status'),
+                paid=response_data.get('paid'),
             )
 
-            return {
-                'id': response.id,
-                'status': response.status,
-                'paid': response.paid,
-                'metadata': response.metadata,
-                'amount_value': float(response.amount.value),
-                'amount_currency': response.amount.currency,
-                'idempotence_key_used': idempotence_key,
-                'refundable': response.refundable,
-                'created_at': response.created_at.isoformat()
-                if hasattr(response.created_at, 'isoformat')
-                else str(response.created_at),
-                'description_from_yk': response.description,
-                'test_mode': response.test if hasattr(response, 'test') else None,
-            }
+            result = self._payment_response_to_dict(response_data)
+            result['idempotence_key_used'] = idempotence_key
+            return result
         except Exception as e:
             logger.error(
                 'Ошибка создания автоплатежа YooKassa',

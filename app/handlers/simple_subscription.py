@@ -273,9 +273,9 @@ def _get_simple_subscription_payment_keyboard(language: str) -> types.InlineKeyb
             [types.InlineKeyboardButton(text='⭐ Telegram Stars', callback_data='simple_subscription_stars')]
         )
 
-    if settings.is_yookassa_enabled():
+    if settings.is_yookassa_enabled('bot'):
         yookassa_methods = []
-        if settings.YOOKASSA_SBP_ENABLED:
+        if settings.is_yookassa_sbp_enabled('bot'):
             yookassa_methods.append(
                 types.InlineKeyboardButton(text='🏦 YooKassa (СБП)', callback_data='simple_subscription_yookassa_sbp')
             )
@@ -918,11 +918,11 @@ async def handle_simple_subscription_payment_method(
 
         elif payment_method in ['yookassa', 'yookassa_sbp']:
             # Оплата через YooKassa
-            if not settings.is_yookassa_enabled():
+            if not settings.is_yookassa_enabled('bot'):
                 await callback.answer('❌ Оплата через YooKassa временно недоступна', show_alert=True)
                 return
 
-            if payment_method == 'yookassa_sbp' and not settings.YOOKASSA_SBP_ENABLED:
+            if payment_method == 'yookassa_sbp' and not settings.is_yookassa_sbp_enabled('bot'):
                 await callback.answer('❌ Оплата через СБП временно недоступна', show_alert=True)
                 return
 
@@ -959,6 +959,7 @@ async def handle_simple_subscription_payment_method(
                         'subscription_period': str(subscription_params['period_days']),
                         'payment_purpose': 'simple_subscription_purchase',
                     },
+                    yookassa_scope='bot',
                 )
             else:
                 payment_result = await payment_service.create_yookassa_payment(
@@ -976,6 +977,7 @@ async def handle_simple_subscription_payment_method(
                         'subscription_period': str(subscription_params['period_days']),
                         'payment_purpose': 'simple_subscription_purchase',
                     },
+                    yookassa_scope='bot',
                 )
 
             if not payment_result:

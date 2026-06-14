@@ -25,18 +25,20 @@ async def create_yookassa_payment(
     payment_method_type: str | None = None,
     yookassa_created_at: datetime | None = None,
     test_mode: bool = False,
+    yookassa_scope: str | None = None,
 ) -> YooKassaPayment | None:
     # Идемпотентно по yookassa_payment_id. Рекуррентный автоплатёж использует
     # детерминированный ключ идемпотентности на (подписку, карту, день), поэтому
     # повторные запуски в тот же день получают от YooKassa ТОТ ЖЕ payment_id.
     # Повторная вставка била по unique-индексу и (ошибочно) логировалась как
     # «FK violation user_id», заваливая админ-чат. Если запись уже есть — вернём её.
-    existing = await get_yookassa_payment_by_id(db, yookassa_payment_id)
+    existing = await get_yookassa_payment_by_id(db, yookassa_payment_id, yookassa_scope=yookassa_scope)
     if existing is not None:
         return existing
 
     payment = YooKassaPayment(
         user_id=user_id,
+        yookassa_scope=yookassa_scope,
         yookassa_payment_id=yookassa_payment_id,
         amount_kopeks=amount_kopeks,
         currency=currency,
@@ -56,7 +58,7 @@ async def create_yookassa_payment(
         await db.rollback()
         # Проиграли гонку вставки по тому же yookassa_payment_id — это успех
         # (идемпотентность): вернём запись, которую успел создать конкурент.
-        existing = await get_yookassa_payment_by_id(db, yookassa_payment_id)
+        existing = await get_yookassa_payment_by_id(db, yookassa_payment_id, yookassa_scope=yookassa_scope)
         if existing is not None:
             return existing
         # Иначе это настоящая проблема целостности (например, FK по user_id) —
@@ -64,6 +66,7 @@ async def create_yookassa_payment(
         logger.error(
             'IntegrityError при создании платежа YooKassa (не дубликат payment_id)',
             yookassa_payment_id=yookassa_payment_id,
+            yookassa_scope=yookassa_scope,
             user_id=user_id,
             error=str(e),
         )
@@ -73,17 +76,24 @@ async def create_yookassa_payment(
     logger.info(
         'Создан платеж YooKassa',
         yookassa_payment_id=yookassa_payment_id,
+        yookassa_scope=yookassa_scope,
         amount_rubles=amount_kopeks / 100,
         user_id=user_id,
     )
     return payment
 
 
-async def get_yookassa_payment_by_id(db: AsyncSession, yookassa_payment_id: str) -> YooKassaPayment | None:
+async def get_yookassa_payment_by_id(
+    db: AsyncSession,
+    yookassa_payment_id: str,
+    yookassa_scope: str | None = None,
+) -> YooKassaPayment | None:
+    conditions = [YooKassaPayment.yookassa_payment_id == yookassa_payment_id]
+    if yookassa_scope is not None:
+        conditions.append(YooKassaPayment.yookassa_scope == yookassa_scope)
+
     result = await db.execute(
-        select(YooKassaPayment)
-        .options(selectinload(YooKassaPayment.user))
-        .where(YooKassaPayment.yookassa_payment_id == yookassa_payment_id)
+        select(YooKassaPayment).options(selectinload(YooKassaPayment.user)).where(and_(*conditions))
     )
     return result.scalar_one_or_none()
 
@@ -163,12 +173,20 @@ async def link_yookassa_payment_to_transaction(
 
 
 async def get_user_yookassa_payments(
-    db: AsyncSession, user_id: int, limit: int = 50, offset: int = 0
+    db: AsyncSession,
+    user_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    yookassa_scope: str | None = None,
 ) -> list[YooKassaPayment]:
+    conditions = [YooKassaPayment.user_id == user_id]
+    if yookassa_scope is not None:
+        conditions.append(YooKassaPayment.yookassa_scope == yookassa_scope)
+
     result = await db.execute(
         select(YooKassaPayment)
         .options(selectinload(YooKassaPayment.transaction))
-        .where(YooKassaPayment.user_id == user_id)
+        .where(and_(*conditions))
         .order_by(YooKassaPayment.created_at.desc())
         .limit(limit)
         .offset(offset)

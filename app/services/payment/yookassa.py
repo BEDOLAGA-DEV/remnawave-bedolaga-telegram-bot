@@ -29,6 +29,29 @@ _INT32_MAX = 2_147_483_647
 class YooKassaPaymentMixin:
     """Mixin с операциями по созданию и подтверждению платежей YooKassa."""
 
+    def _get_yookassa_service_for_scope(self, yookassa_scope: str | None):
+        existing_service = getattr(self, 'yookassa_service', None)
+        if yookassa_scope is None:
+            if existing_service is not None:
+                return existing_service
+            if not settings.is_yookassa_enabled():
+                return None
+            from app.services.yookassa_service import YooKassaService
+
+            return YooKassaService()
+        if existing_service is not None and getattr(existing_service, 'scope', yookassa_scope) == yookassa_scope:
+            return existing_service
+        if not settings.is_yookassa_enabled(yookassa_scope):
+            return None
+        from app.services.yookassa_service import YooKassaService
+
+        return YooKassaService(scope=yookassa_scope)
+
+    @staticmethod
+    def _scope_from_yookassa_metadata(metadata: dict[str, Any]) -> str | None:
+        scope = metadata.get('yookassa_scope') or metadata.get('payment_scope')
+        return scope if scope in {'bot', 'cabinet'} else None
+
     @staticmethod
     def _format_amount_value(value: Any) -> str:
         """Форматирует сумму для хранения в webhook-объекте."""
@@ -99,9 +122,11 @@ class YooKassaPaymentMixin:
         receipt_phone: str | None = None,
         metadata: dict[str, Any] | None = None,
         return_url: str | None = None,
+        yookassa_scope: str | None = None,
     ) -> dict[str, Any] | None:
         """Создаёт обычный платёж в YooKassa и сохраняет локальную запись."""
-        if not getattr(self, 'yookassa_service', None):
+        yookassa_service = self._get_yookassa_service_for_scope(yookassa_scope)
+        if not yookassa_service:
             logger.error('YooKassa сервис не инициализирован')
             return None
 
@@ -133,8 +158,10 @@ class YooKassaPaymentMixin:
                     'type': existing_type or 'balance_topup',
                 }
             )
+            if yookassa_scope:
+                payment_metadata['yookassa_scope'] = yookassa_scope
 
-            yookassa_response = await self.yookassa_service.create_payment(
+            yookassa_response = await yookassa_service.create_payment(
                 amount=amount_rubles,
                 currency='RUB',
                 description=description,
@@ -170,6 +197,7 @@ class YooKassaPaymentMixin:
                 payment_method_type=None,
                 yookassa_created_at=yookassa_created_at,
                 test_mode=yookassa_response.get('test_mode', False),
+                yookassa_scope=yookassa_scope,
             )
 
             logger.info(
@@ -203,9 +231,11 @@ class YooKassaPaymentMixin:
         receipt_phone: str | None = None,
         metadata: dict[str, Any] | None = None,
         return_url: str | None = None,
+        yookassa_scope: str | None = None,
     ) -> dict[str, Any] | None:
         """Создаёт платёж по СБП через YooKassa."""
-        if not getattr(self, 'yookassa_service', None):
+        yookassa_service = self._get_yookassa_service_for_scope(yookassa_scope)
+        if not yookassa_service:
             logger.error('YooKassa сервис не инициализирован')
             return None
 
@@ -237,8 +267,10 @@ class YooKassaPaymentMixin:
                     'type': existing_type or 'balance_topup_sbp',
                 }
             )
+            if yookassa_scope:
+                payment_metadata['yookassa_scope'] = yookassa_scope
 
-            yookassa_response = await self.yookassa_service.create_sbp_payment(
+            yookassa_response = await yookassa_service.create_sbp_payment(
                 amount=amount_rubles,
                 currency='RUB',
                 description=description,
@@ -265,6 +297,7 @@ class YooKassaPaymentMixin:
                 payment_method_type='sbp',
                 yookassa_created_at=None,
                 test_mode=yookassa_response.get('test_mode', False),
+                yookassa_scope=yookassa_scope,
             )
 
             logger.info(
@@ -305,13 +338,13 @@ class YooKassaPaymentMixin:
         if not payment:
             return None
 
+        yookassa_scope = getattr(payment, 'yookassa_scope', None)
+        yookassa_service = self._get_yookassa_service_for_scope(yookassa_scope)
         remote_data: dict[str, Any] | None = None
 
-        if getattr(self, 'yookassa_service', None):
+        if yookassa_service:
             try:
-                remote_data = await self.yookassa_service.get_payment_info(  # type: ignore[union-attr]
-                    payment.yookassa_payment_id
-                )
+                remote_data = await yookassa_service.get_payment_info(payment.yookassa_payment_id)
             except Exception as error:  # pragma: no cover - defensive logging
                 logger.error(
                     'Ошибка получения статуса YooKassa', yookassa_payment_id=payment.yookassa_payment_id, error=error
@@ -1232,7 +1265,13 @@ class YooKassaPaymentMixin:
 
             # Проверяем, не сохранён ли уже (включая деактивированные —
             # если пользователь удалил карту, не реактивируем её)
-            existing = await get_payment_method_by_yookassa_id(db, pm_id, include_inactive=True)
+            yookassa_scope = getattr(payment, 'yookassa_scope', None)
+            existing = await get_payment_method_by_yookassa_id(
+                db,
+                pm_id,
+                include_inactive=True,
+                yookassa_scope=yookassa_scope,
+            )
             if existing:
                 logger.debug(
                     'Метод оплаты уже сохранён',
@@ -1277,6 +1316,7 @@ class YooKassaPaymentMixin:
                 card_expiry_month=expiry_month,
                 card_expiry_year=expiry_year,
                 title=title,
+                yookassa_scope=yookassa_scope,
             )
 
             if saved:
@@ -1329,6 +1369,9 @@ class YooKassaPaymentMixin:
                 amount=amount_rubles,
                 quantity=1,
                 payment_id=payment.yookassa_payment_id,
+                payment_provider='yookassa',
+                payment_scope=getattr(payment, 'yookassa_scope', None),
+                external_payment_id=payment.yookassa_payment_id,
                 telegram_user_id=telegram_user_id,
                 amount_kopeks=payment.amount_kopeks,
             )
@@ -1337,6 +1380,7 @@ class YooKassaPaymentMixin:
                 logger.info(
                     'Чек NaloGO создан для платежа',
                     yookassa_payment_id=payment.yookassa_payment_id,
+                    yookassa_scope=getattr(payment, 'yookassa_scope', None),
                     receipt_uuid=receipt_uuid,
                 )
 
@@ -1365,6 +1409,7 @@ class YooKassaPaymentMixin:
         self,
         db: AsyncSession,
         event: dict[str, Any],
+        yookassa_scope: str | None = None,
     ) -> bool:
         """Обрабатывает входящий webhook YooKassa и синхронизирует состояние платежа."""
         event_object = event.get('object', {})
@@ -1375,6 +1420,23 @@ class YooKassaPaymentMixin:
             # передавать его как kwarg — иначе TypeError. Берём другое имя.
             logger.warning('Webhook без payment id', webhook_event=event)
             return False
+
+        payment_module = import_module('app.services.payment_service')
+
+        if yookassa_scope is not None:
+            payment = await payment_module.get_yookassa_payment_by_id(
+                db,
+                yookassa_payment_id,
+                yookassa_scope=yookassa_scope,
+            )
+        else:
+            payment = await payment_module.get_yookassa_payment_by_id(db, yookassa_payment_id)
+        metadata_scope = self._scope_from_yookassa_metadata(
+            self._normalise_yookassa_metadata(event_object.get('metadata'))
+        )
+        resolved_scope = yookassa_scope or getattr(payment, 'yookassa_scope', None) or metadata_scope
+        if payment and resolved_scope and not getattr(payment, 'yookassa_scope', None):
+            payment.yookassa_scope = resolved_scope
 
         # The remote API call is a defence-in-depth cross-check of the
         # webhook payload — the payload itself already carries ``status``
@@ -1391,12 +1453,11 @@ class YooKassaPaymentMixin:
         # safe because the SDK monkey-patch in yookassa_service.py
         # guarantees the thread itself unblocks within ~15s socket-read.
         remote_data: dict[str, Any] | None = None
-        if getattr(self, 'yookassa_service', None):
+        yookassa_service = self._get_yookassa_service_for_scope(resolved_scope)
+        if yookassa_service:
             try:
                 remote_data = await asyncio.wait_for(
-                    self.yookassa_service.get_payment_info(  # type: ignore[union-attr]
-                        yookassa_payment_id
-                    ),
+                    yookassa_service.get_payment_info(yookassa_payment_id),
                     timeout=8,
                 )
             except TimeoutError:
@@ -1425,12 +1486,9 @@ class YooKassaPaymentMixin:
                 )
             event['object'] = event_object
 
-        payment_module = import_module('app.services.payment_service')
-
-        payment = await payment_module.get_yookassa_payment_by_id(db, yookassa_payment_id)
         if not payment:
             logger.warning('Локальный платеж для YooKassa id не найден', yookassa_payment_id=yookassa_payment_id)
-            payment = await self._restore_missing_yookassa_payment(db, event_object)
+            payment = await self._restore_missing_yookassa_payment(db, event_object, yookassa_scope=resolved_scope)
 
             if not payment:
                 logger.error(
@@ -1473,6 +1531,7 @@ class YooKassaPaymentMixin:
         self,
         db: AsyncSession,
         event_object: dict[str, Any],
+        yookassa_scope: str | None = None,
     ) -> YooKassaPayment | None:
         """Создает локальную запись платежа на основе данных webhook, если она отсутствует."""
 
@@ -1631,6 +1690,7 @@ class YooKassaPaymentMixin:
             payment_method_type=payment_method_type,
             yookassa_created_at=yookassa_created_at,
             test_mode=bool(event_object.get('test') or event_object.get('test_mode')),
+            yookassa_scope=yookassa_scope or self._scope_from_yookassa_metadata(metadata),
         )
 
         if not local_payment:

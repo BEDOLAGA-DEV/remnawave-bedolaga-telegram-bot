@@ -71,6 +71,24 @@ YOOKASSA_ALLOWED_EVENTS: tuple[str, ...] = (
     'payment.waiting_for_capture',
     'payment.canceled',
 )
+YOOKASSA_WEBHOOK_SCOPES: tuple[str, ...] = ('bot', 'cabinet')
+
+
+def _is_yookassa_webhook_enabled() -> bool:
+    return (
+        settings.is_yookassa_enabled()
+        or settings.is_yookassa_enabled('bot')
+        or settings.is_yookassa_enabled('cabinet')
+    )
+
+
+def _scope_from_webhook_path(path: str) -> str | None:
+    base_path = settings.YOOKASSA_WEBHOOK_PATH.rstrip('/')
+    request_path = path.rstrip('/')
+    for scope in YOOKASSA_WEBHOOK_SCOPES:
+        if request_path == f'{base_path}/{scope}':
+            return scope
+    return None
 
 
 def collect_yookassa_ip_candidates(*values: str | None) -> list[str]:
@@ -206,6 +224,7 @@ class YooKassaWebhookHandler:
 
     async def handle_webhook(self, request: web.Request) -> web.Response:
         try:
+            yookassa_scope = request.match_info.get('yookassa_scope') or _scope_from_webhook_path(request.path)
             logger.info('📥 Получен YooKassa webhook', method=request.method, path=request.path)
 
             header_ip_candidates = collect_yookassa_ip_candidates(
@@ -290,7 +309,15 @@ class YooKassaWebhookHandler:
                         )
                         return web.Response(status=200, text='OK')
 
-                    success = await self.payment_service.process_yookassa_webhook(db, webhook_data)
+                    callback_kwargs = {}
+                    if yookassa_scope is not None:
+                        callback_kwargs['yookassa_scope'] = yookassa_scope
+
+                    success = await self.payment_service.process_yookassa_webhook(
+                        db,
+                        webhook_data,
+                        **callback_kwargs,
+                    )
 
                     if success:
                         await db.commit()
@@ -322,6 +349,11 @@ class YooKassaWebhookHandler:
         app.router.add_post(webhook_path, self.handle_webhook)
         app.router.add_get(webhook_path, self._get_handler)
         app.router.add_options(webhook_path, self._options_handler)
+        for scope in YOOKASSA_WEBHOOK_SCOPES:
+            scoped_path = f'{webhook_path}/{scope}'
+            app.router.add_post(scoped_path, self.handle_webhook)
+            app.router.add_get(scoped_path, self._get_handler)
+            app.router.add_options(scoped_path, self._options_handler)
 
         logger.info('✅ Настроен YooKassa webhook (POST)', webhook_path=webhook_path)
 
@@ -332,6 +364,7 @@ class YooKassaWebhookHandler:
                 'message': 'YooKassa webhook endpoint is working',
                 'method': 'GET',
                 'path': request.path,
+                'scope': request.match_info.get('yookassa_scope') or _scope_from_webhook_path(request.path),
                 'note': 'Use POST method for actual webhooks',
             }
         )
@@ -360,7 +393,7 @@ def create_yookassa_webhook_app(payment_service: PaymentService) -> web.Applicat
                 'service': 'yookassa_webhook',
                 'port': settings.YOOKASSA_WEBHOOK_PORT,
                 'path': settings.YOOKASSA_WEBHOOK_PATH,
-                'enabled': settings.is_yookassa_enabled(),
+                'enabled': _is_yookassa_webhook_enabled(),
             }
         )
 
@@ -370,7 +403,7 @@ def create_yookassa_webhook_app(payment_service: PaymentService) -> web.Applicat
 
 
 async def start_yookassa_webhook_server(payment_service: PaymentService) -> None:
-    if not settings.is_yookassa_enabled():
+    if not _is_yookassa_webhook_enabled():
         logger.info('ℹ️ YooKassa отключена, webhook сервер не запускается')
         return
 

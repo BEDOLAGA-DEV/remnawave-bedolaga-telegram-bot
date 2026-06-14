@@ -566,12 +566,22 @@ class MonitoringService:
 
                 # Batch-запрос: собираем user_id с autopay и проверяем наличие карт одним запросом
                 users_with_cards: set[int] = set()
-                if settings.ENABLE_AUTOPAY and settings.YOOKASSA_RECURRENT_ENABLED:
+                if settings.ENABLE_AUTOPAY and settings.is_yookassa_recurrent_enabled('bot'):
                     autopay_user_ids = [s.user_id for s in expiring_subscriptions if s.autopay_enabled]
                     if autopay_user_ids:
                         from app.database.crud.saved_payment_method import get_user_ids_with_active_payment_methods
 
-                        users_with_cards = await get_user_ids_with_active_payment_methods(db, autopay_user_ids)
+                        users_with_cards = await get_user_ids_with_active_payment_methods(
+                            db,
+                            autopay_user_ids,
+                            yookassa_scope='bot',
+                        )
+                        if (
+                            not users_with_cards
+                            and settings.YOOKASSA_BOT_SHOP_ID is None
+                            and settings.YOOKASSA_BOT_SECRET_KEY is None
+                        ):
+                            users_with_cards = await get_user_ids_with_active_payment_methods(db, autopay_user_ids)
 
                 from app.utils.notification_prefs import (
                     get_subscription_expiry_days,

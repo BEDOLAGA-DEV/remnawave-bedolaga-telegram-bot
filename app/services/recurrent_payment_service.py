@@ -27,6 +27,7 @@ from app.database.models import (
 
 
 logger = structlog.get_logger(__name__)
+YOOKASSA_RECURRENT_SCOPE = 'bot'
 
 
 @dataclass
@@ -81,10 +82,10 @@ async def process_recurrent_payments(db: AsyncSession, bot: Bot | None = None) -
     Returns:
         dict: Статистика обработки
     """
-    if not settings.YOOKASSA_RECURRENT_ENABLED:
+    if not settings.is_yookassa_recurrent_enabled(YOOKASSA_RECURRENT_SCOPE):
         return {'skipped': True, 'reason': 'recurrent_disabled'}
 
-    if not settings.YOOKASSA_ENABLED:
+    if not settings.is_yookassa_enabled(YOOKASSA_RECURRENT_SCOPE):
         return {'skipped': True, 'reason': 'yookassa_disabled'}
 
     if not settings.ENABLE_AUTOPAY:
@@ -295,7 +296,10 @@ async def _process_single_subscription(
         return 'skipped'
 
     # Нужно пополнить баланс — ищем сохранённую карту
-    saved_methods = await get_active_payment_methods_by_user(db, user.id)
+    yookassa_scope = YOOKASSA_RECURRENT_SCOPE
+    saved_methods = await get_active_payment_methods_by_user(db, user.id, yookassa_scope=yookassa_scope)
+    if not saved_methods and settings.YOOKASSA_BOT_SHOP_ID is None and settings.YOOKASSA_BOT_SECRET_KEY is None:
+        saved_methods = await get_active_payment_methods_by_user(db, user.id)
     if not saved_methods:
         return 'no_card'
 
@@ -305,7 +309,7 @@ async def _process_single_subscription(
     topup_amount_rubles = topup_amount_kopeks / 100
 
     # Создаём автоплатёж
-    yookassa_service = payment_service.yookassa_service
+    yookassa_service = payment_service._get_yookassa_service_for_scope(yookassa_scope)
     if not yookassa_service or not yookassa_service.configured:
         logger.warning('YooKassa сервис не сконфигурирован для рекуррентных платежей')
         return 'skipped'
@@ -319,13 +323,14 @@ async def _process_single_subscription(
         'purpose': 'recurrent_topup',
         'subscription_id': str(subscription.id),
         'source': 'recurrent_payment_service',
+        'yookassa_scope': yookassa_scope,
     }
 
     # Перебираем все сохранённые карты пока не найдём рабочую
     today = datetime.now(UTC).strftime('%Y-%m-%d')
     for saved_method in saved_methods:
         # Детерминированный ключ: при рестарте/повторе YooKassa вернёт тот же платёж
-        idem_key = f'recurrent_{subscription.id}_{saved_method.id}_{today}'
+        idem_key = f'recurrent_{yookassa_scope}_{subscription.id}_{saved_method.id}_{today}'
         result = await yookassa_service.create_autopayment(
             amount=topup_amount_rubles,
             currency='RUB',
@@ -366,6 +371,7 @@ async def _process_single_subscription(
                 description=description,
                 status=result.get('status', 'pending'),
                 metadata_json=metadata,
+                yookassa_scope=yookassa_scope,
                 yookassa_created_at=yookassa_created_at,
                 test_mode=result.get('test_mode', False),
             )

@@ -48,8 +48,8 @@ def _get_method_defaults() -> dict:
             'available_sub_options': None,
         },
         'yookassa': {
-            'default_display_name': settings.get_yookassa_display_name(),
-            'is_configured': settings.is_yookassa_enabled(),
+            'default_display_name': settings.get_yookassa_display_name('cabinet'),
+            'is_configured': settings.is_yookassa_enabled('cabinet'),
             'default_min': settings.YOOKASSA_MIN_AMOUNT_KOPEKS,
             'default_max': settings.YOOKASSA_MAX_AMOUNT_KOPEKS,
             'available_sub_options': [

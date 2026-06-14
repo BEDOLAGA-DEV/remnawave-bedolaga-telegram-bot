@@ -371,6 +371,7 @@ async def create_topup(
                     description=description,
                     metadata=yookassa_metadata,
                     return_url=cabinet_return_url,
+                    yookassa_scope='cabinet',
                 )
             else:
                 result = await payment_service.create_yookassa_payment(
@@ -380,6 +381,7 @@ async def create_topup(
                     description=description,
                     metadata=yookassa_metadata,
                     return_url=cabinet_return_url,
+                    yookassa_scope='cabinet',
                 )
 
             if result:

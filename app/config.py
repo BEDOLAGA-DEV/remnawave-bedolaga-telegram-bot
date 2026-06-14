@@ -2,6 +2,7 @@ import html
 import os
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import time
 from pathlib import Path
 from typing import ClassVar, Literal
@@ -22,6 +23,21 @@ USER_TAG_PATTERN = re.compile(r'^[A-Z0-9_]{1,16}$')
 
 
 logger = structlog.get_logger(__name__)
+
+
+YooKassaScope = Literal['bot', 'cabinet']
+
+
+@dataclass(frozen=True)
+class YooKassaConfig:
+    scope: YooKassaScope | None
+    enabled: bool
+    display_name: str
+    shop_id: str | None
+    secret_key: str | None
+    return_url: str
+    sbp_enabled: bool
+    recurrent_enabled: bool
 
 
 class Settings(BaseSettings):
@@ -420,6 +436,20 @@ class Settings(BaseSettings):
 
     YOOKASSA_ENABLED: bool = False
     YOOKASSA_DISPLAY_NAME: str = 'YooKassa'
+    YOOKASSA_BOT_ENABLED: bool | None = None
+    YOOKASSA_BOT_DISPLAY_NAME: str | None = None
+    YOOKASSA_BOT_SHOP_ID: str | None = None
+    YOOKASSA_BOT_SECRET_KEY: str | None = None
+    YOOKASSA_BOT_RETURN_URL: str | None = None
+    YOOKASSA_BOT_SBP_ENABLED: bool | None = None
+    YOOKASSA_BOT_RECURRENT_ENABLED: bool | None = None
+    YOOKASSA_CABINET_ENABLED: bool | None = None
+    YOOKASSA_CABINET_DISPLAY_NAME: str | None = None
+    YOOKASSA_CABINET_SHOP_ID: str | None = None
+    YOOKASSA_CABINET_SECRET_KEY: str | None = None
+    YOOKASSA_CABINET_RETURN_URL: str | None = None
+    YOOKASSA_CABINET_SBP_ENABLED: bool | None = None
+    YOOKASSA_CABINET_RECURRENT_ENABLED: bool | None = None
     # HTTP socket timeouts for yookassa SDK requests. The SDK itself
     # ships with NO timeout, so a hanging YK endpoint will block a
     # worker thread forever (until TCP keep-alive eventually kills it,
@@ -2067,12 +2097,91 @@ class Settings(BaseSettings):
 
         return value
 
-    def is_yookassa_enabled(self) -> bool:
-        return self.YOOKASSA_ENABLED and self.YOOKASSA_SHOP_ID is not None and self.YOOKASSA_SECRET_KEY is not None
+    def _normalize_yookassa_scope(self, scope: str | None) -> YooKassaScope | None:
+        if scope is None:
+            return None
+        if scope not in ('bot', 'cabinet'):
+            raise ValueError(f'Unsupported YooKassa scope: {scope}')
+        return scope
 
-    def get_yookassa_display_name(self) -> str:
+    def _get_legacy_yookassa_return_url(self) -> str:
+        if self.YOOKASSA_RETURN_URL:
+            return self.YOOKASSA_RETURN_URL
+        if self.WEBHOOK_URL:
+            return f'{self.WEBHOOK_URL}/payment-success'
+        return 'https://t.me/'
+
+    def _get_yookassa_scope_value(self, scope: YooKassaScope, field: str):
+        return getattr(self, f'YOOKASSA_{scope.upper()}_{field}')
+
+    def get_yookassa_config(self, scope: str | None = None) -> YooKassaConfig:
+        normalized_scope = self._normalize_yookassa_scope(scope)
+        if normalized_scope is None:
+            shop_id = self.YOOKASSA_SHOP_ID
+            secret_key = self.YOOKASSA_SECRET_KEY
+            enabled = self.YOOKASSA_ENABLED and shop_id is not None and secret_key is not None
+            display_name = (self.YOOKASSA_DISPLAY_NAME or '').strip() or 'YooKassa'
+            return YooKassaConfig(
+                scope=None,
+                enabled=enabled,
+                display_name=display_name,
+                shop_id=shop_id,
+                secret_key=secret_key,
+                return_url=self._get_legacy_yookassa_return_url(),
+                sbp_enabled=bool(self.YOOKASSA_SBP_ENABLED),
+                recurrent_enabled=bool(self.YOOKASSA_RECURRENT_ENABLED),
+            )
+
+        enabled_value = self._get_yookassa_scope_value(normalized_scope, 'ENABLED')
+        if enabled_value is None:
+            enabled_value = self.YOOKASSA_ENABLED
+
+        display_name = self._get_yookassa_scope_value(normalized_scope, 'DISPLAY_NAME')
+        if display_name is None:
+            display_name = self.YOOKASSA_DISPLAY_NAME
+
+        scoped_shop_id = self._get_yookassa_scope_value(normalized_scope, 'SHOP_ID')
+        scoped_secret_key = self._get_yookassa_scope_value(normalized_scope, 'SECRET_KEY')
+        has_scoped_credentials = scoped_shop_id is not None or scoped_secret_key is not None
+        shop_id = scoped_shop_id if has_scoped_credentials else self.YOOKASSA_SHOP_ID
+        secret_key = scoped_secret_key if has_scoped_credentials else self.YOOKASSA_SECRET_KEY
+        return_url = self._get_yookassa_scope_value(normalized_scope, 'RETURN_URL') or self._get_legacy_yookassa_return_url()
+
+        sbp_enabled = self._get_yookassa_scope_value(normalized_scope, 'SBP_ENABLED')
+        if sbp_enabled is None:
+            sbp_enabled = self.YOOKASSA_SBP_ENABLED
+
+        recurrent_enabled = self._get_yookassa_scope_value(normalized_scope, 'RECURRENT_ENABLED')
+        if recurrent_enabled is None:
+            recurrent_enabled = self.YOOKASSA_RECURRENT_ENABLED
+
+        return YooKassaConfig(
+            scope=normalized_scope,
+            enabled=bool(enabled_value and shop_id is not None and secret_key is not None),
+            display_name=(display_name or '').strip() or 'YooKassa',
+            shop_id=shop_id,
+            secret_key=secret_key,
+            return_url=return_url,
+            sbp_enabled=bool(sbp_enabled),
+            recurrent_enabled=bool(recurrent_enabled),
+        )
+
+    def is_yookassa_enabled(self, scope: str | None = None) -> bool:
+        if scope is None:
+            return self.YOOKASSA_ENABLED and self.YOOKASSA_SHOP_ID is not None and self.YOOKASSA_SECRET_KEY is not None
+        return self.get_yookassa_config(scope).enabled
+
+    def get_yookassa_display_name(self, scope: str | None = None) -> str:
+        if scope is not None:
+            return self.get_yookassa_config(scope).display_name
         name = (self.YOOKASSA_DISPLAY_NAME or '').strip()
         return name or 'YooKassa'
+
+    def is_yookassa_sbp_enabled(self, scope: str | None = None) -> bool:
+        return self.get_yookassa_config(scope).sbp_enabled
+
+    def is_yookassa_recurrent_enabled(self, scope: str | None = None) -> bool:
+        return self.get_yookassa_config(scope).recurrent_enabled
 
     def is_nalogo_enabled(self) -> bool:
         return self.NALOGO_ENABLED and self.NALOGO_INN is not None and self.NALOGO_PASSWORD is not None
@@ -2080,12 +2189,10 @@ class Settings(BaseSettings):
     def is_support_topup_enabled(self) -> bool:
         return bool(self.SUPPORT_TOPUP_ENABLED)
 
-    def get_yookassa_return_url(self) -> str:
-        if self.YOOKASSA_RETURN_URL:
-            return self.YOOKASSA_RETURN_URL
-        if self.WEBHOOK_URL:
-            return f'{self.WEBHOOK_URL}/payment-success'
-        return 'https://t.me/'
+    def get_yookassa_return_url(self, scope: str | None = None) -> str:
+        if scope is not None:
+            return self.get_yookassa_config(scope).return_url
+        return self._get_legacy_yookassa_return_url()
 
     def is_cryptobot_enabled(self) -> bool:
         return self.CRYPTOBOT_ENABLED and self.CRYPTOBOT_API_TOKEN is not None
