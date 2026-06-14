@@ -147,17 +147,18 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
             ]
         )
 
-    # Freeze (vacation) — same single source of truth as the bot/cabinet gates:
-    # the admin freeze panel toggle (FreezeSettingsService). The freeze/resume
-    # callbacks are id-less; the handler resolves the user's active sub itself.
-    if not is_inactive:
-        from app.services.freeze_settings_service import FreezeSettingsService
+    # Freeze (vacation) — single source of truth: the admin freeze panel toggle
+    # (FreezeSettingsService). A frozen subscription ALWAYS offers "Разморозить",
+    # even when a panel echo desynced its status to DISABLED (is_inactive) —
+    # otherwise the user is stranded with no way to unfreeze. "Заморозить" is
+    # only offered for an active (not is_inactive) subscription.
+    from app.services.freeze_settings_service import FreezeSettingsService
 
-        if FreezeSettingsService.is_enabled():
-            if sub is not None and getattr(sub, 'frozen_at', None) is not None:
-                buttons.append([types.InlineKeyboardButton(text='▶️ Разморозить', callback_data=f'nz!_resume_sub:{sub_id}')])
-            else:
-                buttons.append([types.InlineKeyboardButton(text='❄️ Заморозить', callback_data=f'nz!_freeze_sub:{sub_id}')])
+    if FreezeSettingsService.is_enabled():
+        if sub is not None and getattr(sub, 'frozen_at', None) is not None:
+            buttons.append([types.InlineKeyboardButton(text='▶️ Разморозить', callback_data=f'nz!_resume_sub:{sub_id}')])
+        elif not is_inactive:
+            buttons.append([types.InlineKeyboardButton(text='❄️ Заморозить', callback_data=f'nz!_freeze_sub:{sub_id}')])
 
     buttons.append([types.InlineKeyboardButton(text='◀️ К списку подписок', callback_data='nz!_my_subscriptions')])
 
