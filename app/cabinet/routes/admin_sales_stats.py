@@ -121,6 +121,7 @@ async def get_sales_summary(
                     Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -135,6 +136,7 @@ async def get_sales_summary(
                     Transaction.payment_method == PaymentMethod.MANUAL.value,
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -227,6 +229,7 @@ async def get_sales_summary(
                     Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                     Transaction.is_completed == True,
                     Transaction.created_at < period_start,
+                    Transaction.is_refunded.is_(False),
                 )
             )
             .distinct()
@@ -239,6 +242,7 @@ async def get_sales_summary(
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
                     Transaction.user_id.in_(renewals_subquery),
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -253,6 +257,7 @@ async def get_sales_summary(
                     Transaction.description.ilike('%трафик%'),
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -942,6 +947,7 @@ async def get_addons_stats(
                     Transaction.description.ilike('%трафик%'),
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )

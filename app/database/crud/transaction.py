@@ -299,10 +299,41 @@ async def get_user_total_spent_kopeks(db: AsyncSession, user_id: int) -> int:
                 Transaction.user_id == user_id,
                 Transaction.is_completed.is_(True),
                 Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                Transaction.is_refunded.is_(False),
             )
         )
     )
     return int(result.scalar_one())
+
+
+async def mark_transaction_refunded(db: AsyncSession, transaction_id: int, admin_id: int) -> Transaction | None:
+    """Mark a transaction refunded so it drops out of all money statistics. Idempotent.
+
+    Only marks — balance, subscription and referral state are intentionally left
+    untouched (the admin returns the real money out of band).
+    """
+    txn = await db.get(Transaction, transaction_id)
+    if txn is None:
+        return None
+    txn.is_refunded = True
+    txn.refunded_at = datetime.now(UTC)
+    txn.refunded_by = admin_id
+    await db.commit()
+    logger.info('Transaction marked refunded', transaction_id=transaction_id, admin_id=admin_id)
+    return txn
+
+
+async def unmark_transaction_refunded(db: AsyncSession, transaction_id: int) -> Transaction | None:
+    """Undo a refund mark (admin mistake recovery)."""
+    txn = await db.get(Transaction, transaction_id)
+    if txn is None:
+        return None
+    txn.is_refunded = False
+    txn.refunded_at = None
+    txn.refunded_by = None
+    await db.commit()
+    logger.info('Transaction refund mark cleared', transaction_id=transaction_id)
+    return txn
 
 
 async def complete_transaction(db: AsyncSession, transaction: Transaction) -> Transaction:
@@ -355,6 +386,7 @@ async def get_transactions_statistics(
                 Transaction.created_at >= start_date,
                 Transaction.created_at <= end_date,
                 Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+                Transaction.is_refunded.is_(False),
             )
         )
     )
