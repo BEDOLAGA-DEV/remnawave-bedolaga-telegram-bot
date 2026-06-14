@@ -64,49 +64,60 @@ class WebPushService:
 
     @staticmethod
     def _load_private_key(value: str) -> str:
-        """Resolve the private key config value.
+        """Resolve the VAPID private key into the form pywebpush expects.
 
-        Supported formats:
-        - Full PEM string starting with '-----BEGIN'
-        - Relative or absolute path to a .pem file
-
-        If the value looks like a path and the file exists, read its contents.
-        Otherwise pass the value through verbatim (pywebpush will interpret).
-        Resolution is done from the project root AND from the current working dir,
-        so the bot works regardless of how it's launched.
+        Accepts a PEM string, a path to a .pem file, or an already-encoded
+        value. The result is base64url(PKCS#8 DER): pywebpush feeds the value
+        straight to ``py_vapid.Vapid.from_string``, which (in the installed
+        version) base64url-decodes it and calls ``load_der_private_key`` — it
+        CANNOT parse PEM text, so a PEM passed verbatim fails with
+        "ASN.1 parsing error: invalid length". We therefore convert PEM → DER
+        → base64url here. Path resolution is tried from the CWD and the project
+        root so the bot works regardless of how it is launched.
         """
         if not value:
             return ''
 
-        # Already a PEM string — pass through
+        pem_text: str | None = None
         if value.lstrip().startswith('-----BEGIN'):
+            pem_text = value
+        else:
+            from pathlib import Path
+
+            project_root = Path(__file__).resolve().parent.parent.parent
+            for candidate in (Path(value), project_root / value):
+                try:
+                    if candidate.is_file():
+                        pem_text = candidate.read_text(encoding='ascii')
+                        logger.info('VAPID private key loaded from file', path=str(candidate))
+                        break
+                except OSError:
+                    continue
+
+        if pem_text is None:
+            # Not a PEM and not a resolvable file — assume it is already a form
+            # from_string accepts (base64url DER or raw32) and pass it through.
+            logger.warning(
+                'VAPID private key is not a PEM or existing file; passing through verbatim',
+                value_preview=value[:32] + '...' if len(value) > 32 else value,
+            )
             return value
 
-        # Candidate paths: raw value, project root, /data, cwd
-        import os
-        from pathlib import Path
+        try:
+            import base64
 
-        project_root = Path(__file__).resolve().parent.parent.parent
-        candidates = [
-            Path(value),  # relative to cwd or absolute
-            project_root / value,  # relative to project root
-        ]
+            from cryptography.hazmat.primitives import serialization
 
-        for candidate in candidates:
-            try:
-                if candidate.is_file():
-                    content = candidate.read_text(encoding='ascii')
-                    logger.info('VAPID private key loaded from file', path=str(candidate))
-                    return content
-            except OSError:
-                continue
-
-        # Fallback: return as-is and let pywebpush try
-        logger.warning(
-            'VAPID private key config value is not a recognizable PEM or existing file',
-            value_preview=value[:32] + '...' if len(value) > 32 else value,
-        )
-        return value
+            key = serialization.load_pem_private_key(pem_text.encode('ascii'), password=None)
+            der = key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+            return base64.urlsafe_b64encode(der).rstrip(b'=').decode('ascii')
+        except Exception as e:
+            logger.error('Failed to convert VAPID PEM to base64url-DER', error=e)
+            return pem_text
 
     def _load_pywebpush(self) -> None:
         """Lazily import pywebpush so absence doesn't break app startup."""
