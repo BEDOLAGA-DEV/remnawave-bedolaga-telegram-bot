@@ -200,6 +200,34 @@ async def _deliver_broadcast_to(
     )
 
 
+async def _prompt_broadcast_compose(callback: types.CallbackQuery, state: FSMContext, audience: str) -> None:
+    """After target selection, prompt the compose step based on broadcast_mode.
+
+    copy mode -> ask for a message to copy 1:1 (waiting_for_broadcast_copy_source).
+    html mode -> ask for HTML text (waiting_for_broadcast_message, legacy).
+    """
+    data = await state.get_data()
+    cancel_kb = types.InlineKeyboardMarkup(
+        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')]]
+    )
+    if data.get('broadcast_mode') == 'copy':
+        await callback.message.edit_text(
+            audience
+            + '📋 Отправьте <b>сообщение для рассылки</b> — с любым форматированием/медиа.\n'
+            'Бот скопирует его 1:1 каждому. <b>Не удаляйте</b> его до конца рассылки.',
+            reply_markup=cancel_kb,
+            parse_mode='HTML',
+        )
+        await state.set_state(AdminStates.waiting_for_broadcast_copy_source)
+    else:
+        await callback.message.edit_text(
+            audience + 'Введите текст сообщения для рассылки:\n\n<i>Поддерживается HTML разметка</i>',
+            reply_markup=cancel_kb,
+            parse_mode='HTML',
+        )
+        await state.set_state(AdminStates.waiting_for_broadcast_message)
+
+
 async def _persist_broadcast_result(
     broadcast_id: int,
     sent_count: int,
@@ -591,8 +619,24 @@ async def handle_pinned_broadcast_skip(
 @admin_required
 @error_handler
 async def show_broadcast_targets(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    # Legacy HTML-text broadcast entry — pin the mode so a prior copy broadcast
+    # left in FSM state can't leak into this one. The copy entry sets 'copy'.
+    await state.update_data(broadcast_mode='html')
     await callback.message.edit_text(
         '🎯 <b>Выбор целевой аудитории</b>\n\nВыберите категорию пользователей для рассылки:',
+        reply_markup=get_broadcast_target_keyboard(db_user.language),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def start_copy_broadcast(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    """Entry for the copy_message broadcast mode: pin mode='copy', then pick audience."""
+    await state.update_data(broadcast_mode='copy')
+    await callback.message.edit_text(
+        '📋 <b>Рассылка копией — выбор аудитории</b>\n\nВыберите категорию пользователей для рассылки:',
         reply_markup=get_broadcast_target_keyboard(db_user.language),
         parse_mode='HTML',
     )
@@ -763,19 +807,11 @@ async def select_custom_criteria(callback: types.CallbackQuery, db_user: User, s
 
     await state.update_data(broadcast_target=f'custom_{criteria}')
 
-    await callback.message.edit_text(
-        f'📨 <b>Создание рассылки</b>\n\n'
-        f'🎯 <b>Критерий:</b> {criteria_names.get(criteria, criteria)}\n'
+    audience = (
+        f'📨 <b>Создание рассылки</b>\n\n🎯 <b>Критерий:</b> {criteria_names.get(criteria, criteria)}\n'
         f'👥 <b>Получателей:</b> {user_count}\n\n'
-        f'Введите текст сообщения для рассылки:\n\n'
-        f'<i>Поддерживается HTML разметка</i>',
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')]]
-        ),
-        parse_mode='HTML',
     )
-
-    await state.set_state(AdminStates.waiting_for_broadcast_message)
+    await _prompt_broadcast_compose(callback, state, audience)
     await callback.answer()
 
 
@@ -815,19 +851,10 @@ async def select_broadcast_target(callback: types.CallbackQuery, db_user: User, 
 
     await state.update_data(broadcast_target=target)
 
-    await callback.message.edit_text(
-        f'📨 <b>Создание рассылки</b>\n\n'
-        f'🎯 <b>Аудитория:</b> {target_name}\n'
-        f'👥 <b>Получателей:</b> {user_count}\n\n'
-        f'Введите текст сообщения для рассылки:\n\n'
-        f'<i>Поддерживается HTML разметка</i>',
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')]]
-        ),
-        parse_mode='HTML',
+    audience = (
+        f'📨 <b>Создание рассылки</b>\n\n🎯 <b>Аудитория:</b> {target_name}\n👥 <b>Получателей:</b> {user_count}\n\n'
     )
-
-    await state.set_state(AdminStates.waiting_for_broadcast_message)
+    await _prompt_broadcast_compose(callback, state, audience)
     await callback.answer()
 
 
@@ -928,6 +955,30 @@ async def process_broadcast_media(message: types.Message, db_user: User, state: 
     )
 
     await show_media_preview(message, db_user, state)
+
+
+@admin_required
+@error_handler
+async def process_broadcast_copy_source(message: types.Message, db_user: User, state: FSMContext):
+    """Capture the admin-composed message to copy 1:1, then go to the button selector.
+
+    Stores the source (chat_id, message_id) — copy_message re-copies from here for
+    every recipient, so the admin must not delete this message until the broadcast
+    finishes (warned in the prompt).
+    """
+    if message.content_type in ('new_chat_members', 'left_chat_member', 'pinned_message'):
+        await message.answer('❌ Это сообщение нельзя скопировать. Отправьте обычное сообщение.')
+        return
+
+    await state.update_data(
+        copy_from_chat_id=message.chat.id,
+        copy_source_message_id=message.message_id,
+        has_media=False,
+        media_type=None,
+        media_file_id=None,
+        broadcast_message='📋 Рассылка копией',
+    )
+    await show_button_selector(message, db_user, state)
 
 
 async def show_media_preview(message: types.Message, db_user: User, state: FSMContext):
@@ -2059,6 +2110,7 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_pinned_broadcast_now, F.data.startswith('admin_pinned_broadcast_now:'))
     dp.callback_query.register(handle_pinned_broadcast_skip, F.data.startswith('admin_pinned_broadcast_skip:'))
     dp.callback_query.register(show_broadcast_targets, F.data.in_(['admin_msg_all', 'admin_msg_by_sub']))
+    dp.callback_query.register(start_copy_broadcast, F.data == 'admin_msg_copy')
     dp.callback_query.register(show_tariff_filter, F.data == 'nz!_broadcast_by_tariff')
     dp.callback_query.register(select_broadcast_target, F.data.startswith('nz!_broadcast_'))
     dp.callback_query.register(confirm_broadcast, F.data == 'admin_confirm_broadcast')
@@ -2076,4 +2128,5 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_change_media, F.data == 'nz!_change_media')
     dp.message.register(process_broadcast_message, AdminStates.waiting_for_broadcast_message)
     dp.message.register(process_broadcast_media, AdminStates.waiting_for_broadcast_media)
+    dp.message.register(process_broadcast_copy_source, AdminStates.waiting_for_broadcast_copy_source)
     dp.message.register(process_pinned_message_update, AdminStates.editing_pinned_message)

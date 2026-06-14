@@ -955,6 +955,12 @@ def get_admin_messages_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_MESSAGES_COPY', '📋 Рассылка копией'),
+                    callback_data='admin_msg_copy',
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_PINNED_MESSAGE', '📌 Закрепленное сообщение'),
                     callback_data='admin_pinned_message',
                 )
