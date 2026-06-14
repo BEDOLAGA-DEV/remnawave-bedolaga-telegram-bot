@@ -1046,6 +1046,22 @@ class RemnaWaveWebhookService:
             logger.info('Webhook user.disabled: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
             return
 
+        # Заморозка (vacation) сама отключает юзера в панели → RemnaWave шлёт
+        # эхо user.disabled. Это ожидаемо: заморозка владеет DISABLED-состоянием
+        # панели, а подписка в БД остаётся ACTIVE с меткой frozen_at. Если
+        # деактивировать её здесь, статус слетает в DISABLED, кнопка
+        # «Разморозить» пропадает (is_inactive), и пользователь не может
+        # разморозиться. Пропускаем (как и суточные/эхо-вебхуки ниже).
+        if getattr(subscription, 'frozen_at', None) is not None:
+            logger.info(
+                'Webhook: пропуск disabled для замороженной подписки',
+                subscription_id=subscription.id,
+                user_id=user.id,
+            )
+            self._stamp_webhook_update(subscription)
+            await db.commit()
+            return
+
         # Суточные подписки управляются DailySubscriptionService — не деактивируем
         tariff = sa_inspect(subscription).dict.get('tariff')
         is_active_daily = (
