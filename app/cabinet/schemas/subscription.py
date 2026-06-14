@@ -62,6 +62,9 @@ class SubscriptionData(BaseModel):
     tariff_id: int | None = None
     tariff_name: str | None = None
     traffic_reset_mode: str | None = None
+    frozen_at: datetime | None = None
+    frozen_until: datetime | None = None
+    freeze_available: bool = False  # whether the freeze feature is enabled (admin toggle)
 
     class Config:
         from_attributes = True

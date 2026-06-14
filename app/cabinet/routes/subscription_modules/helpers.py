@@ -209,6 +209,10 @@ def _subscription_to_response(
     # Проверяем настройку скрытия ссылки (скрывается только текст, кнопки работают)
     hide_link = settings.should_hide_subscription_link()
 
+    from app.services.freeze_settings_service import FreezeSettingsService
+
+    freeze_available = FreezeSettingsService.is_enabled()
+
     return SubscriptionResponse(
         id=subscription.id,
         status=actual_status,  # Use actual_status instead of raw status
@@ -244,4 +248,7 @@ def _subscription_to_response(
         tariff_id=tariff_id,
         tariff_name=tariff_name,
         traffic_reset_mode=traffic_reset_mode,
+        frozen_at=getattr(subscription, 'frozen_at', None),
+        frozen_until=getattr(subscription, 'frozen_until', None),
+        freeze_available=freeze_available,
     )
