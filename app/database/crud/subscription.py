@@ -1418,6 +1418,10 @@ async def get_expiring_subscriptions(db: AsyncSession, days_before: int = 3) -> 
             and_(
                 Subscription.status == SubscriptionStatus.ACTIVE.value,
                 User.status == UserStatus.ACTIVE.value,
+                # Замороженные подписки на паузе: их end_date удерживается и
+                # возвращается при разморозке, поэтому они не должны попадать
+                # в предупреждения об истечении.
+                Subscription.frozen_at.is_(None),
                 Subscription.end_date <= threshold_date,
                 Subscription.end_date > datetime.now(UTC),
                 # Не включаем активные суточные подписки — у них end_date всегда +24ч
@@ -1443,6 +1447,10 @@ async def get_expired_subscriptions(db: AsyncSession) -> list[Subscription]:
             and_(
                 Subscription.status == SubscriptionStatus.ACTIVE.value,
                 User.status == UserStatus.ACTIVE.value,
+                # Замороженные подписки на паузе: их end_date удерживается, пока
+                # они заморожены, и возвращается при разморозке. Не истекаем их —
+                # ими управляет планировщик разморозки (_check_frozen_subscriptions).
+                Subscription.frozen_at.is_(None),
                 Subscription.end_date <= datetime.now(UTC),
                 # Не трогаем активные суточные подписки — ими управляет DailySubscriptionService
                 ~and_(
@@ -1471,6 +1479,8 @@ async def get_subscriptions_for_autopay(db: AsyncSession) -> list[Subscription]:
                 User.status == UserStatus.ACTIVE.value,
                 Subscription.autopay_enabled == True,
                 Subscription.is_trial == False,
+                # Замороженная подписка на паузе — автоплатёж по ней не проводим.
+                Subscription.frozen_at.is_(None),
             )
         )
     )

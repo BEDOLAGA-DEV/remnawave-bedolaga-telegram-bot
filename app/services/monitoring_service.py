@@ -410,6 +410,13 @@ class MonitoringService:
                     )
                     continue
 
+                # Frozen subscriptions are paused: their end_date is held while
+                # frozen and credited back on resume. Never expire them here —
+                # the freeze scheduler (_check_frozen_subscriptions) handles them.
+                if getattr(subscription, 'frozen_at', None) is not None:
+                    logger.debug('Пропуск expire подписки: заморожена', subscription_id=subscription.id)
+                    continue
+
                 from app.database.crud.subscription import expire_subscription
 
                 # Capture tariff name before expire_subscription's db.refresh() expires the relationship
@@ -1832,6 +1839,10 @@ class MonitoringService:
                 and_(
                     Subscription.status == SubscriptionStatus.ACTIVE.value,
                     Subscription.is_trial == False,
+                    # Frozen subscriptions are paused — their end_date is held and
+                    # restored on resume, so they must NOT get expiry warnings or
+                    # trigger autopay while frozen.
+                    Subscription.frozen_at.is_(None),
                     Subscription.end_date > current_time,
                     Subscription.end_date <= threshold_date,
                     User.status == UserStatus.ACTIVE.value,
