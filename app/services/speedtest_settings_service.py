@@ -12,6 +12,9 @@ logger = structlog.get_logger(__name__)
 _HOST_RE = re.compile(r'^[a-zA-Z0-9.-]+$')
 
 
+_NAME_MAX_LEN = 64
+
+
 def _sanitize_host(value) -> str | None:
     raw = (value or '').strip() if isinstance(value, str) else ''
     if not raw:
@@ -24,6 +27,17 @@ def _sanitize_host(value) -> str | None:
     return raw
 
 
+def _sanitize_display_name(value) -> str | None:
+    """Custom node display name: free text (any language) minus control
+    characters, trimmed and length-capped. Returns None for empty/non-string."""
+    if not isinstance(value, str):
+        return None
+    cleaned = ''.join(ch for ch in value if ord(ch) >= 0x20 and ord(ch) != 0x7f).strip()
+    if not cleaned:
+        return None
+    return cleaned[:_NAME_MAX_LEN]
+
+
 class SpeedtestSettingsService:
     """Runtime-editable speedtest settings stored on disk."""
 
@@ -31,7 +45,7 @@ class SpeedtestSettingsService:
     _data: dict[str, Any] = {}
     _loaded: bool = False
 
-    _DEFAULTS: dict[str, Any] = {'speedtest': {'enabled': False, 'host_mapping': {}}}
+    _DEFAULTS: dict[str, Any] = {'speedtest': {'enabled': False, 'host_mapping': {}, 'name_mapping': {}}}
 
     @classmethod
     def _ensure_dir(cls) -> None:
@@ -136,3 +150,23 @@ class SpeedtestSettingsService:
             if h:
                 cleaned[str(k)] = h
         return cls._set_field('host_mapping', cleaned)
+
+    # --- name_mapping (custom display names, keyed by node uuid) ---
+
+    @classmethod
+    def get_name_mapping(cls) -> dict:
+        value = cls._get().get('name_mapping', {})
+        if not isinstance(value, dict):
+            return {}
+        return value
+
+    @classmethod
+    def set_name_mapping(cls, mapping) -> bool:
+        if not isinstance(mapping, dict):
+            return False
+        cleaned: dict[str, str] = {}
+        for k, v in mapping.items():
+            name = _sanitize_display_name(v)
+            if name:
+                cleaned[str(k)] = name
+        return cls._set_field('name_mapping', cleaned)
