@@ -175,6 +175,40 @@ async def get_user_achievements(db: AsyncSession, user_id: int) -> list[UserAchi
     return list(result.scalars().all())
 
 
+async def get_achievement_sweep_user_ids(db: AsyncSession, active_days: int) -> list[int]:
+    """User ids to evaluate in the background achievement sweep.
+
+    Union of:
+      - users with an active/trial subscription
+      - active users updated within ``active_days`` days
+    Both restricted to telegram_id IS NOT NULL. Returns a deduped list.
+
+    Uses id-only selects (no SELECT DISTINCT on User rows — the users table has a
+    json column with no equality operator, which breaks DISTINCT on whole rows).
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=active_days)
+
+    sub_ids_result = await db.execute(
+        select(Subscription.user_id)
+        .join(User, User.id == Subscription.user_id)
+        .where(
+            Subscription.status.in_([SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value]),
+            User.telegram_id.isnot(None),
+        )
+    )
+    recent_ids_result = await db.execute(
+        select(User.id).where(
+            User.status == 'active',
+            User.telegram_id.isnot(None),
+            User.updated_at >= cutoff,
+        )
+    )
+
+    ids: set[int] = set(sub_ids_result.scalars().all())
+    ids.update(recent_ids_result.scalars().all())
+    return list(ids)
+
+
 async def unlock_achievement(db: AsyncSession, user_id: int, template_id: int) -> UserAchievement:
     ua = UserAchievement(
         user_id=user_id,

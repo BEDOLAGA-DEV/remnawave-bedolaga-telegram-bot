@@ -296,6 +296,7 @@ class MonitoringService:
                 await self._cleanup_expired_refresh_tokens(db)
                 await self._cleanup_inactive_users(db)
                 await self._sync_with_remnawave(db)
+                await self._check_achievements(db)
 
                 await self._log_monitoring_event(
                     db,
@@ -3149,6 +3150,50 @@ class MonitoringService:
                 {'error': str(e)},
                 is_success=False,
             )
+
+    async def _check_achievements(self, db: AsyncSession):
+        """Background sweep: unlock earned achievements for active/recent users.
+
+        Reuses check_and_unlock_all (evaluate + unlock + reward + notify). Each user
+        is processed in a fresh session so the user-row FOR UPDATE lock stays short
+        and one user's failure never aborts the sweep.
+        """
+        if not settings.ACHIEVEMENTS_ENABLED or not getattr(settings, 'ACHIEVEMENTS_AUTO_CHECK_ENABLED', True):
+            return
+        if not self.bot:
+            return
+
+        from app.database.crud.achievement import check_and_unlock_all, get_achievement_sweep_user_ids
+
+        active_days = int(getattr(settings, 'ACHIEVEMENTS_SWEEP_ACTIVE_DAYS', 7))
+        try:
+            user_ids = await get_achievement_sweep_user_ids(db, active_days)
+        except Exception as e:
+            logger.error('Achievements sweep: failed to load candidates', error=e)
+            return
+
+        if not user_ids:
+            return
+
+        batch_size = 25
+        users_with_unlocks = 0
+        for i in range(0, len(user_ids), batch_size):
+            for uid in user_ids[i : i + batch_size]:
+                try:
+                    async with AsyncSessionLocal() as session:
+                        unlocked = await check_and_unlock_all(session, uid, bot=self.bot)
+                        await session.commit()
+                        if unlocked:
+                            users_with_unlocks += 1
+                except Exception as e:
+                    logger.warning('Achievements sweep: user failed', user_id=uid, error=e)
+            await asyncio.sleep(0.2)
+
+        logger.info(
+            'Achievements sweep done',
+            candidates=len(user_ids),
+            users_with_unlocks=users_with_unlocks,
+        )
 
     async def _check_ticket_sla(self, db: AsyncSession):
         try:
