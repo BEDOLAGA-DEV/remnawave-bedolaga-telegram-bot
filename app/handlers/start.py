@@ -413,9 +413,15 @@ def _calculate_subscription_flags(subscription):
         return False, False
 
     actual_status = getattr(subscription, 'actual_status', None)
+    # A frozen subscription stays reachable in the menu even if a panel echo
+    # desynced its status to DISABLED — otherwise the user can't open it to
+    # unfreeze. Treated as active-for-UI, like 'limited'.
+    is_frozen = getattr(subscription, 'frozen_at', None) is not None
     # 'limited' subscriptions are still active (traffic exhausted, but subscription not expired)
-    has_active_subscription = actual_status in {'active', 'trial', 'limited'}
-    subscription_is_active = bool(getattr(subscription, 'is_active', False)) or actual_status == 'limited'
+    has_active_subscription = actual_status in {'active', 'trial', 'limited'} or is_frozen
+    subscription_is_active = (
+        bool(getattr(subscription, 'is_active', False)) or actual_status == 'limited' or is_frozen
+    )
 
     return has_active_subscription, subscription_is_active
 
@@ -1122,7 +1128,8 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
 
         user_subs_for_flags = getattr(user, 'subscriptions', None) or []
         first_sub_for_flags = next(
-            (s for s in user_subs_for_flags if s.is_active), user_subs_for_flags[0] if user_subs_for_flags else None
+            (s for s in user_subs_for_flags if s.is_active or getattr(s, 'frozen_at', None) is not None),
+            user_subs_for_flags[0] if user_subs_for_flags else None,
         )
         has_active_subscription, subscription_is_active = _calculate_subscription_flags(first_sub_for_flags)
 
@@ -1146,7 +1153,10 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             )
 
         user_subs = getattr(user, 'subscriptions', None) or []
-        first_sub = next((s for s in user_subs if s.is_active), user_subs[0] if user_subs else None)
+        first_sub = next(
+            (s for s in user_subs if s.is_active or getattr(s, 'frozen_at', None) is not None),
+            user_subs[0] if user_subs else None,
+        )
         keyboard = await get_main_menu_keyboard_async(
             db=db,
             user=user,
@@ -1791,7 +1801,8 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
 
         existing_user_subs = getattr(existing_user, 'subscriptions', None) or []
         first_existing_sub = next(
-            (s for s in existing_user_subs if s.is_active), existing_user_subs[0] if existing_user_subs else None
+            (s for s in existing_user_subs if s.is_active or getattr(s, 'frozen_at', None) is not None),
+            existing_user_subs[0] if existing_user_subs else None,
         )
         has_active_subscription, subscription_is_active = _calculate_subscription_flags(first_existing_sub)
 
@@ -2041,7 +2052,10 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
         )
 
         user_subs_menu = getattr(user, 'subscriptions', None) or []
-        first_sub_menu = next((s for s in user_subs_menu if s.is_active), user_subs_menu[0] if user_subs_menu else None)
+        first_sub_menu = next(
+            (s for s in user_subs_menu if s.is_active or getattr(s, 'frozen_at', None) is not None),
+            user_subs_menu[0] if user_subs_menu else None,
+        )
         has_active_subscription, subscription_is_active = _calculate_subscription_flags(first_sub_menu)
 
         menu_text = await get_main_menu_text(user, texts, db)
@@ -2112,7 +2126,8 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
         existing_user_subs = getattr(existing_user, 'subscriptions', None) or []
         first_existing_sub = next(
-            (s for s in existing_user_subs if s.is_active), existing_user_subs[0] if existing_user_subs else None
+            (s for s in existing_user_subs if s.is_active or getattr(s, 'frozen_at', None) is not None),
+            existing_user_subs[0] if existing_user_subs else None,
         )
         has_active_subscription, subscription_is_active = _calculate_subscription_flags(first_existing_sub)
 
@@ -2397,7 +2412,10 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
         )
 
         user_subs_menu = getattr(user, 'subscriptions', None) or []
-        first_sub_menu = next((s for s in user_subs_menu if s.is_active), user_subs_menu[0] if user_subs_menu else None)
+        first_sub_menu = next(
+            (s for s in user_subs_menu if s.is_active or getattr(s, 'frozen_at', None) is not None),
+            user_subs_menu[0] if user_subs_menu else None,
+        )
         has_active_subscription, subscription_is_active = _calculate_subscription_flags(first_sub_menu)
 
         menu_text = await get_main_menu_text(user, texts, db)
