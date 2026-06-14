@@ -506,6 +506,7 @@ async def _fetch_campaign_stats(
                     Transaction.user_id.in_(all_campaign_users),
                     Transaction.type.in_(SPENT_TRANSACTION_TYPES),
                     Transaction.is_completed.is_(True),
+                    Transaction.is_refunded.is_(False),
                 )
             )
             .group_by(Transaction.user_id)
@@ -1143,6 +1144,7 @@ async def get_network_user_detail(
             Transaction.user_id == user_id,
             Transaction.type.in_(SPENT_TRANSACTION_TYPES),
             Transaction.is_completed.is_(True),
+            Transaction.is_refunded.is_(False),
         )
     )
     spent_result = await db.execute(spent_stmt)
@@ -1188,6 +1190,7 @@ async def get_network_user_detail(
             Transaction.user_id.in_(branch_user_ids_stmt),
             Transaction.type.in_(SPENT_TRANSACTION_TYPES),
             Transaction.is_completed.is_(True),
+            Transaction.is_refunded.is_(False),
         )
     )
     branch_rev_result = await db.execute(branch_rev_stmt)
@@ -1312,6 +1315,7 @@ async def get_network_campaign_detail(
                     Transaction.user_id.in_(campaign_user_ids),
                     Transaction.type.in_(SPENT_TRANSACTION_TYPES),
                     Transaction.is_completed.is_(True),
+                    Transaction.is_refunded.is_(False),
                 )
             )
             .group_by(Transaction.user_id)
@@ -1495,6 +1499,7 @@ async def search_referral_network(
                         Transaction.user_id.in_(all_campaign_user_ids),
                         Transaction.type.in_(SPENT_TRANSACTION_TYPES),
                         Transaction.is_completed.is_(True),
+                        Transaction.is_refunded.is_(False),
                     )
                 )
                 .group_by(Transaction.user_id)

@@ -464,6 +464,7 @@ async def get_contest_transaction_breakdown(
                 Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                 Transaction.created_at >= contest_start,
                 Transaction.created_at <= contest_end,
+                Transaction.is_refunded.is_(False),
             )
         )
     )
@@ -480,6 +481,7 @@ async def get_contest_transaction_breakdown(
                 Transaction.payment_method.is_not(None),  # Исключаем системные бонусы
                 Transaction.created_at >= contest_start,
                 Transaction.created_at <= contest_end,
+                Transaction.is_refunded.is_(False),
             )
         )
     )
@@ -653,6 +655,7 @@ async def debug_contest_transactions(
                 Transaction.payment_method.is_not(None),  # Исключаем системные бонусы
                 Transaction.created_at >= contest_start,
                 Transaction.created_at <= contest_end,
+                Transaction.is_refunded.is_(False),
             )
         )
     )
@@ -666,6 +669,7 @@ async def debug_contest_transactions(
                 Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                 Transaction.created_at >= contest_start,
                 Transaction.created_at <= contest_end,
+                Transaction.is_refunded.is_(False),
             )
         )
     )
@@ -797,6 +801,7 @@ async def sync_contest_events(
                 Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                 Transaction.created_at >= contest_start,
                 Transaction.created_at <= contest_end,
+                Transaction.is_refunded.is_(False),
             )
         )
         sub_result = await db.execute(subscription_query)
@@ -811,6 +816,7 @@ async def sync_contest_events(
                 Transaction.payment_method.is_not(None),  # Исключаем системные бонусы
                 Transaction.created_at >= contest_start,
                 Transaction.created_at <= contest_end,
+                Transaction.is_refunded.is_(False),
             )
         )
         dep_result = await db.execute(deposit_query)

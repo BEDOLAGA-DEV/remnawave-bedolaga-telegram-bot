@@ -997,6 +997,7 @@ async def get_addons_stats(
             Transaction.description.ilike('%устройств%'),
             Transaction.created_at >= period_start,
             Transaction.created_at <= period_end,
+            Transaction.is_refunded.is_(False),
         )
         device_result = await db.execute(
             select(
@@ -1097,6 +1098,7 @@ async def get_deposits_stats(
             Transaction.payment_method.in_(methods_with_manual),
             Transaction.created_at >= period_start,
             Transaction.created_at <= period_end,
+            Transaction.is_refunded.is_(False),
         )
 
         totals_result = await db.execute(

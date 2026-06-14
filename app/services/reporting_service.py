@@ -485,6 +485,7 @@ class ReportingService:
             self._exclude_referral_deposits_condition(),
             # Только реальные платежи (исключаем колесо, промокоды, админские, баланс)
             Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+            Transaction.is_refunded.is_(False),
         )
 
     async def _get_top_referrers(
