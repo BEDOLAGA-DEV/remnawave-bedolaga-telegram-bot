@@ -80,6 +80,7 @@ async def _get_overview(db: AsyncSession) -> dict[str, object]:
                 func.date(Transaction.created_at) == today,
                 Transaction.type == TransactionType.DEPOSIT.value,
                 Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+                Transaction.is_refunded.is_(False),
             )
         )
         or 0

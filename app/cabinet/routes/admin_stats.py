@@ -916,11 +916,14 @@ async def get_recent_payments(
         # Calculate totals
         total_count_result = await db.execute(
             select(func.count(Transaction.id)).where(
-                Transaction.type.in_(
-                    [
-                        TransactionType.DEPOSIT.value,
-                        TransactionType.SUBSCRIPTION_PAYMENT.value,
-                    ]
+                and_(
+                    Transaction.type.in_(
+                        [
+                            TransactionType.DEPOSIT.value,
+                            TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        ]
+                    ),
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -933,6 +936,7 @@ async def get_recent_payments(
                     Transaction.is_completed == True,
                     Transaction.created_at >= today_start,
                     Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -945,6 +949,7 @@ async def get_recent_payments(
                     Transaction.is_completed == True,
                     Transaction.created_at >= week_ago,
                     Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )

@@ -613,6 +613,7 @@ async def get_tariff_stats(
             Subscription.tariff_id == tariff_id,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
             Transaction.is_completed == True,
+            Transaction.is_refunded.is_(False),
         )
     )
     revenue_kopeks = revenue_result.scalar() or 0

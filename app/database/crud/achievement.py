@@ -229,6 +229,7 @@ async def _get_user_stat(db: AsyncSession, user: User, condition_type: str) -> i
                     Transaction.user_id == user.id,
                     Transaction.type == TransactionType.DEPOSIT.value,
                     Transaction.is_completed.is_(True),
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -314,6 +315,7 @@ async def _get_user_stat(db: AsyncSession, user: User, condition_type: str) -> i
                     Transaction.type == TransactionType.DEPOSIT.value,
                     Transaction.is_completed.is_(True),
                     Transaction.amount_kopeks >= min_kopeks,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -366,6 +368,7 @@ async def _get_user_stat(db: AsyncSession, user: User, condition_type: str) -> i
                     Transaction.user_id == user.id,
                     Transaction.type == TransactionType.DEPOSIT.value,
                     Transaction.is_completed.is_(True),
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -402,6 +405,7 @@ async def _get_user_stat(db: AsyncSession, user: User, condition_type: str) -> i
                     Transaction.user_id.in_(select(ref_user_ids)),
                     Transaction.type == TransactionType.DEPOSIT.value,
                     Transaction.is_completed.is_(True),
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -497,6 +501,7 @@ async def _compute_topup_window_payout(
                 Transaction.is_completed.is_(True),
                 Transaction.amount_kopeks >= min_topup_kopeks,
                 Transaction.created_at >= window_start,
+                Transaction.is_refunded.is_(False),
             )
         )
     )

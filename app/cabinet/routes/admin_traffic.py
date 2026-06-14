@@ -444,6 +444,7 @@ async def _get_bulk_spending(db: AsyncSession, user_ids: list[int]) -> dict[int,
                 Transaction.user_id.in_(user_ids),
                 Transaction.is_completed.is_(True),
                 Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                Transaction.is_refunded.is_(False),
             )
         )
         .group_by(Transaction.user_id)

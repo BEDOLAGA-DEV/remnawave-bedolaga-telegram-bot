@@ -121,6 +121,7 @@ async def get_sales_summary(
                     Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -135,6 +136,7 @@ async def get_sales_summary(
                     Transaction.payment_method == PaymentMethod.MANUAL.value,
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -227,6 +229,7 @@ async def get_sales_summary(
                     Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                     Transaction.is_completed == True,
                     Transaction.created_at < period_start,
+                    Transaction.is_refunded.is_(False),
                 )
             )
             .distinct()
@@ -239,6 +242,7 @@ async def get_sales_summary(
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
                     Transaction.user_id.in_(renewals_subquery),
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -253,6 +257,7 @@ async def get_sales_summary(
                     Transaction.description.ilike('%трафик%'),
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -544,6 +549,7 @@ async def get_sales_stats(
                     Transaction.is_completed == True,
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -605,6 +611,7 @@ async def get_sales_stats(
                     Transaction.is_completed == True,
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
             .group_by(func.date(Transaction.created_at))
@@ -731,6 +738,7 @@ async def get_renewals_stats(
                         Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                         Transaction.is_completed == True,
                         Transaction.user_id.in_(repeat_users_subquery),
+                        Transaction.is_refunded.is_(False),
                     )
                 )
             )
@@ -768,6 +776,7 @@ async def get_renewals_stats(
                         Transaction.created_at >= period_start,
                         Transaction.created_at <= period_end,
                         Transaction.user_id.in_(existing_users_subquery),
+                        Transaction.is_refunded.is_(False),
                     )
                 )
             )
@@ -797,6 +806,7 @@ async def get_renewals_stats(
                         Transaction.created_at >= prev_start,
                         Transaction.created_at <= prev_end,
                         Transaction.user_id.in_(prev_existing_subquery),
+                        Transaction.is_refunded.is_(False),
                     )
                 )
             )
@@ -821,6 +831,7 @@ async def get_renewals_stats(
                     Transaction.is_completed == True,
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -839,6 +850,7 @@ async def get_renewals_stats(
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
                     Transaction.user_id.in_(existing_users_subquery),
+                    Transaction.is_refunded.is_(False),
                 )
             )
             .group_by(func.date(Transaction.created_at))
@@ -942,6 +954,7 @@ async def get_addons_stats(
                     Transaction.description.ilike('%трафик%'),
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -984,6 +997,7 @@ async def get_addons_stats(
             Transaction.description.ilike('%устройств%'),
             Transaction.created_at >= period_start,
             Transaction.created_at <= period_end,
+            Transaction.is_refunded.is_(False),
         )
         device_result = await db.execute(
             select(
@@ -1084,6 +1098,7 @@ async def get_deposits_stats(
             Transaction.payment_method.in_(methods_with_manual),
             Transaction.created_at >= period_start,
             Transaction.created_at <= period_end,
+            Transaction.is_refunded.is_(False),
         )
 
         totals_result = await db.execute(

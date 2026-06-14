@@ -51,6 +51,7 @@ class ReferralWithdrawalService:
                 Transaction.type == TransactionType.DEPOSIT.value,
                 Transaction.is_completed == True,
                 Transaction.payment_method.isnot(None),
+                Transaction.is_refunded.is_(False),
             )
         )
         return result.scalar() or 0
@@ -293,6 +294,7 @@ class ReferralWithdrawalService:
                     Transaction.is_completed == True,
                     Transaction.created_at >= month_ago,
                     Transaction.payment_method.isnot(None),
+                    Transaction.is_refunded.is_(False),
                 )
                 .group_by(Transaction.user_id)
             )
@@ -342,6 +344,7 @@ class ReferralWithdrawalService:
                     Transaction.type == TransactionType.DEPOSIT.value,
                     Transaction.is_completed == True,
                     Transaction.payment_method.isnot(None),
+                    Transaction.is_refunded.is_(False),
                 )
             )
             ref_stats = all_ref_deposits.fetchone()

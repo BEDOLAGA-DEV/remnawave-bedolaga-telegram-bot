@@ -2476,6 +2476,12 @@ class Transaction(Base):
     created_at = Column(AwareDateTime(), default=func.now())
     completed_at = Column(AwareDateTime(), nullable=True)
 
+    # Refund marking: admin flags a payment as refunded so it drops out of all
+    # money statistics (balance/subscription/referrals are left untouched).
+    is_refunded = Column(Boolean, default=False, nullable=False, server_default='false')
+    refunded_at = Column(AwareDateTime(), nullable=True)
+    refunded_by = Column(Integer, nullable=True)
+
     user = relationship('User', back_populates='transactions')
 
     @property
