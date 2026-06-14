@@ -55,6 +55,7 @@ class SpeedtestService:
     async def get_ping_targets(self) -> list[dict]:
         nodes = await self._get_nodes_cached()
         mapping = SpeedtestSettingsService.get_host_mapping()
+        name_mapping = SpeedtestSettingsService.get_name_mapping()
         targets = []
         for node in nodes:
             if node.get('is_disabled'):
@@ -62,8 +63,11 @@ class SpeedtestService:
             ping_host = self._resolve_ping_host(node, mapping)
             if not ping_host:
                 continue
+            # Custom display name overrides the panel node name; the flag is
+            # built by the frontend from country_code, which stays untouched.
+            display_name = name_mapping.get(node.get('uuid')) or node.get('name', '')
             targets.append({
-                'name': node.get('name', ''),
+                'name': display_name,
                 'country_code': node.get('country_code'),
                 'ping_host': ping_host,
                 'is_online': bool(node.get('is_node_online', node.get('is_connected', False))),

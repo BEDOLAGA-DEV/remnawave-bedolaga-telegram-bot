@@ -24,6 +24,16 @@ def service():
     return svc
 
 
+@pytest.fixture(autouse=True)
+def _no_name_overrides(monkeypatch):
+    # Default: no custom display names, so get_ping_targets never touches disk
+    # in unit tests. Tests that exercise overrides re-patch get_name_mapping.
+    monkeypatch.setattr(
+        ss.SpeedtestSettingsService, 'get_name_mapping', classmethod(lambda cls: {}), raising=False
+    )
+    yield
+
+
 @pytest.mark.asyncio
 async def test_mapping_resolves_host(service, monkeypatch):
     monkeypatch.setattr(ss.SpeedtestSettingsService, 'get_host_mapping',
@@ -92,6 +102,22 @@ async def test_template_sanitizes_hostile_node_name(service, monkeypatch):
     hosts = [t['ping_host'] for t in targets]
     assert all(' ' not in h and '/' not in h for h in hosts)
     assert 'has space' not in hosts
+
+
+@pytest.mark.asyncio
+async def test_name_mapping_overrides_display_name(service, monkeypatch):
+    # A custom name overrides node.name; the flag source (country_code) is left
+    # untouched. Nodes without an override keep their RemnaWave name.
+    monkeypatch.setattr(ss.SpeedtestSettingsService, 'get_host_mapping',
+                        classmethod(lambda cls: {'u1': 'nl1.example.com', 'u2': 'de1.example.com'}))
+    monkeypatch.setattr(ss.SpeedtestSettingsService, 'get_name_mapping',
+                        classmethod(lambda cls: {'u1': 'Custom NL'}))
+    monkeypatch.setattr(ss.settings, 'SPEEDTEST_PING_HOST_TEMPLATE', '', raising=False)
+    targets = await service.get_ping_targets()
+    by_host = {t['ping_host']: t for t in targets}
+    assert by_host['nl1.example.com']['name'] == 'Custom NL'   # overridden
+    assert by_host['nl1.example.com']['country_code'] == 'NL'  # flag source untouched
+    assert by_host['de1.example.com']['name'] == 'DE-1'        # fallback to node name
 
 
 @pytest.mark.asyncio
