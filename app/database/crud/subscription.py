@@ -1,3 +1,4 @@
+import contextlib
 import math
 import secrets
 from collections.abc import Iterable
@@ -5,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import and_, case, delete, func, select
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.exc import StaleDataError
@@ -24,6 +26,37 @@ from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
+
+# Статусы, при которых подписка считается «живой» (индекс uq_subscriptions_user_tariff_active
+# защищает именно эти статусы). Используется в нескольких местах модуля.
+ALIVE_SUBSCRIPTION_STATUSES: frozenset[str] = frozenset(
+    {
+        SubscriptionStatus.ACTIVE.value,
+        SubscriptionStatus.TRIAL.value,
+        SubscriptionStatus.LIMITED.value,
+    }
+)
+
+# Имя частичного уникального индекса, конфликт по которому мы ожидаем
+# при гонке создания триальной подписки.
+UQ_TRIAL_CONSTRAINT = 'uq_subscriptions_user_tariff_active'
+
+
+def _is_trial_unique_violation(exc: IntegrityError) -> bool:
+    """Проверяет, вызвана ли IntegrityError конфликтом по нашему constraint.
+
+    Использует структурированное поле asyncpg (``exc.orig.constraint_name``),
+    со строковым fallback на случай обёрток или будущей смены драйвера.
+    """
+    orig = exc.orig
+    if orig is None:
+        return False
+    # asyncpg: UniqueViolationError.constraint_name
+    name = getattr(orig, 'constraint_name', None)
+    if name is not None:
+        return name == UQ_TRIAL_CONSTRAINT
+    # Строковый fallback — менее надёжен, но лучше чем ничего
+    return UQ_TRIAL_CONSTRAINT.lower() in str(orig).lower()
 
 
 async def generate_unique_short_id(db: AsyncSession, max_attempts: int = 10) -> str:
@@ -174,7 +207,7 @@ async def create_trial_subscription(
     # In multi-tariff mode, only reuse a subscription for the SAME tariff to avoid
     # overwriting a paid subscription for a different tariff.
     existing = None
-    if settings.is_multi_tariff_enabled() and tariff_id:
+    if settings.is_multi_tariff_enabled() and tariff_id is not None:
         for sub in await get_active_subscriptions_by_user_id(db, user_id):
             if sub.tariff_id == tariff_id:
                 existing = sub
@@ -199,6 +232,25 @@ async def create_trial_subscription(
         )
         return existing
 
+    # Идемпотентность: если живая (active/trial/limited) подписка на этот тариф уже
+    # существует (например, из-за двойного клика / гонки запросов), не пытаемся
+    # вставить дубликат — иначе сработает частичный UNIQUE
+    # ``uq_subscriptions_user_tariff_active`` и упадём с IntegrityError. Возвращаем
+    # существующую подписку как результат активации.
+    # Проверяем явно только «живые» статусы: в single-tariff ветке existing приходит
+    # из get_subscription_by_user_id(), который может вернуть EXPIRED/DISABLED —
+    # в этом случае нужно создать новый триал, а не вернуть устаревшую запись.
+    # PENDING уже обработан блоком выше и сюда не доходит.
+    if existing and existing.status in ALIVE_SUBSCRIPTION_STATUSES:
+        logger.info(
+            '🎁 Живая подписка для пользователя уже существует — возвращаем её без INSERT',
+            existing_id=existing.id,
+            existing_status=existing.status,
+            existing_is_trial=existing.is_trial,
+            user_id=user_id,
+        )
+        return existing
+
     short_id = await generate_unique_short_id(db)
 
     subscription = Subscription(
@@ -217,11 +269,37 @@ async def create_trial_subscription(
     )
 
     db.add(subscription)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # Всегда откатываем транзакцию и убираем объект из сессии — независимо от
+        # причины ошибки, сессию нельзя оставлять в broken-состоянии.
+        await db.rollback()
+        with contextlib.suppress(InvalidRequestError):
+            db.expunge(subscription)
+
+        # Пробрасываем ошибки, не связанные с конфликтом по нашему уникальному индексу,
+        # чтобы не маскировать неожиданные IntegrityError из других constraint'ов.
+        if not _is_trial_unique_violation(exc):
+            raise
+
+        logger.warning(
+            '⚠️ Гонка при создании триальной подписки — подписка уже создана параллельно',
+            user_id=user_id,
+            tariff_id=tariff_id,
+        )
+        if settings.is_multi_tariff_enabled() and tariff_id is not None:
+            concurrent = await get_subscription_by_user_and_tariff(db, user_id, tariff_id)
+        else:
+            concurrent = await get_subscription_by_user_id(db, user_id)
+        if concurrent:
+            return concurrent
+        raise
     await db.refresh(subscription)
 
     logger.info(
-        f'🎁 Создана триальная подписка для пользователя {user_id}' + (f' с тарифом {tariff_id}' if tariff_id else '')
+        f'🎁 Создана триальная подписка для пользователя {user_id}'
+        + (f' с тарифом {tariff_id}' if tariff_id is not None else '')
     )
 
     if final_squads:
@@ -2526,13 +2604,7 @@ async def get_active_subscriptions_by_user_id(db: AsyncSession, user_id: int) ->
         )
         .where(
             Subscription.user_id == user_id,
-            Subscription.status.in_(
-                [
-                    SubscriptionStatus.ACTIVE.value,
-                    SubscriptionStatus.TRIAL.value,
-                    SubscriptionStatus.LIMITED.value,
-                ]
-            ),
+            Subscription.status.in_(list(ALIVE_SUBSCRIPTION_STATUSES)),
         )
         .order_by(Subscription.created_at.desc())
     )
@@ -2587,11 +2659,7 @@ async def get_subscription_by_user_and_tariff(
     without this expired duplicates of the same tariff piled up for users.
     Prefers the freshest candidate (latest end_date) — an alive one, if any.
     """
-    statuses = [
-        SubscriptionStatus.ACTIVE.value,
-        SubscriptionStatus.TRIAL.value,
-        SubscriptionStatus.LIMITED.value,
-    ]
+    statuses = list(ALIVE_SUBSCRIPTION_STATUSES)
     if include_inactive:
         statuses += [SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value]
 
