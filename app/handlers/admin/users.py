@@ -1091,26 +1091,74 @@ async def show_user_transactions(callback: types.CallbackQuery, db_user: User, d
     text += f'👤 {user_link} (ID: <code>{user_id_display}</code>)\n'
     text += f'💰 Текущий баланс: {settings.format_price(user.balance_kopeks)}\n\n'
 
+    keyboard_rows: list[list[types.InlineKeyboardButton]] = []
     if transactions:
         text += '<b>Последние транзакции:</b>\n\n'
 
         for transaction in transactions:
             type_emoji = '📈' if transaction.amount_kopeks > 0 else '📉'
-            text += f'{type_emoji} {settings.format_price(abs(transaction.amount_kopeks))}\n'
+            refund_mark = ' ↩️<i>возврат</i>' if getattr(transaction, 'is_refunded', False) else ''
+            text += (
+                f'{type_emoji} <code>#{transaction.id}</code> '
+                f'{settings.format_price(abs(transaction.amount_kopeks))}{refund_mark}\n'
+            )
             text += f'📋 {html.escape(transaction.description or "")}\n'
             text += f'📅 {format_datetime(transaction.created_at)}\n\n'
+
+            # Refund toggle only for real payments (exclusion from stats is the point).
+            if transaction.type in (TransactionType.DEPOSIT.value, TransactionType.SUBSCRIPTION_PAYMENT.value):
+                if getattr(transaction, 'is_refunded', False):
+                    keyboard_rows.append([types.InlineKeyboardButton(
+                        text=f'↩️ Отменить возврат #{transaction.id}',
+                        callback_data=f'admin_txn_unrefund_{transaction.id}_{user_id}')])
+                else:
+                    keyboard_rows.append([types.InlineKeyboardButton(
+                        text=f'↩️ Возврат #{transaction.id}',
+                        callback_data=f'admin_txn_refund_{transaction.id}_{user_id}')])
     else:
         text += '📭 <b>Транзакции отсутствуют</b>'
 
+    keyboard_rows.append(
+        [types.InlineKeyboardButton(text='⬅️ К пользователю', callback_data=f'admin_user_manage_{user_id}')]
+    )
+
     await callback.message.edit_text(
         text,
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [types.InlineKeyboardButton(text='⬅️ К пользователю', callback_data=f'admin_user_manage_{user_id}')]
-            ]
-        ),
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
     )
     await callback.answer()
+
+
+@admin_required
+@error_handler
+async def admin_txn_refund(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    from app.database.crud.transaction import mark_transaction_refunded
+
+    parts = callback.data.split('_')  # admin_txn_refund_<txn>_<user>
+    txn_id, user_id = int(parts[3]), int(parts[4])
+    txn = await mark_transaction_refunded(db, txn_id, admin_id=db_user.id)
+    if txn is None:
+        await callback.answer('❌ Транзакция не найдена', show_alert=True)
+        return
+    await callback.answer('↩️ Помечено возвратом (исключено из статистики)', show_alert=True)
+    callback.data = f'admin_user_transactions_{user_id}'
+    await show_user_transactions(callback, db_user, db)
+
+
+@admin_required
+@error_handler
+async def admin_txn_unrefund(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    from app.database.crud.transaction import unmark_transaction_refunded
+
+    parts = callback.data.split('_')  # admin_txn_unrefund_<txn>_<user>
+    txn_id, user_id = int(parts[3]), int(parts[4])
+    txn = await unmark_transaction_refunded(db, txn_id)
+    if txn is None:
+        await callback.answer('❌ Транзакция не найдена', show_alert=True)
+        return
+    await callback.answer('Возврат отменён', show_alert=True)
+    callback.data = f'admin_user_transactions_{user_id}'
+    await show_user_transactions(callback, db_user, db)
 
 
 @admin_required
@@ -6731,6 +6779,8 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(admin_select_user_subscription, F.data.startswith('admin_user_sub_select_'))
 
     dp.callback_query.register(show_user_transactions, F.data.startswith('admin_user_transactions_'))
+    dp.callback_query.register(admin_txn_refund, F.data.startswith('admin_txn_refund_'))
+    dp.callback_query.register(admin_txn_unrefund, F.data.startswith('admin_txn_unrefund_'))
 
     dp.callback_query.register(show_user_statistics, F.data.startswith('admin_user_statistics_'))
 
