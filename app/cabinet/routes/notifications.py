@@ -81,7 +81,7 @@ def _update_notification_settings(user: User, updates: dict[str, Any]) -> dict[s
 # ============ Routes ============
 
 
-@router.get('', response_model=NotificationSettingsResponse)
+@router.get('/settings', response_model=NotificationSettingsResponse)
 async def get_notification_settings(
     user: User = Depends(get_current_cabinet_user),
 ):
@@ -90,7 +90,7 @@ async def get_notification_settings(
     return NotificationSettingsResponse(**settings)
 
 
-@router.patch('', response_model=NotificationSettingsResponse)
+@router.patch('/settings', response_model=NotificationSettingsResponse)
 async def update_notification_settings(
     request: NotificationSettingsUpdate,
     user: User = Depends(get_current_cabinet_user),
