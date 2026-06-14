@@ -29,6 +29,14 @@ async def nodes_latency_targets(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Speedtest disabled')
     subs = await get_active_subscriptions_by_user_id(db, user.id)
     if not subs:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Subscription required')
+        # Allow exactly one free run for users without an active subscription;
+        # after that the speedtest requires a subscription again.
+        if user.free_speedtest_used:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={'code': 'free_used', 'message': 'Subscription required'},
+            )
+        user.free_speedtest_used = True
+        await db.commit()
     targets = await speedtest_service.get_ping_targets()
     return {'targets': targets, 'samples': settings.get_speedtest_samples()}

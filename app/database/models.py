@@ -1950,6 +1950,8 @@ class User(Base):
     balance_kopeks = Column(Integer, default=0)
     used_promocodes = Column(Integer, default=0)
     has_had_paid_subscription = Column(Boolean, default=False, nullable=False)
+    # One free speedtest run for users without an active subscription.
+    free_speedtest_used = Column(Boolean, default=False, nullable=False, server_default='false')
     referred_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
     referral_code = Column(String(20), unique=True, nullable=True)
     trial_invite_bonus_days_used = Column(Integer, default=0, nullable=False, server_default='0')
