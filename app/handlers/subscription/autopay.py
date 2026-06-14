@@ -11,6 +11,7 @@ from app.database.crud.saved_payment_method import (
 from app.database.crud.subscription import update_subscription_autopay
 from app.database.models import User
 from app.keyboards.inline import (
+    _get_antilopay_recurrent_display_name,
     _get_payment_method_display_name,
     get_autopay_days_keyboard,
     get_autopay_keyboard,
@@ -153,6 +154,12 @@ async def toggle_autopay(callback: types.CallbackQuery, db_user: User, db: Async
 
     await update_subscription_autopay(db, subscription, enable)
 
+    if not enable and settings.ANTILOPAY_RECURRENT_ENABLED:
+        from app.services.payment_service import PaymentService
+
+        payment_service = PaymentService()
+        await payment_service.cancel_user_antilopay_recurrents(db, db_user.id)
+
     texts = get_texts(db_user.language)
     status = texts.t('AUTOPAY_STATUS_ENABLED', 'включен') if enable else texts.t('AUTOPAY_STATUS_DISABLED', 'выключен')
     await callback.answer(texts.t('AUTOPAY_TOGGLE_SUCCESS', '✅ Автоплатеж {status}!').format(status=status))
@@ -274,7 +281,16 @@ async def set_autopay_period(callback: types.CallbackQuery, db_user: User, db: A
 
 async def handle_saved_cards_list(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     texts = get_texts(db_user.language)
-    cards = await get_active_payment_methods_by_user(db, db_user.id)
+    cards = []
+    if settings.YOOKASSA_RECURRENT_ENABLED:
+        cards.extend(await get_active_payment_methods_by_user(db, db_user.id))
+    if settings.ANTILOPAY_RECURRENT_ENABLED:
+        from app.database.crud.antilopay_recurrent import get_active_antilopay_recurrents_by_user
+
+        apay_recurrents = await get_active_antilopay_recurrents_by_user(db, db_user.id)
+        for item in apay_recurrents:
+            item.provider = 'antilopay'  # type: ignore[attr-defined]
+        cards.extend(apay_recurrents)
 
     if not cards:
         await callback.message.edit_text(
@@ -296,6 +312,71 @@ async def handle_saved_cards_list(callback: types.CallbackQuery, db_user: User, 
             parse_mode='HTML',
         )
     await callback.answer()
+
+
+async def handle_unlink_apay_recurrent(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
+    try:
+        recurrent_db_id = int(callback.data.split('_')[-1])
+    except (ValueError, IndexError):
+        await callback.answer(texts.t('INVALID_REQUEST', 'Invalid request'), show_alert=True)
+        return
+
+    from app.database.crud.antilopay_recurrent import get_antilopay_recurrent_by_id
+
+    recurrent = await get_antilopay_recurrent_by_id(db, recurrent_db_id, user_id=db_user.id)
+    if not recurrent:
+        await callback.answer(
+            texts.t('SAVED_CARDS_UNLINK_ERROR', '❌ Не удалось отвязать карту'),
+            show_alert=True,
+        )
+        return
+
+    card_label = _get_antilopay_recurrent_display_name(recurrent, db_user.language)
+    text = texts.t(
+        'SAVED_CARDS_CONFIRM_UNLINK',
+        'Вы уверены, что хотите отвязать карту <b>{card}</b>?\n\n'
+        'После отвязки автоплатеж не сможет использовать эту карту.',
+    ).format(card=card_label)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_confirm_unlink_keyboard(recurrent_db_id, db_user.language, provider='antilopay'),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+async def handle_confirm_unlink_apay(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    texts = get_texts(db_user.language)
+    try:
+        recurrent_db_id = int(callback.data.split('_')[-1])
+    except (ValueError, IndexError):
+        await callback.answer(texts.t('INVALID_REQUEST', 'Invalid request'), show_alert=True)
+        return
+
+    from app.database.crud.antilopay_recurrent import deactivate_antilopay_recurrent, get_antilopay_recurrent_by_id
+    from app.services.antilopay_service import antilopay_service
+
+    recurrent = await get_antilopay_recurrent_by_id(db, recurrent_db_id, user_id=db_user.id)
+    if not recurrent:
+        await callback.answer(
+            texts.t('SAVED_CARDS_UNLINK_ERROR', '❌ Не удалось отвязать карту'),
+            show_alert=True,
+        )
+        return
+
+    try:
+        await antilopay_service.cancel_recurrent_payment(
+            recurrent_id=recurrent.recurrent_id,
+            transaction_id=recurrent.initial_payment_id,
+        )
+    except Exception:
+        pass
+    await deactivate_antilopay_recurrent(db, recurrent)
+
+    await callback.answer(texts.t('SAVED_CARDS_UNLINKED', '✅ Карта отвязана'))
+    await handle_saved_cards_list(callback, db_user, db)
 
 
 async def handle_unlink_card(callback: types.CallbackQuery, db_user: User, db: AsyncSession):

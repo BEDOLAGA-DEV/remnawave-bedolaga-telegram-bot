@@ -72,6 +72,12 @@ async def update_autopay(
 
     await db.commit()
 
+    if not request.enabled and settings.ANTILOPAY_RECURRENT_ENABLED:
+        from app.services.payment_service import PaymentService
+
+        payment_service = PaymentService()
+        await payment_service.cancel_user_antilopay_recurrents(db, user.id)
+
     return {
         'message': 'Autopay settings updated',
         'autopay_enabled': subscription.autopay_enabled,

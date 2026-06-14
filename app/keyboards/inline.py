@@ -1551,7 +1551,7 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
             InlineKeyboardButton(text=texts.BALANCE_TOP_UP, callback_data='balance_topup'),
         ],
     ]
-    if settings.YOOKASSA_RECURRENT_ENABLED:
+    if settings.YOOKASSA_RECURRENT_ENABLED or settings.ANTILOPAY_RECURRENT_ENABLED:
         keyboard.append(
             [
                 InlineKeyboardButton(
@@ -2361,24 +2361,43 @@ def _get_payment_method_display_name(card, language: str = DEFAULT_LANGUAGE) -> 
     return method_name
 
 
+def _get_antilopay_recurrent_display_name(recurrent, language: str = DEFAULT_LANGUAGE) -> str:
+    if getattr(recurrent, 'title', None):
+        return recurrent.title
+    pay_data = getattr(recurrent, 'pay_data', None)
+    if pay_data:
+        return f'Antilopay {pay_data}'
+    return 'Antilopay recurrent'
+
+
 def get_saved_cards_keyboard(cards: list, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
     texts = get_texts(language)
     keyboard = []
     for card in cards:
-        card_label = f'🗑 {_get_payment_method_display_name(card, language)}'
-        keyboard.append([InlineKeyboardButton(text=card_label, callback_data=f'unlink_card_{card.id}')])
+        if getattr(card, 'provider', None) == 'antilopay' or hasattr(card, 'recurrent_id'):
+            card_label = f'🗑 {_get_antilopay_recurrent_display_name(card, language)}'
+            keyboard.append([InlineKeyboardButton(text=card_label, callback_data=f'unlink_apay_{card.id}')])
+        else:
+            card_label = f'🗑 {_get_payment_method_display_name(card, language)}'
+            keyboard.append([InlineKeyboardButton(text=card_label, callback_data=f'unlink_card_{card.id}')])
     keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_confirm_unlink_keyboard(card_id: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+def get_confirm_unlink_keyboard(
+    card_id: int,
+    language: str = DEFAULT_LANGUAGE,
+    *,
+    provider: str = 'yookassa',
+) -> InlineKeyboardMarkup:
     texts = get_texts(language)
+    confirm_callback = f'confirm_unlink_apay_{card_id}' if provider == 'antilopay' else f'confirm_unlink_{card_id}'
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=texts.t('SAVED_CARDS_CONFIRM_YES', '✅ Да, отвязать'),
-                    callback_data=f'confirm_unlink_{card_id}',
+                    callback_data=confirm_callback,
                 ),
                 InlineKeyboardButton(
                     text=texts.t('CANCEL', '❌ Отмена'),

@@ -128,6 +128,7 @@ class AntilopayService:
         success_url: str | None = None,
         fail_url: str | None = None,
         merchant_extra: str | None = None,
+        recurrent: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Создает платеж через API Antilopay.
@@ -163,6 +164,8 @@ class AntilopayService:
             payload['fail_url'] = fail_url
         if merchant_extra:
             payload['merchant_extra'] = merchant_extra[:255]
+        if recurrent:
+            payload['recurrent'] = recurrent
 
         json_body = json.dumps(payload, separators=(',', ':'), ensure_ascii=False)
 
@@ -243,6 +246,93 @@ class AntilopayService:
                     error_msg=error_msg,
                 )
                 raise AntilopayAPIError(response.status, error_msg)
+
+        except aiohttp.ClientError as e:
+            logger.exception('Antilopay API connection error', error=e)
+            raise
+
+    async def check_recurrent_payment(
+        self,
+        *,
+        recurrent_id: str,
+    ) -> dict[str, Any]:
+        """Проверяет статус рекуррентного платежа. POST /payment/recurrent/check"""
+        payload: dict[str, Any] = {
+            'project_identificator': self.project_id,
+            'recurrent_id': recurrent_id,
+        }
+        json_body = json.dumps(payload, separators=(',', ':'), ensure_ascii=False)
+
+        logger.info('Antilopay check_recurrent_payment', recurrent_id=recurrent_id)
+
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f'{API_BASE_URL}/payment/recurrent/check',
+                data=json_body,
+                headers=self._build_headers(json_body),
+            ) as response:
+                data = await self._parse_json_response(response)
+                if response.status == 200:
+                    return data
+
+                error_msg = data.get('message') or data.get('error') or str(data)
+                logger.error(
+                    'Antilopay check_recurrent_payment error',
+                    status_code=response.status,
+                    error_msg=error_msg,
+                )
+                raise AntilopayAPIError(response.status, error_msg)
+
+        except aiohttp.ClientError as e:
+            logger.exception('Antilopay API connection error', error=e)
+            raise
+
+    async def cancel_recurrent_payment(
+        self,
+        *,
+        recurrent_id: str | None = None,
+        transaction_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Отменяет рекуррентный платёж. POST /payment/recurrent/cancel"""
+        if not recurrent_id and not transaction_id:
+            raise ValueError('recurrent_id or transaction_id is required')
+
+        payload: dict[str, Any] = {'project_identificator': self.project_id}
+        if recurrent_id:
+            payload['recurrent_id'] = recurrent_id
+        if transaction_id:
+            payload['transaction_id'] = transaction_id
+
+        json_body = json.dumps(payload, separators=(',', ':'), ensure_ascii=False)
+
+        logger.info(
+            'Antilopay cancel_recurrent_payment',
+            recurrent_id=recurrent_id,
+            transaction_id=transaction_id,
+        )
+
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f'{API_BASE_URL}/payment/recurrent/cancel',
+                data=json_body,
+                headers=self._build_headers(json_body),
+            ) as response:
+                data = await self._parse_json_response(response)
+
+                api_code = data.get('code')
+                if response.status == 200 and api_code == 0:
+                    return data
+
+                error_msg = data.get('message') or data.get('error') or str(data)
+                logger.error(
+                    'Antilopay cancel_recurrent_payment error',
+                    status_code=response.status,
+                    api_code=api_code,
+                    error_msg=error_msg,
+                )
+                raise AntilopayAPIError(response.status, error_msg, api_code)
 
         except aiohttp.ClientError as e:
             logger.exception('Antilopay API connection error', error=e)

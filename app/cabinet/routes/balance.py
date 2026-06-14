@@ -1605,7 +1605,7 @@ async def get_saved_cards(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get user's saved payment methods (cards) for recurrent payments."""
-    recurrent_enabled = settings.YOOKASSA_RECURRENT_ENABLED
+    recurrent_enabled = settings.YOOKASSA_RECURRENT_ENABLED or settings.ANTILOPAY_RECURRENT_ENABLED
 
     if not recurrent_enabled:
         return SavedCardsListResponse(cards=[], recurrent_enabled=False)
@@ -1624,6 +1624,21 @@ async def get_saved_cards(
         for m in methods
     ]
 
+    if settings.ANTILOPAY_RECURRENT_ENABLED:
+        from app.database.crud.antilopay_recurrent import get_active_antilopay_recurrents_by_user
+
+        for recurrent in await get_active_antilopay_recurrents_by_user(db, user.id):
+            cards.append(
+                SavedCardResponse(
+                    id=recurrent.id,
+                    method_type=recurrent.pay_method or 'antilopay',
+                    card_last4=(recurrent.pay_data or '')[-4:] if recurrent.pay_data else None,
+                    card_type='Antilopay',
+                    title=recurrent.title or recurrent.pay_data,
+                    created_at=recurrent.created_at,
+                )
+            )
+
     return SavedCardsListResponse(cards=cards, recurrent_enabled=True)
 
 
@@ -1634,10 +1649,35 @@ async def delete_saved_card(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Unlink (deactivate) a saved payment method."""
-    if not settings.YOOKASSA_RECURRENT_ENABLED:
+    if not settings.YOOKASSA_RECURRENT_ENABLED and not settings.ANTILOPAY_RECURRENT_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Recurrent payments are not enabled',
+        )
+
+    if settings.ANTILOPAY_RECURRENT_ENABLED:
+        from app.database.crud.antilopay_recurrent import (
+            deactivate_antilopay_recurrent,
+            get_antilopay_recurrent_by_id,
+        )
+        from app.services.antilopay_service import antilopay_service
+
+        apay_recurrent = await get_antilopay_recurrent_by_id(db, card_id, user_id=user.id)
+        if apay_recurrent:
+            try:
+                await antilopay_service.cancel_recurrent_payment(
+                    recurrent_id=apay_recurrent.recurrent_id,
+                    transaction_id=apay_recurrent.initial_payment_id,
+                )
+            except Exception:
+                pass
+            await deactivate_antilopay_recurrent(db, apay_recurrent)
+            return {'success': True, 'message': 'Antilopay recurrent cancelled successfully'}
+
+    if not settings.YOOKASSA_RECURRENT_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Saved card not found',
         )
 
     success = await deactivate_payment_method(db, card_id, user.id)

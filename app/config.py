@@ -795,6 +795,10 @@ class Settings(BaseSettings):
 
     ANTILOPAY_SBERPAY_ENABLED: bool = False
     ANTILOPAY_SBERPAY_DISPLAY_NAME: str = 'SberPay (Antilopay)'
+    # Рекуррентные платежи Antilopay (payment/create + recurrent, см. Antilopay API)
+    ANTILOPAY_RECURRENT_ENABLED: bool = False
+    ANTILOPAY_RECURRENT_TYPE: str = 'MONTH'  # WEEK или MONTH
+    ANTILOPAY_RECURRENT_PAYMENT_COUNT: int = 24  # число списаний, включая первичный платёж
 
     # Jupiter (FPGate P2P v2.1, app.juppiter.tech)
     JUPITER_ENABLED: bool = False

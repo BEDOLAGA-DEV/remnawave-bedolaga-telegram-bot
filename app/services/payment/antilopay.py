@@ -28,6 +28,21 @@ ANTILOPAY_STATUS_MAP: dict[str, tuple[str, bool]] = {
 }
 
 
+def _build_antilopay_recurrent_payload() -> dict[str, Any] | None:
+    if not settings.ANTILOPAY_RECURRENT_ENABLED:
+        return None
+    recurrent_type = (settings.ANTILOPAY_RECURRENT_TYPE or 'MONTH').upper()
+    if recurrent_type not in {'WEEK', 'MONTH'}:
+        recurrent_type = 'MONTH'
+    payment_count = max(1, int(settings.ANTILOPAY_RECURRENT_PAYMENT_COUNT or 24))
+    return {'type': recurrent_type, 'payment_count': payment_count}
+
+
+def _supports_antilopay_recurrent(payment_method_type: str | None) -> bool:
+    """Рекуррент Antilopay доступен только для оплаты картой."""
+    return payment_method_type not in ('sbp', 'sberpay')
+
+
 class AntilopayPaymentMixin:
     """Mixin для работы с платежами Antilopay."""
 
@@ -42,6 +57,8 @@ class AntilopayPaymentMixin:
         language: str = 'ru',
         payment_method_type: str | None = None,
         return_url: str | None = None,
+        enable_recurrent: bool | None = None,
+        subscription_id: int | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж Antilopay.
@@ -92,6 +109,8 @@ class AntilopayPaymentMixin:
             'language': language,
             'type': 'balance_topup',
         }
+        if subscription_id is not None:
+            metadata['subscription_id'] = subscription_id
 
         try:
             # Определяем prefer_methods по типу подметода
@@ -102,6 +121,19 @@ class AntilopayPaymentMixin:
                 prefer_methods = ['CARD_RU']
             elif payment_method_type == 'sberpay':
                 prefer_methods = ['SBER_PAY']
+
+            recurrent_payload = None
+            use_recurrent = (
+                enable_recurrent
+                if enable_recurrent is not None
+                else _supports_antilopay_recurrent(payment_method_type)
+            )
+            if use_recurrent:
+                recurrent_payload = _build_antilopay_recurrent_payload()
+                if recurrent_payload:
+                    metadata['recurrent_enabled'] = True
+                    metadata['recurrent_type'] = recurrent_payload['type']
+                    metadata['recurrent_payment_count'] = recurrent_payload['payment_count']
 
             # Формируем success/fail URL
             result_url = return_url or settings.ANTILOPAY_RETURN_URL
@@ -121,6 +153,7 @@ class AntilopayPaymentMixin:
                 success_url=result_url,
                 fail_url=result_url,
                 merchant_extra=merchant_extra,
+                recurrent=recurrent_payload,
             )
 
             payment_id = api_result.get('payment_id')
@@ -252,7 +285,12 @@ class AntilopayPaymentMixin:
                 'pay_data': payload.get('pay_data'),
                 'customer': payload.get('customer'),
                 'merchant_extra': payload.get('merchant_extra'),
+                'recurrent_id': payload.get('recurrent_id'),
             }
+
+            callback_recurrent_id = payload.get('recurrent_id')
+            if callback_recurrent_id:
+                payment.recurrent_id = str(callback_recurrent_id)
 
             # Проверка суммы ДО обновления статуса
             if is_paid:
@@ -286,7 +324,15 @@ class AntilopayPaymentMixin:
                 payment.callback_payload = callback_payload
                 payment.updated_at = datetime.now(UTC)
                 await db.flush()
-                return await self._finalize_antilopay_payment(db, payment, trigger='webhook')
+                finalized = await self._finalize_antilopay_payment(db, payment, trigger='webhook')
+                if finalized and callback_recurrent_id and payment.user_id:
+                    await self._register_antilopay_recurrent_from_callback(
+                        db,
+                        payment=payment,
+                        payload=payload,
+                        recurrent_id=str(callback_recurrent_id),
+                    )
+                return finalized
 
             # Для не-success статусов можно безопасно коммитить
             payment = await antilopay_crud.update_antilopay_payment_status(
@@ -516,6 +562,83 @@ class AntilopayPaymentMixin:
         )
 
         return True
+
+    async def _register_antilopay_recurrent_from_callback(
+        self,
+        db: AsyncSession,
+        *,
+        payment: Any,
+        payload: dict[str, Any],
+        recurrent_id: str,
+    ) -> None:
+        """Сохраняет recurrent_id после успешной оплаты с рекуррентом."""
+        if not settings.ANTILOPAY_RECURRENT_ENABLED or not payment.user_id:
+            return
+
+        try:
+            from app.database.crud.antilopay_recurrent import upsert_antilopay_recurrent
+
+            metadata = dict(getattr(payment, 'metadata_json', {}) or {})
+            subscription_id = metadata.get('subscription_id')
+            if subscription_id is not None:
+                try:
+                    subscription_id = int(subscription_id)
+                except (TypeError, ValueError):
+                    subscription_id = None
+
+            await upsert_antilopay_recurrent(
+                db=db,
+                user_id=payment.user_id,
+                recurrent_id=recurrent_id,
+                initial_payment_id=str(payload.get('payment_id') or payment.antilopay_payment_id or ''),
+                recurrent_type=str(metadata.get('recurrent_type') or settings.ANTILOPAY_RECURRENT_TYPE or 'MONTH'),
+                payment_count=metadata.get('recurrent_payment_count'),
+                status='ACTIVE',
+                pay_method=payload.get('pay_method'),
+                pay_data=payload.get('pay_data'),
+                subscription_id=subscription_id,
+            )
+        except Exception as error:
+            logger.error(
+                'Antilopay: ошибка сохранения рекуррента',
+                recurrent_id=recurrent_id,
+                user_id=payment.user_id,
+                error=error,
+                exc_info=True,
+            )
+
+    async def cancel_user_antilopay_recurrents(
+        self,
+        db: AsyncSession,
+        user_id: int,
+    ) -> int:
+        """Отменяет активные рекурренты Antilopay пользователя через API и в БД."""
+        if not settings.ANTILOPAY_RECURRENT_ENABLED or not settings.is_antilopay_enabled():
+            return 0
+
+        from app.database.crud.antilopay_recurrent import (
+            deactivate_antilopay_recurrent,
+            get_active_antilopay_recurrents_by_user,
+        )
+
+        recurrents = await get_active_antilopay_recurrents_by_user(db, user_id)
+        cancelled = 0
+        for recurrent in recurrents:
+            try:
+                await antilopay_service.cancel_recurrent_payment(
+                    recurrent_id=recurrent.recurrent_id,
+                    transaction_id=recurrent.initial_payment_id,
+                )
+            except Exception as error:
+                logger.warning(
+                    'Antilopay: не удалось отменить рекуррент через API',
+                    recurrent_id=recurrent.recurrent_id,
+                    user_id=user_id,
+                    error=error,
+                )
+            await deactivate_antilopay_recurrent(db, recurrent)
+            cancelled += 1
+        return cancelled
 
     async def check_antilopay_payment_status(
         self,
