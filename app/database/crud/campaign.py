@@ -315,6 +315,7 @@ async def get_campaign_statistics(
             Transaction.type == TransactionType.DEPOSIT.value,
             Transaction.is_completed.is_(True),
             Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+            Transaction.is_refunded.is_(False),
         )
     )
     deposits_total = deposits_result.scalar() or 0

@@ -549,6 +549,7 @@ async def get_sales_stats(
                     Transaction.is_completed == True,
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -610,6 +611,7 @@ async def get_sales_stats(
                     Transaction.is_completed == True,
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
             .group_by(func.date(Transaction.created_at))
@@ -736,6 +738,7 @@ async def get_renewals_stats(
                         Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                         Transaction.is_completed == True,
                         Transaction.user_id.in_(repeat_users_subquery),
+                        Transaction.is_refunded.is_(False),
                     )
                 )
             )
@@ -773,6 +776,7 @@ async def get_renewals_stats(
                         Transaction.created_at >= period_start,
                         Transaction.created_at <= period_end,
                         Transaction.user_id.in_(existing_users_subquery),
+                        Transaction.is_refunded.is_(False),
                     )
                 )
             )
@@ -802,6 +806,7 @@ async def get_renewals_stats(
                         Transaction.created_at >= prev_start,
                         Transaction.created_at <= prev_end,
                         Transaction.user_id.in_(prev_existing_subquery),
+                        Transaction.is_refunded.is_(False),
                     )
                 )
             )
@@ -826,6 +831,7 @@ async def get_renewals_stats(
                     Transaction.is_completed == True,
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
+                    Transaction.is_refunded.is_(False),
                 )
             )
         )
@@ -844,6 +850,7 @@ async def get_renewals_stats(
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
                     Transaction.user_id.in_(existing_users_subquery),
+                    Transaction.is_refunded.is_(False),
                 )
             )
             .group_by(func.date(Transaction.created_at))

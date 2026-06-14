@@ -326,6 +326,7 @@ async def _fetch_branch_revenue(db: AsyncSession, user_ids: set[int]) -> dict[in
             and_(
                 Transaction.type.in_(SPENT_TRANSACTION_TYPES),
                 Transaction.is_completed.is_(True),
+                Transaction.is_refunded.is_(False),
             )
         )
         .group_by(referred_user.c.referred_by_id)
@@ -346,6 +347,7 @@ async def _fetch_personal_spent(db: AsyncSession, user_ids: set[int]) -> dict[in
                 Transaction.user_id.in_(user_ids),
                 Transaction.type.in_(SPENT_TRANSACTION_TYPES),
                 Transaction.is_completed.is_(True),
+                Transaction.is_refunded.is_(False),
             )
         )
         .group_by(Transaction.user_id)

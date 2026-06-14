@@ -411,6 +411,7 @@ async def get_transactions_statistics(
                 Transaction.is_completed == True,
                 Transaction.created_at >= start_date,
                 Transaction.created_at <= end_date,
+                Transaction.is_refunded.is_(False),
             )
         )
     )
@@ -447,6 +448,7 @@ async def get_transactions_statistics(
                 Transaction.is_completed == True,
                 Transaction.created_at >= start_date,
                 Transaction.created_at <= end_date,
+                Transaction.is_refunded.is_(False),
             )
         )
         .group_by(Transaction.payment_method)
@@ -471,6 +473,7 @@ async def get_transactions_statistics(
                 Transaction.is_completed == True,
                 Transaction.created_at >= today,
                 Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+                Transaction.is_refunded.is_(False),
             )
         )
     )
@@ -505,6 +508,7 @@ async def get_revenue_by_period(db: AsyncSession, days: int = 30) -> list[dict]:
                 Transaction.is_completed == True,
                 Transaction.created_at >= start_date,
                 Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+                Transaction.is_refunded.is_(False),
             )
         )
         .group_by(func.date(Transaction.created_at))

@@ -501,6 +501,7 @@ async def _compute_topup_window_payout(
                 Transaction.is_completed.is_(True),
                 Transaction.amount_kopeks >= min_topup_kopeks,
                 Transaction.created_at >= window_start,
+                Transaction.is_refunded.is_(False),
             )
         )
     )
