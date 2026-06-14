@@ -700,6 +700,9 @@ async def check_and_unlock_all(
                         f'\u041e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \U0001f3c6 \u0414\u043e\u0441\u0442\u0438\u0436\u0435\u043d\u0438\u044f \u0432 \u043c\u0435\u043d\u044e, \u0447\u0442\u043e\u0431\u044b \u043f\u043e\u0441\u043c\u043e\u0442\u0440\u0435\u0442\u044c.'
                     ),
                     parse_mode='HTML',
+                    # Low-urgency badge unlock \u2014 send silently so the background
+                    # sweep can't produce a burst of buzzing notifications.
+                    disable_notification=True,
                 )
             except Exception as e:
                 logger.warning('Failed to notify user about achievement', user_id=user.id, error=str(e))

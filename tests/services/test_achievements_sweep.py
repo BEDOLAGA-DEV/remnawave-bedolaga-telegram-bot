@@ -87,3 +87,11 @@ async def test_sweep_dispatches_per_candidate(monkeypatch):
 
     assert unlock.await_count == 3
     assert {c.args[1] for c in unlock.await_args_list} == {101, 202, 303}
+
+
+def test_achievement_unlock_notification_is_silent():
+    # Badge unlocks are low-urgency; the background sweep must not buzz users.
+    import inspect
+
+    src = inspect.getsource(ach_crud.check_and_unlock_all)
+    assert 'disable_notification=True' in src, 'achievement unlock notification must be silent'
