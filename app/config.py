@@ -1191,6 +1191,11 @@ class Settings(BaseSettings):
 
     # Achievements
     ACHIEVEMENTS_ENABLED: bool = True
+    # Background auto-activation: unlock earned achievements in the monitoring
+    # cycle (not only when the user opens the achievements menu).
+    ACHIEVEMENTS_AUTO_CHECK_ENABLED: bool = True
+    # Sweep "recently active" users updated within this many days.
+    ACHIEVEMENTS_SWEEP_ACTIVE_DAYS: int = 7
 
     BAN_SYSTEM_ENABLED: bool = False
     BAN_SYSTEM_API_URL: str | None = None  # e.g., http://ban-server:8000
