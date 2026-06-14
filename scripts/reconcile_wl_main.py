@@ -251,7 +251,12 @@ async def main() -> int:
                     print(f'  tg {tg}: SKIPPED — could not resolve all active mains/_wl (fail-safe, no changes).')
                     continue
 
-                # 2. Enumerate every historical _wl name; flag ACTIVE non-keepers.
+                # 2. Enumerate every historical _wl name; flag non-keeper orphans.
+                #    Disable mode targets only ACTIVE leftovers (no point disabling
+                #    an already-disabled one). Delete mode targets ANY status, so a
+                #    prior `--apply` (disable) sweep can be finalised later with
+                #    `--apply --delete` — otherwise the disabled orphans would be
+                #    invisible to the delete pass.
                 seen: set[str] = set()
                 orphans: list = []
                 for name in _candidate_wl_names(tg, sub_ids, short_ids):
@@ -263,17 +268,20 @@ async def main() -> int:
                     if not au or au in keeper_wl or au in seen:
                         continue
                     seen.add(au)
-                    if getattr(acc, 'status', None) != UserStatus.ACTIVE:
-                        continue  # disabled/expired leftover — harmless, leave it
-                    orphans.append((name, acc))
+                    st = getattr(acc, 'status', None)
+                    if not args.delete and st != UserStatus.ACTIVE:
+                        continue  # disable mode: skip already-disabled leftovers
+                    orphans.append((name, acc, st))
 
                 if not orphans:
                     continue
 
-                print(f'\ntg {tg}: {len(orphans)} active orphan _wl account(s)')
-                for name, acc in orphans:
+                scope = 'orphan' if args.delete else 'active orphan'
+                print(f'\ntg {tg}: {len(orphans)} {scope} _wl account(s)')
+                for name, acc, st in orphans:
                     found += 1
-                    print(f'   {name!r} uuid={acc.uuid}' + ('' if args.apply else ' (dry-run)'))
+                    st_label = getattr(st, 'value', st)
+                    print(f'   {name!r} uuid={acc.uuid} status={st_label}' + ('' if args.apply else ' (dry-run)'))
                     if not args.apply:
                         continue
                     try:
@@ -288,10 +296,11 @@ async def main() -> int:
                         if not ('already' in msg or 'not found' in msg or 'not exist' in msg or '404' in msg):
                             print(f'      WARN: could not {action.lower()} {name}: {e}')
 
+    scope_label = 'orphan _wl found' if args.delete else 'active orphan _wl found'
     print(
         f'\n=== summary [{mode}] ===\n'
-        f'  active orphan _wl found: {found}\n'
-        f'  {action.lower()}d:               {acted}'
+        f'  {scope_label}: {found}\n'
+        f'  {action.lower()}d: {acted}'
     )
     if not args.apply and found:
         print(f'\nDry-run only. Re-run with --apply to {action.lower()} these orphans.')
