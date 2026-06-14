@@ -788,6 +788,9 @@ async def show_messages_history(callback: types.CallbackQuery, db_user: User, db
 @admin_required
 @error_handler
 async def show_custom_broadcast(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
+    # Legacy HTML-text broadcast entry — pin the mode so a prior copy broadcast
+    # left in FSM state can't leak into the criteria path (same as show_broadcast_targets).
+    await state.update_data(broadcast_mode='html')
     stats = await get_users_statistics(db)
 
     text = f"""
