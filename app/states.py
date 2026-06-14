@@ -94,6 +94,8 @@ class AdminStates(StatesGroup):
     waiting_for_broadcast_message = State()
     waiting_for_broadcast_media = State()
     confirming_broadcast = State()
+    waiting_for_broadcast_copy_source = State()
+    waiting_for_broadcast_test_user_id = State()
 
     creating_promo_group_name = State()
     creating_promo_group_priority = State()

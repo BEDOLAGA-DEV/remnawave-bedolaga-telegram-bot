@@ -146,6 +146,60 @@ def create_broadcast_keyboard(
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+async def _deliver_broadcast_to(
+    bot,
+    telegram_id: int,
+    *,
+    mode: str,
+    message_text: str,
+    media_type: str | None,
+    media_file_id: str | None,
+    copy_from_chat_id: int | None,
+    copy_source_message_id: int | None,
+    reply_markup=None,
+) -> None:
+    """Deliver ONE broadcast message to a recipient. Raises Telegram errors to the caller.
+
+    mode == 'copy' -> bot.copy_message (1:1 copy of an admin-composed source message).
+    mode == 'html' -> send_message / send_<media> with parse_mode='HTML' (legacy text mode).
+    """
+    if mode == 'copy':
+        await bot.copy_message(
+            chat_id=telegram_id,
+            from_chat_id=copy_from_chat_id,
+            message_id=copy_source_message_id,
+            reply_markup=reply_markup,
+        )
+        return
+
+    if media_file_id and media_type in ('photo', 'video', 'document'):
+        send_method = {
+            'photo': bot.send_photo,
+            'video': bot.send_video,
+            'document': bot.send_document,
+        }[media_type]
+        media_kwarg = {'photo': 'photo', 'video': 'video', 'document': 'document'}[media_type]
+        # Telegram caps captions at 1024 chars — fall back to media + separate text.
+        if len(message_text) <= 1024:
+            await send_method(
+                chat_id=telegram_id,
+                **{media_kwarg: media_file_id},
+                caption=message_text,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+            )
+        else:
+            await send_method(chat_id=telegram_id, **{media_kwarg: media_file_id})
+            await bot.send_message(
+                chat_id=telegram_id, text=message_text, parse_mode='HTML', reply_markup=reply_markup
+            )
+        return
+
+    await bot.send_message(
+        chat_id=telegram_id, text=message_text, parse_mode='HTML', reply_markup=reply_markup
+    )
+
+
 async def _persist_broadcast_result(
     broadcast_id: int,
     sent_count: int,
@@ -1171,6 +1225,9 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
     media_type = data.get('media_type')
     media_file_id = data.get('media_file_id')
     media_caption = data.get('media_caption')
+    broadcast_mode = data.get('broadcast_mode', 'html')
+    copy_from_chat_id = data.get('copy_from_chat_id')
+    copy_source_message_id = data.get('copy_source_message_id')
 
     # =========================================================================
     # КРИТИЧНО: Извлекаем ВСЕ скалярные значения из ORM-объектов СЕЙЧАС,
@@ -1263,54 +1320,17 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
                 await asyncio.sleep(flood_wait_until - now)
 
             try:
-                if has_media and media_file_id:
-                    send_method = {
-                        'photo': callback.bot.send_photo,
-                        'video': callback.bot.send_video,
-                        'document': callback.bot.send_document,
-                    }.get(media_type)
-                    if send_method:
-                        media_kwarg = {
-                            'photo': 'photo',
-                            'video': 'video',
-                            'document': 'document',
-                        }[media_type]
-                        # Telegram ограничивает caption до 1024 символов
-                        if len(message_text) <= 1024:
-                            await send_method(
-                                chat_id=telegram_id,
-                                **{media_kwarg: media_file_id},
-                                caption=message_text,
-                                parse_mode='HTML',
-                                reply_markup=broadcast_keyboard,
-                            )
-                        else:
-                            # Медиа без caption + текст отдельным сообщением
-                            await send_method(
-                                chat_id=telegram_id,
-                                **{media_kwarg: media_file_id},
-                            )
-                            await callback.bot.send_message(
-                                chat_id=telegram_id,
-                                text=message_text,
-                                parse_mode='HTML',
-                                reply_markup=broadcast_keyboard,
-                            )
-                    else:
-                        # Неизвестный media_type — отправляем как текст
-                        await callback.bot.send_message(
-                            chat_id=telegram_id,
-                            text=message_text,
-                            parse_mode='HTML',
-                            reply_markup=broadcast_keyboard,
-                        )
-                else:
-                    await callback.bot.send_message(
-                        chat_id=telegram_id,
-                        text=message_text,
-                        parse_mode='HTML',
-                        reply_markup=broadcast_keyboard,
-                    )
+                await _deliver_broadcast_to(
+                    callback.bot,
+                    telegram_id,
+                    mode=broadcast_mode,
+                    message_text=message_text,
+                    media_type=media_type,
+                    media_file_id=media_file_id if has_media else None,
+                    copy_from_chat_id=copy_from_chat_id,
+                    copy_source_message_id=copy_source_message_id,
+                    reply_markup=broadcast_keyboard,
+                )
                 return 'sent'
 
             except TelegramRetryAfter as e:
