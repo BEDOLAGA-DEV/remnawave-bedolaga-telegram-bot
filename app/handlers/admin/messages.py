@@ -146,6 +146,119 @@ def create_broadcast_keyboard(
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+async def _deliver_broadcast_to(
+    bot,
+    telegram_id: int,
+    *,
+    mode: str,
+    message_text: str,
+    media_type: str | None,
+    media_file_id: str | None,
+    copy_from_chat_id: int | None,
+    copy_source_message_id: int | None,
+    reply_markup=None,
+) -> None:
+    """Deliver ONE broadcast message to a recipient. Raises Telegram errors to the caller.
+
+    mode == 'copy' -> bot.copy_message (1:1 copy of an admin-composed source message).
+    mode == 'html' -> send_message / send_<media> with parse_mode='HTML' (legacy text mode).
+    """
+    if mode == 'copy':
+        await bot.copy_message(
+            chat_id=telegram_id,
+            from_chat_id=copy_from_chat_id,
+            message_id=copy_source_message_id,
+            reply_markup=reply_markup,
+        )
+        return
+
+    if media_file_id and media_type in ('photo', 'video', 'document'):
+        send_method = {
+            'photo': bot.send_photo,
+            'video': bot.send_video,
+            'document': bot.send_document,
+        }[media_type]
+        media_kwarg = {'photo': 'photo', 'video': 'video', 'document': 'document'}[media_type]
+        # Telegram caps captions at 1024 chars — fall back to media + separate text.
+        if len(message_text) <= 1024:
+            await send_method(
+                chat_id=telegram_id,
+                **{media_kwarg: media_file_id},
+                caption=message_text,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+            )
+        else:
+            await send_method(chat_id=telegram_id, **{media_kwarg: media_file_id})
+            await bot.send_message(
+                chat_id=telegram_id, text=message_text, parse_mode='HTML', reply_markup=reply_markup
+            )
+        return
+
+    await bot.send_message(
+        chat_id=telegram_id, text=message_text, parse_mode='HTML', reply_markup=reply_markup
+    )
+
+
+async def _prompt_broadcast_compose(callback: types.CallbackQuery, state: FSMContext, audience: str) -> None:
+    """After target selection, prompt the compose step based on broadcast_mode.
+
+    copy mode -> ask for a message to copy 1:1 (waiting_for_broadcast_copy_source).
+    html mode -> ask for HTML text (waiting_for_broadcast_message, legacy).
+    """
+    data = await state.get_data()
+    cancel_kb = types.InlineKeyboardMarkup(
+        inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')]]
+    )
+    if data.get('broadcast_mode') == 'copy':
+        await callback.message.edit_text(
+            audience
+            + '📋 Отправьте <b>сообщение для рассылки</b> — с любым форматированием/медиа.\n'
+            'Бот скопирует его 1:1 каждому. <b>Не удаляйте</b> его до конца рассылки.',
+            reply_markup=cancel_kb,
+            parse_mode='HTML',
+        )
+        await state.set_state(AdminStates.waiting_for_broadcast_copy_source)
+    else:
+        await callback.message.edit_text(
+            audience + 'Введите текст сообщения для рассылки:\n\n<i>Поддерживается HTML разметка</i>',
+            reply_markup=cancel_kb,
+            parse_mode='HTML',
+        )
+        await state.set_state(AdminStates.waiting_for_broadcast_message)
+
+
+def _delivery_kwargs_from_state(data: dict, language: str) -> dict:
+    """Build _deliver_broadcast_to kwargs from FSM state (shared by test-send)."""
+    return dict(
+        mode=data.get('broadcast_mode', 'html'),
+        message_text=data.get('broadcast_message', ''),
+        media_type=data.get('media_type'),
+        media_file_id=data.get('media_file_id') if data.get('has_media') else None,
+        copy_from_chat_id=data.get('copy_from_chat_id'),
+        copy_source_message_id=data.get('copy_source_message_id'),
+        reply_markup=create_broadcast_keyboard(
+            data.get('selected_buttons') or list(DEFAULT_SELECTED_BUTTONS), language
+        ),
+    )
+
+
+async def _send_test_broadcast(bot, telegram_id: int, **delivery_kwargs) -> tuple[bool, str]:
+    """Deliver one message to telegram_id as a preview. Returns (ok, reason)."""
+    try:
+        await _deliver_broadcast_to(bot, telegram_id, **delivery_kwargs)
+        return True, ''
+    except TelegramForbiddenError:
+        return False, 'Пользователь не найден или не запускал бота'
+    except TelegramBadRequest as e:
+        err = str(e).lower()
+        if 'chat not found' in err or 'user is deactivated' in err:
+            return False, 'Пользователь не найден или не запускал бота'
+        return False, f'Ошибка: {e}'
+    except Exception as e:
+        return False, f'Ошибка: {e}'
+
+
 async def _persist_broadcast_result(
     broadcast_id: int,
     sent_count: int,
@@ -537,8 +650,24 @@ async def handle_pinned_broadcast_skip(
 @admin_required
 @error_handler
 async def show_broadcast_targets(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    # Legacy HTML-text broadcast entry — pin the mode so a prior copy broadcast
+    # left in FSM state can't leak into this one. The copy entry sets 'copy'.
+    await state.update_data(broadcast_mode='html')
     await callback.message.edit_text(
         '🎯 <b>Выбор целевой аудитории</b>\n\nВыберите категорию пользователей для рассылки:',
+        reply_markup=get_broadcast_target_keyboard(db_user.language),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def start_copy_broadcast(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    """Entry for the copy_message broadcast mode: pin mode='copy', then pick audience."""
+    await state.update_data(broadcast_mode='copy')
+    await callback.message.edit_text(
+        '📋 <b>Рассылка копией — выбор аудитории</b>\n\nВыберите категорию пользователей для рассылки:',
         reply_markup=get_broadcast_target_keyboard(db_user.language),
         parse_mode='HTML',
     )
@@ -659,6 +788,9 @@ async def show_messages_history(callback: types.CallbackQuery, db_user: User, db
 @admin_required
 @error_handler
 async def show_custom_broadcast(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
+    # Legacy HTML-text broadcast entry — pin the mode so a prior copy broadcast
+    # left in FSM state can't leak into the criteria path (same as show_broadcast_targets).
+    await state.update_data(broadcast_mode='html')
     stats = await get_users_statistics(db)
 
     text = f"""
@@ -709,19 +841,11 @@ async def select_custom_criteria(callback: types.CallbackQuery, db_user: User, s
 
     await state.update_data(broadcast_target=f'custom_{criteria}')
 
-    await callback.message.edit_text(
-        f'📨 <b>Создание рассылки</b>\n\n'
-        f'🎯 <b>Критерий:</b> {criteria_names.get(criteria, criteria)}\n'
+    audience = (
+        f'📨 <b>Создание рассылки</b>\n\n🎯 <b>Критерий:</b> {criteria_names.get(criteria, criteria)}\n'
         f'👥 <b>Получателей:</b> {user_count}\n\n'
-        f'Введите текст сообщения для рассылки:\n\n'
-        f'<i>Поддерживается HTML разметка</i>',
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')]]
-        ),
-        parse_mode='HTML',
     )
-
-    await state.set_state(AdminStates.waiting_for_broadcast_message)
+    await _prompt_broadcast_compose(callback, state, audience)
     await callback.answer()
 
 
@@ -761,19 +885,10 @@ async def select_broadcast_target(callback: types.CallbackQuery, db_user: User, 
 
     await state.update_data(broadcast_target=target)
 
-    await callback.message.edit_text(
-        f'📨 <b>Создание рассылки</b>\n\n'
-        f'🎯 <b>Аудитория:</b> {target_name}\n'
-        f'👥 <b>Получателей:</b> {user_count}\n\n'
-        f'Введите текст сообщения для рассылки:\n\n'
-        f'<i>Поддерживается HTML разметка</i>',
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')]]
-        ),
-        parse_mode='HTML',
+    audience = (
+        f'📨 <b>Создание рассылки</b>\n\n🎯 <b>Аудитория:</b> {target_name}\n👥 <b>Получателей:</b> {user_count}\n\n'
     )
-
-    await state.set_state(AdminStates.waiting_for_broadcast_message)
+    await _prompt_broadcast_compose(callback, state, audience)
     await callback.answer()
 
 
@@ -874,6 +989,30 @@ async def process_broadcast_media(message: types.Message, db_user: User, state: 
     )
 
     await show_media_preview(message, db_user, state)
+
+
+@admin_required
+@error_handler
+async def process_broadcast_copy_source(message: types.Message, db_user: User, state: FSMContext):
+    """Capture the admin-composed message to copy 1:1, then go to the button selector.
+
+    Stores the source (chat_id, message_id) — copy_message re-copies from here for
+    every recipient, so the admin must not delete this message until the broadcast
+    finishes (warned in the prompt).
+    """
+    if message.content_type in ('new_chat_members', 'left_chat_member', 'pinned_message'):
+        await message.answer('❌ Это сообщение нельзя скопировать. Отправьте обычное сообщение.')
+        return
+
+    await state.update_data(
+        copy_from_chat_id=message.chat.id,
+        copy_source_message_id=message.message_id,
+        has_media=False,
+        media_type=None,
+        media_file_id=None,
+        broadcast_message='📋 Рассылка копией',
+    )
+    await show_button_selector(message, db_user, state)
 
 
 async def show_media_preview(message: types.Message, db_user: User, state: FSMContext):
@@ -1103,13 +1242,40 @@ async def confirm_button_selection(callback: types.CallbackQuery, db_user: User,
         [
             types.InlineKeyboardButton(text='✅ Отправить', callback_data='admin_confirm_broadcast'),
             types.InlineKeyboardButton(text='📘 Изменить кнопки', callback_data='nz!_edit_buttons'),
-        ]
+        ],
+        [
+            types.InlineKeyboardButton(text='🧪 Тест себе', callback_data='nz!_bcast_test_self'),
+            types.InlineKeyboardButton(text='🧪 Тест пользователю', callback_data='nz!_bcast_test_user'),
+        ],
     ]
 
     if has_media:
         keyboard.append([types.InlineKeyboardButton(text='🖼️ Изменить медиа', callback_data='nz!_change_media')])
 
     keyboard.append([types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_messages')])
+
+    # Copy mode: don't render message_text (it's only a placeholder). Show the
+    # audience summary, then copy the source message back to the admin as a
+    # faithful 1:1 preview (with the same inline keyboard recipients will get).
+    if data.get('broadcast_mode') == 'copy':
+        summary = (
+            '📨 <b>Предпросмотр рассылки копией</b>\n\n'
+            f'🎯 <b>Аудитория:</b> {target_display}\n'
+            f'👥 <b>Получателей:</b> {user_count}'
+            f'{buttons_info}\n\n'
+            '👇 Так выглядит сообщение (точная копия). Подтвердить отправку?'
+        )
+        await safe_edit_or_send_text(
+            callback, summary, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode='HTML'
+        )
+        await callback.bot.copy_message(
+            chat_id=callback.message.chat.id,
+            from_chat_id=data['copy_from_chat_id'],
+            message_id=data['copy_source_message_id'],
+            reply_markup=create_broadcast_keyboard(selected_buttons, db_user.language),
+        )
+        await callback.answer()
+        return
 
     # Если есть медиа, показываем его с загруженным фото, иначе обычное текстовое сообщение
     if has_media and media_type == 'photo':
@@ -1160,6 +1326,40 @@ async def confirm_button_selection(callback: types.CallbackQuery, db_user: User,
 
 @admin_required
 @error_handler
+async def test_broadcast_self(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    """Send the composed message (exact delivery + keyboard) to the admin as a preview."""
+    data = await state.get_data()
+    kw = _delivery_kwargs_from_state(data, db_user.language)
+    ok, reason = await _send_test_broadcast(callback.bot, db_user.telegram_id, **kw)
+    await callback.answer('✅ Тест отправлен' if ok else f'❌ {reason}', show_alert=not ok)
+
+
+@admin_required
+@error_handler
+async def prompt_test_user(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    """Ask for a telegram_id to test-send to."""
+    await state.set_state(AdminStates.waiting_for_broadcast_test_user_id)
+    await callback.message.answer('Введите telegram_id пользователя для теста (число):')
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def process_test_user_id(message: types.Message, db_user: User, state: FSMContext):
+    """Test-send to the entered numeric telegram_id, then return to the confirm screen."""
+    raw = (message.text or '').strip()
+    if not raw.isdigit():
+        await message.answer('❌ Нужен числовой telegram_id. Попробуйте ещё раз:')
+        return
+    data = await state.get_data()
+    kw = _delivery_kwargs_from_state(data, db_user.language)
+    ok, reason = await _send_test_broadcast(message.bot, int(raw), **kw)
+    await message.answer('✅ Тест отправлен' if ok else f'❌ {reason}')
+    await state.set_state(AdminStates.confirming_broadcast)
+
+
+@admin_required
+@error_handler
 async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
     data = await state.get_data()
     target = data.get('broadcast_target')
@@ -1171,6 +1371,9 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
     media_type = data.get('media_type')
     media_file_id = data.get('media_file_id')
     media_caption = data.get('media_caption')
+    broadcast_mode = data.get('broadcast_mode', 'html')
+    copy_from_chat_id = data.get('copy_from_chat_id')
+    copy_source_message_id = data.get('copy_source_message_id')
 
     # =========================================================================
     # КРИТИЧНО: Извлекаем ВСЕ скалярные значения из ORM-объектов СЕЙЧАС,
@@ -1263,54 +1466,17 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
                 await asyncio.sleep(flood_wait_until - now)
 
             try:
-                if has_media and media_file_id:
-                    send_method = {
-                        'photo': callback.bot.send_photo,
-                        'video': callback.bot.send_video,
-                        'document': callback.bot.send_document,
-                    }.get(media_type)
-                    if send_method:
-                        media_kwarg = {
-                            'photo': 'photo',
-                            'video': 'video',
-                            'document': 'document',
-                        }[media_type]
-                        # Telegram ограничивает caption до 1024 символов
-                        if len(message_text) <= 1024:
-                            await send_method(
-                                chat_id=telegram_id,
-                                **{media_kwarg: media_file_id},
-                                caption=message_text,
-                                parse_mode='HTML',
-                                reply_markup=broadcast_keyboard,
-                            )
-                        else:
-                            # Медиа без caption + текст отдельным сообщением
-                            await send_method(
-                                chat_id=telegram_id,
-                                **{media_kwarg: media_file_id},
-                            )
-                            await callback.bot.send_message(
-                                chat_id=telegram_id,
-                                text=message_text,
-                                parse_mode='HTML',
-                                reply_markup=broadcast_keyboard,
-                            )
-                    else:
-                        # Неизвестный media_type — отправляем как текст
-                        await callback.bot.send_message(
-                            chat_id=telegram_id,
-                            text=message_text,
-                            parse_mode='HTML',
-                            reply_markup=broadcast_keyboard,
-                        )
-                else:
-                    await callback.bot.send_message(
-                        chat_id=telegram_id,
-                        text=message_text,
-                        parse_mode='HTML',
-                        reply_markup=broadcast_keyboard,
-                    )
+                await _deliver_broadcast_to(
+                    callback.bot,
+                    telegram_id,
+                    mode=broadcast_mode,
+                    message_text=message_text,
+                    media_type=media_type,
+                    media_file_id=media_file_id if has_media else None,
+                    copy_from_chat_id=copy_from_chat_id,
+                    copy_source_message_id=copy_source_message_id,
+                    reply_markup=broadcast_keyboard,
+                )
                 return 'sent'
 
             except TelegramRetryAfter as e:
@@ -2039,6 +2205,9 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_pinned_broadcast_now, F.data.startswith('admin_pinned_broadcast_now:'))
     dp.callback_query.register(handle_pinned_broadcast_skip, F.data.startswith('admin_pinned_broadcast_skip:'))
     dp.callback_query.register(show_broadcast_targets, F.data.in_(['admin_msg_all', 'admin_msg_by_sub']))
+    dp.callback_query.register(start_copy_broadcast, F.data == 'admin_msg_copy')
+    dp.callback_query.register(test_broadcast_self, F.data == 'nz!_bcast_test_self')
+    dp.callback_query.register(prompt_test_user, F.data == 'nz!_bcast_test_user')
     dp.callback_query.register(show_tariff_filter, F.data == 'nz!_broadcast_by_tariff')
     dp.callback_query.register(select_broadcast_target, F.data.startswith('nz!_broadcast_'))
     dp.callback_query.register(confirm_broadcast, F.data == 'admin_confirm_broadcast')
@@ -2056,4 +2225,6 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_change_media, F.data == 'nz!_change_media')
     dp.message.register(process_broadcast_message, AdminStates.waiting_for_broadcast_message)
     dp.message.register(process_broadcast_media, AdminStates.waiting_for_broadcast_media)
+    dp.message.register(process_broadcast_copy_source, AdminStates.waiting_for_broadcast_copy_source)
+    dp.message.register(process_test_user_id, AdminStates.waiting_for_broadcast_test_user_id)
     dp.message.register(process_pinned_message_update, AdminStates.editing_pinned_message)
