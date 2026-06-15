@@ -39,8 +39,10 @@ def _build_antilopay_recurrent_payload() -> dict[str, Any] | None:
 
 
 def _supports_antilopay_recurrent(payment_method_type: str | None) -> bool:
-    """Рекуррент Antilopay доступен только для оплаты картой."""
-    return payment_method_type not in ('sbp', 'sberpay')
+    """Проверяет, можно ли передать recurrent для данного sub-метода Antilopay."""
+    if not payment_method_type:
+        return False
+    return payment_method_type.strip().lower() in settings.get_antilopay_recurrent_methods()
 
 
 class AntilopayPaymentMixin:

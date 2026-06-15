@@ -799,6 +799,8 @@ class Settings(BaseSettings):
     ANTILOPAY_RECURRENT_ENABLED: bool = False
     ANTILOPAY_RECURRENT_TYPE: str = 'MONTH'  # WEEK или MONTH
     ANTILOPAY_RECURRENT_PAYMENT_COUNT: int = 24  # число списаний, включая первичный платёж
+    # Методы, для которых передаётся recurrent в payment/create: sbp, card, sberpay
+    ANTILOPAY_RECURRENT_METHODS: str = 'sbp'
 
     # Jupiter (FPGate P2P v2.1, app.juppiter.tech)
     JUPITER_ENABLED: bool = False
@@ -2480,6 +2482,11 @@ class Settings(BaseSettings):
 
     def get_antilopay_sberpay_display_name_html(self) -> str:
         return html.escape(self.get_antilopay_sberpay_display_name())
+
+    def get_antilopay_recurrent_methods(self) -> frozenset[str]:
+        raw = (self.ANTILOPAY_RECURRENT_METHODS or 'sbp').replace(' ', '')
+        methods = {item.strip().lower() for item in raw.split(',') if item.strip()}
+        return frozenset(methods or {'sbp'})
 
     def is_jupiter_enabled(self) -> bool:
         return self.JUPITER_ENABLED and self.JUPITER_TOKEN is not None and self.JUPITER_SECRET is not None
