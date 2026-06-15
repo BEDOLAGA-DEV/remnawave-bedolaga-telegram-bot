@@ -13,7 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
-from app.keyboards.inline import get_referral_keyboard
+from app.keyboards.inline import (
+    get_referral_keyboard,
+    build_back_button,
+)
 from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
 from app.services.referral_withdrawal_service import referral_withdrawal_service

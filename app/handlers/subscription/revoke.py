@@ -16,6 +16,7 @@ from app.database.models import Subscription, User
 from app.localization.texts import get_texts
 from app.services.subscription_service import SubscriptionService
 from app.utils.decorators import error_handler
+from app.keyboards.inline import build_back_button
 
 
 logger = structlog.get_logger(__name__)

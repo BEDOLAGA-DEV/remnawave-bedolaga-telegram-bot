@@ -13,7 +13,10 @@ from app.database.crud.contest import get_active_rounds, get_attempt
 from app.database.crud.subscription import get_active_subscriptions_by_user_id
 from app.database.database import AsyncSessionLocal
 from app.database.models import SubscriptionStatus
-from app.keyboards.inline import get_back_keyboard
+from app.keyboards.inline import (
+    get_back_keyboard,
+    build_back_button,
+)
 from app.localization.texts import get_texts
 from app.services.contests import (
     ContestAttemptService,

@@ -7,6 +7,7 @@ from app.config import settings
 from app.database.models import User
 from app.localization.texts import get_texts
 from app.utils.decorators import error_handler
+from app.keyboards.inline import build_back_button
 
 
 logger = structlog.get_logger(__name__)

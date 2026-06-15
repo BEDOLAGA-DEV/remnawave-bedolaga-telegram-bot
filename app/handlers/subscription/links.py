@@ -8,7 +8,8 @@ from app.database.models import User
 from app.keyboards.inline import (
     get_device_selection_keyboard,
     get_happ_cryptolink_keyboard,
-    get_happ_download_button_row,
+    get_happ_download_button_row,,
+    build_back_button
 )
 from app.localization.texts import get_texts
 from app.utils.subscription_utils import (

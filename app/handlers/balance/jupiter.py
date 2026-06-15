@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
-from app.keyboards.inline import get_back_keyboard
+from app.keyboards.inline import (
+    get_back_keyboard,
+    build_back_button,
+)
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
