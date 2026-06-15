@@ -639,12 +639,7 @@ async def show_faq_page(
         keyboard_rows.append(nav_row)
 
     keyboard_rows.append(
-        [
-            types.InlineKeyboardButton(
-                text=texts.t('FAQ_BACK_TO_LIST', '⬅️ К списку FAQ'),
-                callback_data='menu_faq',
-            )
-        ]
+        [build_back_button(texts, 'menu_faq', text=texts.t('FAQ_BACK_TO_LIST', '⬅️ К списку FAQ'))]
     )
     keyboard_rows.append([build_back_button(texts, 'menu_info')])
 

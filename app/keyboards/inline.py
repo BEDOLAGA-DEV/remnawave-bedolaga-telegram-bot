@@ -955,12 +955,7 @@ def get_happ_cryptolink_keyboard(
                     callback_data='happ_download_windows',
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                    callback_data='back_to_menu',
-                )
-            ],
+            [build_back_button(texts, 'back_to_menu', text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'))],
         ]
     )
 
@@ -3052,7 +3047,7 @@ def get_connection_guide_keyboard(
                     callback_data=_sc_cb,
                 )
             ],
-            [InlineKeyboardButton(text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'), callback_data=back_cb)],
+            [build_back_button(texts, back_cb, text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'))],
         ]
     )
 
@@ -3078,11 +3073,7 @@ def get_app_selection_keyboard(device_type: str, apps: list, language: str = DEF
                     callback_data='subscription_connect',
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'), callback_data='menu_subscription'
-                )
-            ],
+            [build_back_button(texts, 'menu_subscription', text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'))],
         ]
     )
 
@@ -3377,11 +3368,7 @@ def get_device_management_help_keyboard(language: str = DEFAULT_LANGUAGE) -> Inl
                     callback_data='subscription_manage_devices',
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'), callback_data='menu_subscription'
-                )
-            ],
+            [build_back_button(texts, 'menu_subscription', text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'))],
         ]
     )
 
