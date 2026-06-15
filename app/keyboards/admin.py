@@ -2238,7 +2238,7 @@ BROADCAST_BUTTONS = {
         'callback': 'menu_subscription',
     },
     'support': {
-        'default_text': '🛠️ Техподдержка',
+        'default_text': '🛠️ Поддержка',
         'text_key': 'ADMIN_BROADCAST_BUTTON_SUPPORT',
         'callback': 'menu_support',
     },
