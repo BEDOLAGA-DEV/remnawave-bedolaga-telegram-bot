@@ -985,6 +985,81 @@ class MenuLayoutService:
     # --- Построение кнопок ---
 
     @classmethod
+    def _prepare_button_text(
+        cls,
+        button_config: dict[str, Any],
+        context: MenuContext,
+        texts: Any,
+        *,
+        custom_emoji_id: str | None,
+        icon: str,
+    ) -> str | None:
+        """Resolve localized button text with optional icon / dynamic placeholders."""
+        text_config = button_config.get('text', {})
+        text = cls._get_localized_text(text_config, context.language)
+        if not text:
+            return None
+
+        if custom_emoji_id:
+            from app.utils.miniapp_buttons import strip_leading_emoji
+
+            text = strip_leading_emoji(text)
+        elif icon and not text.startswith(icon):
+            text = f'{icon} {text}'
+
+        if button_config.get('dynamic_text'):
+            text = cls._format_dynamic_text(text, context, texts)
+
+        return text
+
+    @classmethod
+    def _build_connect_button(
+        cls,
+        button_config: dict[str, Any],
+        context: MenuContext,
+        texts: Any,
+        *,
+        text: str,
+        custom_emoji_id: str | None,
+    ) -> InlineKeyboardButton:
+        """Build connect button using CONNECT_BUTTON_MODE (same rules as inline.py)."""
+        subscription_link = None
+        if context.subscription:
+            from app.utils.subscription_utils import get_display_subscription_link
+
+            subscription_link = get_display_subscription_link(context.subscription)
+
+        connect_mode = settings.CONNECT_BUTTON_MODE
+        kwargs: dict[str, Any] = {'text': text, 'icon_custom_emoji_id': custom_emoji_id or None}
+
+        if connect_mode == 'miniapp_subscription':
+            if subscription_link:
+                return InlineKeyboardButton(web_app=types.WebAppInfo(url=subscription_link), **kwargs)
+            return InlineKeyboardButton(callback_data='subscription_connect', **kwargs)
+
+        if connect_mode == 'miniapp_custom':
+            if settings.MINIAPP_CUSTOM_URL:
+                return InlineKeyboardButton(web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL), **kwargs)
+            return InlineKeyboardButton(callback_data='subscription_connect', **kwargs)
+
+        if connect_mode == 'link':
+            if subscription_link:
+                return InlineKeyboardButton(url=subscription_link, **kwargs)
+            return InlineKeyboardButton(callback_data='subscription_connect', **kwargs)
+
+        if connect_mode == 'happ_cryptolink':
+            if subscription_link:
+                callback_data = (
+                    'subscription_connect'
+                    if settings.is_multi_tariff_enabled()
+                    else 'open_subscription_link'
+                )
+                return InlineKeyboardButton(callback_data=callback_data, **kwargs)
+            return InlineKeyboardButton(callback_data='subscription_connect', **kwargs)
+
+        return InlineKeyboardButton(callback_data='subscription_connect', **kwargs)
+
+    @classmethod
     def _build_button(
         cls,
         button_config: dict[str, Any],
@@ -1018,30 +1093,29 @@ class MenuLayoutService:
             or 'connect' in str(action).lower()
         )
 
-        if is_connect_button:
-            logger.info(
-                '🔗 Построение кнопки connect: button_id=, type=, open_mode=, action=, webapp_url',
-                effective_button_id=effective_button_id,
-                button_type=button_type,
-                open_mode=open_mode,
-                action=action,
-                webapp_url=webapp_url,
-            )
-
-        # Получаем текст
-        text = cls._get_localized_text(text_config, context.language)
+        text = cls._prepare_button_text(
+            button_config,
+            context,
+            texts,
+            custom_emoji_id=custom_emoji_id,
+            icon=icon,
+        )
         if not text:
             return None
 
-        # Добавляем юникод-иконку если есть и текст не начинается с неё.
-        # Если параллельно задан icon_custom_emoji_id — Telegram сам рендерит кастом emoji
-        # слева, и юникод-icon вызвал бы дубль (две иконки), поэтому пропускаем.
-        if icon and not custom_emoji_id and not text.startswith(icon):
-            text = f'{icon} {text}'
-
-        # Форматируем динамический текст
-        if button_config.get('dynamic_text'):
-            text = cls._format_dynamic_text(text, context, texts)
+        if is_connect_button and button_type == 'builtin':
+            logger.info(
+                '🔗 Построение кнопки connect через CONNECT_BUTTON_MODE',
+                effective_button_id=effective_button_id,
+                connect_mode=settings.CONNECT_BUTTON_MODE,
+            )
+            return cls._build_connect_button(
+                button_config,
+                context,
+                texts,
+                text=text,
+                custom_emoji_id=custom_emoji_id,
+            )
 
         # Строим кнопку в зависимости от типа
         if button_type == 'url':
