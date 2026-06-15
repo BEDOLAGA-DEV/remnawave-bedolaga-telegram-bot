@@ -21,6 +21,7 @@ from app.database.crud.subscription import (
 from app.database.models import Subscription, SubscriptionStatus, User
 from app.localization.texts import get_texts
 from app.services.subscription_service import SubscriptionService
+from app.keyboards.inline import build_back_button
 
 
 logger = structlog.get_logger(__name__)
@@ -103,7 +104,7 @@ def _build_subscriptions_keyboard(subscriptions: list, language: str) -> types.I
     # Back button
     buttons.append(
         [
-            types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu'),
+            build_back_button(texts, 'back_to_menu'),
         ]
     )
 
@@ -159,6 +160,7 @@ async def show_my_subscriptions(
         # Fallback to legacy single subscription view
         return
 
+    texts = get_texts(db_user.language)
     subscriptions = await get_all_subscriptions_by_user_id(db, db_user.id)
 
     if not subscriptions:
@@ -166,7 +168,7 @@ async def show_my_subscriptions(
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [types.InlineKeyboardButton(text='🛒 Купить подписку', callback_data='menu_buy')],
-                [types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')],
+                [build_back_button(texts, 'back_to_menu')],
             ]
         )
     else:
@@ -329,6 +331,7 @@ async def handle_subscription_devices(
     else:
         can_buy_devices = settings.is_devices_selection_enabled()
 
+    texts = get_texts(db_user.language)
     current_devices = subscription.device_limit or 0
     text = f'📱 <b>Устройства</b>\n\nТекущий лимит: {current_devices} устройств\n\nВыберите действие:'
 
@@ -340,7 +343,7 @@ async def handle_subscription_devices(
     keyboard.append(
         [types.InlineKeyboardButton(text='📱 Управление устройствами', callback_data=f'device_management:{sub_id}')]
     )
-    keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data=f'sm:{sub_id}')])
+    keyboard.append([build_back_button(texts, f'sm:{sub_id}')])
 
     await callback.message.edit_text(
         text,

@@ -65,7 +65,7 @@ async def handle_connect_subscription(
                         )
                     ]
                 )
-            keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+            keyboard.append([build_back_button(texts, 'back_to_menu')])
             await callback.message.edit_text(
                 '🔗 <b>Подключиться</b>\n\nВыберите подписку:',
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),

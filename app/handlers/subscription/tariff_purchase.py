@@ -2157,7 +2157,7 @@ async def show_tariff_extend(
     db: AsyncSession,
 ):
     """Показывает экран продления по текущему тарифу."""
-    get_texts(db_user.language)
+    texts = get_texts(db_user.language)
 
     if settings.is_multi_tariff_enabled():
         sub_id = None
@@ -2190,7 +2190,7 @@ async def show_tariff_extend(
                             )
                         ]
                     )
-                keyboard.append([InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+                keyboard.append([build_back_button(texts, 'back_to_menu')])
                 await callback.message.edit_text(
                     '🔄 <b>Продление подписки</b>\n\nВыберите подписку для продления:',
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
@@ -2224,7 +2224,7 @@ async def show_tariff_extend(
         if not keyboard:
             await callback.answer('Нет доступных тарифов для продления', show_alert=True)
             return
-        keyboard.append([InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+        keyboard.append([build_back_button(texts, 'back_to_menu')])
 
         await callback.message.edit_text(
             '🔄 <b>Выберите тариф для продления</b>\n\n'
@@ -2254,7 +2254,7 @@ async def show_tariff_extend(
         keyboard = []
         for t in active_tariffs:
             keyboard.append([InlineKeyboardButton(text=f'📦 {t.name}', callback_data=f'tariff_select:{t.id}')])
-        keyboard.append([InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+        keyboard.append([build_back_button(texts, 'back_to_menu')])
 
         await callback.message.edit_text(
             '🔄 <b>Выберите тариф для продления</b>\n\n'
@@ -2862,6 +2862,7 @@ async def select_tariff_switch(
     state: FSMContext,
 ):
     """Обрабатывает выбор тарифа для переключения."""
+    texts = get_texts(db_user.language)
     tariff_id = int(callback.data.split(':')[1])
     tariff = await get_tariff_by_id(db, tariff_id)
 
@@ -2931,7 +2932,7 @@ async def select_tariff_switch(
                                 text='✅ Подтвердить смену', callback_data=f'daily_tariff_switch_confirm:{tariff_id}'
                             )
                         ],
-                        [InlineKeyboardButton(text=get_texts(db_user.language).BACK, callback_data='tariff_switch')],
+                        [build_back_button(texts, 'tariff_switch')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -2950,7 +2951,7 @@ async def select_tariff_switch(
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
                         [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='balance_topup')],
-                        [InlineKeyboardButton(text=get_texts(db_user.language).BACK, callback_data='tariff_switch')],
+                        [build_back_button(texts, 'tariff_switch')],
                     ]
                 ),
                 parse_mode='HTML',
