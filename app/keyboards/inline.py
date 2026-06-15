@@ -295,6 +295,7 @@ def get_language_selection_keyboard(
     *,
     include_back: bool = False,
     language: str = DEFAULT_LANGUAGE,
+    back_callback: str = 'back_to_menu',
 ) -> InlineKeyboardMarkup:
     available_languages = settings.get_available_languages()
 
@@ -328,7 +329,7 @@ def get_language_selection_keyboard(
 
     if include_back:
         texts = get_texts(language)
-        buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+        buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -781,9 +782,6 @@ def get_main_menu_keyboard(
         )
     )
 
-    if settings.is_language_selection_enabled():
-        paired_buttons.append(InlineKeyboardButton(text=texts.MENU_LANGUAGE, callback_data='menu_language'))
-
     for i in range(0, len(paired_buttons), 2):
         row = paired_buttons[i : i + 2]
         keyboard.append(row)
@@ -881,6 +879,16 @@ def get_info_menu_keyboard(
                 InlineKeyboardButton(
                     text=server_status_text,
                     callback_data='menu_server_status',
+                )
+            ]
+        )
+
+    if settings.is_language_selection_enabled():
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.MENU_LANGUAGE,
+                    callback_data='menu_language',
                 )
             ]
         )

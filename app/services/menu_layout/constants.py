@@ -71,12 +71,6 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'max_per_row': 2,
         },
         {
-            'id': 'language_row',
-            'buttons': ['language'],
-            'conditions': {'language_selection_enabled': True},
-            'max_per_row': 2,
-        },
-        {
             'id': 'admin_row',
             'buttons': ['admin_panel'],
             'conditions': {'is_admin': True},

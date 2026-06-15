@@ -925,6 +925,7 @@ async def show_language_menu(
             current_language=db_user.language,
             include_back=True,
             language=db_user.language,
+            back_callback='menu_info',
         ),
         parse_mode='HTML',
     )
