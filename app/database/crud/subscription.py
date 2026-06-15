@@ -37,6 +37,9 @@ ALIVE_SUBSCRIPTION_STATUSES: frozenset[str] = frozenset(
     }
 )
 
+# Кортеж для SQLAlchemy .in_() — вычисляется один раз, не аллоцируется при каждом вызове.
+_ALIVE_SUBSCRIPTION_STATUSES_TUPLE: tuple[str, ...] = tuple(ALIVE_SUBSCRIPTION_STATUSES)
+
 # Имя частичного уникального индекса, конфликт по которому мы ожидаем
 # при гонке создания триальной подписки.
 UQ_TRIAL_CONSTRAINT = 'uq_subscriptions_user_tariff_active'
@@ -2604,7 +2607,7 @@ async def get_active_subscriptions_by_user_id(db: AsyncSession, user_id: int) ->
         )
         .where(
             Subscription.user_id == user_id,
-            Subscription.status.in_(list(ALIVE_SUBSCRIPTION_STATUSES)),
+            Subscription.status.in_(_ALIVE_SUBSCRIPTION_STATUSES_TUPLE),
         )
         .order_by(Subscription.created_at.desc())
     )
@@ -2659,9 +2662,9 @@ async def get_subscription_by_user_and_tariff(
     without this expired duplicates of the same tariff piled up for users.
     Prefers the freshest candidate (latest end_date) — an alive one, if any.
     """
-    statuses = list(ALIVE_SUBSCRIPTION_STATUSES)
+    statuses = _ALIVE_SUBSCRIPTION_STATUSES_TUPLE
     if include_inactive:
-        statuses += [SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value]
+        statuses += (SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value)
 
     result = await db.execute(
         select(Subscription)
