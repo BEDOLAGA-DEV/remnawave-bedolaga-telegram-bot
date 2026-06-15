@@ -19,6 +19,7 @@ from app.database.crud.user_message import get_random_active_message
 from app.database.models import PromoGroup, User
 from app.handlers.subscription.traffic import add_traffic, handle_add_traffic
 from app.keyboards.inline import (
+    build_back_button,
     get_info_menu_keyboard,
     get_language_selection_keyboard,
     get_main_menu_keyboard_async,
@@ -264,7 +265,7 @@ async def show_service_rules(callback: types.CallbackQuery, db_user: User, db: A
     await callback.message.edit_text(
         f'{texts.t("RULES_HEADER", "📋 <b>Правила сервиса</b>")}\n\n{rules_text}',
         reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')]]
+            inline_keyboard=[[build_back_button(texts, 'back_to_menu')]]
         ),
     )
     await callback.answer()
@@ -335,7 +336,7 @@ async def show_promo_groups_info(
     promo_groups = await get_auto_assign_promo_groups(db)
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')]]
+        inline_keyboard=[[build_back_button(texts, 'menu_info')]]
     )
 
     if not promo_groups:
@@ -508,7 +509,7 @@ async def show_faq_pages(
             ]
         )
 
-    buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')])
+    buttons.append([build_back_button(texts, 'menu_info')])
 
     await callback.message.edit_text(
         caption,
@@ -645,7 +646,7 @@ async def show_faq_page(
             )
         ]
     )
-    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')])
+    keyboard_rows.append([build_back_button(texts, 'menu_info')])
 
     await callback.message.edit_text(
         message_text,
@@ -762,7 +763,7 @@ async def show_privacy_policy(
 
         keyboard_rows.append(nav_row)
 
-    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')])
+    keyboard_rows.append([build_back_button(texts, 'menu_info')])
 
     await callback.message.edit_text(
         message_text,
@@ -879,7 +880,7 @@ async def show_public_offer(
 
         keyboard_rows.append(nav_row)
 
-    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_info')])
+    keyboard_rows.append([build_back_button(texts, 'menu_info')])
 
     await callback.message.edit_text(
         message_text,
