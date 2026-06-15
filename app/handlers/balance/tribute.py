@@ -26,7 +26,7 @@ async def start_tribute_payment(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -57,7 +57,7 @@ async def start_tribute_payment(
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [types.InlineKeyboardButton(text='💳 Перейти к оплате', url=payment_url)],
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+                [build_back_button(texts, 'balance_topup')],
             ]
         )
 

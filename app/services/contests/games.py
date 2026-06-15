@@ -56,10 +56,11 @@ class BaseGameStrategy(ABC):
         """Check if user's answer is correct."""
 
     def _get_back_button(self, language: str, callback: str) -> types.InlineKeyboardButton:
+        from app.keyboards.inline import build_back_button
         from app.localization.texts import get_texts
 
         texts = get_texts(language)
-        return types.InlineKeyboardButton(text=texts.BACK, callback_data=callback)
+        return build_back_button(texts, callback)
 
     def _get_texts(self, language: str):
         from app.localization.texts import get_texts

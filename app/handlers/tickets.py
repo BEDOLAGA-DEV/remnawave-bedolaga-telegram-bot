@@ -355,7 +355,7 @@ async def show_my_tickets(callback: types.CallbackQuery, db_user: User, db: Asyn
                             text=texts.t('VIEW_CLOSED_TICKETS', '🟢 Закрытые тикеты'), callback_data='my_tickets_closed'
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_support')],
+                    [build_back_button(texts, 'menu_support')],
                 ]
             ),
         )
@@ -413,7 +413,7 @@ async def show_my_tickets_closed(callback: types.CallbackQuery, db_user: User, d
                             text=texts.t('BACK_TO_OPEN_TICKETS', '🔴 Открытые тикеты'), callback_data='my_tickets'
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_support')],
+                    [build_back_button(texts, 'menu_support')],
                 ]
             ),
         )

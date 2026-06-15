@@ -223,7 +223,7 @@ async def confirm_subscription_revoke(
             texts.t('SUBSCRIPTION_REVOKE_ERROR', '❌ Ошибка при перевыпуске подписки. Попробуйте позже.'),
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                    [build_back_button(texts, 'menu_subscription')],
                 ]
             ),
             parse_mode='HTML',

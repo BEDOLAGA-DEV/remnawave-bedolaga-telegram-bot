@@ -166,7 +166,7 @@ async def process_freekassa_payment_amount(
         keyboard = []
         if support_url:
             keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await message.answer(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
@@ -255,7 +255,7 @@ async def _start_freekassa_topup_impl(
         keyboard = []
         if support_url:
             keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',

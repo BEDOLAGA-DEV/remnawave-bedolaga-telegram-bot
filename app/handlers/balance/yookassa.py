@@ -30,7 +30,7 @@ async def start_yookassa_payment(callback: types.CallbackQuery, db_user: User, s
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -76,7 +76,7 @@ async def start_yookassa_sbp_payment(callback: types.CallbackQuery, db_user: Use
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -124,7 +124,7 @@ async def process_yookassa_payment_amount(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await message.answer(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -193,7 +193,7 @@ async def process_yookassa_payment_amount(
                         text='📊 Проверить статус', callback_data=f'check_yookassa_{payment_result["local_payment_id"]}'
                     )
                 ],
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+                [build_back_button(texts, 'balance_topup')],
             ]
         )
 
@@ -279,7 +279,7 @@ async def process_yookassa_sbp_payment_amount(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await message.answer(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -417,7 +417,7 @@ async def process_yookassa_sbp_payment_amount(
                 )
             ]
         )
-        keyboard_buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')])
+        keyboard_buttons.append([build_back_button(texts, 'balance_topup')])
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
 
