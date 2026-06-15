@@ -21,7 +21,7 @@ from app.keyboards.inline import (
     get_back_keyboard,
     get_balance_keyboard,
     get_pagination_keyboard,
-    get_payment_methods_keyboard,,
+    get_payment_methods_keyboard,
     build_back_button
 )
 from app.localization.texts import get_texts

@@ -33,7 +33,7 @@ from app.keyboards.inline import (
     get_subscription_period_keyboard,
     get_traffic_packages_keyboard,
     get_trial_keyboard,
-    get_updated_subscription_settings_keyboard,,
+    get_updated_subscription_settings_keyboard,
     build_back_button
 )
 from app.localization.texts import get_texts

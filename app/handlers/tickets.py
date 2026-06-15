@@ -17,7 +17,7 @@ from app.keyboards.inline import (
     get_my_tickets_keyboard,
     get_ticket_cancel_keyboard,
     get_ticket_reply_cancel_keyboard,
-    get_ticket_view_keyboard,,
+    get_ticket_view_keyboard,
     build_back_button
 )
 from app.localization.texts import get_texts
