@@ -8,7 +8,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Define router before app imports to avoid circular import via routes/__init__.py
@@ -16,7 +16,11 @@ router = APIRouter(prefix='/admin/stats', tags=['Cabinet Admin Stats'])
 
 from app.database.crud.campaign import get_campaign_statistics, get_campaigns_count, get_campaigns_list
 from app.database.crud.server_squad import get_server_statistics
-from app.database.crud.subscription import get_subscriptions_statistics
+from app.database.crud.subscription import (
+    _paid_subscription_filters,
+    _trial_subscription_filters,
+    get_subscriptions_statistics,
+)
 from app.database.crud.transaction import REAL_PAYMENT_METHODS, get_revenue_by_period, get_transactions_statistics
 from app.database.models import (
     ReferralEarning,
@@ -527,20 +531,24 @@ async def _get_tariff_stats(db: AsyncSession) -> TariffStats | None:
         total_tariff_subscriptions = 0
 
         for tariff in tariffs:
-            # Активные подписки на этом тарифе
+            # Активные платные подписки на этом тарифе (используем единый фильтр)
             active_result = await db.execute(
                 select(func.count(Subscription.id)).where(
-                    Subscription.tariff_id == tariff.id, Subscription.status == SubscriptionStatus.ACTIVE.value
+                    and_(
+                        _paid_subscription_filters(now),
+                        Subscription.tariff_id == tariff.id,
+                    )
                 )
             )
             active_count = active_result.scalar() or 0
 
-            # Триальные подписки на этом тарифе
+            # Триальные подписки на этом тарифе (используем единый фильтр)
             trial_result = await db.execute(
                 select(func.count(Subscription.id)).where(
-                    Subscription.tariff_id == tariff.id,
-                    Subscription.status == SubscriptionStatus.ACTIVE.value,
-                    Subscription.is_trial == True,
+                    and_(
+                        _trial_subscription_filters(now),
+                        Subscription.tariff_id == tariff.id,
+                    )
                 )
             )
             trial_count = trial_result.scalar() or 0
@@ -591,7 +599,69 @@ async def _get_tariff_stats(db: AsyncSession) -> TariffStats | None:
                 )
             )
 
-            total_tariff_subscriptions += active_count
+            total_tariff_subscriptions += active_count + trial_count
+
+        # Подписки без тарифа (Unknown) — считаем отдельно
+        unknown_paid_result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                and_(
+                    _paid_subscription_filters(now),
+                    Subscription.tariff_id.is_(None),
+                )
+            )
+        )
+        unknown_paid = unknown_paid_result.scalar() or 0
+
+        unknown_trial_result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                and_(
+                    _trial_subscription_filters(now),
+                    Subscription.tariff_id.is_(None),
+                )
+            )
+        )
+        unknown_trial = unknown_trial_result.scalar() or 0
+
+        unknown_today_result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                Subscription.tariff_id.is_(None),
+                Subscription.created_at >= today_start,
+                Subscription.is_trial == False,
+            )
+        )
+        unknown_today = unknown_today_result.scalar() or 0
+
+        unknown_week_result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                Subscription.tariff_id.is_(None),
+                Subscription.created_at >= week_ago,
+                Subscription.is_trial == False,
+            )
+        )
+        unknown_week = unknown_week_result.scalar() or 0
+
+        unknown_month_result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                Subscription.tariff_id.is_(None),
+                Subscription.created_at >= month_ago,
+                Subscription.is_trial == False,
+            )
+        )
+        unknown_month = unknown_month_result.scalar() or 0
+
+        if unknown_paid > 0 or unknown_trial > 0:
+            tariff_items.append(
+                TariffStatItem(
+                    tariff_id=-1,
+                    tariff_name='Unknown (без тарифа)',
+                    active_subscriptions=unknown_paid,
+                    trial_subscriptions=unknown_trial,
+                    purchased_today=unknown_today,
+                    purchased_week=unknown_week,
+                    purchased_month=unknown_month,
+                )
+            )
+            total_tariff_subscriptions += unknown_paid + unknown_trial
 
         logger.info('📊 Всего подписок по тарифам', total_tariff_subscriptions=total_tariff_subscriptions)
 

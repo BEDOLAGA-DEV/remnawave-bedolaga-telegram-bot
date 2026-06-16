@@ -2043,17 +2043,31 @@ class RemnaWaveService:
 
                         # Attempt to match tariff by allowed_squads
                         _matched_tariff_id = None
-                        if _squad_uuids:
-                            try:
-                                from app.database.crud.tariff import get_all_active_tariffs
+                        try:
+                            from app.database.crud.tariff import get_all_active_tariffs
 
-                                _all_tariffs = await get_all_active_tariffs(db)
+                            _all_tariffs = await get_all_active_tariffs(db)
+                            if _squad_uuids:
                                 for _t in _all_tariffs:
                                     if _t.allowed_squads and set(_squad_uuids).issubset(set(_t.allowed_squads)):
                                         _matched_tariff_id = _t.id
                                         break
-                            except Exception:
-                                pass
+
+                            # Fallback: use first active tariff to prevent NULL tariff_id orphans
+                            if _matched_tariff_id is None and _all_tariffs:
+                                _matched_tariff_id = _all_tariffs[0].id
+                                logger.warning(
+                                    '⚠️ [multi-tariff] Тариф не найден по squad_uuid, используем fallback',
+                                    panel_uuid=panel_uuid,
+                                    squad_uuids=_squad_uuids,
+                                    fallback_tariff_id=_matched_tariff_id,
+                                )
+                        except Exception as tariff_err:
+                            logger.error(
+                                '❌ [multi-tariff] Ошибка при поиске тарифа',
+                                panel_uuid=panel_uuid,
+                                error=tariff_err,
+                            )
 
                         new_sub = Subscription(
                             user_id=_bot_user.id,
