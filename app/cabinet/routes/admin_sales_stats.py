@@ -166,31 +166,40 @@ async def get_sales_summary(
         )
         manual_topup = manual_topup_result.scalar() or 0
 
-        # Consolidated subscription counts: active paid, active trial, new trials in period
+        # Consolidated subscription counts: new trials, new paid, expired paid
+        # For active counts we want UNIQUE users (not subscription rows) so use
+        # count(distinct user_id) with appropriate filters.
+        current_time = datetime.now(UTC)
+
+        active_paid_result = await db.execute(
+            select(func.count(func.distinct(Subscription.user_id))).where(
+                and_(
+                    Subscription.status == SubscriptionStatus.ACTIVE.value,
+                    Subscription.is_trial.is_(False),
+                    Subscription.end_date.isnot(None),
+                    Subscription.end_date > current_time,
+                )
+            )
+        )
+        active_subs = active_paid_result.scalar() or 0
+
+        active_trial_result = await db.execute(
+            select(func.count(func.distinct(Subscription.user_id))).where(
+                and_(
+                    Subscription.is_trial.is_(True),
+                    Subscription.end_date.isnot(None),
+                    Subscription.end_date > current_time,
+                    Subscription.status.in_([
+                        SubscriptionStatus.ACTIVE.value,
+                        SubscriptionStatus.TRIAL.value,
+                    ]),
+                )
+            )
+        )
+        active_trials = active_trial_result.scalar() or 0
+
         sub_counts_result = await db.execute(
             select(
-                func.sum(
-                    case(
-                        (
-                            and_(
-                                Subscription.status == SubscriptionStatus.ACTIVE.value, Subscription.is_trial.is_(False)
-                            ),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label('active_paid'),
-                func.sum(
-                    case(
-                        (
-                            and_(
-                                Subscription.status == SubscriptionStatus.ACTIVE.value, Subscription.is_trial.is_(True)
-                            ),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label('active_trial'),
                 func.sum(
                     case(
                         (
@@ -235,8 +244,6 @@ async def get_sales_summary(
             )
         )
         row = sub_counts_result.one()
-        active_subs = row.active_paid or 0
-        active_trials = row.active_trial or 0
         new_trials = row.new_trials or 0
         new_paid_subs = row.new_paid or 0
         expired_paid_subs = row.expired_paid or 0
