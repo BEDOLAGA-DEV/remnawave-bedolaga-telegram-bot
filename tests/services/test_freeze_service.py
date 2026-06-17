@@ -27,6 +27,8 @@ def service():
     svc._subscription_service = MagicMock()
     svc._subscription_service.disable_remnawave_user = AsyncMock(return_value=True)
     svc._subscription_service.enable_remnawave_user = AsyncMock(return_value=True)
+    # update_remnawave_user returns RemnaWaveUser | None (None on failure)
+    svc._subscription_service.update_remnawave_user = AsyncMock(return_value=SimpleNamespace())
     return svc
 
 
@@ -127,7 +129,32 @@ async def test_resume_happy_extends_end_date(service):
     assert sub.frozen_at is None
     assert sub.end_date > old_end
     assert sub.freeze_days_used_year >= 5
-    service._subscription_service.enable_remnawave_user.assert_awaited_once_with('uuid-main')
+    # Resume syncs the credited end_date to the panel via update_remnawave_user
+    # (status=ACTIVE + expire_at=end_date), not a bare enable.
+    service._subscription_service.update_remnawave_user.assert_awaited_once()
+    service._subscription_service.enable_remnawave_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resume_pushes_credited_end_date_to_panel(service):
+    # Regression (tg report 2026-06-17): resume must push the credited end_date
+    # back to the panel as expireAt. enable_remnawave_user only flips status to
+    # ACTIVE and leaves the stale pre-freeze expireAt — the panel->bot sync then
+    # reverts end_date to that stale value and the subscription gets wrongly
+    # expired the day after resume. update_remnawave_user is freeze-aware
+    # (frozen_at is cleared first) and sends status=ACTIVE + expire_at=end_date,
+    # also re-syncing the paired _wl account.
+    now = datetime.now(UTC)
+    sub = _sub(frozen_at=now - timedelta(days=5), frozen_until=now + timedelta(days=25),
+               end_date=now + timedelta(days=10), freeze_year=now.year)
+    db = _db(locked_sub=sub)
+    await service.resume_subscription(db, sub, SimpleNamespace(id=10), reason='manual')
+    service._subscription_service.update_remnawave_user.assert_awaited_once()
+    args, kwargs = service._subscription_service.update_remnawave_user.call_args
+    passed_sub = args[1] if len(args) > 1 else kwargs.get('subscription')
+    # The subscription handed to the panel sync carries the credited end_date
+    assert passed_sub is sub
+    assert sub.end_date > now + timedelta(days=10)  # ~5 frozen days credited
 
 
 @pytest.mark.asyncio
@@ -144,7 +171,9 @@ async def test_resume_capped_at_frozen_until(service):
 
 @pytest.mark.asyncio
 async def test_resume_panel_failure_keeps_time_enqueues(service, monkeypatch):
-    service._subscription_service.enable_remnawave_user = AsyncMock(return_value=False)
+    # update_remnawave_user returns None on panel failure -> enqueue retry,
+    # but the credited time stays (DB already committed).
+    service._subscription_service.update_remnawave_user = AsyncMock(return_value=None)
     enqueue = MagicMock()
     monkeypatch.setattr(fs.remnawave_retry_queue, 'enqueue', enqueue)
     now = datetime.now(UTC)
@@ -166,6 +195,7 @@ async def test_resume_concurrent_already_cleared_is_noop(service):
     locked = _sub(frozen_at=None, end_date=now + timedelta(days=15))  # already resumed
     db = _db(locked_sub=locked)
     await service.resume_subscription(db, sub, SimpleNamespace(id=10), reason='auto')
+    service._subscription_service.update_remnawave_user.assert_not_awaited()
     service._subscription_service.enable_remnawave_user.assert_not_awaited()
     db.commit.assert_not_awaited()
 

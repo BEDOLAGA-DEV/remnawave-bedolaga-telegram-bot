@@ -122,10 +122,17 @@ class FreezeService:
 
         uuid = getattr(subscription, 'remnawave_uuid', None)
         if uuid:
-            # enable_remnawave_user also re-enables the paired _wl (БС-трафик)
-            # account, so resume restores both the main and БС access.
-            ok = await self._subscription_service.enable_remnawave_user(uuid)
-            if not ok:
+            # Re-enable AND push the credited end_date back to the panel as
+            # expireAt. enable_remnawave_user only flips status to ACTIVE and
+            # leaves the pre-freeze expireAt untouched, so the panel keeps the
+            # old date; the bidirectional panel->bot sync then reverts end_date
+            # to that stale value and the subscription is wrongly expired the
+            # day after resume (tg report 2026-06-17). update_remnawave_user is
+            # freeze-aware — frozen_at is cleared above, so it sends
+            # status=ACTIVE + expire_at=end_date and re-syncs the paired _wl
+            # (БС-трафик) account. Matches the retry-queue 'update' fallback.
+            updated = await self._subscription_service.update_remnawave_user(db, subscription)
+            if updated is None:
                 remnawave_retry_queue.enqueue(
                     subscription_id=subscription.id, user_id=subscription.user_id, action='update',
                 )
