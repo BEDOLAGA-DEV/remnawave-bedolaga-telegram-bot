@@ -1572,12 +1572,12 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
             InlineKeyboardButton(
                 text=history_text,
                 callback_data='balance_history',
-                icon_custom_emoji_id='5375107165277158175',
+                icon_custom_emoji_id='5375380522765679294',
             ),
             InlineKeyboardButton(
                 text=top_up_text,
                 callback_data='balance_topup',
-                icon_custom_emoji_id='5372915585199929301',
+                icon_custom_emoji_id='5375218203066663939',
             ),
         ],
     ]
@@ -1989,7 +1989,7 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
                 InlineKeyboardButton(
                     text=strip_leading_emoji(texts.t('PAYMENT_ANTILOPAY_SBP', f'📱 {sbp_name}')),
                     callback_data=_build_callback('antilopay_sbp'),
-                    icon_custom_emoji_id='5217961106554769883',
+                    icon_custom_emoji_id='5217837965547427903',
                 )
             ]
         )
