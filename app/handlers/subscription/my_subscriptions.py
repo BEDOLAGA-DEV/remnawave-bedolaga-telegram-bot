@@ -102,7 +102,7 @@ def _build_subscriptions_keyboard(subscriptions: list, language: str) -> types.I
     buttons.append(
         [
             types.InlineKeyboardButton(
-                text=buy_text_clean,
+                text='➕ ' + buy_text_clean,
                 callback_data='menu_buy',
                 icon_custom_emoji_id='5372915585199929301',
             ),

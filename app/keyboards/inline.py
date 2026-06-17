@@ -1582,11 +1582,13 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
         ],
     ]
     if settings.YOOKASSA_RECURRENT_ENABLED or settings.ANTILOPAY_RECURRENT_ENABLED:
+        from app.utils.miniapp_buttons import strip_leading_emoji
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('SAVED_CARDS_BUTTON', '💳 Привязанные карты'),
+                    text=strip_leading_emoji(texts.t('SAVED_CARDS_BUTTON', '💳 Привязанные карты')),
                     callback_data='saved_cards_list',
+                    icon_custom_emoji_id='5372929307620440846',
                 )
             ]
         )
@@ -1596,6 +1598,7 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
 
 
 def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    from app.utils.miniapp_buttons import strip_leading_emoji
     texts = get_texts(language)
     keyboard = []
     has_direct_payment_methods = False
@@ -1611,7 +1614,9 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('PAYMENT_TELEGRAM_STARS', '⭐ Telegram Stars'), callback_data=_build_callback('stars')
+                    text=strip_leading_emoji(texts.t('PAYMENT_TELEGRAM_STARS', '⭐ Telegram Stars')),
+                    callback_data=_build_callback('stars'),
+                    icon_custom_emoji_id='4983746717313664194',
                 )
             ]
         )
@@ -1669,8 +1674,9 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('PAYMENT_CARD_WATA', '💳 Банковская карта (WATA)'),
+                    text=strip_leading_emoji(texts.t('PAYMENT_CARD_WATA', '💳 Банковская карта (WATA)')),
                     callback_data=_build_callback('wata'),
+                    icon_custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1725,8 +1731,9 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('PAYMENT_HELEKET', '🪙 Криптовалюта (Heleket)'),
+                    text=strip_leading_emoji(texts.t('PAYMENT_HELEKET', '🪙 Криптовалюта (Heleket)')),
                     callback_data=_build_callback('heleket'),
+                    icon_custom_emoji_id='5355123515672510607',
                 )
             ]
         )
@@ -1980,8 +1987,9 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('PAYMENT_ANTILOPAY_SBP', f'📱 {sbp_name}'),
+                    text=strip_leading_emoji(texts.t('PAYMENT_ANTILOPAY_SBP', f'📱 {sbp_name}')),
                     callback_data=_build_callback('antilopay_sbp'),
+                    icon_custom_emoji_id='5217961106554769883',
                 )
             ]
         )
@@ -2145,7 +2153,9 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('PAYMENT_VIA_SUPPORT', '🛠️ Через поддержку'), callback_data='topup_support'
+                    text=strip_leading_emoji(texts.t('PAYMENT_VIA_SUPPORT', '🛠️ Через поддержку')),
+                    callback_data='topup_support',
+                    icon_custom_emoji_id='5372981976804398143',
                 )
             ]
         )
