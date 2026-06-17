@@ -2149,16 +2149,7 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
-    if settings.is_support_topup_enabled():
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=strip_leading_emoji(texts.t('PAYMENT_VIA_SUPPORT', '🛠️ Через поддержку')),
-                    callback_data='topup_support',
-                    icon_custom_emoji_id='5372981976804398143',
-                )
-            ]
-        )
+
 
     if not keyboard:
         keyboard.append(
