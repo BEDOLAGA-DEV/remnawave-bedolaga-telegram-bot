@@ -1562,11 +1562,23 @@ def get_subscription_confirm_keyboard(language: str = DEFAULT_LANGUAGE) -> Inlin
 
 def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
     texts = get_texts(language)
+    from app.utils.miniapp_buttons import strip_leading_emoji
+
+    history_text = strip_leading_emoji(texts.BALANCE_HISTORY)
+    top_up_text = strip_leading_emoji(texts.BALANCE_TOP_UP)
 
     keyboard = [
         [
-            InlineKeyboardButton(text=texts.BALANCE_HISTORY, callback_data='balance_history'),
-            InlineKeyboardButton(text=texts.BALANCE_TOP_UP, callback_data='balance_topup'),
+            InlineKeyboardButton(
+                text=history_text,
+                callback_data='balance_history',
+                icon_custom_emoji_id='5375107165277158175',
+            ),
+            InlineKeyboardButton(
+                text=top_up_text,
+                callback_data='balance_topup',
+                icon_custom_emoji_id='5372915585199929301',
+            ),
         ],
     ]
     if settings.YOOKASSA_RECURRENT_ENABLED or settings.ANTILOPAY_RECURRENT_ENABLED:

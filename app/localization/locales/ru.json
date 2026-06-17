@@ -952,7 +952,7 @@
   "BALANCE_BUTTON": "💰 Баланс: {balance}",
   "BALANCE_BUTTON_DEFAULT": "💰 Баланс: {balance}",
   "BALANCE_BUTTON_ZERO": "💰 Баланс: 0 ₽",
-  "BALANCE_HISTORY": "📊 История операций",
+  "BALANCE_HISTORY": "📊 История",
   "BALANCE_INFO": "\n💰 <b>Баланс: {balance}</b>\n\nВыберите действие:\n",
   "BALANCE_SUPPORT_REQUEST": "🛠️ Запрос через поддержку",
   "BALANCE_TOPUP": "💳 Пополнить баланс",

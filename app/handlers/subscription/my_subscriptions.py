@@ -87,8 +87,9 @@ def _build_subscriptions_keyboard(subscriptions: list, language: str) -> types.I
         buttons.append(
             [
                 types.InlineKeyboardButton(
-                    text=f'⚙️ {tariff_name}',
+                    text=tariff_name,
                     callback_data=f'sm:{sub.id}',
+                    icon_custom_emoji_id='5375107165277158175',
                 )
             ]
         )
@@ -96,9 +97,15 @@ def _build_subscriptions_keyboard(subscriptions: list, language: str) -> types.I
     # "Buy another tariff" button
     texts = get_texts(language)
     buy_text = getattr(texts, 'MENU_BUY_SUBSCRIPTION', 'Купить ещё тариф')
+    from app.utils.miniapp_buttons import strip_leading_emoji
+    buy_text_clean = strip_leading_emoji(buy_text)
     buttons.append(
         [
-            types.InlineKeyboardButton(text=f'➕ {buy_text}', callback_data='menu_buy'),
+            types.InlineKeyboardButton(
+                text=buy_text_clean,
+                callback_data='menu_buy',
+                icon_custom_emoji_id='5372915585199929301',
+            ),
         ]
     )
     # Back button

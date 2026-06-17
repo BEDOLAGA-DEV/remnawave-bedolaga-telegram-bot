@@ -944,7 +944,7 @@
   "BALANCE_BUTTON": "💰 موجودی",
   "BALANCE_BUTTON_DEFAULT": "💰 موجودی: {balance}",
   "BALANCE_BUTTON_ZERO": "💰 موجودی: 0 ₽",
-  "BALANCE_HISTORY": "📊 تاریخچه عملیات",
+  "BALANCE_HISTORY": "📊 تاریخچه",
   "BALANCE_INFO": "\n💰 <b>موجودی: {balance}</b>\n\nعملیات:\n",
   "BALANCE_SUPPORT_REQUEST": "🛠️ درخواست از پشتیبانی",
   "BALANCE_TOPUP": "💳 شارژ موجودی",

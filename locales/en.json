@@ -924,7 +924,7 @@
   "BALANCE_BUTTON": "💰 Balance: {balance}",
   "BALANCE_BUTTON_DEFAULT": "💰 Balance: {balance}",
   "BALANCE_BUTTON_ZERO": "💰 Balance: 0 ₽",
-  "BALANCE_HISTORY": "📊 Transaction history",
+  "BALANCE_HISTORY": "📊 History",
   "BALANCE_INFO": "\n💰 <b>Balance: {balance}</b>\n\nChoose an action:\n",
   "BALANCE_SUPPORT_REQUEST": "🛠️ Request via support",
   "BALANCE_TOPUP": "💳 Top up balance",
