@@ -304,6 +304,22 @@ def get_language_selection_keyboard(
 
     normalized_current = (current_language or '').lower()
 
+    # Premium custom flag emoji mappings
+    language_custom_emojis = {
+        'ru': '5300987145123538510',
+        'ru-ru': '5300987145123538510',
+        'en': '5300788601670345923',
+        'en-us': '5300788601670345923',
+        'en-gb': '5300788601670345923',
+        'zh': '5300871296970662423',
+        'zh-cn': '5300871296970662423',
+        'zh-hans': '5300871296970662423',
+        'zh-tw': '5300871296970662423',
+        'zh-hant': '5300871296970662423',
+        'fa': '5303384157781498356',
+        'fa-ir': '5303384157781498356',
+    }
+
     for index, lang_code in enumerate(available_languages, start=1):
         normalized_code = lang_code.lower()
         display_name = _LANGUAGE_DISPLAY_NAMES.get(
@@ -311,12 +327,18 @@ def get_language_selection_keyboard(
             normalized_code.upper(),
         )
 
+        custom_emoji_id = language_custom_emojis.get(normalized_code)
+        if custom_emoji_id:
+            from app.utils.miniapp_buttons import strip_leading_emoji
+            display_name = strip_leading_emoji(display_name)
+
         prefix = '✅ ' if normalized_code == normalized_current and normalized_current else ''
 
         row.append(
             InlineKeyboardButton(
                 text=f'{prefix}{display_name}',
                 callback_data=f'language_select:{normalized_code}',
+                icon_custom_emoji_id=custom_emoji_id,
             )
         )
 
@@ -703,17 +725,34 @@ def get_main_menu_keyboard(
                 )
             )
 
+    show_trial = not has_had_paid_subscription and not has_active_subscription
+    show_buy = not has_active_subscription or not subscription_is_active
+
+    if show_trial:
+        from app.utils.miniapp_buttons import strip_leading_emoji
+        trial_text = strip_leading_emoji(texts.MENU_TRIAL)
+        keyboard.append([
+            InlineKeyboardButton(
+                text=trial_text,
+                callback_data='menu_trial',
+                icon_custom_emoji_id='5400037092493388751',
+                style='success',
+            )
+        ])
+
     keyboard.append([InlineKeyboardButton(text=balance_button_text, callback_data='menu_balance')])
 
-    show_trial = not has_had_paid_subscription and not has_active_subscription
+    if show_buy:
+        from app.utils.miniapp_buttons import strip_leading_emoji
+        buy_text = strip_leading_emoji(texts.MENU_BUY_SUBSCRIPTION)
+        keyboard.append([
+            InlineKeyboardButton(
+                text=buy_text,
+                callback_data='menu_buy',
+                icon_custom_emoji_id='5402536282423320905',
+            )
+        ])
 
-    show_buy = not has_active_subscription or not subscription_is_active
-    current_subscription = subscription
-    bool(
-        current_subscription
-        and not getattr(current_subscription, 'is_trial', False)
-        and getattr(current_subscription, 'is_active', False)
-    )
     simple_purchase_button = None
     if settings.SIMPLE_SUBSCRIPTION_ENABLED:
         simple_purchase_button = InlineKeyboardButton(
@@ -721,16 +760,6 @@ def get_main_menu_keyboard(
             callback_data='simple_subscription_purchase',
         )
 
-    subscription_buttons: list[InlineKeyboardButton] = []
-
-    if show_trial:
-        subscription_buttons.append(InlineKeyboardButton(text=texts.MENU_TRIAL, callback_data='menu_trial'))
-
-    if show_buy:
-        subscription_buttons.append(InlineKeyboardButton(text=texts.MENU_BUY_SUBSCRIPTION, callback_data='menu_buy'))
-
-    if subscription_buttons:
-        paired_buttons.extend(subscription_buttons)
     if simple_purchase_button:
         paired_buttons.append(simple_purchase_button)
 
@@ -907,6 +936,132 @@ def get_happ_download_button_row(texts) -> list[InlineKeyboardButton] | None:
             text=texts.t('HAPP_DOWNLOAD_BUTTON', '⬇️ Скачать Happ'), callback_data='subscription_happ_download'
         )
     ]
+
+
+def get_connect_keyboard(
+    texts,
+    subscription_link: str,
+    connect_mode: str,
+) -> InlineKeyboardMarkup:
+    """Создает клавиатуру подключения к подписке (после успешной оплаты или активации триала)."""
+    from app.utils.miniapp_buttons import strip_leading_emoji
+
+    connect_text = strip_leading_emoji(texts.t('CONNECT_BUTTON', '🔗 Подключиться'))
+    back_menu_text = strip_leading_emoji(texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'))
+
+    connect_emoji = '5402520343799685652'
+    back_menu_emoji = '5372990734242706763'
+
+    if connect_mode == 'miniapp_subscription':
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=connect_text,
+                        web_app=types.WebAppInfo(url=subscription_link),
+                        icon_custom_emoji_id=connect_emoji,
+                        style='primary',
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=back_menu_text,
+                        callback_data='back_to_menu',
+                        icon_custom_emoji_id=back_menu_emoji,
+                    )
+                ],
+            ]
+        )
+    if connect_mode == 'miniapp_custom':
+        if not settings.MINIAPP_CUSTOM_URL:
+            return get_back_keyboard(texts.language if hasattr(texts, 'language') else 'ru')
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=connect_text,
+                        web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
+                        icon_custom_emoji_id=connect_emoji,
+                        style='primary',
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=back_menu_text,
+                        callback_data='back_to_menu',
+                        icon_custom_emoji_id=back_menu_emoji,
+                    )
+                ],
+            ]
+        )
+    if connect_mode == 'link':
+        rows = [
+            [
+                InlineKeyboardButton(
+                    text=connect_text,
+                    url=subscription_link,
+                    icon_custom_emoji_id=connect_emoji,
+                    style='primary',
+                )
+            ]
+        ]
+        happ_row = get_happ_download_button_row(texts)
+        if happ_row:
+            rows.append(happ_row)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=back_menu_text,
+                    callback_data='back_to_menu',
+                    icon_custom_emoji_id=back_menu_emoji,
+                )
+            ]
+        )
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+    if connect_mode == 'happ_cryptolink':
+        rows = [
+            [
+                InlineKeyboardButton(
+                    text=connect_text,
+                    callback_data='open_subscription_link',
+                    icon_custom_emoji_id=connect_emoji,
+                    style='primary',
+                )
+            ]
+        ]
+        happ_row = get_happ_download_button_row(texts)
+        if happ_row:
+            rows.append(happ_row)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=back_menu_text,
+                    callback_data='back_to_menu',
+                    icon_custom_emoji_id=back_menu_emoji,
+                )
+            ]
+        )
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=connect_text,
+                    callback_data='subscription_connect',
+                    icon_custom_emoji_id=connect_emoji,
+                    style='primary',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=back_menu_text,
+                    callback_data='back_to_menu',
+                    icon_custom_emoji_id=back_menu_emoji,
+                )
+            ],
+        ]
+    )
 
 
 def get_happ_cryptolink_keyboard(
@@ -1342,12 +1497,19 @@ def get_insufficient_balance_keyboard_with_cart(
 
 def get_trial_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
     texts = get_texts(language)
+    from app.utils.miniapp_buttons import strip_leading_emoji
+    activate_text = strip_leading_emoji(texts.t('TRIAL_ACTIVATE_BUTTON', '🎁 Активировать'))
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=texts.t('TRIAL_ACTIVATE_BUTTON', '🎁 Активировать'), callback_data='trial_activate'
-                ),
+                    text=activate_text,
+                    callback_data='trial_activate',
+                    icon_custom_emoji_id='5402520343799685652',
+                )
+            ],
+            [
                 build_back_button(texts, callback_data='back_to_menu'),
             ]
         ]

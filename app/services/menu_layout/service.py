@@ -1103,7 +1103,7 @@ class MenuLayoutService:
         if not text:
             return None
 
-        if is_connect_button and button_type == 'builtin':
+        if is_connect_button and button_type == 'builtin' and open_mode != 'direct':
             logger.info(
                 '🔗 Построение кнопки connect через CONNECT_BUTTON_MODE',
                 effective_button_id=effective_button_id,
