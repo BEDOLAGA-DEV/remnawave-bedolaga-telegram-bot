@@ -209,7 +209,7 @@ class PaymentPromptTemplate(str):
         # 5. Default Cards (Wata, YooKassa Card, CloudPayments)
         else:
             title = 'банковскую карту'
-            emoji = '🪙'
+            emoji = '<tg-emoji emoji-id="5357079680002310747">💳</tg-emoji>'
 
         # Build clean prompt text matching user template exactly
         return (
