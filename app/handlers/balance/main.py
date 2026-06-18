@@ -343,6 +343,7 @@ async def handle_balance_history_pagination(callback: types.CallbackQuery, db_us
 
 @error_handler
 async def show_payment_methods(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    await state.clear()
     from app.config import settings
     from app.utils.payment_utils import get_payment_methods_text
 

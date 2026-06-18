@@ -61,8 +61,8 @@ async def start_cryptobot_payment(callback: types.CallbackQuery, db_user: User, 
     message_text = (
         '<tg-emoji emoji-id="5355123515672510607">🪙</tg-emoji> Пополнение через Криптовалюту\n\n'
         'Введите сумму пополнения от 100 до 100 000 ₽:\n'
-        '⚡️Мгновенное зачисление\n'
-        '💯Безопасная оплата\n\n'
+        '<tg-emoji emoji-id="5400071306202867643">⚡️</tg-emoji>Мгновенное зачисление\n'
+        '<tg-emoji emoji-id="5400163201323130799">💯</tg-emoji>Безопасная оплата\n\n'
         f'💰 Доступные активы: {assets_text}\n'
         f'{rate_text}\n'
         'Сумма будет автоматически конвертирована в USD для оплаты.'

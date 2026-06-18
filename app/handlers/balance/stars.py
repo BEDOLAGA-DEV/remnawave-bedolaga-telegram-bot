@@ -48,8 +48,8 @@ async def start_stars_payment(callback: types.CallbackQuery, db_user: User, stat
     message_text = (
         '<tg-emoji emoji-id="4983746717313664194">⭐️</tg-emoji> Пополнение через Telegram Stars\n\n'
         'Введите сумму пополнения от 10 до 10 000 ₽:\n'
-        '⚡️Мгновенное зачисление\n'
-        '💯Безопасная оплата'
+        '<tg-emoji emoji-id="5400071306202867643">⚡️</tg-emoji>Мгновенное зачисление\n'
+        '<tg-emoji emoji-id="5400163201323130799">💯</tg-emoji>Безопасная оплата'
     )
 
     keyboard = get_back_keyboard(db_user.language)

@@ -215,8 +215,8 @@ class PaymentPromptTemplate(str):
         return (
             f"{emoji} Пополнение через {title}\n\n"
             f"Введите сумму пополнения от {min_clean} до {max_clean} ₽:\n"
-            f"⚡️Мгновенное зачисление\n"
-            f"💯Безопасная оплата"
+            f'<tg-emoji emoji-id="5400071306202867643">⚡️</tg-emoji>Мгновенное зачисление\n'
+            f'<tg-emoji emoji-id="5400163201323130799">💯</tg-emoji>Безопасная оплата'
         )
 
 

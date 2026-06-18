@@ -77,8 +77,8 @@ async def _prompt_amount(
     prompt_text = (
         f'{emoji_tag} Пополнение через {method_name}\n\n'
         f'Введите сумму пополнения от {min_str} до {max_str} ₽:\n'
-        f'⚡️Мгновенное зачисление\n'
-        f'💯Безопасная оплата'
+        f'<tg-emoji emoji-id="5400071306202867643">⚡️</tg-emoji>Мгновенное зачисление\n'
+        f'<tg-emoji emoji-id="5400163201323130799">💯</tg-emoji>Безопасная оплата'
     )
 
     keyboard = get_back_keyboard(db_user.language)
