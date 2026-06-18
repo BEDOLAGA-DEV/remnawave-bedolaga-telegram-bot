@@ -122,3 +122,42 @@ def test_fresh_cycle_allows_notifications_again():
     """A renewal advances end_date → caller loads a FRESH state for the new cycle_token."""
     fresh = AutopayFailState()
     assert decide_autopay_fail_notification(fresh, hours_left=40, now_ts=200000, **DEFAULTS) == 'first'
+
+
+async def test_load_save_state_in_memory_roundtrip(monkeypatch):
+    """With Redis returning nothing, the in-memory fallback must persist state across
+    load/save within the process (single bot process in prod)."""
+    from app.services import monitoring_service as ms
+
+    svc = ms.MonitoringService(bot=None)
+    monkeypatch.setattr(ms.cache, 'get', AsyncMock(return_value=None))
+    monkeypatch.setattr(ms.cache, 'set', AsyncMock(return_value=True))
+
+    loaded = await svc._load_autopay_fail_state(subscription_id=7, cycle_token=111)
+    assert loaded.count == 0
+
+    apply_autopay_fail_notification(loaded, 'first', now_ts=10.0)
+    await svc._save_autopay_fail_state(7, 111, loaded, ttl_seconds=3600)
+
+    again = await svc._load_autopay_fail_state(7, 111)
+    assert again.count == 1 and again.final_sent is False
+
+
+async def test_cleanup_evicts_old_cycles(monkeypatch):
+    """In-memory state for cycles whose end_date is >72h in the past must be evicted."""
+    from app.services import monitoring_service as ms
+
+    svc = ms.MonitoringService(bot=None)
+    now = datetime.now(UTC)
+    old_token = int((now - timedelta(hours=100)).timestamp())
+    fresh_token = int((now + timedelta(hours=10)).timestamp())
+    svc._autopay_fail_state = {
+        (1, old_token): AutopayFailState(count=2).to_dict(),
+        (2, fresh_token): AutopayFailState(count=1).to_dict(),
+    }
+    # Force the cleanup's time-gate open.
+    svc._last_cleanup = now - timedelta(hours=2)
+    await svc._cleanup_notification_cache()
+
+    assert (1, old_token) not in svc._autopay_fail_state
+    assert (2, fresh_token) in svc._autopay_fail_state

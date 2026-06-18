@@ -192,8 +192,9 @@ class MonitoringService:
         self._notified_users: set[str] = set()
         self._last_cleanup = datetime.now(UTC)
         self._sla_task = None
-        # In-memory fallback для cooldown автоплатежей (на случай недоступности Redis)
-        self._autopay_fail_notified_at: dict[int, datetime] = {}
+        # In-memory fallback состояния уведомлений об ошибке автоплатежа (на случай
+        # недоступности Redis). Ключ — (subscription_id, cycle_token=int(end_date.timestamp())).
+        self._autopay_fail_state: dict[tuple[int, int], dict] = {}
 
     async def _send_message_with_logo(
         self,
@@ -384,73 +385,53 @@ class MonitoringService:
             old_count = len(self._notified_users)
             self._notified_users.clear()
 
-            # Чистим просроченные записи cooldown автоплатежей
-            cutoff = current_time - timedelta(seconds=AUTOPAY_INSUFFICIENT_BALANCE_COOLDOWN_SECONDS)
-            expired_ids = [uid for uid, ts in self._autopay_fail_notified_at.items() if ts < cutoff]
-            for uid in expired_ids:
-                del self._autopay_fail_notified_at[uid]
+            # Чистим состояние autopay-fail по протухшим циклам (end_date в прошлом > 72ч)
+            cutoff_ts = (current_time - timedelta(hours=72)).timestamp()
+            expired_keys = [key for key in self._autopay_fail_state if key[1] < cutoff_ts]
+            for key in expired_keys:
+                del self._autopay_fail_state[key]
 
             self._last_cleanup = current_time
             logger.info(
                 '🧹 Очищен кеш уведомлений',
                 old_count=old_count,
-                autopay_cooldown_evicted=len(expired_ids),
-                autopay_cooldown_remaining=len(self._autopay_fail_notified_at),
+                autopay_state_evicted=len(expired_keys),
+                autopay_state_remaining=len(self._autopay_fail_state),
             )
 
-    async def _check_autopay_fail_cooldown(self, user_id: int, user_identifier: str) -> bool:
-        """Проверяет, можно ли отправить уведомление об ошибке автоплатежа.
-
-        Использует Redis как primary хранилище cooldown, с in-memory fallback.
-        Returns True если уведомление можно отправить.
-        """
-        # 1. In-memory fallback (работает даже без Redis)
-        last_notified = self._autopay_fail_notified_at.get(user_id)
-        if last_notified:
-            elapsed = (datetime.now(UTC) - last_notified).total_seconds()
-            if elapsed < AUTOPAY_INSUFFICIENT_BALANCE_COOLDOWN_SECONDS:
-                logger.debug(
-                    'Пропуск уведомления об ошибке автоплатежа — in-memory cooldown активен',
-                    user_identifier=user_identifier,
-                    elapsed_seconds=int(elapsed),
-                )
-                return False
-
-        # 2. Redis check (если доступен)
-        cooldown_key = f'autopay_insufficient_balance_notified:{user_id}'
+    async def _load_autopay_fail_state(self, subscription_id: int, cycle_token: int) -> AutopayFailState:
+        """Load per-cycle autopay-fail state. In-memory first (current within process),
+        Redis as cross-restart source of truth."""
+        mem = self._autopay_fail_state.get((subscription_id, cycle_token))
+        if mem is not None:
+            return AutopayFailState.from_dict(mem)
         try:
-            if await cache.exists(cooldown_key):
-                logger.debug(
-                    'Пропуск уведомления об ошибке автоплатежа — Redis cooldown активен',
-                    user_identifier=user_identifier,
-                )
-                return False
+            data = await cache.get(f'autopay_fail:{subscription_id}:{cycle_token}')
+            if data:
+                return AutopayFailState.from_dict(data)
         except Exception as redis_err:
             logger.warning(
-                'Ошибка проверки cooldown в Redis, используем in-memory fallback',
-                user_identifier=user_identifier,
+                'Ошибка чтения состояния autopay-fail из Redis, in-memory fallback',
+                subscription_id=subscription_id,
                 redis_err=redis_err,
             )
+        return AutopayFailState()
 
-        return True
-
-    async def _set_autopay_fail_cooldown(self, user_id: int, user_identifier: str) -> None:
-        """Устанавливает cooldown после отправки уведомления об ошибке автоплатежа."""
-        # In-memory (всегда)
-        self._autopay_fail_notified_at[user_id] = datetime.now(UTC)
-
-        # Redis (если доступен)
-        cooldown_key = f'autopay_insufficient_balance_notified:{user_id}'
+    async def _save_autopay_fail_state(
+        self, subscription_id: int, cycle_token: int, state: AutopayFailState, ttl_seconds: int
+    ) -> None:
+        """Persist state to in-memory (always) and Redis (best effort)."""
+        self._autopay_fail_state[(subscription_id, cycle_token)] = state.to_dict()
         try:
             await cache.set(
-                cooldown_key,
-                1,
-                expire=AUTOPAY_INSUFFICIENT_BALANCE_COOLDOWN_SECONDS,
+                f'autopay_fail:{subscription_id}:{cycle_token}',
+                state.to_dict(),
+                expire=max(ttl_seconds, 60),
             )
         except Exception as redis_err:
             logger.warning(
-                'Не удалось установить cooldown в Redis, in-memory fallback активен',
-                user_identifier=user_identifier,
+                'Не удалось сохранить состояние autopay-fail в Redis, in-memory fallback активен',
+                subscription_id=subscription_id,
                 redis_err=redis_err,
             )
 
