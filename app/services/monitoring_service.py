@@ -174,6 +174,7 @@ def apply_autopay_fail_notification(state: AutopayFailState, reason: str, now_ts
         state.final_sent = True
     return state
 
+
 # Размер батча для проверки подписок на каналы (keyset pagination)
 _CHANNEL_CHECK_BATCH_SIZE: int = 100
 
@@ -1636,18 +1637,14 @@ class MonitoringService:
                             )
                         else:
                             failed_count += 1
-                            await self._maybe_notify_autopay_failure(
-                                user, charge_amount, subscription, current_time
-                            )
+                            await self._maybe_notify_autopay_failure(user, charge_amount, subscription, current_time)
                             logger.warning(
                                 '💳 Ошибка списания средств для автопродления пользователя',
                                 user_identifier=user_identifier,
                             )
                     else:
                         failed_count += 1
-                        await self._maybe_notify_autopay_failure(
-                            user, charge_amount, subscription, current_time
-                        )
+                        await self._maybe_notify_autopay_failure(user, charge_amount, subscription, current_time)
                         logger.warning(
                             '💳 Недостаточно средств для автопродления у пользователя',
                             user_identifier=user_identifier,
@@ -2227,9 +2224,7 @@ class MonitoringService:
                 )
             else:
                 template = texts.AUTOPAY_FAILED
-            message = template.format(
-                balance=settings.format_price(balance), required=settings.format_price(required)
-            )
+            message = template.format(balance=settings.format_price(balance), required=settings.format_price(required))
             if (
                 settings.is_multi_tariff_enabled()
                 and subscription

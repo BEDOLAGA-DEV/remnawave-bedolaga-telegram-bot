@@ -14,7 +14,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import pytest
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
@@ -29,11 +28,12 @@ def test_config_defaults_present():
     assert settings.AUTOPAY_FAIL_REPEAT_INTERVAL_HOURS == 0
 
 
-from app.services.monitoring_service import (  # noqa: E402
+from app.services.monitoring_service import (
     AutopayFailState,
     apply_autopay_fail_notification,
     decide_autopay_fail_notification,
 )
+
 
 DEFAULTS = dict(max_notifications=2, final_reminder_hours=3, repeat_interval_hours=0)
 
@@ -73,10 +73,17 @@ def test_post_expiry_blocked_when_cap_reached():
 
 
 def test_max_zero_disables_all():
-    assert decide_autopay_fail_notification(
-        AutopayFailState(), hours_left=40, now_ts=0,
-        max_notifications=0, final_reminder_hours=3, repeat_interval_hours=0,
-    ) is None
+    assert (
+        decide_autopay_fail_notification(
+            AutopayFailState(),
+            hours_left=40,
+            now_ts=0,
+            max_notifications=0,
+            final_reminder_hours=3,
+            repeat_interval_hours=0,
+        )
+        is None
+    )
 
 
 def test_late_first_failure_inside_window_sends_final_only():
@@ -86,18 +93,32 @@ def test_late_first_failure_inside_window_sends_final_only():
 
 def test_repeat_interval_sends_after_elapsed():
     state = AutopayFailState(count=1, last_sent_ts=0, final_sent=False)
-    assert decide_autopay_fail_notification(
-        state, hours_left=20, now_ts=7 * 3600,
-        max_notifications=10, final_reminder_hours=3, repeat_interval_hours=6,
-    ) == 'repeat'
+    assert (
+        decide_autopay_fail_notification(
+            state,
+            hours_left=20,
+            now_ts=7 * 3600,
+            max_notifications=10,
+            final_reminder_hours=3,
+            repeat_interval_hours=6,
+        )
+        == 'repeat'
+    )
 
 
 def test_repeat_interval_not_yet_elapsed_stays_silent():
     state = AutopayFailState(count=1, last_sent_ts=0, final_sent=False)
-    assert decide_autopay_fail_notification(
-        state, hours_left=20, now_ts=5 * 3600,
-        max_notifications=10, final_reminder_hours=3, repeat_interval_hours=6,
-    ) is None
+    assert (
+        decide_autopay_fail_notification(
+            state,
+            hours_left=20,
+            now_ts=5 * 3600,
+            max_notifications=10,
+            final_reminder_hours=3,
+            repeat_interval_hours=6,
+        )
+        is None
+    )
 
 
 def test_full_cycle_default_yields_exactly_two_then_silence():
@@ -106,8 +127,14 @@ def test_full_cycle_default_yields_exactly_two_then_silence():
     state = AutopayFailState()
     sent = []
     ticks = [
-        (40, 0), (30, 36000), (10, 108000), (4, 129600),
-        (3, 133200), (2, 136800), (1, 140400), (-0.5, 145800),
+        (40, 0),
+        (30, 36000),
+        (10, 108000),
+        (4, 129600),
+        (3, 133200),
+        (2, 136800),
+        (1, 140400),
+        (-0.5, 145800),
     ]
     for hours_left, now_ts in ticks:
         reason = decide_autopay_fail_notification(state, hours_left=hours_left, now_ts=now_ts, **DEFAULTS)
