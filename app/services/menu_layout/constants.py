@@ -35,14 +35,14 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'max_per_row': 1,
         },
         {
-            'id': 'balance_row',
-            'buttons': ['balance'],
+            'id': 'buy_row',
+            'buttons': ['buy_subscription'],
             'conditions': None,
             'max_per_row': 1,
         },
         {
-            'id': 'buy_row',
-            'buttons': ['buy_subscription'],
+            'id': 'balance_row',
+            'buttons': ['balance'],
             'conditions': None,
             'max_per_row': 1,
         },

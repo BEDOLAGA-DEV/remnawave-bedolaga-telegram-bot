@@ -740,8 +740,6 @@ def get_main_menu_keyboard(
             )
         ])
 
-    keyboard.append([InlineKeyboardButton(text=balance_button_text, callback_data='menu_balance')])
-
     if show_buy:
         from app.utils.miniapp_buttons import strip_leading_emoji
         buy_text = strip_leading_emoji(texts.MENU_BUY_SUBSCRIPTION)
@@ -752,6 +750,8 @@ def get_main_menu_keyboard(
                 icon_custom_emoji_id='5402536282423320905',
             )
         ])
+
+    keyboard.append([InlineKeyboardButton(text=balance_button_text, callback_data='menu_balance')])
 
     simple_purchase_button = None
     if settings.SIMPLE_SUBSCRIPTION_ENABLED:

@@ -238,6 +238,8 @@ async def show_balance_menu(callback: types.CallbackQuery, db_user: User, db: As
 
     texts = get_texts(db_user.language)
 
+    balance_text = texts.BALANCE_INFO.format(balance=texts.format_price(db_user.balance_kopeks))
+
     has_saved_cards = False
     if settings.YOOKASSA_RECURRENT_ENABLED or settings.ANTILOPAY_RECURRENT_ENABLED:
         cards = []
