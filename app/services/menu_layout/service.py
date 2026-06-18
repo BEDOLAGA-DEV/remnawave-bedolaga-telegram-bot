@@ -228,7 +228,17 @@ class MenuLayoutService:
 
             if setting and setting.value:
                 try:
-                    cls._cache = json.loads(setting.value)
+                    loaded_config = json.loads(setting.value)
+                    # Merge buttons with defaults to ensure builtin buttons have correct styles/emojis
+                    from app.services.menu_layout.constants import DEFAULT_MENU_CONFIG
+                    default_buttons = DEFAULT_MENU_CONFIG.get('buttons', {})
+                    loaded_buttons = loaded_config.get('buttons', {})
+                    for btn_id, default_cfg in default_buttons.items():
+                        if btn_id in loaded_buttons:
+                            loaded_buttons[btn_id] = {**default_cfg, **loaded_buttons[btn_id]}
+                        else:
+                            loaded_buttons[btn_id] = default_cfg
+                    cls._cache = loaded_config
                     cls._cache_updated_at = setting.updated_at
                 except json.JSONDecodeError:
                     logger.warning('Invalid menu layout config JSON, using default')
@@ -1030,7 +1040,7 @@ class MenuLayoutService:
             subscription_link = get_display_subscription_link(context.subscription)
 
         connect_mode = settings.CONNECT_BUTTON_MODE
-        kwargs: dict[str, Any] = {'text': text, 'icon_custom_emoji_id': custom_emoji_id or None}
+        kwargs: dict[str, Any] = {'text': text, 'icon_custom_emoji_id': custom_emoji_id or None, 'style': 'primary'}
 
         if connect_mode == 'miniapp_subscription':
             if subscription_link:
@@ -1084,6 +1094,7 @@ class MenuLayoutService:
         webapp_url = button_config.get('webapp_url')
         icon = button_config.get('icon', '')
         custom_emoji_id = button_config.get('icon_custom_emoji_id') or None
+        style = button_config.get('style') or None
 
         # Логирование для отладки кнопки connect
         is_connect_button = (
@@ -1119,16 +1130,17 @@ class MenuLayoutService:
 
         # Строим кнопку в зависимости от типа
         if button_type == 'url':
-            return InlineKeyboardButton(text=text, url=action, icon_custom_emoji_id=custom_emoji_id)
+            return InlineKeyboardButton(text=text, url=action, icon_custom_emoji_id=custom_emoji_id, style=style)
         if button_type == 'mini_app':
             return InlineKeyboardButton(
                 text=text,
                 web_app=types.WebAppInfo(url=action),
                 icon_custom_emoji_id=custom_emoji_id,
+                style=style,
             )
         if button_type == 'callback':
             # Кастомная кнопка с callback_data
-            return InlineKeyboardButton(text=text, callback_data=action, icon_custom_emoji_id=custom_emoji_id)
+            return InlineKeyboardButton(text=text, callback_data=action, icon_custom_emoji_id=custom_emoji_id, style=style)
         # builtin - проверяем open_mode
         if open_mode == 'direct':
             # Прямое открытие Mini App через WebAppInfo
@@ -1158,6 +1170,7 @@ class MenuLayoutService:
                     text=text,
                     web_app=types.WebAppInfo(url=url),
                     icon_custom_emoji_id=custom_emoji_id,
+                    style=style,
                 )
             logger.warning(
                 '🔗 Кнопка connect: open_mode=direct, но URL не найден. webapp_url=, action=, subscription_url',
@@ -1166,10 +1179,10 @@ class MenuLayoutService:
                 value='есть' if context.subscription else 'нет',
             )
             # Fallback на callback_data
-            return InlineKeyboardButton(text=text, callback_data=action, icon_custom_emoji_id=custom_emoji_id)
+            return InlineKeyboardButton(text=text, callback_data=action, icon_custom_emoji_id=custom_emoji_id, style=style)
         # Стандартный callback_data
         logger.debug('Кнопка connect: open_mode=, используем callback_data', open_mode=open_mode, action=action)
-        return InlineKeyboardButton(text=text, callback_data=action, icon_custom_emoji_id=custom_emoji_id)
+        return InlineKeyboardButton(text=text, callback_data=action, icon_custom_emoji_id=custom_emoji_id, style=style)
 
     # --- Построение клавиатуры ---
 

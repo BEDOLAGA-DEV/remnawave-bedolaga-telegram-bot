@@ -145,6 +145,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'visibility': 'all',
             'conditions': {'show_trial': True},
             'dynamic_text': False,
+            'icon_custom_emoji_id': '5400037092493388751',
+            'style': 'success',
         },
         'buy_subscription': {
             'type': 'builtin',
@@ -155,6 +157,7 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'visibility': 'all',
             'conditions': {'show_buy': True},
             'dynamic_text': False,
+            'icon_custom_emoji_id': '5402536282423320905',
         },
         'simple_subscription': {
             'type': 'builtin',
