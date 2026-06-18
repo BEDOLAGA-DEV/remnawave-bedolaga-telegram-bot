@@ -1,5 +1,6 @@
 import asyncio
 import html
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -106,8 +107,72 @@ def resolve_autopay_period_candidate(candidate, tariff) -> int | None:
     return candidate
 
 
-# Кулдаун между повторными уведомлениями об автоплатеже с недостаточным балансом (6 часов)
-AUTOPAY_INSUFFICIENT_BALANCE_COOLDOWN_SECONDS: int = 21600
+@dataclass
+class AutopayFailState:
+    """Per-(subscription, cycle) state for autopay-failure notifications.
+
+    `cycle` is keyed on the subscription's end_date, so a successful renewal
+    (which moves end_date forward) starts a fresh cycle with a fresh count.
+    """
+
+    count: int = 0
+    last_sent_ts: float = 0.0
+    final_sent: bool = False
+
+    def to_dict(self) -> dict:
+        return {'count': self.count, 'last_sent_ts': self.last_sent_ts, 'final_sent': self.final_sent}
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> 'AutopayFailState':
+        if not data:
+            return cls()
+        return cls(
+            count=int(data.get('count', 0)),
+            last_sent_ts=float(data.get('last_sent_ts', 0.0)),
+            final_sent=bool(data.get('final_sent', False)),
+        )
+
+
+def decide_autopay_fail_notification(
+    state: AutopayFailState,
+    hours_left: float,
+    now_ts: float,
+    *,
+    max_notifications: int,
+    final_reminder_hours: int,
+    repeat_interval_hours: int,
+) -> str | None:
+    """Decide whether/what to send on a failed-autopay tick.
+
+    Returns 'first' | 'final' | 'repeat' | None. None means stay silent this tick.
+    Pure function — no I/O — so the full notification policy is unit-testable.
+    """
+    if max_notifications <= 0 or state.count >= max_notifications:
+        return None
+
+    in_final_window = final_reminder_hours > 0 and 0 <= hours_left <= final_reminder_hours
+
+    if state.count == 0:
+        # First failure of the cycle. If it already lands inside the final window,
+        # send a single 'final' rather than 'first' then 'final' back-to-back.
+        return 'final' if in_final_window else 'first'
+
+    if in_final_window and not state.final_sent:
+        return 'final'
+
+    if repeat_interval_hours > 0 and (now_ts - state.last_sent_ts) / 3600.0 >= repeat_interval_hours:
+        return 'repeat'
+
+    return None
+
+
+def apply_autopay_fail_notification(state: AutopayFailState, reason: str, now_ts: float) -> AutopayFailState:
+    """Mutate state to record that a notification with `reason` was just sent."""
+    state.count += 1
+    state.last_sent_ts = now_ts
+    if reason == 'final':
+        state.final_sent = True
+    return state
 
 # Размер батча для проверки подписок на каналы (keyset pagination)
 _CHANNEL_CHECK_BATCH_SIZE: int = 100
