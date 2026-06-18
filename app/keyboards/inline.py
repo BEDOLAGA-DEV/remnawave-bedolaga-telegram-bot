@@ -790,16 +790,6 @@ def get_main_menu_keyboard(
             InlineKeyboardButton(text=texts.t('CONTESTS_BUTTON', '🎲 Конкурсы'), callback_data='contests_menu')
         )
 
-    try:
-        from app.services.support_settings_service import SupportSettingsService
-
-        support_enabled = SupportSettingsService.is_support_menu_enabled()
-    except Exception:
-        support_enabled = settings.SUPPORT_MENU_ENABLED
-
-    if support_enabled:
-        paired_buttons.append(InlineKeyboardButton(text=texts.MENU_SUPPORT, callback_data='menu_support'))
-
     # Добавляем кнопку активации
     if settings.ACTIVATE_BUTTON_VISIBLE:
         paired_buttons.append(InlineKeyboardButton(text=settings.ACTIVATE_BUTTON_TEXT, callback_data='activate_button'))
@@ -810,6 +800,16 @@ def get_main_menu_keyboard(
             callback_data='menu_info',
         )
     )
+
+    try:
+        from app.services.support_settings_service import SupportSettingsService
+
+        support_enabled = SupportSettingsService.is_support_menu_enabled()
+    except Exception:
+        support_enabled = settings.SUPPORT_MENU_ENABLED
+
+    if support_enabled:
+        paired_buttons.append(InlineKeyboardButton(text=texts.MENU_SUPPORT, callback_data='menu_support'))
 
     for i in range(0, len(paired_buttons), 2):
         row = paired_buttons[i : i + 2]
@@ -1722,7 +1722,7 @@ def get_subscription_confirm_keyboard(language: str = DEFAULT_LANGUAGE) -> Inlin
     )
 
 
-def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+def get_balance_keyboard(language: str = DEFAULT_LANGUAGE, has_saved_cards: bool = False) -> InlineKeyboardMarkup:
     texts = get_texts(language)
     from app.utils.miniapp_buttons import strip_leading_emoji
 
@@ -1740,10 +1740,11 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
                 text=top_up_text,
                 callback_data='balance_topup',
                 icon_custom_emoji_id='5375218203066663939',
+                style='success',
             ),
         ],
     ]
-    if settings.YOOKASSA_RECURRENT_ENABLED or settings.ANTILOPAY_RECURRENT_ENABLED:
+    if (settings.YOOKASSA_RECURRENT_ENABLED or settings.ANTILOPAY_RECURRENT_ENABLED) and has_saved_cards:
         from app.utils.miniapp_buttons import strip_leading_emoji
         keyboard.append(
             [
@@ -2333,7 +2334,108 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             ],
         )
 
-    keyboard.append([build_back_button(texts, callback_data='menu_balance')])
+    # Separate payment rows from other rows (e.g., back button, warnings)
+    payment_rows = []
+    other_rows = []
+    for row in keyboard:
+        is_payment_row = False
+        for btn in row:
+            cb = getattr(btn, 'callback_data', None)
+            if cb and (cb.startswith('topup_') or cb.startswith('topup_amount|')):
+                is_payment_row = True
+                break
+        if is_payment_row:
+            payment_rows.append(row)
+        else:
+            other_rows.append(row)
+
+    METHOD_PRIORITIES = {
+        # Card methods (10)
+        'yookassa': 10,
+        'wata': 10,
+        'cloudpayments': 10,
+        'freekassa_card': 10,
+        'freekassa': 10,
+        'kassa_ai_card': 10,
+        'kassa_ai': 10,
+        'riopay': 10,
+        'severpay': 10,
+        'paypear': 10,
+        'rollypay': 10,
+        'overpay': 10,
+        'aurapay_card': 10,
+        'aurapay': 10,
+        'etoplatezhi_card': 10,
+        'etoplatezhi': 10,
+        'antilopay_card': 10,
+        'antilopay': 10,
+        'jupiter': 10,
+        'donut_card': 10,
+        'donut': 10,
+        'lava_card': 10,
+        'lava': 10,
+        'platega': 10,
+        'kassa_ai_sberpay': 10,
+        'antilopay_sberpay': 10,
+
+        # SBP methods (20)
+        'yookassa_sbp': 20,
+        'pal24': 20,
+        'freekassa_sbp': 20,
+        'kassa_ai_sbp': 20,
+        'aurapay_sbp': 20,
+        'etoplatezhi_sbp': 20,
+        'antilopay_sbp': 20,
+        'jupiter_sbp': 20,
+        'donut_sbp': 20,
+        'donut_sbp_qr': 20,
+        'lava_sbp': 20,
+
+        # Stars (30)
+        'stars': 30,
+
+        # Crypto (40)
+        'cryptobot': 40,
+        'heleket': 40,
+
+        # Foreign cards (50)
+        'tribute': 50,
+        'mulenpay': 50,
+
+        # Support (60)
+        'support': 60,
+    }
+
+    def _get_row_priority(row) -> int:
+        for btn in row:
+            cb = getattr(btn, 'callback_data', None)
+            if not cb:
+                continue
+            
+            method = None
+            if cb.startswith('topup_amount|'):
+                parts = cb.split('|')
+                if len(parts) > 1:
+                    method = parts[1]
+            elif cb.startswith('topup_'):
+                method = cb[len('topup_'):]
+                
+            if not method:
+                continue
+                
+            if method.startswith('platega_m'):
+                if 'sbp' in method.lower() or 'сбп' in method.lower():
+                    return 20
+                return 10
+                
+            priority = METHOD_PRIORITIES.get(method)
+            if priority is not None:
+                return priority
+                
+        return 999
+
+    payment_rows.sort(key=_get_row_priority)
+    keyboard = payment_rows + other_rows
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

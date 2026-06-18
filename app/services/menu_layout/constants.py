@@ -29,16 +29,22 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'max_per_row': 2,
         },
         {
+            'id': 'trial_row',
+            'buttons': ['trial'],
+            'conditions': None,
+            'max_per_row': 1,
+        },
+        {
             'id': 'balance_row',
             'buttons': ['balance'],
             'conditions': None,
             'max_per_row': 1,
         },
         {
-            'id': 'trial_buy_row',
-            'buttons': ['trial', 'buy_subscription'],
+            'id': 'buy_row',
+            'buttons': ['buy_subscription'],
             'conditions': None,
-            'max_per_row': 2,
+            'max_per_row': 1,
         },
         {
             'id': 'simple_subscription_row',
@@ -66,7 +72,7 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         },
         {
             'id': 'support_info_row',
-            'buttons': ['support', 'info'],
+            'buttons': ['info', 'support'],
             'conditions': None,
             'max_per_row': 2,
         },

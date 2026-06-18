@@ -238,9 +238,19 @@ async def show_balance_menu(callback: types.CallbackQuery, db_user: User, db: As
 
     texts = get_texts(db_user.language)
 
-    balance_text = texts.BALANCE_INFO.format(balance=texts.format_price(db_user.balance_kopeks))
+    has_saved_cards = False
+    if settings.YOOKASSA_RECURRENT_ENABLED or settings.ANTILOPAY_RECURRENT_ENABLED:
+        cards = []
+        if settings.YOOKASSA_RECURRENT_ENABLED:
+            from app.database.crud.saved_payment_method import get_active_payment_methods_by_user
+            cards.extend(await get_active_payment_methods_by_user(db, db_user.id))
+        if settings.ANTILOPAY_RECURRENT_ENABLED:
+            from app.database.crud.antilopay_recurrent import get_active_antilopay_recurrents_by_user
+            cards.extend(await get_active_antilopay_recurrents_by_user(db, db_user.id))
+        if cards:
+            has_saved_cards = True
 
-    reply_markup = get_balance_keyboard(db_user.language)
+    reply_markup = get_balance_keyboard(db_user.language, has_saved_cards=has_saved_cards)
 
     try:
         if callback.message and callback.message.text:
