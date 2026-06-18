@@ -1761,6 +1761,7 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE, has_saved_cards: bool
 
 
 def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    import re
     from app.utils.miniapp_buttons import strip_leading_emoji
     texts = get_texts(language)
     keyboard = []
@@ -1773,13 +1774,72 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             return f'topup_amount|{method}|{amount_kopeks}'
         return f'topup_{method}'
 
+    def clean_payment_text(text: str, method: str) -> str:
+        cleaned = strip_leading_emoji(text).strip()
+        cleaned = re.sub(r'\s*\([^)]*\)', '', cleaned).strip()
+        
+        m_lower = method.lower()
+        if m_lower == 'stars':
+            return 'Telegram Stars'
+        elif m_lower.startswith('platega_m'):
+            code_str = m_lower[len('platega_m'):]
+            if code_str.isdigit():
+                m_code = int(code_str)
+                if m_code == 2:
+                    return 'СБП'
+                elif m_code == 11:
+                    return 'Банковская карта'
+                elif m_code == 12:
+                    return 'Иностранная карта'
+                elif m_code == 13:
+                    return 'Криптовалюта'
+        elif 'sbp_qr' in m_lower:
+            return 'СБП'
+        elif 'sbp' in m_lower:
+            if 'antilopay' in m_lower or 'сбп #2' in cleaned.lower():
+                return 'СБП #2'
+            return 'СБП'
+        elif 'heleket' in m_lower or 'cryptobot' in m_lower:
+            return 'Криптовалюта'
+        elif 'tribute' in m_lower or 'mulenpay' in m_lower:
+            return 'Иностранная карта'
+        elif 'card' in m_lower or m_lower in ['yookassa', 'wata', 'cloudpayments', 'riopay', 'severpay', 'paypear', 'rollypay', 'overpay', 'aurapay', 'etoplatezhi', 'antilopay', 'jupiter', 'donut', 'lava', 'platega']:
+            return 'Банковская карта'
+        return cleaned
+
+    def _create_btn(text: str, callback_data: str, method: str, custom_emoji_id: str | None = None) -> InlineKeyboardButton:
+        clean_text = clean_payment_text(text, method)
+        
+        resolved_emoji_id = custom_emoji_id
+        if not resolved_emoji_id:
+            m_lower = method.lower()
+            if m_lower == 'stars':
+                resolved_emoji_id = '4983746717313664194'
+            elif 'sbp_qr' in m_lower or 'sbp' in m_lower or m_lower == 'pal24' or m_lower == 'platega_m2':
+                resolved_emoji_id = '5217837965547427903'
+            elif 'heleket' in m_lower or 'cryptobot' in m_lower or m_lower == 'platega_m13':
+                resolved_emoji_id = '5355123515672510607'
+            elif 'tribute' in m_lower or 'mulenpay' in m_lower or m_lower == 'platega_m12':
+                resolved_emoji_id = '5357274199071146437'
+            elif 'card' in m_lower or m_lower in ['yookassa', 'wata', 'cloudpayments', 'riopay', 'severpay', 'paypear', 'rollypay', 'overpay', 'aurapay', 'etoplatezhi', 'antilopay', 'jupiter', 'donut', 'lava', 'platega_m11']:
+                resolved_emoji_id = '5357079680002310747'
+                
+        clean_text = strip_leading_emoji(clean_text).strip()
+        
+        return InlineKeyboardButton(
+            text=clean_text,
+            callback_data=callback_data,
+            icon_custom_emoji_id=resolved_emoji_id,
+        )
+
     if settings.TELEGRAM_STARS_ENABLED:
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=strip_leading_emoji(texts.t('PAYMENT_TELEGRAM_STARS', '⭐ Telegram Stars')),
+                _create_btn(
+                    text=texts.t('PAYMENT_TELEGRAM_STARS', '⭐ Telegram Stars'),
                     callback_data=_build_callback('stars'),
-                    icon_custom_emoji_id='4983746717313664194',
+                    method='stars',
+                    custom_emoji_id='4983746717313664194',
                 )
             ]
         )
@@ -1789,10 +1849,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         if settings.YOOKASSA_SBP_ENABLED:
             keyboard.append(
                 [
-                    InlineKeyboardButton(
-                        text=strip_leading_emoji(texts.t('PAYMENT_SBP_YOOKASSA', '🏦 Оплатить по СБП (YooKassa)')),
+                    _create_btn(
+                        text=texts.t('PAYMENT_SBP_YOOKASSA', '🏦 Оплатить по СБП (YooKassa)'),
                         callback_data=_build_callback('yookassa_sbp'),
-                        icon_custom_emoji_id='5217837965547427903',
+                        method='yookassa_sbp',
+                        custom_emoji_id='5217837965547427903',
                     )
                 ]
             )
@@ -1800,9 +1861,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
 
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_CARD_YOOKASSA', '💳 Банковская карта (YooKassa)'),
                     callback_data=_build_callback('yookassa'),
+                    method='yookassa',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1811,10 +1874,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.TRIBUTE_ENABLED:
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=strip_leading_emoji(texts.t('PAYMENT_CARD_TRIBUTE', '💳 Банковская карта (Tribute)')),
+                _create_btn(
+                    text=texts.t('PAYMENT_CARD_TRIBUTE', '💳 Банковская карта (Tribute)'),
                     callback_data=_build_callback('tribute'),
-                    icon_custom_emoji_id='5357274199071146437',
+                    method='tribute',
+                    custom_emoji_id='5357274199071146437',
                 )
             ]
         )
@@ -1824,13 +1888,14 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         mulenpay_name = settings.get_mulenpay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=strip_leading_emoji(texts.t(
+                _create_btn(
+                    text=texts.t(
                         'PAYMENT_CARD_MULENPAY',
                         '💳 Банковская карта ({mulenpay_name})',
-                    ).format(mulenpay_name=mulenpay_name)),
+                    ).format(mulenpay_name=mulenpay_name),
                     callback_data=_build_callback('mulenpay'),
-                    icon_custom_emoji_id='5357274199071146437',
+                    method='mulenpay',
+                    custom_emoji_id='5357274199071146437',
                 )
             ]
         )
@@ -1839,10 +1904,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.is_wata_enabled():
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=strip_leading_emoji(texts.t('PAYMENT_CARD_WATA', '💳 Банковская карта (WATA)')),
+                _create_btn(
+                    text=texts.t('PAYMENT_CARD_WATA', '💳 Банковская карта (WATA)'),
                     callback_data=_build_callback('wata'),
-                    icon_custom_emoji_id='5357079680002310747',
+                    method='wata',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1851,8 +1917,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.is_pal24_enabled():
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=texts.t('PAYMENT_CARD_PAL24', '🏦 СБП (PayPalych)'), callback_data=_build_callback('pal24')
+                _create_btn(
+                    text=texts.t('PAYMENT_CARD_PAL24', '🏦 СБП (PayPalych)'),
+                    callback_data=_build_callback('pal24'),
+                    method='pal24',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -1864,38 +1933,34 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             for method_code in settings.get_platega_active_methods():
                 title = settings.get_platega_method_display_title(method_code)
                 icon_emoji_id = None
-                if method_code == 2:  # СБП
+                if method_code == 2:
                     icon_emoji_id = '5217837965547427903'
-                elif method_code == 12:  # Международные карты
+                elif method_code == 12:
                     icon_emoji_id = '5357274199071146437'
+                elif method_code == 11:
+                    icon_emoji_id = '5357079680002310747'
+                elif method_code == 13:
+                    icon_emoji_id = '5355123515672510607'
                 
                 text_label = f'{title} ({platega_name})'
-                if icon_emoji_id:
-                    text_label = strip_leading_emoji(text_label)
-                    keyboard.append(
-                        [
-                            InlineKeyboardButton(
-                                text=text_label,
-                                callback_data=_build_callback(f'platega_m{method_code}'),
-                                icon_custom_emoji_id=icon_emoji_id,
-                            )
-                        ]
-                    )
-                else:
-                    keyboard.append(
-                        [
-                            InlineKeyboardButton(
-                                text=text_label,
-                                callback_data=_build_callback(f'platega_m{method_code}'),
-                            )
-                        ]
-                    )
+                keyboard.append(
+                    [
+                        _create_btn(
+                            text=text_label,
+                            callback_data=_build_callback(f'platega_m{method_code}'),
+                            method=f'platega_m{method_code}',
+                            custom_emoji_id=icon_emoji_id,
+                        )
+                    ]
+                )
         else:
             keyboard.append(
                 [
-                    InlineKeyboardButton(
+                    _create_btn(
                         text=texts.t('PAYMENT_PLATEGA', f'💳 {platega_name}'),
                         callback_data=_build_callback('platega'),
+                        method='platega',
+                        custom_emoji_id='5357079680002310747',
                     )
                 ]
             )
@@ -1904,9 +1969,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.is_cryptobot_enabled():
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_CRYPTOBOT', '🪙 Криптовалюта (CryptoBot)'),
                     callback_data=_build_callback('cryptobot'),
+                    method='cryptobot',
+                    custom_emoji_id='5355123515672510607',
                 )
             ]
         )
@@ -1915,10 +1982,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.is_heleket_enabled():
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=strip_leading_emoji(texts.t('PAYMENT_HELEKET', '🪙 Криптовалюта (Heleket)')),
+                _create_btn(
+                    text=texts.t('PAYMENT_HELEKET', '🪙 Криптовалюта (Heleket)'),
                     callback_data=_build_callback('heleket'),
-                    icon_custom_emoji_id='5355123515672510607',
+                    method='heleket',
+                    custom_emoji_id='5355123515672510607',
                 )
             ]
         )
@@ -1927,9 +1995,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.is_cloudpayments_enabled():
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_CLOUDPAYMENTS', '💳 Банковская карта (CloudPayments)'),
                     callback_data=_build_callback('cloudpayments'),
+                    method='cloudpayments',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1939,9 +2009,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sbp_name = settings.get_freekassa_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_FREEKASSA_SBP', f'📱 {sbp_name}'),
                     callback_data=_build_callback('freekassa_sbp'),
+                    method='freekassa_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -1951,9 +2023,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         card_name = settings.get_freekassa_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_FREEKASSA_CARD', f'💳 {card_name}'),
                     callback_data=_build_callback('freekassa_card'),
+                    method='freekassa_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1967,9 +2041,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         freekassa_name = settings.get_freekassa_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_FREEKASSA', f'💳 {freekassa_name}'),
                     callback_data=_build_callback('freekassa'),
+                    method='freekassa',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1979,9 +2055,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sbp_name = settings.get_kassa_ai_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_KASSA_AI_SBP', f'📱 {sbp_name}'),
                     callback_data=_build_callback('kassa_ai_sbp'),
+                    method='kassa_ai_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -1991,9 +2069,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         card_name = settings.get_kassa_ai_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_KASSA_AI_CARD', f'💳 {card_name}'),
                     callback_data=_build_callback('kassa_ai_card'),
+                    method='kassa_ai_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2003,9 +2083,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sberpay_name = settings.get_kassa_ai_sberpay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_KASSA_AI_SBERPAY', f'💳 {sberpay_name}'),
                     callback_data=_build_callback('kassa_ai_sberpay'),
+                    method='kassa_ai_sberpay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2020,8 +2102,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         kassa_ai_name = settings.get_kassa_ai_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=texts.t('PAYMENT_KASSA_AI', f'💳 {kassa_ai_name}'), callback_data=_build_callback('kassa_ai')
+                _create_btn(
+                    text=texts.t('PAYMENT_KASSA_AI', f'💳 {kassa_ai_name}'),
+                    callback_data=_build_callback('kassa_ai'),
+                    method='kassa_ai',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2031,9 +2116,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         riopay_name = settings.get_riopay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_RIOPAY', f'💳 Банковская карта ({riopay_name})'),
                     callback_data=_build_callback('riopay'),
+                    method='riopay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2043,9 +2130,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         severpay_name = settings.get_severpay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_SEVERPAY', f'💳 Банковская карта ({severpay_name})'),
                     callback_data=_build_callback('severpay'),
+                    method='severpay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2055,9 +2144,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         paypear_name = settings.get_paypear_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_PAYPEAR', f'💳 Оплата ({paypear_name})'),
                     callback_data=_build_callback('paypear'),
+                    method='paypear',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2067,9 +2158,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         rollypay_name = settings.get_rollypay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ROLLYPAY', f'💳 {rollypay_name}'),
                     callback_data=_build_callback('rollypay'),
+                    method='rollypay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2079,9 +2172,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         overpay_name = settings.get_overpay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_OVERPAY', f'💳 {overpay_name}'),
                     callback_data=_build_callback('overpay'),
+                    method='overpay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2091,9 +2186,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sbp_name = settings.get_aurapay_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_AURAPAY_SBP', f'📱 {sbp_name}'),
                     callback_data=_build_callback('aurapay_sbp'),
+                    method='aurapay_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2103,9 +2200,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         card_name = settings.get_aurapay_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_AURAPAY_CARD', f'💳 {card_name}'),
                     callback_data=_build_callback('aurapay_card'),
+                    method='aurapay_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2119,9 +2218,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         aurapay_name = settings.get_aurapay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_AURAPAY', f'💳 {aurapay_name}'),
                     callback_data=_build_callback('aurapay'),
+                    method='aurapay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2131,9 +2232,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sbp_name = settings.get_etoplatezhi_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ETOPLATEZHI_SBP', f'📱 {sbp_name}'),
                     callback_data=_build_callback('etoplatezhi_sbp'),
+                    method='etoplatezhi_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2143,9 +2246,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         card_name = settings.get_etoplatezhi_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ETOPLATEZHI_CARD', f'💳 {card_name}'),
                     callback_data=_build_callback('etoplatezhi_card'),
+                    method='etoplatezhi_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2159,9 +2264,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         etoplatezhi_name = settings.get_etoplatezhi_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ETOPLATEZHI', f'💳 {etoplatezhi_name}'),
                     callback_data=_build_callback('etoplatezhi'),
+                    method='etoplatezhi',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2171,10 +2278,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sbp_name = settings.get_antilopay_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=strip_leading_emoji(texts.t('PAYMENT_ANTILOPAY_SBP', f'📱 {sbp_name}')),
+                _create_btn(
+                    text=texts.t('PAYMENT_ANTILOPAY_SBP', f'📱 {sbp_name}'),
                     callback_data=_build_callback('antilopay_sbp'),
-                    icon_custom_emoji_id='5217837965547427903',
+                    method='antilopay_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2184,9 +2292,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         card_name = settings.get_antilopay_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ANTILOPAY_CARD', f'💳 {card_name}'),
                     callback_data=_build_callback('antilopay_card'),
+                    method='antilopay_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2196,9 +2306,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sberpay_name = settings.get_antilopay_sberpay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ANTILOPAY_SBERPAY', f'💳 {sberpay_name}'),
                     callback_data=_build_callback('antilopay_sberpay'),
+                    method='antilopay_sberpay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2213,9 +2325,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         antilopay_name = settings.get_antilopay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ANTILOPAY', f'💳 {antilopay_name}'),
                     callback_data=_build_callback('antilopay'),
+                    method='antilopay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2225,9 +2339,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         jupiter_sbp_name = settings.get_jupiter_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_JUPITER_SBP', f'📱 {jupiter_sbp_name}'),
                     callback_data=_build_callback('jupiter_sbp'),
+                    method='jupiter_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2237,9 +2353,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         jupiter_name = settings.get_jupiter_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_JUPITER', f'🪐 {jupiter_name}'),
                     callback_data=_build_callback('jupiter'),
+                    method='jupiter',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2249,9 +2367,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         donut_card_name = settings.get_donut_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_DONUT_CARD', f'💳 {donut_card_name}'),
                     callback_data=_build_callback('donut_card'),
+                    method='donut_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2261,9 +2381,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         donut_sbp_name = settings.get_donut_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_DONUT_SBP', f'📱 {donut_sbp_name}'),
                     callback_data=_build_callback('donut_sbp'),
+                    method='donut_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2273,9 +2395,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         donut_qr_name = settings.get_donut_sbp_qr_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_DONUT_SBP_QR', f'🏦 {donut_qr_name}'),
                     callback_data=_build_callback('donut_sbp_qr'),
+                    method='donut_sbp_qr',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2290,9 +2414,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         donut_name = settings.get_donut_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_DONUT', f'🍩 {donut_name}'),
                     callback_data=_build_callback('donut'),
+                    method='donut',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2302,9 +2428,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         lava_card_name = settings.get_lava_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_LAVA_CARD', f'💳 {lava_card_name}'),
                     callback_data=_build_callback('lava_card'),
+                    method='lava_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2314,9 +2442,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         lava_sbp_name = settings.get_lava_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_LAVA_SBP', f'📱 {lava_sbp_name}'),
                     callback_data=_build_callback('lava_sbp'),
+                    method='lava_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2326,9 +2456,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         lava_name = settings.get_lava_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_LAVA', f'🌋 {lava_name}'),
                     callback_data=_build_callback('lava'),
+                    method='lava',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2410,11 +2542,13 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         'kassa_ai_sbp': 20,
         'aurapay_sbp': 20,
         'etoplatezhi_sbp': 20,
-        'antilopay_sbp': 20,
         'jupiter_sbp': 20,
         'donut_sbp': 20,
         'donut_sbp_qr': 20,
         'lava_sbp': 20,
+
+        # SBP #2 (21)
+        'antilopay_sbp': 21,
 
         # Stars (30)
         'stars': 30,
@@ -2449,9 +2583,17 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
                 continue
                 
             if method.startswith('platega_m'):
-                if 'sbp' in method.lower() or 'сбп' in method.lower():
-                    return 20
-                return 10
+                code_str = method[len('platega_m'):]
+                if code_str.isdigit():
+                    m_code = int(code_str)
+                    if m_code == 2:
+                        return 20
+                    elif m_code == 11:
+                        return 10
+                    elif m_code == 12:
+                        return 50
+                    elif m_code == 13:
+                        return 40
                 
             priority = METHOD_PRIORITIES.get(method)
             if priority is not None:

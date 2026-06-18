@@ -71,8 +71,18 @@ async def _prompt_amount(
     else:
         emoji_tag = '💳'
 
-    min_str = min_amount_label.replace(' ₽', '').strip()
-    max_str = max_amount_label.replace(' ₽', '').strip()
+    def _clean_and_format(val_label: str) -> str:
+        val_str = val_label.replace(' ₽', '').replace(' ', '').replace(',', '').strip()
+        if not val_str:
+            return ''
+        try:
+            num = int(val_str)
+            return f"{num:,}".replace(",", " ")
+        except Exception:
+            return val_str
+
+    min_str = _clean_and_format(min_amount_label)
+    max_str = _clean_and_format(max_amount_label)
 
     prompt_text = (
         f'{emoji_tag} Пополнение через {method_name}\n\n'
