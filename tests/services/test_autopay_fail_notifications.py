@@ -161,3 +161,52 @@ async def test_cleanup_evicts_old_cycles(monkeypatch):
 
     assert (1, old_token) not in svc._autopay_fail_state
     assert (2, fresh_token) in svc._autopay_fail_state
+
+
+async def test_maybe_notify_sends_first_then_silent(monkeypatch):
+    """_maybe_notify_autopay_failure sends on first failure, records state, and stays
+    silent on an immediate second tick (no repeat configured)."""
+    from app.services import monitoring_service as ms
+
+    svc = ms.MonitoringService(bot=object())  # truthy bot so the telegram branch is taken
+    sent: list[bool] = []
+
+    async def fake_send(user, balance, required, *, subscription=None, is_final=False):
+        sent.append(is_final)
+
+    monkeypatch.setattr(svc, '_send_autopay_failed_notification', fake_send)
+    monkeypatch.setattr(ms.cache, 'get', AsyncMock(return_value=None))
+    monkeypatch.setattr(ms.cache, 'set', AsyncMock(return_value=True))
+
+    now = datetime.now(UTC)
+    user = SimpleNamespace(id=1, telegram_id=555, balance_kopeks=0)
+    sub = SimpleNamespace(id=7, end_date=now + timedelta(hours=40))
+
+    await svc._maybe_notify_autopay_failure(user, 50000, sub, now)
+    assert sent == [False]  # 'first' → is_final False
+
+    await svc._maybe_notify_autopay_failure(user, 50000, sub, now)
+    assert sent == [False]  # second immediate tick: silent (count cap path)
+
+
+async def test_maybe_notify_final_when_inside_window(monkeypatch):
+    """When the first failure lands inside the final window, the wrapper sends a final
+    (is_final=True) message."""
+    from app.services import monitoring_service as ms
+
+    svc = ms.MonitoringService(bot=object())
+    sent: list[bool] = []
+
+    async def fake_send(user, balance, required, *, subscription=None, is_final=False):
+        sent.append(is_final)
+
+    monkeypatch.setattr(svc, '_send_autopay_failed_notification', fake_send)
+    monkeypatch.setattr(ms.cache, 'get', AsyncMock(return_value=None))
+    monkeypatch.setattr(ms.cache, 'set', AsyncMock(return_value=True))
+
+    now = datetime.now(UTC)
+    user = SimpleNamespace(id=1, telegram_id=555, balance_kopeks=0)
+    sub = SimpleNamespace(id=8, end_date=now + timedelta(hours=2))  # inside default 3h window
+
+    await svc._maybe_notify_autopay_failure(user, 50000, sub, now)
+    assert sent == [True]

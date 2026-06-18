@@ -435,6 +435,44 @@ class MonitoringService:
                 redis_err=redis_err,
             )
 
+    async def _maybe_notify_autopay_failure(
+        self, user, charge_amount: int, subscription, current_time: datetime
+    ) -> None:
+        """Send an autopay-failure notification iff policy allows it this tick, then
+        record state. Policy = decide_autopay_fail_notification() + AUTOPAY_FAIL_* config."""
+        cycle_token = int(subscription.end_date.timestamp())
+        now_ts = current_time.timestamp()
+        hours_left = (subscription.end_date - current_time).total_seconds() / 3600.0
+
+        state = await self._load_autopay_fail_state(subscription.id, cycle_token)
+        reason = decide_autopay_fail_notification(
+            state,
+            hours_left,
+            now_ts,
+            max_notifications=settings.AUTOPAY_FAIL_MAX_NOTIFICATIONS,
+            final_reminder_hours=settings.AUTOPAY_FAIL_FINAL_REMINDER_HOURS,
+            repeat_interval_hours=settings.AUTOPAY_FAIL_REPEAT_INTERVAL_HOURS,
+        )
+        if reason is None:
+            return
+
+        is_final = reason == 'final'
+        if user.telegram_id and self.bot:
+            await self._send_autopay_failed_notification(
+                user, user.balance_kopeks, charge_amount, subscription=subscription, is_final=is_final
+            )
+        elif not user.telegram_id:
+            reason_text = (
+                'Последнее напоминание: подписка скоро отключится — недостаточно средств'
+                if is_final
+                else 'Недостаточно средств на балансе'
+            )
+            await notification_delivery_service.notify_autopay_failed(user=user, reason=reason_text)
+
+        apply_autopay_fail_notification(state, reason, now_ts)
+        ttl_seconds = int(max(0.0, hours_left) * 3600) + 72 * 3600
+        await self._save_autopay_fail_state(subscription.id, cycle_token, state, ttl_seconds)
+
     async def _check_expired_subscriptions(self, db: AsyncSession):
         try:
             from app.database.crud.subscription import is_recently_updated_by_webhook
@@ -1598,36 +1636,18 @@ class MonitoringService:
                             )
                         else:
                             failed_count += 1
-                            if await self._check_autopay_fail_cooldown(user.id, user_identifier):
-                                if user.telegram_id and self.bot:
-                                    await self._send_autopay_failed_notification(
-                                        user, user.balance_kopeks, charge_amount, subscription=subscription
-                                    )
-                                elif not user.telegram_id:
-                                    await notification_delivery_service.notify_autopay_failed(
-                                        user=user,
-                                        reason='Ошибка списания средств',
-                                    )
-                                await self._set_autopay_fail_cooldown(user.id, user_identifier)
+                            await self._maybe_notify_autopay_failure(
+                                user, charge_amount, subscription, current_time
+                            )
                             logger.warning(
                                 '💳 Ошибка списания средств для автопродления пользователя',
                                 user_identifier=user_identifier,
                             )
                     else:
                         failed_count += 1
-
-                        if await self._check_autopay_fail_cooldown(user.id, user_identifier):
-                            if user.telegram_id and self.bot:
-                                await self._send_autopay_failed_notification(
-                                    user, user.balance_kopeks, charge_amount, subscription=subscription
-                                )
-                            elif not user.telegram_id:
-                                await notification_delivery_service.notify_autopay_failed(
-                                    user=user,
-                                    reason='Недостаточно средств на балансе',
-                                )
-                            await self._set_autopay_fail_cooldown(user.id, user_identifier)
-
+                        await self._maybe_notify_autopay_failure(
+                            user, charge_amount, subscription, current_time
+                        )
                         logger.warning(
                             '💳 Недостаточно средств для автопродления у пользователя',
                             user_identifier=user_identifier,
@@ -2187,11 +2207,27 @@ class MonitoringService:
             logger.error('Ошибка отправки уведомления об автоплатеже пользователю', telegram_id=user.telegram_id, e=e)
 
     async def _send_autopay_failed_notification(
-        self, user: User, balance: int, required: int, *, subscription: Subscription | None = None
+        self,
+        user: User,
+        balance: int,
+        required: int,
+        *,
+        subscription: Subscription | None = None,
+        is_final: bool = False,
     ):
         try:
             texts = get_texts(user.language)
-            message = texts.AUTOPAY_FAILED.format(
+            if is_final:
+                template = texts.t(
+                    'AUTOPAY_FAILED_FINAL',
+                    '\n⏰ <b>Последнее напоминание</b>\n\n'
+                    'Подписка скоро отключится — автоплатёж не прошёл из-за нехватки средств.\n'
+                    'Баланс: {balance}\nТребуется: {required}\n\n'
+                    'Пополните баланс сейчас, чтобы не потерять доступ.\n',
+                )
+            else:
+                template = texts.AUTOPAY_FAILED
+            message = template.format(
                 balance=settings.format_price(balance), required=settings.format_price(required)
             )
             if (

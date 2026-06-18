@@ -888,6 +888,7 @@
   "AUTOPAY_DISABLED_TEXT": "Disabled — don't forget to renew manually!",
   "AUTOPAY_ENABLED_TEXT": "Enabled — the subscription will renew automatically",
   "AUTOPAY_FAILED": "\n❌ <b>Autopay failed</b>\n\nWe couldn't charge the renewal payment.\nBalance available: {balance}\nRequired: {required}\n\nPlease top up your balance and renew manually.\n",
+  "AUTOPAY_FAILED_FINAL": "\n⏰ <b>Final reminder</b>\n\nYour subscription is about to expire — autopay failed due to insufficient balance.\nBalance: {balance}\nRequired: {required}\n\nTop up your balance now to keep access.\n",
   "AUTOPAY_MENU_TEXT": "💳 <b>Auto payment</b>\n\n📊 <b>Status:</b> {status}\n⏰ <b>Charge:</b> {days} days before expiry\n📅 <b>Renewal period:</b> {period}\n\nChoose an action:",
   "AUTOPAY_PERIOD_DEFAULT_BUTTON": "⚙️ Default (cheapest)",
   "AUTOPAY_PERIOD_DEFAULT_VALUE": "default (the tariff's cheapest period)",
