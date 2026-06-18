@@ -372,6 +372,17 @@ class Settings(BaseSettings):
     # Per-subscription override lives in Subscription.autopay_period_days.
     DEFAULT_AUTOPAY_PERIOD_DAYS: int = 0
     MIN_BALANCE_FOR_AUTOPAY_KOPEKS: int = 10000
+
+    # ── Антиспам уведомлений об ошибке автоплатежа ──
+    # Максимум уведомлений об ошибке списания за ОДИН цикл подписки (до следующего end_date).
+    # 0 — не отправлять уведомления об ошибке вовсе.
+    AUTOPAY_FAIL_MAX_NOTIFICATIONS: int = 2
+    # За сколько часов до окончания подписки слать «финальное» напоминание. 0 — без финала.
+    AUTOPAY_FAIL_FINAL_REMINDER_HOURS: int = 3
+    # Периодические повторы между первым и финальным уведомлением, каждые N часов
+    # (legacy-режим). 0 — без повторов (только первое + финальное).
+    AUTOPAY_FAIL_REPEAT_INTERVAL_HOURS: int = 0
+
     SUBSCRIPTION_RENEWAL_BALANCE_THRESHOLD_KOPEKS: int = 20000
 
     MONITORING_INTERVAL: int = 60
