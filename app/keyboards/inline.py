@@ -2334,6 +2334,9 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             ],
         )
 
+    # Добавляем кнопку "Назад"
+    keyboard.append([build_back_button(texts, 'menu_balance')])
+
     # Separate payment rows from other rows (e.g., back button, warnings)
     payment_rows = []
     other_rows = []
