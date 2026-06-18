@@ -63,25 +63,28 @@ async def _prompt_amount(
     max_amount_kopeks = settings.PLATEGA_MAX_AMOUNT_KOPEKS
     max_amount_label = settings.format_price(max_amount_kopeks) if max_amount_kopeks and max_amount_kopeks > 0 else ''
 
-    default_prompt_body = (
-        'Введите сумму для пополнения от {min_amount} до {max_amount}.\n'
-        if max_amount_kopeks and max_amount_kopeks > 0
-        else 'Введите сумму для пополнения от {min_amount}.\n'
-    )
+    # Choose emoji based on method_code
+    if method_code == 2:
+        emoji_tag = '<tg-emoji emoji-id="5217837965547427903">🔸</tg-emoji>'
+    elif method_code == 12:
+        emoji_tag = '<tg-emoji emoji-id="5357274199071146437">🪙</tg-emoji>'
+    else:
+        emoji_tag = '💳'
 
-    prompt_template = texts.t(
-        'PLATEGA_TOPUP_PROMPT',
-        (f'💳 <b>Оплата через Platega ({{method_name}})</b>\n\n{default_prompt_body}Оплата происходит через Platega.'),
+    min_str = min_amount_label.replace(' ₽', '').strip()
+    max_str = max_amount_label.replace(' ₽', '').strip()
+
+    prompt_text = (
+        f'{emoji_tag} Пополнение через {method_name}\n\n'
+        f'Введите сумму пополнения от {min_str} до {max_str} ₽:\n'
+        f'⚡️Мгновенное зачисление\n'
+        f'💯Безопасная оплата'
     )
 
     keyboard = get_back_keyboard(db_user.language)
 
     await message.edit_text(
-        prompt_template.format(
-            method_name=method_name,
-            min_amount=min_amount_label,
-            max_amount=max_amount_label,
-        ),
+        prompt_text,
         reply_markup=keyboard,
         parse_mode='HTML',
     )

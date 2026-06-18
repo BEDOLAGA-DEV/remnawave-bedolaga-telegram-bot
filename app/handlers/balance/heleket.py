@@ -62,22 +62,20 @@ async def start_heleket_payment(
     else:
         markup_text = None
 
-    message_lines = [
-        '🪙 <b>Пополнение через Heleket</b>',
-        '\n',
-        'Введите сумму пополнения от 100 до 100,000 ₽:',
-        '',
-        '⚡ Мгновенное зачисление',
-        '🔒 Безопасная оплата',
-    ]
+    message_text = (
+        '<tg-emoji emoji-id="5355123515672510607">🪙</tg-emoji> Пополнение через Криптовалюту\n\n'
+        'Введите сумму пополнения от 100 до 100 000 ₽:\n'
+        '⚡️Мгновенное зачисление\n'
+        '💯Безопасная оплата'
+    )
 
     if markup_text:
-        message_lines.extend(['', markup_text])
+        message_text += f'\n\n{markup_text}'
 
     keyboard = get_back_keyboard(db_user.language)
 
     await callback.message.edit_text(
-        '\n'.join(filter(None, message_lines)),
+        message_text,
         reply_markup=keyboard,
         parse_mode='HTML',
     )

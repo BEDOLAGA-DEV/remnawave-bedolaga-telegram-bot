@@ -1790,8 +1790,9 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             keyboard.append(
                 [
                     InlineKeyboardButton(
-                        text=texts.t('PAYMENT_SBP_YOOKASSA', '🏦 Оплатить по СБП (YooKassa)'),
+                        text=strip_leading_emoji(texts.t('PAYMENT_SBP_YOOKASSA', '🏦 Оплатить по СБП (YooKassa)')),
                         callback_data=_build_callback('yookassa_sbp'),
+                        icon_custom_emoji_id='5217837965547427903',
                     )
                 ]
             )
@@ -1811,8 +1812,9 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('PAYMENT_CARD_TRIBUTE', '💳 Банковская карта (Tribute)'),
+                    text=strip_leading_emoji(texts.t('PAYMENT_CARD_TRIBUTE', '💳 Банковская карта (Tribute)')),
                     callback_data=_build_callback('tribute'),
+                    icon_custom_emoji_id='5357274199071146437',
                 )
             ]
         )
@@ -1823,11 +1825,12 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t(
+                    text=strip_leading_emoji(texts.t(
                         'PAYMENT_CARD_MULENPAY',
                         '💳 Банковская карта ({mulenpay_name})',
-                    ).format(mulenpay_name=mulenpay_name),
+                    ).format(mulenpay_name=mulenpay_name)),
                     callback_data=_build_callback('mulenpay'),
+                    icon_custom_emoji_id='5357274199071146437',
                 )
             ]
         )
@@ -1860,14 +1863,33 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         if settings.PLATEGA_INLINE_METHODS:
             for method_code in settings.get_platega_active_methods():
                 title = settings.get_platega_method_display_title(method_code)
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            text=f'{title} ({platega_name})',
-                            callback_data=_build_callback(f'platega_m{method_code}'),
-                        )
-                    ]
-                )
+                icon_emoji_id = None
+                if method_code == 2:  # СБП
+                    icon_emoji_id = '5217837965547427903'
+                elif method_code == 12:  # Международные карты
+                    icon_emoji_id = '5357274199071146437'
+                
+                text_label = f'{title} ({platega_name})'
+                if icon_emoji_id:
+                    text_label = strip_leading_emoji(text_label)
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                text=text_label,
+                                callback_data=_build_callback(f'platega_m{method_code}'),
+                                icon_custom_emoji_id=icon_emoji_id,
+                            )
+                        ]
+                    )
+                else:
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                text=text_label,
+                                callback_data=_build_callback(f'platega_m{method_code}'),
+                            )
+                        ]
+                    )
         else:
             keyboard.append(
                 [

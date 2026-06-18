@@ -141,6 +141,85 @@ def _build_dynamic_values(language: str) -> dict[str, Any]:
     return values
 
 
+class PaymentPromptTemplate(str):
+    def __new__(cls, key: str, language: str, base_str: str = ""):
+        obj = str.__new__(cls, base_str)
+        obj.key = key
+        obj.language = language
+        return obj
+
+    def format(self, *args, **kwargs):
+        if self.language != 'ru':
+            return super().format(*args, **kwargs)
+
+        # Extract values
+        name = kwargs.get('name', '')
+        min_amount = kwargs.get('min_amount', '')
+        max_amount = kwargs.get('max_amount', '')
+
+        # Clean amount values
+        def format_clean_val(val) -> str:
+            if not val:
+                return ''
+            try:
+                # Extract digits only (in case it is already formatted like "50 ₽")
+                val_str = str(val).replace(' ₽', '').replace(' ', '').replace(',', '').strip()
+                if '.' in val_str:
+                    val_str = val_str.split('.')[0]
+                num = int(val_str)
+                return f"{num:,}".replace(",", " ")
+            except Exception:
+                return str(val)
+
+        min_clean = format_clean_val(min_amount)
+        max_clean = format_clean_val(max_amount)
+
+        # Classification helper
+        k_lower = self.key.lower()
+        n_lower = name.lower()
+
+        # Parse min amount as integer for SBP/SBP #2 checks
+        try:
+            min_digits = ''.join(c for c in str(min_amount) if c.isdigit())
+            min_val = int(min_digits) if min_digits else 0
+        except Exception:
+            min_val = 0
+
+        # Classification logic:
+        # 1. Stars
+        if 'stars' in k_lower or 'stars' in n_lower:
+            title = 'Telegram Stars'
+            emoji = '<tg-emoji emoji-id="4983746717313664194">⭐️</tg-emoji>'
+        # 2. Cryptocurrency / Heleket / Cryptobot
+        elif 'heleket' in k_lower or 'cryptobot' in k_lower or 'crypto' in n_lower:
+            title = 'Криптовалюту'
+            emoji = '<tg-emoji emoji-id="5355123515672510607">🪙</tg-emoji>'
+        # 3. SBP
+        elif 'sbp' in k_lower or 'sbp' in n_lower or 'сбп' in n_lower or 'paypalych' in n_lower or 'pal24' in k_lower:
+            # SBP #2 is for Platega SBP or Antilopay SBP (limits 10-10000)
+            if min_val <= 10 or 'antilopay' in k_lower:
+                title = 'СБП #2'
+            else:
+                title = 'СБП'
+            emoji = '<tg-emoji emoji-id="5217837965547427903">🔸</tg-emoji>'
+        # 4. International Bank Card (Tribute, Mulenpay)
+        elif 'tribute' in k_lower or 'tribute' in n_lower or 'mulenpay' in k_lower or 'mulenpay' in n_lower or 'international' in n_lower or 'международн' in n_lower:
+            title = 'банковскую карту'
+            emoji = '<tg-emoji emoji-id="5357274199071146437">🪙</tg-emoji>'
+        # 5. Default Cards (Wata, YooKassa Card, CloudPayments)
+        else:
+            title = 'банковскую карту'
+            emoji = '🪙'
+
+        # Build clean prompt text matching user template exactly
+        return (
+            f"{emoji} Пополнение через {title}\n\n"
+            f"Введите сумму пополнения от {min_clean} до {max_clean} ₽:\n"
+            f"⚡️Мгновенное зачисление\n"
+            f"💯Безопасная оплата"
+        )
+
+
 class Texts:
     def __init__(self, language: str = DEFAULT_LANGUAGE):
         self.language = language or DEFAULT_LANGUAGE
@@ -185,20 +264,25 @@ class Texts:
         if item == 'RULES_TEXT':
             return _get_cached_rules_value(self.language)
 
+        is_payment_key = (item.endswith('_ENTER_AMOUNT') or item.endswith('_TOPUP_PROMPT')) and 'REFERRAL' not in item
+
         if item in self._values:
-            return self._values[item]
+            val = self._values[item]
+        elif item in self._fallback_values:
+            val = self._fallback_values[item]
+        else:
+            # Предупреждаем только когда у вызова НЕТ запасного текста. t(key, default) и
+            # get(key, default) передают warn=False: для них отсутствие ключа штатно —
+            # показывается переданный fallback (часто это динамическая строка вроде
+            # настраиваемого названия платёжки), засорять логи warning'ами не нужно.
+            # Доступ через атрибут/[] без запасного варианта по-прежнему предупреждает.
+            if warn:
+                _logger.warning('Missing localization key', item=item, language=self.language)
+            raise KeyError(item)
 
-        if item in self._fallback_values:
-            return self._fallback_values[item]
-
-        # Предупреждаем только когда у вызова НЕТ запасного текста. t(key, default) и
-        # get(key, default) передают warn=False: для них отсутствие ключа штатно —
-        # показывается переданный fallback (часто это динамическая строка вроде
-        # настраиваемого названия платёжки), засорять логи warning'ами не нужно.
-        # Доступ через атрибут/[] без запасного варианта по-прежнему предупреждает.
-        if warn:
-            _logger.warning('Missing localization key', item=item, language=self.language)
-        raise KeyError(item)
+        if is_payment_key:
+            return PaymentPromptTemplate(item, self.language, val)
+        return val
 
     @staticmethod
     def format_price(kopeks: int, round_kopeks: bool | None = None) -> str:

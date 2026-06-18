@@ -45,11 +45,16 @@ async def start_stars_payment(callback: types.CallbackQuery, db_user: User, stat
         await callback.answer()
         return
 
-    message_text = texts.TOP_UP_AMOUNT
+    message_text = (
+        '<tg-emoji emoji-id="4983746717313664194">⭐️</tg-emoji> Пополнение через Telegram Stars\n\n'
+        'Введите сумму пополнения от 10 до 10 000 ₽:\n'
+        '⚡️Мгновенное зачисление\n'
+        '💯Безопасная оплата'
+    )
 
     keyboard = get_back_keyboard(db_user.language)
 
-    await callback.message.edit_text(message_text, reply_markup=keyboard)
+    await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
 
     await state.update_data(
         stars_prompt_message_id=callback.message.message_id,
@@ -91,6 +96,19 @@ async def process_stars_payment_amount(message: types.Message, db_user: User, am
 
     try:
         amount_rubles = amount_kopeks / 100
+        if amount_rubles < 10:
+            await message.answer(
+                'Минимальная сумма пополнения: 10 ₽',
+                reply_markup=get_back_keyboard(db_user.language),
+            )
+            return
+        if amount_rubles > 10000:
+            await message.answer(
+                'Максимальная сумма пополнения: 10 000 ₽',
+                reply_markup=get_back_keyboard(db_user.language),
+            )
+            return
+
         stars_amount = TelegramStarsService.calculate_stars_from_rubles(amount_rubles)
         stars_rate = settings.get_stars_rate()
 
