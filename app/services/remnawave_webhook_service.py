@@ -1165,9 +1165,14 @@ class RemnaWaveWebhookService:
             except (ValueError, TypeError):
                 pass
 
-        # Sync expire date — panel is the source of truth for user.modified events
+        # Sync expire date — panel is the source of truth for user.modified events.
+        # НО: если подписка намеренно ОТКЛЮЧЕНА в боте (обнуление/деактивация админом),
+        # не воскрешаем её срок из устаревшего panel expireAt — иначе наспамленные дни
+        # могли бы «вернуться» после обнуления (см. crud.reset_subscription). Статус
+        # отдельно синхронизируется ниже: при panel ACTIVE + future end_date подписка
+        # всё равно может корректно реактивироваться через обычное продление/активацию.
         expire_at = data.get('expireAt')
-        if expire_at:
+        if expire_at and subscription.status != SubscriptionStatus.DISABLED.value:
             try:
                 parsed_dt = datetime.fromisoformat(expire_at.replace('Z', '+00:00'))
                 new_end_date = parsed_dt.astimezone(UTC)
@@ -1353,6 +1358,7 @@ class RemnaWaveWebhookService:
         # that are actually gone (verified via API), leave alive ones untouched.
         await db.refresh(user, ['subscriptions'])
         now = datetime.now(UTC)
+        from app.database.models import _aware
         from app.services.subscription_service import SubscriptionService
 
         subscription_service = SubscriptionService()
@@ -1361,18 +1367,37 @@ class RemnaWaveWebhookService:
                 continue
             if other_sub.status in (SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value):
                 continue
-            # Check if this sibling's panel user still exists
-            sibling_uuid = getattr(other_sub, 'remnawave_uuid', None) if settings.is_multi_tariff_enabled() else None
-            if not sibling_uuid and not settings.is_multi_tariff_enabled():
-                sibling_uuid = getattr(user, 'remnawave_uuid', None)
-            if sibling_uuid and subscription_service.is_configured:
-                try:
-                    async with subscription_service.get_api_client() as api:
-                        panel_user = await api.get_user_by_uuid(sibling_uuid)
-                    if panel_user is not None:
-                        continue  # still alive in panel, don't touch
-                except Exception:
-                    pass  # API error — deactivate to be safe
+
+            # Never expire a sibling that is still valid by its own end_date. Another
+            # subscription's panel user being deleted must not retroactively kill a
+            # paid, not-yet-expired sub — e.g. a pre-multi-tariff sub whose panel UUID
+            # lives on user.remnawave_uuid. (Bug: deleting a 2nd, expired sub expired
+            # the original active one and wiped its squads.)
+            other_end = _aware(other_sub.end_date)
+            if other_end is not None and other_end > now:
+                continue
+
+            # Resolve the sibling's panel UUID — fall back to user.remnawave_uuid in
+            # BOTH modes, since pre-multi-tariff subs store the panel UUID there.
+            sibling_uuid = getattr(other_sub, 'remnawave_uuid', None) or getattr(user, 'remnawave_uuid', None)
+
+            # Only expire when the panel POSITIVELY reports the user is gone. If we
+            # cannot verify (no uuid, API not configured, or a transient error), leave
+            # the sub untouched — an unverifiable check must never expire a live sub.
+            if not sibling_uuid or not subscription_service.is_configured:
+                continue
+            try:
+                async with subscription_service.get_api_client() as api:
+                    panel_user = await api.get_user_by_uuid(sibling_uuid)
+            except Exception as exc:
+                logger.warning(
+                    'Webhook user.deleted: sibling liveness check failed, leaving subscription untouched',
+                    other_sub_id=other_sub.id,
+                    error=str(exc),
+                )
+                continue
+            if panel_user is not None:
+                continue  # still alive in panel, don't touch
 
             other_sub.status = SubscriptionStatus.EXPIRED.value
             other_sub.subscription_url = None

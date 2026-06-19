@@ -20,6 +20,7 @@ from app.database.crud.system_setting import get_setting_value
 from app.database.crud.user import (
     OAUTH_PROVIDER_COLUMNS,
     clear_user_oauth_provider_id,
+    get_user_by_email,
     get_user_by_id,
     get_user_by_oauth_provider,
     get_user_by_telegram_id,
@@ -316,6 +317,30 @@ async def _exchange_and_link_oauth(
             status_code=status.HTTP_409_CONFLICT,
             detail=('This social account is already linked to a different account. Unlink it from that account first.'),
         )
+
+    # Backfill the account email from the provider when a Telegram-first (or any
+    # no-email) account links Google/Yandex and the IdP attests a verified address.
+    # Without this the linked user has no email on their card and email-based
+    # features (recovery, panel sync, cross-provider linking) stay unavailable.
+    # Only fill an empty slot; never overwrite an existing email, and never adopt an
+    # address already owned by another account (that needs the explicit merge flow) —
+    # just skip the backfill so linking the social login still succeeds.
+    if not user.email and user_info.email and user_info.email_verified:
+        normalized_email = user_info.email.strip().lower()
+        email_owner = await get_user_by_email(db, normalized_email)
+        if email_owner is not None and email_owner.id != user.id:
+            logger.info(
+                'OAuth link: email backfill skipped, address already owned by another account',
+                context=log_context,
+                provider=provider,
+                user_id=user.id,
+                existing_user_id=email_owner.id,
+            )
+        else:
+            user.email = normalized_email
+            user.email_verified = True
+            user.email_verified_at = datetime.now(UTC)
+            user.email_verification_source = f'oauth_{provider}'
 
     # Link the provider to current user
     await set_user_oauth_provider_id(db, user, provider, user_info.provider_id)
@@ -786,7 +811,7 @@ async def link_server_complete(
 
 
 # ---------------------------------------------------------------------------
-# Router 2: Merge (NO JWT required)
+# Router 2: Merge (JWT required — bound to the authenticated initiator)
 # ---------------------------------------------------------------------------
 
 merge_router = APIRouter(prefix='/auth/merge', tags=['Cabinet Account Merge'])

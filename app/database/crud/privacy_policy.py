@@ -21,17 +21,20 @@ async def upsert_privacy_policy(
     content: str,
     *,
     enable_if_new: bool = True,
+    is_enabled: bool | None = None,
 ) -> PrivacyPolicy:
     policy = await get_privacy_policy(db, language)
 
     if policy:
         policy.content = content or ''
+        if is_enabled is not None:
+            policy.is_enabled = bool(is_enabled)
         policy.updated_at = datetime.now(UTC)
     else:
         policy = PrivacyPolicy(
             language=language,
             content=content or '',
-            is_enabled=bool(enable_if_new),
+            is_enabled=bool(enable_if_new) if is_enabled is None else bool(is_enabled),
         )
         db.add(policy)
 

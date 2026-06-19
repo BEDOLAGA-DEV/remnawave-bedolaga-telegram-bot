@@ -116,6 +116,16 @@ class Settings(BaseSettings):
 
     DATABASE_MODE: str = 'auto'
 
+    # Параметры пула подключений к PostgreSQL. Раньше были захардкожены в
+    # app/database/database.py — вынесены в .env, чтобы масштабировать пул под
+    # нагрузку без пересборки образа. При нескольких воркерах каждый процесс
+    # держит СВОЙ пул, поэтому суммарно ≈ WORKERS * (POOL_SIZE + MAX_OVERFLOW)
+    # соединений — держите ниже max_connections PostgreSQL. Для SQLite не
+    # применяются (там используется NullPool без пулинга).
+    DATABASE_POOL_SIZE: int = 20
+    DATABASE_MAX_OVERFLOW: int = 20
+    DATABASE_POOL_TIMEOUT: int = 30
+
     REDIS_URL: str = 'redis://localhost:6379/0'
     CART_TTL_SECONDS: int = 3600  # Время жизни корзины пользователя в Redis (1 час)
     # «Свежее намерение» пополнить ради сохранённой корзины. Тихая авто-покупка из
@@ -189,6 +199,10 @@ class Settings(BaseSettings):
     RESET_DEVICES_ON_RENEWAL: bool = False
     TARIFF_SWITCH_UPGRADE_ENABLED: bool = True
     TARIFF_SWITCH_DOWNGRADE_ENABLED: bool = True
+    # При смене тарифа НЕ переносить остаток дней, наспамленных на бесплатном (0₽)
+    # тарифе, на новый платный тариф (иначе юзер бесплатно уносит, напр., 1000 дней).
+    # Платные подписки переносят дни как обычно. Выключите, чтобы вернуть перенос.
+    TARIFF_SWITCH_RESET_FREE_DAYS: bool = True
     MAX_DEVICES_LIMIT: int = 20
 
     TRIAL_WARNING_HOURS: int = 2
@@ -372,6 +386,17 @@ class Settings(BaseSettings):
     # Per-subscription override lives in Subscription.autopay_period_days.
     DEFAULT_AUTOPAY_PERIOD_DAYS: int = 0
     MIN_BALANCE_FOR_AUTOPAY_KOPEKS: int = 10000
+
+    # ── Антиспам уведомлений об ошибке автоплатежа ──
+    # Максимум уведомлений об ошибке списания за ОДИН цикл подписки (до следующего end_date).
+    # 0 — не отправлять уведомления об ошибке вовсе.
+    AUTOPAY_FAIL_MAX_NOTIFICATIONS: int = 2
+    # За сколько часов до окончания подписки слать «финальное» напоминание. 0 — без финала.
+    AUTOPAY_FAIL_FINAL_REMINDER_HOURS: int = 3
+    # Периодические повторы между первым и финальным уведомлением, каждые N часов
+    # (legacy-режим). 0 — без повторов (только первое + финальное).
+    AUTOPAY_FAIL_REPEAT_INTERVAL_HOURS: int = 0
+
     SUBSCRIPTION_RENEWAL_BALANCE_THRESHOLD_KOPEKS: int = 20000
 
     MONITORING_INTERVAL: int = 60
@@ -658,6 +683,9 @@ class Settings(BaseSettings):
     YANDEX_OFFLINE_CONV_DL: str = ''
     YANDEX_OFFLINE_CONV_DT: str = ''
     YANDEX_OFFLINE_CONV_CURRENCY: str = 'RUB'
+    # Offline Conversions API (mc.yandex.ru via OAuth, yclid-keyed)
+    YANDEX_OFFLINE_CONV_OAUTH_TOKEN: str = ''
+    YANDEX_OFFLINE_CONV_PURCHASE_GOAL_ID: str = ''
 
     # ── S2S Postback (server-to-server affiliate notifications) ──
     S2S_POSTBACK_ENABLED: bool = False
@@ -748,6 +776,14 @@ class Settings(BaseSettings):
     OVERPAY_RETURN_URL: str | None = None
     OVERPAY_LIFETIME_MINUTES: int = 1440
     OVERPAY_PAYMENT_METHODS: str = 'card,fps'
+    OVERPAY_SBP_TERMINAL_ID: str | None = None
+    OVERPAY_CARD_TERMINAL_ID: str | None = None
+    OVERPAY_INT_TERMINAL_ID: str | None = None
+    OVERPAY_SBP_DIRECT_QR: bool = False
+    OVERPAY_INT_ENABLED: bool = False
+    OVERPAY_INT_MIN_EUR: float = 5.0
+    OVERPAY_RUB_PER_EUR: float = 0.0
+    OVERPAY_SERVER_IP: str | None = None
 
     # AuraPay (aurapay.tech)
     AURAPAY_ENABLED: bool = False
@@ -886,6 +922,11 @@ class Settings(BaseSettings):
     CONNECT_BUTTON_MODE: str = 'miniapp_subscription'
     MINIAPP_CUSTOM_URL: str = ''
     MINIAPP_STATIC_PATH: str = 'miniapp'
+    # Короткое имя Telegram Mini App (BotFather → /newapp), напр. 'cabinet'.
+    # Нужно только для диплинков t.me/<bot>/<app>?startapp=… которые открывают
+    # кабинет из ГРУППОВЫХ чатов (web_app-кнопки в группах не работают). В личке
+    # достаточно MINIAPP_CUSTOM_URL. Пусто → в группах кнопка кабинета не строится.
+    MINIAPP_APP_SHORT_NAME: str = ''
 
     # Media upload settings (news article images/videos)
     MEDIA_UPLOAD_DIR: str = './uploads'
@@ -914,6 +955,11 @@ class Settings(BaseSettings):
     DEFAULT_LANGUAGE: str = 'ru'
     AVAILABLE_LANGUAGES: str = 'ru,en,ua,zh,fa'
     LANGUAGE_SELECTION_ENABLED: bool = True
+
+    PRIVACY_POLICY_DISPLAY_MODE: str = 'both'
+    PUBLIC_OFFER_DISPLAY_MODE: str = 'both'
+    SERVICE_RULES_DISPLAY_MODE: str = 'both'
+    FAQ_DISPLAY_MODE: str = 'both'
 
     # Округление цен при отображении (≤50 коп вниз, >50 коп вверх)
     PRICE_ROUNDING_ENABLED: bool = True
@@ -1218,6 +1264,38 @@ class Settings(BaseSettings):
             return max(1, value_int)
         except (TypeError, ValueError):
             return 10
+
+    @field_validator('DATABASE_POOL_SIZE', mode='before')
+    @classmethod
+    def ensure_positive_database_pool_size(cls, value: int | None) -> int:
+        # pool_size=0 в SQLAlchemy QueuePool означает «без лимита» — это footgun,
+        # который легко исчерпает max_connections PostgreSQL, поэтому держим >= 1.
+        try:
+            if value is None or value == '':
+                return 20
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return 20
+
+    @field_validator('DATABASE_MAX_OVERFLOW', mode='before')
+    @classmethod
+    def ensure_nonnegative_database_max_overflow(cls, value: int | None) -> int:
+        try:
+            if value is None or value == '':
+                return 20
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return 20
+
+    @field_validator('DATABASE_POOL_TIMEOUT', mode='before')
+    @classmethod
+    def ensure_positive_database_pool_timeout(cls, value: int | None) -> int:
+        try:
+            if value is None or value == '':
+                return 30
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return 30
 
     @field_validator('LOG_FILE', mode='before')
     @classmethod
@@ -2404,6 +2482,20 @@ class Settings(BaseSettings):
     def get_overpay_display_name_html(self) -> str:
         return html.escape(self.get_overpay_display_name())
 
+    def get_overpay_terminal_id(self, option: str | None = None) -> str | None:
+        terminals = {
+            'fps': self.OVERPAY_SBP_TERMINAL_ID,
+            'card': self.OVERPAY_CARD_TERMINAL_ID,
+            'int': self.OVERPAY_INT_TERMINAL_ID,
+        }
+        return terminals.get(option or '') or self.OVERPAY_PROJECT_ID
+
+    def is_overpay_int_enabled(self) -> bool:
+        return self.is_overpay_enabled() and self.OVERPAY_INT_ENABLED and self.OVERPAY_RUB_PER_EUR > 0
+
+    def is_overpay_sbp_direct_qr_enabled(self) -> bool:
+        return self.OVERPAY_SBP_DIRECT_QR and bool((self.OVERPAY_SERVER_IP or '').strip())
+
     def is_aurapay_enabled(self) -> bool:
         return (
             self.AURAPAY_ENABLED
@@ -3342,6 +3434,30 @@ class Settings(BaseSettings):
             stacklevel=2,
         )
         return self.BOT_TOKEN
+
+    def collect_insecure_default_warnings(self) -> list[str]:
+        """Return warnings about insecure default/secret configuration.
+
+        Surfaced once at startup (via the structured logger) so operators notice when the
+        bot runs with shipped defaults that must be changed before production.
+        """
+        messages: list[str] = []
+
+        if self.POSTGRES_PASSWORD == 'secure_password_123' and 'postgresql' in self.get_database_url():
+            messages.append(
+                'POSTGRES_PASSWORD is the shipped default ("secure_password_123"). '
+                'Set a unique strong password before exposing this deployment.'
+            )
+
+        if self.is_cabinet_enabled() and not self.CABINET_JWT_SECRET:
+            messages.append(
+                'CABINET_JWT_SECRET is not set — cabinet JWTs are signed with BOT_TOKEN, which is '
+                'widely exposed (Telegram API, payment-provider configs). A BOT_TOKEN leak would let '
+                'anyone forge cabinet sessions. Set CABINET_JWT_SECRET to a unique value: '
+                'python -c "import secrets; print(secrets.token_urlsafe(64))"'
+            )
+
+        return messages
 
     def get_cabinet_access_token_expire_minutes(self) -> int:
         return max(1, self.CABINET_ACCESS_TOKEN_EXPIRE_MINUTES)

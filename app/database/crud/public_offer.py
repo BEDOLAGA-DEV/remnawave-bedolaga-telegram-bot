@@ -21,17 +21,20 @@ async def upsert_public_offer(
     content: str,
     *,
     enable_if_new: bool = True,
+    is_enabled: bool | None = None,
 ) -> PublicOffer:
     offer = await get_public_offer(db, language)
 
     if offer:
         offer.content = content or ''
+        if is_enabled is not None:
+            offer.is_enabled = bool(is_enabled)
         offer.updated_at = datetime.now(UTC)
     else:
         offer = PublicOffer(
             language=language,
             content=content or '',
-            is_enabled=bool(enable_if_new),
+            is_enabled=bool(enable_if_new) if is_enabled is None else bool(is_enabled),
         )
         db.add(offer)
 

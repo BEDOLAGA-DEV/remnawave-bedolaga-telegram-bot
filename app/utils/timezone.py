@@ -32,15 +32,23 @@ def get_local_timezone() -> ZoneInfo:
 
 
 def panel_datetime_to_utc(dt: datetime) -> datetime:
-    """Convert a panel datetime to aware UTC.
+    """Normalize a RemnaWave panel datetime to aware UTC.
 
-    Panel API returns local time with a misleading UTC offset (+00:00 / Z).
-    This strips the offset, interprets the raw value as panel-local time,
-    then converts to aware UTC for database storage.
+    The panel always returns time in UTC (ISO with a trailing ``Z`` / ``+00:00``),
+    matching how the bot pushes ``subscription.end_date`` (aware UTC) to the panel.
+    So we simply ensure the value is aware UTC — naive values are assumed UTC,
+    aware values are converted to UTC.
+
+    NOTE: an earlier version wrongly assumed the panel returned panel-local time
+    mislabeled as UTC and re-stamped the wall-clock with ``get_local_timezone()``.
+    That shifted every cabinet sync by the local offset (e.g. -3h for Europe/Moscow),
+    corrupting subscription end dates. This mirrors
+    ``remnawave_service._parse_remnawave_date`` ("Панель RemnaWave всегда отдаёт
+    время в UTC"), keeping the whole system consistent on UTC.
     """
-    naive = dt
-    localized = naive.replace(tzinfo=get_local_timezone())
-    return localized.astimezone(ZoneInfo('UTC'))
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def to_local_datetime(dt: datetime | None) -> datetime | None:

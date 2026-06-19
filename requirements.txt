@@ -10,13 +10,13 @@ aiosqlite==0.22.1
 # Дополнительные зависимости
 pydantic==2.11.9
 pydantic-settings==2.10.1
-python-dotenv==1.1.1
+python-dotenv==1.2.2
 redis==7.1.1
 PyYAML==6.0.3
 fastapi==0.129.0
 uvicorn==0.32.1
 websockets>=12.0
-python-multipart==0.0.9
+python-multipart==0.0.18
 
 # YooKassa SDK
 yookassa==3.10.0
@@ -52,4 +52,4 @@ packaging==26.0
 aiofiles==23.2.1
 
 # Архивирование с паролем
-pyzipper==0.3.6
+pyzipper==0.4.0

@@ -128,6 +128,7 @@ CATEGORY_GROUP_METADATA: dict[str, dict[str, object]] = {
             'INTERFACE',
             'INTERFACE_BRANDING',
             'INTERFACE_SUBSCRIPTION',
+            'INFO_PAGES',
             'CONNECT_BUTTON',
             'MINIAPP',
             'HAPP',

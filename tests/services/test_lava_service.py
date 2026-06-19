@@ -210,3 +210,22 @@ def test_webhook_verify_handles_garbage_body(service: LavaService) -> None:
 
     # And clearly-wrong signature → False.
     assert service.verify_webhook_signature(body, 'a' * 64) is False
+
+
+def test_strip_url_query_removes_query_and_fragment() -> None:
+    """Lava Business rejects success/fail URLs with a query string (HTTP 422 'ошибочный
+    формат ссылки'). The sanitizer must drop query + fragment but keep the rest intact —
+    this is exactly the cabinet top-up regression where ?method=lava&status=success broke
+    Lava invoice creation while the bot (which sends no return URL) kept working."""
+    from app.services.lava_service import _strip_url_query
+
+    assert (
+        _strip_url_query('https://c.example/balance/top-up/result?method=lava&status=success')
+        == 'https://c.example/balance/top-up/result'
+    )
+    assert _strip_url_query('https://c.example/p#frag') == 'https://c.example/p'
+    # Clean URLs (including the path-based method variant) pass through unchanged.
+    assert _strip_url_query('https://c.example/balance/top-up/result/lava') == (
+        'https://c.example/balance/top-up/result/lava'
+    )
+    assert _strip_url_query('https://c.example/p') == 'https://c.example/p'

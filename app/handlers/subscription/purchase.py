@@ -602,8 +602,10 @@ async def show_trial_offer(callback: types.CallbackQuery, db_user: User, db: Asy
 
     texts = get_texts(db_user.language)
 
-    # Проверяем, отключён ли триал для этого типа пользователя
-    if settings.is_trial_disabled_for_user(getattr(db_user, 'auth_type', 'telegram')):
+    # Триал отключён глобально (нулевая длительность) либо для этого типа пользователя
+    if settings.TRIAL_DURATION_DAYS <= 0 or settings.is_trial_disabled_for_user(
+        getattr(db_user, 'auth_type', 'telegram')
+    ):
         await callback.message.edit_text(
             texts.t('TRIAL_DISABLED_FOR_USER_TYPE', 'Пробный период недоступен'),
             reply_markup=get_back_keyboard(db_user.language),
@@ -795,8 +797,10 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
         await callback.answer()
         return
 
-    # Проверяем, отключён ли триал для этого типа пользователя
-    if settings.is_trial_disabled_for_user(getattr(db_user, 'auth_type', 'telegram')):
+    # Триал отключён глобально (нулевая длительность) либо для этого типа пользователя
+    if settings.TRIAL_DURATION_DAYS <= 0 or settings.is_trial_disabled_for_user(
+        getattr(db_user, 'auth_type', 'telegram')
+    ):
         await callback.message.edit_text(
             texts.t('TRIAL_DISABLED_FOR_USER_TYPE', 'Пробный период недоступен'),
             reply_markup=get_back_keyboard(db_user.language),

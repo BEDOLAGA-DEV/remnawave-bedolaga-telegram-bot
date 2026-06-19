@@ -10,6 +10,7 @@ POST /subscription/trial
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -58,6 +59,12 @@ from .helpers import _subscription_to_response
 
 
 logger = structlog.get_logger(__name__)
+
+# Cap inline RemnaWave panel sync on user-facing cabinet requests. The product is
+# committed before the sync, so a slow/unavailable panel must not hold the HTTP
+# response open (the cabinet pay button is bound to the request and would spin
+# after delivery). Past this budget the sync is deferred to remnawave_retry_queue.
+REMNAWAVE_SYNC_TIMEOUT = 10.0
 
 router = APIRouter()
 
@@ -492,12 +499,11 @@ async def submit_purchase(
 
         # Отправляем уведомление админам о покупке подписки
         try:
-            from aiogram import Bot
-
+            from app.bot_factory import create_bot
             from app.services.admin_notification_service import AdminNotificationService
 
-            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-                bot = Bot(token=settings.BOT_TOKEN)
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                bot = create_bot()
                 try:
                     notification_service = AdminNotificationService(bot)
                     is_new_subscription = result.get('was_trial_conversion') or not context.subscription
@@ -525,10 +531,11 @@ async def submit_purchase(
         try:
             from app.services import yandex_offline_conv_service as yandex_conv
 
-            await yandex_conv.store_cid_and_fire_purchase(
+            # Purchase event fires centrally from create_transaction; here we
+            # only persist the request-body CID synchronously (#558449).
+            await yandex_conv.store_cid_only(
                 user.id,
                 request.yandex_cid,
-                pricing.final_total,
             )
         except Exception as yconv_err:
             logger.debug('yandex_conv purchase hook failed (non-fatal)', user_id=user.id, error=str(yconv_err))
@@ -661,6 +668,18 @@ async def purchase_tariff(
         traffic_limit_gb = tariff.traffic_limit_gb
         custom_traffic_gb = None
         if request.traffic_gb is not None and tariff.can_purchase_custom_traffic():
+            # Validate against the tariff's allowed custom-traffic range. Without this an
+            # out-of-range value makes get_price_for_custom_traffic() return None, which the
+            # pricing engine treats as 0 — provisioning free (even unlimited) traffic. The
+            # bot-side flow clamps the same input (tariff_purchase.py); mirror that here.
+            if request.traffic_gb < tariff.min_traffic_gb or request.traffic_gb > tariff.max_traffic_gb:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f'Traffic must be between {tariff.min_traffic_gb} and '
+                        f'{tariff.max_traffic_gb} GB for this tariff'
+                    ),
+                )
             custom_traffic_gb = request.traffic_gb
             traffic_limit_gb = request.traffic_gb
 
@@ -946,21 +965,25 @@ async def purchase_tariff(
             else:
                 _should_create = not getattr(user, 'remnawave_uuid', None)
 
-            if not _should_create:
-                await service.update_remnawave_user(
-                    db,
-                    subscription,
-                    reset_traffic=True,
-                    reset_reason='покупка тарифа (cabinet)',
-                    sync_squads=True,
-                )
-            else:
-                await service.create_remnawave_user(
-                    db,
-                    subscription,
-                    reset_traffic=True,
-                    reset_reason='покупка тарифа (cabinet)',
-                )
+            # Time-bounded (see REMNAWAVE_SYNC_TIMEOUT): the subscription is already
+            # committed, so a slow panel must not keep the cabinet pay button spinning;
+            # past the budget the sync is deferred to remnawave_retry_queue below.
+            async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
+                if not _should_create:
+                    await service.update_remnawave_user(
+                        db,
+                        subscription,
+                        reset_traffic=True,
+                        reset_reason='покупка тарифа (cabinet)',
+                        sync_squads=True,
+                    )
+                else:
+                    await service.create_remnawave_user(
+                        db,
+                        subscription,
+                        reset_traffic=True,
+                        reset_reason='покупка тарифа (cabinet)',
+                    )
         except Exception as remnawave_error:
             logger.error('Failed to sync subscription with RemnaWave', remnawave_error=remnawave_error)
             from app.services.remnawave_retry_queue import remnawave_retry_queue
@@ -994,10 +1017,11 @@ async def purchase_tariff(
         try:
             from app.services import yandex_offline_conv_service as yandex_conv
 
-            await yandex_conv.store_cid_and_fire_purchase(
+            # Purchase event fires centrally from create_transaction; here we
+            # only persist the request-body CID synchronously (#558449).
+            await yandex_conv.store_cid_only(
                 user.id,
                 request.yandex_cid,
-                price_kopeks,
             )
         except Exception as yconv_err:
             logger.debug('yandex_conv purchase hook failed (non-fatal)', user_id=user.id, error=str(yconv_err))
@@ -1061,12 +1085,11 @@ async def purchase_tariff(
 
         # Отправляем уведомление админам о покупке/продлении тарифа
         try:
-            from aiogram import Bot
-
+            from app.bot_factory import create_bot
             from app.services.admin_notification_service import AdminNotificationService
 
-            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-                bot = Bot(token=settings.BOT_TOKEN)
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                bot = create_bot()
                 try:
                     notification_service = AdminNotificationService(bot)
                     # Определяем тип покупки: новая подписка или продление
@@ -1251,6 +1274,24 @@ async def activate_trial(
                 detail='Failed to charge trial activation fee',
             )
 
+        # Persist the request-body CID BEFORE create_transaction. The
+        # SUBSCRIPTION_PAYMENT below fires the purchase event centrally
+        # (background fire_purchase_bg reads the CID from the DB), so the CID
+        # must be stored and committed first or the fire races it and no-ops
+        # (#558449). store_cid_and_fire_trial below still handles the separate
+        # 'trial-add' event.
+        cabinet_cid = request.yandex_cid if request is not None else None
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            await yandex_conv.store_cid_only(user.id, cabinet_cid)
+        except Exception as yconv_err:
+            logger.debug(
+                'yandex_conv CID persist (pre-transaction) failed (non-fatal)',
+                user_id=user.id,
+                error=str(yconv_err),
+            )
+
         # Создаём транзакцию для учёта списания за триал
         await create_transaction(
             db,
@@ -1331,8 +1372,12 @@ async def activate_trial(
     panel_user = None
     try:
         if subscription_service.is_configured:
-            panel_user = await subscription_service.create_remnawave_user(db, subscription)
-            await db.refresh(subscription)
+            # Time-bounded (see REMNAWAVE_SYNC_TIMEOUT): on timeout the panel_user
+            # stays None and the check below enqueues remnawave_retry_queue, instead
+            # of holding the cabinet response open after the trial is committed.
+            async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
+                panel_user = await subscription_service.create_remnawave_user(db, subscription)
+                await db.refresh(subscription)
     except Exception as e:
         logger.error('Failed to create RemnaWave user for trial', error=e)
 
@@ -1356,12 +1401,11 @@ async def activate_trial(
 
     # Send admin notification about trial activation
     try:
-        from aiogram import Bot
-
+        from app.bot_factory import create_bot
         from app.services.admin_notification_service import AdminNotificationService
 
-        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
+        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+            bot = create_bot()
             try:
                 notification_service = AdminNotificationService(bot)
                 charged_amount = settings.TRIAL_ACTIVATION_PRICE if requires_payment else None
@@ -1380,13 +1424,11 @@ async def activate_trial(
     try:
         from app.services import yandex_offline_conv_service as yandex_conv
 
+        # 'trial-add' event still fires here. The paid-trial 'purchase' event is
+        # NOT fired here anymore: when a trial activation fee is charged it
+        # creates a SUBSCRIPTION_PAYMENT transaction, which fires the purchase
+        # event centrally from create_transaction (avoids double-fire).
         await yandex_conv.store_cid_and_fire_trial(user.id, cabinet_cid)
-        if requires_payment and settings.TRIAL_ACTIVATION_PRICE > 0:
-            await yandex_conv.store_cid_and_fire_purchase(
-                user.id,
-                cabinet_cid,
-                settings.TRIAL_ACTIVATION_PRICE,
-            )
     except Exception as yconv_err:
         logger.debug(
             'yandex_conv trial/purchase hook failed (non-fatal)',

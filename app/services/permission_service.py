@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database.crud.rbac import SUPERADMIN_LEVEL, AccessPolicyCRUD, AuditLogCRUD, UserRoleCRUD
 
 
@@ -26,11 +25,16 @@ logger = structlog.get_logger(__name__)
 
 
 def _is_legacy_admin(user: User) -> bool:
-    """Check if user is a legacy config-based admin (ADMIN_IDS / ADMIN_EMAILS)."""
-    return settings.is_admin(
-        telegram_id=user.telegram_id,
-        email=user.email if user.email_verified else None,
-    )
+    """Check if user is a legacy config-based admin (ADMIN_IDS / ADMIN_EMAILS).
+
+    Routed through is_user_admin_by_env so the ADMIN_EMAILS match honours the
+    trusted email_verification_source guard. settings.is_admin() trusts
+    email_verified alone, but untrusted sources (VK/Yandex OAuth) set
+    email_verified=True without proof of ownership and must not escalate.
+    """
+    from app.services.rbac_bootstrap_service import is_user_admin_by_env
+
+    return is_user_admin_by_env(user).is_admin
 
 
 # ---------------------------------------------------------------------------

@@ -12,10 +12,13 @@ from app.database.models import User
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..services.email_template_overrides import (
+    COMMON_CONTEXT_VARS,
+    build_common_context,
     delete_template_override,
     get_all_overrides,
     get_overrides_for_type,
     save_template_override,
+    substitute_context_vars,
 )
 from ..services.email_templates import EmailNotificationTemplates
 
@@ -299,6 +302,86 @@ TEMPLATE_TYPES = [
         'context_vars': ['username', 'reset_url', 'expire_hours'],
     },
     {
+        'type': 'email_change_code',
+        'label': {
+            'ru': 'Код смены email',
+            'en': 'Email Change Code',
+            'zh': '邮箱更换验证码',
+            'ua': 'Код зміни email',
+        },
+        'description': {
+            'ru': 'Письмо с кодом подтверждения для смены email адреса',
+            'en': 'Email with a confirmation code for changing the email address',
+            'zh': '包含更换邮箱确认码的邮件',
+            'ua': 'Лист з кодом підтвердження для зміни email адреси',
+        },
+        'context_vars': ['username', 'code', 'expire_minutes'],
+    },
+    {
+        'type': 'partner_application_approved',
+        'label': {
+            'ru': 'Партнёрство одобрено',
+            'en': 'Partner Application Approved',
+            'zh': '合作伙伴申请已批准',
+            'ua': 'Партнерство схвалено',
+        },
+        'description': {
+            'ru': 'Уведомление об одобрении заявки на партнёрство',
+            'en': 'Partner application approved notification',
+            'zh': '合作伙伴申请获批通知',
+            'ua': 'Сповіщення про схвалення заявки на партнерство',
+        },
+        'context_vars': ['commission_percent', 'comment'],
+    },
+    {
+        'type': 'partner_application_rejected',
+        'label': {
+            'ru': 'Партнёрство отклонено',
+            'en': 'Partner Application Rejected',
+            'zh': '合作伙伴申请被拒绝',
+            'ua': 'Партнерство відхилено',
+        },
+        'description': {
+            'ru': 'Уведомление об отклонении заявки на партнёрство',
+            'en': 'Partner application rejected notification',
+            'zh': '合作伙伴申请被拒通知',
+            'ua': 'Сповіщення про відхилення заявки на партнерство',
+        },
+        'context_vars': ['comment'],
+    },
+    {
+        'type': 'withdrawal_approved',
+        'label': {
+            'ru': 'Вывод средств одобрен',
+            'en': 'Withdrawal Approved',
+            'zh': '提现已批准',
+            'ua': 'Виведення коштів схвалено',
+        },
+        'description': {
+            'ru': 'Уведомление об одобрении запроса на вывод средств',
+            'en': 'Withdrawal request approved notification',
+            'zh': '提现请求获批通知',
+            'ua': 'Сповіщення про схвалення запиту на виведення коштів',
+        },
+        'context_vars': ['formatted_amount', 'amount_rubles', 'comment'],
+    },
+    {
+        'type': 'withdrawal_rejected',
+        'label': {
+            'ru': 'Вывод средств отклонён',
+            'en': 'Withdrawal Rejected',
+            'zh': '提现被拒绝',
+            'ua': 'Виведення коштів відхилено',
+        },
+        'description': {
+            'ru': 'Уведомление об отклонении запроса на вывод средств',
+            'en': 'Withdrawal request rejected notification',
+            'zh': '提现请求被拒通知',
+            'ua': 'Сповіщення про відхилення запиту на виведення коштів',
+        },
+        'context_vars': ['formatted_amount', 'amount_rubles', 'comment'],
+    },
+    {
         'type': 'guest_subscription_delivered',
         'label': {
             'ru': 'Быстрая покупка: подписка доставлена',
@@ -424,6 +507,11 @@ SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
         'expire_hours': 24,
     },
     'password_reset': {'username': 'John', 'reset_url': 'https://example.com/reset?token=abc123', 'expire_hours': 1},
+    'email_change_code': {'username': 'John', 'code': '123456', 'expire_minutes': 10},
+    'partner_application_approved': {'commission_percent': 20, 'comment': 'Welcome aboard!'},
+    'partner_application_rejected': {'comment': 'Not enough details provided'},
+    'withdrawal_approved': {'formatted_amount': '1000.00 ₽', 'amount_rubles': 1000, 'comment': 'Processed'},
+    'withdrawal_rejected': {'formatted_amount': '1000.00 ₽', 'amount_rubles': 1000, 'comment': 'Invalid requisites'},
     'guest_subscription_delivered': {
         'tariff_name': 'Premium',
         'period_days': 30,
@@ -457,6 +545,75 @@ SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
 
 AVAILABLE_LANGUAGES = ['ru', 'en', 'zh', 'ua', 'fa']
 
+# Recipient-level common vars are empty until the sending code fills them —
+# in preview/test we substitute samples so the admin sees realistic values.
+COMMON_SAMPLE_CONTEXT = {'username': 'John', 'email': 'user@example.com'}
+
+
+def _build_sample_context(notification_type: str) -> dict[str, Any]:
+    """Common (real instance values) + recipient samples + per-type samples."""
+    return {
+        **build_common_context(),
+        **COMMON_SAMPLE_CONTEXT,
+        **SAMPLE_CONTEXTS.get(notification_type, {}),
+    }
+
+
+def _get_type_meta(notification_type: str) -> dict[str, Any] | None:
+    return next((t for t in TEMPLATE_TYPES if t['type'] == notification_type), None)
+
+
+def _validate_template_type(notification_type: str) -> dict[str, Any]:
+    type_meta = _get_type_meta(notification_type)
+    if type_meta is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Unknown template type: {notification_type}',
+        )
+    return type_meta
+
+
+# Numeric twins of formatted_* vars: templates eagerly evaluate fallbacks like
+# f'{context.get("amount_rubles", 0):.2f}', which raises on a string placeholder.
+# Omitted from the placeholder context — defaults render via formatted_* anyway,
+# and at send time the real numeric values substitute {amount_rubles} fine.
+_NUMERIC_FALLBACK_VARS = {'amount_rubles', 'new_balance_rubles', 'bonus_rubles'}
+
+
+def _placeholder_context(notification_type: str) -> dict[str, Any]:
+    """Context that renders default templates with literal {var} placeholders.
+
+    The editor must show editable templates with placeholders intact — if the
+    admin saved a template rendered with sample values, production emails would
+    contain those samples (e.g. an example.com verification link) instead of
+    the real ones.
+    """
+    type_meta = _get_type_meta(notification_type)
+    if not type_meta:
+        return {}
+    return {var: f'{{{var}}}' for var in type_meta['context_vars'] if var not in _NUMERIC_FALLBACK_VARS}
+
+
+def _get_default_template(notification_type: str, language: str, context: dict[str, Any]) -> dict[str, str] | None:
+    """Render the built-in default template, or None if unavailable."""
+    from app.services.notification_delivery_service import NotificationType
+
+    try:
+        ntype_enum = NotificationType(notification_type)
+    except ValueError:
+        return None
+
+    try:
+        return EmailNotificationTemplates().get_template(ntype_enum, language, context)
+    except Exception as e:
+        logger.warning(
+            'Не удалось отрендерить дефолтный email шаблон',
+            notification_type=notification_type,
+            language=language,
+            e=e,
+        )
+        return None
+
 
 # ============ Schemas ============
 
@@ -477,10 +634,16 @@ class EmailTemplatePreviewRequest(BaseModel):
 
 
 class EmailTemplateSendTestRequest(BaseModel):
-    """Request to send a test email."""
+    """Request to send a test email.
+
+    When subject/body_html are provided, the current (possibly unsaved) editor
+    content is sent; otherwise the saved override or the default template.
+    """
 
     language: str = Field(default='ru')
     email: str = Field(default='')
+    subject: str = Field(default='')
+    body_html: str = Field(default='')
 
 
 # ============ Endpoints ============
@@ -517,7 +680,11 @@ async def list_template_types(
             }
         )
 
-    return {'items': result, 'available_languages': AVAILABLE_LANGUAGES}
+    return {
+        'items': result,
+        'available_languages': AVAILABLE_LANGUAGES,
+        'common_context_vars': COMMON_CONTEXT_VARS,
+    }
 
 
 @router.get('/{notification_type}', summary='Get templates for a notification type')
@@ -526,37 +693,24 @@ async def get_templates_for_type(
     _admin: User = Depends(require_permission('email_templates:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
-    """Get all language templates for a specific notification type."""
-    # Validate type
-    valid_types = [t['type'] for t in TEMPLATE_TYPES]
-    if notification_type not in valid_types:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f'Unknown template type: {notification_type}',
-        )
+    """Get all language templates for a specific notification type.
+
+    Default templates are rendered with literal {var} placeholders (not sample
+    values) so the admin can save them as overrides without baking in fake
+    URLs, codes, or amounts.
+    """
+    type_meta = _validate_template_type(notification_type)
 
     # Get overrides from DB
     overrides = await get_overrides_for_type(notification_type, db)
     override_map = {o['language']: o for o in overrides}
 
-    # Get defaults from hardcoded templates
-    templates_instance = EmailNotificationTemplates()
-    sample_context = SAMPLE_CONTEXTS.get(notification_type, {})
-
-    # Get type metadata
-    type_meta = next(t for t in TEMPLATE_TYPES if t['type'] == notification_type)
+    editor_context = _placeholder_context(notification_type)
 
     # Build combined result per language
     languages = {}
     for lang in AVAILABLE_LANGUAGES:
-        # Get default template
-        try:
-            from app.services.notification_delivery_service import NotificationType
-
-            ntype_enum = NotificationType(notification_type)
-            default_template = templates_instance.get_template(ntype_enum, lang, sample_context)
-        except Exception:
-            default_template = None
+        default_template = _get_default_template(notification_type, lang, editor_context)
 
         default_subject = ''
         default_body_html = ''
@@ -588,6 +742,7 @@ async def get_templates_for_type(
         'label': type_meta['label'],
         'description': type_meta['description'],
         'context_vars': type_meta['context_vars'],
+        'common_context_vars': COMMON_CONTEXT_VARS,
         'languages': languages,
     }
 
@@ -601,12 +756,7 @@ async def update_template(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """Save a custom email template override."""
-    valid_types = [t['type'] for t in TEMPLATE_TYPES]
-    if notification_type not in valid_types:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f'Unknown template type: {notification_type}',
-        )
+    _validate_template_type(notification_type)
 
     if language not in AVAILABLE_LANGUAGES:
         raise HTTPException(
@@ -637,12 +787,7 @@ async def reset_template(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """Delete custom template override, reverting to default."""
-    valid_types = [t['type'] for t in TEMPLATE_TYPES]
-    if notification_type not in valid_types:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f'Unknown template type: {notification_type}',
-        )
+    _validate_template_type(notification_type)
 
     deleted = await delete_template_override(notification_type, language, db)
 
@@ -663,32 +808,25 @@ async def preview_template(
     data: EmailTemplatePreviewRequest,
     _admin: User = Depends(require_permission('email_templates:read')),
 ) -> dict[str, Any]:
-    """Preview a rendered email template with sample data."""
-    valid_types = [t['type'] for t in TEMPLATE_TYPES]
-    if notification_type not in valid_types:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f'Unknown template type: {notification_type}',
-        )
+    """Preview a rendered email template with sample data.
 
-    templates_instance = EmailNotificationTemplates()
+    Custom content arrives with {var} placeholders — they are substituted with
+    sample values so the preview matches what the user actually receives.
+    """
+    _validate_template_type(notification_type)
+
     language = data.language if data.language in AVAILABLE_LANGUAGES else 'ru'
+    sample_context = _build_sample_context(notification_type)
 
     if data.body_html:
-        # Preview custom content — auto-detects styled vs simple HTML
-        rendered_html = templates_instance._wrap_override_template(data.body_html, language)
-        subject = data.subject or notification_type
+        # Preview custom content — substitute sample values, then wrap
+        # (auto-detects styled vs simple HTML)
+        body_html = substitute_context_vars(data.body_html, sample_context)
+        rendered_html = EmailNotificationTemplates()._wrap_override_template(body_html, language)
+        subject = substitute_context_vars(data.subject, sample_context, escape=False) or notification_type
     else:
         # Preview default template
-        sample_context = SAMPLE_CONTEXTS.get(notification_type, {})
-        try:
-            from app.services.notification_delivery_service import NotificationType
-
-            ntype_enum = NotificationType(notification_type)
-            default_template = templates_instance.get_template(ntype_enum, language, sample_context)
-        except Exception:
-            default_template = None
-
+        default_template = _get_default_template(notification_type, language, sample_context)
         if default_template:
             rendered_html = default_template['body_html']
             subject = default_template['subject']
@@ -725,41 +863,34 @@ async def send_test_email(
             detail='No email address provided and admin has no email',
         )
 
-    valid_types = [t['type'] for t in TEMPLATE_TYPES]
-    if notification_type not in valid_types:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f'Unknown template type: {notification_type}',
-        )
+    _validate_template_type(notification_type)
 
     language = data.language if data.language in AVAILABLE_LANGUAGES else 'ru'
-    sample_context = SAMPLE_CONTEXTS.get(notification_type, {})
-    templates_instance = EmailNotificationTemplates()
+    sample_context = _build_sample_context(notification_type)
 
-    # Check for DB override (get_rendered_override substitutes sample context vars)
-    from ..services.email_template_overrides import get_rendered_override
-
-    rendered = await get_rendered_override(notification_type, language, sample_context, db)
-
-    if rendered:
-        subject, body_html = rendered
+    if data.body_html:
+        # Test the current editor content (possibly unsaved)
+        body_html = substitute_context_vars(data.body_html, sample_context)
+        body_html = EmailNotificationTemplates()._wrap_override_template(body_html, language)
+        subject = substitute_context_vars(data.subject, sample_context, escape=False) or notification_type
     else:
-        try:
-            from app.services.notification_delivery_service import NotificationType
+        # Check for DB override (get_rendered_override substitutes sample context vars)
+        from ..services.email_template_overrides import get_rendered_override
 
-            ntype_enum = NotificationType(notification_type)
-            default_template = templates_instance.get_template(ntype_enum, language, sample_context)
-        except Exception:
-            default_template = None
+        rendered = await get_rendered_override(notification_type, language, sample_context, db)
 
-        if default_template:
-            subject = default_template['subject']
-            body_html = default_template['body_html']
+        if rendered:
+            subject, body_html = rendered
         else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail='Template not found',
-            )
+            default_template = _get_default_template(notification_type, language, sample_context)
+            if default_template:
+                subject = default_template['subject']
+                body_html = default_template['body_html']
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail='Template not found',
+                )
 
     subject = f'[TEST] {subject}'
 

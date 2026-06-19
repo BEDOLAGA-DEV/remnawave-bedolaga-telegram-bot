@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 
 import structlog
@@ -33,6 +34,32 @@ def _create_cors_response() -> Response:
             'Access-Control-Allow-Headers': 'Content-Type, trbt-signature, Crypto-Pay-API-Signature, X-MulenPay-Signature, Authorization',
         },
     )
+
+
+def _resolve_proxied_client_ip(request: Request) -> str | None:
+    """Resolve the client IP without trusting attacker-settable forwarding headers.
+
+    A direct connection from a public peer uses that peer address; client-supplied X-Real-IP /
+    X-Forwarded-For are honoured only when the immediate peer is a local/private reverse proxy
+    (the only party trusted to have set them). Otherwise an attacker could forge a whitelisted
+    source IP to pass a webhook IP-allowlist check.
+    """
+    peer = request.client.host if request.client else None
+
+    def _is_local_proxy(ip: str | None) -> bool:
+        if not ip:
+            return False
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
+
+    if peer and not _is_local_proxy(peer):
+        return peer
+
+    forwarded = request.headers.get('x-real-ip') or request.headers.get('x-forwarded-for', '').split(',')[0].strip()
+    return forwarded or peer
 
 
 def _verify_mulenpay_signature(request: Request, raw_body: bytes) -> bool:
@@ -1233,11 +1260,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
             from app.services.paypear_service import paypear_service
 
-            client_ip = (
-                request.headers.get('x-real-ip')
-                or request.headers.get('x-forwarded-for', '').split(',')[0].strip()
-                or (request.client.host if request.client else None)
-            )
+            client_ip = _resolve_proxied_client_ip(request)
             if not paypear_service.verify_webhook_signature(raw_body, received_signature, client_ip=client_ip):
                 logger.warning('PayPear webhook: invalid signature and IP', client_ip=client_ip)
                 return JSONResponse({'status': False}, status_code=status.HTTP_403_FORBIDDEN)

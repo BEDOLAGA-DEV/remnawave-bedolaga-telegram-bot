@@ -2774,6 +2774,28 @@ async def show_tariff_switch_list(
     if not subscription:
         return
 
+    # Истёкшая подписка: смены тарифа нет, предлагаем купить новый тариф с нуля
+    # (раньше кнопка «Тариф» вела сюда в тупик на истёкшей подписке).
+    if not subscription.end_date or subscription.end_date <= datetime.now(UTC):
+        await callback.message.edit_text(
+            '❌ <b>Переключение недоступно</b>\n\n'
+            'У вашей подписки не осталось активных дней.\n'
+            'Оформите новый тариф с нуля.',
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('BUY_TARIFF_BUTTON', '📦 Купить тариф'), callback_data='menu_buy'
+                        )
+                    ],
+                    [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                ]
+            ),
+            parse_mode='HTML',
+        )
+        await callback.answer()
+        return
+
     current_tariff_id = subscription.tariff_id
 
     # Проверяем, разрешена ли смена тарифа хотя бы в одном направлении
@@ -3810,9 +3832,16 @@ async def show_instant_switch_list(
         await callback.message.edit_text(
             '❌ <b>Переключение недоступно</b>\n\n'
             'У вашей подписки не осталось активных дней.\n'
-            'Используйте продление или покупку нового тарифа.',
+            'Оформите новый тариф с нуля.',
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[build_back_button(texts, 'menu_subscription')]]
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('BUY_TARIFF_BUTTON', '📦 Купить тариф'), callback_data='menu_buy'
+                        )
+                    ],
+                    [build_back_button(texts, 'menu_subscription')],
+                ]
             ),
             parse_mode='HTML',
         )

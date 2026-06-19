@@ -16,6 +16,7 @@ from app.keyboards.inline import (
     get_back_keyboard,
     build_back_button,
 )
+from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
@@ -304,7 +305,7 @@ async def start_pal24_payment(
         ),
     )
 
-    keyboard = get_back_keyboard(db_user.language)
+    keyboard = await get_topup_amount_keyboard('pal24', db_user.language, back_callback='back_to_menu')
 
     await callback.message.edit_text(
         message_text,

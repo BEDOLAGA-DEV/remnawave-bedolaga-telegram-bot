@@ -135,13 +135,23 @@ class TributeService:
 
                 from app.database.crud.transaction import create_unique_tribute_transaction
 
-                transaction = await create_unique_tribute_transaction(
+                transaction, created = await create_unique_tribute_transaction(
                     db=session,
                     user_id=user.id,
                     payment_id=payment_id,
                     amount_kopeks=amount_kopeks,
                     description=f'Пополнение через Tribute: {amount_kopeks / 100}₽ (ID: {payment_id})',
                 )
+
+                if not created:
+                    # Replayed webhook for an already-processed payment — the balance was
+                    # credited on first delivery; crediting again would be a double-spend.
+                    logger.warning(
+                        'Tribute: платёж уже обработан ранее, повторное начисление пропущено',
+                        payment_id=payment_id,
+                        transaction_id=transaction.id,
+                    )
+                    return
 
                 # Lock user row to prevent concurrent balance race conditions
                 from app.database.crud.user import lock_user_for_update

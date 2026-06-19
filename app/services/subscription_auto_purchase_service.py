@@ -412,6 +412,35 @@ def _apply_extension_updates(context: AutoExtendContext) -> None:
             subscription.connected_squads = (subscription.connected_squads or []) + [context.squad_uuid]
 
 
+async def _resolve_extend_traffic_limit_gb(
+    db: AsyncSession,
+    prepared: AutoExtendContext,
+    subscription: Subscription,
+    *,
+    was_trial: bool,
+) -> int | None:
+    """Какой traffic_limit_gb передать в extend_subscription при автопродлении.
+
+    Триал→платная: подписка обязана принять лимит трафика ПЛАТНОГО тарифа. Триал нёс
+    TRIAL_TRAFFIC_LIMIT_GB, а корзина продления обычно НЕ содержит traffic_limit_gb
+    (None), и tariff_id триала часто совпадает с целевым — поэтому без явного
+    применения конвертированная платная подписка сохраняла триальный лимит даже на
+    безлимитном тарифе (Telegram-репорт #654380: «остаётся 10 ГБ с триала, хотя
+    платная безлимит»). Берём лимит из тарифа (в т.ч. 0 = безлимит), но НЕ затираем
+    явно заданное в корзине значение (кастомный трафик).
+    """
+    traffic_limit_gb = prepared.traffic_limit_gb
+    if was_trial and traffic_limit_gb is None:
+        paid_tariff_id = prepared.tariff_id or subscription.tariff_id
+        if paid_tariff_id:
+            from app.database.crud.tariff import get_tariff_by_id
+
+            paid_tariff = await get_tariff_by_id(db, paid_tariff_id)
+            if paid_tariff is not None:
+                traffic_limit_gb = paid_tariff.traffic_limit_gb
+    return traffic_limit_gb
+
+
 async def _auto_extend_subscription(
     db: AsyncSession,
     user: User,
@@ -489,6 +518,14 @@ async def _auto_extend_subscription(
     # Определяем, произошла ли смена тарифа
     is_tariff_change = prepared.tariff_id is not None and old_tariff_id != prepared.tariff_id
 
+    # Триал→платная: применяем лимит трафика платного тарифа (см. репорт #654380).
+    conversion_traffic_limit_gb = await _resolve_extend_traffic_limit_gb(
+        db, prepared, subscription, was_trial=was_trial
+    )
+
+    # Применяем лимит трафика при смене тарифа ИЛИ при конвертации триала.
+    apply_traffic_limit = is_tariff_change or was_trial
+
     try:
         # При смене тарифа передаём traffic_limit_gb для сброса трафика в БД
         updated_subscription = await extend_subscription(
@@ -496,7 +533,7 @@ async def _auto_extend_subscription(
             subscription,
             prepared.period_days,
             tariff_id=prepared.tariff_id if is_tariff_change else None,
-            traffic_limit_gb=prepared.traffic_limit_gb if is_tariff_change else None,
+            traffic_limit_gb=conversion_traffic_limit_gb if apply_traffic_limit else None,
             device_limit=prepared.device_limit if is_tariff_change else None,
         )
 

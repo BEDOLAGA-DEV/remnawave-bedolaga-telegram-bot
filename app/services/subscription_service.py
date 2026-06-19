@@ -1233,3 +1233,36 @@ class SubscriptionService:
             )
 
         return propagate_result
+
+
+async def reset_subscription_with_panel(db, user: User, subscription: Subscription) -> dict:
+    """Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
+    НЕ удаляя пользователя из БД (тикеты и аккаунт остаются).
+
+    Панельного пользователя ОТКЛЮЧАЕМ (disable), а не удаляем — обратимо. Дальше юзер
+    может купить тариф с нуля. Возвращает ``{'panel_disabled': bool, 'panel_uuid': str|None}``.
+    """
+    from app.database.crud.subscription import reset_subscription
+
+    # В мультитарифном режиме у каждой подписки свой панельный UUID — НЕ откатываемся
+    # на user.remnawave_uuid (это легаси single-tariff UUID, иначе можно отключить
+    # не того панельного пользователя). В single-tariff fallback на user корректен.
+    if settings.is_multi_tariff_enabled():
+        panel_uuid = getattr(subscription, 'remnawave_uuid', None)
+    else:
+        panel_uuid = getattr(subscription, 'remnawave_uuid', None) or getattr(user, 'remnawave_uuid', None)
+
+    panel_disabled = False
+    if panel_uuid:
+        try:
+            panel_disabled = await SubscriptionService().disable_remnawave_user(panel_uuid)
+        except Exception as e:
+            logger.warning('Не удалось отключить пользователя в RemnaWave при обнулении подписки', error=e)
+    else:
+        logger.warning(
+            'Обнуление подписки: панельный UUID не найден, отключение в панели пропущено',
+            subscription_id=getattr(subscription, 'id', None),
+        )
+
+    await reset_subscription(db, subscription)
+    return {'panel_disabled': panel_disabled, 'panel_uuid': panel_uuid}

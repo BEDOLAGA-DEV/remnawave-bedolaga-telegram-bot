@@ -14,6 +14,7 @@ from app.keyboards.inline import (
     get_back_keyboard,
     build_back_button,
 )
+from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
@@ -228,16 +229,7 @@ async def _start_jupiter_topup_impl(
     else:
         display_name = settings.get_jupiter_display_name()
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_BUTTON', '◀️ Назад'),
-                    callback_data='menu_balance',
-                )
-            ]
-        ]
-    )
+    keyboard = await get_topup_amount_keyboard(payment_method, db_user.language)
 
     await callback.message.edit_text(
         texts.t(

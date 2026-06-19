@@ -40,6 +40,15 @@ from app.services.subscription_service import SubscriptionService
 
 logger = structlog.get_logger(__name__)
 
+# GuestPurchase.token is a unique 64-char value. A gift deep-link (``GIFT_<token>`` /
+# ``giftclaim_<token>``) overflows Telegram's 64-char start_param limit, so Telegram
+# truncates the token by the prefix length — the surviving prefix is still >= 54 chars.
+# Prefix-based lookups must therefore require a long minimum length: matching on a short
+# prefix (the old 8-char floor) let an attacker enumerate and claim arbitrary unclaimed
+# gifts. 48 base64url chars (~288 bits) is unguessable yet accepts every legitimate
+# truncation.
+GIFT_TOKEN_MIN_PREFIX_LENGTH = 48
+
 _TELEGRAM_USERNAME_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9_]{4,31}$')
 
 
@@ -462,6 +471,22 @@ async def fulfill_purchase(
         await db.commit()
         await db.refresh(purchase, attribute_names=['landing', 'user', 'buyer'])
 
+        # Save Yandex CID from Redis → DB BEFORE create_transaction, so the
+        # central purchase hook fired from create_transaction (every completed
+        # SUBSCRIPTION_PAYMENT) can read the stored CID. Without this ordering
+        # the background fire would race the CID write and no-op.
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+            from app.utils.cache import cache
+
+            _cached_cid = await cache.get(f'yacid:purchase:{purchase.token}')
+            _cached_yclid = await cache.get(f'yclid:purchase:{purchase.token}')
+            if _cached_cid:
+                await yandex_conv.store_cid(db, user.id, _cached_cid, source='landing', yclid=_cached_yclid)
+                await db.commit()
+        except Exception:
+            logger.debug('Failed to save CID from Redis')
+
         # Create transaction so promo group auto-assignment and contest tracking work.
         # Skip for gift recipients — they didn't pay, so their spending shouldn't be inflated.
         transaction = None
@@ -489,18 +514,6 @@ async def fulfill_purchase(
                 except Exception:
                     pass
 
-        # Save Yandex CID from Redis → DB (enables on_registration/on_purchase to use it)
-        try:
-            from app.services import yandex_offline_conv_service as yandex_conv
-            from app.utils.cache import cache
-
-            _cached_cid = await cache.get(f'yacid:purchase:{purchase.token}')
-            if _cached_cid:
-                await yandex_conv.store_cid(db, user.id, _cached_cid, source='landing')
-                await db.commit()
-        except Exception:
-            logger.debug('Failed to save CID from Redis')
-
         # Registration event (new accounts only) + S2S postback
         if is_new_account:
             try:
@@ -520,14 +533,9 @@ async def fulfill_purchase(
             except Exception:
                 logger.debug('S2S postback registration hook error')
 
-        # Purchase event + S2S postback (always for paid purchases)
-        try:
-            from app.services import yandex_offline_conv_service as yandex_conv
-
-            await yandex_conv.on_purchase(db, user.id, purchase.amount_kopeks)
-        except Exception:
-            logger.debug('Yandex on_purchase hook error')
-
+        # Purchase event fires centrally from create_transaction (the
+        # SUBSCRIPTION_PAYMENT created above, after the CID was persisted).
+        # S2S postback is independent and still fires here.
         try:
             from app.database.crud.yandex_client_id import get_subid
             from app.services.s2s_postback_service import send_postback
@@ -984,6 +992,7 @@ async def send_guest_notification(
         'cabinet_url': cabinet_base,
         'cabinet_email': recipient_email,
         'cabinet_password': purchase.cabinet_password,
+        'email': recipient_email,
     }
 
     if is_pending_activation:
@@ -1045,7 +1054,10 @@ async def send_guest_notification(
             from app.cabinet.services.email_template_overrides import get_rendered_override
 
             cred_rendered = await get_rendered_override(
-                NotificationType.GUEST_CABINET_CREDENTIALS.value, language, context
+                NotificationType.GUEST_CABINET_CREDENTIALS.value,
+                language,
+                context,
+                required_vars=['cabinet_email', 'cabinet_password'],
             )
             if cred_rendered:
                 cred_subject, cred_body = cred_rendered

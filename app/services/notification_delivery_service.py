@@ -65,6 +65,7 @@ class NotificationType(Enum):
     # Auth emails
     EMAIL_VERIFICATION = 'email_verification'
     PASSWORD_RESET = 'password_reset'
+    EMAIL_CHANGE_CODE = 'email_change_code'
 
     # Webhook subscription events
     WEBHOOK_SUB_EXPIRED = 'webhook_sub_expired'
@@ -345,6 +346,8 @@ class NotificationDeliveryService:
             # Inject common context values used across all email templates
             context = {
                 'cabinet_url': getattr(settings, 'CABINET_URL', '') or '',
+                'username': user.first_name or user.username or '',
+                'email': user.email or '',
                 **context,
             }
 

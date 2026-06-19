@@ -158,6 +158,12 @@ ALLOWED_BG_TYPES = (
     'dots',
     'spotlight',
     'ripple',
+    'fireflies',
+    'snowfall',
+    'starfield',
+    'matrix-rain',
+    'liquid-gradient',
+    'constellation',
     'none',
 )
 
@@ -211,6 +217,12 @@ class AnimationConfigUpdate(BaseModel):
             'dots',
             'spotlight',
             'ripple',
+            'fireflies',
+            'snowfall',
+            'starfield',
+            'matrix-rain',
+            'liquid-gradient',
+            'constellation',
             'none',
         ]
         | None

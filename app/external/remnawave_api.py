@@ -1288,13 +1288,44 @@ class RemnaWaveAPI:
             return False
 
     async def remove_device(self, user_uuid: str, device_hwid: str) -> bool:
+        """Удалить одно HWID-устройство пользователя.
+
+        Возвращает True только когда устройство действительно отсутствует.
+        Панель на POST /api/hwid/devices/delete отвечает ОСТАВШИМИСЯ устройствами
+        ({response: {total, devices}} — та же форма, что и у GET), поэтому мы
+        проверяем, что целевого hwid в этом списке больше нет, вместо того чтобы
+        считать «нет исключения == удалено». 404 означает, что устройство/пользователь
+        уже отсутствует — это и есть нужный результат, поэтому тоже success.
+        Панели, отвечающие «голым» ack без списка devices, обрабатываются как раньше
+        (успешный запрос == удалено).
+        """
+        delete_data = {'userUuid': user_uuid, 'hwid': device_hwid}
         try:
-            delete_data = {'userUuid': user_uuid, 'hwid': device_hwid}
-            await self._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
-            return True
+            response = await self._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
+        except RemnaWaveAPIError as e:
+            if e.status_code == 404:
+                return True  # устройства уже нет — цель достигнута
+            logger.error(
+                'Ошибка удаления устройства', device_hwid=device_hwid, status_code=e.status_code, error=e.message
+            )
+            return False
         except Exception as e:
             logger.error('Ошибка удаления устройства', device_hwid=device_hwid, error=e)
             return False
+
+        payload = response.get('response') if isinstance(response, dict) else None
+        devices = payload.get('devices') if isinstance(payload, dict) else None
+        if isinstance(devices, list):
+            still_present = any(isinstance(d, dict) and d.get('hwid') == device_hwid for d in devices)
+            if still_present:
+                logger.warning(
+                    'Панель приняла запрос, но устройство осталось в списке',
+                    device_hwid=device_hwid,
+                    remaining=payload.get('total'),
+                )
+                return False
+
+        return True
 
     async def encrypt_happ_crypto_link(self, link_to_encrypt: str) -> str | None:
         try:

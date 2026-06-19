@@ -14,6 +14,7 @@ from app.keyboards.inline import (
     get_back_keyboard,
     build_back_button,
 )
+from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
 from app.services.kassa_ai_service import KASSA_AI_SUB_METHODS
 from app.services.payment_service import PaymentService
@@ -264,9 +265,7 @@ async def _start_kassa_ai_sub_topup(
     max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS // 100
     display_name = cfg['display_name']()
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='menu_balance')]]
-    )
+    keyboard = await get_topup_amount_keyboard(payment_method, db_user.language, db)
 
     await callback.message.edit_text(
         texts.t(

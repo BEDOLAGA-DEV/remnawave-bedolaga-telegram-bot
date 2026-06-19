@@ -1492,6 +1492,29 @@ async def update_user_subscription(
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
+    if request.action == 'reset':
+        # Полностью обнулить подписку «как будто пользователь её не оформлял»: снять
+        # наспамленные дни, обнулить трафик/сквады, пометить DISABLED и ОТКЛЮЧИТЬ в
+        # панели RemnaWave (не удаляя). Пользователь и его тикеты сохраняются —
+        # дальше юзер сам покупает тариф с нуля и выбирает срок.
+        from app.services.subscription_service import reset_subscription_with_panel
+
+        result = await reset_subscription_with_panel(db, user, subscription)
+
+        logger.info(
+            'Admin reset subscription for user',
+            admin_id=admin.id,
+            user_id=user_id,
+            subscription_id=subscription.id,
+            panel_disabled=result.get('panel_disabled'),
+        )
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message='Subscription reset',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
     if request.action == 'activate':
         # Проверка: нельзя активировать, если у пользователя уже есть
         # другая активная подписка с тем же тарифом
@@ -3139,11 +3162,37 @@ async def sync_user_from_panel(
                     # Specific subscription requested — use its UUID directly
                     panel_user = await api.get_user_by_uuid(selected_sub.remnawave_uuid)
                 elif selected_sub and not selected_sub.remnawave_uuid:
-                    # Specific subscription requested but not yet linked to panel — cannot sync
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail='This subscription is not linked to the panel yet. Sync to panel first.',
-                    )
+                    # The subscription lost its panel UUID (e.g. a spurious user.deleted
+                    # webhook wiped it). Re-link it to its live panel user by
+                    # telegram_id/email — but only UNAMBIGUOUSLY: choose a panel user that
+                    # is NOT already linked to another of this user's subscriptions, so we
+                    # never bind two subs to the same panel user (telegram_id is one-to-many
+                    # in multi-tariff). This is what makes the panel->bot repair work after
+                    # the sibling-expiry corruption.
+                    linked_uuids = {s.remnawave_uuid for s in from_subs if s.id != selected_sub.id and s.remnawave_uuid}
+                    candidates = []
+                    if user.telegram_id:
+                        candidates = list(await api.get_user_by_telegram_id(user.telegram_id) or [])
+                    if not candidates and user.email:
+                        candidates = list(await api.get_user_by_email(user.email) or [])
+                    orphans = [pu for pu in candidates if pu.uuid not in linked_uuids]
+                    if len(orphans) == 1:
+                        panel_user = orphans[0]
+                        changes['remnawave_uuid'] = {'old': None, 'new': panel_user.uuid}
+                        selected_sub.remnawave_uuid = panel_user.uuid
+                    elif len(orphans) > 1:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=(
+                                'Multiple panel users match this account; cannot safely re-link '
+                                'this subscription. Resolve manually.'
+                            ),
+                        )
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail='This subscription is not linked to the panel and no matching panel user was found.',
+                        )
                 else:
                     # No specific subscription — iterate all subscription UUIDs
                     sub_uuids = [s.remnawave_uuid for s in from_subs if s.remnawave_uuid]
@@ -3171,14 +3220,21 @@ async def sync_user_from_panel(
                     errors=['No user found in Remnawave panel by UUID, telegram_id, or email'],
                 )
 
-            # Build panel info
+            # Build panel info. active_internal_squads is a list[dict] (see the
+            # diagnostic in get_user_sync_status / auth.py); the previous .uuid/str
+            # checks matched nothing, so panel squads were never extracted and the
+            # repair could not restore connected_squads. Handle dict (real), str and
+            # object forms defensively.
             active_squads = []
-            if hasattr(panel_user, 'active_internal_squads') and panel_user.active_internal_squads:
-                for squad in panel_user.active_internal_squads:
-                    if hasattr(squad, 'uuid'):
-                        active_squads.append(squad.uuid)
-                    elif isinstance(squad, str):
-                        active_squads.append(squad)
+            for squad in getattr(panel_user, 'active_internal_squads', None) or []:
+                if isinstance(squad, dict):
+                    squad_uuid = squad.get('uuid')
+                elif isinstance(squad, str):
+                    squad_uuid = squad
+                else:
+                    squad_uuid = getattr(squad, 'uuid', None)
+                if squad_uuid:
+                    active_squads.append(squad_uuid)
 
             panel_info = PanelUserInfo(
                 uuid=panel_user.uuid,

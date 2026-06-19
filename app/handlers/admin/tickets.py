@@ -20,6 +20,7 @@ from app.localization.texts import get_texts
 from app.services.support_settings_service import SupportSettingsService
 from app.states import AdminTicketStates
 from app.utils.cache import RateLimitCache
+from app.utils.photo_message import safe_edit_or_resend
 
 
 logger = structlog.get_logger(__name__)
@@ -366,12 +367,20 @@ async def reply_to_admin_ticket(callback: types.CallbackQuery, state: FSMContext
         return
     ticket_id = int(callback.data.replace('admin_reply_ticket_', ''))
 
-    await state.update_data(ticket_id=ticket_id, reply_mode=True)
     texts = get_texts(db_user.language)
-    await callback.message.edit_text(
-        texts.t('ADMIN_TICKET_REPLY_INPUT', 'Введите ответ от поддержки:'),
-        reply_markup=get_admin_ticket_reply_cancel_keyboard(db_user.language),
-    )
+    message = callback.message
+    if not isinstance(message, types.Message):
+        # None или InaccessibleMessage (например, уведомление старше 48ч) — редактировать нельзя
+        await callback.answer(
+            texts.t('MESSAGE_TOO_OLD', '⚠️ Сообщение устарело, откройте тикет в панели.'), show_alert=True
+        )
+        return
+
+    # Изменяем состояние только если сообщение доступно
+    await state.update_data(ticket_id=ticket_id, reply_mode=True)
+    reply_text = texts.t('ADMIN_TICKET_REPLY_INPUT', 'Введите ответ от поддержки:')
+    reply_markup = get_admin_ticket_reply_cancel_keyboard(db_user.language)
+    await safe_edit_or_resend(message, reply_text, reply_markup)
 
     await state.set_state(AdminTicketStates.waiting_for_reply)
     await callback.answer()
@@ -707,23 +716,31 @@ async def block_user_in_ticket(callback: types.CallbackQuery, state: FSMContext,
         return
     ticket_id = int(callback.data.replace('admin_block_user_ticket_', ''))
     texts = get_texts(db_user.language)
+    message = callback.message
+    if not isinstance(message, types.Message):
+        # None или InaccessibleMessage (например, уведомление старше 48ч) — редактировать нельзя
+        await callback.answer(
+            texts.t('MESSAGE_TOO_OLD', '⚠️ Сообщение устарело, откройте тикет в панели.'), show_alert=True
+        )
+        return
     # Save original ticket message ids to update it after blocking without reopening
     try:
-        await state.update_data(origin_chat_id=callback.message.chat.id, origin_message_id=callback.message.message_id)
-    except Exception:
-        pass
-    await callback.message.edit_text(
-        texts.t('ENTER_BLOCK_MINUTES', 'Введите количество минут для блокировки пользователя (например, 15):'),
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(
-                        text=texts.t('CANCEL_REPLY', '❌ Отменить ввод'), callback_data='cancel_admin_ticket_reply'
-                    )
-                ]
-            ]
-        ),
+        await state.update_data(origin_chat_id=message.chat.id, origin_message_id=message.message_id)
+    except Exception as e:
+        logger.warning('Failed to save origin message ids for ticket block', ticket_id=ticket_id, error=e)
+    block_prompt = texts.t(
+        'ENTER_BLOCK_MINUTES', 'Введите количество минут для блокировки пользователя (например, 15):'
     )
+    block_markup = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('CANCEL_REPLY', '❌ Отменить ввод'), callback_data='cancel_admin_ticket_reply'
+                )
+            ]
+        ]
+    )
+    await safe_edit_or_resend(message, block_prompt, block_markup)
     await state.update_data(ticket_id=ticket_id)
     await state.set_state(AdminTicketStates.waiting_for_block_duration)
     await callback.answer()

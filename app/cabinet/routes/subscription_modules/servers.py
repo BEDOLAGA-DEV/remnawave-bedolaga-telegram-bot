@@ -274,7 +274,9 @@ async def update_countries(
         try:
             from app.services import yandex_offline_conv_service as yandex_conv
 
-            await yandex_conv.store_cid_and_fire_purchase(user.id, cid, total_cost)
+            # Purchase event fires centrally from create_transaction; here we
+            # only persist the request-body CID synchronously (#558449).
+            await yandex_conv.store_cid_only(user.id, cid)
         except Exception as yconv_err:
             logger.debug(
                 'yandex_conv purchase hook failed (non-fatal)',
