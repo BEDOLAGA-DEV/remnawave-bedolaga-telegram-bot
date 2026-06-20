@@ -1760,10 +1760,45 @@ class Tariff(Base):
         prices = self.period_prices or {}
         return prices.get(str(period_days))
 
+    @property
+    def is_free(self) -> bool:
+        """Тариф полностью бесплатный (все доступные цены = 0).
+
+        Используется при смене тарифа: дни, наспамленные на бесплатном (0₽) тарифе,
+        не переносятся на платный — см. extend_subscription / TARIFF_SWITCH_RESET_FREE_DAYS.
+        """
+        if self.is_daily:
+            return (self.daily_price_kopeks or 0) <= 0
+        prices = list((self.period_prices or {}).values())
+        if not prices:
+            return False
+        return all((price or 0) <= 0 for price in prices)
+
     def get_available_periods(self) -> list[int]:
         """Возвращает список доступных периодов в днях."""
         prices = self.period_prices or {}
         return sorted([int(p) for p in prices.keys()])
+
+    def get_purchasable_periods(self) -> list[int]:
+        """Периоды, доступные для покупки, с учётом суточных тарифов.
+
+        У суточных тарифов ``period_prices`` пуст — оплата идёт за день,
+        поэтому единственный «период» покупки равен 1 дню. Для обычных
+        тарифов поведение совпадает с :meth:`get_available_periods`.
+        """
+        if self.is_daily and self.daily_price_kopeks:
+            return [1]
+        return self.get_available_periods()
+
+    def get_purchasable_price_for_period(self, period_days: int) -> int | None:
+        """Цена за период с учётом суточных тарифов.
+
+        Для суточного тарифа период в 1 день стоит ``daily_price_kopeks``;
+        в остальных случаях используется обычная цена из ``period_prices``.
+        """
+        if self.is_daily and period_days == 1:
+            return self.daily_price_kopeks or None
+        return self.get_price_for_period(period_days)
 
     def get_shortest_period(self) -> int | None:
         """Возвращает минимальный доступный период в днях (для автопродления)."""
@@ -1930,6 +1965,21 @@ class User(Base):
         # Fallback to most recent (already ordered by created_at desc)
         return self.subscriptions[0]
 
+    def is_trial_already_used(self) -> bool:
+        """Единый гейт доступности триала для бота И кабинета.
+
+        Раньше проверка дублировалась 4× в боте (purchase.py) и 2× в кабинете, причём
+        с разной логикой. Триал недоступен, если пользователь уже оплачивал подписку
+        ЛИБО у него есть ЛЮБАЯ подписка — кроме PENDING-триала (это повторная попытка
+        оплаты того же триала). Проверяются ВСЕ подписки (multi-tariff-safe). Требует
+        загруженного `subscriptions`.
+        """
+        if self.has_had_paid_subscription:
+            return True
+        return any(
+            not (sub.status == SubscriptionStatus.PENDING.value and sub.is_trial) for sub in (self.subscriptions or [])
+        )
+
     transactions = relationship('Transaction', back_populates='user')
     referral_earnings = relationship('ReferralEarning', foreign_keys='ReferralEarning.user_id', back_populates='user')
     discount_offers = relationship('DiscountOffer', back_populates='user')
@@ -2083,6 +2133,8 @@ class Subscription(Base):
 
     autopay_enabled = Column(Boolean, default=False)
     autopay_days_before = Column(Integer, default=3)
+    # NULL → fall back to settings.DEFAULT_AUTOPAY_PERIOD_DAYS, then tariff shortest period
+    autopay_period_days = Column(Integer, nullable=True)
 
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
@@ -3738,6 +3790,11 @@ class WheelSpin(Base):
     # Сгенерированный промокод (если приз - промокод)
     generated_promocode_id = Column(Integer, ForeignKey('promocodes.id'), nullable=True)
 
+    # Telegram Stars charge id — идемпотентность: Telegram доставляет successful_payment
+    # «как минимум один раз», поэтому при повторной доставке апдейта спин по этому charge_id
+    # не должен начислить приз второй раз. Уникальный индекс — гарантия на уровне БД.
+    telegram_charge_id = Column(String(255), nullable=True, unique=True)
+
     # Флаг успешного начисления
     is_applied = Column(Boolean, default=False, nullable=False)
     applied_at = Column(AwareDateTime(), nullable=True)
@@ -3822,6 +3879,8 @@ class PaymentMethodConfig(Base):
     # Под-опции включения/выключения (JSON): {"card": true, "sbp": false}
     # Для методов с вариантами: yookassa, pal24, platega
     sub_options = Column(JSON, nullable=True, default=None)
+
+    quick_amounts = Column(JSON, nullable=True, default=None)
 
     # Переопределение мин/макс сумм (null = из env)
     min_amount_kopeks = Column(Integer, nullable=True)
@@ -4232,6 +4291,7 @@ class YandexClientIdMap(Base):
     registration_sent = Column(Boolean, default=False, server_default=text('false'), nullable=False)
     trial_sent = Column(Boolean, default=False, server_default=text('false'), nullable=False)
     subid = Column(String(255), nullable=True)
+    yclid = Column(String(64), nullable=True)
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
 
@@ -4249,6 +4309,7 @@ class InfoPage(Base):
     sort_order = Column(Integer, nullable=False, default=0, server_default='0')
     icon = Column(String(50), nullable=True)
     replaces_tab = Column(String(20), nullable=True)  # 'faq', 'rules', 'privacy', 'offer', or null
+    display_mode = Column(String(10), nullable=False, default='both', server_default='both')
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
 

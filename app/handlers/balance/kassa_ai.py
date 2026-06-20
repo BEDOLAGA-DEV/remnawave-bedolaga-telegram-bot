@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import get_back_keyboard
+from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
 from app.services.kassa_ai_service import KASSA_AI_SUB_METHODS
 from app.services.payment_service import PaymentService
@@ -163,7 +164,7 @@ async def _create_kassa_ai_payment_and_respond(
             parse_mode='HTML',
         )
 
-    logger.info('KassaAI payment created: user amount=₽', telegram_id=db_user.telegram_id, amount_rub=amount_rub)
+    logger.info('KassaAI payment created', telegram_id=db_user.telegram_id, amount_rub=amount_rub)
 
 
 @error_handler
@@ -261,9 +262,7 @@ async def _start_kassa_ai_sub_topup(
     max_amount = settings.KASSA_AI_MAX_AMOUNT_KOPEKS // 100
     display_name = cfg['display_name']()
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='menu_balance')]]
-    )
+    keyboard = await get_topup_amount_keyboard(payment_method, db_user.language, db)
 
     await callback.message.edit_text(
         texts.t(

@@ -264,8 +264,9 @@ def _validate_create_payload(payload: PromoCodeCreateRequest) -> None:
     if payload.type == PromoCodeType.DISCOUNT:
         if payload.balance_bonus_kopeks <= 0 or payload.balance_bonus_kopeks > 100:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Discount percent must be between 1 and 100')
-        if payload.subscription_days <= 0:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Discount validity hours must be positive')
+        # 0 hours = perpetual ("until first purchase"), matching the bot + service.
+        if payload.subscription_days < 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Discount validity hours cannot be negative')
 
     if normalized_valid_from and normalized_valid_until and normalized_valid_from > normalized_valid_until:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'valid_from cannot be greater than valid_until')
@@ -299,8 +300,9 @@ def _validate_update_payload(payload: PromoCodeUpdateRequest, promocode: PromoCo
     if new_type == PromoCodeType.DISCOUNT:
         if balance_bonus <= 0 or balance_bonus > 100:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Discount percent must be between 1 and 100')
-        if subscription_days <= 0:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Discount validity hours must be positive')
+        # 0 hours = perpetual ("until first purchase"), matching the bot + service.
+        if subscription_days < 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Discount validity hours cannot be negative')
 
     valid_from = _normalize_datetime(payload.valid_from) if payload.valid_from is not None else promocode.valid_from
     valid_until = _normalize_datetime(payload.valid_until) if payload.valid_until is not None else promocode.valid_until

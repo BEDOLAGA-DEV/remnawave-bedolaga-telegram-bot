@@ -105,7 +105,7 @@ class DisplayNameRestrictionMiddleware(BaseMiddleware):
             )
 
             logger.warning(
-                "🚫 DisplayNameRestriction: user blocked due to suspicious name ''",
+                '🚫 DisplayNameRestriction: user blocked due to suspicious name',
                 user_id=user.id,
                 suspicious_value=suspicious_value,
             )

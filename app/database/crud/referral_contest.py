@@ -743,7 +743,7 @@ async def sync_contest_events(
         contest_end = contest_end.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     logger.info(
-        'Синхронизация конкурса : период с по',
+        'Синхронизация конкурса',
         contest_id=contest_id,
         contest_start=contest_start,
         contest_end=contest_end,
@@ -887,9 +887,7 @@ async def cleanup_invalid_contest_events(
     if contest_end.hour == 0 and contest_end.minute == 0 and contest_end.second == 0:
         contest_end = contest_end.replace(hour=23, minute=59, second=59, microsecond=999999)
 
-    logger.info(
-        'Очистка конкурса : период с по', contest_id=contest_id, contest_start=contest_start, contest_end=contest_end
-    )
+    logger.info('Очистка конкурса', contest_id=contest_id, contest_start=contest_start, contest_end=contest_end)
 
     # Считаем сколько было событий до очистки
     total_before_result = await db.execute(

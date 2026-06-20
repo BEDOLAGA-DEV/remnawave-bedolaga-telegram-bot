@@ -50,8 +50,15 @@ def _make_user(
     restriction_reason: str | None = None,
     used_promocodes: int = 0,
     subscription: object | None = None,
+    subscriptions: list | None = None,
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
+    has_had_paid_subscription: bool = False,
+    has_made_first_topup: bool = False,
+    restriction_topup: bool = False,
+    restriction_subscription: bool = False,
+    restriction_reason: str | None = None,
+    used_promocodes: int = 0,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=id,
@@ -81,10 +88,23 @@ def _make_user(
         restriction_reason=restriction_reason,
         used_promocodes=used_promocodes,
         subscription=subscription,
-        subscriptions=[subscription] if subscription is not None else [],
+        # Production code reads `user.subscriptions` (list). Tests historically
+        # pass a singular `subscription=` for convenience — wrap it.
+        subscriptions=subscriptions if subscriptions is not None else ([subscription] if subscription else []),
         created_at=created_at or datetime(2024, 1, 1, tzinfo=UTC),
         updated_at=updated_at or datetime(2024, 1, 1, tzinfo=UTC),
+        # Fields added to User model after this test was written —
+        # default to the User-model defaults (False/0/None).
+        has_had_paid_subscription=has_had_paid_subscription,
+        has_made_first_topup=has_made_first_topup,
+        restriction_topup=restriction_topup,
+        restriction_subscription=restriction_subscription,
+        restriction_reason=restriction_reason,
+        used_promocodes=used_promocodes,
     )
+
+
+_subscription_id_counter = 100
 
 
 def _make_subscription(
@@ -98,11 +118,18 @@ def _make_subscription(
     traffic_used_gb: float = 10.0,
     device_limit: int = 3,
     tariff_name: str = 'Basic',
+    tariff_id: int | None = None,
     autopay_enabled: bool = False,
+    remnawave_uuid: str | None = None,
 ) -> SimpleNamespace:
+    global _subscription_id_counter
+    resolved_id = id
+    if resolved_id is None:
+        _subscription_id_counter += 1
+        resolved_id = _subscription_id_counter
     tariff = SimpleNamespace(name=tariff_name)
     return SimpleNamespace(
-        id=id,
+        id=resolved_id,
         user_id=user_id,
         status=status,
         is_trial=is_trial,
@@ -111,7 +138,9 @@ def _make_subscription(
         traffic_used_gb=traffic_used_gb,
         device_limit=device_limit,
         tariff=tariff,
+        tariff_id=tariff_id,
         autopay_enabled=autopay_enabled,
+        remnawave_uuid=remnawave_uuid,
     )
 
 
@@ -743,6 +772,36 @@ class TestExecuteMergeSubscription:
         # Secondary subscription transferred
         assert sub_s.user_id == 1
         assert primary.remnawave_uuid == 'rw-secondary'
+
+    async def test_deferred_deletions_not_executed_during_merge(self, monkeypatch):
+        """When the caller passes a deletions list, the discarded panel user is NOT
+        deleted during the merge — an external delete can't be rolled back with the
+        DB, so a failed merge must not leave a deleted panel user. The UUID is
+        collected for the caller to flush after commit (regression: data loss when
+        the merge raised mid-way after the panel user was already deleted)."""
+        db = _make_db()
+        sub = _make_subscription(user_id=1)
+        primary = _make_user(id=1, subscription=sub, remnawave_uuid='rw-primary')
+        secondary = _make_user(id=2, remnawave_uuid='rw-secondary')
+        monkeypatch.setattr(
+            account_merge_service,
+            'get_user_by_id',
+            AsyncMock(side_effect=[primary, secondary]),
+        )
+        deferred: list[str] = []
+        with _patch_remnawave_delete() as mock_del:
+            await execute_merge(db, 1, 2, deferred_remnawave_deletions=deferred)
+            mock_del.assert_not_awaited()  # deferred — nothing deleted inside the txn
+
+        assert deferred == ['rw-secondary']  # collected for post-commit deletion
+        assert secondary.remnawave_uuid is None  # DB reference cleared either way
+
+    async def test_flush_remnawave_deletions_deletes_each(self):
+        with _patch_remnawave_delete() as mock_del:
+            await account_merge_service.flush_remnawave_deletions(['rw-a', 'rw-b'])
+        assert mock_del.await_count == 2
+        mock_del.assert_any_await('rw-a')
+        mock_del.assert_any_await('rw-b')
 
 
 # ---------------------------------------------------------------------------

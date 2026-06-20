@@ -427,7 +427,7 @@ class CloudPaymentsPaymentMixin:
             await db.commit()
 
         logger.info(
-            'CloudPayments платёж неуспешен: invoice reason= (code=)',
+            'CloudPayments платёж неуспешен',
             invoice_id=invoice_id,
             reason=reason,
             reason_code=reason_code,

@@ -225,6 +225,18 @@ def get_admin_settings_submenu_keyboard(language: str = 'ru') -> InlineKeyboardM
             ],
             [
                 InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_SETTINGS_QUICK_AMOUNTS', '💸 Быстрые суммы'),
+                    callback_data='qamounts:list',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_SETTINGS_OVERPAY_CERT', '📜 Сертификат Overpay'),
+                    callback_data='overpay_cert',
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_SETTINGS_APP_CONFIG', '📱 Конфиг приложений'),
                     callback_data='admin_remna_config',
                 )

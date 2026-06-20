@@ -4,7 +4,7 @@ import json
 import redis.asyncio as aioredis
 import structlog
 from aiogram import Bot
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -97,6 +97,86 @@ async def clear_pending_referral(telegram_id: int) -> None:
         await client.delete(f'pending_referral:{telegram_id}')
     except Exception:
         pass
+
+
+def _normalize_percent(percent: int | None, fallback: int) -> int:
+    if percent is None:
+        percent = fallback
+    return max(0, min(100, int(percent)))
+
+
+def _parse_recurring_commission_tiers(raw_tiers: str | None) -> list[tuple[int, int]]:
+    tiers: list[tuple[int, int]] = []
+    if not raw_tiers:
+        return tiers
+
+    for part in raw_tiers.split(','):
+        item = part.strip()
+        if not item or ':' not in item:
+            continue
+        threshold_raw, percent_raw = item.split(':', 1)
+        try:
+            threshold = max(0, int(threshold_raw.strip()))
+            percent = _normalize_percent(int(percent_raw.strip()), settings.REFERRAL_COMMISSION_PERCENT)
+        except ValueError:
+            logger.warning('Invalid referral recurring commission tier skipped', tier=item)
+            continue
+        tiers.append((threshold, percent))
+
+    return sorted(tiers, key=lambda tier: tier[0])
+
+
+async def get_paid_referrals_count(db: AsyncSession, referrer_id: int) -> int:
+    result = await db.execute(
+        select(func.count(User.id)).where(
+            User.referred_by_id == referrer_id,
+            User.has_made_first_topup.is_(True),
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def get_referral_reward_payment_count(db: AsyncSession, referrer_id: int, referral_id: int) -> int:
+    result = await db.execute(
+        select(func.count(ReferralEarning.id)).where(
+            ReferralEarning.user_id == referrer_id,
+            ReferralEarning.referral_id == referral_id,
+            ReferralEarning.reason.in_(['referral_first_topup', 'referral_commission_topup']),
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def calculate_referral_commission_percent(
+    db: AsyncSession,
+    referrer,
+    *,
+    is_first_payment: bool,
+) -> int:
+    base_percent = get_effective_referral_commission_percent(referrer)
+
+    if is_first_payment:
+        return _normalize_percent(settings.REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT, base_percent)
+
+    tiers = _parse_recurring_commission_tiers(settings.REFERRAL_RECURRING_COMMISSION_TIERS)
+    if not tiers:
+        return base_percent
+
+    paid_referrals_count = await get_paid_referrals_count(db, referrer.id)
+    selected_percent = base_percent
+    for threshold, percent in tiers:
+        if paid_referrals_count >= threshold:
+            selected_percent = percent
+        else:
+            break
+
+    logger.debug(
+        'Recurring referral commission tier selected',
+        referrer_id=referrer.id,
+        paid_referrals_count=paid_referrals_count,
+        commission_percent=selected_percent,
+    )
+    return selected_percent
 
 
 async def attach_referrer_if_missing(
@@ -306,30 +386,70 @@ async def attach_referrer_if_missing(
 _PENDING_CAMPAIGN_TTL = 7 * 24 * 3600  # 7 days
 
 
-async def save_pending_campaign(telegram_id: int, campaign_slug: str, campaign_id: int) -> bool:
-    """Save pending campaign attribution to Redis for a not-yet-registered user.
+async def save_pending_campaign(
+    telegram_id: int,
+    campaign_slug: str,
+    campaign_id: int,
+) -> bool | None:
+    """Сохранить атрибуцию кампании в Redis для ещё не зарегистрированного пользователя.
 
-    Called from /start handler immediately after resolving an advertising campaign.
-    Picked up by the cabinet auth route if the user opens the WebApp before
-    completing the bot registration flow.
+    Вызывается из обработчика /start сразу после определения рекламной кампании.
+    Считывается маршрутом авторизации кабинета, если пользователь открыл WebApp
+    до завершения регистрации через бот.
+
+    Использует SET NX (set-if-not-exists), чтобы первая кампания, по которой
+    перешёл пользователь, не перезаписывалась последующими /start-ссылками
+    (защита первого касания).
+
+    При пропуске NX обновляет TTL ключа через EXPIRE, чтобы атрибуция
+    не протухала, пока пользователь продолжает взаимодействовать с ботом.
+
+    Возвращает:
+        ``True``  — ключ успешно записан (кампания сохранена).
+        ``False`` — ключ уже существовал, запись пропущена
+                    (штатное поведение защиты первого касания).
+        ``None``  — ошибка Redis; атрибуция могла не сохраниться.
     """
     client = _get_redis()
     if client is None:
-        return False
+        logger.warning(
+            'Redis-клиент недоступен, pending campaign не сохранена',
+            telegram_id=telegram_id,
+            campaign_id=campaign_id,
+        )
+        return None
     try:
         key = f'pending_campaign:{telegram_id}'
         data = json.dumps({'campaign_slug': campaign_slug, 'campaign_id': campaign_id})
-        await client.setex(key, _PENDING_CAMPAIGN_TTL, data)
-        logger.info(
-            'Saved pending campaign to Redis',
-            telegram_id=telegram_id,
-            campaign_slug=campaign_slug,
-            campaign_id=campaign_id,
-        )
-        return True
+
+        # SET NX: ключ записывается только при первом обращении,
+        # чтобы первая кампания не перезаписывалась последующей.
+        result = await client.set(key, data, ex=_PENDING_CAMPAIGN_TTL, nx=True)
+        if result:
+            logger.info(
+                'Saved pending campaign to Redis',
+                telegram_id=telegram_id,
+                campaign_slug=campaign_slug,
+                campaign_id=campaign_id,
+            )
+        else:
+            # Ключ уже существует — обновляем TTL, чтобы первое касание
+            # не протухло, пока пользователь продолжает взаимодействие.
+            try:
+                await client.expire(key, _PENDING_CAMPAIGN_TTL)
+            except Exception as _expire_err:
+                logger.warning('Failed to refresh TTL for pending campaign', error=_expire_err)
+            logger.info(
+                'Campaign is already set in Redis, skipping (first-touch protection)',
+                telegram_id=telegram_id,
+                skipped_campaign_slug=campaign_slug,
+                skipped_campaign_id=campaign_id,
+            )
     except Exception as exc:
         logger.warning('Failed to save pending campaign to Redis', error=exc)
-        return False
+        return None
+    else:
+        return bool(result)
 
 
 async def get_pending_campaign(telegram_id: int) -> dict[str, str | int] | None:
@@ -432,9 +552,7 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
         referrer = await get_user_by_id(db, referrer_id)
 
         if not new_user or not referrer:
-            logger.error(
-                'Пользователи не найдены: new_user_id=, referrer_id', new_user_id=new_user_id, referrer_id=referrer_id
-            )
+            logger.error('Пользователи не найдены', new_user_id=new_user_id, referrer_id=referrer_id)
             return False
 
         if new_user.referred_by_id != referrer_id:
@@ -574,7 +692,12 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
             return False
 
         campaign_id = await get_user_campaign_id(db, user.id)
-        commission_percent = get_effective_referral_commission_percent(referrer)
+        prior_reward_payments = await get_referral_reward_payment_count(db, referrer.id, user.id)
+        commission_percent = await calculate_referral_commission_percent(
+            db,
+            referrer,
+            is_first_payment=prior_reward_payments == 0,
+        )
 
         logger.info(
             'Обработка реферального пополнения',

@@ -44,9 +44,7 @@ async def create_referral_earning(
     await db.commit()
     await db.refresh(earning)
 
-    logger.info(
-        '💰 Создан реферальный заработок: ₽ для пользователя', amount_kopeks=amount_kopeks / 100, user_id=user_id
-    )
+    logger.info('💰 Создан реферальный заработок', amount_kopeks=amount_kopeks / 100, user_id=user_id)
     return earning
 
 

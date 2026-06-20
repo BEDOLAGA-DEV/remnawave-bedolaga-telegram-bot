@@ -26,6 +26,15 @@ async def create_yookassa_payment(
     yookassa_created_at: datetime | None = None,
     test_mode: bool = False,
 ) -> YooKassaPayment | None:
+    # Идемпотентно по yookassa_payment_id. Рекуррентный автоплатёж использует
+    # детерминированный ключ идемпотентности на (подписку, карту, день), поэтому
+    # повторные запуски в тот же день получают от YooKassa ТОТ ЖЕ payment_id.
+    # Повторная вставка била по unique-индексу и (ошибочно) логировалась как
+    # «FK violation user_id», заваливая админ-чат. Если запись уже есть — вернём её.
+    existing = await get_yookassa_payment_by_id(db, yookassa_payment_id)
+    if existing is not None:
+        return existing
+
     payment = YooKassaPayment(
         user_id=user_id,
         yookassa_payment_id=yookassa_payment_id,
@@ -45,19 +54,26 @@ async def create_yookassa_payment(
         await db.commit()
     except IntegrityError as e:
         await db.rollback()
+        # Проиграли гонку вставки по тому же yookassa_payment_id — это успех
+        # (идемпотентность): вернём запись, которую успел создать конкурент.
+        existing = await get_yookassa_payment_by_id(db, yookassa_payment_id)
+        if existing is not None:
+            return existing
+        # Иначе это настоящая проблема целостности (например, FK по user_id) —
+        # вот её и логируем как ERROR, с корректным текстом.
         logger.error(
-            'FK violation при создании платежа YooKassa : user_id= не существует в БД',
+            'IntegrityError при создании платежа YooKassa (не дубликат payment_id)',
             yookassa_payment_id=yookassa_payment_id,
             user_id=user_id,
-            e=e,
+            error=str(e),
         )
         return None
     await db.refresh(payment)
 
     logger.info(
-        'Создан платеж YooKassa: на ₽ для пользователя',
+        'Создан платеж YooKassa',
         yookassa_payment_id=yookassa_payment_id,
-        amount_kopeks=amount_kopeks / 100,
+        amount_rubles=amount_kopeks / 100,
         user_id=user_id,
     )
     return payment

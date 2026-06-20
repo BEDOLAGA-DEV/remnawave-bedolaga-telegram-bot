@@ -152,7 +152,7 @@ class HeleketPaymentMixin:
             metadata={'raw_response': payment_result, **metadata},
         )
 
-        logger.info('Создан Heleket платеж на ₽ для пользователя', uuid=uuid, amount_str=amount_str, user_id=user_id)
+        logger.info('Создан Heleket платеж', uuid=uuid, amount_str=amount_str, user_id=user_id)
 
         return {
             'local_payment_id': local_payment.id,
@@ -197,7 +197,7 @@ class HeleketPaymentMixin:
             payment = await heleket_crud.get_heleket_payment_by_order_id(db, order_id)
 
         if not payment:
-            logger.error('Heleket платеж не найден (uuid= order_id=)', uuid=uuid, order_id=order_id)
+            logger.error('Heleket платеж не найден', uuid=uuid, order_id=order_id)
             return None
 
         payer_amount = payload.get('payer_amount') or payload.get('payment_amount')

@@ -131,6 +131,35 @@ from app.database.models import (
 logger = structlog.get_logger(__name__)
 
 
+async def _terminate_competing_backends(conn) -> int:
+    """Drop other DB sessions so a restore TRUNCATE can grab its ACCESS EXCLUSIVE lock.
+
+    TRUNCATE needs ACCESS EXCLUSIVE, which conflicts with the ACCESS SHARE the live
+    bot/cabinet hold on every table they read (same deployment, same DB). Without this the
+    TRUNCATE waits out lock_timeout and fails with LockNotAvailableError, then the per-table
+    fallback hits the same wall (Telegram bug #649289). A restore is destructive by
+    definition — it wipes and replaces the data — so terminating the other sessions is
+    acceptable; they reconnect onto the restored data. Best-effort: if the DB role lacks
+    privilege to signal backends, we log and leave the previous behaviour unchanged.
+
+    Returns the number of backends terminated (0 on failure).
+    """
+    try:
+        result = await conn.execute(
+            text(
+                'SELECT pg_terminate_backend(pid) FROM pg_stat_activity '
+                'WHERE datname = current_database() AND pid <> pg_backend_pid()'
+            )
+        )
+        terminated = len(result.fetchall())
+        if terminated:
+            logger.info('🔌 Завершены конкурирующие сессии БД перед TRUNCATE', terminated=terminated)
+        return terminated
+    except Exception as e:
+        logger.warning('Не удалось завершить конкурирующие сессии БД перед TRUNCATE (best-effort)', error=e)
+        return 0
+
+
 @dataclass
 class BackupMetadata:
     timestamp: str
@@ -375,12 +404,27 @@ class BackupService:
 
         if hours <= 0:
             logger.warning(
-                'Некорректное значение BACKUP_INTERVAL_HOURS=. Используется значение по умолчанию 24.', hours=hours
+                'Некорректное значение BACKUP_INTERVAL_HOURS. Используется значение по умолчанию 24.', hours=hours
             )
             hours = 24
             self._settings.backup_interval_hours = hours
 
         return timedelta(hours=hours)
+
+    @staticmethod
+    def _next_future_run(next_run: datetime, interval: timedelta, now: datetime) -> datetime:
+        """Advance next_run by one interval, skipping any already-missed slots.
+
+        A stale schedule (downtime, a first run computed in the past, or an interval
+        shorter than how long a backup takes) otherwise made _auto_backup_loop fire a
+        backup for EACH missed slot back-to-back — the reported "кидает 6 файлов подряд"
+        (Telegram bug #650541). Advancing straight to the next FUTURE slot caps it at one
+        catch-up backup.
+        """
+        next_run = next_run + interval
+        while next_run <= now:
+            next_run += interval
+        return next_run
 
     def _get_models_for_backup(self, include_logs: bool) -> list[Any]:
         models = self._base_backup_models.copy()
@@ -454,9 +498,15 @@ class BackupService:
                     await meta_file.write(json_lib.dumps(metadata, ensure_ascii=False, indent=2))
 
                 mode = 'w:gz' if compress else 'w'
-                with tarfile.open(backup_path, mode) as tar:
-                    for item in await asyncio.to_thread(lambda: list(staging_dir.iterdir())):
-                        tar.add(item, arcname=item.name)
+
+                def _write_archive() -> None:
+                    # tar.add reads + gzip-compresses each file; running it inline froze the
+                    # whole event loop (and thus the bot) for the duration of every auto-backup.
+                    with tarfile.open(backup_path, mode) as tar:
+                        for item in staging_dir.iterdir():
+                            tar.add(item, arcname=item.name)
+
+                await asyncio.to_thread(_write_archive)
 
             file_size = (await asyncio.to_thread(backup_path.stat)).st_size
 
@@ -491,7 +541,7 @@ class BackupService:
 
     async def restore_backup(self, backup_file_path: str, clear_existing: bool = False) -> tuple[bool, str]:
         try:
-            logger.info('📄 Начинаем восстановление из', backup_file_path=backup_file_path)
+            logger.info('📄 Начинаем восстановление из файла', backup_file_path=backup_file_path)
 
             backup_path = Path(backup_file_path)
             if not await asyncio.to_thread(backup_path.exists):
@@ -729,7 +779,9 @@ class BackupService:
                     backup_data[table_name] = table_data
                     total_records += len(table_data)
 
-                    logger.info('✅ Экспортировано записей из', table_data_count=len(table_data), table_name=table_name)
+                    logger.info(
+                        '✅ Экспортировано записей из таблицы', table_data_count=len(table_data), table_name=table_name
+                    )
 
                 association_data = await self._export_association_tables(db)
                 for records in association_data.values():
@@ -811,8 +863,13 @@ class BackupService:
             temp_path = Path(temp_dir)
 
             mode = 'r:gz' if backup_path.suffixes and backup_path.suffixes[-1] == '.gz' else 'r'
-            with tarfile.open(backup_path, mode) as tar:
-                tar.extractall(temp_path, filter='data')
+
+            def _extract_archive() -> None:
+                # Decompress + extract off the event loop so a large restore doesn't freeze the bot.
+                with tarfile.open(backup_path, mode) as tar:
+                    tar.extractall(temp_path, filter='data')
+
+            await asyncio.to_thread(_extract_archive)
 
             metadata_path = temp_path / 'metadata.json'
             if not await asyncio.to_thread(metadata_path.exists):
@@ -1206,7 +1263,7 @@ class BackupService:
                                 await db.flush()
                         except IntegrityError:
                             logger.warning(
-                                'Дубликат пользователя (id telegram_id=), пропускаем',
+                                'Дубликат пользователя, пропускаем',
                                 processed_data=processed_data.get('id'),
                                 processed_data_2=processed_data.get('telegram_id'),
                             )
@@ -1219,7 +1276,7 @@ class BackupService:
                             await db.flush()
                     except IntegrityError:
                         logger.warning(
-                            'Дубликат пользователя (telegram_id=), пропускаем',
+                            'Дубликат пользователя, пропускаем',
                             processed_data=processed_data.get('telegram_id'),
                         )
                         continue
@@ -1350,7 +1407,7 @@ class BackupService:
                 result = await db.execute(select(table_obj))
                 rows = result.mappings().all()
                 association_data[table_name] = [dict(row) for row in rows]
-                logger.info('✅ Экспортировано связей из', rows_count=len(rows), table_name=table_name)
+                logger.info('✅ Экспортировано связей из таблицы', rows_count=len(rows), table_name=table_name)
             except Exception as e:
                 logger.error('Ошибка экспорта таблицы связей', table_name=table_name, error=e)
 
@@ -1501,7 +1558,7 @@ class BackupService:
                 restored_count += 1
 
             except Exception as e:
-                logger.error('Ошибка восстановления записи в', table_name=table_name, error=e)
+                logger.error('Ошибка восстановления записи в таблицу', table_name=table_name, error=e)
                 logger.error('Проблемные данные', record_data=record_data)
                 raise
 
@@ -1666,10 +1723,21 @@ class BackupService:
         try:
             tables_str = ', '.join(tables_to_truncate)
             async with truncate_engine.begin() as conn:
+                # Free table locks held by the live app so TRUNCATE doesn't wait out
+                # lock_timeout and fail with LockNotAvailableError (#649289).
+                await _terminate_competing_backends(conn)
                 await conn.execute(text(f'TRUNCATE {tables_str} RESTART IDENTITY CASCADE'))
             logger.info('🗑️ Очищены все таблицы', tables_count=len(tables_to_truncate))
         except Exception as e:
             logger.error('❌ Ошибка TRUNCATE CASCADE, пробуем поштучно', error=e)
+            # The most common cause is lock contention with the live app. Free the locks
+            # once before the per-table retries (no point repeating it per table — killed
+            # sessions reconnect, and re-killing 80× just thrashes).
+            try:
+                async with truncate_engine.begin() as conn:
+                    await _terminate_competing_backends(conn)
+            except Exception as term_err:
+                logger.warning('Не удалось завершить сессии перед поштучной очисткой', error=term_err)
             # Fallback: поштучная очистка, каждая в отдельном соединении
             # чтобы PendingRollbackError не каскадировал на остальные таблицы
             failed_tables = []
@@ -1918,7 +1986,7 @@ class BackupService:
 
                 if delay > 0:
                     logger.info(
-                        '⏰ Следующий автоматический бекап запланирован на (через ч)',
+                        '⏰ Запланирован следующий автоматический бекап',
                         next_run=next_run.strftime('%d.%m.%Y %H:%M:%S'),
                         delay=delay / 3600,
                     )
@@ -1946,7 +2014,9 @@ class BackupService:
                     logger.info('ℹ️ Автобекапы отключены через настройки, останавливаем цикл')
                     break
                 interval = self._get_backup_interval()
-                next_run = next_run + interval
+                # Skip missed slots so a stale/past next_run doesn't trigger a burst of
+                # back-to-back catch-up backups (#650541).
+                next_run = self._next_future_run(next_run, interval, datetime.now(UTC))
 
             except asyncio.CancelledError:
                 break

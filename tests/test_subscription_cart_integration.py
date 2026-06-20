@@ -398,6 +398,7 @@ async def test_handle_subscription_cancel_clears_saved_cart(mock_callback_query,
         patch('app.localization.texts.get_texts', return_value=MagicMock()) as _,
         patch('app.handlers.menu.show_main_menu', new=mock_show_main_menu),
     ):
+        mock_cart_service.get_user_cart = AsyncMock(return_value=None)
         mock_cart_service.delete_user_cart = AsyncMock(return_value=True)
 
         await handle_subscription_cancel(mock_callback_query, mock_state, mock_user, mock_db)
@@ -405,5 +406,38 @@ async def test_handle_subscription_cancel_clears_saved_cart(mock_callback_query,
         mock_state.clear.assert_called_once()
         mock_clear_draft.assert_awaited_once_with(mock_user.id)
         mock_cart_service.delete_user_cart.assert_awaited_once_with(mock_user.id)
+        mock_show_main_menu.assert_awaited_once_with(mock_callback_query, mock_user, mock_db)
+        mock_callback_query.answer.assert_called_once_with('❌ Покупка отменена')
+
+
+async def test_handle_subscription_cancel_clears_only_current_subscription_cart(
+    mock_callback_query, mock_state, mock_user, mock_db
+):
+    """Отмена покупки в мультитарифном сценарии чистит только корзину текущей подписки"""
+    mock_clear_draft = AsyncMock()
+    mock_show_main_menu = AsyncMock()
+
+    with (
+        patch('app.handlers.subscription.autopay.user_cart_service') as mock_cart_service,
+        patch('app.handlers.subscription.autopay.clear_subscription_checkout_draft', new=mock_clear_draft),
+        patch('app.localization.texts.get_texts', return_value=MagicMock()) as _,
+        patch('app.handlers.menu.show_main_menu', new=mock_show_main_menu),
+    ):
+        # First read returns the per-subscription cart; second (global) read still
+        # references the same subscription, so the global key is cleaned up too.
+        mock_cart_service.get_user_cart = AsyncMock(side_effect=[{'subscription_id': 777}, {'subscription_id': 777}])
+        mock_cart_service.delete_subscription_cart = AsyncMock(return_value=True)
+        mock_cart_service.delete_global_cart_only = AsyncMock(return_value=True)
+        mock_cart_service.delete_user_cart = AsyncMock(return_value=True)
+
+        await handle_subscription_cancel(mock_callback_query, mock_state, mock_user, mock_db)
+
+        mock_state.clear.assert_called_once()
+        mock_clear_draft.assert_awaited_once_with(mock_user.id)
+        # Money-safe: only the current subscription's cart is removed; the broad
+        # delete_user_cart that could nuke other subscriptions' carts is NOT called.
+        mock_cart_service.delete_subscription_cart.assert_awaited_once_with(mock_user.id, 777)
+        mock_cart_service.delete_global_cart_only.assert_awaited_once_with(mock_user.id)
+        mock_cart_service.delete_user_cart.assert_not_called()
         mock_show_main_menu.assert_awaited_once_with(mock_callback_query, mock_user, mock_db)
         mock_callback_query.answer.assert_called_once_with('❌ Покупка отменена')

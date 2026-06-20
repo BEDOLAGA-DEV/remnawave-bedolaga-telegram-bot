@@ -37,6 +37,7 @@ class SystemSummary(BaseModel):
     total_users: int
     active_connections: int
     nodes_online: int
+    total_nodes: int = 0
     users_last_day: int
     users_last_week: int
     users_never_online: int
@@ -119,6 +120,8 @@ class NodeInfo(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     provider_uuid: str | None = None
+    provider_name: str | None = None
+    provider_favicon: str | None = None
     versions: dict[str, str] | None = None
     system: dict[str, Any] | None = None
     active_plugin_uuid: str | None = None
@@ -392,3 +395,86 @@ class SyncRecommendations(BaseModel):
     success: bool
     message: str | None = None
     data: dict[str, Any] | None = None
+
+
+# ============ Panel recap / devices / top consumers ============
+
+
+class RecapTotal(BaseModel):
+    users: int = 0
+    nodes: int = 0
+    traffic_bytes: int = 0
+    nodes_ram_bytes: int = 0
+    nodes_cpu_cores: int = 0
+    distinct_countries: int = 0
+
+
+class RecapThisMonth(BaseModel):
+    users: int = 0
+    traffic_bytes: int = 0
+
+
+class RecapResponse(BaseModel):
+    """Panel recap overview (lifetime + this month + version/uptime)."""
+
+    version: str | None = None
+    init_date: str | None = None
+    total: RecapTotal = Field(default_factory=RecapTotal)
+    this_month: RecapThisMonth = Field(default_factory=RecapThisMonth)
+
+
+class PlatformCount(BaseModel):
+    platform: str
+    count: int
+
+
+class AppCount(BaseModel):
+    app: str
+    count: int
+
+
+class DeviceTopUser(BaseModel):
+    username: str
+    devices_count: int
+
+
+class DevicesStatsResponse(BaseModel):
+    """HWID device statistics: breakdown by platform/app + totals + top users."""
+
+    by_platform: list[PlatformCount] = Field(default_factory=list)
+    by_app: list[AppCount] = Field(default_factory=list)
+    top_users: list[DeviceTopUser] = Field(default_factory=list)
+    total_unique_devices: int = 0
+    total_hwid_devices: int = 0
+    average_devices_per_user: float = 0
+
+
+class TopConsumer(BaseModel):
+    username: str
+    total_bytes: int
+
+
+class TopConsumersResponse(BaseModel):
+    """Top traffic-consuming users aggregated across nodes."""
+
+    period_days: int = 7
+    users: list[TopConsumer] = Field(default_factory=list)
+
+
+class HealthResponse(BaseModel):
+    """Panel process runtime health (rss/heap, event-loop lag, uptime)."""
+
+    instances: int = 0
+    rss_bytes: int = 0
+    heap_used_bytes: int = 0
+    heap_total_bytes: int = 0
+    event_loop_delay_ms: float = 0
+    event_loop_p99_ms: float = 0
+    uptime_seconds: int = 0
+    instance_id: str | None = None
+
+
+class SubscriptionRequestStatsResponse(BaseModel):
+    """Subscription-link request stats broken down by client app."""
+
+    by_app: list[AppCount] = Field(default_factory=list)

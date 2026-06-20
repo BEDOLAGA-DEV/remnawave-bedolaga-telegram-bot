@@ -25,6 +25,8 @@ from ..schemas.remnawave import (
     AutoSyncToggleRequest,
     Bandwidth,
     ConnectionStatus,
+    DevicesStatsResponse,
+    HealthResponse,
     # Inbounds
     InboundsListResponse,
     # Migration
@@ -40,6 +42,8 @@ from ..schemas.remnawave import (
     NodesOverview,
     NodeStatisticsResponse,
     NodeUsageResponse,
+    # Recap / devices / top consumers / health / sub-requests
+    RecapResponse,
     # Status & Connection
     RemnaWaveStatusResponse,
     ServerInfo,
@@ -51,12 +55,14 @@ from ..schemas.remnawave import (
     SquadUpdateRequest,
     # Squads
     SquadWithLocalInfo,
+    SubscriptionRequestStatsResponse,
     # Manual Sync
     SyncMode,
     SyncResponse,
     # System Statistics
     SystemStatsResponse,
     SystemSummary,
+    TopConsumersResponse,
     TrafficPeriod,
     TrafficPeriods,
 )
@@ -143,6 +149,8 @@ def _serialize_node(node_data: dict[str, Any]) -> NodeInfo:
         created_at=_parse_datetime(node_data.get('created_at')),
         updated_at=_parse_datetime(node_data.get('updated_at')),
         provider_uuid=node_data.get('provider_uuid'),
+        provider_name=node_data.get('provider_name'),
+        provider_favicon=node_data.get('provider_favicon'),
         versions=node_data.get('versions'),
         system=node_data.get('system'),
         active_plugin_uuid=node_data.get('active_plugin_uuid'),
@@ -201,6 +209,7 @@ async def get_system_statistics(
             total_users=system_data.get('total_users', 0),
             active_connections=system_data.get('active_connections', 0),
             nodes_online=system_data.get('nodes_online', 0),
+            total_nodes=system_data.get('total_nodes', 0),
             users_last_day=system_data.get('users_last_day', 0),
             users_last_week=system_data.get('users_last_week', 0),
             users_never_online=system_data.get('users_never_online', 0),
@@ -230,6 +239,73 @@ async def get_system_statistics(
         nodes_weekly=stats.get('nodes_weekly', []),
         last_updated=_parse_datetime(stats.get('last_updated')),
     )
+
+
+@router.get('/recap', response_model=RecapResponse)
+async def get_recap(
+    admin: User = Depends(require_permission('remnawave:read')),
+) -> RecapResponse:
+    """Panel recap: lifetime/this-month traffic, version, uptime, distinct countries."""
+    service = _get_service()
+    _ensure_configured(service)
+    data = await service.get_recap_statistics()
+    if isinstance(data, dict) and data.get('error'):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Failed to get RemnaWave recap')
+    return RecapResponse(**data)
+
+
+@router.get('/devices-stats', response_model=DevicesStatsResponse)
+async def get_devices_stats(
+    admin: User = Depends(require_permission('remnawave:read')),
+) -> DevicesStatsResponse:
+    """HWID device statistics: breakdown by platform and app + totals."""
+    service = _get_service()
+    _ensure_configured(service)
+    data = await service.get_devices_statistics()
+    if isinstance(data, dict) and data.get('error'):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Failed to get device statistics')
+    return DevicesStatsResponse(**data)
+
+
+@router.get('/top-consumers', response_model=TopConsumersResponse)
+async def get_top_consumers_route(
+    days: int = Query(7, ge=1, le=90),
+    limit: int = Query(10, ge=1, le=50),
+    admin: User = Depends(require_permission('remnawave:read')),
+) -> TopConsumersResponse:
+    """Top traffic-consuming users aggregated across nodes for the last N days."""
+    service = _get_service()
+    _ensure_configured(service)
+    data = await service.get_top_consumers(days=days, limit=limit)
+    if isinstance(data, dict) and data.get('error'):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Failed to get top consumers')
+    return TopConsumersResponse(**data)
+
+
+@router.get('/health', response_model=HealthResponse)
+async def get_health_route(
+    admin: User = Depends(require_permission('remnawave:read')),
+) -> HealthResponse:
+    """Panel process runtime health: RAM, event-loop p99 lag, uptime."""
+    service = _get_service()
+    _ensure_configured(service)
+    data = await service.get_health_statistics()
+    if isinstance(data, dict) and data.get('error'):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Failed to get panel health')
+    return HealthResponse(**data)
+
+
+@router.get('/subscription-requests', response_model=SubscriptionRequestStatsResponse)
+async def get_subscription_requests_route(
+    admin: User = Depends(require_permission('remnawave:read')),
+) -> SubscriptionRequestStatsResponse:
+    """Subscription-link request stats by client app."""
+    service = _get_service()
+    _ensure_configured(service)
+    data = await service.get_subscription_request_statistics()
+    if isinstance(data, dict) and data.get('error'):
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Failed to get subscription request stats')
+    return SubscriptionRequestStatsResponse(**data)
 
 
 # ============ Nodes ============

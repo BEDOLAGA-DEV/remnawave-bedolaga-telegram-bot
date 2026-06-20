@@ -96,7 +96,7 @@ class ContestAttemptService:
         )
 
         logger.info(
-            "Contest attempt: user , round , pick '', winner",
+            'Contest button attempt processed',
             user_id=user_id,
             round_obj_id=round_obj.id,
             pick=pick,
@@ -183,7 +183,7 @@ class ContestAttemptService:
         await update_attempt(db, attempt, answer=text_answer.strip().upper(), is_winner=is_winner)
 
         logger.info(
-            "Contest text attempt: user , round , answer '', winner",
+            'Contest text attempt processed',
             user_id=user_id,
             round_obj_id=round_obj.id,
             text_answer=text_answer,

@@ -105,6 +105,11 @@ class SpinHistoryItem(BaseModel):
     """Элемент истории спинов."""
 
     id: int
+    # WheelPrize id of the won prize (None if that prize was later deleted). The
+    # cabinet uses it to land the wheel animation on the exact winning sector after
+    # a Stars payment, instead of guessing by name/emoji (which could mismatch and
+    # fall back to a random — often falsely winning — angle).
+    prize_id: int | None = None
     payment_type: str
     payment_amount: int
     prize_type: str

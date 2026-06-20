@@ -8,12 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import PERIOD_PRICES, settings
 from app.database.models import User
-from app.handlers.subscription.common import (
-    build_redirect_link,
-    create_deep_link,
-    get_localized_value,
-    resolve_button_url,
-)
 from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
@@ -710,7 +704,12 @@ def get_main_menu_keyboard(
 
     keyboard.append([InlineKeyboardButton(text=balance_button_text, callback_data='menu_balance')])
 
-    show_trial = not has_had_paid_subscription and not has_active_subscription
+    show_trial = (
+        not has_had_paid_subscription
+        and not has_active_subscription
+        and settings.TRIAL_DURATION_DAYS > 0
+        and settings.TRIAL_DISABLED_FOR != 'all'
+    )
 
     show_buy = not has_active_subscription or not subscription_is_active
     current_subscription = subscription
@@ -816,6 +815,8 @@ def get_info_menu_keyboard(
     show_public_offer: bool = False,
     show_faq: bool = False,
     show_promo_groups: bool = False,
+    show_rules: bool = True,
+    custom_pages: list[tuple[int, str]] | None = None,
 ) -> InlineKeyboardMarkup:
     texts = get_texts(language)
 
@@ -861,7 +862,18 @@ def get_info_menu_keyboard(
             ]
         )
 
-    buttons.append([InlineKeyboardButton(text=texts.MENU_RULES, callback_data='menu_rules')])
+    if show_rules:
+        buttons.append([InlineKeyboardButton(text=texts.MENU_RULES, callback_data='menu_rules')])
+
+    for page_id, page_title in custom_pages or []:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=page_title,
+                    callback_data=f'info_page:{page_id}:1',
+                )
+            ]
+        )
 
     server_status_mode = settings.get_server_status_mode()
     server_status_text = texts.t('MENU_SERVER_STATUS', '📊 Статус серверов')
@@ -1232,13 +1244,23 @@ def get_subscription_keyboard(
                 )
             ]
             if settings.is_tariffs_mode() and subscription:
-                # Для суточных тарифов переходим на список тарифов, для обычных - мгновенное переключение
-                tariff_callback = 'tariff_switch' if is_daily_tariff else 'instant_switch'
-                settings_row.append(
-                    InlineKeyboardButton(
-                        text=texts.t('CHANGE_TARIFF_BUTTON', '📦 Тариф'), callback_data=tariff_callback
+                # На истёкшей/отключённой подписке смена тарифа недоступна (хендлер её
+                # блокирует) — раньше кнопка «Тариф» всё равно показывалась и вела в тупик.
+                # Теперь для таких подписок показываем «Купить тариф» (покупку с нуля).
+                if getattr(subscription, 'actual_status', None) in ('expired', 'disabled'):
+                    settings_row.append(
+                        InlineKeyboardButton(
+                            text=texts.t('BUY_TARIFF_BUTTON', '📦 Купить тариф'), callback_data='menu_buy'
+                        )
                     )
-                )
+                else:
+                    # Для суточных тарифов переходим на список тарифов, для обычных - мгновенное переключение
+                    tariff_callback = 'tariff_switch' if is_daily_tariff else 'instant_switch'
+                    settings_row.append(
+                        InlineKeyboardButton(
+                            text=texts.t('CHANGE_TARIFF_BUTTON', '📦 Тариф'), callback_data=tariff_callback
+                        )
+                    )
             keyboard.append(settings_row)
 
             # Кнопка докупки трафика для платных подписок
@@ -1569,6 +1591,32 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
     keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def _apply_payment_name_overrides(keyboard: list[list[InlineKeyboardButton]]) -> None:
+    """Replace payment-method button labels with cabinet-set display names.
+
+    Bot keyboards build labels from locale strings / ``*_DISPLAY_NAME`` settings,
+    which ignore the per-method overrides operators set in the cabinet
+    (``PaymentMethodConfig.display_name``). Here we decode the method_id from each
+    ``topup_*`` callback and, when an override exists, show it — so bot button
+    labels stay in sync with the cabinet. No override -> the original label is kept.
+    """
+    from app.services.payment_method_config_service import get_display_name_override
+
+    for row in keyboard:
+        for idx, button in enumerate(row):
+            data = button.callback_data or ''
+            if data.startswith('topup_amount|'):
+                parts = data.split('|')
+                method = parts[1] if len(parts) > 1 else ''
+            elif data.startswith('topup_'):
+                method = data[len('topup_') :]
+            else:
+                continue
+            override = get_display_name_override(method) if method else None
+            if override:
+                row[idx] = button.model_copy(update={'text': override})
 
 
 def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
@@ -2148,6 +2196,8 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
 
     keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
+    _apply_payment_name_overrides(keyboard)
+
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -2322,6 +2372,12 @@ def get_autopay_keyboard(language: str = DEFAULT_LANGUAGE, sub_id: int | None = 
                     text=texts.t('AUTOPAY_SET_DAYS_BUTTON', '⚙️ Настроить дни'), callback_data='autopay_set_days'
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text=texts.t('AUTOPAY_SET_PERIOD_BUTTON', '📅 Период продления'),
+                    callback_data='autopay_set_period',
+                )
+            ],
             [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
         ]
     )
@@ -2397,6 +2453,31 @@ def get_autopay_days_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboar
         keyboard.append(
             [InlineKeyboardButton(text=f'{days} {_get_days_word(days)}', callback_data=f'autopay_days_{days}')]
         )
+
+    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='subscription_autopay')])
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_autopay_period_keyboard(
+    available_periods: list[int],
+    current_period: int | None,
+    language: str = DEFAULT_LANGUAGE,
+) -> InlineKeyboardMarkup:
+    """Period picker for autopay. `current_period=None` means "use default"."""
+    texts = get_texts(language)
+    keyboard = []
+
+    default_label = texts.t('AUTOPAY_PERIOD_DEFAULT_BUTTON', '⚙️ По умолчанию (самый дешёвый)')
+    if current_period is None:
+        default_label = f'✅ {default_label}'
+    keyboard.append([InlineKeyboardButton(text=default_label, callback_data='autopay_period_default')])
+
+    for days in sorted(available_periods):
+        label = f'{days} {_get_days_word(days)}'
+        if current_period == days:
+            label = f'✅ {label}'
+        keyboard.append([InlineKeyboardButton(text=label, callback_data=f'autopay_period_{days}')])
 
     keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='subscription_autopay')])
 
@@ -3584,6 +3665,137 @@ def get_admin_ticket_view_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def _coerce_tg_user_id(telegram_id: str | int | None) -> int | None:
+    """Приводит telegram_id к положительному int или возвращает None.
+
+    URL `tg://user?id=` принимает только числовой ID, поэтому строки вроде
+    email или нечисловые значения отбрасываются.
+    """
+    try:
+        numeric_id = int(telegram_id)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return numeric_id if numeric_id > 0 else None
+
+
+def get_ticket_notification_keyboard(
+    ticket_id: int,
+    *,
+    user_id: int | None = None,
+    telegram_id: str | int | None = None,
+    username: str | None = None,
+    is_closed: bool = False,
+    is_user_blocked: bool = False,
+    is_admin: bool = False,
+    fsm_enabled: bool = True,
+    cabinet_button: InlineKeyboardButton | None = None,
+    language: str = DEFAULT_LANGUAGE,
+) -> InlineKeyboardMarkup:
+    """Клавиатура для уведомления о тикете (личный или групповой админ-чат).
+
+    Отображает кнопки действий без «⬅️ Назад» — она не имеет смысла вне
+    контекста админки. Набор кнопок зависит от роли получателя:
+    - is_admin=True  → полный набор (включая «👤 К пользователю»);
+    - is_admin=False → набор без «👤 К пользователю» (@admin_required).
+
+    Args:
+        ticket_id: ID тикета.
+        user_id: DB-id пользователя (для callback «К пользователю»).
+        telegram_id: Telegram-id автора тикета (для URL-кнопки «Профиль»).
+        username: username автора тикета без @ (для URL-кнопки «ЛС»).
+        is_closed: тикет уже закрыт — скрываем «Ответить» и «Закрыть».
+        is_user_blocked: показываем «Разблокировать» вместо блок-контролов.
+        is_admin: получатель — полный админ (не модератор).
+        fsm_enabled: показывать ли кнопки, запускающие ввод текста через FSM
+            («Ответить», «Блок по времени»). В групповом/супергруппа-чате бот
+            из-за privacy mode не видит обычный текст ответа, поэтому туда
+            передаём ``False`` — остаются только надёжные callback/URL-кнопки.
+        cabinet_button: готовая кнопка «открыть тикет в кабинете» (web_app в личке
+            или t.me Mini App диплинк в группе). Размещается самым верхом. ``None`` —
+            не cabinet-режим / кабинет не настроен.
+        language: язык локализации.
+    """
+    texts = get_texts(language)
+    keyboard: list[list[InlineKeyboardButton]] = []
+
+    # Кнопка кабинета — самым верхом, чтобы была заметна (если передана).
+    if cabinet_button is not None:
+        keyboard.append([cabinet_button])
+
+    # URL-кнопки: не требуют прав, опциональны по наличию данных
+    url_row: list[InlineKeyboardButton] = []
+    if username:
+        safe_username = username.lstrip('@')
+        url_row.append(InlineKeyboardButton(text='✉ ЛС', url=f'tg://resolve?domain={safe_username}'))
+    if (tg_id := _coerce_tg_user_id(telegram_id)) is not None:
+        url_row.append(InlineKeyboardButton(text='👤 Профиль', url=f'tg://user?id={tg_id}'))
+    if url_row:
+        keyboard.append(url_row)
+
+    # «К пользователю» — только для полного админа (@admin_required)
+    if is_admin and user_id:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text='👤 К пользователю',
+                    callback_data=f'admin_user_manage_{user_id}_from_ticket_{ticket_id}',
+                )
+            ]
+        )
+
+    # «Ответить» запускает FSM (ввод текста) — в группе/канале ненадёжно
+    # (privacy mode бота не пропускает обычный текст), поэтому только при fsm_enabled.
+    if not is_closed and fsm_enabled:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('REPLY_TO_TICKET', '💬 Ответить'),
+                    callback_data=f'admin_reply_ticket_{ticket_id}',
+                )
+            ]
+        )
+    # «Закрыть» — обычный callback, работает везде, включая группу.
+    if not is_closed:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('CLOSE_TICKET', '🔒 Закрыть тикет'),
+                    callback_data=f'admin_close_ticket_{ticket_id}',
+                )
+            ]
+        )
+
+    # Блок-контролы
+    if is_user_blocked:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('UNBLOCK', '✅ Разблокировать'),
+                    callback_data=f'admin_unblock_user_ticket_{ticket_id}',
+                )
+            ]
+        )
+    else:
+        # «Заблокировать навсегда» — обычный callback (работает в группе);
+        # «Блок по времени» запускает FSM → только при fsm_enabled.
+        block_row = [
+            InlineKeyboardButton(
+                text=texts.t('BLOCK_FOREVER', '🚫 Заблокировать'),
+                callback_data=f'admin_block_user_perm_ticket_{ticket_id}',
+            )
+        ]
+        if fsm_enabled:
+            block_row.append(
+                InlineKeyboardButton(
+                    text=texts.t('BLOCK_BY_TIME', '⏳ Блок по времени'),
+                    callback_data=f'admin_block_user_ticket_{ticket_id}',
+                )
+            )
+        keyboard.append(block_row)
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 def get_admin_ticket_reply_cancel_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
     texts = get_texts(language)
     return InlineKeyboardMarkup(
@@ -3595,3 +3807,19 @@ def get_admin_ticket_reply_cancel_keyboard(language: str = DEFAULT_LANGUAGE) -> 
             ]
         ]
     )
+
+
+# Late-bound imports — placed at the bottom to break the
+# `keyboards.inline` ↔ `handlers.subscription.__init__` ↔ `autopay.py`
+# circular import chain. `autopay.py` imports `_get_payment_method_display_name`
+# (and other helpers) from inline.py at its module top level; by deferring
+# this import until inline.py finishes loading, those symbols are guaranteed
+# to exist when subscription/__init__.py loads autopay.
+# Function bodies above reference these names; Python resolves module-level
+# globals at call time, not definition time, so the late binding works.
+from app.handlers.subscription.common import (
+    build_redirect_link,
+    create_deep_link,
+    get_localized_value,
+    resolve_button_url,
+)

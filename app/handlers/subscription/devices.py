@@ -40,6 +40,7 @@ from app.states import SubscriptionStates
 from app.utils.pagination import paginate_list
 from app.utils.pricing_utils import (
     apply_percentage_discount,
+    calculate_prorated_price,
 )
 from app.utils.subscription_utils import (
     get_display_subscription_link,
@@ -352,7 +353,10 @@ async def confirm_change_devices(
 
         devices_price_per_month = chargeable_devices * price_per_device
 
-        # Считаем стоимость по оставшимся дням подписки
+        # Считаем стоимость по оставшимся дням подписки.
+        # Прорейт по фактическому остатку — как трафик/серверы (calculate_prorated_price),
+        # без потолка: устройство активно до конца подписки, на продлении доначисляется
+        # через pricing_engine.
         now = datetime.now(UTC)
         days_left = max(1, math.ceil((subscription.end_date - now).total_seconds() / 86400))
         period_hint_days = days_left
@@ -366,12 +370,9 @@ async def confirm_change_devices(
             devices_price_per_month,
             devices_discount_percent,
         )
-        # Цена = месячная_цена * days_left / 30
-        price = int(discounted_per_month * days_left / 30)
-        if chargeable_devices > 0:
-            price = max(100, price)  # Минимум 1 рубль (только для платных устройств)
-        total_discount = int(discount_per_month * days_left / 30)
-        period_label = f'{days_left} дн.' if days_left > 1 else '1 день'
+        price, charged_days = calculate_prorated_price(discounted_per_month, subscription.end_date)
+        total_discount = int(discount_per_month * charged_days / 30)
+        period_label = f'{charged_days} дн.' if charged_days > 1 else '1 день'
 
         if price > 0 and db_user.balance_kopeks < price:
             missing_kopeks = price - db_user.balance_kopeks
@@ -593,9 +594,8 @@ async def execute_change_devices(
             devices_price_per_month,
             devices_discount_percent,
         )
-        price = int(discounted_per_month * days_left / 30)
-        if chargeable_devices > 0:
-            price = max(100, price)
+        # Прорейт по остатку подписки (как трафик/серверы), без потолка.
+        price, _ = calculate_prorated_price(discounted_per_month, subscription.end_date)
     else:
         price = 0
 
@@ -1060,7 +1060,17 @@ async def start_device_rename(callback: types.CallbackQuery, db_user: User, db: 
         current=html_mod.escape(current or '—'),
         max_len=ALIAS_MAX_LENGTH,
     )
-    await callback.message.edit_text(prompt)
+    cancel_keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('DEVICE_RENAME_CANCEL_BTN', '✖️ Отмена'),
+                    callback_data='device_rename_cancel',
+                )
+            ]
+        ]
+    )
+    await callback.message.edit_text(prompt, reply_markup=cancel_keyboard)
     await callback.answer()
 
 
@@ -1084,39 +1094,36 @@ async def process_device_rename(message: types.Message, db_user: User, db: Async
     raw = (message.text or '').strip()
     if raw.lower() in {'/cancel', 'cancel', 'отмена'}:
         await message.answer(texts.t('DEVICE_RENAME_CANCELLED', '✖️ Переименование отменено'))
-        if state is not None:
-            await state.clear()
-        return
-
-    try:
-        if raw in {'-', '—', '/clear', 'clear'} or not raw:
-            await delete_alias(db, db_user.id, hwid)
-            await message.answer(texts.t('DEVICE_RENAME_CLEARED', '✅ Имя устройства сброшено к стандартному'))
-        else:
-            new_alias = normalize_alias(raw)
-            if not new_alias:
-                await message.answer(
-                    texts.t('DEVICE_RENAME_EMPTY', '❌ Имя не может быть пустым (или используйте «-» для сброса)')
-                )
-                return
-            if len(new_alias) > ALIAS_MAX_LENGTH:
-                # Доп. защита; normalize_alias уже режет, но даём явный feedback.
-                await message.answer(
-                    texts.t(
-                        'DEVICE_RENAME_TOO_LONG',
-                        '⚠️ Имя слишком длинное, сократили до {max_len} символов.',
-                    ).format(max_len=ALIAS_MAX_LENGTH)
-                )
-            saved = await upsert_alias(db, db_user.id, hwid, new_alias)
+        # NB: НЕ выходим здесь — проваливаемся ниже, чтобы перерисовать список
+        # устройств. Иначе пользователь остаётся без списка и без кнопки «назад».
+    elif raw in {'-', '—', '/clear', 'clear'} or not raw:
+        await delete_alias(db, db_user.id, hwid)
+        await message.answer(texts.t('DEVICE_RENAME_CLEARED', '✅ Имя устройства сброшено к стандартному'))
+    else:
+        new_alias = normalize_alias(raw)
+        if not new_alias:
             await message.answer(
-                texts.t('DEVICE_RENAME_SAVED', '✅ Имя устройства обновлено: <code>{name}</code>').format(
-                    name=html_mod.escape(saved)
-                ),
-                parse_mode='HTML',
+                texts.t('DEVICE_RENAME_EMPTY', '❌ Имя не может быть пустым (или используйте «-» для сброса)')
             )
-    finally:
-        if state is not None:
-            await state.clear()
+            return  # оставляем FSM-состояние, чтобы юзер мог повторить ввод
+        if len(new_alias) > ALIAS_MAX_LENGTH:
+            # Доп. защита; normalize_alias уже режет, но даём явный feedback.
+            await message.answer(
+                texts.t(
+                    'DEVICE_RENAME_TOO_LONG',
+                    '⚠️ Имя слишком длинное, сократили до {max_len} символов.',
+                ).format(max_len=ALIAS_MAX_LENGTH)
+            )
+        saved = await upsert_alias(db, db_user.id, hwid, new_alias)
+        await message.answer(
+            texts.t('DEVICE_RENAME_SAVED', '✅ Имя устройства обновлено: <code>{name}</code>').format(
+                name=html_mod.escape(saved)
+            ),
+            parse_mode='HTML',
+        )
+
+    if state is not None:
+        await state.clear()
 
     # Re-fetch + re-render текущей страницы списка, чтобы юзер сразу увидел
     # новое имя. Используем fake callback из последнего message — пишем
@@ -1149,6 +1156,47 @@ async def process_device_rename(message: types.Message, db_user: User, db: Async
         )
     except Exception as exc:
         logger.warning('Failed to re-render devices list after rename', error=str(exc)[:200])
+
+
+async def cancel_device_rename(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    """Callback `device_rename_cancel` — «Отмена» в промпте переименования.
+
+    Сбрасывает FSM-состояние и переоткрывает список устройств на той странице,
+    с которой пользователь зашёл, чтобы он не остался в тупике без кнопки «назад».
+    """
+    texts = get_texts(db_user.language)
+    data = await state.get_data() if state else {}
+    page = int(data.get('rename_page') or 1)
+    sub_id = data.get('rename_sub_id')
+    if state is not None:
+        await state.clear()
+
+    subscription = None
+    if sub_id:
+        result = await db.execute(select(Subscription).where(Subscription.id == sub_id))
+        subscription = result.scalar_one_or_none()
+    remnawave_uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
+
+    if remnawave_uuid:
+        try:
+            service = RemnaWaveService()
+            async with service.get_api_client() as api:
+                response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
+            devices_list = (response or {}).get('response', {}).get('devices', []) or []
+            await show_devices_page(callback, db_user, devices_list, page=page, sub_id=sub_id)
+            await callback.answer(texts.t('DEVICE_RENAME_CANCELLED', '✖️ Переименование отменено'))
+            return
+        except Exception as exc:
+            logger.warning('Failed to reopen devices list after rename cancel', error=str(exc)[:200])
+
+    # Fallback: список не достали — хотя бы внятно сообщаем и не оставляем пустоту.
+    await callback.message.edit_text(
+        texts.t('DEVICE_RENAME_CANCELLED', '✖️ Переименование отменено'),
+        reply_markup=get_back_keyboard(db_user.language),
+    )
+    await callback.answer()
 
 
 async def handle_single_device_reset(
@@ -1485,12 +1533,10 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
             devices_price_per_month,
             devices_discount_percent,
         )
-        # Цена = месячная_цена * days_left / 30
-        price = int(discounted_per_month * days_left / 30)
-        if chargeable_devices > 0:
-            price = max(100, price)  # Минимум 1 рубль (только для платных устройств)
-        total_discount = int(discount_per_month * days_left / 30)
-        period_label = f'{days_left} дн.' if days_left > 1 else '1 день'
+        # Прорейт по остатку подписки (как трафик/серверы), без потолка.
+        price, charged_days = calculate_prorated_price(discounted_per_month, subscription.end_date)
+        total_discount = int(discount_per_month * charged_days / 30)
+        period_label = f'{charged_days} дн.' if charged_days > 1 else '1 день'
     else:
         # Для обычных тарифов - по дням (как в кабинете)
         now = datetime.now(UTC)
@@ -1506,12 +1552,10 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
             devices_price_per_month,
             devices_discount_percent,
         )
-        # Цена = месячная_цена * days_left / 30
-        price = int(discounted_per_month * days_left / 30)
-        if chargeable_devices > 0:
-            price = max(100, price)  # Минимум 1 рубль (только для платных устройств)
-        total_discount = int(discount_per_month * days_left / 30)
-        period_label = f'{days_left} дн.' if days_left > 1 else '1 день'
+        # Прорейт по остатку подписки (как трафик/серверы), без потолка.
+        price, charged_days = calculate_prorated_price(discounted_per_month, subscription.end_date)
+        total_discount = int(discount_per_month * charged_days / 30)
+        period_label = f'{charged_days} дн.' if charged_days > 1 else '1 день'
 
     logger.info(
         'Добавление устройств: ₽/мес × = ₽ (скидка ₽)',

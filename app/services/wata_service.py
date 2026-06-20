@@ -54,6 +54,10 @@ class WataService:
         }
 
     _MAX_RETRIES = 2
+    # Уважаем Retry-After, но НЕ блокируем запрос на десятки секунд: WATA может
+    # прислать Retry-After=39..45с, а этот же _request зовётся при поллинге статуса
+    # (в т.ч. в админском «проверить все»), и длинный sleep вешал хендлер на ~42с.
+    _MAX_RETRY_DELAY = 3.0
 
     @staticmethod
     def _parse_retry_after(response: aiohttp.ClientResponse, response_text: str) -> float:
@@ -101,19 +105,21 @@ class WataService:
                     response_text = await response.text()
 
                     if response.status == 429:
-                        retry_delay = self._parse_retry_after(response, response_text)
+                        retry_after = self._parse_retry_after(response, response_text)
                         if attempt < self._MAX_RETRIES:
+                            sleep_for = min(retry_after, self._MAX_RETRY_DELAY)
                             logger.warning(
-                                'WATA API 429 on , retry / after s',
+                                'WATA API rate limited (429) — retrying',
                                 method=method,
                                 path=path,
                                 attempt=attempt + 1,
-                                MAX_RETRIES=self._MAX_RETRIES,
-                                retry_delay=retry_delay,
+                                max_retries=self._MAX_RETRIES,
+                                retry_after=retry_after,
+                                sleep_for=sleep_for,
                             )
-                            await asyncio.sleep(retry_delay)
+                            await asyncio.sleep(sleep_for)
                             continue
-                        logger.warning('WATA API 429 on , retries exhausted', method=method, path=path)
+                        logger.warning('WATA API rate limited (429) — retries exhausted', method=method, path=path)
                         last_error = WataAPIError(f'WATA API rate limited on {method} {path}')
                         break
 

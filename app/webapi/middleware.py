@@ -25,7 +25,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 return response
             except (TimeoutError, ConnectionRefusedError, OSError, OperationalError, InterfaceError) as e:
                 logger.error(
-                    'Database connection error on', method=request.method, path=request.url.path, e=str(e)[:200]
+                    'Database connection error while handling request',
+                    method=request.method,
+                    path=request.url.path,
+                    e=str(e)[:200],
                 )
                 response = JSONResponse(
                     status_code=503,
@@ -36,5 +39,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 duration_ms = (monotonic() - start) * 1000
                 status = response.status_code if response else 'error'
                 logger.debug(
-                    '-> (ms)', method=request.method, path=request.url.path, status=status, duration_ms=duration_ms
+                    'Request handled',
+                    method=request.method,
+                    path=request.url.path,
+                    status=status,
+                    duration_ms=duration_ms,
                 )

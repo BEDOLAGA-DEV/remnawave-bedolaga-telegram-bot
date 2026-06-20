@@ -1,10 +1,10 @@
 """Email service for sending verification and password reset emails."""
 
-import html
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formatdate, make_msgid
+from typing import Any
 
 import structlog
 
@@ -144,6 +144,40 @@ class EmailService:
             logger.error('Failed to send email to', to_email=to_email, error=e)
             return False
 
+    def _render_default_template(
+        self,
+        notification_type: str,
+        language: str,
+        context: dict[str, Any],
+    ) -> tuple[str, str] | None:
+        """
+        Render the built-in default template for an auth email.
+
+        Single source of truth: the same EmailNotificationTemplates the admin
+        editor and the notification delivery service use — what the admin sees
+        in the editor preview is exactly what this service sends.
+
+        Imports are lazy to avoid a module cycle
+        (notification_delivery_service imports this module).
+        """
+        from app.services.notification_delivery_service import NotificationType
+
+        from .email_templates import EmailNotificationTemplates
+
+        try:
+            template = EmailNotificationTemplates().get_template(NotificationType(notification_type), language, context)
+        except Exception as e:
+            logger.error(
+                'Не удалось отрендерить дефолтный email шаблон',
+                notification_type=notification_type,
+                language=language,
+                error=e,
+            )
+            return None
+        if not template:
+            return None
+        return (template['subject'], template['body_html'])
+
     def send_verification_email(
         self,
         to_email: str,
@@ -172,107 +206,18 @@ class EmailService:
         if custom_subject and custom_body_html:
             return self.send_email(to_email, custom_subject, custom_body_html)
 
-        full_url = f'{verification_url}?token={verification_token}'
-        expire_hours = settings.get_cabinet_email_verification_expire_hours()
-
-        # Escape user-provided values for HTML context
-        safe_username = html.escape(username) if username else None
-
-        # Localized content
-        texts = {
-            'ru': {
-                'greeting': f'Здравствуйте{", " + safe_username if safe_username else ""}!',
-                'subject': 'Подтверждение email адреса',
-                'intro': 'Спасибо за регистрацию! Пожалуйста, подтвердите ваш email адрес, нажав на кнопку ниже:',
-                'button': 'Подтвердить email',
-                'or_copy': 'Или скопируйте и вставьте эту ссылку в браузер:',
-                'expires': f'Ссылка действительна в течение {expire_hours} часов.',
-                'ignore': 'Если вы не создавали аккаунт, просто проигнорируйте это письмо.',
-                'regards': 'С уважением,',
+        rendered = self._render_default_template(
+            'email_verification',
+            language,
+            {
+                'username': username or '',
+                'verification_url': f'{verification_url}?token={verification_token}',
+                'expire_hours': settings.get_cabinet_email_verification_expire_hours(),
             },
-            'en': {
-                'greeting': f'Hello{", " + safe_username if safe_username else ""}!',
-                'subject': 'Verify your email address',
-                'intro': 'Thank you for registering! Please verify your email address by clicking the button below:',
-                'button': 'Verify Email',
-                'or_copy': 'Or copy and paste this link in your browser:',
-                'expires': f'This link will expire in {expire_hours} hours.',
-                'ignore': "If you didn't create an account, you can safely ignore this email.",
-                'regards': 'Best regards,',
-            },
-            'zh': {
-                'greeting': f'您好{", " + safe_username if safe_username else ""}!',
-                'subject': '验证您的邮箱地址',
-                'intro': '感谢您的注册！请点击下方按钮验证您的邮箱地址：',
-                'button': '验证邮箱',
-                'or_copy': '或将此链接复制并粘贴到浏览器中：',
-                'expires': f'此链接将在 {expire_hours} 小时后过期。',
-                'ignore': '如果您没有创建账户，请忽略此邮件。',
-                'regards': '此致,',
-            },
-            'ua': {
-                'greeting': f'Вітаємо{", " + safe_username if safe_username else ""}!',
-                'subject': 'Підтвердження email адреси',
-                'intro': 'Дякуємо за реєстрацію! Будь ласка, підтвердіть вашу email адресу, натиснувши на кнопку нижче:',
-                'button': 'Підтвердити email',
-                'or_copy': 'Або скопіюйте та вставте це посилання в браузер:',
-                'expires': f'Посилання дійсне протягом {expire_hours} годин.',
-                'ignore': 'Якщо ви не створювали акаунт, просто проігноруйте цей лист.',
-                'regards': 'З повагою,',
-            },
-            'fa': {
-                'greeting': f'سلام{", " + safe_username if safe_username else ""}!',
-                'subject': 'تایید آدرس ایمیل',
-                'intro': 'از ثبت‌نام شما سپاسگزاریم! لطفاً با کلیک روی دکمه زیر ایمیل خود را تایید کنید:',
-                'button': 'تایید ایمیل',
-                'or_copy': 'یا این لینک را در مرورگر خود کپی و باز کنید:',
-                'expires': f'این لینک تا {expire_hours} ساعت معتبر است.',
-                'ignore': 'اگر شما این حساب را ایجاد نکرده‌اید، این ایمیل را نادیده بگیرید.',
-                'regards': 'با احترام،',
-            },
-        }
-
-        t = texts.get(language, texts['ru'])
-
-        subject = t['subject']
-        body_html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .button {{
-                    display: inline-block;
-                    padding: 12px 24px;
-                    background-color: #007bff;
-                    color: white !important;
-                    text-decoration: none;
-                    border-radius: 5px;
-                    margin: 20px 0;
-                }}
-                .footer {{ margin-top: 30px; font-size: 12px; color: #666; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2>{t['greeting']}</h2>
-                <p>{t['intro']}</p>
-                <a href="{full_url}" class="button">{t['button']}</a>
-                <p>{t['or_copy']}</p>
-                <p><a href="{full_url}">{full_url}</a></p>
-                <p>{t['expires']}</p>
-                <p>{t['ignore']}</p>
-                <div class="footer">
-                    <p>{t['regards']}<br>{self.from_name}</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-
-        return self.send_email(to_email, subject, body_html)
+        )
+        if not rendered:
+            return False
+        return self.send_email(to_email, *rendered)
 
     def send_password_reset_email(
         self,
@@ -302,108 +247,18 @@ class EmailService:
         if custom_subject and custom_body_html:
             return self.send_email(to_email, custom_subject, custom_body_html)
 
-        full_url = f'{reset_url}?token={reset_token}'
-        expire_hours = settings.get_cabinet_password_reset_expire_hours()
-
-        # Escape user-provided values for HTML context
-        safe_username = html.escape(username) if username else None
-
-        # Localized content
-        texts = {
-            'ru': {
-                'greeting': f'Здравствуйте{", " + safe_username if safe_username else ""}!',
-                'subject': 'Сброс пароля',
-                'intro': 'Мы получили запрос на сброс вашего пароля. Нажмите на кнопку ниже, чтобы установить новый пароль:',
-                'button': 'Сбросить пароль',
-                'or_copy': 'Или скопируйте и вставьте эту ссылку в браузер:',
-                'expires': f'Ссылка действительна в течение {expire_hours} часов.',
-                'warning': 'Если вы не запрашивали сброс пароля, проигнорируйте это письмо или свяжитесь с поддержкой.',
-                'regards': 'С уважением,',
+        rendered = self._render_default_template(
+            'password_reset',
+            language,
+            {
+                'username': username or '',
+                'reset_url': f'{reset_url}?token={reset_token}',
+                'expire_hours': settings.get_cabinet_password_reset_expire_hours(),
             },
-            'en': {
-                'greeting': f'Hello{", " + safe_username if safe_username else ""}!',
-                'subject': 'Reset your password',
-                'intro': 'We received a request to reset your password. Click the button below to set a new password:',
-                'button': 'Reset Password',
-                'or_copy': 'Or copy and paste this link in your browser:',
-                'expires': f'This link will expire in {expire_hours} hour(s).',
-                'warning': "If you didn't request a password reset, please ignore this email or contact support if you're concerned.",
-                'regards': 'Best regards,',
-            },
-            'zh': {
-                'greeting': f'您好{", " + safe_username if safe_username else ""}!',
-                'subject': '重置您的密码',
-                'intro': '我们收到了重置您密码的请求。点击下方按钮设置新密码：',
-                'button': '重置密码',
-                'or_copy': '或将此链接复制并粘贴到浏览器中：',
-                'expires': f'此链接将在 {expire_hours} 小时后过期。',
-                'warning': '如果您没有请求重置密码，请忽略此邮件或联系客服。',
-                'regards': '此致,',
-            },
-            'ua': {
-                'greeting': f'Вітаємо{", " + safe_username if safe_username else ""}!',
-                'subject': 'Скидання пароля',
-                'intro': 'Ми отримали запит на скидання вашого пароля. Натисніть на кнопку нижче, щоб встановити новий пароль:',
-                'button': 'Скинути пароль',
-                'or_copy': 'Або скопіюйте та вставте це посилання в браузер:',
-                'expires': f'Посилання дійсне протягом {expire_hours} годин.',
-                'warning': "Якщо ви не запитували скидання пароля, проігноруйте цей лист або зв'яжіться з підтримкою.",
-                'regards': 'З повагою,',
-            },
-            'fa': {
-                'greeting': f'سلام{", " + safe_username if safe_username else ""}!',
-                'subject': 'بازنشانی رمز عبور',
-                'intro': 'درخواستی برای بازنشانی رمز عبور شما دریافت شد. برای تعیین رمز جدید روی دکمه زیر بزنید:',
-                'button': 'بازنشانی رمز عبور',
-                'or_copy': 'یا این لینک را در مرورگر خود کپی و باز کنید:',
-                'expires': f'این لینک تا {expire_hours} ساعت معتبر است.',
-                'warning': 'اگر شما درخواست بازنشانی رمز عبور نداده‌اید، این ایمیل را نادیده بگیرید یا با پشتیبانی تماس بگیرید.',
-                'regards': 'با احترام،',
-            },
-        }
-
-        t = texts.get(language, texts['ru'])
-
-        subject = t['subject']
-        body_html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .button {{
-                    display: inline-block;
-                    padding: 12px 24px;
-                    background-color: #dc3545;
-                    color: white !important;
-                    text-decoration: none;
-                    border-radius: 5px;
-                    margin: 20px 0;
-                }}
-                .footer {{ margin-top: 30px; font-size: 12px; color: #666; }}
-                .warning {{ color: #dc3545; font-weight: bold; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2>{t['greeting']}</h2>
-                <p>{t['intro']}</p>
-                <a href="{full_url}" class="button">{t['button']}</a>
-                <p>{t['or_copy']}</p>
-                <p><a href="{full_url}">{full_url}</a></p>
-                <p>{t['expires']}</p>
-                <p class="warning">{t['warning']}</p>
-                <div class="footer">
-                    <p>{t['regards']}<br>{self.from_name}</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-
-        return self.send_email(to_email, subject, body_html)
+        )
+        if not rendered:
+            return False
+        return self.send_email(to_email, *rendered)
 
     def send_email_change_code(
         self,
@@ -431,107 +286,18 @@ class EmailService:
         if custom_subject and custom_body_html:
             return self.send_email(to_email, custom_subject, custom_body_html)
 
-        expire_minutes = settings.get_cabinet_email_change_code_expire_minutes()
-
-        # Escape user-provided values for HTML context
-        safe_username = html.escape(username) if username else None
-
-        texts = {
-            'ru': {
-                'greeting': f'Здравствуйте{", " + safe_username if safe_username else ""}!',
-                'subject': 'Код подтверждения для смены email',
-                'intro': 'Вы запросили смену email адреса. Используйте код ниже для подтверждения:',
-                'code_label': 'Ваш код подтверждения:',
-                'expires': f'Код действителен в течение {expire_minutes} минут.',
-                'ignore': 'Если вы не запрашивали смену email, просто проигнорируйте это письмо.',
-                'regards': 'С уважением,',
+        rendered = self._render_default_template(
+            'email_change_code',
+            language,
+            {
+                'username': username or '',
+                'code': code,
+                'expire_minutes': settings.get_cabinet_email_change_code_expire_minutes(),
             },
-            'en': {
-                'greeting': f'Hello{", " + safe_username if safe_username else ""}!',
-                'subject': 'Email change verification code',
-                'intro': 'You requested to change your email address. Use the code below to confirm:',
-                'code_label': 'Your verification code:',
-                'expires': f'This code will expire in {expire_minutes} minutes.',
-                'ignore': "If you didn't request an email change, you can safely ignore this email.",
-                'regards': 'Best regards,',
-            },
-            'zh': {
-                'greeting': f'您好{", " + safe_username if safe_username else ""}!',
-                'subject': '邮箱更换验证码',
-                'intro': '您请求更换邮箱地址。请使用以下验证码确认：',
-                'code_label': '您的验证码：',
-                'expires': f'此验证码将在 {expire_minutes} 分钟后过期。',
-                'ignore': '如果您没有请求更换邮箱，请忽略此邮件。',
-                'regards': '此致,',
-            },
-            'ua': {
-                'greeting': f'Вітаємо{", " + safe_username if safe_username else ""}!',
-                'subject': 'Код підтвердження для зміни email',
-                'intro': 'Ви запросили зміну email адреси. Використовуйте код нижче для підтвердження:',
-                'code_label': 'Ваш код підтвердження:',
-                'expires': f'Код дійсний протягом {expire_minutes} хвилин.',
-                'ignore': 'Якщо ви не запитували зміну email, просто проігноруйте цей лист.',
-                'regards': 'З повагою,',
-            },
-            'fa': {
-                'greeting': f'سلام{", " + safe_username if safe_username else ""}!',
-                'subject': 'کد تایید تغییر ایمیل',
-                'intro': 'شما درخواست تغییر ایمیل داده‌اید. برای تایید از کد زیر استفاده کنید:',
-                'code_label': 'کد تایید شما:',
-                'expires': f'این کد تا {expire_minutes} دقیقه معتبر است.',
-                'ignore': 'اگر شما درخواست تغییر ایمیل نداده‌اید، این ایمیل را نادیده بگیرید.',
-                'regards': 'با احترام،',
-            },
-        }
-
-        t = texts.get(language, texts['ru'])
-
-        subject = t['subject']
-        body_html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .code-box {{
-                    background-color: #f8f9fa;
-                    border: 2px solid #007bff;
-                    border-radius: 8px;
-                    padding: 20px;
-                    text-align: center;
-                    margin: 20px 0;
-                }}
-                .code {{
-                    font-size: 32px;
-                    font-weight: bold;
-                    letter-spacing: 8px;
-                    color: #007bff;
-                    font-family: monospace;
-                }}
-                .footer {{ margin-top: 30px; font-size: 12px; color: #666; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2>{t['greeting']}</h2>
-                <p>{t['intro']}</p>
-                <div class="code-box">
-                    <p>{t['code_label']}</p>
-                    <p class="code">{code}</p>
-                </div>
-                <p>{t['expires']}</p>
-                <p>{t['ignore']}</p>
-                <div class="footer">
-                    <p>{t['regards']}<br>{self.from_name}</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-
-        return self.send_email(to_email, subject, body_html)
+        )
+        if not rendered:
+            return False
+        return self.send_email(to_email, *rendered)
 
 
 # Singleton instance

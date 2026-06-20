@@ -106,7 +106,7 @@ async def get_public_ip() -> str:
                                 logger.info('Определён публичный IP сервера', ip=ip)
                                 return ip
                 except Exception as e:
-                    logger.debug('Не удалось получить IP от', service_url=service_url, error=e)
+                    logger.debug('Не удалось получить IP от сервиса', service_url=service_url, error=e)
                     continue
 
         # Fallback на известный рабочий IP если ничего не получилось

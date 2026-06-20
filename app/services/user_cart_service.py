@@ -69,7 +69,7 @@ class UserCartService:
             await client.setex(key, effective_ttl, json_data)
             cart_mode = cart_data.get('cart_mode', 'unknown')
             logger.info(
-                '🛒 Корзина пользователя сохранена в Redis (mode=, ttl=s)',
+                '🛒 Корзина пользователя сохранена в Redis',
                 user_id=user_id,
                 cart_mode=cart_mode,
                 effective_ttl=effective_ttl,
@@ -91,6 +91,23 @@ class UserCartService:
                     )
                 except (TypeError, ValueError):
                     pass  # Non-integer subscription_id -- skip per-sub key
+
+            # «Свежее намерение»: корзина сохранена именно для пополнения и
+            # завершения покупки (поток «недостаточно средств → выбрать оплату»).
+            # Только при наличии этой метки тихая авто-покупка после пополнения
+            # имеет право списать баланс — пополнение ради подарка/просто денег
+            # такой метки не ставит и корзину не трогает.
+            if cart_data.get('return_to_cart'):
+                try:
+                    await client.setex(
+                        self._topup_intent_key(user_id),
+                        settings.CART_AUTOPURCHASE_INTENT_TTL_SECONDS,
+                        '1',
+                    )
+                except Exception as intent_error:
+                    logger.warning(
+                        '🛒 Не удалось поставить метку намерения пополнения', user_id=user_id, error=intent_error
+                    )
 
             return True
         except Exception as e:
@@ -162,6 +179,10 @@ class UserCartService:
                 sub_key = self._subscription_cart_key(user_id, subscription_id)
                 await client.delete(sub_key)
 
+            # Удаляем метку намерения пополнения вместе с корзиной, чтобы она не
+            # «висела» после очистки и не давала повода для авто-покупки.
+            await client.delete(self._topup_intent_key(user_id))
+
             if result:
                 logger.debug('Корзина пользователя удалена из Redis', user_id=user_id)
             return bool(result)
@@ -220,6 +241,46 @@ class UserCartService:
     @staticmethod
     def _subscription_cart_key(user_id: int, subscription_id: int) -> str:
         return f'user_cart:{user_id}:sub:{subscription_id}'
+
+    @staticmethod
+    def _topup_intent_key(user_id: int) -> str:
+        """Ключ «свежего намерения» пополнить ради сохранённой корзины.
+
+        Ставится коротко-живущим (CART_AUTOPURCHASE_INTENT_TTL_SECONDS), когда
+        пользователь явно вошёл в поток «недостаточно средств → корзина
+        сохранена → выбрать оплату» (cart_data['return_to_cart'] == True).
+        Тихая авто-покупка из корзины после пополнения проверяет наличие метки
+        (has_topup_intent) и гасит её только при УСПЕШНОЙ покупке
+        (clear_topup_intent) — чтобы пополнение ради подарка / просто денег не
+        тратилось молча на подписку из старой корзины, а частичное пополнение
+        (в рассрочку) могло до-сработать со следующего пополнения.
+        """
+        return f'cart_topup_intent:{user_id}'
+
+    async def has_topup_intent(self, user_id: int) -> bool:
+        """Есть ли свежая метка намерения пополнить ради корзины (без удаления).
+
+        Если Redis недоступен — считаем намерение отсутствующим (безопасно: не
+        списываем баланс молча).
+        """
+        client = self._get_redis_client()
+        if client is None:
+            return False
+        try:
+            return bool(await client.exists(self._topup_intent_key(user_id)))
+        except Exception as e:
+            logger.error('🛒 Ошибка чтения метки намерения пополнения', user_id=user_id, error=e)
+            return False
+
+    async def clear_topup_intent(self, user_id: int) -> None:
+        """Погасить метку намерения (после успешной авто-покупки или очистки корзины)."""
+        client = self._get_redis_client()
+        if client is None:
+            return
+        try:
+            await client.delete(self._topup_intent_key(user_id))
+        except Exception as e:
+            logger.error('🛒 Ошибка удаления метки намерения пополнения', user_id=user_id, error=e)
 
     async def save_subscription_cart(
         self,

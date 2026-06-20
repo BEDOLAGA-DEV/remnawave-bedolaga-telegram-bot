@@ -1,5 +1,6 @@
 """Сервис для работы с API Overpay (pay.overpay.io)."""
 
+import asyncio
 import ssl
 import tempfile
 from typing import Any
@@ -163,6 +164,7 @@ class OverpayService:
         description: str = '',
         return_url: str | None = None,
         payment_methods: list[str] | None = None,
+        project_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Создает платеж через API Overpay.
@@ -172,7 +174,7 @@ class OverpayService:
             'amount': amount,
             'currency': currency,
             'livetimeMinutes': lifetime_minutes,
-            'projectId': self.project_id,
+            'projectId': project_id or self.project_id,
             'merchantTransactionId': merchant_transaction_id,
         }
 
@@ -221,6 +223,113 @@ class OverpayService:
         except httpx.HTTPError as e:
             logger.exception('Overpay API connection error', error=e)
             raise
+
+    async def create_payment_s2s(
+        self,
+        *,
+        amount: str,
+        currency: str = 'RUB',
+        project_id: str,
+        merchant_transaction_id: str,
+        client_email: str | None = None,
+        return_url: str,
+        payment_method: str = 'fps',
+    ) -> dict[str, Any]:
+        if not settings.OVERPAY_SERVER_IP:
+            raise OverpayAPIError(0, 'OVERPAY_SERVER_IP is not configured')
+
+        payload: dict[str, Any] = {
+            'paymentMethod': payment_method,
+            'type': 'PURCHASE',
+            'amount': amount,
+            'currency': currency,
+            'projectId': project_id,
+            'merchantTransactionId': merchant_transaction_id,
+            'location': {'ip': settings.OVERPAY_SERVER_IP},
+            'options': {'returnUrl': return_url},
+        }
+        if client_email:
+            payload['client'] = {'email': client_email}
+
+        logger.info(
+            'Overpay API create_payment_s2s',
+            merchant_transaction_id=merchant_transaction_id,
+            amount=amount,
+            currency=currency,
+        )
+
+        try:
+            client = await self._get_client()
+            response = await client.post(
+                f'{self.api_url}/api/orders/init',
+                json=payload,
+                headers={'Content-Type': 'application/json'},
+            )
+
+            data = response.json()
+
+            if response.status_code in (200, 201):
+                logger.info(
+                    'Overpay API s2s order created',
+                    merchant_transaction_id=merchant_transaction_id,
+                    overpay_id=data.get('id'),
+                    order_status=data.get('status'),
+                )
+                return data
+
+            error_msg = data.get('message') or data.get('error') or str(data)
+            logger.error(
+                'Overpay create_payment_s2s error',
+                status_code=response.status_code,
+                error_msg=error_msg,
+            )
+            raise OverpayAPIError(response.status_code, error_msg)
+
+        except httpx.HTTPError as e:
+            logger.exception('Overpay API connection error', error=e)
+            raise
+
+    async def wait_for_redirect_link(
+        self,
+        order_id: str,
+        *,
+        attempts: int = 4,
+        delay: float = 0.3,
+    ) -> str | None:
+        last_status = None
+        for attempt in range(attempts):
+            try:
+                client = await self._get_client()
+                response = await client.get(
+                    f'{self.api_url}/orders/{order_id}',
+                    headers={'Content-Type': 'application/json'},
+                    timeout=5.0,
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    orders = data.get('orders') or []
+                    if orders:
+                        order = orders[0]
+                        last_status = order.get('status')
+                        interaction = order.get('interaction') or {}
+                        redirect_link = interaction.get('redirectLink')
+                        if redirect_link:
+                            return redirect_link
+                        if last_status in ('error', 'declined', 'rejected'):
+                            break
+                else:
+                    logger.warning(
+                        'Overpay wait_for_redirect_link non-200',
+                        order_id=order_id,
+                        status_code=response.status_code,
+                    )
+            except (httpx.HTTPError, ValueError) as e:
+                logger.warning('Overpay wait_for_redirect_link connection error', order_id=order_id, error=e)
+            if attempt < attempts - 1:
+                await asyncio.sleep(delay)
+
+        logger.error('Overpay: redirectLink не получен', order_id=order_id, last_status=last_status)
+        return None
 
     async def get_payment(self, order_id: str) -> dict[str, Any]:
         """

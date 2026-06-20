@@ -246,6 +246,18 @@ async def _delete_remnawave_user_with_fallback(remnawave_uuid: str) -> None:
             )
 
 
+async def flush_remnawave_deletions(remnawave_uuids: list[str]) -> None:
+    """Удаляет (или деактивирует как fallback) пользователей RemnaWave.
+
+    Вызывается caller'ом ПОСЛЕ успешного db.commit() мержа: внешнее удаление
+    нельзя откатить вместе с транзакцией, поэтому его откладывают до коммита,
+    чтобы упавший мерж не оставил удалённого юзера в панели при rollback.
+    Каждое удаление изолировано — сбой одного не мешает остальным.
+    """
+    for remnawave_uuid in remnawave_uuids:
+        await _delete_remnawave_user_with_fallback(remnawave_uuid)
+
+
 async def _sync_transferred_subscriptions_to_panel(
     primary: User,
     transferred_subs: list[Subscription],
@@ -310,6 +322,7 @@ async def _handle_subscription_merge(
     primary: User,
     secondary: User,
     keep_subscription_from: Literal['primary', 'secondary'],
+    deferred_remnawave_deletions: list[str],
 ) -> None:
     """Обрабатывает мерж подписок между двумя аккаунтами.
 
@@ -442,7 +455,7 @@ async def _handle_subscription_merge(
     # Подписка только у primary — удаляем RemnaWave юзера secondary (если есть)
     if has_primary_sub and not has_secondary_sub:
         if secondary.remnawave_uuid:
-            await _delete_remnawave_user_with_fallback(secondary.remnawave_uuid)
+            deferred_remnawave_deletions.append(secondary.remnawave_uuid)
             secondary.remnawave_uuid = None
         logger.info(
             'Мерж подписок: оставлена подписка primary, secondary не имел подписки',
@@ -476,7 +489,7 @@ async def _handle_subscription_merge(
     if keep_subscription_from == 'secondary':
         # Удаляем подписку primary из RemnaWave
         if primary.remnawave_uuid:
-            await _delete_remnawave_user_with_fallback(primary.remnawave_uuid)
+            deferred_remnawave_deletions.append(primary.remnawave_uuid)
             primary.remnawave_uuid = None
         # Явно удаляем subscription_servers перед подпиской (CASCADE настроен, но делаем явно для ясности)
         await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id == primary_sub.id))
@@ -502,7 +515,7 @@ async def _handle_subscription_merge(
         # keep_subscription_from == 'primary' (по умолчанию)
         # Удаляем подписку secondary из RemnaWave
         if secondary.remnawave_uuid:
-            await _delete_remnawave_user_with_fallback(secondary.remnawave_uuid)
+            deferred_remnawave_deletions.append(secondary.remnawave_uuid)
             secondary.remnawave_uuid = None
         # Явно удаляем subscription_servers перед подпиской (CASCADE настроен, но делаем явно для ясности)
         await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id == secondary_sub.id))
@@ -523,6 +536,7 @@ async def execute_merge(
     keep_subscription_from: Literal['primary', 'secondary'] = 'primary',
     provider: str | None = None,
     provider_id: str | None = None,
+    deferred_remnawave_deletions: list[str] | None = None,
 ) -> User:
     """Выполняет атомарный мерж двух аккаунтов. Caller отвечает за commit/rollback.
 
@@ -665,8 +679,15 @@ async def execute_merge(
     if secondary.used_promocodes:
         primary.used_promocodes = (primary.used_promocodes or 0) + secondary.used_promocodes
 
+    # Удаления пользователей из RemnaWave откладываем: внешний вызов нельзя
+    # откатить вместе с БД. Если caller передал список — он выполнит удаления
+    # ПОСЛЕ commit; иначе выполняем их в конце, когда вся работа с БД прошла.
+    pending_remnawave_deletions: list[str] = (
+        deferred_remnawave_deletions if deferred_remnawave_deletions is not None else []
+    )
+
     # 5. Мерж подписок
-    await _handle_subscription_merge(db, primary, secondary, keep_subscription_from)
+    await _handle_subscription_merge(db, primary, secondary, keep_subscription_from, pending_remnawave_deletions)
 
     # 6. Переназначение транзакций
     await db.execute(update(Transaction).where(Transaction.user_id == secondary.id).values(user_id=primary.id))
@@ -690,8 +711,35 @@ async def execute_merge(
             )
         )
     )
-    # 8b. Переназначение оставшихся записей
+    # 8b. Переназначение оставшихся записей.
+    # Частичный уникальный индекс uq_referral_earnings_registration_pending
+    # (user_id, referral_id) WHERE reason='referral_registration_pending'. Если оба
+    # аккаунта приглашены одним реферером (или пригласили одного человека), перенос
+    # создаёт дубликат → сначала удаляем коллизии, как в секциях 10c/10h.
+    reg_pending = ReferralEarning.reason == 'referral_registration_pending'
+    # (i) перенос user_id: убрать pending-строки secondary, дублирующие primary по referral_id
+    primary_pending_referral_ids = select(ReferralEarning.referral_id).where(
+        ReferralEarning.user_id == primary.id, reg_pending
+    )
+    await db.execute(
+        delete(ReferralEarning).where(
+            ReferralEarning.user_id == secondary.id,
+            reg_pending,
+            ReferralEarning.referral_id.in_(primary_pending_referral_ids),
+        )
+    )
     await db.execute(update(ReferralEarning).where(ReferralEarning.user_id == secondary.id).values(user_id=primary.id))
+    # (ii) перенос referral_id: убрать pending-строки secondary, дублирующие primary по user_id
+    primary_pending_user_ids = select(ReferralEarning.user_id).where(
+        ReferralEarning.referral_id == primary.id, reg_pending
+    )
+    await db.execute(
+        delete(ReferralEarning).where(
+            ReferralEarning.referral_id == secondary.id,
+            reg_pending,
+            ReferralEarning.user_id.in_(primary_pending_user_ids),
+        )
+    )
     await db.execute(
         update(ReferralEarning).where(ReferralEarning.referral_id == secondary.id).values(referral_id=primary.id)
     )
@@ -964,5 +1012,13 @@ async def execute_merge(
 
     # 15. flush (не commit — caller управляет транзакцией)
     await db.flush()
+
+    # Если caller не взял отложенные удаления на себя (передал None) — выполняем
+    # их здесь, после ВСЕЙ работы с БД. Сбой мержа выше (IntegrityError и т.п.)
+    # происходит до этой точки, поэтому удалённого в панели юзера при откате не
+    # останется. Идеальный путь (удаление строго после commit) — у caller'а,
+    # передающего список (см. execute_merge_endpoint).
+    if deferred_remnawave_deletions is None:
+        await flush_remnawave_deletions(pending_remnawave_deletions)
 
     return primary

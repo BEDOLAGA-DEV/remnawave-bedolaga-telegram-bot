@@ -19,6 +19,40 @@ logger = structlog.get_logger(__name__)
 MERGE_TOKEN_TTL_SECONDS = 1800  # 30 minutes
 MERGE_TOKEN_PREFIX = 'account_merge'
 
+# Pending email-merge OTP: before a merge token is minted for the email path, the
+# initiator must prove control of the EXISTING account's inbox with a one-time
+# code mailed to it. Keyed by the initiator's user id (one pending merge at a
+# time per user). Not the merge token itself — that is created only after the
+# code is verified.
+EMAIL_MERGE_OTP_PREFIX = 'email_merge_otp'
+EMAIL_MERGE_OTP_TTL_SECONDS = 900  # 15 minutes
+
+
+async def store_email_merge_otp(initiator_user_id: int, secondary_user_id: int, email: str, code: str) -> None:
+    """Store a pending email-merge code for the initiator (overwrites any prior)."""
+    key = cache_key(EMAIL_MERGE_OTP_PREFIX, str(initiator_user_id))
+    await cache.set(
+        key,
+        {
+            'secondary_user_id': secondary_user_id,
+            'email': email,
+            'code': code,
+            'created_at': datetime.now(UTC).isoformat(),
+        },
+        expire=EMAIL_MERGE_OTP_TTL_SECONDS,
+    )
+
+
+async def get_email_merge_otp(initiator_user_id: int) -> dict[str, Any] | None:
+    """Read the pending email-merge code without consuming it."""
+    data: Any = await cache.get(cache_key(EMAIL_MERGE_OTP_PREFIX, str(initiator_user_id)))
+    return data if isinstance(data, dict) else None
+
+
+async def clear_email_merge_otp(initiator_user_id: int) -> None:
+    """Drop the pending email-merge code."""
+    await cache.getdel(cache_key(EMAIL_MERGE_OTP_PREFIX, str(initiator_user_id)))
+
 
 async def create_merge_token(
     primary_user_id: int,

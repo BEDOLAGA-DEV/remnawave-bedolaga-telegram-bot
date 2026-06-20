@@ -242,6 +242,8 @@ async def get_referral_terms():
     return ReferralTermsResponse(
         is_enabled=settings.is_referral_program_enabled(),
         commission_percent=settings.REFERRAL_COMMISSION_PERCENT,
+        first_payment_commission_percent=settings.REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT,
+        recurring_commission_tiers=settings.REFERRAL_RECURRING_COMMISSION_TIERS,
         minimum_topup_kopeks=settings.REFERRAL_MINIMUM_TOPUP_KOPEKS,
         minimum_topup_rubles=settings.REFERRAL_MINIMUM_TOPUP_KOPEKS / 100,
         first_topup_bonus_kopeks=settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS,

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.database.constants import POSTGRES_INT4_MAX, POSTGRES_INT4_MIN
 from app.database.crud.promo_group import get_promo_group_by_id
 from app.database.crud.subscription import (
     create_paid_subscription,
@@ -39,9 +41,14 @@ from ..schemas.users import (
     UserSubscriptionCreateRequest,
     UserUpdateRequest,
 )
+from ._subscription_state import (
+    restore_subscription_state as _restore_subscription_state,
+    snapshot_subscription_state as _snapshot_subscription_state,
+)
 
 
 router = APIRouter()
+logger = structlog.get_logger(__name__)
 
 
 def _serialize_promo_group(group: PromoGroup | None) -> PromoGroupSummary | None:
@@ -121,8 +128,10 @@ def _apply_search_filter(query, search: str):
     ]
 
     if search.isdigit():
-        conditions.append(User.telegram_id == int(search))
-        conditions.append(User.id == int(search))
+        numeric_search = int(search)
+        conditions.append(User.telegram_id == numeric_search)
+        if POSTGRES_INT4_MIN <= numeric_search <= POSTGRES_INT4_MAX:
+            conditions.append(User.id == numeric_search)
 
     return query.where(or_(*conditions))
 
@@ -361,6 +370,15 @@ async def _get_user_by_id_or_telegram_id(db: AsyncSession, user_id: int) -> User
     return user
 
 
+async def _delete_subscription_if_exists(db: AsyncSession, subscription_id: int) -> None:
+    result = await db.execute(select(Subscription).where(Subscription.id == subscription_id))
+    subscription = result.scalar_one_or_none()
+    if not subscription:
+        return
+    await db.delete(subscription)
+    await db.commit()
+
+
 @router.post('/{user_id}/subscription', response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user_subscription(
     user_id: int,
@@ -405,88 +423,117 @@ async def create_user_subscription(
                 status.HTTP_400_BAD_REQUEST,
                 'User already has a subscription. Use replace_existing=true to replace it',
             )
+    previous_state = _snapshot_subscription_state(existing) if existing else None
 
     forced_devices = None
     if not settings.is_devices_selection_enabled():
         forced_devices = settings.get_disabled_mode_device_limit()
 
-    if payload.is_trial:
-        trial_device_limit = payload.device_limit
-        if trial_device_limit is None:
-            trial_device_limit = forced_devices
-        duration_days = payload.duration_days or settings.TRIAL_DURATION_DAYS
-        traffic_limit_gb = payload.traffic_limit_gb or settings.TRIAL_TRAFFIC_LIMIT_GB
+    subscription = None
+    try:
+        if payload.is_trial:
+            trial_device_limit = payload.device_limit
+            if trial_device_limit is None:
+                trial_device_limit = forced_devices
+            duration_days = payload.duration_days or settings.TRIAL_DURATION_DAYS
+            traffic_limit_gb = payload.traffic_limit_gb or settings.TRIAL_TRAFFIC_LIMIT_GB
 
-        if existing:
-            # Сохраняем существующие сквады при замене
-            connected_squads = list(existing.connected_squads or [])
-            if payload.squad_uuid:
-                connected_squads = [payload.squad_uuid]
-            elif payload.connected_squads:
-                connected_squads = payload.connected_squads
+            if existing:
+                # Сохраняем существующие сквады при замене
+                connected_squads = list(existing.connected_squads or [])
+                if payload.squad_uuid:
+                    connected_squads = [payload.squad_uuid]
+                elif payload.connected_squads:
+                    connected_squads = payload.connected_squads
 
-            subscription = await replace_subscription(
-                db,
-                existing,
-                duration_days=duration_days,
-                traffic_limit_gb=traffic_limit_gb,
-                device_limit=(trial_device_limit if trial_device_limit is not None else settings.TRIAL_DEVICE_LIMIT),
-                connected_squads=connected_squads,
-                is_trial=True,
-                update_server_counters=True,
-            )
-        else:
-            subscription = await create_trial_subscription(
-                db,
-                user_id=user.id,
-                duration_days=duration_days,
-                traffic_limit_gb=traffic_limit_gb,
-                device_limit=trial_device_limit,
-                squad_uuid=payload.squad_uuid,
-            )
-    else:
-        if payload.duration_days is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'duration_days is required for paid subscriptions')
-        device_limit = payload.device_limit
-        if device_limit is None:
-            if forced_devices is not None:
-                device_limit = forced_devices
+                subscription = await replace_subscription(
+                    db,
+                    existing,
+                    duration_days=duration_days,
+                    traffic_limit_gb=traffic_limit_gb,
+                    device_limit=(
+                        trial_device_limit if trial_device_limit is not None else settings.TRIAL_DEVICE_LIMIT
+                    ),
+                    connected_squads=connected_squads,
+                    is_trial=True,
+                    update_server_counters=True,
+                )
             else:
-                device_limit = settings.DEFAULT_DEVICE_LIMIT
-
-        if existing:
-            subscription = await replace_subscription(
-                db,
-                existing,
-                duration_days=payload.duration_days,
-                traffic_limit_gb=payload.traffic_limit_gb or settings.DEFAULT_TRAFFIC_LIMIT_GB,
-                device_limit=device_limit,
-                connected_squads=payload.connected_squads or [],
-                is_trial=False,
-                update_server_counters=True,
-            )
+                subscription = await create_trial_subscription(
+                    db,
+                    user_id=user.id,
+                    duration_days=duration_days,
+                    traffic_limit_gb=traffic_limit_gb,
+                    device_limit=trial_device_limit,
+                    squad_uuid=payload.squad_uuid,
+                )
         else:
-            subscription = await create_paid_subscription(
-                db,
-                user_id=user.id,
-                duration_days=payload.duration_days,
-                traffic_limit_gb=payload.traffic_limit_gb or settings.DEFAULT_TRAFFIC_LIMIT_GB,
-                device_limit=device_limit,
-                connected_squads=payload.connected_squads or [],
-                update_server_counters=True,
-            )
+            if payload.duration_days is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'duration_days is required for paid subscriptions')
+            device_limit = payload.device_limit
+            if device_limit is None:
+                if forced_devices is not None:
+                    device_limit = forced_devices
+                else:
+                    device_limit = settings.DEFAULT_DEVICE_LIMIT
+
+            if existing:
+                subscription = await replace_subscription(
+                    db,
+                    existing,
+                    duration_days=payload.duration_days,
+                    traffic_limit_gb=payload.traffic_limit_gb or settings.DEFAULT_TRAFFIC_LIMIT_GB,
+                    device_limit=device_limit,
+                    connected_squads=payload.connected_squads or [],
+                    is_trial=False,
+                    update_server_counters=True,
+                )
+            else:
+                subscription = await create_paid_subscription(
+                    db,
+                    user_id=user.id,
+                    duration_days=payload.duration_days,
+                    traffic_limit_gb=payload.traffic_limit_gb or settings.DEFAULT_TRAFFIC_LIMIT_GB,
+                    device_limit=device_limit,
+                    connected_squads=payload.connected_squads or [],
+                    update_server_counters=True,
+                )
 
         subscription_service = SubscriptionService()
-        await subscription_service.create_remnawave_user(db, subscription)
-
-    # Provision trial subscriptions in RemnaWave as well
-    if payload.is_trial:
-        subscription_service = SubscriptionService()
-        await subscription_service.create_remnawave_user(db, subscription)
+        rem_user = await subscription_service.update_remnawave_user(db, subscription, reset_traffic=False)
+        if not rem_user:
+            rem_user = await subscription_service.create_remnawave_user(db, subscription, reset_traffic=False)
+        if not rem_user:
+            raise ValueError('Failed to create/update user in Remnawave')
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception('Failed to sync user subscription with Remnawave', user_id=user.id)
+        try:
+            if existing and previous_state is not None:
+                await _restore_subscription_state(db, existing.id, previous_state)
+            elif subscription is not None:
+                await _delete_subscription_if_exists(db, subscription.id)
+        except Exception:
+            logger.exception('Failed to rollback user subscription mutation', user_id=user.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to sync with Remnawave',
+        )
 
     # Перезагружаем пользователя с подпиской
     user = await get_user_by_id(db, user.id)
     return _serialize_user(user)
+
+
+@router.patch('/{user_id}/subscription', response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def patch_user_subscription(
+    user_id: int,
+    payload: UserSubscriptionCreateRequest,
+    _: Any = Security(require_api_token),
+    db: AsyncSession = Depends(get_db_session),
+) -> UserResponse:
+    return await create_user_subscription(user_id, payload, _, db)
 
 
 @router.delete('/{user_id}/subscription', response_model=UserResponse)

@@ -71,7 +71,7 @@ class NalogoQueueService:
         self._running = True
         self._task = asyncio.create_task(self._process_queue_loop())
         logger.info(
-            'Сервис очереди чеков NaloGO запущен (интервал: с, задержка между чеками: с)',
+            'Сервис очереди чеков NaloGO запущен',
             _check_interval=self._check_interval,
             _receipt_delay=self._receipt_delay,
         )
@@ -224,7 +224,7 @@ class NalogoQueueService:
                         await cache.delete(queued_key)
 
                     logger.info(
-                        'Чек из очереди успешно создан: (payment_id=, попытка )',
+                        'Чек из очереди успешно создан',
                         receipt_uuid=receipt_uuid,
                         payment_id=payment_id,
                         attempts=attempts + 1,
@@ -235,7 +235,7 @@ class NalogoQueueService:
                     failed += 1
                     service_unavailable = True
                     logger.warning(
-                        'Не удалось создать чек из очереди (payment_id=), возвращен в очередь (попытка /)',
+                        'Не удалось создать чек из очереди, возвращён в очередь',
                         payment_id=payment_id,
                         attempts=attempts + 1,
                         _max_attempts=self._max_attempts,
@@ -246,7 +246,7 @@ class NalogoQueueService:
             except Exception as error:
                 await self._nalogo_service.requeue_receipt(receipt_data)
                 failed += 1
-                logger.error('Ошибка при создании чека из очереди (payment_id=)', payment_id=payment_id, error=error)
+                logger.error('Ошибка при создании чека из очереди', payment_id=payment_id, error=error)
                 # Прекращаем попытки при ошибке
                 break
 
@@ -255,7 +255,7 @@ class NalogoQueueService:
 
         if processed > 0 or failed > 0 or skipped > 0:
             logger.info(
-                'Обработка очереди завершена: успешно=, неудачно=, пропущено',
+                'Обработка очереди завершена',
                 processed=processed,
                 failed=failed,
                 skipped=skipped,

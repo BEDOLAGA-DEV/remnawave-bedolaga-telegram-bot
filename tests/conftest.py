@@ -192,6 +192,13 @@ def fixed_datetime() -> datetime:
     return datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
+# Auto-load fixture modules so tests don't need explicit imports.
+# Promocode/promo-group tests in tests/services/test_promocode_service.py,
+# tests/crud/test_promocode_crud.py, and tests/integration/test_promocode_promo_group_flow.py
+# all rely on these without importing them directly.
+pytest_plugins = ['tests.fixtures.promocode_fixtures']
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Регистрируем маркеры для асинхронных тестов."""
 

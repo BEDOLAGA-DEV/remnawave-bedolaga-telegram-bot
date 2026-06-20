@@ -28,6 +28,11 @@ logger = structlog.get_logger(__name__)
 # Rate limiting for Telegram API calls
 _API_SEMAPHORE = asyncio.Semaphore(20)  # max 20 concurrent getChatMember calls
 _API_DELAY = 0.05  # 50ms between calls -> ~20/sec safe rate
+# Это проверка подписки на канал вызывается из пользовательских хендлеров. Длинный
+# Telegram FloodWait (десятки секунд/минуты) нельзя «отсыпать» блокирующим sleep —
+# юзер повиснет. Коротко (<= порога) ждём и повторяем; иначе считаем результат
+# неопределённым (None: текущее состояние сохраняется, авто-деактивации НЕ будет).
+_MAX_RETRY_AFTER = 5.0
 
 GOOD_STATUSES = (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
 
@@ -155,22 +160,39 @@ class ChannelSubscriptionService:
         # Layer 3: Rate-limited API calls for channels without fresh data
         if channels_needing_api and self.bot:
             async with AsyncSessionLocal() as db:
+                # Reuse the sub_map from layer 2 above so we can fall back to the
+                # last known DB value when an API call returns None (uncertain).
+                sub_map_local = locals().get('sub_map', {})
                 for ch in channels_needing_api:
-                    is_member = await self._rate_limited_check(telegram_id, ch['channel_id'])
-                    result[ch['channel_id']] = is_member
+                    check_result = await self._rate_limited_check(telegram_id, ch['channel_id'])
+                    if check_result is None:
+                        # Uncertain — keep last known DB value if any, otherwise
+                        # default to True so a transient API hiccup never punishes
+                        # a paying user (Telegram bug #313502).
+                        last_known = sub_map_local.get(ch['channel_id'])
+                        is_member = last_known.is_member if last_known else True
+                        result[ch['channel_id']] = is_member
+                        # Do NOT persist the uncertain value — let the next check
+                        # try again with fresh API state.
+                        continue
+                    result[ch['channel_id']] = check_result
                     # Write DB first (source of truth), then cache
-                    await upsert_user_channel_sub(db, telegram_id, ch['channel_id'], is_member)
-                    await ChannelSubCache.set_sub_status(telegram_id, ch['channel_id'], is_member)
+                    await upsert_user_channel_sub(db, telegram_id, ch['channel_id'], check_result)
+                    await ChannelSubCache.set_sub_status(telegram_id, ch['channel_id'], check_result)
                 await db.commit()
         elif channels_needing_api:
-            # No bot available (e.g., cabinet API context) -- fail-closed
+            # No bot available (e.g., cabinet API context). Fall back to the last
+            # known DB value to avoid revoking access from paying users when the
+            # bot singleton hasn't been initialised yet for this request.
             logger.warning(
-                'No bot instance for API check -- failing closed',
+                'No bot instance for API check -- using last known DB value (paid users keep access)',
                 telegram_id=telegram_id,
                 channels=[ch['channel_id'] for ch in channels_needing_api],
             )
+            sub_map_local = locals().get('sub_map', {})
             for ch in channels_needing_api:
-                result[ch['channel_id']] = False
+                last_known = sub_map_local.get(ch['channel_id'])
+                result[ch['channel_id']] = last_known.is_member if last_known else True
 
         return result
 
@@ -256,12 +278,20 @@ class ChannelSubscriptionService:
 
     # -- Rate-limited Telegram API ------------------------------------------------
 
-    async def _rate_limited_check(self, telegram_id: int, channel_id: str) -> bool:
+    async def _rate_limited_check(self, telegram_id: int, channel_id: str) -> bool | None:
         """Check subscription via Telegram API with rate-limiting.
 
-        SECURITY: Fail-closed -- any error returns False (not subscribed).
-        For a VPN access control system, false negatives (temporary denial)
-        are preferable to false positives (unauthorized access).
+        Returns:
+          - True  — confirmed member
+          - False — confirmed non-member (BadRequest user_not_found, Forbidden, etc.)
+          - None  — could not determine (network blip, double rate-limit, generic exception)
+
+        The tri-state result is critical for paid subscriptions: a single transient
+        TelegramNetworkError used to be treated as "not subscribed", which then got
+        persisted to DB and triggered deactivate_subscription on the user's annual
+        paid sub (Telegram bug report #313502 — Chara Freedom). Callers that auto-
+        deactivate subs on `False` must now skip on `None` so a transient API hiccup
+        no longer revokes paid access.
         """
         async with _API_SEMAPHORE:
             try:
@@ -270,19 +300,28 @@ class ChannelSubscriptionService:
                 return member.status in GOOD_STATUSES
             except TelegramRetryAfter as e:
                 logger.warning('Rate limited by Telegram', retry_after=e.retry_after, channel_id=channel_id)
+                if e.retry_after > _MAX_RETRY_AFTER:
+                    # Слишком долгий FloodWait — не вешаем хендлер; результат неизвестен.
+                    logger.warning(
+                        'Telegram rate-limit too long, skipping channel check',
+                        retry_after=e.retry_after,
+                        channel_id=channel_id,
+                    )
+                    return None
                 await asyncio.sleep(e.retry_after)
                 try:
                     member = await self.bot.get_chat_member(chat_id=channel_id, user_id=telegram_id)
                     return member.status in GOOD_STATUSES
                 except Exception:
                     logger.error('Double failure after rate-limit retry', channel_id=channel_id)
-                    return False  # Fail-closed on double failure
+                    return None  # Uncertain — preserve last known value, do not auto-deactivate
             except TelegramForbiddenError:
                 logger.critical(
-                    'Bot removed/blocked from channel -- all checks will fail-closed',
+                    'Bot removed/blocked from channel -- treating result as uncertain so '
+                    'paid subs are not deactivated wholesale until the operator fixes access',
                     channel_id=channel_id,
                 )
-                return False  # Fail-closed -- bot cannot verify membership
+                return None  # Uncertain — bot's fault, not the user's
             except TelegramBadRequest as e:
                 err_msg = str(e).lower()
                 # Expected non-membership signals — обрабатываем тихо. Эти ошибки
@@ -307,13 +346,13 @@ class ChannelSubscriptionService:
                     )
                     return False
                 logger.error('Bad request checking channel', channel_id=channel_id, error=str(e))
-                return False  # Fail-closed
+                return None  # Uncertain — unknown BadRequest, don't punish the user
             except TelegramNetworkError:
                 logger.warning('Network error checking channel', channel_id=channel_id)
-                return False  # Fail-closed
+                return None  # Uncertain — transient, the next check will probably succeed
             except Exception as e:
                 logger.error('Unexpected error checking channel', channel_id=channel_id, error=str(e))
-                return False  # Fail-closed
+                return None  # Uncertain — same logic, do not deactivate on unknown failures
 
 
 # Singleton instance (bot is set at startup)

@@ -76,7 +76,7 @@ async def set_active_pinned_message(
     await db.commit()
     await db.refresh(pinned_message)
 
-    logger.info('Создано новое закрепленное сообщение #', pinned_message_id=pinned_message.id)
+    logger.info('Создано новое закрепленное сообщение', pinned_message_id=pinned_message.id)
     return pinned_message
 
 
@@ -89,7 +89,7 @@ async def deactivate_active_pinned_message(db: AsyncSession) -> PinnedMessage | 
     pinned_message.updated_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(pinned_message)
-    logger.info('Деактивировано закрепленное сообщение #', pinned_message_id=pinned_message.id)
+    logger.info('Деактивировано закрепленное сообщение', pinned_message_id=pinned_message.id)
     return pinned_message
 
 

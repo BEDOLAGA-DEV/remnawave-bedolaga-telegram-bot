@@ -38,7 +38,7 @@ async def create_or_update_rules(
     await db.commit()
     await db.refresh(new_rules)
 
-    logger.info('✅ Правила для языка обновлены (ID: )', language=language, new_rules_id=new_rules.id)
+    logger.info('✅ Правила обновлены', language=language, new_rules_id=new_rules.id)
     return new_rules
 
 

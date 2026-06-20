@@ -160,7 +160,7 @@ class WataWebhookHandler:
             return web.json_response({'status': 'error', 'reason': 'invalid_json'}, status=400)
 
         logger.info(
-            'Получен WATA webhook: order_id status',
+            'Получен WATA webhook',
             payload=payload.get('orderId'),
             payload_2=payload.get('transactionStatus'),
         )
@@ -214,7 +214,7 @@ def create_wata_webhook_app(payment_service: PaymentService) -> web.Application:
     app.router.add_options(settings.WATA_WEBHOOK_PATH, handler.options_handler)
     app.router.add_get('/health', handler.health_check)
 
-    logger.info('Настроен WATA webhook endpoint на', WATA_WEBHOOK_PATH=settings.WATA_WEBHOOK_PATH)
+    logger.info('Настроен WATA webhook endpoint', WATA_WEBHOOK_PATH=settings.WATA_WEBHOOK_PATH)
 
     return app
 
@@ -237,12 +237,12 @@ async def start_wata_webhook_server(payment_service: PaymentService) -> None:
     try:
         await site.start()
         logger.info(
-            'WATA webhook сервер запущен на',
+            'WATA webhook сервер запущен',
             WATA_WEBHOOK_HOST=settings.WATA_WEBHOOK_HOST,
             WATA_WEBHOOK_PORT=settings.WATA_WEBHOOK_PORT,
         )
         logger.info(
-            'WATA webhook URL: http://',
+            'WATA webhook URL',
             WATA_WEBHOOK_HOST=settings.WATA_WEBHOOK_HOST,
             WATA_WEBHOOK_PORT=settings.WATA_WEBHOOK_PORT,
             WATA_WEBHOOK_PATH=settings.WATA_WEBHOOK_PATH,

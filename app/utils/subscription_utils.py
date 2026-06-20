@@ -34,7 +34,7 @@ async def cleanup_duplicate_subscriptions(db: AsyncSession) -> int:
             await db.delete(old_subscription)
             total_deleted += 1
             logger.info(
-                '🗑️ Удалена дублирующаяся подписка ID пользователя',
+                '🗑️ Удалена дублирующаяся подписка',
                 old_subscription_id=old_subscription.id,
                 user_id=user_id,
             )
@@ -102,6 +102,32 @@ def convert_subscription_link_to_happ_scheme(subscription_link: str | None) -> s
         return subscription_link
 
     return urlunparse(parsed_link._replace(scheme='happ'))
+
+
+def device_limit_needs_heal(value: int | None) -> bool:
+    """Return True if a stored ``device_limit`` is structurally invalid.
+
+    ``0`` is a legitimate "unlimited devices" state synced from RemnaWave
+    (see :func:`coerce_panel_device_limit`) and must NOT be healed back to
+    ``1`` — that was the original sync bug (every heal pass reverted
+    unlimited-device subscriptions). Only ``None`` and negative values are
+    truly broken.
+    """
+    return value is None or value < 0
+
+
+def coerce_panel_device_limit(value: object, default: int = 1) -> int:
+    """Normalize ``hwidDeviceLimit`` from a RemnaWave panel response.
+
+    The panel returns ``0`` to signal HWID limit disabled (unlimited devices).
+    A naive ``value or default`` collapses that ``0`` into the fallback and
+    silently overwrites unlimited-device subscriptions on every sync.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int) and value >= 0:
+        return value
+    return default
 
 
 def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:

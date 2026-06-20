@@ -21,6 +21,7 @@ from app.database.crud.system_setting import get_setting_value
 from app.database.crud.user import (
     OAUTH_PROVIDER_COLUMNS,
     clear_user_oauth_provider_id,
+    get_user_by_email,
     get_user_by_id,
     get_user_by_oauth_provider,
     get_user_by_telegram_id,
@@ -35,7 +36,12 @@ from app.services.oauth_provider_revocation_service import (
     OAuthProviderRevocationResult,
     oauth_provider_revocation_service,
 )
-from app.services.account_merge_service import compute_auth_methods, execute_merge, get_merge_preview
+from app.services.account_merge_service import (
+    compute_auth_methods,
+    execute_merge,
+    flush_remnawave_deletions,
+    get_merge_preview,
+)
 from app.utils.cache import RateLimitCache, TokenReplayCache
 
 from ..auth.merge_service import (
@@ -401,28 +407,70 @@ async def _exchange_and_link_oauth(
     if current_value and str(current_value) == user_info.provider_id:
         return LinkCallbackResponse(success=True, message='already_linked')
 
-    # Check if provider_id is linked to ANOTHER user
-    existing_user = await get_user_by_oauth_provider(db, provider, user_info.provider_id)
-    if existing_user and existing_user.id != user.id:
+    if current_value:
+        # The user already has a DIFFERENT account of this provider linked.
+        # Don't silently overwrite it (that orphans the old login with no trace
+        # and quietly swaps which external identity can sign in). Require an
+        # explicit unlink first.
         logger.info(
-            'Account linking conflict: provider already linked to another user',
+            'Account linking rejected: provider slot already occupied by a different account',
             context=log_context,
             provider=provider,
-            provider_id=user_info.provider_id,
+            user_id=user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f'A {provider} account is already linked to your account. Unlink it first to link a different one.'
+            ),
+        )
+
+    # Check if provider_id is linked to ANOTHER account.
+    existing_user = await get_user_by_oauth_provider(db, provider, user_info.provider_id)
+    if existing_user and existing_user.id != user.id:
+        # A social login belongs to exactly ONE account. This used to silently
+        # offer an account MERGE (absorb the other account) — surprising and
+        # unsafe: linking a login should never move/merge accounts. Refuse it.
+        # To move the social login, the owner unlinks it from the other account
+        # first; to deliberately combine two accounts, use the email/Telegram
+        # merge flows. (You can only reach here by completing OAuth as this
+        # provider account, so this is not a takeover — but it must not be a
+        # silent merge either.)
+        logger.info(
+            'Account linking rejected: provider already linked to another account',
+            context=log_context,
+            provider=provider,
             current_user_id=user.id,
             existing_user_id=existing_user.id,
         )
-        merge_token = await create_merge_token(
-            primary_user_id=user.id,
-            secondary_user_id=existing_user.id,
-            provider=provider,
-            provider_id=user_info.provider_id,
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=('This social account is already linked to a different account. Unlink it from that account first.'),
         )
-        return LinkCallbackResponse(
-            success=False,
-            merge_required=True,
-            merge_token=merge_token,
-        )
+
+    # Backfill the account email from the provider when a Telegram-first (or any
+    # no-email) account links Google/Yandex and the IdP attests a verified address.
+    # Without this the linked user has no email on their card and email-based
+    # features (recovery, panel sync, cross-provider linking) stay unavailable.
+    # Only fill an empty slot; never overwrite an existing email, and never adopt an
+    # address already owned by another account (that needs the explicit merge flow) —
+    # just skip the backfill so linking the social login still succeeds.
+    if not user.email and user_info.email and user_info.email_verified:
+        normalized_email = user_info.email.strip().lower()
+        email_owner = await get_user_by_email(db, normalized_email)
+        if email_owner is not None and email_owner.id != user.id:
+            logger.info(
+                'OAuth link: email backfill skipped, address already owned by another account',
+                context=log_context,
+                provider=provider,
+                user_id=user.id,
+                existing_user_id=email_owner.id,
+            )
+        else:
+            user.email = normalized_email
+            user.email_verified = True
+            user.email_verified_at = datetime.now(UTC)
+            user.email_verification_source = f'oauth_{provider}'
 
     # Link the provider to current user
     await set_user_oauth_provider_id(db, user, provider, user_info.provider_id)
@@ -925,11 +973,19 @@ async def link_telegram(
         if request.photo_url is not None:
             widget_data['photo_url'] = request.photo_url
 
-        # Generous max_age: Telegram caches auth data with stale auth_date
-        if not validate_telegram_login_widget(widget_data, max_age_seconds=86400 * 30):
+        # Login Widget auth is fresh per click (24h is already very generous).
+        if not validate_telegram_login_widget(widget_data, max_age_seconds=86400):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Invalid or expired Telegram Login Widget data',
+            )
+        # SECURITY: one-time use — a captured widget payload (it can travel in the
+        # redirect URL) must not be replayable to link a Telegram account.
+        widget_replay = hashlib.sha256(f'tg_widget:{widget_data.get("hash", "")}'.encode()).hexdigest()
+        if await TokenReplayCache.is_token_replayed(widget_replay, ttl=86400):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='This Telegram authorization has already been used.',
             )
         telegram_id = request.id
         telegram_username = request.username
@@ -1129,7 +1185,7 @@ async def link_server_complete(
 
 
 # ---------------------------------------------------------------------------
-# Router 2: Merge (NO JWT required)
+# Router 2: Merge (JWT required — bound to the authenticated initiator)
 # ---------------------------------------------------------------------------
 
 merge_router = APIRouter(prefix='/auth/merge', tags=['Cabinet Account Merge'])
@@ -1139,10 +1195,10 @@ merge_router = APIRouter(prefix='/auth/merge', tags=['Cabinet Account Merge'])
 async def get_merge_preview_endpoint(
     raw_request: Request,
     merge_token: str = Path(..., min_length=32, max_length=64),
+    user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> MergePreviewResponse:
     """Preview the result of merging two accounts before confirming."""
-    # Rate limit by IP (unauthenticated endpoint)
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'merge_preview', limit=15, window=60, fail_closed=True):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail='Too many requests')
@@ -1156,6 +1212,14 @@ async def get_merge_preview_endpoint(
 
     primary_user_id: int = token_data['primary_user_id']
     secondary_user_id: int = token_data['secondary_user_id']
+
+    # SECURITY: bind to the authenticated initiator — a leaked token alone must
+    # not let a third party preview the two accounts or run the merge.
+    if user.id != primary_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='This merge can only be completed by the account that started it.',
+        )
 
     try:
         preview = await get_merge_preview(db, primary_user_id, secondary_user_id)
@@ -1189,10 +1253,10 @@ async def execute_merge_endpoint(
     request: MergeRequest,
     raw_request: Request,
     merge_token: str = Path(..., min_length=32, max_length=64),
+    user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> MergeResponse:
     """Execute account merge. Consumes the merge token (one-time use)."""
-    # Rate limit by IP (unauthenticated endpoint)
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'merge_execute', limit=5, window=60, fail_closed=True):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail='Too many requests')
@@ -1210,6 +1274,16 @@ async def execute_merge_endpoint(
     provider: str = consumed.get('provider', '')
     provider_id: str = consumed.get('provider_id', '')
 
+    # SECURITY: bind execution to the authenticated initiator (the primary). A
+    # leaked token alone (e.g. from a URL in logs/history) must not let a third
+    # party run the merge. Restore the token so the real initiator can retry.
+    if user.id != primary_user_id:
+        await restore_merge_token(merge_token, consumed)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='This merge can only be completed by the account that started it.',
+        )
+
     # 2. Validate keep_subscription_from — restore token if invalid
     if request.keep_subscription_from not in (primary_user_id, secondary_user_id):
         await restore_merge_token(merge_token, consumed)
@@ -1223,7 +1297,11 @@ async def execute_merge_endpoint(
         'primary' if request.keep_subscription_from == primary_user_id else 'secondary'
     )
 
-    # 3. Execute merge
+    # 3. Execute merge.
+    # RemnaWave user deletions are DEFERRED until after commit: an external delete
+    # can't be rolled back with the DB, so deleting before commit would (on a
+    # failed merge) leave a deleted panel user while the DB merge is rolled back.
+    deferred_deletions: list[str] = []
     try:
         merged_user = await execute_merge(
             db=db,
@@ -1232,6 +1310,7 @@ async def execute_merge_endpoint(
             keep_subscription_from=keep_from,
             provider=provider,
             provider_id=provider_id,
+            deferred_remnawave_deletions=deferred_deletions,
         )
         await db.commit()
     except ValueError as exc:
@@ -1250,6 +1329,9 @@ async def execute_merge_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Account merge failed due to an internal error',
         ) from exc
+
+    # Commit succeeded — only now drop the discarded subscription's panel user.
+    await flush_remnawave_deletions(deferred_deletions)
 
     # 4. Re-fetch merged user with full relationships for auth response
     merged_user = await get_user_by_id(db, primary_user_id)

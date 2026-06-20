@@ -10,31 +10,57 @@ from app.database.models import PaymentMethod, Transaction, TransactionType, Use
 
 logger = structlog.get_logger(__name__)
 
-# Реальные платёжные методы для подсчёта дохода
-# Исключены: MANUAL (админские), BALANCE (оплата с баланса), NULL (колесо, промокоды, бонусы)
-REAL_PAYMENT_METHODS = [
-    PaymentMethod.TELEGRAM_STARS.value,
-    PaymentMethod.TRIBUTE.value,
-    PaymentMethod.YOOKASSA.value,
-    PaymentMethod.CRYPTOBOT.value,
-    PaymentMethod.HELEKET.value,
-    PaymentMethod.MULENPAY.value,
-    PaymentMethod.PAL24.value,
-    PaymentMethod.WATA.value,
-    PaymentMethod.PLATEGA.value,
-    PaymentMethod.CLOUDPAYMENTS.value,
-    PaymentMethod.FREEKASSA.value,
-    PaymentMethod.KASSA_AI.value,
-    PaymentMethod.RIOPAY.value,
-    PaymentMethod.SEVERPAY.value,
-    PaymentMethod.APPLE_IAP.value,
-    PaymentMethod.ROLLYPAY.value,
-    PaymentMethod.PAYPEAR.value,
-    PaymentMethod.OVERPAY.value,
-    PaymentMethod.AURAPAY.value,
-    PaymentMethod.ETOPLATEZHI.value,
-    PaymentMethod.ANTILOPAY.value,
-]
+# Реальные платёжные методы для подсчёта дохода.
+#
+# Выводим из enum, а не перечисляем руками: раньше список хардкодился, и каждый
+# новый шлюз надо было не забыть добавить — Jupiter/Donut/Lava забыли, и их выручка
+# выпадала из ВСЕХ отчётов (сводка, по методам, партнёрка, ежедневный отчёт, webapi).
+# Теперь новый шлюз попадает в статистику автоматически.
+#
+# Исключаем только НЕ-шлюзовые значения enum:
+#   MANUAL  — админские пополнения (считаются отдельной строкой, не как доход шлюза);
+#   BALANCE — оплата с баланса (иначе двойной счёт: деньги уже учтены при пополнении).
+# Все остальные значения PaymentMethod — реальные платёжные шлюзы.
+_NON_GATEWAY_METHODS = frozenset(
+    {
+        PaymentMethod.MANUAL.value,
+        PaymentMethod.BALANCE.value,
+    }
+)
+REAL_PAYMENT_METHODS = [m.value for m in PaymentMethod if m.value not in _NON_GATEWAY_METHODS]
+
+
+# ── Доп. услуги (докупка трафика / устройств) ──────────────────────────────────
+#
+# Допы переиспользуют тип SUBSCRIPTION_PAYMENT, поэтому отличить их от настоящих
+# продаж/продлений можно только по тексту описания. Описания — захардкоженные
+# литералы в местах покупки (НЕ через texts.t), поэтому подстроки стабильны для
+# любого языка интерфейса. Держим их единым списком, чтобы хрупкое сопоставление
+# жило в одном месте, а не дублировалось по эндпоинтам.
+#
+# ВАЖНО (известное ограничение): если ТАРИФ назван со словом «трафик»/«устройств»,
+# обычная покупка/продление такого тарифа ложно попадёт под фильтр. Надёжное
+# решение — отдельный тип/маркер транзакции для допов; пока его нет, фрагильность
+# локализована здесь. Английский вариант «Traffic upgrade …» (кабинет) раньше
+# выпадал из %трафик% — теперь учтён.
+TRAFFIC_ADDON_PATTERNS = ('%трафик%', '%traffic upgrade%')
+DEVICE_ADDON_PATTERNS = ('%устройств%',)
+ADDON_DESCRIPTION_PATTERNS = (*TRAFFIC_ADDON_PATTERNS, *DEVICE_ADDON_PATTERNS)
+
+
+def traffic_addon_clause(description_column):
+    """SQL-условие: описание транзакции похоже на докупку трафика."""
+    return or_(*(description_column.ilike(p) for p in TRAFFIC_ADDON_PATTERNS))
+
+
+def device_addon_clause(description_column):
+    """SQL-условие: описание транзакции похоже на покупку доп. устройств."""
+    return or_(*(description_column.ilike(p) for p in DEVICE_ADDON_PATTERNS))
+
+
+def addon_description_clause(description_column):
+    """SQL-условие: транзакция — любой доп (трафик или устройства), не продажа/продление."""
+    return or_(*(description_column.ilike(p) for p in ADDON_DESCRIPTION_PATTERNS))
 
 
 async def create_transaction(
@@ -83,7 +109,7 @@ async def create_transaction(
     await db.refresh(transaction)
 
     logger.info(
-        '💳 Создана транзакция: на ₽ для пользователя',
+        '💳 Создана транзакция',
         type_value=type.value,
         amount_kopeks=stored_amount / 100,
         user_id=user_id,
@@ -132,6 +158,19 @@ async def create_transaction(
                 )
             except Exception as exc:
                 logger.debug('Не удалось записать событие конкурса для пользователя', user_id=user_id, exc=exc)
+
+            # Yandex.Metrika offline conversion — central chokepoint.
+            # Every completed SUBSCRIPTION_PAYMENT (cabinet, bot handlers, guest,
+            # stars, trial→paid conversion, autopay/recurring, IAP, webhooks)
+            # passes through here, so the purchase event fires exactly once per
+            # paid purchase. Background task with its own DB session; no-ops when
+            # the service is disabled or no CID is stored.
+            try:
+                from app.services import yandex_offline_conv_service as yandex_conv
+
+                yandex_conv.spawn_bg(yandex_conv.fire_purchase_bg(user_id, abs(amount_kopeks)))
+            except Exception as exc:
+                logger.debug('Не удалось отправить Yandex purchase для пользователя', user_id=user_id, exc=exc)
 
     return transaction
 
@@ -193,6 +232,17 @@ async def emit_transaction_side_effects(
             )
         except Exception as exc:
             logger.debug('Не удалось записать событие конкурса для пользователя', user_id=user_id, exc=exc)
+
+        # Yandex.Metrika offline conversion — central chokepoint (deferred path
+        # for create_transaction(commit=False) callers). Fires the purchase event
+        # exactly once per completed SUBSCRIPTION_PAYMENT. Background task with
+        # its own DB session; no-ops when disabled or no CID stored.
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            yandex_conv.spawn_bg(yandex_conv.fire_purchase_bg(user_id, abs(amount_kopeks)))
+        except Exception as exc:
+            logger.debug('Не удалось отправить Yandex purchase для пользователя', user_id=user_id, exc=exc)
 
 
 async def get_transaction_by_id(db: AsyncSession, transaction_id: int) -> Transaction | None:
@@ -487,18 +537,39 @@ async def check_tribute_payment_duplicate(
 
 async def create_unique_tribute_transaction(
     db: AsyncSession, user_id: int, payment_id: str, amount_kopeks: int, description: str
-) -> Transaction:
+) -> tuple[Transaction, bool]:
+    """Create a Tribute deposit transaction idempotently.
+
+    Returns ``(transaction, created)``. When ``created`` is False the payment was
+    already processed (a replayed webhook) and the caller MUST NOT credit the balance
+    again.
+    """
     external_id = f'donation_{payment_id}'
 
     existing = await get_transaction_by_external_id(db, external_id, PaymentMethod.TRIBUTE)
 
     if existing:
+        # Synthesized fallback ids (``tribute_<tg>_<amount>``) are NOT unique per payment,
+        # so a user legitimately repeating a same-amount donation must still be credited —
+        # keep the disambiguating suffix for those only. A real Tribute event id is unique,
+        # so a collision there means a replayed webhook: stay idempotent and do not
+        # double-credit. (The previous unconditional timestamped suffix defeated the
+        # uq_transaction_external_id_method constraint and credited again on every replay
+        # delivered after the 24h dedup window.)
+        if not str(payment_id).startswith('tribute_'):
+            logger.info(
+                'Tribute: повторный webhook с тем же payment_id — идемпотентно, начисление пропускаем',
+                external_id=external_id,
+                transaction_id=existing.id,
+            )
+            return existing, False
+
         timestamp = int(datetime.now(UTC).timestamp())
         external_id = f'donation_{payment_id}_{amount_kopeks}_{timestamp}'
 
-        logger.info('Создан уникальный external_id для избежания дубликатов', external_id=external_id)
+        logger.info('Создан уникальный external_id для fallback payment_id', external_id=external_id)
 
-    return await create_transaction(
+    transaction = await create_transaction(
         db=db,
         user_id=user_id,
         type=TransactionType.DEPOSIT,
@@ -508,3 +579,4 @@ async def create_unique_tribute_transaction(
         external_id=external_id,
         is_completed=True,
     )
+    return transaction, True

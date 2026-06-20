@@ -64,6 +64,7 @@ def _build_request(
 @pytest.mark.anyio
 async def test_tribute_webhook_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'TRIBUTE_ENABLED', True, raising=False)
+    monkeypatch.setattr(settings, 'TRIBUTE_API_KEY', 'test-key', raising=False)
 
     process_mock = AsyncMock(return_value={'status': 'ok'})
 
@@ -146,7 +147,6 @@ async def test_yookassa_forbidden_ip(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.status_code == 403
     payload = json.loads(response.body.decode('utf-8'))
     assert payload['reason'] == 'forbidden_ip'
-    assert payload['ip'] == '8.8.8.8'
     service.process_yookassa_webhook.assert_not_awaited()
 
 
@@ -172,7 +172,6 @@ async def test_yookassa_forbidden_ip_ignores_spoofed_header(monkeypatch: pytest.
     assert response.status_code == 403
     payload = json.loads(response.body.decode('utf-8'))
     assert payload['reason'] == 'forbidden_ip'
-    assert payload['ip'] == '8.8.8.8'
     service.process_yookassa_webhook.assert_not_awaited()
 
 
@@ -198,7 +197,6 @@ async def test_yookassa_forbidden_ip_ignores_spoofed_forwarded_chain(monkeypatch
     assert response.status_code == 403
     payload = json.loads(response.body.decode('utf-8'))
     assert payload['reason'] == 'forbidden_ip'
-    assert payload['ip'] == '8.8.8.8'
     service.process_yookassa_webhook.assert_not_awaited()
 
 

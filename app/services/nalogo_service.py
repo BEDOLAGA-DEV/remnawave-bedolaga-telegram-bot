@@ -132,7 +132,7 @@ class NaloGoService:
         if success:
             queue_len = await cache.llen(NALOGO_QUEUE_KEY)
             logger.info(
-                'Чек добавлен в очередь (payment_id=, сумма=₽, в очереди: )',
+                'Чек добавлен в очередь',
                 payment_id=payment_id,
                 amount=amount,
                 queue_len=queue_len,
@@ -175,7 +175,7 @@ class NaloGoService:
         if success:
             count = await cache.llen(NALOGO_PENDING_VERIFICATION_KEY)
             logger.warning(
-                'Чек сохранён для ручной проверки (payment_id=, сумма=₽, всего ожидают проверки: )',
+                'Чек сохранён для ручной проверки',
                 payment_id=payment_id,
                 amount=amount,
                 count=count,
@@ -274,7 +274,7 @@ class NaloGoService:
         count = await self.get_pending_verification_count()
         if count > 0:
             await cache.delete(NALOGO_PENDING_VERIFICATION_KEY)
-            logger.info('Очередь проверки очищена: удалено чеков', count=count)
+            logger.info('Очередь проверки очищена', count=count)
         return count
 
     async def authenticate(self) -> bool:
@@ -354,7 +354,7 @@ class NaloGoService:
             # Ошибка аутентификации — чек не создавался, безопасно в очередь
             if self._is_service_unavailable(auth_error):
                 logger.warning(
-                    'NaloGO недоступен при аутентификации, чек в очередь (payment_id=, сумма=₽)',
+                    'NaloGO недоступен при аутентификации, чек добавлен в очередь',
                     payment_id=payment_id,
                     amount=amount,
                 )
@@ -393,7 +393,7 @@ class NaloGoService:
 
             receipt_uuid = result.get('approvedReceiptUuid')
             if receipt_uuid:
-                logger.info('Чек создан успешно: на сумму ₽', receipt_uuid=receipt_uuid, amount=amount)
+                logger.info('Чек создан успешно', receipt_uuid=receipt_uuid, amount=amount)
 
                 # Сохраняем в Redis чтобы предотвратить дубли (TTL 30 дней)
                 if payment_id:
@@ -505,7 +505,7 @@ class NaloGoService:
                             receipt_uuid = income.get('approvedReceiptUuid', income.get('receiptUuid'))
                             if receipt_uuid:
                                 logger.info(
-                                    'Найден дубликат чека: (сумма=₽, время=, разница=с)',
+                                    'Найден дубликат чека',
                                     receipt_uuid=receipt_uuid,
                                     income_amount=income_amount,
                                     operation_time=operation_time,

@@ -121,7 +121,9 @@ from .autopay import (
     handle_subscription_cancel,
     handle_subscription_config_back,
     set_autopay_days,
+    set_autopay_period,
     show_autopay_days,
+    show_autopay_period,
     toggle_autopay,
 )
 from .common import _get_promo_offer_discount_percent, update_traffic_prices
@@ -599,8 +601,10 @@ async def show_trial_offer(callback: types.CallbackQuery, db_user: User, db: Asy
 
     texts = get_texts(db_user.language)
 
-    # Проверяем, отключён ли триал для этого типа пользователя
-    if settings.is_trial_disabled_for_user(getattr(db_user, 'auth_type', 'telegram')):
+    # Триал отключён глобально (нулевая длительность) либо для этого типа пользователя
+    if settings.TRIAL_DURATION_DAYS <= 0 or settings.is_trial_disabled_for_user(
+        getattr(db_user, 'auth_type', 'telegram')
+    ):
         await callback.message.edit_text(
             texts.t('TRIAL_DISABLED_FOR_USER_TYPE', 'Пробный период недоступен'),
             reply_markup=get_back_keyboard(db_user.language),
@@ -613,16 +617,7 @@ async def show_trial_offer(callback: types.CallbackQuery, db_user: User, db: Asy
     # Multi-tariff note: db_user.subscription returns the first active/most recent
     # subscription. In multi-tariff mode a user can have multiple subscriptions, but
     # trial eligibility is still "has any subscription" so this check is correct.
-    trial_blocked = False
-    if db_user.has_had_paid_subscription:
-        trial_blocked = True
-    elif db_user.subscription:
-        sub = db_user.subscription
-        # Разрешаем если это PENDING триальная подписка (повторная попытка оплаты)
-        if not (sub.status == SubscriptionStatus.PENDING.value and sub.is_trial):
-            trial_blocked = True
-
-    if trial_blocked:
+    if db_user.is_trial_already_used():
         await callback.message.edit_text(texts.TRIAL_ALREADY_USED, reply_markup=get_back_keyboard(db_user.language))
         await callback.answer()
         return
@@ -801,8 +796,10 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
         await callback.answer()
         return
 
-    # Проверяем, отключён ли триал для этого типа пользователя
-    if settings.is_trial_disabled_for_user(getattr(db_user, 'auth_type', 'telegram')):
+    # Триал отключён глобально (нулевая длительность) либо для этого типа пользователя
+    if settings.TRIAL_DURATION_DAYS <= 0 or settings.is_trial_disabled_for_user(
+        getattr(db_user, 'auth_type', 'telegram')
+    ):
         await callback.message.edit_text(
             texts.t('TRIAL_DISABLED_FOR_USER_TYPE', 'Пробный период недоступен'),
             reply_markup=get_back_keyboard(db_user.language),
@@ -814,16 +811,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
     # PENDING триальные подписки не считаются - пользователь может повторить оплату
     # Multi-tariff note: db_user.subscription returns the first active/most recent
     # subscription. Trial eligibility is "has any subscription" so this check is correct.
-    trial_blocked = False
-    if db_user.has_had_paid_subscription:
-        trial_blocked = True
-    elif db_user.subscription:
-        sub = db_user.subscription
-        # Разрешаем если это PENDING триальная подписка (повторная попытка оплаты)
-        if not (sub.status == SubscriptionStatus.PENDING.value and sub.is_trial):
-            trial_blocked = True
-
-    if trial_blocked:
+    if db_user.is_trial_already_used():
         await callback.message.edit_text(texts.TRIAL_ALREADY_USED, reply_markup=get_back_keyboard(db_user.language))
         await callback.answer()
         return
@@ -3244,16 +3232,7 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
     # PENDING триальные подписки не считаются - пользователь может повторить оплату
     # Multi-tariff note: trial eligibility is "has any subscription", so checking
     # db_user.subscription (first active/most recent) is correct in all modes.
-    trial_blocked = False
-    if db_user.has_had_paid_subscription:
-        trial_blocked = True
-    elif db_user.subscription:
-        sub = db_user.subscription
-        # Разрешаем если это PENDING триальная подписка (повторная попытка оплаты)
-        if not (sub.status == SubscriptionStatus.PENDING.value and sub.is_trial):
-            trial_blocked = True
-
-    if trial_blocked:
+    if db_user.is_trial_already_used():
         await callback.message.edit_text(texts.TRIAL_ALREADY_USED, reply_markup=get_back_keyboard(db_user.language))
         await callback.answer()
         return
@@ -3650,16 +3629,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
     # PENDING триальные подписки не считаются - пользователь может повторить оплату
     # Multi-tariff note: trial eligibility is "has any subscription", so checking
     # db_user.subscription (first active/most recent) is correct in all modes.
-    trial_blocked = False
-    if db_user.has_had_paid_subscription:
-        trial_blocked = True
-    elif db_user.subscription:
-        sub = db_user.subscription
-        # Разрешаем если это PENDING триальная подписка (повторная попытка оплаты)
-        if not (sub.status == SubscriptionStatus.PENDING.value and sub.is_trial):
-            trial_blocked = True
-
-    if trial_blocked:
+    if db_user.is_trial_already_used():
         await callback.message.edit_text(texts.TRIAL_ALREADY_USED, reply_markup=get_back_keyboard(db_user.language))
         await callback.answer()
         return
@@ -4231,11 +4201,15 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(show_autopay_days, F.data == 'autopay_set_days')
 
+    dp.callback_query.register(show_autopay_period, F.data == 'autopay_set_period')
+
     dp.callback_query.register(handle_subscription_config_back, F.data == 'subscription_config_back')
 
     dp.callback_query.register(handle_subscription_cancel, F.data == 'subscription_cancel')
 
     dp.callback_query.register(set_autopay_days, F.data.startswith('autopay_days_'))
+
+    dp.callback_query.register(set_autopay_period, F.data.startswith('autopay_period_'))
 
     dp.callback_query.register(select_country, F.data.startswith('country_'), SubscriptionStates.selecting_countries)
 
@@ -4300,9 +4274,15 @@ def register_handlers(dp: Dispatcher):
     # NB: `SubscriptionStates` уже импортирован на уровне модуля (строка 107) —
     # повторный локальный `from app.states import …` превратил бы имя в local
     # и сломал бы строку 4197 с UnboundLocalError на старте.
-    from app.handlers.subscription.devices import process_device_rename, start_device_rename
+    from app.handlers.subscription.devices import (
+        cancel_device_rename,
+        process_device_rename,
+        start_device_rename,
+    )
 
     dp.callback_query.register(start_device_rename, F.data.regexp(r'^device_rename_\d+_\d+$'))
+    # Кнопка «Отмена» в промпте переименования — чистит FSM и возвращает список.
+    dp.callback_query.register(cancel_device_rename, F.data == 'device_rename_cancel')
     # F.text — игнорируем стикеры/фото/voice пока юзер в FSM, иначе
     # message.text==None трактуется как пустая строка и очищает alias.
     dp.message.register(process_device_rename, SubscriptionStates.renaming_device, F.text)

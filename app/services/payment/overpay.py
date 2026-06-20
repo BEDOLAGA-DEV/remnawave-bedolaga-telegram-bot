@@ -16,21 +16,25 @@ from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
 
 
-# Маппинг статусов Overpay -> internal
 OVERPAY_STATUS_MAP: dict[str, tuple[str, bool]] = {
     'charged': ('success', True),
     'authorized': ('authorized', False),
     'preflight': ('pending', False),
     'new': ('pending', False),
-    'processing': ('processing', False),
     'prepared': ('processing', False),
-    'rejected': ('rejected', False),
+    'prepared_for_holder_metadata_collecting': ('processing', False),
+    'processing': ('processing', False),
     'declined': ('declined', False),
+    'rejected': ('rejected', False),
+    'error': ('error', False),
     'reversed': ('reversed', False),
     'refunded': ('refunded', False),
     'chargeback': ('chargeback', False),
-    'error': ('error', False),
+    'representment': ('chargeback', False),
+    'credited': ('credited', False),
 }
+
+OVERPAY_OPTIONS = ('fps', 'card', 'int')
 
 
 class OverpayPaymentMixin:
@@ -46,18 +50,20 @@ class OverpayPaymentMixin:
         email: str | None = None,
         language: str = 'ru',
         return_url: str | None = None,
+        option: str | None = None,
     ) -> dict[str, Any] | None:
-        """
-        Создает платеж Overpay.
-
-        Returns:
-            Словарь с данными платежа или None при ошибке
-        """
         if not settings.is_overpay_enabled():
             logger.error('Overpay не настроен')
             return None
 
-        # Валидация лимитов
+        if option is not None and option not in OVERPAY_OPTIONS:
+            logger.warning('Overpay: неизвестная опция', option=option)
+            return None
+
+        if option == 'int' and not settings.is_overpay_int_enabled():
+            logger.warning('Overpay: международные платежи отключены')
+            return None
+
         if amount_kopeks < settings.OVERPAY_MIN_AMOUNT_KOPEKS:
             logger.warning(
                 'Overpay: сумма меньше минимальной',
@@ -74,7 +80,6 @@ class OverpayPaymentMixin:
             )
             return None
 
-        # Получаем telegram_id пользователя для order_id
         payment_module = import_module('app.services.payment_service')
         if user_id is not None:
             user = await payment_module.get_user_by_id(db, user_id)
@@ -83,44 +88,99 @@ class OverpayPaymentMixin:
             user = None
             tg_id = 'guest'
 
-        # Генерируем уникальный order_id с telegram_id для удобного поиска
         order_id = f'op{tg_id}_{uuid.uuid4().hex[:6]}'
         amount_rubles = amount_kopeks / 100
-        amount_value = f'{amount_rubles:.2f}'
-        currency = settings.OVERPAY_CURRENCY
 
-        # Метаданные
+        amount_eur = None
+        if option == 'int':
+            amount_eur = round(amount_rubles / settings.OVERPAY_RUB_PER_EUR, 2)
+            if amount_eur < settings.OVERPAY_INT_MIN_EUR:
+                logger.warning(
+                    'Overpay: сумма меньше минимальной в EUR',
+                    amount_eur=amount_eur,
+                    OVERPAY_INT_MIN_EUR=settings.OVERPAY_INT_MIN_EUR,
+                )
+                return None
+            amount_value = f'{amount_eur:.2f}'
+            currency = 'EUR'
+        else:
+            amount_value = f'{amount_rubles:.2f}'
+            currency = settings.OVERPAY_CURRENCY
+
+        project_id = settings.get_overpay_terminal_id(option)
+
         metadata = {
             'user_id': user_id,
             'amount_kopeks': amount_kopeks,
             'description': description,
             'language': language,
             'type': 'balance_topup',
+            'option': option,
+            'currency': currency,
         }
+        if option == 'int':
+            metadata['amount_eur'] = amount_eur
+            metadata['rub_per_eur'] = settings.OVERPAY_RUB_PER_EUR
 
-        # Методы оплаты из настроек
-        payment_methods_str = settings.OVERPAY_PAYMENT_METHODS
-        payment_methods = (
-            [m.strip() for m in payment_methods_str.split(',') if m.strip()] if payment_methods_str else None
-        )
-
-        try:
-            # Используем API для создания платежа
-            result = await overpay_service.create_payment(
-                amount=amount_value,
-                currency=currency,
-                lifetime_minutes=settings.OVERPAY_LIFETIME_MINUTES,
-                merchant_transaction_id=order_id,
-                description=description,
-                return_url=return_url or settings.OVERPAY_RETURN_URL,
-                payment_methods=payment_methods,
+        if option == 'fps':
+            payment_methods = ['fps']
+        elif option in ('card', 'int'):
+            payment_methods = ['card']
+        else:
+            payment_methods_str = settings.OVERPAY_PAYMENT_METHODS
+            payment_methods = (
+                [m.strip() for m in payment_methods_str.split(',') if m.strip()] if payment_methods_str else None
             )
 
-            payment_url = result.get('resultUrl')
-            overpay_payment_id = str(result.get('id', '')) if result.get('id') else None
+        effective_return_url = return_url or settings.OVERPAY_RETURN_URL
+        use_direct_qr = option == 'fps' and settings.is_overpay_sbp_direct_qr_enabled() and bool(effective_return_url)
+
+        try:
+            payment_url = None
+            overpay_payment_id = None
+
+            if use_direct_qr:
+                init_result = None
+                try:
+                    init_result = await overpay_service.create_payment_s2s(
+                        amount=amount_value,
+                        currency=currency,
+                        project_id=project_id,
+                        merchant_transaction_id=order_id,
+                        client_email=email or None,
+                        return_url=effective_return_url,
+                    )
+                except Exception as e:
+                    logger.warning('Overpay: S2S init не сработал, fallback на форму', order_id=order_id, error=e)
+
+                if init_result is not None:
+                    init_id = init_result.get('id')
+                    if not init_id:
+                        logger.error('Overpay: S2S init без id', order_id=order_id, result=init_result)
+                        return None
+                    overpay_payment_id = str(init_id)
+                    payment_url = await overpay_service.wait_for_redirect_link(overpay_payment_id)
+                    if not payment_url:
+                        logger.error('Overpay: прямой QR недоступен, платеж не создан', order_id=order_id)
+                        return None
+                    metadata['direct_qr'] = True
 
             if not payment_url:
-                logger.error('Overpay API не вернул URL платежа', result=result)
+                result = await overpay_service.create_payment(
+                    amount=amount_value,
+                    currency=currency,
+                    lifetime_minutes=settings.OVERPAY_LIFETIME_MINUTES,
+                    merchant_transaction_id=order_id,
+                    description=description,
+                    return_url=effective_return_url,
+                    payment_methods=payment_methods,
+                    project_id=project_id,
+                )
+                payment_url = result.get('resultUrl')
+                overpay_payment_id = str(result.get('id', '')) if result.get('id') else None
+
+            if not payment_url:
+                logger.error('Overpay API не вернул URL платежа', order_id=order_id)
                 return None
 
             logger.info(
@@ -128,12 +188,11 @@ class OverpayPaymentMixin:
                 order_id=order_id,
                 overpay_payment_id=overpay_payment_id,
                 payment_url=payment_url,
+                option=option,
             )
 
-            # Срок действия
             expires_at = datetime.now(UTC) + timedelta(minutes=settings.OVERPAY_LIFETIME_MINUTES)
 
-            # Сохраняем в БД
             overpay_crud = import_module('app.database.crud.overpay')
             local_payment = await overpay_crud.create_overpay_payment(
                 db=db,
@@ -143,6 +202,7 @@ class OverpayPaymentMixin:
                 currency=currency,
                 description=description,
                 payment_url=payment_url,
+                payment_method=option,
                 overpay_payment_id=overpay_payment_id,
                 expires_at=expires_at,
                 metadata_json=metadata,
@@ -161,7 +221,9 @@ class OverpayPaymentMixin:
                 'overpay_payment_id': overpay_payment_id,
                 'amount_kopeks': amount_kopeks,
                 'amount_rubles': amount_rubles,
+                'amount_eur': amount_eur,
                 'currency': currency,
+                'option': option,
                 'payment_url': payment_url,
                 'expires_at': expires_at.isoformat(),
                 'local_payment_id': local_payment.id,
@@ -237,6 +299,36 @@ class OverpayPaymentMixin:
 
             # Финализируем платеж если оплачен — без промежуточного commit
             if is_paid:
+                # Defense in depth: the Overpay webhook is authenticated only by mTLS at the
+                # reverse proxy, which the application itself cannot verify. Before crediting,
+                # cross-check the authoritative status with Overpay over the mTLS API client so a
+                # forged "paid" callback for a still-unpaid invoice is rejected. Fail OPEN (trust
+                # the webhook) on API errors so a transient Overpay outage never blocks a
+                # genuinely-paid callback — same posture as the YooKassa cross-check.
+                try:
+                    remote = await overpay_service.get_payment(payment.order_id)
+                    remote_status = (remote or {}).get('status')
+                    if remote_status is None:
+                        orders = (remote or {}).get('orders') or []
+                        if orders:
+                            remote_status = orders[0].get('status')
+                    if remote_status is not None:
+                        _, remote_paid = OVERPAY_STATUS_MAP.get(remote_status, ('pending', False))
+                        if not remote_paid:
+                            logger.warning(
+                                'Overpay webhook: API не подтвердил оплату — начисление отклонено',
+                                order_id=payment.order_id,
+                                webhook_status=overpay_status,
+                                api_status=remote_status,
+                            )
+                            return False
+                except Exception as cross_check_error:
+                    logger.warning(
+                        'Overpay webhook: не удалось перепроверить статус через API — доверяем вебхуку',
+                        order_id=payment.order_id,
+                        error=cross_check_error,
+                    )
+
                 # Inline field assignments to keep FOR UPDATE lock intact
                 payment.status = internal_status
                 payment.is_paid = True
@@ -505,6 +597,10 @@ class OverpayPaymentMixin:
                 try:
                     order_data = await overpay_service.get_payment(payment.overpay_payment_id)
                     overpay_status = order_data.get('status')
+                    if not overpay_status:
+                        orders = order_data.get('orders') or []
+                        if orders:
+                            overpay_status = orders[0].get('status')
 
                     if overpay_status:
                         status_info = OVERPAY_STATUS_MAP.get(overpay_status, ('pending', False))

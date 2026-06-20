@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 import aiohttp
 import structlog
 
+from app.config import settings
+
 
 logger = structlog.get_logger(__name__)
 
@@ -163,6 +165,8 @@ class RemnaWaveNode:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     provider_uuid: str | None = None
+    provider_name: str | None = None  # infra-provider name (из вложенного provider)
+    provider_favicon: str | None = None  # provider.faviconLink — иконка хостера
     # v2.7.0: replaced cpuCount/cpuModel/totalRam/xrayVersion/nodeVersion
     versions: dict[str, str] | None = None  # {xray, node}
     system: dict[str, Any] | None = None  # {info: {arch, cpus, cpuModel, memoryTotal, ...}, stats: {...}}
@@ -226,6 +230,14 @@ class RemnaWaveAPIError(Exception):
         self.status_code = status_code
         self.response_data = response_data
         super().__init__(self.message)
+
+
+class RemnaWaveTransientError(RemnaWaveAPIError):
+    """Transient panel failure (timeout / connection) after retries — the panel is
+    slow or briefly unreachable, not a real API error. A distinct type so the
+    admin-error forwarder (app/logging_handler.py) can skip these instead of
+    spamming the admin chat on every slow-panel request; a persistent outage is
+    surfaced by the monitoring service, not by per-request error logs."""
 
 
 class RemnaWaveAPI:
@@ -334,7 +346,10 @@ class RemnaWaveAPI:
         connector = aiohttp.TCPConnector(**connector_kwargs)
 
         session_kwargs = {
-            'timeout': aiohttp.ClientTimeout(total=60, connect=10),
+            'timeout': aiohttp.ClientTimeout(
+                total=settings.REMNAWAVE_API_TOTAL_TIMEOUT,
+                connect=settings.REMNAWAVE_API_CONNECT_TIMEOUT,
+            ),
             'headers': headers,
             'connector': connector,
         }
@@ -397,7 +412,16 @@ class RemnaWaveAPI:
                         is_harmless = response.status == 400 and (
                             'already enabled' in error_lower or 'already disabled' in error_lower
                         )
-                        log = logger.warning if response.status in (502, 503, 504) or is_harmless else logger.error
+                        # 404 = "not found" — это всегда обрабатывает вызывающий код (get_user_by_uuid
+                        # → None, delete → success, sync → пересоздание). Логировать его как error
+                        # нельзя: error-логи буферизуются и сыплют отчётом в админ-чат (например, при
+                        # просмотре юзера с протухшим panel uuid — A063). Понижаем до warning.
+                        is_not_found = response.status == 404
+                        log = (
+                            logger.warning
+                            if response.status in (502, 503, 504) or is_harmless or is_not_found
+                            else logger.error
+                        )
                         log('API Error %s: %s', response.status, error_message)
                         log('Response: %s', response_text[:500])
                         raise RemnaWaveAPIError(error_message, response.status, response_data)
@@ -418,10 +442,29 @@ class RemnaWaveAPI:
                     )
                     await asyncio.sleep(delay)
                     continue
-                logger.error('Request failed', error=e)
-                raise RemnaWaveAPIError(f'Request failed: {e!s}')
+                # Транзиент (таймаут/обрыв связи с панелью) после ретраев — WARNING,
+                # а не ERROR: иначе медленная панель спамит админ-чат ошибками
+                # (forwarder в logging_handler шлёт только error+).
+                logger.warning(
+                    'RemnaWave request failed after retries (panel slow/unreachable)',
+                    method=method,
+                    endpoint=endpoint,
+                    error=str(e)[:200],
+                )
+                raise RemnaWaveTransientError(f'Request failed: {e!s}')
+            except TimeoutError as e:
+                # Total-request timeout — the panel was slow to respond. Transient:
+                # log WARNING and wrap in a typed transient error so the admin-error
+                # forwarder skips it. No retry (avoids multi-minute user-facing hangs).
+                logger.warning(
+                    'RemnaWave request timed out (panel slow)',
+                    method=method,
+                    endpoint=endpoint,
+                    error=str(e)[:200],
+                )
+                raise RemnaWaveTransientError(f'Request timed out: {method} {endpoint}') from e
 
-        raise RemnaWaveAPIError(f'Max retries exceeded for {method} {endpoint}')
+        raise RemnaWaveTransientError(f'Max retries exceeded for {method} {endpoint}')
 
     async def create_user(
         self,
@@ -940,8 +983,26 @@ class RemnaWaveAPI:
                 raise RemnaWaveAPIError(f'Failed to get outline subscription: {response.status}')
             return await response.text()
 
-    async def get_system_stats(self) -> dict[str, Any]:
-        response = await self._make_request('GET', '/api/system/stats')
+    async def get_system_stats(self, tz: str | None = None) -> dict[str, Any]:
+        params = {'tz': tz} if tz else None
+        response = await self._make_request('GET', '/api/system/stats', params=params)
+        return response['response']
+
+    async def get_health(self) -> dict[str, Any]:
+        """Panel runtime health: {runtimeMetrics: [{rss, heapUsed, heapTotal,
+        eventLoopDelayMs, eventLoopP99Ms, uptime, instanceId, ...}]}."""
+        response = await self._make_request('GET', '/api/system/health')
+        return response['response']
+
+    async def get_hwid_top_users(self, size: int = 10, start: int = 0) -> dict[str, Any]:
+        """Top users by HWID device count: {users:[{username,devicesCount,...}], total}."""
+        params = {'size': size, 'start': start}
+        response = await self._make_request('GET', '/api/hwid/devices/top-users', params=params)
+        return response['response']
+
+    async def get_subscription_request_stats(self) -> dict[str, Any]:
+        """Subscription request history: {byParsedApp:[{app,count}], hourlyRequestStats:[...]}."""
+        response = await self._make_request('GET', '/api/subscription-request-history/stats')
         return response['response']
 
     async def get_system_metadata(self) -> dict[str, Any]:
@@ -957,12 +1018,25 @@ class RemnaWaveAPI:
         response = await self._make_request('GET', '/api/system/metadata')
         return response['response']
 
-    async def get_bandwidth_stats(self) -> dict[str, Any]:
-        response = await self._make_request('GET', '/api/system/stats/bandwidth')
+    async def get_bandwidth_stats(self, tz: str | None = None) -> dict[str, Any]:
+        params = {'tz': tz} if tz else None
+        response = await self._make_request('GET', '/api/system/stats/bandwidth', params=params)
         return response['response']
 
     async def get_nodes_statistics(self) -> dict[str, Any]:
         response = await self._make_request('GET', '/api/system/stats/nodes')
+        return response['response']
+
+    async def get_stats_recap(self) -> dict[str, Any]:
+        """Panel recap: {thisMonth:{users,traffic}, total:{users,nodes,traffic,nodesRam,
+        nodesCpuCores,distinctCountries}, version, initDate}."""
+        response = await self._make_request('GET', '/api/system/stats/recap')
+        return response['response']
+
+    async def get_hwid_devices_stats(self) -> dict[str, Any]:
+        """HWID device stats: {byPlatform:[{platform,count}], byApp:[{app,count}],
+        stats:{totalUniqueDevices,totalHwidDevices,averageHwidDevicesPerUser}}."""
+        response = await self._make_request('GET', '/api/hwid/devices/stats')
         return response['response']
 
     async def get_nodes_metrics(self) -> dict[str, Any]:
@@ -1214,13 +1288,44 @@ class RemnaWaveAPI:
             return False
 
     async def remove_device(self, user_uuid: str, device_hwid: str) -> bool:
+        """Удалить одно HWID-устройство пользователя.
+
+        Возвращает True только когда устройство действительно отсутствует.
+        Панель на POST /api/hwid/devices/delete отвечает ОСТАВШИМИСЯ устройствами
+        ({response: {total, devices}} — та же форма, что и у GET), поэтому мы
+        проверяем, что целевого hwid в этом списке больше нет, вместо того чтобы
+        считать «нет исключения == удалено». 404 означает, что устройство/пользователь
+        уже отсутствует — это и есть нужный результат, поэтому тоже success.
+        Панели, отвечающие «голым» ack без списка devices, обрабатываются как раньше
+        (успешный запрос == удалено).
+        """
+        delete_data = {'userUuid': user_uuid, 'hwid': device_hwid}
         try:
-            delete_data = {'userUuid': user_uuid, 'hwid': device_hwid}
-            await self._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
-            return True
+            response = await self._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
+        except RemnaWaveAPIError as e:
+            if e.status_code == 404:
+                return True  # устройства уже нет — цель достигнута
+            logger.error(
+                'Ошибка удаления устройства', device_hwid=device_hwid, status_code=e.status_code, error=e.message
+            )
+            return False
         except Exception as e:
             logger.error('Ошибка удаления устройства', device_hwid=device_hwid, error=e)
             return False
+
+        payload = response.get('response') if isinstance(response, dict) else None
+        devices = payload.get('devices') if isinstance(payload, dict) else None
+        if isinstance(devices, list):
+            still_present = any(isinstance(d, dict) and d.get('hwid') == device_hwid for d in devices)
+            if still_present:
+                logger.warning(
+                    'Панель приняла запрос, но устройство осталось в списке',
+                    device_hwid=device_hwid,
+                    remaining=payload.get('total'),
+                )
+                return False
+
+        return True
 
     async def encrypt_happ_crypto_link(self, link_to_encrypt: str) -> str | None:
         try:
@@ -1387,6 +1492,8 @@ class RemnaWaveAPI:
             created_at=self._parse_optional_datetime(node_data.get('createdAt')),
             updated_at=self._parse_optional_datetime(node_data.get('updatedAt')),
             provider_uuid=node_data.get('providerUuid'),
+            provider_name=(node_data.get('provider') or {}).get('name'),
+            provider_favicon=(node_data.get('provider') or {}).get('faviconLink'),
             versions=node_data.get('versions'),
             system=node_data.get('system'),
             active_plugin_uuid=node_data.get('activePluginUuid'),

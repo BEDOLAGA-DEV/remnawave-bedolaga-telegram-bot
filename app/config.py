@@ -104,14 +104,46 @@ class Settings(BaseSettings):
 
     TIMEZONE: str = Field(default_factory=lambda: os.getenv('TZ', 'UTC'))
 
+    # strftime pattern used to render datetime values that flow into
+    # email templates (subscription_expiring, subscription_renewed,
+    # autopay_success, etc). Default is locale-independent so it
+    # renders identically on every system: '20.05.2026, 10:32'.
+    # Admins who run a Docker image with the matching locale package
+    # installed can switch to `'%d %B %Y, %H:%M'` for month names like
+    # '20 мая 2026, 10:32', or to `'%Y-%m-%d %H:%M'` for ISO-ish.
+    # See app/utils/timezone.py::format_email_datetime.
+    EMAIL_DATE_FORMAT: str = '%d.%m.%Y, %H:%M'
+
     DATABASE_MODE: str = 'auto'
+
+    # Параметры пула подключений к PostgreSQL. Раньше были захардкожены в
+    # app/database/database.py — вынесены в .env, чтобы масштабировать пул под
+    # нагрузку без пересборки образа. При нескольких воркерах каждый процесс
+    # держит СВОЙ пул, поэтому суммарно ≈ WORKERS * (POOL_SIZE + MAX_OVERFLOW)
+    # соединений — держите ниже max_connections PostgreSQL. Для SQLite не
+    # применяются (там используется NullPool без пулинга).
+    DATABASE_POOL_SIZE: int = 20
+    DATABASE_MAX_OVERFLOW: int = 20
+    DATABASE_POOL_TIMEOUT: int = 30
 
     REDIS_URL: str = 'redis://localhost:6379/0'
     CART_TTL_SECONDS: int = 3600  # Время жизни корзины пользователя в Redis (1 час)
+    # «Свежее намерение» пополнить ради сохранённой корзины. Тихая авто-покупка из
+    # корзины после пополнения срабатывает ТОЛЬКО если в течение этого окна юзер
+    # явно нажал «Корзина сохранена → выбрать оплату» (return_to_cart). Иначе
+    # пополнение ради подарка / просто денег не должно молча тратиться на подписку.
+    CART_AUTOPURCHASE_INTENT_TTL_SECONDS: int = 1800  # 30 минут (хватает на оплату, но не на «забытую» корзину)
 
     REMNAWAVE_API_URL: str | None = None
     REMNAWAVE_API_KEY: str | None = None
     REMNAWAVE_SECRET_KEY: str | None = None
+
+    # HTTP-таймауты запросов к панели RemnaWave (секунды). Self-hosted панели
+    # бывают медленными на коннект: раньше connect был зашит в 10с, из-за чего
+    # на медленной панели соединение рвалось (ConnectionTimeoutError). Транзиентные
+    # таймауты логируются как WARNING, чтобы не спамить админ-чат ошибками.
+    REMNAWAVE_API_CONNECT_TIMEOUT: int = 30
+    REMNAWAVE_API_TOTAL_TIMEOUT: int = 60
 
     REMNAWAVE_USERNAME: str | None = None
     REMNAWAVE_PASSWORD: str | None = None
@@ -167,6 +199,10 @@ class Settings(BaseSettings):
     RESET_DEVICES_ON_RENEWAL: bool = False
     TARIFF_SWITCH_UPGRADE_ENABLED: bool = True
     TARIFF_SWITCH_DOWNGRADE_ENABLED: bool = True
+    # При смене тарифа НЕ переносить остаток дней, наспамленных на бесплатном (0₽)
+    # тарифе, на новый платный тариф (иначе юзер бесплатно уносит, напр., 1000 дней).
+    # Платные подписки переносят дни как обычно. Выключите, чтобы вернуть перенос.
+    TARIFF_SWITCH_RESET_FREE_DAYS: bool = True
     MAX_DEVICES_LIMIT: int = 20
 
     TRIAL_WARNING_HOURS: int = 2
@@ -256,6 +292,8 @@ class Settings(BaseSettings):
     REFERRAL_FIRST_TOPUP_BONUS_KOPEKS: int = 10000
     REFERRAL_INVITER_BONUS_KOPEKS: int = 10000
     REFERRAL_COMMISSION_PERCENT: int = 25
+    REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT: int | None = None
+    REFERRAL_RECURRING_COMMISSION_TIERS: str = ''  # Формат: "0:10,10:15,50:20,100:25"
     REFERRAL_MAX_COMMISSION_PAYMENTS: int = 0  # Макс. кол-во платежей реферала с комиссией (0 = без лимита)
 
     REFERRAL_PROGRAM_ENABLED: bool = True
@@ -343,7 +381,22 @@ class Settings(BaseSettings):
 
     DEFAULT_AUTOPAY_ENABLED: bool = False
     DEFAULT_AUTOPAY_DAYS_BEFORE: int = 3
+    # 0 → use the tariff's shortest (cheapest) period, as before.
+    # >0 → autopay charges this many days each cycle by default (must be present in tariff/renewal periods).
+    # Per-subscription override lives in Subscription.autopay_period_days.
+    DEFAULT_AUTOPAY_PERIOD_DAYS: int = 0
     MIN_BALANCE_FOR_AUTOPAY_KOPEKS: int = 10000
+
+    # ── Антиспам уведомлений об ошибке автоплатежа ──
+    # Максимум уведомлений об ошибке списания за ОДИН цикл подписки (до следующего end_date).
+    # 0 — не отправлять уведомления об ошибке вовсе.
+    AUTOPAY_FAIL_MAX_NOTIFICATIONS: int = 2
+    # За сколько часов до окончания подписки слать «финальное» напоминание. 0 — без финала.
+    AUTOPAY_FAIL_FINAL_REMINDER_HOURS: int = 3
+    # Периодические повторы между первым и финальным уведомлением, каждые N часов
+    # (legacy-режим). 0 — без повторов (только первое + финальное).
+    AUTOPAY_FAIL_REPEAT_INTERVAL_HOURS: int = 0
+
     SUBSCRIPTION_RENEWAL_BALANCE_THRESHOLD_KOPEKS: int = 20000
 
     MONITORING_INTERVAL: int = 60
@@ -392,6 +445,30 @@ class Settings(BaseSettings):
 
     YOOKASSA_ENABLED: bool = False
     YOOKASSA_DISPLAY_NAME: str = 'YooKassa'
+    # HTTP socket timeouts for yookassa SDK requests. The SDK itself
+    # ships with NO timeout, so a hanging YK endpoint will block a
+    # worker thread forever (until TCP keep-alive eventually kills it,
+    # hours later). app/services/yookassa_service.py monkey-patches
+    # ApiClient.execute to pass these values to requests.Session, so
+    # threads are guaranteed to unstick within ``read`` seconds.
+    #
+    # Read=10s catches P99.9 degradation while keeping pool-slot
+    # occupancy bounded — at 4 workers, a degradation event can pin
+    # the pool for at most 10s instead of 15s (33% faster recovery).
+    # YK normal latency is ~500ms, so 10s read is still ~20× headroom.
+    #
+    # Operators floor at 1s — setting either to ``0`` silently falls
+    # back to the default below to avoid disabling protection entirely.
+    YOOKASSA_HTTP_CONNECT_TIMEOUT: int = 5
+    YOOKASSA_HTTP_READ_TIMEOUT: int = 10
+
+    # Bounded thread pool for synchronous yookassa SDK calls. Default 4
+    # is a balance between burst capacity (~8 req/s normal, ~2 req/s
+    # under degradation per Little's law) and memory footprint (~32MB
+    # per worker stack). High-volume operators can raise this to 6-8
+    # without splitting into polling vs webhook lanes — that split is
+    # a separate refactor.
+    YOOKASSA_MAX_CONCURRENT_REQUESTS: int = 4
     YOOKASSA_SHOP_ID: str | None = None
     YOOKASSA_SECRET_KEY: str | None = None
     YOOKASSA_RETURN_URL: str | None = None
@@ -606,6 +683,9 @@ class Settings(BaseSettings):
     YANDEX_OFFLINE_CONV_DL: str = ''
     YANDEX_OFFLINE_CONV_DT: str = ''
     YANDEX_OFFLINE_CONV_CURRENCY: str = 'RUB'
+    # Offline Conversions API (mc.yandex.ru via OAuth, yclid-keyed)
+    YANDEX_OFFLINE_CONV_OAUTH_TOKEN: str = ''
+    YANDEX_OFFLINE_CONV_PURCHASE_GOAL_ID: str = ''
 
     # ── S2S Postback (server-to-server affiliate notifications) ──
     S2S_POSTBACK_ENABLED: bool = False
@@ -697,6 +777,14 @@ class Settings(BaseSettings):
     OVERPAY_RETURN_URL: str | None = None
     OVERPAY_LIFETIME_MINUTES: int = 1440
     OVERPAY_PAYMENT_METHODS: str = 'card,fps'
+    OVERPAY_SBP_TERMINAL_ID: str | None = None
+    OVERPAY_CARD_TERMINAL_ID: str | None = None
+    OVERPAY_INT_TERMINAL_ID: str | None = None
+    OVERPAY_SBP_DIRECT_QR: bool = False
+    OVERPAY_INT_ENABLED: bool = False
+    OVERPAY_INT_MIN_EUR: float = 5.0
+    OVERPAY_RUB_PER_EUR: float = 0.0
+    OVERPAY_SERVER_IP: str | None = None
 
     # AuraPay (aurapay.tech)
     AURAPAY_ENABLED: bool = False
@@ -827,6 +915,11 @@ class Settings(BaseSettings):
     CONNECT_BUTTON_MODE: str = 'miniapp_subscription'
     MINIAPP_CUSTOM_URL: str = ''
     MINIAPP_STATIC_PATH: str = 'miniapp'
+    # Короткое имя Telegram Mini App (BotFather → /newapp), напр. 'cabinet'.
+    # Нужно только для диплинков t.me/<bot>/<app>?startapp=… которые открывают
+    # кабинет из ГРУППОВЫХ чатов (web_app-кнопки в группах не работают). В личке
+    # достаточно MINIAPP_CUSTOM_URL. Пусто → в группах кнопка кабинета не строится.
+    MINIAPP_APP_SHORT_NAME: str = ''
 
     # Media upload settings (news article images/videos)
     MEDIA_UPLOAD_DIR: str = './uploads'
@@ -855,6 +948,11 @@ class Settings(BaseSettings):
     DEFAULT_LANGUAGE: str = 'ru'
     AVAILABLE_LANGUAGES: str = 'ru,en,ua,zh,fa'
     LANGUAGE_SELECTION_ENABLED: bool = True
+
+    PRIVACY_POLICY_DISPLAY_MODE: str = 'both'
+    PUBLIC_OFFER_DISPLAY_MODE: str = 'both'
+    SERVICE_RULES_DISPLAY_MODE: str = 'both'
+    FAQ_DISPLAY_MODE: str = 'both'
 
     # Округление цен при отображении (≤50 коп вниз, >50 коп вверх)
     PRICE_ROUNDING_ENABLED: bool = True
@@ -1170,6 +1268,38 @@ class Settings(BaseSettings):
         except (TypeError, ValueError):
             return 10
 
+    @field_validator('DATABASE_POOL_SIZE', mode='before')
+    @classmethod
+    def ensure_positive_database_pool_size(cls, value: int | None) -> int:
+        # pool_size=0 в SQLAlchemy QueuePool означает «без лимита» — это footgun,
+        # который легко исчерпает max_connections PostgreSQL, поэтому держим >= 1.
+        try:
+            if value is None or value == '':
+                return 20
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return 20
+
+    @field_validator('DATABASE_MAX_OVERFLOW', mode='before')
+    @classmethod
+    def ensure_nonnegative_database_max_overflow(cls, value: int | None) -> int:
+        try:
+            if value is None or value == '':
+                return 20
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return 20
+
+    @field_validator('DATABASE_POOL_TIMEOUT', mode='before')
+    @classmethod
+    def ensure_positive_database_pool_timeout(cls, value: int | None) -> int:
+        try:
+            if value is None or value == '':
+                return 30
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return 30
+
     @field_validator('LOG_FILE', mode='before')
     @classmethod
     def ensure_log_dir(cls, v):
@@ -1452,7 +1582,14 @@ class Settings(BaseSettings):
         raw_username = template.format_map(values).strip()
         sanitized_username = _sanitize(raw_username)
 
-        if not sanitized_username:
+        # Degenerate render: ни одна переменная шаблона не дала уникального
+        # значения. Напр. шаблон `user_{username}` для email-only юзера (у
+        # которого нет Telegram-username) рендерится в `user` — одинаково для
+        # ВСЕХ таких юзеров → RemnaWave отвечает 409 "username already exists"
+        # на каждую регистрацию после первой. `skeleton` — тот же шаблон с
+        # пустыми переменными; равенство ему значит «шаблон ничего не дал».
+        skeleton = _sanitize(template.format_map(defaultdict(str)))
+        if not sanitized_username or sanitized_username == skeleton:
             sanitized_username = _sanitize(f'user_{identifier}')
 
         # Резервируем место под caller-suffix, не опускаясь ниже минимальной длины.
@@ -2377,6 +2514,20 @@ class Settings(BaseSettings):
     def get_overpay_display_name_html(self) -> str:
         return html.escape(self.get_overpay_display_name())
 
+    def get_overpay_terminal_id(self, option: str | None = None) -> str | None:
+        terminals = {
+            'fps': self.OVERPAY_SBP_TERMINAL_ID,
+            'card': self.OVERPAY_CARD_TERMINAL_ID,
+            'int': self.OVERPAY_INT_TERMINAL_ID,
+        }
+        return terminals.get(option or '') or self.OVERPAY_PROJECT_ID
+
+    def is_overpay_int_enabled(self) -> bool:
+        return self.is_overpay_enabled() and self.OVERPAY_INT_ENABLED and self.OVERPAY_RUB_PER_EUR > 0
+
+    def is_overpay_sbp_direct_qr_enabled(self) -> bool:
+        return self.OVERPAY_SBP_DIRECT_QR and bool((self.OVERPAY_SERVER_IP or '').strip())
+
     def is_aurapay_enabled(self) -> bool:
         return (
             self.AURAPAY_ENABLED
@@ -2970,6 +3121,8 @@ class Settings(BaseSettings):
             'first_topup_bonus_kopeks': self.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS,
             'inviter_bonus_kopeks': self.REFERRAL_INVITER_BONUS_KOPEKS,
             'commission_percent': self.REFERRAL_COMMISSION_PERCENT,
+            'first_payment_commission_percent': self.REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT,
+            'recurring_commission_tiers': self.REFERRAL_RECURRING_COMMISSION_TIERS,
             'notifications_enabled': self.REFERRAL_NOTIFICATIONS_ENABLED,
             'withdrawal_enabled': self.REFERRAL_WITHDRAWAL_ENABLED,
             'withdrawal_min_amount_kopeks': self.REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS,
@@ -3308,6 +3461,30 @@ class Settings(BaseSettings):
             stacklevel=2,
         )
         return self.BOT_TOKEN
+
+    def collect_insecure_default_warnings(self) -> list[str]:
+        """Return warnings about insecure default/secret configuration.
+
+        Surfaced once at startup (via the structured logger) so operators notice when the
+        bot runs with shipped defaults that must be changed before production.
+        """
+        messages: list[str] = []
+
+        if self.POSTGRES_PASSWORD == 'secure_password_123' and 'postgresql' in self.get_database_url():
+            messages.append(
+                'POSTGRES_PASSWORD is the shipped default ("secure_password_123"). '
+                'Set a unique strong password before exposing this deployment.'
+            )
+
+        if self.is_cabinet_enabled() and not self.CABINET_JWT_SECRET:
+            messages.append(
+                'CABINET_JWT_SECRET is not set — cabinet JWTs are signed with BOT_TOKEN, which is '
+                'widely exposed (Telegram API, payment-provider configs). A BOT_TOKEN leak would let '
+                'anyone forge cabinet sessions. Set CABINET_JWT_SECRET to a unique value: '
+                'python -c "import secrets; print(secrets.token_urlsafe(64))"'
+            )
+
+        return messages
 
     def get_cabinet_access_token_expire_minutes(self) -> int:
         return max(1, self.CABINET_ACCESS_TOKEN_EXPIRE_MINUTES)

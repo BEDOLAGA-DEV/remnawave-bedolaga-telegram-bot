@@ -32,6 +32,15 @@ class MaintenanceMiddleware(BaseMiddleware):
         if settings.is_admin(user.id):
             return await handler(event, data)
 
+        # Moderators are support staff and must keep handling tickets during
+        # maintenance (e.g. the reply/block FSM flows started from the new
+        # ticket-notification buttons, issue #2988). Same in-memory cache check
+        # as resolve_recipient_role — no I/O on the hot path.
+        from app.services.support_settings_service import SupportSettingsService
+
+        if SupportSettingsService.is_moderator(user.id):
+            return await handler(event, data)
+
         maintenance_message = maintenance_service.get_maintenance_message()
 
         try:

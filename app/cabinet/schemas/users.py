@@ -309,7 +309,11 @@ class UpdateSubscriptionRequest(BaseModel):
     """Request to update user subscription."""
 
     action: str = Field(
-        ..., description='Action: extend, shorten, set_end_date, change_tariff, set_traffic, toggle_autopay, cancel'
+        ...,
+        description=(
+            'Action: extend, shorten, set_end_date, change_tariff, set_traffic, '
+            'toggle_autopay, cancel, reset (zero out the subscription, keep user+tickets)'
+        ),
     )
 
     # Target subscription (required in multi-tariff mode for non-create actions)

@@ -40,7 +40,7 @@ async def create_freekassa_payment(
     db.add(payment)
     await db.commit()
     await db.refresh(payment)
-    logger.info('Создан платеж Freekassa: order_id=, user_id', order_id=order_id, user_id=user_id)
+    logger.info('Создан платеж Freekassa', order_id=order_id, user_id=user_id)
     return payment
 
 
@@ -102,7 +102,7 @@ async def update_freekassa_payment_status(
     await db.commit()
     await db.refresh(payment)
     logger.info(
-        'Обновлен статус платежа Freekassa: order_id=, status=, is_paid',
+        'Обновлен статус платежа Freekassa',
         order_id=payment.order_id,
         status=status,
         is_paid=is_paid,

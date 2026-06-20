@@ -61,7 +61,7 @@ async def create_campaign(
     await db.refresh(campaign)
 
     logger.info(
-        '📣 Создана рекламная кампания (start bonus=)',
+        '📣 Создана рекламная кампания',
         campaign_name=campaign.name,
         start_parameter=campaign.start_parameter,
         bonus_type=campaign.bonus_type,

@@ -645,7 +645,7 @@ async def handle_confirm_action(
     )
 
     logger.info(
-        'Очистка заблокированных пользователей завершена: DB=, RW=, marked=, errors',
+        'Очистка заблокированных пользователей завершена',
         deleted_from_db=result.deleted_from_db,
         deleted_from_remnawave=result.deleted_from_remnawave,
         marked_as_blocked=result.marked_as_blocked,

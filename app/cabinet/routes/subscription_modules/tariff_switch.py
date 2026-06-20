@@ -67,6 +67,19 @@ async def preview_tariff_switch(
                 'use_purchase_flow': True,
             },
         )
+    if subscription.is_trial:
+        # A trial has no paid value to prorate from — "switching" it would hand the
+        # user a full paid period of the target tariff for the (often zero/cheap)
+        # upgrade cost (bug #629889 class). Trials must buy a real tariff via the
+        # purchase flow instead of switching.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'trial_cannot_switch',
+                'message': 'Trial subscriptions cannot switch tariffs. Please purchase a tariff instead.',
+                'use_purchase_flow': True,
+            },
+        )
     if actual_status not in ('active', 'trial'):
         # For disabled/pending subscriptions, block switching with generic error
         raise HTTPException(
@@ -221,6 +234,19 @@ async def switch_tariff(
                 'use_purchase_flow': True,
             },
         )
+    if subscription.is_trial:
+        # A trial has no paid value to prorate from — "switching" it would hand the
+        # user a full paid period of the target tariff for the (often zero/cheap)
+        # upgrade cost (bug #629889 class). Trials must buy a real tariff via the
+        # purchase flow instead of switching.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'trial_cannot_switch',
+                'message': 'Trial subscriptions cannot switch tariffs. Please purchase a tariff instead.',
+                'use_purchase_flow': True,
+            },
+        )
     if actual_status not in ('active', 'trial'):
         # For disabled/pending subscriptions, block switching with generic error
         raise HTTPException(
@@ -345,6 +371,26 @@ async def switch_tariff(
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail='Failed to charge balance',
+            )
+
+        # Persist the request-body CID BEFORE create_transaction. The
+        # SUBSCRIPTION_PAYMENT below fires the purchase event centrally via
+        # emit_transaction_side_effects -> background fire_purchase_bg, which
+        # reads the CID from the DB. Storing (and committing) the CID first
+        # closes the race where the background fire would see no CID and no-op
+        # (#558449).
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            await yandex_conv.store_cid_only(
+                user.id,
+                request.yandex_cid,
+            )
+        except Exception as yconv_err:
+            logger.debug(
+                'yandex_conv CID persist (pre-transaction) failed (non-fatal)',
+                user_id=user.id,
+                error=str(yconv_err),
             )
 
         # Create transaction (commit=False to keep FOR UPDATE lock held)
@@ -485,12 +531,11 @@ async def switch_tariff(
 
     # Отправляем уведомление админам о смене тарифа
     try:
-        from aiogram import Bot
-
+        from app.bot_factory import create_bot
         from app.services.admin_notification_service import AdminNotificationService
 
-        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
+        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+            bot = create_bot()
             try:
                 notification_service = AdminNotificationService(bot)
                 await notification_service.send_subscription_purchase_notification(
@@ -511,6 +556,11 @@ async def switch_tariff(
     # Refresh expired objects after db.commit() in _record_subscription_event
     await db.refresh(subscription)
     await db.refresh(user)
+
+    # Yandex.Metrika offline conversion: the request-body CID for a paid tariff
+    # switch (upgrade_cost > 0) is now persisted BEFORE create_transaction above,
+    # so the central purchase event fired by the SUBSCRIPTION_PAYMENT sees the
+    # CID and does not race it (#558449). Nothing to do here.
 
     response: dict[str, Any] = {
         'success': True,

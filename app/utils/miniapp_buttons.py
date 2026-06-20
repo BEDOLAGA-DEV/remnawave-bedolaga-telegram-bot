@@ -57,7 +57,16 @@ CALLBACK_TO_CABINET_PATH: dict[str, str] = {
     'menu_support': '/support',
     'menu_info': '/info',
     'menu_profile': '/profile',
-    'back_to_menu': '/',
+    # NB: ``back_to_menu`` is intentionally NOT mapped here.
+    # The callback semantically means "return to the bot's main menu"
+    # — every other call site in the codebase uses raw
+    # ``InlineKeyboardButton(callback_data='back_to_menu')`` for it.
+    # Routing it through this helper in cabinet mode would silently
+    # turn the button into a WebApp launcher that opens the cabinet
+    # root, which is NOT what the user-visible label "Главное меню"
+    # promises. Without an entry here, the helper falls through to
+    # an InlineKeyboardButton with callback_data and the bot's
+    # ``back_to_menu`` handler runs as expected.
 }
 
 # Default button styles per callback_data for cabinet mode.
@@ -80,10 +89,24 @@ CALLBACK_TO_CABINET_STYLE: dict[str, str] = {
     'menu_support': 'primary',
     'menu_info': 'primary',
     'menu_profile': 'primary',
-    'back_to_menu': 'primary',
+    # See CALLBACK_TO_CABINET_PATH comment — back_to_menu is bot-menu only,
+    # not a cabinet-routed action, so styling here is dead config.
 }
 
-# Mapping from broadcast button keys to cabinet paths.
+# Mapping from broadcast button keys to cabinet paths. Used by the
+# admin-broadcast custom-button builder in app/handlers/admin/messages.py
+# to swap selected buttons for WebApp launchers in cabinet mode.
+#
+# ``'home'`` is intentionally NOT mapped here — same reason as
+# ``back_to_menu`` above. A broadcast button labelled "Home" must
+# always be a bot-menu callback regardless of MAIN_MENU_MODE; otherwise
+# users tapping it in cabinet mode get stuck in cabinet root with no
+# way back to the bot view. The set-membership gate
+# ``CABINET_MINIAPP_BUTTON_KEYS`` in admin/messages.py already excludes
+# ``'home'``, but removing the foot-gun entry here is the structural fix:
+# even if someone adds ``'home'`` to that set in a future commit, the
+# mapping lookup falls through to empty string and ``build_miniapp_or_callback_button``
+# returns a callback button.
 BUTTON_KEY_TO_CABINET_PATH: dict[str, str] = {
     'balance': '/balance/top-up',
     'referrals': '/referral',
@@ -91,11 +114,32 @@ BUTTON_KEY_TO_CABINET_PATH: dict[str, str] = {
     'connect': '/subscription',
     'subscription': '/subscription',
     'support': '/support',
-    'home': '/',
 }
 
 # Valid style values accepted by the Telegram Bot API.
 _VALID_STYLES = frozenset({'primary', 'success', 'danger'})
+
+
+def build_main_menu_button(text: str) -> InlineKeyboardButton:
+    """Always-callback button for "Main Menu" / "Главное меню" navigation.
+
+    Exists as a typed alternative to ``build_miniapp_or_callback_button``
+    for the one case where cabinet-routing is semantically wrong:
+    a button explicitly labelled "Главное меню" must return the user
+    to the bot's inline menu (``back_to_menu`` callback handler),
+    NOT open the cabinet root via WebApp. Otherwise a user in
+    ``MAIN_MENU_MODE=cabinet`` who taps "Главное меню" lands back in
+    the cabinet they're trying to exit — an infinite loop UX.
+
+    Production incident (2026-05-18): the top-up success notification
+    used ``build_miniapp_or_callback_button(callback_data='back_to_menu')``
+    which silently routed to cabinet root in cabinet mode. Defense at
+    two layers: ``back_to_menu`` is intentionally absent from
+    ``CALLBACK_TO_CABINET_PATH`` so the helper falls through to
+    callback even if called wrongly, AND this dedicated factory is
+    what callers should reach for to express intent.
+    """
+    return InlineKeyboardButton(text=text, callback_data='back_to_menu')
 
 
 def _resolve_style(style: str | None) -> str | None:
@@ -193,3 +237,56 @@ def build_miniapp_or_callback_button(
                 )
 
     return InlineKeyboardButton(text=text, callback_data=callback_data)
+
+
+# Префикс startapp/маршрута для диплинка на конкретный тикет в админ-кабинете.
+# Должен совпадать с разбором на стороне фронта (bedolaga-cabinet): start_param
+# 'admin_ticket_<id>' и маршрут '/admin/tickets/<id>'.
+ADMIN_TICKET_DEEPLINK_PREFIX = 'admin_ticket_'
+
+
+def build_miniapp_startapp_url(start_param: str) -> str:
+    """Собрать t.me Mini App deep link, открывающий кабинет в ЛЮБОМ типе чата.
+
+    ``https://t.me/<bot>/<app>?startapp=<start_param>`` — работает и в группах/
+    каналах, где ``web_app``-кнопки недоступны. Требует и имя бота, и
+    зарегистрированное короткое имя Mini App (``MINIAPP_APP_SHORT_NAME``,
+    BotFather → /newapp). Возвращает '' если чего-то не хватает.
+    """
+    bot_username = settings.get_bot_username()
+    app_name = (getattr(settings, 'MINIAPP_APP_SHORT_NAME', '') or '').strip()
+    if not bot_username or not app_name:
+        return ''
+    return f'https://t.me/{bot_username}/{app_name}?startapp={start_param}'
+
+
+def build_admin_ticket_cabinet_button(
+    ticket_id: int,
+    *,
+    text: str,
+    in_group: bool,
+) -> InlineKeyboardButton | None:
+    """Кнопка «открыть тикет в админ-кабинете» для уведомления о тикете.
+
+    Строится только в cabinet-режиме (``is_cabinet_mode``):
+    - личный чат (``in_group=False``) → ``web_app`` на ``/admin/tickets/<id>``
+      (Telegram сам прокидывает initData → кабинет авторизует и роутит к тикету);
+    - группа/канал (``in_group=True``) → ``web_app`` недоступен, поэтому t.me
+      Mini App startapp-диплинк (нужен ``MINIAPP_APP_SHORT_NAME``).
+
+    Возвращает ``None``, если подходящую кнопку построить нельзя (не cabinet-режим,
+    не задан URL кабинета, или в группе не зарегистрирован Mini App).
+    """
+    if not settings.is_cabinet_mode():
+        return None
+
+    if in_group:
+        url = build_miniapp_startapp_url(f'{ADMIN_TICKET_DEEPLINK_PREFIX}{ticket_id}')
+        if not url:
+            return None
+        return InlineKeyboardButton(text=text, url=url)
+
+    url = build_cabinet_url(f'/admin/tickets/{ticket_id}')
+    if not url:
+        return None
+    return InlineKeyboardButton(text=text, web_app=types.WebAppInfo(url=url))

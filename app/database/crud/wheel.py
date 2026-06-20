@@ -190,6 +190,7 @@ async def create_wheel_spin(
     prize_value_kopeks: int,
     generated_promocode_id: int | None = None,
     is_applied: bool = False,
+    telegram_charge_id: str | None = None,
 ) -> WheelSpin:
     """Создать запись о спине колеса."""
     spin = WheelSpin(
@@ -205,12 +206,19 @@ async def create_wheel_spin(
         generated_promocode_id=generated_promocode_id,
         is_applied=is_applied,
         applied_at=datetime.now(UTC) if is_applied else None,
+        telegram_charge_id=telegram_charge_id,
     )
     db.add(spin)
     await db.commit()
     await db.refresh(spin)
-    logger.info('🎰 Создан спин колеса: user_id=, prize', user_id=user_id, prize_display_name=prize_display_name)
+    logger.info('🎰 Создан спин колеса', user_id=user_id, prize_display_name=prize_display_name)
     return spin
+
+
+async def get_wheel_spin_by_charge_id(db: AsyncSession, telegram_charge_id: str) -> WheelSpin | None:
+    """Найти спин по Telegram charge id (идемпотентность Stars-платежа)."""
+    result = await db.execute(select(WheelSpin).where(WheelSpin.telegram_charge_id == telegram_charge_id))
+    return result.scalar_one_or_none()
 
 
 async def mark_spin_applied(db: AsyncSession, spin_id: int) -> WheelSpin | None:

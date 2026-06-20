@@ -1,3 +1,4 @@
+import hmac
 import secrets
 import string
 from datetime import UTC, datetime, timedelta
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.database.constants import POSTGRES_INT4_MAX, POSTGRES_INT4_MIN
 from app.database.crud.discount_offer import get_latest_claimed_offer_for_user
 from app.database.crud.promo_group import get_default_promo_group
 from app.database.crud.promo_offer_log import log_promo_offer_action
@@ -86,6 +88,10 @@ def generate_referral_code() -> str:
 
 
 async def get_user_by_id(db: AsyncSession, user_id: int) -> User | None:
+    # users.id is INTEGER (int4) in PostgreSQL; guard large telegram IDs passed by mistake.
+    if user_id < POSTGRES_INT4_MIN or user_id > POSTGRES_INT4_MAX:
+        return None
+
     result = await db.execute(
         select(User)
         .options(
@@ -320,6 +326,21 @@ async def create_user_no_commit(
     return user
 
 
+def _violated_constraint(exc: IntegrityError) -> str:
+    """Return the violated DB constraint name for an IntegrityError.
+
+    Prefers asyncpg's programmatic ``constraint_name`` (robust against driver
+    message changes) and falls back to the stringified original error.
+    """
+    orig = getattr(exc, 'orig', None)
+    # SQLAlchemy wraps the dbapi error; the real asyncpg exception is its cause.
+    cause = getattr(orig, '__cause__', None)
+    constraint = getattr(cause, 'constraint_name', None) or getattr(orig, 'constraint_name', None)
+    if constraint:
+        return str(constraint)
+    return str(orig if orig is not None else exc)
+
+
 async def create_user(
     db: AsyncSession,
     telegram_id: int,
@@ -409,11 +430,28 @@ async def create_user(
         except IntegrityError as exc:
             await db.rollback()
 
-            if (
-                isinstance(getattr(exc, 'orig', None), Exception)
-                and 'users_pkey' in str(exc.orig)
-                and attempt < attempts
-            ):
+            constraint = _violated_constraint(exc)
+
+            # Гонка регистраций: параллельный поток уже создал пользователя
+            # с таким telegram_id. Возвращаем существующего вместо падения.
+            if 'telegram_id' in constraint:
+                logger.info(
+                    'Пользователь с таким telegram_id уже существует (гонка регистраций), '
+                    'возвращаем существующего пользователя',
+                    telegram_id=telegram_id,
+                    constraint=constraint,
+                )
+                existing_user = await get_user_by_telegram_id(db, telegram_id)
+                if existing_user:
+                    return existing_user
+
+                # Маловероятно: конфликт был, но пользователь не найден — пробуем ещё раз
+                if attempt < attempts:
+                    continue
+
+                raise
+
+            if 'users_pkey' in constraint and attempt < attempts:
                 logger.warning(
                     '⚠️ Обнаружено несоответствие последовательности users_id_seq при создании пользователя . Выполняем повторную синхронизацию (попытка /)',
                     telegram_id=telegram_id,
@@ -760,7 +798,7 @@ async def subtract_user_balance(
                         log_error=log_error,
                     )
 
-        logger.info('✅ Средства списаны: →', old_balance=old_balance, balance_kopeks=user.balance_kopeks)
+        logger.info('✅ Средства списаны', old_balance=old_balance, balance_kopeks=user.balance_kopeks)
         return True
 
     except Exception as e:
@@ -1477,7 +1515,7 @@ async def verify_and_apply_email_change(db: AsyncSession, user: User, code: str)
         await db.commit()
         return False, 'Verification code has expired'
 
-    if user.email_change_code != code:
+    if not hmac.compare_digest(str(user.email_change_code), str(code)):
         return False, 'Invalid verification code'
 
     # Check if new email is still available
@@ -1589,6 +1627,10 @@ async def create_user_by_oauth(
     referred_by_id: int | None = None,
 ) -> User:
     """Create a new user via OAuth provider."""
+    # Normalize the provider email to lowercase so it matches every other flow
+    # (email registration and the OAuth-link backfill both lowercase) and the
+    # case-insensitive unique-email lookups stay consistent.
+    email = email.strip().lower() if email else None
     referral_code = await create_unique_referral_code(db)
     normalized_language = _normalize_language_code(language)
     default_group = await _get_or_create_default_promo_group(db)
@@ -1628,9 +1670,7 @@ async def create_user_by_oauth(
     await db.refresh(user)
 
     user.promo_group = default_group
-    logger.info(
-        'Created OAuth user via (provider_id=) with id', provider=provider, provider_id=provider_id, user_id=user.id
-    )
+    logger.info('Created OAuth user', provider=provider, provider_id=provider_id, user_id=user.id)
 
     try:
         from app.services.event_emitter import event_emitter

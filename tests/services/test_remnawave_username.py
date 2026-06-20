@@ -177,3 +177,97 @@ def test_build_subscription_username_handles_pathological_long_suffix() -> None:
     )
 
     assert len(final) <= settings.REMNAWAVE_USERNAME_MAX_LENGTH
+
+
+# Regression: email-only cabinet users were getting the literal 'user' as their
+# RemnaWave username because `user_{username}` rendered identically for every
+# user without a Telegram @username — panel then rejected all but the first
+# registration with 409 "username already exists". The skeleton detector below
+# catches this class of degenerate template renders and falls back to
+# user_<identifier>, which always carries the unique user_id / telegram_id.
+
+
+def test_skeleton_detector_falls_back_when_username_template_renders_constant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Template `user_{username}` for email-only user (no TG username) renders to
+    the constant `user` — must fall back to `user_email_<prefix>_<user_id>`."""
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_USERNAME_TEMPLATE', 'user_{username}', raising=False)
+
+    name = settings.format_remnawave_username(
+        full_name='Email User',
+        username=None,
+        telegram_id=None,
+        email='alice@example.com',
+        user_id=42,
+    )
+
+    # Must NOT equal the degenerate `user` rendered by the skeleton.
+    assert name != 'user'
+    # Must contain the unique user_id so two email-only users get different usernames.
+    assert '42' in name
+    # Must still match RemnaWave's character class.
+    import re as _re
+
+    assert _re.match(r'^[A-Za-z0-9_-]+$', name)
+
+
+def test_skeleton_detector_falls_back_when_template_has_no_variables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A template with no variables (admin misconfig) is itself degenerate —
+    it would collide for every single user. Skeleton detector catches it."""
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_USERNAME_TEMPLATE', 'static_user', raising=False)
+
+    name_a = settings.format_remnawave_username(
+        full_name='A', username=None, telegram_id=None, email='a@example.com', user_id=1
+    )
+    name_b = settings.format_remnawave_username(
+        full_name='B', username=None, telegram_id=None, email='b@example.com', user_id=2
+    )
+
+    # Two different users must get two different usernames despite the broken template.
+    assert name_a != name_b
+    assert '1' in name_a and '2' in name_b
+
+
+def test_skeleton_detector_does_not_trigger_for_telegram_users(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TG users with a real @username are NOT degenerate — the template renders
+    their unique username. Skeleton detector must NOT fire here, otherwise the
+    fix would regress every TG user to user_<telegram_id> and rename them all."""
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_USERNAME_TEMPLATE', 'user_{username}', raising=False)
+
+    name = settings.format_remnawave_username(
+        full_name='TG User',
+        username='alice_tg',
+        telegram_id=123456,
+        email=None,
+        user_id=10,
+    )
+
+    # Should reflect the actual TG username, not the user_<identifier> fallback.
+    assert 'alice_tg' in name
+
+
+def test_skeleton_detector_uses_user_id_when_template_references_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Template that references {user_id} (which always has a value) must NOT
+    trigger the fallback — the rendered username already carries unique data."""
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_USERNAME_TEMPLATE', 'u_{user_id}_{username}', raising=False)
+
+    name = settings.format_remnawave_username(
+        full_name='Email User',
+        username=None,
+        telegram_id=None,
+        email='alice@example.com',
+        user_id=42,
+    )
+
+    # The {user_id} substitution gives uniqueness — fallback path must NOT fire.
+    assert '42' in name
+    # And the rendered result must NOT be the user_<identifier> fallback shape,
+    # which would have wiped the template's own structure.
+    assert name.startswith('u_42')

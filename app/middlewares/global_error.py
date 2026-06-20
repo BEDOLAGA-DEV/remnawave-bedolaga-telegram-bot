@@ -73,7 +73,7 @@ class GlobalErrorMiddleware(BaseMiddleware):
             raise
         except Exception as e:
             user_info = self._get_user_info(event)
-            logger.error('Неожиданная ошибка в GlobalErrorMiddleware (user=)', user_info=user_info, e=e, exc_info=True)
+            logger.error('Неожиданная ошибка в GlobalErrorMiddleware', user_info=user_info, e=e, exc_info=True)
             raise
 
     async def _handle_telegram_error(self, event: TelegramObject, error: TelegramBadRequest, data: dict[str, Any]):
@@ -92,7 +92,7 @@ class GlobalErrorMiddleware(BaseMiddleware):
 
         # Неизвестная ошибка — логируем
         user_info = self._get_user_info(event)
-        logger.error('Неизвестная Telegram API ошибка (user=)', user_info=user_info, error=error)
+        logger.error('Неизвестная Telegram API ошибка', user_info=user_info, error=error)
         raise error
 
     def _is_old_query_error(self, error_message: str) -> bool:
@@ -111,7 +111,7 @@ class GlobalErrorMiddleware(BaseMiddleware):
         if isinstance(event, CallbackQuery):
             user_info = self._get_user_info(event)
             logger.warning(
-                "[GlobalErrorMiddleware] Игнорируем устаревший callback '' от",
+                '[GlobalErrorMiddleware] Игнорируем устаревший callback',
                 event_data=event.data,
                 user_info=user_info,
             )
@@ -146,7 +146,7 @@ class GlobalErrorMiddleware(BaseMiddleware):
             logger.warning('[GlobalErrorMiddleware] Чат или сообщение не найдено', error=error)
             return
         user_info = self._get_user_info(event)
-        logger.error('[GlobalErrorMiddleware] Неизвестная bad request ошибка (user=)', user_info=user_info, error=error)
+        logger.error('[GlobalErrorMiddleware] Неизвестная bad request ошибка', user_info=user_info, error=error)
         raise error
 
     def _get_user_info(self, event: TelegramObject) -> str:

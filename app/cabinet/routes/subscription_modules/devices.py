@@ -13,6 +13,7 @@ POST /subscription/devices/save-cart
 
 from __future__ import annotations
 
+import asyncio
 import math
 from datetime import UTC, datetime
 from typing import Any
@@ -42,6 +43,12 @@ from .helpers import _apply_addon_discount, resolve_subscription
 
 
 logger = structlog.get_logger(__name__)
+
+# Cap inline RemnaWave panel sync on user-facing cabinet requests. The product is
+# committed before the sync, so a slow/unavailable panel must not hold the HTTP
+# response open (the cabinet pay button is bound to the request and would spin
+# after delivery). Past this budget the sync is deferred to remnawave_retry_queue.
+REMNAWAVE_SYNC_TIMEOUT = 10.0
 
 router = APIRouter()
 
@@ -134,7 +141,15 @@ async def purchase_devices_legacy(
         else:
             chargeable_devices = request.devices
 
-    base_total_price = device_price * chargeable_devices
+    # Прорейт по фактическому остатку подписки — как трафик/серверы, без потолка.
+    now = datetime.now(UTC)
+    end_date = subscription.end_date
+    if end_date.tzinfo is None:
+        end_date = end_date.replace(tzinfo=UTC)
+    days_left = max(1, math.ceil((end_date - now).total_seconds() / 86400))
+    base_total_price = int(device_price * chargeable_devices * days_left / 30)
+    if chargeable_devices > 0:
+        base_total_price = max(100, base_total_price)  # Минимум 1 рубль
 
     # Lock user row to prevent TOCTOU on promo-offer state
     from app.database.crud.user import lock_user_for_pricing
@@ -142,7 +157,7 @@ async def purchase_devices_legacy(
     user = await lock_user_for_pricing(db, user.id)
 
     # Apply discount from promo group
-    discount_result = _apply_addon_discount(user, 'devices', base_total_price, 30)
+    discount_result = _apply_addon_discount(user, 'devices', base_total_price, days_left)
     total_price = discount_result['discounted']
     devices_discount_percent = discount_result['percent']
 
@@ -251,7 +266,8 @@ async def purchase_devices_legacy(
     await db.refresh(subscription)
     await db.refresh(user)
 
-    # Sync with RemnaWave
+    # Sync with RemnaWave (time-bounded — see REMNAWAVE_SYNC_TIMEOUT; product is
+    # already committed, defer slow syncs to remnawave_retry_queue).
     try:
         service = SubscriptionService()
         if settings.is_multi_tariff_enabled():
@@ -259,10 +275,11 @@ async def purchase_devices_legacy(
         else:
             _should_create = not getattr(user, 'remnawave_uuid', None)
 
-        if _should_create:
-            await service.create_remnawave_user(db, subscription)
-        else:
-            await service.update_remnawave_user(db, subscription)
+        async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
+            if _should_create:
+                await service.create_remnawave_user(db, subscription)
+            else:
+                await service.update_remnawave_user(db, subscription)
     except Exception as e:
         logger.error('Failed to sync devices with RemnaWave (legacy endpoint)', error=e)
         from app.services.remnawave_retry_queue import remnawave_retry_queue
@@ -275,12 +292,11 @@ async def purchase_devices_legacy(
 
     # Отправляем уведомление админам
     try:
-        from aiogram import Bot
-
+        from app.bot_factory import create_bot
         from app.services.admin_notification_service import AdminNotificationService
 
-        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
+        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+            bot = create_bot()
             try:
                 notification_service = AdminNotificationService(bot)
                 await notification_service.send_subscription_update_notification(
@@ -391,6 +407,10 @@ async def purchase_devices(
 
         days_left = max(1, math.ceil((end_date - now).total_seconds() / 86400))
         total_days = 30  # Base period for device price calculation
+        # Прорейт по фактическому остатку подписки — как трафик/серверы, без потолка.
+        # Устройство активно до конца подписки; на продлении доначисляется через
+        # pricing_engine. (Раньше тут был потолок в 1 месяц — #596757/#587412.)
+        effective_days = days_left
 
         # Устройства в пределах тарифного лимита — бесплатные
         if tariff:
@@ -410,7 +430,7 @@ async def purchase_devices(
 
         # Calculate base price before discount
         base_price_per_month = device_price * chargeable_devices
-        base_price_prorated = int(base_price_per_month * days_left / total_days)
+        base_price_prorated = int(base_price_per_month * effective_days / total_days)
         if chargeable_devices > 0:
             base_price_prorated = max(100, base_price_prorated)  # Minimum 1 ruble
 
@@ -521,7 +541,8 @@ async def purchase_devices(
         await db.commit()
         await db.refresh(subscription)
 
-        # Sync with RemnaWave
+        # Sync with RemnaWave (time-bounded — see REMNAWAVE_SYNC_TIMEOUT; product is
+        # already committed, defer slow syncs to remnawave_retry_queue).
         service = SubscriptionService()
         try:
             if settings.is_multi_tariff_enabled():
@@ -529,10 +550,11 @@ async def purchase_devices(
             else:
                 _should_create = not getattr(user, 'remnawave_uuid', None)
 
-            if _should_create:
-                await service.create_remnawave_user(db, subscription)
-            else:
-                await service.update_remnawave_user(db, subscription)
+            async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
+                if _should_create:
+                    await service.create_remnawave_user(db, subscription)
+                else:
+                    await service.update_remnawave_user(db, subscription)
         except Exception as e:
             logger.error('Failed to sync devices with RemnaWave', error=e)
             from app.services.remnawave_retry_queue import remnawave_retry_queue
@@ -561,12 +583,11 @@ async def purchase_devices(
 
         # Отправляем уведомление админам
         try:
-            from aiogram import Bot
-
+            from app.bot_factory import create_bot
             from app.services.admin_notification_service import AdminNotificationService
 
-            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-                bot = Bot(token=settings.BOT_TOKEN)
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                bot = create_bot()
                 try:
                     notification_service = AdminNotificationService(bot)
                     await notification_service.send_subscription_update_notification(
@@ -582,6 +603,19 @@ async def purchase_devices(
                     await bot.session.close()
         except Exception as e:
             logger.error('Failed to send admin notification for device purchase', error=e)
+
+        # Yandex.Metrika offline conversion (#558449).
+        try:
+            from app.services import yandex_offline_conv_service as yandex_conv
+
+            # Purchase event fires centrally from create_transaction; here we
+            # only persist the request-body CID synchronously (#558449).
+            await yandex_conv.store_cid_only(
+                user.id,
+                request.yandex_cid,
+            )
+        except Exception as yconv_err:
+            logger.debug('yandex_conv purchase hook failed (non-fatal)', user_id=user.id, error=str(yconv_err))
 
         response: dict[str, Any] = {
             'success': True,
@@ -669,6 +703,9 @@ async def save_devices_cart(
 
     days_left = max(1, math.ceil((end_date - now).total_seconds() / 86400))
     total_days = 30
+    # Прорейт по фактическому остатку подписки — как трафик/серверы, без потолка
+    # (раньше был потолок в 1 месяц — #596757). Доначисление за устройства — на продлении.
+    effective_days = days_left
 
     # Устройства в пределах тарифного лимита — бесплатные
     if tariff:
@@ -686,7 +723,7 @@ async def save_devices_cart(
         else:
             chargeable_devices = request.devices
 
-    base_total_price = int(device_price * chargeable_devices * days_left / total_days)
+    base_total_price = int(device_price * chargeable_devices * effective_days / total_days)
     if chargeable_devices > 0:
         base_total_price = max(100, base_total_price)  # Minimum 1 ruble
 
@@ -783,6 +820,9 @@ async def get_device_price(
 
     days_left = max(1, math.ceil((end_date - now).total_seconds() / 86400))
     total_days = 30
+    # Прорейт по фактическому остатку подписки — как трафик/серверы, без потолка
+    # (раньше был потолок в 1 месяц — #596757). Доначисление за устройства — на продлении.
+    effective_days = days_left
 
     # Устройства в пределах тарифного лимита — бесплатные
     if tariff:
@@ -801,7 +841,7 @@ async def get_device_price(
             chargeable_devices = devices
 
     # Calculate base price before discount (total first, then floor)
-    base_total_price = int(device_price * chargeable_devices * days_left / total_days)
+    base_total_price = int(device_price * chargeable_devices * effective_days / total_days)
     if chargeable_devices > 0:
         base_total_price = max(100, base_total_price)
 
@@ -914,7 +954,10 @@ async def get_devices(
             }
 
     except Exception as e:
-        logger.error('Error fetching devices', error=e)
+        # Панель медленная/недоступна — деградируем мягко (пустой список) и логируем
+        # WARNING, как соседние читатели устройств (device_ownership, miniapp), чтобы
+        # транзиентный таймаут панели не спамил админ-чат ошибками.
+        logger.warning('Failed to load devices from RemnaWave (panel slow/unavailable)', error=str(e)[:200])
         return {
             'devices': [],
             'total': 0,
@@ -1162,7 +1205,7 @@ async def get_device_reduction_info(
                 if response:
                     connected_devices_count = response.get('total', 0)
         except Exception as e:
-            logger.error('Error getting connected devices count', error=e)
+            logger.warning('Failed to get connected devices count (panel slow/unavailable)', error=str(e)[:200])
 
     can_reduce = current_device_limit - min_device_limit
 

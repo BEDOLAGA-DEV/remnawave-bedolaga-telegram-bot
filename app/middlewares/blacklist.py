@@ -30,7 +30,7 @@ class BlacklistMiddleware(BaseMiddleware):
         if not is_blacklisted:
             return await handler(event, data)
 
-        logger.warning('🚫 Пользователь (@) из черного списка', user_id=user.id, username=user.username, reason=reason)
+        logger.warning('🚫 Пользователь из черного списка', user_id=user.id, username=user.username, reason=reason)
 
         block_text = (
             f'🚫 Доступ запрещен\n\nПричина: {reason}\n\nЕсли вы считаете, что это ошибка, обратитесь в поддержку.'

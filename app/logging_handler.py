@@ -77,6 +77,32 @@ IGNORED_LOGGER_PREFIXES: Final[tuple[str, ...]] = (
 )
 
 
+def _is_transient_remnawave_error(event_dict: dict[str, Any]) -> bool:
+    """True when the log's exception is a RemnaWaveTransientError (slow / briefly
+    unreachable panel). Checked by class name + cause chain so we don't import the
+    RemnaWave client here (avoids a circular import). Such per-request transient
+    failures must NOT be forwarded to the admin chat — a persistent panel outage
+    is surfaced by the monitoring service instead.
+    """
+    exc: BaseException | None = None
+    exc_info = event_dict.get('exc_info')
+    if isinstance(exc_info, tuple) and len(exc_info) > 1 and isinstance(exc_info[1], BaseException):
+        exc = exc_info[1]
+    if exc is None:
+        for key in ('error', 'exc', 'exception', 'e', 'err'):
+            candidate = event_dict.get(key)
+            if isinstance(candidate, BaseException):
+                exc = candidate
+                break
+    seen = 0
+    while exc is not None and seen < 6:
+        if type(exc).__name__ == 'RemnaWaveTransientError':
+            return True
+        exc = exc.__cause__ or exc.__context__
+        seen += 1
+    return False
+
+
 class TelegramNotifierProcessor:
     """Structlog processor that sends ERROR/CRITICAL events to the admin Telegram chat.
 
@@ -156,6 +182,11 @@ class TelegramNotifierProcessor:
                     if isinstance(candidate, BaseException) and candidate.__traceback__ is not None:
                         event_dict['exc_info'] = (type(candidate), candidate, candidate.__traceback__)
                         break
+
+        # 4b. Skip transient RemnaWave panel failures (slow / briefly unreachable)
+        # — forwarding them would spam the admin chat on every slow-panel request.
+        if _is_transient_remnawave_error(event_dict):
+            return event_dict
 
         # 5. Bot not initialized yet — skip
         bot = self._bot

@@ -17,6 +17,64 @@ from app.database.database import AsyncSessionLocal
 
 logger = structlog.get_logger(__name__)
 
+# Placeholders available in EVERY template regardless of notification type.
+# Injected at the single render chokepoint (get_rendered_override), so an
+# admin can use them in any subject/body; per-type context wins on conflict.
+COMMON_CONTEXT_VARS = ['service_name', 'cabinet_url', 'support_username', 'username', 'email', 'date']
+
+
+def build_common_context() -> dict[str, Any]:
+    """Values for the type-independent placeholders.
+
+    Instance-level values resolve here; recipient-level ones (username,
+    email) are supplied by the sending code and merged over these defaults —
+    the empty-string defaults only guarantee the placeholder never leaks
+    into a delivered email as a literal ``{username}``.
+    """
+    from app.config import settings
+    from app.utils.timezone import format_email_datetime
+
+    return {
+        'service_name': settings.SMTP_FROM_NAME or 'VPN Service',
+        'cabinet_url': getattr(settings, 'CABINET_URL', '') or '',
+        'support_username': getattr(settings, 'SUPPORT_USERNAME', '') or '',
+        'username': '',
+        'email': '',
+        'date': format_email_datetime(datetime.now(UTC), fmt='%d.%m.%Y'),
+    }
+
+
+def substitute_context_vars(
+    text: str,
+    context: dict[str, Any] | None,
+    *,
+    escape: bool = True,
+) -> str:
+    """
+    Replace {var} placeholders in template text with context values.
+
+    Args:
+        text: Template text containing {var} placeholders.
+        context: Mapping of variable names to values.
+        escape: HTML-escape values (use False for plain-text contexts
+            like the subject line, where newlines are stripped instead).
+
+    Returns:
+        New string with placeholders substituted.
+    """
+    if not context:
+        return text
+    result = text
+    for key, value in context.items():
+        if value is None:
+            replacement = ''
+        elif escape:
+            replacement = html.escape(str(value))
+        else:
+            replacement = str(value).replace('\r', '').replace('\n', '')
+        result = result.replace(f'{{{key}}}', replacement)
+    return result
+
 
 async def get_template_override(
     notification_type: str,
@@ -177,12 +235,21 @@ async def get_rendered_override(
     language: str,
     context: dict[str, Any] | None = None,
     db: AsyncSession | None = None,
+    required_vars: list[str] | None = None,
 ) -> tuple[str, str] | None:
     """
     Get a custom template override rendered with the base email template.
 
+    Args:
+        required_vars: Context variable names whose values MUST appear in the
+            rendered body (e.g. 'verification_url' for verification emails).
+            If a required value is missing — the admin saved a template without
+            the placeholder — the override is rejected and None is returned so
+            the caller falls back to the default template instead of sending
+            a useless email.
+
     Returns:
-        Tuple of (subject, body_html) if override exists, None otherwise.
+        Tuple of (subject, body_html) if a usable override exists, None otherwise.
     """
     override = await get_template_override(notification_type, language, db)
     if not override:
@@ -191,21 +258,27 @@ async def get_rendered_override(
     from .email_templates import EmailNotificationTemplates
 
     templates = EmailNotificationTemplates()
-    body_html = override['body_html']
+    # Type-independent placeholders work in every template; caller context wins.
+    context = {**build_common_context(), **(context or {})}
+    body_html = substitute_context_vars(override['body_html'], context)
 
-    # Simple variable substitution for context vars like {username}, {verification_url}, etc.
-    if context:
-        for key, value in context.items():
-            body_html = body_html.replace(f'{{{key}}}', html.escape(str(value)) if value is not None else '')
+    if required_vars and context:
+        missing = [
+            var
+            for var in required_vars
+            if context.get(var) not in (None, '') and html.escape(str(context[var])) not in body_html
+        ]
+        if missing:
+            logger.warning(
+                'Override шаблона не содержит обязательные переменные — используется дефолтный шаблон',
+                notification_type=notification_type,
+                language=language,
+                missing=missing,
+            )
+            return None
 
     rendered = templates._wrap_override_template(body_html, language)
-    subject = override['subject']
-
-    # Also substitute in subject
-    if context:
-        for key, value in context.items():
-            safe_value = str(value).replace('\r', '').replace('\n', '') if value is not None else ''
-            subject = subject.replace(f'{{{key}}}', safe_value)
+    subject = substitute_context_vars(override['subject'], context, escape=False)
 
     return (subject, rendered)
 

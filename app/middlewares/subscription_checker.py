@@ -60,7 +60,7 @@ class SubscriptionStatusMiddleware(BaseMiddleware):
                             needs_commit = True
 
                             logger.warning(
-                                '⏰ Middleware DEACTIVATION: подписка (user_id=) деактивирована. end_date=, просрочена на',
+                                '⏰ Middleware DEACTIVATION: подписка деактивирована',
                                 subscription_id=subscription.id,
                                 user_id=user.id,
                                 end_date=subscription.end_date,
@@ -68,7 +68,7 @@ class SubscriptionStatusMiddleware(BaseMiddleware):
                             )
                         else:
                             logger.debug(
-                                '⏰ Middleware: подписка пользователя истекла недавно ждём буфер мин',
+                                '⏰ Middleware: подписка истекла недавно, ждём буфер перед деактивацией',
                                 user_id=user.id,
                                 time_since_expiry=time_since_expiry,
                                 EXPIRATION_BUFFER_MINUTES=EXPIRATION_BUFFER_MINUTES,

@@ -46,6 +46,9 @@ class SettingDefinition(BaseModel):
     original: Any | None = Field(default=None)
     has_override: bool
     read_only: bool = Field(default=False)
+    # True for secret-bearing keys: current/original are masked and a new value must
+    # be sent explicitly to change them (re-sending the mask is a no-op).
+    is_secret: bool = Field(default=False)
     choices: list[SettingChoice] = Field(default_factory=list)
 
     model_config = ConfigDict(extra='forbid')

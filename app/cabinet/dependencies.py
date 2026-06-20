@@ -313,12 +313,13 @@ async def get_current_admin_user(
     Raises:
         HTTPException: If user is not an admin by either mechanism
     """
-    # Legacy check: config-based admin list
-    is_legacy_admin = settings.is_admin(
-        telegram_id=user.telegram_id,
-        email=user.email if user.email_verified else None,
-    )
-    if is_legacy_admin:
+    # Legacy check: config-based admin list. Routed through is_user_admin_by_env so the
+    # ADMIN_EMAILS match honours the trusted email_verification_source guard — an email
+    # verified by an untrusted source (VK/Yandex OAuth, or a no-proof flow) must not grant
+    # admin even though email_verified is True.
+    from app.services.rbac_bootstrap_service import is_user_admin_by_env
+
+    if is_user_admin_by_env(user).is_admin:
         return user
 
     # RBAC check: user has any active role with level > 0

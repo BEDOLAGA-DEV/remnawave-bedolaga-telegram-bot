@@ -201,6 +201,7 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
             'not_yet_valid': texts.t('PROMOCODE_NOT_YET_VALID', '❌ Промокод ещё не начал действовать'),
             'used': texts.PROMOCODE_USED,
             'already_used_by_user': texts.PROMOCODE_USED,
+            'user_not_found': texts.t('PROMOCODE_USER_NOT_FOUND', '❌ Пользователь не найден'),
             'not_first_purchase': texts.t(
                 'PROMOCODE_NOT_FIRST_PURCHASE', '❌ Этот промокод доступен только для первой покупки'
             ),
@@ -212,9 +213,18 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
                 'PROMOCODE_NO_SUBSCRIPTION',
                 '❌ Для активации этого промокода необходима подписка (активная или просроченная).',
             ),
+            'subscription_not_found': texts.t('PROMOCODE_SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена.'),
             'daily_limit': texts.t(
                 'PROMO_DAILY_LIMIT',
                 '❌ Достигнут лимит активаций промокодов на сегодня. Попробуйте завтра.',
+            ),
+            'trial_subscription_exists': texts.t(
+                'PROMOCODE_TRIAL_SUBSCRIPTION_EXISTS',
+                '❌ У вас уже есть подписка, поэтому триал-промокод применить нельзя.',
+            ),
+            'trial_provisioning_failed': texts.t(
+                'PROMOCODE_TRIAL_PROVISIONING_FAILED',
+                '❌ Не удалось выдать триал прямо сейчас. Попробуйте позже.',
             ),
             'server_error': texts.ERROR,
         }

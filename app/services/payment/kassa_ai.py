@@ -29,6 +29,7 @@ class KassaAiPaymentMixin:
         email: str | None = None,
         language: str = 'ru',
         payment_system_id: int | None = None,
+        return_url: str | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж KassaAI.
@@ -95,6 +96,11 @@ class KassaAiPaymentMixin:
             # KassaAI требует email в формате {telegram_id}@telegram.org
             target_email = email or (f'{user.telegram_id}@telegram.org' if user and user.telegram_id else None)
 
+            # Notification (webhook) URL — always points to our /kassa-ai-webhook
+            webhook_url = None
+            if settings.WEBHOOK_URL:
+                webhook_url = f'{settings.WEBHOOK_URL.rstrip("/")}/kassa-ai-webhook'
+
             result = await kassa_ai_service.create_order(
                 order_id=order_id,
                 amount=amount_rubles,
@@ -103,6 +109,9 @@ class KassaAiPaymentMixin:
                 payment_system_id=payment_system_id
                 if payment_system_id is not None
                 else settings.KASSA_AI_PAYMENT_SYSTEM_ID,
+                success_url=return_url,
+                fail_url=return_url,
+                notification_url=webhook_url,
             )
 
             payment_url = result.get('location')
@@ -254,9 +263,7 @@ class KassaAiPaymentMixin:
 
         # FOR UPDATE lock already acquired by caller — just check idempotency
         if payment.transaction_id:
-            logger.info(
-                'KassaAI платеж уже привязан к транзакции (trigger=)', order_id=payment.order_id, trigger=trigger
-            )
+            logger.info('KassaAI платеж уже привязан к транзакции', order_id=payment.order_id, trigger=trigger)
             return True
 
         # --- Guest purchase flow (landing page) ---
@@ -277,7 +284,7 @@ class KassaAiPaymentMixin:
         user = await payment_module.get_user_by_id(db, payment.user_id)
         if not user:
             logger.error(
-                'Пользователь не найден для KassaAI платежа (trigger=)',
+                'Пользователь не найден для KassaAI платежа',
                 user_id=payment.user_id,
                 order_id=payment.order_id,
                 trigger=trigger,
@@ -405,7 +412,7 @@ class KassaAiPaymentMixin:
             )
 
         logger.info(
-            '✅ Обработан KassaAI платеж для пользователя (trigger=)',
+            '✅ Обработан KassaAI платеж для пользователя',
             order_id=payment.order_id,
             user_id=payment.user_id,
             trigger=trigger,

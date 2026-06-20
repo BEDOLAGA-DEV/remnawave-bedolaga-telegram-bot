@@ -261,7 +261,7 @@ class BlockedUsersService:
         result.scan_duration_seconds = (datetime.now(tz=UTC) - start_time).total_seconds()
 
         logger.info(
-            'Сканирование завершено: заблокированных из проверенных за с',
+            'Сканирование завершено',
             blocked_count=result.blocked_count,
             total_checked=result.total_checked,
             scan_duration_seconds=round(result.scan_duration_seconds, 1),

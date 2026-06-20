@@ -104,7 +104,7 @@ class TributeService:
                     status = 'unknown'
 
             logger.info(
-                '📝 Извлеченные данные: payment_id=, status=, amount_kopeks=, telegram_user_id=, trb_user_id=',
+                '📝 Извлеченные данные',
                 payment_id=payment_id,
                 status=status,
                 amount_kopeks=amount_kopeks,

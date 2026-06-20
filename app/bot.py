@@ -34,6 +34,7 @@ from app.handlers.admin import (
     maintenance as admin_maintenance,
     messages as admin_messages,
     monitoring as admin_monitoring,
+    overpay_certificate as admin_overpay_certificate,
     payments as admin_payments,
     polls as admin_polls,
     pricing as admin_pricing,
@@ -42,6 +43,7 @@ from app.handlers.admin import (
     promo_offers as admin_promo_offers,
     promocodes as admin_promocodes,
     public_offer as admin_public_offer,
+    quick_amounts as admin_quick_amounts,
     referrals as admin_referrals,
     remnawave as admin_remnawave,
     reports as admin_reports,
@@ -100,6 +102,11 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     from app.bot_factory import create_bot
 
     bot = create_bot()
+
+    # Token-authoritative username so gift/referral/deep links never point at a stale bot.
+    from app.utils.bot_identity import sync_bot_username
+
+    await sync_bot_username(bot)
 
     proxy_url = settings.get_proxy_url()
     nalogo_proxy_url = settings.get_nalogo_proxy_url()
@@ -215,6 +222,8 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_blacklist.register_blacklist_handlers(dp)
     admin_blocked_users.register_handlers(dp)
     admin_required_channels.register_handlers(dp)
+    admin_quick_amounts.register_handlers(dp)
+    admin_overpay_certificate.register_handlers(dp)
     register_channel_member_handlers(dp)
     register_gift_activation_handlers(dp)
     common.register_handlers(dp)

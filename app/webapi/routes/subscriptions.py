@@ -36,6 +36,10 @@ from ..schemas.subscriptions import (
     SubscriptionSquadRequest,
     SubscriptionTrafficRequest,
 )
+from ._subscription_state import (
+    restore_subscription_state as _restore_subscription_state,
+    snapshot_subscription_state as _snapshot_subscription_state,
+)
 
 
 logger = structlog.get_logger(__name__)
@@ -242,14 +246,17 @@ async def create_subscription(
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.exception(
+            'Failed to sync subscription with Remnawave during create/replace',
+            user_id=payload.user_id,
+            subscription_id=getattr(subscription, 'id', None),
+        )
         try:
             await db.rollback()
         except Exception:
-            logger.exception('Rollback failed after error', e=e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f'Failed to sync with Remnawave: {e!s}'
-        )
+            logger.exception('Rollback failed after subscription sync error')
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='Failed to sync with Remnawave')
 
     subscription = await _get_subscription(db, subscription.id)
     return _serialize_subscription(subscription)
@@ -263,7 +270,36 @@ async def extend_subscription_endpoint(
     db: AsyncSession = Depends(get_db_session),
 ) -> SubscriptionResponse:
     subscription = await _get_subscription(db, subscription_id)
-    subscription = await extend_subscription(db, subscription, payload.days)
+    previous_state = _snapshot_subscription_state(subscription)
+
+    try:
+        subscription = await extend_subscription(db, subscription, payload.days)
+
+        subscription_service = SubscriptionService()
+        rem_user = await subscription_service.update_remnawave_user(db, subscription, reset_traffic=False)
+        if not rem_user:
+            rem_user = await subscription_service.create_remnawave_user(db, subscription, reset_traffic=False)
+        if not rem_user:
+            raise ValueError('Failed to update user in Remnawave')
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            'Failed to sync subscription with Remnawave during extend',
+            subscription_id=subscription_id,
+        )
+        try:
+            await _restore_subscription_state(db, subscription_id, previous_state)
+        except Exception:
+            logger.exception(
+                'Failed to rollback subscription %s after Remnawave sync error',
+                subscription_id,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to sync with Remnawave',
+        )
+
     subscription = await _get_subscription(db, subscription.id)
     return _serialize_subscription(subscription)
 

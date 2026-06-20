@@ -150,7 +150,7 @@ class PlategaPaymentMixin:
             )
 
         if not payment:
-            logger.warning('Platega webhook: платеж не найден (id=)', transaction_id=transaction_id)
+            logger.warning('Platega webhook: платеж не найден', transaction_id=transaction_id)
             return False
 
         # Lock payment row immediately to prevent concurrent webhook processing (TOCTOU race)

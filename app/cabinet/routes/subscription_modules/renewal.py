@@ -266,6 +266,19 @@ async def renew_subscription(
             },
         )
 
+    # Yandex.Metrika offline conversion — see /purchase endpoint for context (#558449).
+    try:
+        from app.services import yandex_offline_conv_service as yandex_conv
+
+        # Purchase event fires centrally from create_transaction; here we only
+        # persist the request-body CID synchronously (#558449).
+        await yandex_conv.store_cid_only(
+            user.id,
+            request.yandex_cid,
+        )
+    except Exception as yconv_err:
+        logger.debug('yandex_conv purchase hook failed (non-fatal)', user_id=user.id, error=str(yconv_err))
+
     response: dict[str, Any] = {
         'message': 'Subscription renewed successfully',
         'new_end_date': result.subscription.end_date.isoformat(),
