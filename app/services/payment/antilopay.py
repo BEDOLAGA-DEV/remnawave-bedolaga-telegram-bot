@@ -136,24 +136,14 @@ class AntilopayPaymentMixin:
                     metadata['recurrent_enabled'] = True
                     metadata['recurrent_type'] = recurrent_payload['type']
                     metadata['recurrent_payment_count'] = recurrent_payload['payment_count']
-                    # Для подписок используем category=SUBSCRIPTION и делаем
-                    # первое списание сразу (delay=0, delay_type=DAY) — это
-                    # говорит Antilopay привязать карту и выполнить списание
-                    # немедленно (нужно для сценария привязки карты + сразу платеж).
-                    if subscription_id is not None:
-                        recurrent_payload.setdefault('category', 'SUBSCRIPTION')
-                        # Обязательно передать delay=0 и delay_type='DAY'
-                        # чтобы первое списание прошло сразу при оплате.
-                        recurrent_payload.setdefault('delay', 0)
-                        recurrent_payload.setdefault('delay_type', 'DAY')
+                    recurrent_payload.setdefault('category', 'SUBSCRIPTION')
+                    recurrent_payload.setdefault('delay', 0)
+                    recurrent_payload.setdefault('delay_type', 'DAY')
 
-            # Формируем success/fail URL
             result_url = return_url or settings.ANTILOPAY_RETURN_URL
 
-            # merchant_extra — строка до 255 символов для callback
             merchant_extra = order_id
 
-            # Создаем платеж через API
             api_result = await antilopay_service.create_payment(
                 amount_rubles=amount_rubles,
                 order_id=order_id,
