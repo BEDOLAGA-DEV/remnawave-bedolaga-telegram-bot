@@ -1602,8 +1602,14 @@ async def confirm_tariff_purchase(
         await callback.answer('Тариф недоступен', show_alert=True)
         return
 
-    # Validate period is available for this tariff
-    if str(period) not in (tariff.period_prices or {}):
+    # Validate period: exact anchor, or any in-range day for flexible-days tariffs
+    _periods = tariff.get_available_periods()
+    _flex_ok = (
+        getattr(tariff, 'flexible_days_enabled', False)
+        and _periods
+        and _periods[0] <= period <= _periods[-1]
+    )
+    if str(period) not in (tariff.period_prices or {}) and not _flex_ok:
         await callback.answer('Период недоступен', show_alert=True)
         return
 
