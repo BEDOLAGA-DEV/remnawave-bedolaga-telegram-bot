@@ -66,6 +66,16 @@ def _get_remnawave_uuid(subscription, db_user):
     return getattr(subscription, 'remnawave_uuid', None) or db_user.remnawave_uuid
 
 
+def _tariff_devices_enabled(tariff) -> bool:
+    """Докупка устройств доступна, если у тарифа есть тиры или цена за устройство."""
+    if tariff is None:
+        return False
+    if getattr(tariff, 'device_price_tiers', None):
+        return True
+    price = getattr(tariff, 'device_price_kopeks', None)
+    return price is not None and price > 0
+
+
 async def get_current_devices_detailed(db_user: User, subscription=None) -> dict:
     try:
         uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
@@ -186,7 +196,7 @@ async def handle_change_devices(
     # Для тарифов - проверяем разрешено ли изменение устройств
     tariff_device_price = getattr(tariff, 'device_price_kopeks', None) if tariff else None
     if tariff:
-        if tariff_device_price is None or tariff_device_price <= 0:
+        if not _tariff_devices_enabled(tariff):
             await callback.answer(
                 texts.t('TARIFF_DEVICES_DISABLED', '⚠️ Изменение устройств недоступно для вашего тарифа'),
                 show_alert=True,
@@ -211,7 +221,7 @@ async def handle_change_devices(
 
     # Для тарифов показываем цену из тарифа
     if tariff:
-        price_per_device = tariff_device_price
+        price_per_device = tariff_device_price or 0
         price_text = texts.format_price(price_per_device)
         prompt_text = texts.t(
             'CHANGE_DEVICES_PROMPT_TARIFF',
@@ -280,13 +290,13 @@ async def confirm_change_devices(
     # Для тарифов - проверяем разрешено ли изменение устройств
     tariff_device_price = getattr(tariff, 'device_price_kopeks', None) if tariff else None
     if tariff:
-        if tariff_device_price is None or tariff_device_price <= 0:
+        if not _tariff_devices_enabled(tariff):
             await callback.answer(
                 texts.t('TARIFF_DEVICES_DISABLED', '⚠️ Изменение устройств недоступно для вашего тарифа'),
                 show_alert=True,
             )
             return
-        price_per_device = tariff_device_price
+        price_per_device = tariff_device_price or 0
     else:
         if not settings.is_devices_selection_enabled():
             await callback.answer(
@@ -336,21 +346,21 @@ async def confirm_change_devices(
     if devices_difference > 0:
         additional_devices = devices_difference
 
-        # Устройства в пределах тарифного лимита — бесплатные
+        # Цена доплаты: для тарифа — дельта тиров (база бесплатна внутри helper),
+        # иначе старый расчёт по бесплатным устройствам и price_per_device.
         if tariff:
-            tariff_included = tariff.device_limit or 0
-            if current_devices < tariff_included:
-                free_devices = tariff_included - current_devices
+            devices_price_per_month = max(
+                0,
+                tariff.get_device_extra_price_per_month(new_devices_count)
+                - tariff.get_device_extra_price_per_month(current_devices),
+            )
+        else:
+            if current_devices < settings.DEFAULT_DEVICE_LIMIT:
+                free_devices = settings.DEFAULT_DEVICE_LIMIT - current_devices
                 chargeable_devices = max(0, additional_devices - free_devices)
             else:
                 chargeable_devices = additional_devices
-        elif current_devices < settings.DEFAULT_DEVICE_LIMIT:
-            free_devices = settings.DEFAULT_DEVICE_LIMIT - current_devices
-            chargeable_devices = max(0, additional_devices - free_devices)
-        else:
-            chargeable_devices = additional_devices
-
-        devices_price_per_month = chargeable_devices * price_per_device
+            devices_price_per_month = chargeable_devices * price_per_device
 
         # Считаем стоимость по оставшимся дням подписки
         now = datetime.now(UTC)
@@ -371,7 +381,7 @@ async def confirm_change_devices(
         )
         # Цена = месячная_цена * min(days_left, 30) / 30 — capped at one month
         price = int(discounted_per_month * effective_days / 30)
-        if chargeable_devices > 0:
+        if devices_price_per_month > 0:
             price = max(100, price)  # Минимум 1 рубль (только для платных устройств)
         total_discount = int(discount_per_month * effective_days / 30)
         period_label = f'{effective_days} дн.' if effective_days > 1 else '1 день'
@@ -544,13 +554,13 @@ async def execute_change_devices(
     # Для тарифов - проверяем разрешено ли изменение устройств
     if tariff:
         tariff_device_price = getattr(tariff, 'device_price_kopeks', None)
-        if tariff_device_price is None or tariff_device_price <= 0:
+        if not _tariff_devices_enabled(tariff):
             await callback.answer(
                 texts.t('TARIFF_DEVICES_DISABLED', '⚠️ Изменение устройств недоступно для вашего тарифа'),
                 show_alert=True,
             )
             return
-        price_per_device = tariff_device_price
+        price_per_device = tariff_device_price or 0
     elif not settings.is_devices_selection_enabled():
         await callback.answer(
             texts.t('DEVICES_SELECTION_DISABLED', '⚠️ Изменение количества устройств недоступно'),
@@ -575,19 +585,18 @@ async def execute_change_devices(
     devices_difference = new_devices_count - current_devices
     if devices_difference > 0:
         if tariff:
-            tariff_included = tariff.device_limit or 0
-            if current_devices < tariff_included:
-                free_devices = tariff_included - current_devices
-                chargeable_devices = max(0, devices_difference - free_devices)
-            else:
-                chargeable_devices = devices_difference
+            devices_price_per_month = max(
+                0,
+                tariff.get_device_extra_price_per_month(new_devices_count)
+                - tariff.get_device_extra_price_per_month(current_devices),
+            )
         elif current_devices < settings.DEFAULT_DEVICE_LIMIT:
             free_devices = settings.DEFAULT_DEVICE_LIMIT - current_devices
             chargeable_devices = max(0, devices_difference - free_devices)
+            devices_price_per_month = chargeable_devices * price_per_device
         else:
             chargeable_devices = devices_difference
-
-        devices_price_per_month = chargeable_devices * price_per_device
+            devices_price_per_month = chargeable_devices * price_per_device
         days_left = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
         effective_days = min(days_left, 30)  # Cap prorate at one month — #596757
         devices_discount_percent = PricingEngine.get_addon_discount_percent(
@@ -600,7 +609,7 @@ async def execute_change_devices(
             devices_discount_percent,
         )
         price = int(discounted_per_month * effective_days / 30)
-        if chargeable_devices > 0:
+        if devices_price_per_month > 0:
             price = max(100, price)
     else:
         price = 0
@@ -1421,13 +1430,13 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
     # Для тарифов - проверяем разрешено ли добавление устройств
     tariff_device_price = getattr(tariff, 'device_price_kopeks', None) if tariff else None
     if tariff:
-        if tariff_device_price is None or tariff_device_price <= 0:
+        if not _tariff_devices_enabled(tariff):
             await callback.answer(
                 texts.t('TARIFF_DEVICES_DISABLED', '⚠️ Добавление устройств недоступно для вашего тарифа'),
                 show_alert=True,
             )
             return
-        price_per_device = tariff_device_price
+        price_per_device = tariff_device_price or 0
     else:
         if not settings.is_devices_selection_enabled():
             await callback.answer(
@@ -1454,22 +1463,21 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         )
         return
 
-    # Устройства в пределах тарифного лимита — бесплатные
+    # Цена доплаты: для тарифа — дельта тиров, иначе старый расчёт.
     current_devices = subscription.device_limit or 1
     if tariff:
-        tariff_included = tariff.device_limit or 0
-        if current_devices < tariff_included:
-            free_devices = tariff_included - current_devices
-            chargeable_devices = max(0, devices_count - free_devices)
-        else:
-            chargeable_devices = devices_count
+        devices_price_per_month = max(
+            0,
+            tariff.get_device_extra_price_per_month(new_total_devices)
+            - tariff.get_device_extra_price_per_month(current_devices),
+        )
     elif current_devices < settings.DEFAULT_DEVICE_LIMIT:
         free_devices = settings.DEFAULT_DEVICE_LIMIT - current_devices
         chargeable_devices = max(0, devices_count - free_devices)
+        devices_price_per_month = chargeable_devices * price_per_device
     else:
         chargeable_devices = devices_count
-
-    devices_price_per_month = chargeable_devices * price_per_device
+        devices_price_per_month = chargeable_devices * price_per_device
 
     # TOCTOU: lock user row before reading promo/discount state
     db_user = await lock_user_for_pricing(db, db_user.id)
@@ -1495,7 +1503,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         )
         # Цена = месячная_цена * min(days_left, 30) / 30 — capped at one month
         price = int(discounted_per_month * effective_days / 30)
-        if chargeable_devices > 0:
+        if devices_price_per_month > 0:
             price = max(100, price)  # Минимум 1 рубль (только для платных устройств)
         total_discount = int(discount_per_month * effective_days / 30)
         period_label = f'{effective_days} дн.' if effective_days > 1 else '1 день'
@@ -1517,7 +1525,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         )
         # Цена = месячная_цена * min(days_left, 30) / 30 — capped at one month
         price = int(discounted_per_month * effective_days / 30)
-        if chargeable_devices > 0:
+        if devices_price_per_month > 0:
             price = max(100, price)  # Минимум 1 рубль (только для платных устройств)
         total_discount = int(discount_per_month * effective_days / 30)
         period_label = f'{effective_days} дн.' if effective_days > 1 else '1 день'
