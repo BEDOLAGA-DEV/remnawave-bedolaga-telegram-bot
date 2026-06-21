@@ -99,7 +99,10 @@ from app.utils.pricing_utils import (
     format_period_description,
 )
 from app.utils.promo_offer import get_user_active_promo_discount_percent
-from app.utils.subscription_utils import get_happ_cryptolink_redirect_link
+from app.utils.subscription_utils import (
+    apply_subscription_domain_override,
+    get_happ_cryptolink_redirect_link,
+)
 from app.utils.telegram_webapp import (
     TelegramWebAppAuthError,
     parse_webapp_init_data,
@@ -2892,7 +2895,7 @@ async def _load_subscription_links(
     payload: dict[str, Any] = {
         'links': list(info.links or []),
         'ss_conf_links': dict(info.ss_conf_links or {}),
-        'subscription_url': info.subscription_url,
+        'subscription_url': apply_subscription_domain_override(info.subscription_url),
         'happ': info.happ,
         'happ_link': getattr(info, 'happ_link', None),
         'happ_crypto_link': getattr(info, 'happ_crypto_link', None),
@@ -3357,7 +3360,9 @@ async def get_subscription_details(
         links_payload = await _load_subscription_links(subscription)
         # Флаг скрытия ссылки (скрывается только текст, кнопки работают)
         hide_subscription_link = settings.should_hide_subscription_link()
-        subscription_url = links_payload.get('subscription_url') or subscription.subscription_url
+        subscription_url = apply_subscription_domain_override(
+            links_payload.get('subscription_url') or subscription.subscription_url
+        )
         subscription_crypto_link = links_payload.get('happ_crypto_link') or subscription.subscription_crypto_link
         happ_redirect_link = get_happ_cryptolink_redirect_link(subscription_crypto_link)
         connected_squads = list(subscription.connected_squads or [])

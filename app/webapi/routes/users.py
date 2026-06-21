@@ -29,6 +29,7 @@ from app.database.crud.user import (
 )
 from app.database.models import PaymentMethod, PromoGroup, Subscription, User, UserStatus
 from app.services.subscription_service import SubscriptionService
+from app.utils.subscription_utils import apply_subscription_domain_override
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.users import (
@@ -81,7 +82,7 @@ def _serialize_subscription(subscription: Subscription | None) -> SubscriptionSu
         device_limit=subscription.device_limit,
         autopay_enabled=subscription.autopay_enabled,
         autopay_days_before=subscription.autopay_days_before,
-        subscription_url=subscription.subscription_url,
+        subscription_url=apply_subscription_domain_override(subscription.subscription_url),
         subscription_crypto_link=subscription.subscription_crypto_link,
         connected_squads=list(subscription.connected_squads or []),
         tariff_id=subscription.tariff_id,

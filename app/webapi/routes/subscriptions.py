@@ -61,7 +61,7 @@ def _serialize_subscription(subscription: Subscription) -> SubscriptionResponse:
         device_limit=subscription.device_limit,
         autopay_enabled=subscription.autopay_enabled,
         autopay_days_before=subscription.autopay_days_before,
-        subscription_url=subscription.subscription_url,
+        subscription_url=apply_subscription_domain_override(subscription.subscription_url),
         subscription_crypto_link=subscription.subscription_crypto_link,
         connected_squads=list(subscription.connected_squads or []),
         created_at=subscription.created_at,
