@@ -980,6 +980,7 @@ class Settings(BaseSettings):
     HAPP_DOWNLOAD_LINK_WINDOWS: str | None = None
     HAPP_DOWNLOAD_LINK_PC: str | None = None
     HIDE_SUBSCRIPTION_LINK: bool = False
+    SUBSCRIPTION_DOMAIN_OVERRIDE: str | None = None
     ENABLE_LOGO_MODE: bool = True
     LOGO_FILE: str = 'vpn_logo.png'
     SKIP_RULES_ACCEPT: bool = False
@@ -2911,6 +2912,20 @@ class Settings(BaseSettings):
         if self.is_happ_cryptolink_mode():
             return False
         return self.HIDE_SUBSCRIPTION_LINK
+
+    def get_subscription_domain_override(self) -> str | None:
+        """Return the configured replacement host for subscription links.
+
+        Accepts a bare host, ``host:port`` or a full URL; normalizes to the
+        netloc (``host`` or ``host:port``). Blank/unset → ``None`` (no override).
+        """
+        raw = (self.SUBSCRIPTION_DOMAIN_OVERRIDE or '').strip()
+        if not raw:
+            return None
+        if '://' in raw:
+            raw = raw.split('://', 1)[1]
+        raw = raw.split('/', 1)[0].strip()
+        return raw or None
 
     def is_contests_enabled(self) -> bool:
         if getattr(self, 'CONTESTS_ENABLED', False):
