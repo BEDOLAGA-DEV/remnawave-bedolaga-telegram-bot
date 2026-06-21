@@ -113,6 +113,32 @@ def apply_subscription_domain_override(url: str | None) -> str | None:
     return urlunparse(parsed._replace(netloc=override))
 
 
+async def resolve_crypto_link_for_storage(
+    api,
+    subscription_url: str | None,
+    panel_crypto_link: str | None,
+) -> str | None:
+    """Return the crypt5 link to persist in ``subscription_crypto_link``.
+
+    With no override → the panel-provided value (current behavior). With an
+    override → re-encrypt the overridden subscription URL via the open panel
+    ``api`` client so the client fetches the new host. Encryption failure falls
+    back to the panel value (never raises). ``api`` is any object exposing an
+    async ``encrypt_happ_crypto_link(link)``.
+    """
+    if not settings.get_subscription_domain_override():
+        return panel_crypto_link
+    if not subscription_url:
+        return panel_crypto_link
+    overridden_url = apply_subscription_domain_override(subscription_url)
+    try:
+        encrypted = await api.encrypt_happ_crypto_link(overridden_url)
+    except Exception:
+        logger.warning('resolve_crypto_link_for_storage: encryption failed')
+        encrypted = None
+    return encrypted or panel_crypto_link
+
+
 def get_happ_cryptolink_redirect_link(subscription_link: str | None) -> str | None:
     if not subscription_link:
         return None
