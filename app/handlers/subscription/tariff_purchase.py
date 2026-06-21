@@ -1453,63 +1453,36 @@ async def build_period_confirm(
     single_tariff = bool(data.get('single_tariff'))
     back_cb = 'nz!_back_to_menu' if single_tariff else f'nz!_tariff_select:{tariff_id}'
 
+    # Preview is non-terminal: ALWAYS keep the device-selection keyboard so the
+    # user can raise/lower devices and browse prices freely. Insufficient balance
+    # is only a note here; it is enforced at confirm time (confirm_tariff_purchase).
+    # No cart is saved during preview.
+    discount_text = f'\n🎁 Скидка: {discount_percent}%' if discount_percent > 0 else ''
     if user_balance >= final_price:
-        discount_text = f'\n🎁 Скидка: {discount_percent}%' if discount_percent > 0 else ''
-        text = (
-            f'✅ <b>Подтверждение покупки</b>\n\n'
-            f'📊 Трафик: {traffic}\n'
-            f'📱 Устройств: {selected_device_limit}\n'
-            f'📅 Период: {format_period(period)}\n'
-            f'{discount_text}\n'
-            f'💰 <b>Итого: {format_price_kopeks(final_price)}</b>\n\n'
-            f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
-            f'После оплаты: {format_price_kopeks(user_balance - final_price)}'
-        )
-        kb = get_tariff_confirm_keyboard(
-            tariff_id,
-            period,
-            db_user.language,
-            device_limit=selected_device_limit,
-            base=base,
-            effective_max=effective_max,
-            devices_selectable=selectable,
-            back_callback=back_cb,
-        )
+        balance_line = f'После оплаты: {format_price_kopeks(user_balance - final_price)}'
     else:
         missing = final_price - user_balance
-        if settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-            _existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
-        else:
-            _existing_sub = await get_subscription_by_user_id(db, db_user.id)
-
-        cart_data = {
-            'cart_mode': 'tariff_purchase',
-            'tariff_id': tariff_id,
-            'period_days': period,
-            'total_price': final_price,
-            'user_id': db_user.id,
-            'saved_cart': True,
-            'missing_amount': missing,
-            'return_to_cart': True,
-            'description': f'Покупка тарифа {tariff.name} на {period} дней',
-            'traffic_limit_gb': tariff.traffic_limit_gb,
-            'device_limit': selected_device_limit,
-            'allowed_squads': tariff.allowed_squads or [],
-            'discount_percent': discount_percent,
-            'subscription_id': _existing_sub.id if _existing_sub else None,
-        }
-        await user_cart_service.save_user_cart(db_user.id, cart_data)
-        text = (
-            f'❌ <b>Недостаточно средств</b>\n\n'
-            f'📅 Период: {format_period(period)}\n'
-            f'💰 Стоимость: {format_price_kopeks(final_price)}\n\n'
-            f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
-            f'⚠️ Не хватает: <b>{format_price_kopeks(missing)}</b>\n\n'
-            f'🛒 <i>Корзина сохранена! После пополнения баланса подписка будет оформлена автоматически.</i>'
-        )
-        kb = get_tariff_insufficient_balance_keyboard(tariff_id, period, db_user.language)
+        balance_line = f'⚠️ Не хватает: <b>{format_price_kopeks(missing)}</b> — пополните баланс'
+    text = (
+        f'✅ <b>Подтверждение покупки</b>\n\n'
+        f'📊 Трафик: {traffic}\n'
+        f'📱 Устройств: {selected_device_limit}\n'
+        f'📅 Период: {format_period(period)}\n'
+        f'{discount_text}\n'
+        f'💰 <b>Итого: {format_price_kopeks(final_price)}</b>\n\n'
+        f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
+        f'{balance_line}'
+    )
+    kb = get_tariff_confirm_keyboard(
+        tariff_id,
+        period,
+        db_user.language,
+        device_limit=selected_device_limit,
+        base=base,
+        effective_max=effective_max,
+        devices_selectable=selectable,
+        back_callback=back_cb,
+    )
 
     target_subscription_id: int | None = None
     if settings.is_multi_tariff_enabled():
