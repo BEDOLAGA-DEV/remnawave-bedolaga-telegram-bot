@@ -5018,15 +5018,21 @@ async def _build_subscription_settings(
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
 
     # Determine device price and max limit from tariff or global settings
-    if tariff and tariff.device_price_kopeks is not None:
-        base_device_price = tariff.device_price_kopeks
+    tariff_has_devices = bool(tariff) and (
+        bool(getattr(tariff, 'device_price_tiers', None))
+        or (tariff.device_price_kopeks is not None and tariff.device_price_kopeks > 0)
+    )
+    if tariff_has_devices:
+        base_device_price = tariff.device_price_kopeks or 0
+        max_devices_setting = tariff.max_device_limit
+    elif tariff:
+        base_device_price = 0
         max_devices_setting = tariff.max_device_limit
     else:
         base_device_price = settings.PRICE_PER_DEVICE
         max_devices_setting = settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None
 
-    # If device price is 0 or negative, device purchase is unavailable
-    devices_can_update = bool(base_device_price and base_device_price > 0)
+    devices_can_update = bool(tariff_has_devices) or (not tariff and base_device_price > 0)
 
     if max_devices_setting is not None:
         max_devices = max(max_devices_setting, current_device_limit, default_device_limit)
@@ -5040,9 +5046,17 @@ async def _build_subscription_settings(
 
     devices_options: list[MiniAppSubscriptionDeviceOption] = []
     for value in range(1, max_devices + 1):
-        chargeable = max(0, value - default_device_limit)
+        if tariff is not None:
+            per_month = max(
+                0,
+                tariff.get_device_extra_price_per_month(value)
+                - tariff.get_device_extra_price_per_month(current_device_limit),
+            )
+        else:
+            chargeable = max(0, value - default_device_limit)
+            per_month = chargeable * base_device_price
         discounted_per_month, _ = apply_percentage_discount(
-            chargeable * base_device_price,
+            per_month,
             devices_discount,
         )
         devices_options.append(
@@ -6069,15 +6083,22 @@ async def update_subscription_devices_endpoint(
     if subscription.tariff_id:
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
 
-    if tariff and tariff.device_price_kopeks is not None:
-        tariff_device_price = tariff.device_price_kopeks
+    tariff_has_devices = bool(tariff) and (
+        bool(getattr(tariff, 'device_price_tiers', None))
+        or (tariff.device_price_kopeks is not None and tariff.device_price_kopeks > 0)
+    )
+    if tariff_has_devices:
+        tariff_device_price = tariff.device_price_kopeks or 0
+        tariff_max_device_limit = tariff.max_device_limit
+    elif tariff:
+        tariff_device_price = 0
         tariff_max_device_limit = tariff.max_device_limit
     else:
         tariff_device_price = settings.PRICE_PER_DEVICE
         tariff_max_device_limit = settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None
 
-    # Block purchase if device price is 0 (purchase unavailable for this tariff)
-    if not tariff_device_price or tariff_device_price <= 0:
+    # Block purchase if device add-on unavailable for this tariff
+    if not (tariff_has_devices or (not tariff and tariff_device_price > 0)):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail={'code': 'devices_unavailable', 'message': 'Докупка устройств недоступна'},
@@ -6118,11 +6139,17 @@ async def update_subscription_devices_endpoint(
     charged_days = 0
 
     if devices_difference > 0:
-        current_chargeable = max(0, current_devices - settings.DEFAULT_DEVICE_LIMIT)
-        new_chargeable = max(0, new_devices - settings.DEFAULT_DEVICE_LIMIT)
-        chargeable_diff = new_chargeable - current_chargeable
-
-        price_per_month = chargeable_diff * tariff_device_price
+        if tariff is not None:
+            price_per_month = max(
+                0,
+                tariff.get_device_extra_price_per_month(new_devices)
+                - tariff.get_device_extra_price_per_month(current_devices),
+            )
+        else:
+            current_chargeable = max(0, current_devices - settings.DEFAULT_DEVICE_LIMIT)
+            new_chargeable = max(0, new_devices - settings.DEFAULT_DEVICE_LIMIT)
+            chargeable_diff = new_chargeable - current_chargeable
+            price_per_month = chargeable_diff * tariff_device_price
         days_remaining = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
         period_hint_days = days_remaining
 
