@@ -1548,9 +1548,14 @@ async def confirm_tariff_purchase(
     else:
         existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
-    device_limit = None
+    _selectable, _base, _eff_max = _tariff_device_purchase_options(tariff)
     if existing_sub and existing_sub.tariff_id == tariff.id:
+        # Продление того же тарифа — кол-во устройств не меняем здесь
         device_limit = existing_sub.device_limit
+    else:
+        _state_dev = await state.get_data() if state else {}
+        _sel = _state_dev.get('selected_device_limit') or _base
+        device_limit = max(_base, min(int(_sel), _eff_max))
 
     result = await pricing_engine.calculate_tariff_purchase_price(
         tariff,
@@ -1675,7 +1680,7 @@ async def confirm_tariff_purchase(
                     user_id=db_user.id,
                     duration_days=period,
                     traffic_limit_gb=tariff.traffic_limit_gb,
-                    device_limit=tariff.device_limit,
+                    device_limit=device_limit,
                     connected_squads=squads,
                     tariff_id=tariff.id,
                     wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
@@ -1704,7 +1709,7 @@ async def confirm_tariff_purchase(
                 user_id=db_user.id,
                 duration_days=period,
                 traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
+                device_limit=device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
                 wl_traffic_limit_gb=resolve_wl_traffic_for_tariff(tariff),
