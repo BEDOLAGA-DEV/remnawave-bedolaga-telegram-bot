@@ -92,6 +92,26 @@ def get_display_subscription_link(subscription: Subscription | None) -> str | No
     return base_link
 
 
+def apply_subscription_domain_override(url: str | None) -> str | None:
+    """Swap the host of a subscription link for the configured override host.
+
+    Non-destructive: the stored ``subscription_url`` is never modified — call
+    this only on values being emitted to a user/API. Preserves scheme, path,
+    query and fragment. Returns the input unchanged when no override is set,
+    the input is empty, or it has no ``//netloc`` (e.g. an opaque token). Never
+    pass a crypt5 link here — those are read from storage already overridden.
+    """
+    if not url:
+        return url
+    override = settings.get_subscription_domain_override()
+    if not override:
+        return url
+    parsed = urlparse(url)
+    if not parsed.netloc:
+        return url
+    return urlunparse(parsed._replace(netloc=override))
+
+
 def get_happ_cryptolink_redirect_link(subscription_link: str | None) -> str | None:
     if not subscription_link:
         return None
