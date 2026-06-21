@@ -26,6 +26,7 @@ from app.database.crud.subscription import (
 from app.database.crud.user import get_user_by_id
 from app.database.models import Subscription, SubscriptionStatus
 from app.services.subscription_service import SubscriptionService
+from app.utils.subscription_utils import apply_subscription_domain_override
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.subscriptions import (
