@@ -90,6 +90,7 @@ class TariffDetailResponse(BaseModel):
     device_limit: int
     device_price_kopeks: int | None = None
     max_device_limit: int | None = None
+    device_price_tiers: dict[str, int] = Field(default_factory=dict)
     tier_level: int
     display_order: int
     period_prices: list[PeriodPrice]
@@ -154,6 +155,7 @@ class TariffCreateRequest(BaseModel):
     device_limit: int = Field(1, ge=1)
     device_price_kopeks: int | None = Field(None, ge=0)
     max_device_limit: int | None = Field(None, ge=1)
+    device_price_tiers: dict[str, int] = Field(default_factory=dict, description='count -> extra kopeks/month')
     tier_level: int = Field(1, ge=1, le=10)
     period_prices: list[PeriodPrice] = Field(default_factory=list)
     allowed_squads: list[str] = Field(default_factory=list, description='Server UUIDs')
@@ -199,6 +201,7 @@ class TariffUpdateRequest(BaseModel):
     device_limit: int | None = Field(None, ge=1)
     device_price_kopeks: int | None = Field(None, ge=0)
     max_device_limit: int | None = Field(None, ge=1)
+    device_price_tiers: dict[str, int] | None = None
     tier_level: int | None = Field(None, ge=1, le=10)
     display_order: int | None = Field(None, ge=0)
     period_prices: list[PeriodPrice] | None = None

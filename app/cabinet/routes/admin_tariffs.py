@@ -246,6 +246,7 @@ async def get_tariff(
         device_limit=tariff.device_limit,
         device_price_kopeks=tariff.device_price_kopeks,
         max_device_limit=tariff.max_device_limit,
+        device_price_tiers=tariff.device_price_tiers or {},
         tier_level=tariff.tier_level,
         display_order=tariff.display_order,
         period_prices=_period_prices_to_list(tariff.period_prices),
@@ -310,6 +311,7 @@ async def create_new_tariff(
         device_limit=request.device_limit,
         device_price_kopeks=request.device_price_kopeks,
         max_device_limit=request.max_device_limit,
+        device_price_tiers=request.device_price_tiers,
         tier_level=request.tier_level,
         period_prices=period_prices_dict,
         allowed_squads=request.allowed_squads,
@@ -391,6 +393,8 @@ async def update_existing_tariff(
         updates['device_price_kopeks'] = request.device_price_kopeks
     if request.max_device_limit is not None:
         updates['max_device_limit'] = request.max_device_limit
+    if request.device_price_tiers is not None:
+        updates['device_price_tiers'] = request.device_price_tiers
     if request.tier_level is not None:
         updates['tier_level'] = request.tier_level
     if request.display_order is not None:
