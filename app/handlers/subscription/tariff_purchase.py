@@ -399,7 +399,6 @@ def format_tariff_info_for_user(
 
 <b>Параметры:</b>
 • Трафик: {traffic}
-• Устройств: {tariff.device_limit}
 """
 
     if tariff.description:
@@ -672,13 +671,7 @@ async def show_tariffs_list(
         only = tariffs[0]
         if only.id not in purchased_tariff_ids:
             await state.update_data(single_tariff=True, selected_tariff_id=only.id)
-            if getattr(only, 'is_daily', False):
-                # daily обрабатывает select_tariff целиком
-                callback.data = f'nz!_tariff_select:{only.id}'
-                await select_tariff(callback, db_user, db, state)
-                return
-            await _render_tariff_entry(callback, db_user, db, state, only)
-            await callback.answer()
+            await select_tariff(callback, db_user, db, state, tariff=only)
             return
 
     # Проверяем есть ли у пользователя скидки по периодам
@@ -786,10 +779,14 @@ async def select_tariff(
     db_user: User,
     db: AsyncSession,
     state: FSMContext,
+    tariff: Tariff | None = None,
 ):
     """Обрабатывает выбор тарифа."""
-    tariff_id = int(callback.data.split(':')[1])
-    tariff = await get_tariff_by_id(db, tariff_id)
+    if tariff is None:
+        tariff_id = int(callback.data.split(':')[1])
+        tariff = await get_tariff_by_id(db, tariff_id)
+    else:
+        tariff_id = tariff.id
 
     if not tariff or not tariff.is_active:
         await callback.answer('Тариф недоступен', show_alert=True)
@@ -1344,11 +1341,14 @@ async def select_tariff_period(
     db_user: User,
     db: AsyncSession,
     state: FSMContext,
+    tariff_id: int | None = None,
+    period: int | None = None,
 ):
     """Обрабатывает выбор периода для тарифа."""
-    parts = callback.data.split(':')
-    tariff_id = int(parts[1])
-    period = int(parts[2])
+    if tariff_id is None or period is None:
+        parts = callback.data.split(':')
+        tariff_id = int(parts[1])
+        period = int(parts[2])
 
     tariff = await get_tariff_by_id(db, tariff_id)
     if not tariff or not tariff.is_active:
@@ -1502,9 +1502,8 @@ async def handle_tariff_device_change(
     clamped = max(base, min(requested, effective_max))
     await state.update_data(selected_device_limit=clamped)
 
-    # Перерисовываем экран подтверждения тем же рендером
-    callback.data = f'nz!_tariff_period:{tariff_id}:{period}'
-    await select_tariff_period(callback, db_user, db, state)
+    # Перерисовываем экран подтверждения тем же рендером (без мутации frozen callback)
+    await select_tariff_period(callback, db_user, db, state, tariff_id=tariff_id, period=period)
 
 
 @error_handler
