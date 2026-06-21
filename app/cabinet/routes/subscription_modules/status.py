@@ -412,16 +412,20 @@ async def get_app_config(
     subscription_url = None
     subscription_crypto_link = None
     if subscription:
-        subscription_url = apply_subscription_domain_override(subscription.subscription_url)
+        subscription_url = subscription.subscription_url
         subscription_crypto_link = subscription.subscription_crypto_link
 
     # Generate crypto link on the fly if subscription_url exists but crypto link is missing.
-    # This covers synced users where enrich_happ_links was not called.
+    # This covers synced users where enrich_happ_links was not called. Encrypt the
+    # override-applied URL so a configured subscription domain is honored in the stored
+    # crypt5 (consistent with the storage layer); the raw subscription_url is preserved.
     if subscription_url and not subscription_crypto_link:
         try:
             service = RemnaWaveService()
             async with service.get_api_client() as api:
-                encrypted = await api.encrypt_happ_crypto_link(subscription_url)
+                encrypted = await api.encrypt_happ_crypto_link(
+                    apply_subscription_domain_override(subscription_url)
+                )
                 if encrypted:
                     subscription_crypto_link = encrypted
                     if subscription:
@@ -433,6 +437,9 @@ async def get_app_config(
                         )
         except Exception as e:
             logger.debug('Could not generate crypto link', error=e)
+
+    # Apply the domain override to the plain URL emitted in the response.
+    subscription_url = apply_subscription_domain_override(subscription_url)
 
     config = await _load_app_config_async()
 
