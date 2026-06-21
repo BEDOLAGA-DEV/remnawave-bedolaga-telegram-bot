@@ -1327,49 +1327,69 @@ async def select_tariff_period(
         await callback.answer('Тариф недоступен', show_alert=True)
         return
 
-    # Получаем скидку для выбранного периода
+    # Получаем скидку для выбранного периода (для бейджа)
     group_pct, offer_pct, discount_percent = _get_user_period_discount(db_user, period)
-
-    # Получаем цену с учётом акции
-    prices = tariff.period_prices or {}
-    base_price = prices.get(str(period), 0)
     scheduled_pct = await _get_scheduled_promo_discount(db, tariff_id)
-    final_price = _apply_promo_discount(base_price, group_pct, offer_pct, scheduled_pct=scheduled_pct)
-
-    # Учитываем скидку акции в отображении
     if scheduled_pct > 0:
         remaining = (100 - scheduled_pct) * (100 - discount_percent)
         discount_percent = 100 - remaining // 100
 
-    # Проверяем баланс
-    user_balance = db_user.balance_kopeks or 0
+    # Выбор устройств
+    selectable, base, effective_max = _tariff_device_purchase_options(tariff)
+    data = await state.get_data()
+    selected_device_limit = data.get('selected_device_limit')
+    if selected_device_limit is None:
+        selected_device_limit = base
+    selected_device_limit = max(base, min(int(selected_device_limit), effective_max))
 
+    # Единый источник цены — движок (превью == списание), включает устройства
+    from app.services.pricing_engine import pricing_engine
+
+    result = await pricing_engine.calculate_tariff_purchase_price(
+        tariff,
+        period,
+        device_limit=selected_device_limit,
+        user=db_user,
+        db=db,
+    )
+    final_price = result.final_total
+
+    user_balance = db_user.balance_kopeks or 0
     traffic = format_traffic(tariff.traffic_limit_gb)
 
+    single_tariff = bool(data.get('single_tariff'))
+    back_cb = 'nz!_back_to_menu' if single_tariff else f'nz!_tariff_select:{tariff_id}'
+
     if user_balance >= final_price:
-        # Показываем подтверждение
         discount_text = ''
         if discount_percent > 0:
-            discount_text = f'\n🎁 Скидка: {discount_percent}% (-{format_price_kopeks(base_price - final_price)})'
+            discount_text = f'\n🎁 Скидка: {discount_percent}%'
 
         await callback.message.edit_text(
             f'✅ <b>Подтверждение покупки</b>\n\n'
             f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
-            f'📱 Устройств: {tariff.device_limit}\n'
+            f'📱 Устройств: {selected_device_limit}\n'
             f'📅 Период: {format_period(period)}\n'
             f'{discount_text}\n'
             f'💰 <b>Итого: {format_price_kopeks(final_price)}</b>\n\n'
             f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
             f'После оплаты: {format_price_kopeks(user_balance - final_price)}',
-            reply_markup=get_tariff_confirm_keyboard(tariff_id, period, db_user.language),
+            reply_markup=get_tariff_confirm_keyboard(
+                tariff_id,
+                period,
+                db_user.language,
+                device_limit=selected_device_limit,
+                base=base,
+                effective_max=effective_max,
+                devices_selectable=selectable,
+                back_callback=back_cb,
+            ),
             parse_mode='HTML',
         )
     else:
-        # Недостаточно средств - сохраняем корзину для автопокупки
         missing = final_price - user_balance
 
-        # Ищем существующую подписку для передачи subscription_id в корзину
         if settings.is_multi_tariff_enabled():
             from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
@@ -1377,7 +1397,6 @@ async def select_tariff_period(
         else:
             _existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
-        # Сохраняем данные корзины для автопокупки после пополнения
         cart_data = {
             'cart_mode': 'tariff_purchase',
             'tariff_id': tariff_id,
@@ -1389,7 +1408,7 @@ async def select_tariff_period(
             'return_to_cart': True,
             'description': f'Покупка тарифа {tariff.name} на {period} дней',
             'traffic_limit_gb': tariff.traffic_limit_gb,
-            'device_limit': tariff.device_limit,
+            'device_limit': selected_device_limit,
             'allowed_squads': tariff.allowed_squads or [],
             'discount_percent': discount_percent,
             'subscription_id': _existing_sub.id if _existing_sub else None,
@@ -1428,6 +1447,7 @@ async def select_tariff_period(
         final_price=final_price,
         tariff_discount_percent=discount_percent,
         target_subscription_id=target_subscription_id,
+        selected_device_limit=selected_device_limit,
     )
     await callback.answer()
 
