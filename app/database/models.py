@@ -1771,6 +1771,8 @@ class Tariff(Base):
     # Тарифные тиры устройств: JSON {"3": 4000, "5": 7000} — total_count: extra_kopeks/мес
     # сверх базы. Пусто = использовать линейный device_price_kopeks (старое поведение).
     device_price_tiers = Column(JSON, default=dict)
+    # Произвольный срок с ценой floor-anchor из period_prices. Отдельно от flat custom_days.
+    flexible_days_enabled = Column(Boolean, default=False, nullable=False, server_default='false')
 
     # Длительность триала для этого тарифа. None = использовать глобальный TRIAL_DURATION_DAYS
     trial_duration_days = Column(Integer, nullable=True, default=None)
@@ -1909,6 +1911,38 @@ class Tariff(Base):
         denom = (b_count - a_count) or 1
         slope = (b_price - a_price) / denom
         return max(0, round(b_price + slope * (n - b_count)))
+
+    def get_price_for_days_anchored(self, days: int) -> int:
+        """База в копейках за произвольный срок по floor-anchor с капом следующим якорем.
+
+        rate = price[floor]/floor_days; base = min(days × rate, price[ceil]); округление до рубля.
+        days клампится в [min_anchor, max_anchor]. Пустые period_prices → 0.
+        """
+        prices = self.period_prices or {}
+        anchors = sorted((int(d), int(p)) for d, p in prices.items())
+        if not anchors:
+            return 0
+
+        d = max(anchors[0][0], min(int(days), anchors[-1][0]))
+
+        for a_days, a_price in anchors:
+            if a_days == d:
+                return a_price
+
+        floor = anchors[0]
+        ceil = None
+        for a_days, a_price in anchors:
+            if a_days < d:
+                floor = (a_days, a_price)
+            elif a_days > d:
+                ceil = (a_days, a_price)
+                break
+
+        rate = floor[1] / floor[0]
+        raw = d * rate
+        if ceil is not None:
+            raw = min(raw, ceil[1])
+        return int(round(raw / 100.0) * 100)
 
     def get_traffic_topup_price(self, gb: int) -> int | None:
         """Возвращает цену в копейках для указанного пакета трафика."""

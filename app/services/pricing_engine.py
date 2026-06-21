@@ -578,6 +578,10 @@ class PricingEngine:
         else:
             period_prices: dict = tariff.period_prices or {}
             base_price = int(period_prices.get(str(period_days), 0) or 0)
+            if base_price == 0 and getattr(tariff, 'flexible_days_enabled', False):
+                _periods = tariff.get_available_periods()
+                if _periods and _periods[0] <= period_days <= _periods[-1]:
+                    base_price = int(tariff.get_price_for_days_anchored(period_days))
             if base_price == 0 and hasattr(tariff, 'get_price_for_custom_days'):
                 if hasattr(tariff, 'can_purchase_custom_days') and tariff.can_purchase_custom_days():
                     custom_price = tariff.get_price_for_custom_days(period_days)
