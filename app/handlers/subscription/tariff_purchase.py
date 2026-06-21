@@ -107,6 +107,26 @@ async def _get_scheduled_promo_discount(db, tariff_id: int) -> int:
         return 0
 
 
+def _tariff_device_purchase_options(tariff) -> tuple[bool, int, int]:
+    """Опции выбора устройств при покупке тарифа.
+
+    Возвращает (selectable, base, effective_max):
+      - selectable: показывать ли −/＋ (есть цена устройств И есть запас сверх базы)
+      - base: включённые устройства (device_limit, минимум 1)
+      - effective_max: верхняя граница выбора
+    """
+    base = tariff.device_limit or 1
+    has_price = bool(getattr(tariff, 'device_price_tiers', None)) or (
+        getattr(tariff, 'device_price_kopeks', None) or 0
+    ) > 0
+    raw_max = getattr(tariff, 'max_device_limit', None) or (
+        settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else 0
+    )
+    effective_max = raw_max if raw_max and raw_max > base else base
+    selectable = has_price and effective_max > base
+    return selectable, base, effective_max
+
+
 def _get_user_period_discount(db_user: User, period_days: int) -> tuple[int, int, int]:
     """Получает скидку пользователя на период из промогруппы + промо-оффер.
 
