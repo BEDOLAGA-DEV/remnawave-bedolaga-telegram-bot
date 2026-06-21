@@ -1378,6 +1378,43 @@ async def handle_tariff_flexdays_start(
     await callback.answer()
 
 
+@error_handler
+async def process_flexdays_input(
+    message: types.Message,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Текстовый ввод числа дней для flexible-тарифа → экран подтверждения."""
+    data = await state.get_data()
+    tariff_id = data.get('selected_tariff_id')
+    tariff = await get_tariff_by_id(db, tariff_id) if tariff_id else None
+    if not tariff or not tariff.is_active or not getattr(tariff, 'flexible_days_enabled', False):
+        await message.answer('Тариф недоступен')
+        await state.clear()
+        return
+
+    periods = tariff.get_available_periods()
+    if not periods:
+        await message.answer('Период недоступен')
+        await state.clear()
+        return
+    min_d, max_d = periods[0], periods[-1]
+
+    raw = (message.text or '').strip()
+    try:
+        days = int(raw)
+    except ValueError:
+        await message.answer(f'Введите число дней от {min_d} до {max_d}.')
+        return
+
+    days = max(min_d, min(days, max_d))
+
+    await state.set_state(None)
+    text, kb = await build_period_confirm(db_user, db, state, tariff, days)
+    await message.answer(text, reply_markup=kb, parse_mode='HTML')
+
+
 async def build_period_confirm(
     db_user: User,
     db: AsyncSession,
@@ -4692,6 +4729,7 @@ def register_tariff_purchase_handlers(dp: Dispatcher):
     dp.callback_query.register(select_tariff_period, F.data.startswith('nz!_tariff_period:'))
     dp.callback_query.register(handle_tariff_device_change, F.data.startswith('nz!_tariff_dev:'))
     dp.callback_query.register(handle_tariff_flexdays_start, F.data.startswith('nz!_tariff_flexdays:'))
+    dp.message.register(process_flexdays_input, SubscriptionStates.selecting_custom_days, F.text)
 
     # Подтверждение покупки
     dp.callback_query.register(confirm_tariff_purchase, F.data.startswith('nz!_tariff_confirm:'))
