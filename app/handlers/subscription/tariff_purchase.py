@@ -667,6 +667,20 @@ async def show_tariffs_list(
         active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)
         purchased_tariff_ids = {s.tariff_id for s in active_subs if s.tariff_id and not s.is_trial}
 
+    # Один активный тариф — пропускаем экран выбора, ведём сразу в его flow.
+    if len(tariffs) == 1:
+        only = tariffs[0]
+        if only.id not in purchased_tariff_ids:
+            await state.update_data(single_tariff=True, selected_tariff_id=only.id)
+            if getattr(only, 'is_daily', False):
+                # daily обрабатывает select_tariff целиком
+                callback.data = f'nz!_tariff_select:{only.id}'
+                await select_tariff(callback, db_user, db, state)
+                return
+            await _render_tariff_entry(callback, db_user, db, state, only)
+            await callback.answer()
+            return
+
     # Проверяем есть ли у пользователя скидки по периодам
     promo_group = db_user.get_primary_promo_group() if hasattr(db_user, 'get_primary_promo_group') else None
     if promo_group is None:
@@ -686,6 +700,84 @@ async def show_tariffs_list(
     )
 
     await callback.answer()
+
+
+async def _render_tariff_entry(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+    tariff: Tariff,
+):
+    """Рендерит первый экран НЕ-суточного тарифа (период/custom).
+
+    Учитывает single_tariff из state для кнопки «Назад» на экране периода.
+    Суточные тарифы обрабатывает select_tariff (сюда не попадают).
+    """
+    tariff_id = tariff.id
+    single_tariff = bool((await state.get_data()).get('single_tariff'))
+    periods_back = 'nz!_back_to_menu' if single_tariff else 'nz!_tariff_list'
+
+    can_custom_days = tariff.can_purchase_custom_days()
+    can_custom_traffic = tariff.can_purchase_custom_traffic()
+
+    if can_custom_days:
+        user_balance = db_user.balance_kopeks or 0
+        initial_days = tariff.min_days
+        initial_traffic = tariff.min_traffic_gb if can_custom_traffic else tariff.traffic_limit_gb
+        group_pct, offer_pct, discount_percent = _get_user_period_discount(db_user, initial_days)
+        await state.update_data(
+            selected_tariff_id=tariff_id,
+            custom_days=initial_days,
+            custom_traffic_gb=initial_traffic,
+            period_discount_percent=discount_percent,
+            period_group_pct=group_pct,
+            period_offer_pct=offer_pct,
+        )
+        preview_text = await format_custom_tariff_preview(
+            tariff=tariff,
+            days=initial_days,
+            traffic_gb=initial_traffic,
+            user_balance=user_balance,
+            db_user=db_user,
+            discount_percent=discount_percent,
+        )
+        await callback.message.edit_text(
+            preview_text,
+            reply_markup=get_custom_tariff_keyboard(
+                tariff_id=tariff_id,
+                language=db_user.language,
+                days=initial_days,
+                traffic_gb=initial_traffic,
+                can_custom_days=can_custom_days,
+                can_custom_traffic=can_custom_traffic,
+                min_days=tariff.min_days,
+                max_days=tariff.max_days,
+                min_traffic=tariff.min_traffic_gb,
+                max_traffic=tariff.max_traffic_gb,
+            ),
+            parse_mode='HTML',
+        )
+    elif can_custom_traffic:
+        await callback.message.edit_text(
+            format_tariff_info_for_user(tariff, db_user.language)
+            + '\n\n📊 <i>После выбора периода вы сможете настроить трафик</i>',
+            reply_markup=get_tariff_periods_keyboard_with_traffic(
+                tariff, db_user.language, db_user=db_user, back_callback=periods_back
+            ),
+            parse_mode='HTML',
+        )
+    else:
+        _scheduled = await _get_scheduled_promo_discount(db, tariff_id)
+        await callback.message.edit_text(
+            format_tariff_info_for_user(tariff, db_user.language),
+            reply_markup=get_tariff_periods_keyboard(
+                tariff, db_user.language, db_user=db_user, scheduled_pct=_scheduled, back_callback=periods_back
+            ),
+            parse_mode='HTML',
+        )
+
+    await state.update_data(selected_tariff_id=tariff_id)
 
 
 @error_handler
@@ -789,71 +881,7 @@ async def select_tariff(
                 parse_mode='HTML',
             )
     else:
-        # Проверяем, есть ли кастомные дни или трафик
-        can_custom_days = tariff.can_purchase_custom_days()
-        can_custom_traffic = tariff.can_purchase_custom_traffic()
-
-        if can_custom_days:
-            # Кастомные дни - показываем экран с +/- для дней (и опционально трафика)
-            user_balance = db_user.balance_kopeks or 0
-
-            initial_days = tariff.min_days
-            initial_traffic = tariff.min_traffic_gb if can_custom_traffic else tariff.traffic_limit_gb
-
-            # Вычисляем скидку для начального периода
-            group_pct, offer_pct, discount_percent = _get_user_period_discount(db_user, initial_days)
-
-            await state.update_data(
-                selected_tariff_id=tariff_id,
-                custom_days=initial_days,
-                custom_traffic_gb=initial_traffic,
-                period_discount_percent=discount_percent,
-                period_group_pct=group_pct,
-                period_offer_pct=offer_pct,
-            )
-
-            preview_text = await format_custom_tariff_preview(
-                tariff=tariff,
-                days=initial_days,
-                traffic_gb=initial_traffic,
-                user_balance=user_balance,
-                db_user=db_user,
-                discount_percent=discount_percent,
-            )
-
-            await callback.message.edit_text(
-                preview_text,
-                reply_markup=get_custom_tariff_keyboard(
-                    tariff_id=tariff_id,
-                    language=db_user.language,
-                    days=initial_days,
-                    traffic_gb=initial_traffic,
-                    can_custom_days=can_custom_days,
-                    can_custom_traffic=can_custom_traffic,
-                    min_days=tariff.min_days,
-                    max_days=tariff.max_days,
-                    min_traffic=tariff.min_traffic_gb,
-                    max_traffic=tariff.max_traffic_gb,
-                ),
-                parse_mode='HTML',
-            )
-        elif can_custom_traffic:
-            # Только кастомный трафик - сначала выбираем период из period_prices
-            # Показываем обычный выбор периода, трафик будет на следующем шаге
-            await callback.message.edit_text(
-                format_tariff_info_for_user(tariff, db_user.language)
-                + '\n\n📊 <i>После выбора периода вы сможете настроить трафик</i>',
-                reply_markup=get_tariff_periods_keyboard_with_traffic(tariff, db_user.language, db_user=db_user),
-                parse_mode='HTML',
-            )
-        else:
-            # Для обычного тарифа показываем выбор периода
-            _scheduled = await _get_scheduled_promo_discount(db, tariff_id)
-            await callback.message.edit_text(
-                format_tariff_info_for_user(tariff, db_user.language),
-                reply_markup=get_tariff_periods_keyboard(tariff, db_user.language, db_user=db_user, scheduled_pct=_scheduled),
-                parse_mode='HTML',
-            )
+        await _render_tariff_entry(callback, db_user, db, state, tariff)
 
     await state.update_data(selected_tariff_id=tariff_id)
     await callback.answer()
