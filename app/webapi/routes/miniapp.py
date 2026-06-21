@@ -3363,7 +3363,16 @@ async def get_subscription_details(
         subscription_url = apply_subscription_domain_override(
             links_payload.get('subscription_url') or subscription.subscription_url
         )
-        subscription_crypto_link = links_payload.get('happ_crypto_link') or subscription.subscription_crypto_link
+        if settings.get_subscription_domain_override():
+            # Stored crypto link is the crypt5 re-encrypted for the override host;
+            # the live panel value (links_payload) carries the old host, so prefer
+            # the stored one. Falls back to the panel value only when not yet
+            # regenerated (self-heals on the next routine sync).
+            subscription_crypto_link = (
+                subscription.subscription_crypto_link or links_payload.get('happ_crypto_link')
+            )
+        else:
+            subscription_crypto_link = links_payload.get('happ_crypto_link') or subscription.subscription_crypto_link
         happ_redirect_link = get_happ_cryptolink_redirect_link(subscription_crypto_link)
         connected_squads = list(subscription.connected_squads or [])
         connected_servers = await _resolve_connected_servers(db, connected_squads)
