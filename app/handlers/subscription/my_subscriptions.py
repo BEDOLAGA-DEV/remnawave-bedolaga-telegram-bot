@@ -70,7 +70,7 @@ def _format_subscription_line(sub, idx: int) -> str:
     # End date
     end_date = sub.end_date.strftime('%d.%m.%Y') if sub.end_date else '—'
 
-    parts = [f'{emoji} <b>{idx}. ⭐{tariff_name}</b>{label}']
+    parts = [f'{emoji} <b>{idx}. {tariff_name}</b>{label}']
     parts.append(f'   <tg-emoji emoji-id="5931472654660800739">📊</tg-emoji> Трафик: {traffic}')
     if devices:
         parts.append(f'   <tg-emoji emoji-id="5877318502947229960">💻</tg-emoji> Устройства: {devices}')
@@ -87,7 +87,7 @@ def _build_subscriptions_keyboard(subscriptions: list, language: str) -> types.I
         buttons.append(
             [
                 types.InlineKeyboardButton(
-                    text='⭐ ' + tariff_name,
+                    text=tariff_name,
                     callback_data=f'sm:{sub.id}',
                 )
             ]
