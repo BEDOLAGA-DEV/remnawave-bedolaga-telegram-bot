@@ -66,6 +66,7 @@ from app.utils.message_patch import caption_exceeds_telegram_limit
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 from app.utils.subscription_utils import (
+    resolve_crypto_link_for_storage,
     resolve_hwid_device_limit_for_payload,
 )
 from app.utils.timezone import format_local_datetime
@@ -552,7 +553,9 @@ class MonitoringService:
                 updated_user = await api.update_user(**update_kwargs)
 
                 subscription.subscription_url = updated_user.subscription_url
-                subscription.subscription_crypto_link = updated_user.happ_crypto_link
+                subscription.subscription_crypto_link = await resolve_crypto_link_for_storage(
+                    api, updated_user.subscription_url, updated_user.happ_crypto_link
+                )
                 await db.commit()
 
                 status_text = 'активным' if is_active else 'истёкшим'

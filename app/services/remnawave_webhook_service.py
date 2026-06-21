@@ -1245,11 +1245,18 @@ class RemnaWaveWebhookService:
             changed = True
 
         # Sync subscription crypto link (for HAPP_CRYPT4_LINK)
-        subscription_crypto_link = data.get('subscriptionCryptoLink') or (data.get('happ') or {}).get('cryptoLink', '')
-        if subscription_crypto_link and self._is_valid_link(subscription_crypto_link):
-            if subscription.subscription_crypto_link != subscription_crypto_link:
-                subscription.subscription_crypto_link = subscription_crypto_link
-                changed = True
+        # When a domain override is active the stored crypto link is our
+        # re-encrypted crypt5 (new host); the panel pushes the old-host value,
+        # so do not overwrite it from the webhook. Routine sync (which holds an
+        # api client) re-encrypts and refreshes it.
+        if not settings.get_subscription_domain_override():
+            subscription_crypto_link = data.get('subscriptionCryptoLink') or (data.get('happ') or {}).get(
+                'cryptoLink', ''
+            )
+            if subscription_crypto_link and self._is_valid_link(subscription_crypto_link):
+                if subscription.subscription_crypto_link != subscription_crypto_link:
+                    subscription.subscription_crypto_link = subscription_crypto_link
+                    changed = True
         # NOTE: панель не включает cryptoLink в каждый webhook user.modified
         # Отсутствие поля не означает что его нужно сбрасывать
 
@@ -1491,13 +1498,18 @@ class RemnaWaveWebhookService:
         if new_url and self._is_valid_url(new_url) and subscription.subscription_url != new_url:
             subscription.subscription_url = new_url
             changed = True
-        if new_crypto_link and self._is_valid_link(new_crypto_link):
-            if subscription.subscription_crypto_link != new_crypto_link:
-                subscription.subscription_crypto_link = new_crypto_link
+        # When a domain override is active the stored crypto link is our
+        # re-encrypted crypt5 (new host); the panel pushes the old-host value
+        # (or nothing), so do not overwrite/clear it from the webhook. Routine
+        # sync (which holds an api client) re-encrypts and refreshes it.
+        if not settings.get_subscription_domain_override():
+            if new_crypto_link and self._is_valid_link(new_crypto_link):
+                if subscription.subscription_crypto_link != new_crypto_link:
+                    subscription.subscription_crypto_link = new_crypto_link
+                    changed = True
+            elif new_url and subscription.subscription_crypto_link:
+                subscription.subscription_crypto_link = None
                 changed = True
-        elif new_url and subscription.subscription_crypto_link:
-            subscription.subscription_crypto_link = None
-            changed = True
 
         # Always stamp to protect from sync overwrite
         self._stamp_webhook_update(subscription)

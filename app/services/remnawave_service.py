@@ -37,6 +37,7 @@ from app.services.subscription_service import get_traffic_reset_strategy
 from app.utils.subscription_utils import (
     coerce_panel_device_limit,
     device_limit_needs_heal,
+    resolve_crypto_link_for_storage,
     resolve_hwid_device_limit_for_payload,
 )
 from app.utils.timezone import get_local_timezone
@@ -3160,7 +3161,9 @@ class RemnaWaveService:
                                     if rw_user:
                                         subscription.remnawave_short_uuid = rw_user.short_uuid
                                         subscription.subscription_url = rw_user.subscription_url
-                                        subscription.subscription_crypto_link = rw_user.happ_crypto_link
+                                        subscription.subscription_crypto_link = await resolve_crypto_link_for_storage(
+                                            api, rw_user.subscription_url, rw_user.happ_crypto_link
+                                        )
                                         logger.info(
                                             '🔧 Восстановлены данные Remnawave для', telegram_id=user.telegram_id
                                         )
