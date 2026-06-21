@@ -585,15 +585,19 @@ class PricingEngine:
                         base_price = int(custom_price)
 
         # --- Extra devices (monthly × months) ---
-        device_price_per_unit = (
-            tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
-        )
+        # Tiered pricing via Tariff.get_device_extra_price_per_month (handles tiers
+        # with interpolation, else linear device_price_kopeks fallback).
         tariff_device_limit = tariff.device_limit or 0
         extra_devices = max(0, (device_limit or 0) - tariff_device_limit)
-        if is_daily and period_days <= 1:
-            devices_price = extra_devices * device_price_per_unit
+        if tariff.device_price_tiers or tariff.device_price_kopeks is not None:
+            devices_price_per_month = tariff.get_device_extra_price_per_month(device_limit or 0)
         else:
-            devices_price = extra_devices * device_price_per_unit * months
+            # No tariff device pricing configured — fall back to global flat rate.
+            devices_price_per_month = extra_devices * settings.PRICE_PER_DEVICE
+        if is_daily and period_days <= 1:
+            devices_price = devices_price_per_month
+        else:
+            devices_price = devices_price_per_month * months
 
         # --- Custom traffic (tariff add-on, uses addon discount path) ---
         traffic_price = 0
