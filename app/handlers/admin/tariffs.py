@@ -87,6 +87,50 @@ def _format_period_prices_for_edit(prices: dict[str, int]) -> str:
     return ', '.join(parts)
 
 
+def _parse_device_price_tiers(text: str) -> dict[str, int]:
+    """Парсит тиры устройств. Формат: "3:4000, 5:7000" (кол-во:доплата_коп/мес).
+
+    Кол-во должно быть >= 2 (1 устройство — база, доплата 0). Цена >= 0.
+    """
+    tiers: dict[str, int] = {}
+    text = text.replace(';', ',').replace('=', ':')
+
+    for part in text.split(','):
+        part = part.strip()
+        if not part or ':' not in part:
+            continue
+        count_str, price_str = part.split(':', 1)
+        try:
+            count = int(count_str.strip())
+            price = int(price_str.strip())
+            if count >= 2 and price >= 0:
+                tiers[str(count)] = price
+        except ValueError:
+            continue
+
+    return tiers
+
+
+def _format_device_price_tiers_display(tiers: dict[str, int]) -> str:
+    """Форматирует тиры устройств для отображения."""
+    if not tiers:
+        return 'Не заданы'
+
+    lines = []
+    for count_str in sorted(tiers.keys(), key=int):
+        lines.append(f'  • {count_str} устр.: +{format_price_kopeks(tiers[count_str])}/мес')
+
+    return '\n'.join(lines)
+
+
+def _format_device_price_tiers_for_edit(tiers: dict[str, int]) -> str:
+    """Форматирует тиры устройств для редактирования."""
+    if not tiers:
+        return '3:4000, 5:7000'
+
+    return ', '.join(f'{c}:{tiers[c]}' for c in sorted(tiers.keys(), key=int))
+
+
 def get_tariffs_list_keyboard(
     tariffs: list[tuple[Tariff, int]],
     language: str,
@@ -315,6 +359,10 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
         device_price_display = format_price_kopeks(device_price) + '/мес'
     else:
         device_price_display = 'Недоступно'
+
+    device_tiers = getattr(tariff, 'device_price_tiers', None) or {}
+    if device_tiers:
+        device_price_display = 'Тиры:\n' + _format_device_price_tiers_display(device_tiers)
 
     # Форматируем макс. устройств
     max_devices = getattr(tariff, 'max_device_limit', None)
@@ -1473,17 +1521,22 @@ async def start_edit_tariff_device_price(
     await state.update_data(tariff_id=tariff_id, language=db_user.language)
 
     device_price = getattr(tariff, 'device_price_kopeks', None)
-    if device_price is not None and device_price > 0:
-        current_price = format_price_kopeks(device_price) + '/мес'
+    device_tiers = getattr(tariff, 'device_price_tiers', None) or {}
+    if device_tiers:
+        current_price = 'Тиры: ' + _format_device_price_tiers_for_edit(device_tiers)
+    elif device_price is not None and device_price > 0:
+        current_price = format_price_kopeks(device_price) + '/мес (линейно)'
     else:
         current_price = 'Недоступно (докупка устройств запрещена)'
 
     await callback.message.edit_text(
         f'📱💰 <b>Редактирование цены за устройство</b>\n\n'
-        f'Текущая цена: <b>{current_price}</b>\n\n'
-        'Введите цену в копейках за одно устройство в месяц.\n\n'
-        '• <code>0</code> или <code>-</code> — докупка устройств недоступна\n'
-        '• Например: <code>5000</code> = 50₽/мес за устройство',
+        f'Текущее: <b>{current_price}</b>\n\n'
+        'Введите одно из:\n'
+        '• <b>Тиры</b> (нелинейно): <code>3:4000, 5:7000</code> '
+        '(кол-во:доплата_коп/мес сверх базы)\n'
+        '• <b>Линейно</b>: одно число — цена коп/мес за устройство\n'
+        '• <code>0</code> или <code>-</code> — докупка недоступна',
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text=texts.CANCEL, callback_data=f'admin_tariff_view:{tariff_id}')]]
         ),
@@ -1513,7 +1566,16 @@ async def process_edit_tariff_device_price(
     text = message.text.strip()
 
     if text == '-' or text == '0':
-        device_price = None
+        tariff = await update_tariff(db, tariff, device_price_kopeks=None, device_price_tiers={})
+    elif ':' in text or ',' in text:
+        tiers = _parse_device_price_tiers(text)
+        if not tiers:
+            await message.answer(
+                'Не удалось разобрать тиры. Формат: <code>3:4000, 5:7000</code>',
+                parse_mode='HTML',
+            )
+            return
+        tariff = await update_tariff(db, tariff, device_price_tiers=tiers)
     else:
         try:
             device_price = int(text)
@@ -1521,13 +1583,13 @@ async def process_edit_tariff_device_price(
                 raise ValueError
         except ValueError:
             await message.answer(
-                'Введите корректное число (0 или больше).\n'
-                'Для отключения докупки введите <code>0</code> или <code>-</code>',
+                'Введите число (линейно), тиры (<code>3:4000, 5:7000</code>) '
+                'или <code>0</code>/<code>-</code> для отключения.',
                 parse_mode='HTML',
             )
             return
+        tariff = await update_tariff(db, tariff, device_price_kopeks=device_price, device_price_tiers={})
 
-    tariff = await update_tariff(db, tariff, device_price_kopeks=device_price)
     await state.clear()
 
     subs_count = await get_tariff_subscriptions_count(db, tariff_id)
