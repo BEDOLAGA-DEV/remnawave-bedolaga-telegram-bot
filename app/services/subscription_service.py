@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.database import AsyncSessionLocal
 from app.database.crud.server_squad import get_all_server_squads
 from app.database.crud.user import get_user_by_id
 from app.database.models import Subscription, SubscriptionStatus, User
@@ -1639,3 +1640,56 @@ class SubscriptionService:
             )
 
         return propagate_result
+
+
+async def _load_subs_for_crypto_regen() -> list[Subscription]:
+    active = (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Subscription).where(
+                Subscription.status.in_(active),
+                Subscription.subscription_url.isnot(None),
+                Subscription.subscription_url != '',
+            )
+        )
+        return list(result.scalars().all())
+
+
+def _open_panel_api_for_regen():
+    """Return an async-context panel API client for crypt5 regeneration."""
+    from app.services.remnawave_service import RemnaWaveService
+
+    return RemnaWaveService().get_api_client()
+
+
+async def regenerate_all_subscription_crypto_links() -> int:
+    """Re-encrypt crypt5 for active/trial subscriptions using the override host.
+
+    Triggered when the admin changes SUBSCRIPTION_DOMAIN_OVERRIDE. Throttled to
+    be gentle on the external crypto service. No-op when no override is set.
+    Returns the number of subscriptions whose crypto link changed.
+    """
+    if not settings.get_subscription_domain_override():
+        return 0
+
+    subs = await _load_subs_for_crypto_regen()
+    if not subs:
+        return 0
+
+    changed = 0
+    async with _open_panel_api_for_regen() as api:
+        async with AsyncSessionLocal() as db:
+            for sub in subs:
+                new_link = await resolve_crypto_link_for_storage(
+                    api, sub.subscription_url, sub.subscription_crypto_link
+                )
+                if new_link and new_link != sub.subscription_crypto_link:
+                    db_sub = await db.get(Subscription, sub.id)
+                    if db_sub is not None:
+                        db_sub.subscription_crypto_link = new_link
+                        changed += 1
+                await asyncio.sleep(0.2)  # throttle external crypto calls
+            await db.commit()
+
+    logger.info('🔁 Regenerated crypt5 for domain override', changed=changed, total=len(subs))
+    return changed

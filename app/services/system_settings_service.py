@@ -1829,6 +1829,17 @@ class BotConfigurationService:
                     SupportSettingsService.set_system_mode(str(value))
                 except Exception as error:
                     logger.error('Не удалось синхронизировать SupportSettingsService', error=error)
+            elif key == 'SUBSCRIPTION_DOMAIN_OVERRIDE':
+                try:
+                    import asyncio
+
+                    from app.services.subscription_service import (
+                        regenerate_all_subscription_crypto_links,
+                    )
+
+                    asyncio.create_task(regenerate_all_subscription_crypto_links())
+                except Exception as error:
+                    logger.error('Не удалось запустить регенерацию crypt5 для домена', error=error)
             elif key in {
                 'BACKUP_AUTO_ENABLED',
                 'BACKUP_INTERVAL_HOURS',
