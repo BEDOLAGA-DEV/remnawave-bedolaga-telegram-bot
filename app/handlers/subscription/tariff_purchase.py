@@ -829,7 +829,6 @@ async def select_tariff(
         if user_balance >= daily_price:
             await callback.message.edit_text(
                 f'✅ <b>Подтверждение покупки</b>\n\n'
-                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'📊 Трафик: {traffic}\n'
                 f'📱 Устройств: {tariff.device_limit}\n'
                 f'🔄 Тип: <b>Суточный</b>\n\n'
@@ -873,7 +872,6 @@ async def select_tariff(
 
             await callback.message.edit_text(
                 f'❌ <b>Недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'🔄 Тип: Суточный\n'
                 f'💰 Цена: {format_price_kopeks(daily_price)}/день'
                 f'{discount_text}\n\n'
@@ -1247,7 +1245,6 @@ async def handle_custom_confirm(
 
         await callback.message.edit_text(
             f'🎉 <b>Подписка успешно оформлена!</b>\n\n'
-            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic_display}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'📅 Период: {format_period(custom_days)}\n'
@@ -1969,7 +1966,6 @@ async def confirm_tariff_purchase(
 
         await callback.message.edit_text(
             f'🎉 <b>Подписка успешно оформлена!</b>\n\n'
-            f'📦 Тариф: <b>{tariff.name}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'{wl_traffic_line}'
             f'📱 Устройств: {tariff.device_limit}\n'
@@ -2026,7 +2022,6 @@ async def confirm_tariff_purchase(
 
     await callback.message.edit_text(
         f'🎉 <b>Подписка успешно оформлена!</b>\n\n'
-        f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
         f'📊 Трафик: {traffic}\n'
         f'{wl_traffic_line}'
         f'📱 Устройств: {tariff.device_limit}\n'
@@ -2313,7 +2308,6 @@ async def confirm_daily_tariff_purchase(
 
     await callback.message.edit_text(
         f'🎉 <b>Суточная подписка оформлена!</b>\n\n'
-        f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
         f'📊 Трафик: {traffic}\n'
         f'📱 Устройств: {tariff.device_limit}\n'
         f'🔄 Тип: Суточный\n'
@@ -2529,7 +2523,6 @@ async def show_tariff_extend(
 
     await callback.message.edit_text(
         f'🔄 <b>Продление подписки</b>{discount_hint}\n\n'
-        f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
         f'📊 Трафик: {traffic}\n'
         f'📱 Устройств: {actual_device_limit}\n\n'
         'Выберите период продления:',
@@ -2597,7 +2590,6 @@ async def select_tariff_extend_period(
 
         await callback.message.edit_text(
             f'✅ <b>Подтверждение продления</b>\n\n'
-            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {actual_device_limit}\n'
             f'📅 Период: {format_period(period)}\n'
@@ -2632,7 +2624,6 @@ async def select_tariff_extend_period(
 
         await callback.message.edit_text(
             f'❌ <b>Недостаточно средств</b>\n\n'
-            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📅 Период: {format_period(period)}\n'
             f'💰 К оплате: {format_price_kopeks(final_price)}\n\n'
             f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
@@ -2804,7 +2795,6 @@ async def confirm_tariff_extend(
 
         await callback.message.edit_text(
             f'🎉 <b>Подписка успешно продлена!</b>\n\n'
-            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {actual_device_limit}\n'
             f'📅 Добавлено: {format_period(period)}\n'
@@ -3167,7 +3157,6 @@ async def select_tariff_switch(
             missing = daily_price - user_balance
             await callback.message.edit_text(
                 f'❌ <b>Недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'🔄 Тип: Суточный\n'
                 f'💰 Цена: {format_price_kopeks(daily_price)}/день'
                 f'{discount_text}\n\n'
@@ -3287,7 +3276,6 @@ async def select_tariff_switch_period(
         missing = final_price - user_balance
         await callback.message.edit_text(
             f'❌ <b>Недостаточно средств</b>\n\n'
-            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📅 Период: {format_period(period)}\n'
             f'💰 К оплате: {format_price_kopeks(final_price)}\n\n'
             f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
@@ -4163,7 +4151,6 @@ async def preview_instant_switch(
             missing = daily_price - user_balance
             await callback.message.edit_text(
                 f'❌ <b>Недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{html.escape(new_tariff.name)}</b>\n'
                 f'🔄 Тип: Суточный\n'
                 f'💰 Цена: {format_price_kopeks(daily_price)}/день'
                 f'{discount_text}\n\n'
@@ -4596,7 +4583,6 @@ async def return_to_saved_tariff_cart(
         if cart_mode == 'daily_tariff_purchase':
             await callback.message.edit_text(
                 f'❌ <b>Все еще недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'🔄 Тип: Суточный\n'
                 f'💰 Стоимость: {format_price_kopeks(total_price)}\n\n'
                 f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
@@ -4608,7 +4594,6 @@ async def return_to_saved_tariff_cart(
             period = cart_data.get('period_days', 30)
             await callback.message.edit_text(
                 f'❌ <b>Все еще недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'📅 Период: {format_period(period)}\n'
                 f'💰 Стоимость: {format_price_kopeks(total_price)}\n\n'
                 f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
@@ -4620,7 +4605,6 @@ async def return_to_saved_tariff_cart(
             period = cart_data.get('period_days', 30)
             await callback.message.edit_text(
                 f'❌ <b>Все еще недостаточно средств</b>\n\n'
-                f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
                 f'📅 Период: {format_period(period)}\n'
                 f'💰 Стоимость: {format_price_kopeks(total_price)}\n\n'
                 f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
@@ -4655,7 +4639,6 @@ async def return_to_saved_tariff_cart(
 
         await callback.message.edit_text(
             f'✅ <b>Подтверждение покупки</b>\n\n'
-            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'🔄 Тип: Суточный\n'
@@ -4675,7 +4658,6 @@ async def return_to_saved_tariff_cart(
 
         await callback.message.edit_text(
             f'✅ <b>Подтверждение продления</b>\n\n'
-            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'📅 Период: {format_period(period)}\n'
@@ -4705,7 +4687,6 @@ async def return_to_saved_tariff_cart(
 
         await callback.message.edit_text(
             f'✅ <b>Подтверждение покупки</b>\n\n'
-            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {tariff.device_limit}\n'
             f'📅 Период: {format_period(period)}\n'
