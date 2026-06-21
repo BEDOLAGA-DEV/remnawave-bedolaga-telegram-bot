@@ -909,6 +909,7 @@ async def get_users_list(
     promo_group_id: int | None = None,
     campaign_id: int | None = None,
     partner_id: int | None = None,
+    is_recurrent: bool | None = None,
     order_by_balance: bool = False,
     order_by_traffic: bool = False,
     order_by_last_activity: bool = False,
@@ -919,6 +920,7 @@ async def get_users_list(
         selectinload(User.subscriptions).selectinload(Subscription.tariff),
         selectinload(User.promo_group),
         selectinload(User.referrer),
+        selectinload(User.antilopay_recurrents),
     )
 
     if status:
@@ -966,6 +968,17 @@ async def get_users_list(
                 )
             )
         )
+
+    if is_recurrent is not None:
+        from app.database.models import AntilopayRecurrent
+        active_recurrent_exists = exists().where(
+            AntilopayRecurrent.user_id == User.id,
+            AntilopayRecurrent.is_active == True,
+        )
+        if is_recurrent:
+            query = query.where(active_recurrent_exists)
+        else:
+            query = query.where(~active_recurrent_exists)
 
     if search:
         search_term = f'%{search}%'
@@ -1055,6 +1068,7 @@ async def get_users_count(
     promo_group_id: int | None = None,
     campaign_id: int | None = None,
     partner_id: int | None = None,
+    is_recurrent: bool | None = None,
 ) -> int:
     query = select(func.count(User.id))
 
@@ -1102,6 +1116,17 @@ async def get_users_count(
                 )
             )
         )
+
+    if is_recurrent is not None:
+        from app.database.models import AntilopayRecurrent
+        active_recurrent_exists = exists().where(
+            AntilopayRecurrent.user_id == User.id,
+            AntilopayRecurrent.is_active == True,
+        )
+        if is_recurrent:
+            query = query.where(active_recurrent_exists)
+        else:
+            query = query.where(~active_recurrent_exists)
 
     if search:
         search_term = f'%{search}%'

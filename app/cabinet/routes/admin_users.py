@@ -177,6 +177,8 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
                 )
             )
 
+    is_recurrent = any(r.is_active for r in getattr(user, 'antilopay_recurrents', []) or [])
+
     return UserListItem(
         id=user.id,
         telegram_id=user.telegram_id,
@@ -207,6 +209,7 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
         has_restrictions=user.has_restrictions,
         restriction_topup=user.restriction_topup,
         restriction_subscription=user.restriction_subscription,
+        is_recurrent=is_recurrent,
     )
 
 
@@ -489,6 +492,7 @@ async def list_users(
     promo_group_id: int | None = Query(None),
     campaign_id: int | None = Query(None),
     partner_id: int | None = Query(None),
+    is_recurrent: bool | None = Query(None),
     sort_by: SortByEnum = Query(SortByEnum.CREATED_AT),
     admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
@@ -501,6 +505,7 @@ async def list_users(
     - **search**: Search by telegram_id, username, first_name, last_name
     - **email**: Search by email
     - **status**: Filter by user status (active, blocked, deleted)
+    - **is_recurrent**: Filter by recurrent payment status (true = has active card, false = does not)
     - **sort_by**: Sort field (created_at, balance, traffic, last_activity, total_spent, purchase_count)
     """
     # Convert status enum to model enum
@@ -535,6 +540,7 @@ async def list_users(
         promo_group_id=promo_group_id,
         campaign_id=campaign_id,
         partner_id=partner_id,
+        is_recurrent=is_recurrent,
         order_by_balance=order_by_balance,
         order_by_traffic=order_by_traffic,
         order_by_last_activity=order_by_last_activity,
@@ -552,6 +558,7 @@ async def list_users(
         promo_group_id=promo_group_id,
         campaign_id=campaign_id,
         partner_id=partner_id,
+        is_recurrent=is_recurrent,
     )
 
     # Get spending stats for all users
@@ -644,6 +651,17 @@ async def get_users_stats(
     deleted_q = select(func.count(User.id)).where(User.status == UserStatus.DELETED.value)
     deleted_count = (await db.execute(deleted_q)).scalar() or 0
 
+    # Count recurrent users (users with active card)
+    from app.database.models import AntilopayRecurrent
+    from sqlalchemy import exists
+
+    active_recurrent_exists = exists().where(
+        AntilopayRecurrent.user_id == User.id,
+        AntilopayRecurrent.is_active == True,
+    )
+    recurrent_count_q = select(func.count(User.id)).where(active_recurrent_exists)
+    recurrent_users_count = (await db.execute(recurrent_count_q)).scalar() or 0
+
     return UsersStatsResponse(
         total_users=stats['total_users'],
         active_users=stats['active_users'],
@@ -656,6 +674,7 @@ async def get_users_stats(
         users_with_active_subscription=users_with_active,
         users_with_trial=users_with_trial,
         users_with_expired_subscription=users_with_expired,
+        recurrent_users_count=recurrent_users_count,
         total_balance_kopeks=total_balance,
         total_balance_rubles=total_balance / 100,
         avg_balance_kopeks=avg_balance,
