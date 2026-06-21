@@ -1453,6 +1453,33 @@ async def select_tariff_period(
 
 
 @error_handler
+async def handle_tariff_device_change(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """−/＋ устройств на экране подтверждения. Сохраняет выбор и перерисовывает."""
+    parts = callback.data.split(':')
+    tariff_id = int(parts[1])
+    period = int(parts[2])
+    requested = int(parts[3])
+
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if not tariff or not tariff.is_active:
+        await callback.answer('Тариф недоступен', show_alert=True)
+        return
+
+    _selectable, base, effective_max = _tariff_device_purchase_options(tariff)
+    clamped = max(base, min(requested, effective_max))
+    await state.update_data(selected_device_limit=clamped)
+
+    # Перерисовываем экран подтверждения тем же рендером
+    callback.data = f'nz!_tariff_period:{tariff_id}:{period}'
+    await select_tariff_period(callback, db_user, db, state)
+
+
+@error_handler
 async def confirm_tariff_purchase(
     callback: types.CallbackQuery,
     db_user: User,
@@ -4589,6 +4616,7 @@ def register_tariff_purchase_handlers(dp: Dispatcher):
 
     # Выбор периода
     dp.callback_query.register(select_tariff_period, F.data.startswith('nz!_tariff_period:'))
+    dp.callback_query.register(handle_tariff_device_change, F.data.startswith('nz!_tariff_dev:'))
 
     # Подтверждение покупки
     dp.callback_query.register(confirm_tariff_purchase, F.data.startswith('nz!_tariff_confirm:'))
