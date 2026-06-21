@@ -1378,34 +1378,25 @@ async def handle_tariff_flexdays_start(
     await callback.answer()
 
 
-@error_handler
-async def select_tariff_period(
-    callback: types.CallbackQuery,
+async def build_period_confirm(
     db_user: User,
     db: AsyncSession,
     state: FSMContext,
-    tariff_id: int | None = None,
-    period: int | None = None,
-):
-    """Обрабатывает выбор периода для тарифа."""
-    if tariff_id is None or period is None:
-        parts = callback.data.split(':')
-        tariff_id = int(parts[1])
-        period = int(parts[2])
+    tariff: Tariff,
+    period: int,
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Готовит (текст, клавиатуру) экрана подтверждения покупки на `period` дней.
 
-    tariff = await get_tariff_by_id(db, tariff_id)
-    if not tariff or not tariff.is_active:
-        await callback.answer('Тариф недоступен', show_alert=True)
-        return
-
-    # Получаем скидку для выбранного периода (для бейджа)
+    Сохраняет state + корзину (при нехватке баланса). Не трогает callback/message —
+    подходит и для CallbackQuery.edit_text, и для Message.answer.
+    """
+    tariff_id = tariff.id
     group_pct, offer_pct, discount_percent = _get_user_period_discount(db_user, period)
     scheduled_pct = await _get_scheduled_promo_discount(db, tariff_id)
     if scheduled_pct > 0:
         remaining = (100 - scheduled_pct) * (100 - discount_percent)
         discount_percent = 100 - remaining // 100
 
-    # Выбор устройств
     selectable, base, effective_max = _tariff_device_purchase_options(tariff)
     data = await state.get_data()
     selected_device_limit = data.get('selected_device_limit')
@@ -1413,7 +1404,6 @@ async def select_tariff_period(
         selected_device_limit = base
     selected_device_limit = max(base, min(int(selected_device_limit), effective_max))
 
-    # Единый источник цены — движок (превью == списание), включает устройства
     from app.services.pricing_engine import pricing_engine
 
     result = await pricing_engine.calculate_tariff_purchase_price(
@@ -1424,19 +1414,14 @@ async def select_tariff_period(
         db=db,
     )
     final_price = result.final_total
-
     user_balance = db_user.balance_kopeks or 0
     traffic = format_traffic(tariff.traffic_limit_gb)
-
     single_tariff = bool(data.get('single_tariff'))
     back_cb = 'nz!_back_to_menu' if single_tariff else f'nz!_tariff_select:{tariff_id}'
 
     if user_balance >= final_price:
-        discount_text = ''
-        if discount_percent > 0:
-            discount_text = f'\n🎁 Скидка: {discount_percent}%'
-
-        await callback.message.edit_text(
+        discount_text = f'\n🎁 Скидка: {discount_percent}%' if discount_percent > 0 else ''
+        text = (
             f'✅ <b>Подтверждение покупки</b>\n\n'
             f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
@@ -1445,22 +1430,20 @@ async def select_tariff_period(
             f'{discount_text}\n'
             f'💰 <b>Итого: {format_price_kopeks(final_price)}</b>\n\n'
             f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
-            f'После оплаты: {format_price_kopeks(user_balance - final_price)}',
-            reply_markup=get_tariff_confirm_keyboard(
-                tariff_id,
-                period,
-                db_user.language,
-                device_limit=selected_device_limit,
-                base=base,
-                effective_max=effective_max,
-                devices_selectable=selectable,
-                back_callback=back_cb,
-            ),
-            parse_mode='HTML',
+            f'После оплаты: {format_price_kopeks(user_balance - final_price)}'
+        )
+        kb = get_tariff_confirm_keyboard(
+            tariff_id,
+            period,
+            db_user.language,
+            device_limit=selected_device_limit,
+            base=base,
+            effective_max=effective_max,
+            devices_selectable=selectable,
+            back_callback=back_cb,
         )
     else:
         missing = final_price - user_balance
-
         if settings.is_multi_tariff_enabled():
             from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
@@ -1485,32 +1468,23 @@ async def select_tariff_period(
             'subscription_id': _existing_sub.id if _existing_sub else None,
         }
         await user_cart_service.save_user_cart(db_user.id, cart_data)
-
-        await callback.message.edit_text(
+        text = (
             f'❌ <b>Недостаточно средств</b>\n\n'
             f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📅 Период: {format_period(period)}\n'
             f'💰 Стоимость: {format_price_kopeks(final_price)}\n\n'
             f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
             f'⚠️ Не хватает: <b>{format_price_kopeks(missing)}</b>\n\n'
-            f'🛒 <i>Корзина сохранена! После пополнения баланса подписка будет оформлена автоматически.</i>',
-            reply_markup=get_tariff_insufficient_balance_keyboard(tariff_id, period, db_user.language),
-            parse_mode='HTML',
+            f'🛒 <i>Корзина сохранена! После пополнения баланса подписка будет оформлена автоматически.</i>'
         )
+        kb = get_tariff_insufficient_balance_keyboard(tariff_id, period, db_user.language)
 
-    # Resolve target subscription_id at preview time and pin it in FSM.
-    # Without this, ``confirm_tariff_purchase`` re-queries by
-    # ``(user_id, tariff_id)`` and can race with concurrent panel
-    # webhooks that briefly flip the active sub's status — falling
-    # through to ``create_paid_subscription`` and hitting the partial
-    # UNIQUE ``uq_subscriptions_user_tariff_active`` (logs "Тариф уже
-    # активен", refunds, leaves user confused).
     target_subscription_id: int | None = None
     if settings.is_multi_tariff_enabled():
         from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-        _existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
-        target_subscription_id = _existing_sub.id if _existing_sub else None
+        _existing_for_pin = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
+        target_subscription_id = _existing_for_pin.id if _existing_for_pin else None
 
     await state.update_data(
         selected_tariff_id=tariff_id,
@@ -1520,6 +1494,31 @@ async def select_tariff_period(
         target_subscription_id=target_subscription_id,
         selected_device_limit=selected_device_limit,
     )
+    return text, kb
+
+
+@error_handler
+async def select_tariff_period(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+    tariff_id: int | None = None,
+    period: int | None = None,
+):
+    """Обрабатывает выбор периода для тарифа."""
+    if tariff_id is None or period is None:
+        parts = callback.data.split(':')
+        tariff_id = int(parts[1])
+        period = int(parts[2])
+
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if not tariff or not tariff.is_active:
+        await callback.answer('Тариф недоступен', show_alert=True)
+        return
+
+    text, kb = await build_period_confirm(db_user, db, state, tariff, period)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode='HTML')
     await callback.answer()
 
 
