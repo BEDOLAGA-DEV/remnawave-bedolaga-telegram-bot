@@ -172,6 +172,7 @@ async def create_tariff(
     device_limit: int = 1,
     device_price_kopeks: int | None = None,
     max_device_limit: int | None = None,
+    device_price_tiers: dict[str, int] | None = None,
     allowed_squads: list[str] | None = None,
     server_traffic_limits: dict[str, dict] | None = None,
     period_prices: dict[int, int] | None = None,
@@ -213,6 +214,7 @@ async def create_tariff(
         device_limit=max(1, device_limit),
         device_price_kopeks=device_price_kopeks,
         max_device_limit=max_device_limit,
+        device_price_tiers=device_price_tiers or {},
         allowed_squads=allowed_squads or [],
         server_traffic_limits=server_traffic_limits or {},
         period_prices=normalized_prices,
@@ -314,6 +316,7 @@ async def update_tariff(
     # WL (_wl) трафик
     wl_default_traffic_gb: int | None = ...,  # ... = не передан, None = сбросить к глобальной настройке
     wl_traffic_topup_packages: dict[str, int] | None = None,
+    device_price_tiers: dict[str, int] | None = None,
 ) -> Tariff:
     """Обновляет существующий тариф."""
     if name is not None:
@@ -391,6 +394,8 @@ async def update_tariff(
         tariff.wl_default_traffic_gb = wl_default_traffic_gb
     if wl_traffic_topup_packages is not None:
         tariff.wl_traffic_topup_packages = wl_traffic_topup_packages
+    if device_price_tiers is not None:
+        tariff.device_price_tiers = device_price_tiers
 
     # Обновляем промогруппы если указаны
     if promo_group_ids is not None:

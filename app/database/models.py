@@ -1768,6 +1768,10 @@ class Tariff(Base):
     # {"5": 1000, "10": 2000, ...} (GB: price_kopeks). Пустой = использовать глобальные цены
     wl_traffic_topup_packages = Column(JSON, default=dict)
 
+    # Тарифные тиры устройств: JSON {"3": 4000, "5": 7000} — total_count: extra_kopeks/мес
+    # сверх базы. Пусто = использовать линейный device_price_kopeks (старое поведение).
+    device_price_tiers = Column(JSON, default=dict)
+
     # Длительность триала для этого тарифа. None = использовать глобальный TRIAL_DURATION_DAYS
     trial_duration_days = Column(Integer, nullable=True, default=None)
 
@@ -1863,6 +1867,48 @@ class Tariff(Base):
         """Возвращает пакеты трафика для докупки: {ГБ: цена в копейках}."""
         packages = self.traffic_topup_packages or {}
         return {int(gb): int(price) for gb, price in packages.items()}
+
+    def get_device_extra_price_per_month(self, total_count: int) -> int:
+        """Доплата коп/мес сверх базы за total_count устройств.
+
+        Источник — device_price_tiers (интерполяция между якорями, экстраполяция
+        по наклону последнего сегмента выше верхнего якоря). Пустые тиры —
+        линейный fallback на device_price_kopeks. Базовые device_limit бесплатны.
+        """
+        base = self.device_limit or 0
+        if (total_count or 0) <= base:
+            return 0
+
+        tiers = self.device_price_tiers or {}
+        if not tiers:
+            unit = self.device_price_kopeks or 0
+            return max(0, ((total_count or 0) - base) * unit)
+
+        anchors = {base: 0}
+        for count_str, price in tiers.items():
+            try:
+                anchors[int(count_str)] = int(price)
+            except (TypeError, ValueError):
+                continue
+        points = sorted(anchors.items())
+
+        n = total_count
+        for count, price in points:
+            if count == n:
+                return max(0, price)
+
+        for i in range(len(points) - 1):
+            a_count, a_price = points[i]
+            b_count, b_price = points[i + 1]
+            if a_count < n < b_count:
+                slope = (b_price - a_price) / (b_count - a_count)
+                return max(0, round(a_price + slope * (n - a_count)))
+
+        a_count, a_price = points[-2] if len(points) >= 2 else (base, 0)
+        b_count, b_price = points[-1]
+        denom = (b_count - a_count) or 1
+        slope = (b_price - a_price) / denom
+        return max(0, round(b_price + slope * (n - b_count)))
 
     def get_traffic_topup_price(self, gb: int) -> int | None:
         """Возвращает цену в копейках для указанного пакета трафика."""
