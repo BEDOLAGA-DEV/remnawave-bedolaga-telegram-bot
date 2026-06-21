@@ -30,6 +30,7 @@ from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 from app.utils.decorators import error_handler
 from app.utils.formatting import format_period, format_price_kopeks, format_traffic
+from app.states import SubscriptionStates
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 
 
@@ -286,6 +287,11 @@ def get_tariff_periods_keyboard(
 
         button_text = f'{format_period(period)} — {price_text}'
         buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'nz!_tariff_period:{tariff.id}:{period}')])
+
+    if getattr(tariff, 'flexible_days_enabled', False) and (tariff.period_prices or {}):
+        buttons.append(
+            [InlineKeyboardButton(text='✏️ Свой срок', callback_data=f'nz!_tariff_flexdays:{tariff.id}')]
+        )
 
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
 
@@ -1329,6 +1335,43 @@ async def select_tariff_period_with_traffic(
             max_days=period,
             min_traffic=tariff.min_traffic_gb,
             max_traffic=tariff.max_traffic_gb,
+        ),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+@error_handler
+async def handle_tariff_flexdays_start(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Кнопка «Свой срок»: просим ввести число дней текстом."""
+    tariff_id = int(callback.data.split(':')[1])
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if not tariff or not tariff.is_active or not getattr(tariff, 'flexible_days_enabled', False):
+        await callback.answer('Недоступно', show_alert=True)
+        return
+
+    periods = tariff.get_available_periods()
+    if not periods:
+        await callback.answer('Период недоступен', show_alert=True)
+        return
+    min_d, max_d = periods[0], periods[-1]
+
+    await state.set_state(SubscriptionStates.selecting_custom_days)
+    await state.update_data(selected_tariff_id=tariff_id, flexdays_min=min_d, flexdays_max=max_d)
+
+    await callback.message.edit_text(
+        f'✏️ <b>Свой срок</b>\n\n'
+        f'Введите число дней от <b>{min_d}</b> до <b>{max_d}</b> сообщением.\n'
+        f'Цена считается по тарифной сетке.',
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=get_texts(db_user.language).BACK, callback_data=f'nz!_tariff_select:{tariff_id}')]
+            ]
         ),
         parse_mode='HTML',
     )
@@ -4649,6 +4692,7 @@ def register_tariff_purchase_handlers(dp: Dispatcher):
     # Выбор периода
     dp.callback_query.register(select_tariff_period, F.data.startswith('nz!_tariff_period:'))
     dp.callback_query.register(handle_tariff_device_change, F.data.startswith('nz!_tariff_dev:'))
+    dp.callback_query.register(handle_tariff_flexdays_start, F.data.startswith('nz!_tariff_flexdays:'))
 
     # Подтверждение покупки
     dp.callback_query.register(confirm_tariff_purchase, F.data.startswith('nz!_tariff_confirm:'))
