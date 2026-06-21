@@ -798,10 +798,12 @@ def get_main_menu_keyboard(
     if settings.ACTIVATE_BUTTON_VISIBLE:
         paired_buttons.append(InlineKeyboardButton(text=settings.ACTIVATE_BUTTON_TEXT, callback_data='activate_button'))
 
+    from app.utils.miniapp_buttons import strip_leading_emoji
     paired_buttons.append(
         InlineKeyboardButton(
-            text=texts.t('MENU_INFO', 'ℹ️ Инфо'),
+            text=strip_leading_emoji(texts.t('MENU_INFO', 'ℹ️ Инфо')),
             callback_data='menu_info',
+            icon_custom_emoji_id='5334544901428229844',
         )
     )
 
@@ -859,31 +861,37 @@ def get_info_menu_keyboard(
         )
 
     if show_promo_groups:
+        from app.utils.miniapp_buttons import strip_leading_emoji
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('MENU_PROMO_GROUPS_INFO', '🎯 Промогруппы'),
+                    text=strip_leading_emoji(texts.t('MENU_PROMO_GROUPS_INFO', '🎯 Промогруппы')),
                     callback_data='menu_info_promo_groups',
+                    icon_custom_emoji_id='5778311685638984859',
                 )
             ]
         )
 
     if show_privacy_policy:
+        from app.utils.miniapp_buttons import strip_leading_emoji
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('MENU_PRIVACY_POLICY', '🛡️ Политика конф.'),
+                    text=strip_leading_emoji(texts.t('MENU_PRIVACY_POLICY', '🛡️ Политика конф.')),
                     callback_data='menu_privacy_policy',
+                    icon_custom_emoji_id='6030445631921721471',
                 )
             ]
         )
 
     if show_public_offer:
+        from app.utils.miniapp_buttons import strip_leading_emoji
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('MENU_PUBLIC_OFFER', '📄 Оферта'),
+                    text=strip_leading_emoji(texts.t('MENU_PUBLIC_OFFER', '📄 Оферта')),
                     callback_data='menu_public_offer',
+                    icon_custom_emoji_id='6034969813032374911',
                 )
             ]
         )
@@ -930,11 +938,13 @@ def get_info_menu_keyboard(
         )
 
     if settings.is_language_selection_enabled():
+        from app.utils.miniapp_buttons import strip_leading_emoji
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=texts.MENU_LANGUAGE,
+                    text=strip_leading_emoji(texts.MENU_LANGUAGE),
                     callback_data='menu_language',
+                    icon_custom_emoji_id='5879585266426973039',
                 )
             ]
         )
