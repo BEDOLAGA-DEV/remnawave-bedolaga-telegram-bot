@@ -257,6 +257,7 @@ def get_tariff_periods_keyboard(
     language: str,
     db_user: User | None = None,
     scheduled_pct: int = 0,
+    back_callback: str = 'nz!_tariff_list',
 ) -> InlineKeyboardMarkup:
     """Создает клавиатуру выбора периода для тарифа с учетом скидок по периодам."""
     texts = get_texts(language)
@@ -286,7 +287,7 @@ def get_tariff_periods_keyboard(
         button_text = f'{format_period(period)} — {price_text}'
         buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'nz!_tariff_period:{tariff.id}:{period}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_tariff_list')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -295,6 +296,7 @@ def get_tariff_periods_keyboard_with_traffic(
     tariff: Tariff,
     language: str,
     db_user: User | None = None,
+    back_callback: str = 'nz!_tariff_list',
 ) -> InlineKeyboardMarkup:
     """Клавиатура выбора периода для тарифа с кастомным трафиком (переход к настройке трафика)."""
     texts = get_texts(language)
@@ -322,7 +324,7 @@ def get_tariff_periods_keyboard_with_traffic(
             [InlineKeyboardButton(text=button_text, callback_data=f'nz!_tariff_period_traffic:{tariff.id}:{period}')]
         )
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_tariff_list')])
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -331,15 +333,41 @@ def get_tariff_confirm_keyboard(
     tariff_id: int,
     period: int,
     language: str,
+    *,
+    device_limit: int = 1,
+    base: int = 1,
+    effective_max: int = 1,
+    devices_selectable: bool = False,
+    back_callback: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Создает клавиатуру подтверждения покупки тарифа."""
     texts = get_texts(language)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text='✅ Подтвердить покупку', callback_data=f'nz!_tariff_confirm:{tariff_id}:{period}')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=f'nz!_tariff_select:{tariff_id}')],
-        ]
+    rows = []
+    if devices_selectable:
+        minus_cb = (
+            f'nz!_tariff_dev:{tariff_id}:{period}:{device_limit - 1}'
+            if device_limit > base
+            else 'nz!_noop'
+        )
+        plus_cb = (
+            f'nz!_tariff_dev:{tariff_id}:{period}:{device_limit + 1}'
+            if device_limit < effective_max
+            else 'nz!_noop'
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(text='➖', callback_data=minus_cb),
+                InlineKeyboardButton(text=f'📱 {device_limit} устр.', callback_data='nz!_noop'),
+                InlineKeyboardButton(text='➕', callback_data=plus_cb),
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text='✅ Подтвердить покупку', callback_data=f'nz!_tariff_confirm:{tariff_id}:{period}')]
     )
+    rows.append(
+        [InlineKeyboardButton(text=texts.BACK, callback_data=back_callback or f'nz!_tariff_select:{tariff_id}')]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_tariff_insufficient_balance_keyboard(
