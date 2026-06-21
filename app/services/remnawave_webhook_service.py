@@ -1499,17 +1499,22 @@ class RemnaWaveWebhookService:
             subscription.subscription_url = new_url
             changed = True
         # When a domain override is active the stored crypto link is our
-        # re-encrypted crypt5 (new host); the panel pushes the old-host value
-        # (or nothing), so do not overwrite/clear it from the webhook. Routine
-        # sync (which holds an api client) re-encrypts and refreshes it.
-        if not settings.get_subscription_domain_override():
-            if new_crypto_link and self._is_valid_link(new_crypto_link):
-                if subscription.subscription_crypto_link != new_crypto_link:
-                    subscription.subscription_crypto_link = new_crypto_link
-                    changed = True
-            elif new_url and subscription.subscription_crypto_link:
-                subscription.subscription_crypto_link = None
+        # re-encrypted crypt5 (new host); the panel pushes the old-host value,
+        # so do NOT accept the panel crypto link from the webhook (routine sync,
+        # which holds an api client, re-encrypts it). But still CLEAR a now-stale
+        # crypt5 when the URL is replaced on revoke, so display falls back to the
+        # overridden URL instead of serving a dead link.
+        if (
+            not settings.get_subscription_domain_override()
+            and new_crypto_link
+            and self._is_valid_link(new_crypto_link)
+        ):
+            if subscription.subscription_crypto_link != new_crypto_link:
+                subscription.subscription_crypto_link = new_crypto_link
                 changed = True
+        elif new_url and subscription.subscription_crypto_link:
+            subscription.subscription_crypto_link = None
+            changed = True
 
         # Always stamp to protect from sync overwrite
         self._stamp_webhook_update(subscription)
