@@ -240,6 +240,9 @@ class UserDetailResponse(BaseModel):
     # Remnawave UUID
     remnawave_uuid: str | None = None
 
+    # Recurrent cards
+    recurrent_cards: list[str] = []
+
 
 # === Panel Info ===
 

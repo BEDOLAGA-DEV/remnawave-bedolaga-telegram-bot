@@ -70,6 +70,7 @@ class UserFilterType(Enum):
     BALANCE = 'balance'
     CAMPAIGN = 'campaign'
     POTENTIAL_CUSTOMERS = 'potential_customers'
+    RECURRENT = 'recurrent'
 
 
 @dataclass
@@ -104,6 +105,13 @@ USER_FILTER_CONFIGS: dict[UserFilterType, UserFilterConfig] = {
         title='👥 <b>Потенциальные клиенты</b>',
         empty_message='💰 Потенциальные клиенты не найдены',
         pagination_prefix='admin_users_potential_customers_list',
+        order_param='',  # использует специальный метод
+    ),
+    UserFilterType.RECURRENT: UserFilterConfig(
+        fsm_state=AdminStates.viewing_user_from_recurrent_list,
+        title='💳 <b>Пользователи с привязанной картой (рекурренты)</b>',
+        empty_message='💳 Пользователи с привязанной картой не найдены',
+        pagination_prefix='admin_users_recurrent_list',
         order_param='',  # использует специальный метод
     ),
 }
@@ -274,6 +282,7 @@ async def show_users_menu(callback: types.CallbackQuery, db_user: User, db: Asyn
 • Всего: {stats['total_users']}
 • Активных: {stats['active_users']}
 • Заблокированных: {stats['blocked_users']}
+• Привязали карту (рекурренты): {stats.get('recurrent_users', 0)}
 
 📈 <b>Новые пользователи:</b>
 • Сегодня: {stats['new_today']}
@@ -698,6 +707,140 @@ async def handle_potential_customers_pagination(
     except (ValueError, IndexError) as e:
         logger.error('Ошибка парсинга номера страницы', error=e)
         await show_potential_customers(callback, db_user, db, state, 1)
+
+
+@admin_required
+@error_handler
+async def show_recurrent_users(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext, page: int = 1
+):
+    """Показывает пользователей, которые привязали карту (рекуррентные платежи)."""
+    await state.set_state(AdminStates.viewing_user_from_recurrent_list)
+
+    texts = get_texts(db_user.language)
+    user_service = UserService()
+    users_data = await user_service.get_recurrent_users(
+        db,
+        page=page,
+        limit=10,
+    )
+
+    header = texts.t(
+        'ADMIN_USERS_FILTER_RECURRENT_TITLE',
+        '💳 Пользователи с привязанной картой',
+    )
+    description = texts.t(
+        'ADMIN_USERS_FILTER_RECURRENT_DESC',
+        'Пользователи, привязавшие карту для автопродлений (рекуррентные платежи).',
+    )
+
+    if not users_data['users']:
+        empty_text = texts.t(
+            'ADMIN_USERS_FILTER_RECURRENT_EMPTY',
+            'Сейчас нет пользователей с привязанными картами.',
+        )
+        await callback.message.edit_text(
+            f'{header}\n\n{description}\n\n{empty_text}',
+            reply_markup=get_admin_users_keyboard(db_user.language),
+        )
+        await callback.answer()
+        return
+
+    text = f'{header}\n\n{description}\n\n'
+    text += 'Нажмите на пользователя для управления:'
+
+    keyboard = []
+
+    for user in users_data['users']:
+        subscription = user.subscription
+        status_emoji = '✅' if user.status == UserStatus.ACTIVE.value else '🚫'
+        subscription_emoji = '❌'
+
+        if subscription:
+            if subscription.is_trial:
+                subscription_emoji = '🎁'
+            elif subscription.is_active:
+                subscription_emoji = '💎'
+            else:
+                subscription_emoji = '⏰'
+
+        recurrent_cards = [
+            r.title or r.pay_data
+            for r in (getattr(user, 'antilopay_recurrents', None) or [])
+            if r.is_active and (r.title or r.pay_data)
+        ]
+        card_info = recurrent_cards[0] if recurrent_cards else 'Карта'
+
+        button_text = (
+            f'{status_emoji} {subscription_emoji} {user.full_name} | 💳 {card_info}'
+        )
+
+        if len(button_text) > 60:
+            short_name = user.full_name
+            if len(short_name) > 20:
+                short_name = short_name[:17] + '...'
+            button_text = (
+                f'{status_emoji} {subscription_emoji} {short_name} | 💳 {card_info}'
+            )
+
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=button_text,
+                    callback_data=f'admin_user_manage_{user.id}',
+                )
+            ]
+        )
+
+    if users_data['total_pages'] > 1:
+        pagination_row = get_admin_pagination_keyboard(
+            users_data['current_page'],
+            users_data['total_pages'],
+            'admin_users_recurrent_list',
+            'admin_users_recurrent_filter',
+            db_user.language,
+        ).inline_keyboard[0]
+        keyboard.append(pagination_row)
+
+    keyboard.extend(
+        [
+            [
+                types.InlineKeyboardButton(
+                    text='🔍 Поиск',
+                    callback_data='admin_users_search',
+                ),
+                types.InlineKeyboardButton(
+                    text='📊 Статистика',
+                    callback_data='admin_users_stats',
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text='⬅️ Назад',
+                    callback_data='admin_users',
+                )
+            ],
+        ]
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def handle_recurrent_users_pagination(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext
+):
+    try:
+        page = int(callback.data.split('_')[-1])
+        await show_recurrent_users(callback, db_user, db, state, page)
+    except (ValueError, IndexError) as e:
+        logger.error('Ошибка парсинга номера страницы', error=e)
+        await show_recurrent_users(callback, db_user, db, state, 1)
 
 
 @admin_required
@@ -1382,6 +1525,15 @@ async def show_user_management(callback: types.CallbackQuery, db_user: User, db:
             restriction_lines.append(f'  📝 Причина: {html.escape(restriction_reason)}')
         sections.append('\n'.join(restriction_lines))
 
+    # Show active recurrent payment methods (linked cards) if any
+    active_recurrents = [r for r in (getattr(user, 'antilopay_recurrents', None) or []) if r.is_active]
+    if active_recurrents:
+        recurrent_lines = ['💳 <b>Привязанные карты (рекурренты):</b>']
+        for r in active_recurrents:
+            card_name = r.title or r.pay_data or 'Карта'
+            recurrent_lines.append(f'  • {html.escape(card_name)} (ID: <code>{html.escape(r.recurrent_id)}</code>)')
+        sections.append('\n'.join(recurrent_lines))
+
     text = '\n\n'.join(sections)
 
     # Проверяем состояние, чтобы определить, откуда пришел пользователь
@@ -1394,6 +1546,8 @@ async def show_user_management(callback: types.CallbackQuery, db_user: User, db:
         back_callback = 'admin_users_ready_to_renew_filter'
     elif current_state == AdminStates.viewing_user_from_potential_customers_list:
         back_callback = 'admin_users_potential_customers_filter'
+    elif current_state == AdminStates.viewing_user_from_recurrent_list:
+        back_callback = 'admin_users_recurrent_filter'
 
     # Базовая клавиатура профиля
     kb = get_user_management_keyboard(user.id, user.status, db_user.language, back_callback)
@@ -6316,6 +6470,10 @@ def register_handlers(dp: Dispatcher):
     )
 
     dp.callback_query.register(
+        handle_recurrent_users_pagination, F.data.startswith('admin_users_recurrent_list_page_')
+    )
+
+    dp.callback_query.register(
         handle_users_campaign_list_pagination, F.data.startswith('admin_users_campaign_list_page_')
     )
 
@@ -6504,5 +6662,7 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_users_ready_to_renew, F.data == 'admin_users_ready_to_renew_filter')
 
     dp.callback_query.register(show_potential_customers, F.data == 'admin_users_potential_customers_filter')
+
+    dp.callback_query.register(show_recurrent_users, F.data == 'admin_users_recurrent_filter')
 
     dp.callback_query.register(show_users_list_by_campaign, F.data == 'admin_users_campaign_filter')

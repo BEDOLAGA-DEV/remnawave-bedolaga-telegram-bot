@@ -386,6 +386,12 @@ def get_admin_users_filters_keyboard(language: str = 'ru') -> InlineKeyboardMark
             ],
             [
                 InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_USERS_FILTER_RECURRENT', '💳 Привязали карту (рекурренты)'),
+                    callback_data='admin_users_recurrent_filter',
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_USERS_FILTER_CAMPAIGN', '📢 По кампании'),
                     callback_data='admin_users_campaign_filter',
                 )

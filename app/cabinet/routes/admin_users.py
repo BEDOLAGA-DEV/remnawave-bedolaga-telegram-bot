@@ -810,6 +810,11 @@ async def get_user_detail(
             if settings.is_multi_tariff_enabled() and primary_sub and primary_sub.remnawave_uuid
             else user.remnawave_uuid
         ),
+        recurrent_cards=[
+            r.title or r.pay_data
+            for r in (getattr(user, 'antilopay_recurrents', None) or [])
+            if r.is_active and (r.title or r.pay_data)
+        ],
     )
 
 
