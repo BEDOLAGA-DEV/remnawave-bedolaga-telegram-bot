@@ -253,6 +253,16 @@ def get_tariff_view_keyboard(
         )
         # Примечание: отключение суточного режима убрано - это необратимое решение при создании
 
+    # Переключение «Свой срок» (произвольное число дней)
+    if getattr(tariff, 'flexible_days_enabled', False):
+        buttons.append(
+            [InlineKeyboardButton(text='✏️ Свой срок: ✅', callback_data=f'admin_tariff_toggle_flexdays:{tariff.id}')]
+        )
+    else:
+        buttons.append(
+            [InlineKeyboardButton(text='✏️ Свой срок: ❌', callback_data=f'admin_tariff_toggle_flexdays:{tariff.id}')]
+        )
+
     # Переключение триала
     if tariff.is_trial_available:
         buttons.append(
@@ -345,6 +355,7 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
         promo_display = 'Доступен всем'
 
     trial_status = '✅ Да' if tariff.is_trial_available else '❌ Нет'
+    flexdays_status = '✅' if getattr(tariff, 'flexible_days_enabled', False) else '❌'
 
     # Форматируем дни триала
     trial_days = getattr(tariff, 'trial_duration_days', None)
@@ -413,6 +424,7 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
 • Цена за доп. устройство: {device_price_display}
 • Триал: {trial_status}
 • Дней триала: {trial_days_display}
+• Свой срок (произвольные дни): {flexdays_status}
 
 <b>Докупка трафика:</b>
 {traffic_topup_display}
@@ -608,6 +620,37 @@ async def toggle_trial_tariff(
     tariff = await get_tariff_by_id(db, tariff_id)
     subs_count = await get_tariff_subscriptions_count(db, tariff_id)
 
+    await callback.message.edit_text(
+        format_tariff_info(tariff, db_user.language, subs_count),
+        reply_markup=get_tariff_view_keyboard(tariff, db_user.language),
+        parse_mode='HTML',
+    )
+
+
+@admin_required
+@error_handler
+async def toggle_tariff_flexible_days(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+):
+    """Переключает режим «Свой срок» (произвольное число дней, flexible_days_enabled)."""
+    tariff_id = int(callback.data.split(':')[1])
+    tariff = await get_tariff_by_id(db, tariff_id)
+
+    if not tariff:
+        await callback.answer('Тариф не найден', show_alert=True)
+        return
+
+    new_value = not bool(getattr(tariff, 'flexible_days_enabled', False))
+    tariff = await update_tariff(db, tariff, flexible_days_enabled=new_value)
+
+    note = ''
+    if new_value and len(tariff.get_available_periods()) < 2:
+        note = ' (добавьте ≥2 периода — иначе свой срок бесполезен)'
+    await callback.answer(('Свой срок включён' if new_value else 'Свой срок выключен') + note, show_alert=True)
+
+    subs_count = await get_tariff_subscriptions_count(db, tariff_id)
     await callback.message.edit_text(
         format_tariff_info(tariff, db_user.language, subs_count),
         reply_markup=get_tariff_view_keyboard(tariff, db_user.language),
@@ -3244,9 +3287,13 @@ def register_handlers(dp: Dispatcher):
         & ~F.data.startswith('trf_sq:')
         & ~F.data.startswith('admin_tariff_toggle_promo:')
         & ~F.data.startswith('admin_tariff_toggle_traffic_topup:')
-        & ~F.data.startswith('admin_tariff_toggle_daily:'),
+        & ~F.data.startswith('admin_tariff_toggle_daily:')
+        & ~F.data.startswith('admin_tariff_toggle_flexdays:'),
     )
     dp.callback_query.register(toggle_trial_tariff, F.data.startswith('admin_tariff_toggle_trial:'))
+    dp.callback_query.register(
+        toggle_tariff_flexible_days, F.data.startswith('admin_tariff_toggle_flexdays:')
+    )
 
     # Создание тарифа
     dp.callback_query.register(start_create_tariff, F.data == 'admin_tariff_create')
