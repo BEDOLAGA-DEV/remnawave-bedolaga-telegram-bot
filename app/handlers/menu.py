@@ -322,7 +322,7 @@ async def show_info_menu(
 
     texts = get_texts(db_user.language)
 
-    header = texts.t('MENU_INFO_HEADER', 'ℹ️ <b>Инфо</b>')
+    header = texts.t('MENU_INFO_HEADER', '<tg-emoji emoji-id="5334544901428229844">ℹ️</tg-emoji> <b>Инфо</b>')
     prompt = texts.t('MENU_INFO_PROMPT', 'Выберите раздел:')
     caption = f'{header}\n\n{prompt}' if prompt else header
 
