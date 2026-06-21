@@ -2981,12 +2981,19 @@ def get_change_devices_keyboard(
         elif devices_count > current_devices:
             emoji = '➕'
 
-            current_chargeable = max(0, current_devices - default_device_limit)
-            new_chargeable = max(0, devices_count - default_device_limit)
-            chargeable_devices = new_chargeable - current_chargeable
-
-            if chargeable_devices > 0:
+            if tariff is not None:
+                price_per_month = max(
+                    0,
+                    tariff.get_device_extra_price_per_month(devices_count)
+                    - tariff.get_device_extra_price_per_month(current_devices),
+                )
+            else:
+                current_chargeable = max(0, current_devices - default_device_limit)
+                new_chargeable = max(0, devices_count - default_device_limit)
+                chargeable_devices = new_chargeable - current_chargeable
                 price_per_month = chargeable_devices * device_price_per_month
+
+            if price_per_month > 0:
                 discounted_per_month, discount_per_month = apply_percentage_discount(
                     price_per_month,
                     discount_percent,
