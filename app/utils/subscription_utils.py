@@ -87,9 +87,10 @@ def get_display_subscription_link(subscription: Subscription | None) -> str | No
 
     if settings.is_happ_cryptolink_mode():
         crypto_link = getattr(subscription, 'subscription_crypto_link', None)
-        return crypto_link or base_link
+        # crypto_link is already regenerated for the override host at storage time
+        return crypto_link or apply_subscription_domain_override(base_link)
 
-    return base_link
+    return apply_subscription_domain_override(base_link)
 
 
 def apply_subscription_domain_override(url: str | None) -> str | None:
