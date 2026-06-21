@@ -1,7 +1,7 @@
 # Subscription Link Domain Override — Design
 
 **Date:** 2026-06-21
-**Status:** Approved (design) — pending spec review
+**Status:** Implemented (2026-06-21)
 
 ## Problem
 
@@ -130,6 +130,16 @@ Panel sync → writes original `subscription_url`; crypt5 re-derived via
 - crypt5 encryption failure → fall back to panel crypto link (never crash an
   emit path); logged.
 - URL with no host (opaque/empty) → returned unchanged.
+
+### Implementation notes (post-build)
+- `app/webapi/routes/_subscription_state.py` is a snapshot/restore persistence
+  path (its values are written back to the DB), NOT a REST emit point — it is
+  intentionally NOT overridden, to preserve the "never mutate stored
+  subscription_url" invariant. (The original plan mislabeled it as an emit site.)
+- Known limitation: if the panel rotates an existing subscription's URL via a
+  webhook while an override is active, its crypt5 stays stale until the next
+  routine sync (which holds an api client and re-encrypts). A `user.revoked`
+  webhook clears the now-stale crypt5 so display falls back to the overridden URL.
 
 ## Testing
 
