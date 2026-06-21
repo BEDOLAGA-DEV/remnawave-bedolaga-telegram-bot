@@ -64,28 +64,35 @@ def _function_source(source: str, func: ast.AsyncFunctionDef) -> str:
 
 
 def test_select_tariff_period_resolves_and_pins_target_subscription_id() -> None:
-    """REGRESSION: ``select_tariff_period`` must resolve the existing
-    subscription for this tariff and write its id to FSM under
-    ``target_subscription_id``. Without this pin,
-    ``confirm_tariff_purchase`` falls back to a race-vulnerable
-    tariff-level lookup.
+    """REGRESSION: the preview path must resolve the existing subscription
+    for this tariff and write its id to FSM under ``target_subscription_id``.
+
+    The pin logic lives in ``build_period_confirm`` (the shared confirm-render
+    helper); ``select_tariff_period`` delegates to it. Without this pin,
+    ``confirm_tariff_purchase`` falls back to a race-vulnerable tariff-level lookup.
     """
     source = TARIFF_PURCHASE_PATH.read_text(encoding='utf-8')
     tree = ast.parse(source)
-    func = _find_async_function(tree, 'select_tariff_period')
-    body = _function_source(source, func)
 
-    # Must look up the existing sub by (user, tariff) inside the preview.
+    # select_tariff_period must delegate the confirm render (incl. the pin)
+    # to build_period_confirm.
+    select_body = _function_source(source, _find_async_function(tree, 'select_tariff_period'))
+    assert 'build_period_confirm' in select_body, (
+        'select_tariff_period must delegate the confirm render to build_period_confirm'
+    )
+
+    body = _function_source(source, _find_async_function(tree, 'build_period_confirm'))
+
+    # Must look up the existing sub by (user, tariff) at preview time.
     assert 'get_subscription_by_user_and_tariff' in body, (
-        'select_tariff_period must resolve the target subscription at preview time '
+        'build_period_confirm must resolve the target subscription at preview time '
         'so confirm_tariff_purchase can pin it'
     )
 
-    # Must store target_subscription_id in FSM. Pin the literal kwarg
-    # name so a refactor that renames it (and breaks the confirm-side
-    # reader) trips this test.
+    # Must store target_subscription_id in FSM. Pin the literal kwarg name so a
+    # refactor that renames it (and breaks the confirm-side reader) trips this test.
     assert 'target_subscription_id=' in body, (
-        'select_tariff_period must write target_subscription_id into FSM state — '
+        'build_period_confirm must write target_subscription_id into FSM state — '
         'confirm_tariff_purchase reads this key to pin the exact subscription user '
         'clicked on, avoiding the race that produced the "Тариф уже активен" bug'
     )
