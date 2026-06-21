@@ -1460,7 +1460,6 @@ async def build_period_confirm(
         discount_text = f'\n🎁 Скидка: {discount_percent}%' if discount_percent > 0 else ''
         text = (
             f'✅ <b>Подтверждение покупки</b>\n\n'
-            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📊 Трафик: {traffic}\n'
             f'📱 Устройств: {selected_device_limit}\n'
             f'📅 Период: {format_period(period)}\n'
@@ -1507,7 +1506,6 @@ async def build_period_confirm(
         await user_cart_service.save_user_cart(db_user.id, cart_data)
         text = (
             f'❌ <b>Недостаточно средств</b>\n\n'
-            f'📦 Тариф: <b>{html.escape(tariff.name)}</b>\n'
             f'📅 Период: {format_period(period)}\n'
             f'💰 Стоимость: {format_price_kopeks(final_price)}\n\n'
             f'💳 Ваш баланс: {format_price_kopeks(user_balance)}\n'
