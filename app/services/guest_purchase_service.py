@@ -37,6 +37,7 @@ from app.database.models import (
     _aware,
 )
 from app.services.subscription_service import SubscriptionService
+from app.utils.subscription_utils import apply_subscription_domain_override
 
 
 logger = structlog.get_logger(__name__)
@@ -972,7 +973,7 @@ async def send_guest_notification(
         'tariff_name': tariff_name,
         'period_days': purchase.period_days,
         'success_page_url': success_page_url,
-        'subscription_url': purchase.subscription_url or '',
+        'subscription_url': apply_subscription_domain_override(purchase.subscription_url) or '',
         'is_gift': purchase.is_gift,
         'gift_message': purchase.gift_message,
         'is_existing_user': not is_new_account,

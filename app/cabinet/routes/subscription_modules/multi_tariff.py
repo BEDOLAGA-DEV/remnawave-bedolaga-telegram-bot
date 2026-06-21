@@ -18,6 +18,7 @@ from app.database.crud.subscription import (
     get_subscription_by_id_for_user,
 )
 from app.database.models import SubscriptionStatus, User
+from app.utils.subscription_utils import apply_subscription_domain_override
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 
@@ -64,7 +65,7 @@ def _subscription_to_list_item(sub) -> SubscriptionListItem:
         traffic_used_gb=sub.traffic_used_gb or 0.0,
         device_limit=sub.device_limit or 1,
         end_date=sub.end_date.isoformat() if sub.end_date else None,
-        subscription_url=sub.subscription_url,
+        subscription_url=apply_subscription_domain_override(sub.subscription_url),
         subscription_crypto_link=sub.subscription_crypto_link,
         is_trial=sub.is_trial or False,
         is_daily=bool(sub.tariff and getattr(sub.tariff, 'is_daily', False)),

@@ -23,6 +23,7 @@ from app.database.crud.tariff import get_tariff_by_id
 from app.database.models import ServerSquad, User
 from app.services.remnawave_service import RemnaWaveService
 from app.services.system_settings_service import bot_configuration_service
+from app.utils.subscription_utils import apply_subscription_domain_override
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import (
@@ -141,7 +142,7 @@ async def get_connection_link(
             detail='No subscription found',
         )
 
-    subscription_url = subscription.subscription_url
+    subscription_url = apply_subscription_domain_override(subscription.subscription_url)
     if not subscription_url:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -411,7 +412,7 @@ async def get_app_config(
     subscription_url = None
     subscription_crypto_link = None
     if subscription:
-        subscription_url = subscription.subscription_url
+        subscription_url = apply_subscription_domain_override(subscription.subscription_url)
         subscription_crypto_link = subscription.subscription_crypto_link
 
     # Generate crypto link on the fly if subscription_url exists but crypto link is missing.

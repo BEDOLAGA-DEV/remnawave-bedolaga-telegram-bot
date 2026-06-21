@@ -24,6 +24,7 @@ from app.services.guest_purchase_service import (
 from app.services.payment_method_config_service import _get_method_defaults
 from app.services.payment_service import PaymentService
 from app.utils.cache import RateLimitCache, cache
+from app.utils.subscription_utils import apply_subscription_domain_override
 
 
 logger = structlog.get_logger(__name__)
@@ -194,7 +195,7 @@ def _build_purchase_status_response(purchase: GuestPurchase) -> PurchaseStatusRe
         age = datetime.now(UTC) - purchase.delivered_at
         if age < timedelta(hours=_SUBSCRIPTION_URL_EXPIRY_HOURS):
             within_ttl = True
-            subscription_url = purchase.subscription_url
+            subscription_url = apply_subscription_domain_override(purchase.subscription_url)
             subscription_crypto_link = purchase.subscription_crypto_link
 
     masked_contact = _mask_contact(purchase.contact_value) if purchase.contact_value else None

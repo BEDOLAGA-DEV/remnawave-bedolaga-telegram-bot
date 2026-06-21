@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Subscription, User
+from app.utils.subscription_utils import apply_subscription_domain_override
 
 from ...schemas.subscription import (
     ServerInfo,
@@ -235,7 +236,7 @@ def _subscription_to_response(
         servers=servers or [],
         autopay_enabled=subscription.autopay_enabled or False,
         autopay_days_before=subscription.autopay_days_before or 3,
-        subscription_url=subscription.subscription_url,
+        subscription_url=apply_subscription_domain_override(subscription.subscription_url),
         hide_subscription_link=hide_link,
         is_active=is_active,
         is_expired=is_expired,

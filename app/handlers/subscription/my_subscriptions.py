@@ -21,6 +21,7 @@ from app.database.crud.subscription import (
 from app.database.models import Subscription, SubscriptionStatus, User
 from app.localization.texts import get_texts
 from app.services.subscription_service import SubscriptionService
+from app.utils.subscription_utils import get_display_subscription_link
 
 
 logger = structlog.get_logger(__name__)
@@ -253,8 +254,9 @@ async def show_subscription_detail(
         f'📅 До: {end_date}\n'
     )
 
-    if subscription.subscription_url and not settings.should_hide_subscription_link():
-        text += f'\n🔗 <code>{subscription.subscription_url}</code>'
+    _display_link = get_display_subscription_link(subscription)
+    if _display_link and not settings.should_hide_subscription_link():
+        text += f'\n🔗 <code>{_display_link}</code>'
 
     keyboard = _build_subscription_detail_keyboard(sub_id, sub=subscription)
 
