@@ -61,17 +61,17 @@ def test_payment_methods_keyboard_sorting(monkeypatch):
     topup_callbacks = [cb for cb in callbacks if cb.startswith("topup_")]
     
     # Expected order categories priorities:
-    # 1. Cards (wata, yookassa): priority 10
-    # 2. SBP (yookassa_sbp): priority 20
-    # 3. Stars (stars): priority 30
-    # 4. Crypto (heleket): priority 40
-    # 5. Foreign (tribute): priority 50
-    # 6. Support (support): priority 60
+    # 1. SBP (yookassa_sbp): priority 10
+    # 2. Cards (wata, yookassa): priority 20
+    # 3. Stars (stars): priority 40
+    # 4. Crypto (heleket): priority 50
+    # 5. Foreign (tribute): priority 60
+    # 6. Support (support): priority 70
     
     expected_order = [
+        "topup_yookassa_sbp",
         "topup_yookassa",
         "topup_wata",
-        "topup_yookassa_sbp",
         "topup_stars",
         "topup_heleket",
         "topup_tribute"

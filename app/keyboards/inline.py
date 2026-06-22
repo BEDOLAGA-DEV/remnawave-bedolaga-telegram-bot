@@ -2570,62 +2570,62 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             other_rows.append(row)
 
     METHOD_PRIORITIES = {
-        # Card methods (10)
-        'yookassa': 10,
-        'wata': 10,
-        'cloudpayments': 10,
-        'freekassa_card': 10,
-        'freekassa': 10,
-        'kassa_ai_card': 10,
-        'kassa_ai': 10,
-        'riopay': 10,
-        'severpay': 10,
-        'paypear': 10,
-        'rollypay': 10,
-        'overpay': 10,
-        'aurapay_card': 10,
-        'aurapay': 10,
-        'etoplatezhi_card': 10,
-        'etoplatezhi': 10,
-        'antilopay_card': 10,
-        'antilopay': 10,
-        'jupiter': 10,
-        'donut_card': 10,
-        'donut': 10,
-        'lava_card': 10,
-        'lava': 10,
-        'platega': 10,
-        'kassa_ai_sberpay': 10,
-        'antilopay_sberpay': 10,
+        # SBP methods (10)
+        'yookassa_sbp': 10,
+        'pal24': 10,
+        'freekassa_sbp': 10,
+        'kassa_ai_sbp': 10,
+        'aurapay_sbp': 10,
+        'etoplatezhi_sbp': 10,
+        'jupiter_sbp': 10,
+        'donut_sbp': 10,
+        'donut_sbp_qr': 10,
+        'lava_sbp': 10,
 
-        # SBP methods (20)
-        'yookassa_sbp': 20,
-        'pal24': 20,
-        'freekassa_sbp': 20,
-        'kassa_ai_sbp': 20,
-        'aurapay_sbp': 20,
-        'etoplatezhi_sbp': 20,
-        'jupiter_sbp': 20,
-        'donut_sbp': 20,
-        'donut_sbp_qr': 20,
-        'lava_sbp': 20,
+        # Card methods (20)
+        'yookassa': 20,
+        'wata': 20,
+        'cloudpayments': 20,
+        'freekassa_card': 20,
+        'freekassa': 20,
+        'kassa_ai_card': 20,
+        'kassa_ai': 20,
+        'riopay': 20,
+        'severpay': 20,
+        'paypear': 20,
+        'rollypay': 20,
+        'overpay': 20,
+        'aurapay_card': 20,
+        'aurapay': 20,
+        'etoplatezhi_card': 20,
+        'etoplatezhi': 20,
+        'antilopay_card': 20,
+        'antilopay': 20,
+        'jupiter': 20,
+        'donut_card': 20,
+        'donut': 20,
+        'lava_card': 20,
+        'lava': 20,
+        'platega': 20,
+        'kassa_ai_sberpay': 20,
+        'antilopay_sberpay': 20,
 
-        # SBP #2 (21)
-        'antilopay_sbp': 21,
+        # SBP #2 (30)
+        'antilopay_sbp': 30,
 
-        # Stars (30)
-        'stars': 30,
+        # Stars (40)
+        'stars': 40,
 
-        # Crypto (40)
-        'cryptobot': 40,
-        'heleket': 40,
+        # Crypto (50)
+        'cryptobot': 50,
+        'heleket': 50,
 
-        # Foreign cards (50)
-        'tribute': 50,
-        'mulenpay': 50,
+        # Foreign cards (60)
+        'tribute': 60,
+        'mulenpay': 60,
 
-        # Support (60)
-        'support': 60,
+        # Support (70)
+        'support': 70,
     }
 
     def _get_row_priority(row) -> int:
@@ -2650,13 +2650,13 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
                 if code_str.isdigit():
                     m_code = int(code_str)
                     if m_code == 2:
-                        return 20
-                    elif m_code == 11:
                         return 10
+                    elif m_code == 11:
+                        return 20
                     elif m_code == 12:
-                        return 50
+                        return 60
                     elif m_code == 13:
-                        return 40
+                        return 50
                 
             priority = METHOD_PRIORITIES.get(method)
             if priority is not None:

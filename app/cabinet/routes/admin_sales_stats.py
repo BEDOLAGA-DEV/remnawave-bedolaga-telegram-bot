@@ -558,7 +558,7 @@ class SalesByTariffItem(BaseModel):
 
 
 class SalesByPeriodItem(BaseModel):
-    period_days: int
+    period_days: str
     count: int
 
 
@@ -670,8 +670,44 @@ async def get_sales_stats(
             .group_by(period_days_expr)
             .order_by(period_days_expr)
         )
+        
+        buckets = {
+            "< 1": 0,
+            "1": 0,
+            "2 - 7": 0,
+            "8 - 14": 0,
+            "15 - 30": 0,
+            "31 - 90": 0,
+            "91 - 180": 0,
+            "181 - 365": 0,
+            "> 365": 0
+        }
+        for row in by_period_query:
+            days = int(row.period_days or 0)
+            cnt = row.count or 0
+            if days < 1:
+                buckets["< 1"] += cnt
+            elif days == 1:
+                buckets["1"] += cnt
+            elif 2 <= days <= 7:
+                buckets["2 - 7"] += cnt
+            elif 8 <= days <= 14:
+                buckets["8 - 14"] += cnt
+            elif 15 <= days <= 30:
+                buckets["15 - 30"] += cnt
+            elif 31 <= days <= 90:
+                buckets["31 - 90"] += cnt
+            elif 91 <= days <= 180:
+                buckets["91 - 180"] += cnt
+            elif 181 <= days <= 365:
+                buckets["181 - 365"] += cnt
+            else:
+                buckets["> 365"] += cnt
+
         by_period = [
-            SalesByPeriodItem(period_days=int(row.period_days or 0), count=row.count) for row in by_period_query
+            SalesByPeriodItem(period_days=label, count=cnt)
+            for label, cnt in buckets.items()
+            if cnt > 0
         ]
 
         daily_query = await db.execute(
