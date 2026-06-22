@@ -3,7 +3,7 @@
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formatdate, make_msgid
+from email.utils import formataddr, formatdate, make_msgid
 from typing import Any
 
 import structlog
@@ -112,7 +112,7 @@ class EmailService:
             msg['Subject'] = subject
             safe_from_name = self.from_name.replace('\n', '').replace('\r', '') if self.from_name else ''
             safe_from_email = sender_email.replace('\n', '').replace('\r', '')
-            msg['From'] = f'{safe_from_name} <{safe_from_email}>'
+            msg['From'] = formataddr((safe_from_name, safe_from_email))
             msg['To'] = to_email
             msg['Date'] = formatdate(localtime=False)
             msg['Message-ID'] = make_msgid(domain=safe_from_email.split('@')[-1])
