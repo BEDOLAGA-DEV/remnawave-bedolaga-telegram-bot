@@ -31,6 +31,12 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(element, compiler, **kw):
+    return "JSON"
+
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, backref, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -4078,7 +4084,9 @@ class LandingPage(Base):
     analytics_click_goal = Column(String(64), nullable=True)
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+    referrer_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
 
+    referrer = relationship('User', foreign_keys=[referrer_id], backref='referrer_landings')
     guest_purchases = relationship('GuestPurchase', back_populates='landing', lazy='noload')
 
     def __repr__(self) -> str:

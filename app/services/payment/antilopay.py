@@ -389,6 +389,17 @@ class AntilopayPaymentMixin:
             provider_name='antilopay',
         )
         if guest_result is not None:
+            purchase_token = metadata.get('purchase_token')
+            if purchase_token:
+                from sqlalchemy import select
+                from app.database.models import GuestPurchase
+                gp_res = await db.execute(
+                    select(GuestPurchase.user_id).where(GuestPurchase.token == purchase_token)
+                )
+                resolved_user_id = gp_res.scalar_one_or_none()
+                if resolved_user_id:
+                    payment.user_id = resolved_user_id
+                    await db.commit()
             return True
 
         # Ensure paid fields are set (idempotent — caller may have already set them)
