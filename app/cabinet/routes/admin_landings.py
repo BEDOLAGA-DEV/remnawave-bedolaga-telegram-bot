@@ -547,6 +547,8 @@ class LandingStatsResponse(BaseModel):
     total_regular: int
     avg_purchase_kopeks: int
     linked_cards_count: int = 0
+    trial_cards_count: int = 0
+    regular_cards_count: int = 0
     # Conversion: created -> paid/delivered
     total_created: int
     total_successful: int  # paid + delivered + pending_activation
@@ -933,25 +935,53 @@ async def get_landing_stats(
     conversion_rate = round(total_successful / total_created * 100, 1) if total_created > 0 else 0.0
 
     # -- Linked cards stats --
-    user_ids_subquery = select(GuestPurchase.user_id).where(
+    from sqlalchemy import distinct
+    
+    # YooKassa trial vs regular cards
+    yoo_trial_query = select(func.count(distinct(SavedPaymentMethod.id))).join(
+        GuestPurchase, GuestPurchase.user_id == SavedPaymentMethod.user_id
+    ).where(
         GuestPurchase.landing_id == landing_id,
         is_successful,
-        GuestPurchase.user_id.is_not(None)
-    ).scalar_subquery()
-
-    yookassa_cards_query = select(func.count(SavedPaymentMethod.id)).where(
-        SavedPaymentMethod.user_id.in_(user_ids_subquery),
+        GuestPurchase.amount_kopeks == 1000,
         SavedPaymentMethod.is_active.is_(True)
     )
-    yookassa_cards_count = (await db.execute(yookassa_cards_query)).scalar() or 0
+    yoo_trial_count = (await db.execute(yoo_trial_query)).scalar() or 0
 
-    antilopay_recurrents_query = select(func.count(AntilopayRecurrent.id)).where(
-        AntilopayRecurrent.user_id.in_(user_ids_subquery),
+    yoo_regular_query = select(func.count(distinct(SavedPaymentMethod.id))).join(
+        GuestPurchase, GuestPurchase.user_id == SavedPaymentMethod.user_id
+    ).where(
+        GuestPurchase.landing_id == landing_id,
+        is_successful,
+        GuestPurchase.amount_kopeks != 1000,
+        SavedPaymentMethod.is_active.is_(True)
+    )
+    yoo_regular_count = (await db.execute(yoo_regular_query)).scalar() or 0
+
+    # Antilopay trial vs regular cards
+    anti_trial_query = select(func.count(distinct(AntilopayRecurrent.id))).join(
+        GuestPurchase, GuestPurchase.user_id == AntilopayRecurrent.user_id
+    ).where(
+        GuestPurchase.landing_id == landing_id,
+        is_successful,
+        GuestPurchase.amount_kopeks == 1000,
         AntilopayRecurrent.is_active.is_(True)
     )
-    antilopay_recurrents_count = (await db.execute(antilopay_recurrents_query)).scalar() or 0
+    anti_trial_count = (await db.execute(anti_trial_query)).scalar() or 0
 
-    linked_cards_count = yookassa_cards_count + antilopay_recurrents_count
+    anti_regular_query = select(func.count(distinct(AntilopayRecurrent.id))).join(
+        GuestPurchase, GuestPurchase.user_id == AntilopayRecurrent.user_id
+    ).where(
+        GuestPurchase.landing_id == landing_id,
+        is_successful,
+        GuestPurchase.amount_kopeks != 1000,
+        AntilopayRecurrent.is_active.is_(True)
+    )
+    anti_regular_count = (await db.execute(anti_regular_query)).scalar() or 0
+
+    trial_cards_count = yoo_trial_count + anti_trial_count
+    regular_cards_count = yoo_regular_count + anti_regular_count
+    linked_cards_count = trial_cards_count + regular_cards_count
 
     # -- Daily stats for last N days --
     now = datetime.now(UTC)
@@ -1091,6 +1121,8 @@ async def get_landing_stats(
         total_regular=total_regular,
         avg_purchase_kopeks=avg_purchase_kopeks,
         linked_cards_count=linked_cards_count,
+        trial_cards_count=trial_cards_count,
+        regular_cards_count=regular_cards_count,
         total_created=total_created,
         total_successful=total_successful,
         conversion_rate=conversion_rate,
