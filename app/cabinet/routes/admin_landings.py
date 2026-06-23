@@ -24,7 +24,7 @@ from app.database.crud.landing import (
     update_landing,
     update_landing_order,
 )
-from app.database.models import GuestPurchase, GuestPurchaseStatus, LandingPage, Tariff, User, SavedPaymentMethod, AntilopayRecurrent
+from app.database.models import GuestPurchase, GuestPurchaseStatus, LandingPage, Tariff, User, SavedPaymentMethod, AntilopayRecurrent, Transaction
 
 from ..dependencies import get_cabinet_db, require_permission
 from .branding import ALLOWED_BG_TYPES, _validate_settings
@@ -549,6 +549,8 @@ class LandingStatsResponse(BaseModel):
     linked_cards_count: int = 0
     trial_cards_count: int = 0
     regular_cards_count: int = 0
+    renewals_count: int = 0
+    renewals_rate: float = 0.0
     # Conversion: created -> paid/delivered
     total_created: int
     total_successful: int  # paid + delivered + pending_activation
@@ -1113,6 +1115,21 @@ async def get_landing_stats(
         host_counts[host] += r.purchases
     source_stats = [LandingSourceStat(source=h, purchases=c) for h, c in host_counts.most_common(8)]
 
+    # -- Renewals (subsequent payments/top-ups) --
+    renewals_query = (
+        select(func.count(distinct(GuestPurchase.user_id)))
+        .join(Transaction, Transaction.user_id == GuestPurchase.user_id)
+        .where(
+            GuestPurchase.landing_id == landing_id,
+            is_successful,
+            Transaction.is_completed == True,
+            Transaction.type.in_(['deposit', 'subscription_payment']),
+            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + timedelta(hours=23)
+        )
+    )
+    renewals_count = (await db.execute(renewals_query)).scalar() or 0
+    renewals_rate = round(renewals_count / total_successful * 100, 1) if total_successful > 0 else 0.0
+
     return LandingStatsResponse(
         total_purchases=total_created,
         total_revenue_kopeks=total_revenue_kopeks,
@@ -1123,6 +1140,8 @@ async def get_landing_stats(
         linked_cards_count=linked_cards_count,
         trial_cards_count=trial_cards_count,
         regular_cards_count=regular_cards_count,
+        renewals_count=renewals_count,
+        renewals_rate=renewals_rate,
         total_created=total_created,
         total_successful=total_successful,
         conversion_rate=conversion_rate,
