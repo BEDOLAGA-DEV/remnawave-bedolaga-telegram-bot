@@ -656,6 +656,27 @@ async def _validate_referrer_id(db: AsyncSession, referrer_id: int | None) -> No
             )
 
 
+async def _backfill_landing_referrals(db: AsyncSession, landing_id: int, referrer_id: int | None) -> None:
+    if referrer_id is None:
+        return
+
+    from sqlalchemy import update as _update
+
+    subq = select(GuestPurchase.user_id).where(
+        GuestPurchase.landing_id == landing_id,
+        GuestPurchase.user_id.is_not(None)
+    ).scalar_subquery()
+
+    await db.execute(
+        _update(User)
+        .where(User.id.in_(subq))
+        .where(User.referred_by_id.is_(None))
+        .where(User.id != referrer_id)
+        .values(referred_by_id=referrer_id)
+    )
+    await db.commit()
+
+
 @router.post('', response_model=LandingDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_landing_page(
     request: LandingCreateRequest,
@@ -706,6 +727,8 @@ async def create_landing_page(
         analytics_click_goal=request.analytics_click_goal,
         referrer_id=request.referrer_id,
     )
+
+    await _backfill_landing_referrals(db, landing.id, request.referrer_id)
 
     logger.info('Admin created landing page', admin_id=admin.id, slug=landing.slug, landing_id=landing.id)
 
@@ -798,6 +821,9 @@ async def update_landing_page(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Landing page not found',
         )
+
+    if 'referrer_id' in data:
+        await _backfill_landing_referrals(db, landing.id, data['referrer_id'])
 
     logger.info('Admin updated landing page', admin_id=admin.id, slug=landing.slug, landing_id=landing.id)
 
