@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.utils.locale import (
@@ -1124,7 +1124,7 @@ async def get_landing_stats(
             is_successful,
             Transaction.is_completed == True,
             Transaction.type.in_(['deposit', 'subscription_payment']),
-            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + timedelta(hours=23)
+            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'")
         )
     )
     renewals_count = (await db.execute(renewals_query)).scalar() or 0
