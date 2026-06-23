@@ -1403,6 +1403,11 @@ def get_subscription_period_keyboard(
             add_exclamation=False,
         )
 
+        if days == 90:
+            button_text = button_text + ' 🔥'
+        elif days == 180:
+            button_text = button_text + ' 💎'
+
         keyboard.append([InlineKeyboardButton(text=button_text, callback_data=f'period_{days}')])
 
     # Кнопка "Простая покупка" была убрана из выбора периода подписки

@@ -225,12 +225,16 @@ def get_tariffs_keyboard(
     if purchased_tariff_ids is None:
         purchased_tariff_ids = set()
     buttons = []
+    tariff_buttons = []
 
     for tariff in tariffs:
         if tariff.id in purchased_tariff_ids:
-            buttons.append([InlineKeyboardButton(text=f'✅ {tariff.name}', callback_data=f'tariff_select:{tariff.id}')])
+            tariff_buttons.append(InlineKeyboardButton(text=f'✅ {tariff.name}', callback_data=f'tariff_select:{tariff.id}'))
         else:
-            buttons.append([InlineKeyboardButton(text=tariff.name, callback_data=f'tariff_select:{tariff.id}')])
+            tariff_buttons.append(InlineKeyboardButton(text=tariff.name, callback_data=f'tariff_select:{tariff.id}'))
+
+    for i in range(0, len(tariff_buttons), 2):
+        buttons.append(tariff_buttons[i:i + 2])
 
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
 
