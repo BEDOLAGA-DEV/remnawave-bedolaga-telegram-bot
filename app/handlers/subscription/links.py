@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import (
+    get_app_choice_keyboard,
     get_device_selection_keyboard,
     get_happ_cryptolink_keyboard,
     get_happ_download_button_row,
@@ -17,7 +18,12 @@ from app.utils.subscription_utils import (
     get_happ_cryptolink_redirect_link,
 )
 
-from .common import get_platforms_list, load_app_config_async, logger
+from .common import (
+    get_platforms_list,
+    load_app_config_async,
+    logger,
+    resolve_subscription_from_context,
+)
 
 
 async def _resolve_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state=None):
@@ -72,7 +78,41 @@ async def handle_connect_subscription(
             await callback.answer()
             return
 
-    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    subscription, sub_id = await resolve_subscription_from_context(callback, db_user, db, state)
+    if subscription is None:
+        return
+    subscription_link = get_display_subscription_link(subscription)
+
+    if not subscription_link:
+        await callback.answer(
+            texts.t(
+                'SUBSCRIPTION_NO_ACTIVE_LINK',
+                '⚠ У вас нет активной подписки или ссылка еще генерируется',
+            ),
+            show_alert=True,
+        )
+        return
+
+    # Ask which app before showing the connect UI. HAPP reproduces the current
+    # behavior; INCY uses the incy:// deep-link flow. Choice is ephemeral.
+    await callback.message.edit_text(
+        texts.t('APP_CHOICE_PROMPT', '📲 <b>Выберите приложение</b>\nКакое приложение вы используете?'),
+        reply_markup=get_app_choice_keyboard(db_user.language, sub_id=sub_id),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+async def handle_connect_app_happ(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    """Render the existing (HAPP / configured CONNECT_BUTTON_MODE) connect UI."""
+    if isinstance(callback.message, InaccessibleMessage):
+        await callback.answer()
+        return
+
+    texts = get_texts(db_user.language)
+    subscription, sub_id = await resolve_subscription_from_context(callback, db_user, db, state)
     if subscription is None:
         return
     subscription_link = get_display_subscription_link(subscription)

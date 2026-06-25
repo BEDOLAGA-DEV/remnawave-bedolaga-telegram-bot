@@ -165,7 +165,8 @@ from .happ import (
     handle_happ_link_broken_raw,
     handle_happ_link_not_working,
 )
-from .links import handle_connect_subscription, handle_open_subscription_link
+from .incy import handle_connect_incy, handle_incy_download
+from .links import handle_connect_app_happ, handle_connect_subscription, handle_open_subscription_link
 from .pricing import _build_subscription_period_prompt, _prepare_subscription_summary
 from .promo import (
     _build_promo_group_discount_text,
@@ -4308,6 +4309,10 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_happ_download_back, F.data == 'nz!_happ_download_back')
 
     dp.callback_query.register(handle_connect_subscription, F.data.startswith('nz!_subscription_connect'))
+
+    dp.callback_query.register(handle_connect_app_happ, F.data.startswith('nz!_capp:happ'))
+    dp.callback_query.register(handle_connect_incy, F.data.startswith('nz!_capp:incy'))
+    dp.callback_query.register(handle_incy_download, F.data.startswith('nz!_incy_dl'))
 
     dp.callback_query.register(handle_device_guide, F.data.startswith('nz!_device_guide_'))
 

@@ -71,7 +71,9 @@ from .happ import (
     handle_happ_link_broken_raw,
     handle_happ_link_not_working,
 )
+from .incy import handle_connect_incy, handle_incy_download
 from .links import (
+    handle_connect_app_happ,
     handle_connect_subscription,
     handle_open_subscription_link,
 )
@@ -189,6 +191,8 @@ __all__ = [
     'handle_autopay_menu',
     'handle_change_devices',
     'handle_confirm_unlink',
+    'handle_connect_app_happ',
+    'handle_connect_incy',
     'handle_connect_subscription',
     'handle_device_guide',
     'handle_device_management',
@@ -198,6 +202,7 @@ __all__ = [
     'handle_happ_download_close',
     'handle_happ_download_platform_choice',
     'handle_happ_download_request',
+    'handle_incy_download',
     'handle_manage_country',
     'handle_no_traffic_packages',
     'handle_open_subscription_link',
