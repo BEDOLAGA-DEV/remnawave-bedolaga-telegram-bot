@@ -145,8 +145,11 @@ def build_scheme_redirect_link(deep_link: str | None, template: str | None) -> s
     Telegram inline buttons reject custom URL schemes, so the deep link is
     handed to an HTTP redirect host that 302s to the scheme. ``template`` may use
     ``{link}``/``{subscription_link}`` placeholders (filled with the url-encoded
-    deep link) or simply end with ``=``/``?``/``&`` to have the encoded link
-    appended. Returns None when either argument is empty.
+    deep link), and ``{link_raw}``/``{subscription_link_raw}`` placeholders
+    (filled with the unencoded deep link). When no placeholder is present,
+    the url-encoded deep link is appended to the template as-is — so the
+    template should normally end with ``=``, ``?``, or ``&``. Returns None
+    when either argument is empty.
     """
     if not deep_link or not template:
         return None
