@@ -15,12 +15,9 @@ import hashlib
 import json
 import os
 
-import structlog
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.utils.incy_keymat import KEYMAT_A_B64, KEYMAT_B_B64
-
-logger = structlog.get_logger(__name__)
 
 # Salt parts concatenated in order, fed into the SHA-256 KDF (see upstream).
 _SALT = b'incy' + b'deep' + b'crypt1' + b'v2026.06'

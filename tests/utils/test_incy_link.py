@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import pytest
 
 from app.utils.incy_link import (
     KEY_FINGERPRINT,
@@ -52,6 +53,5 @@ def test_deterministic_iv_is_reproducible():
 
 
 def test_empty_url_raises():
-    import pytest
     with pytest.raises(ValueError):
         encrypt_incy_link('')
