@@ -785,6 +785,9 @@ async def get_sales_stats(
 class DailyRenewalItem(BaseModel):
     date: str
     count: int
+    trials: int = 0
+    regular: int = 0
+    rate: float = 0.0
 
 
 class RenewalPeriodStats(BaseModel):
@@ -955,7 +958,7 @@ async def get_renewals_stats(
         total_sub_payments = total_sub_payments_result.scalar() or 0
         renewal_rate = round((current_count / total_sub_payments * 100), 1) if total_sub_payments > 0 else 0.0
 
-        daily_query = await db.execute(
+        daily_renewals_query = await db.execute(
             select(
                 func.date(Transaction.created_at).label('date'),
                 func.count(Transaction.id).label('count'),
@@ -971,15 +974,64 @@ async def get_renewals_stats(
                 )
             )
             .group_by(func.date(Transaction.created_at))
-            .order_by(func.date(Transaction.created_at))
         )
-        daily = [
-            DailyRenewalItem(
-                date=row.date.isoformat() if hasattr(row.date, 'isoformat') else str(row.date),
-                count=row.count,
+        renewals_by_date = {row.date: row.count for row in daily_renewals_query}
+
+        daily_trials_query = await db.execute(
+            select(
+                func.date(Subscription.created_at).label('date'),
+                func.count(Subscription.id).label('count'),
             )
-            for row in daily_query
-        ]
+            .where(
+                and_(
+                    Subscription.is_trial == True,
+                    Subscription.created_at >= period_start,
+                    Subscription.created_at <= period_end,
+                )
+            )
+            .group_by(func.date(Subscription.created_at))
+        )
+        trials_by_date = {row.date: row.count for row in daily_trials_query}
+
+        daily_regular_query = await db.execute(
+            select(
+                func.date(Transaction.created_at).label('date'),
+                func.count(Transaction.id).label('count'),
+            )
+            .where(
+                and_(
+                    Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                    Transaction.is_completed == True,
+                    not_addon,
+                    Transaction.created_at >= period_start,
+                    Transaction.created_at <= period_end,
+                    ~Transaction.user_id.in_(existing_users_subquery),
+                )
+            )
+            .group_by(func.date(Transaction.created_at))
+        )
+        regular_by_date = {row.date: row.count for row in daily_regular_query}
+
+        daily = []
+        curr_date = period_start.date()
+        end_date_limit = period_end.date()
+        while curr_date <= end_date_limit:
+            renewals_count = renewals_by_date.get(curr_date, 0)
+            trials_count = trials_by_date.get(curr_date, 0)
+            regular_count = regular_by_date.get(curr_date, 0)
+            total = renewals_count + trials_count + regular_count
+            rate = round((renewals_count / total * 100), 1) if total > 0 else 0.0
+
+            daily.append(
+                DailyRenewalItem(
+                    date=curr_date.isoformat(),
+                    count=renewals_count,
+                    trials=trials_count,
+                    regular=regular_count,
+                    rate=rate,
+                )
+            )
+            curr_date += timedelta(days=1)
 
         return RenewalsStatsResponse(
             total_renewals=current_count,

@@ -518,6 +518,9 @@ class LandingDailyStat(BaseModel):
     purchases: int
     revenue_kopeks: int
     gifts: int
+    trials: int = 0
+    regular: int = 0
+    renewals: int = 0
 
 
 class LandingTariffStat(BaseModel):
@@ -995,6 +998,8 @@ async def get_landing_stats(
             func.count(GuestPurchase.id).label('purchases'),
             func.coalesce(func.sum(GuestPurchase.amount_kopeks), 0).label('revenue_kopeks'),
             func.count(case((GuestPurchase.is_gift.is_(True), GuestPurchase.id))).label('gifts'),
+            func.count(case((GuestPurchase.amount_kopeks == 1000, GuestPurchase.id))).label('trials'),
+            func.count(case((GuestPurchase.amount_kopeks != 1000, GuestPurchase.id))).label('regular'),
         )
         .where(
             GuestPurchase.landing_id == landing_id,
@@ -1022,6 +1027,27 @@ async def get_landing_stats(
     )
     created_rows = {str(r.day): r.created for r in created_result.all()}
 
+    # Renewals per day (based on Transaction.created_at)
+    day_tx_utc = func.date(func.timezone('UTC', Transaction.created_at))
+    renewals_daily_result = await db.execute(
+        select(
+            day_tx_utc.label('day'),
+            func.count(Transaction.id).label('count'),
+        )
+        .join(GuestPurchase, GuestPurchase.user_id == Transaction.user_id)
+        .where(
+            GuestPurchase.landing_id == landing_id,
+            GuestPurchase.status.in_(_SUCCESSFUL_STATUSES),
+            Transaction.is_completed == True,
+            Transaction.type.in_(['deposit', 'subscription_payment']),
+            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'"),
+            Transaction.created_at >= cutoff,
+        )
+        .group_by(day_tx_utc)
+        .order_by(day_tx_utc)
+    )
+    renewals_daily_rows = {str(r.day): r.count for r in renewals_daily_result.all()}
+
     # Fill missing days with zeros
     today = now.date()
     daily_stats: list[LandingDailyStat] = []
@@ -1029,6 +1055,7 @@ async def get_landing_stats(
         day = today - timedelta(days=i)
         day_str = day.isoformat()
         day_created = created_rows.get(day_str, 0)
+        day_renewals = renewals_daily_rows.get(day_str, 0)
         if day_str in daily_rows:
             r = daily_rows[day_str]
             daily_stats.append(
@@ -1038,6 +1065,9 @@ async def get_landing_stats(
                     purchases=r.purchases,
                     revenue_kopeks=r.revenue_kopeks,
                     gifts=r.gifts,
+                    trials=r.trials,
+                    regular=r.regular,
+                    renewals=day_renewals,
                 )
             )
         else:
@@ -1048,6 +1078,9 @@ async def get_landing_stats(
                     purchases=0,
                     revenue_kopeks=0,
                     gifts=0,
+                    trials=0,
+                    regular=0,
+                    renewals=day_renewals,
                 )
             )
 
