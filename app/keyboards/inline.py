@@ -1122,6 +1122,71 @@ def get_happ_download_link_keyboard(language: str, link: str) -> InlineKeyboardM
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def get_app_choice_keyboard(language: str, sub_id: int | None = None) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+    suffix = f':{sub_id}' if sub_id is not None else ''
+    back_cb = f'nz!_sm:{sub_id}' if (sub_id is not None and settings.is_multi_tariff_enabled()) else 'nz!_menu_subscription'
+    buttons = [
+        [InlineKeyboardButton(text=texts.t('APP_CHOICE_HAPP', 'Happ'), callback_data=f'nz!_capp:happ{suffix}', style='primary')],
+        [InlineKeyboardButton(text=texts.t('APP_CHOICE_INCY', 'INCY'), callback_data=f'nz!_capp:incy{suffix}', style='primary')],
+        [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb, style='danger')],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_incy_download_platform_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+    buttons = [
+        [InlineKeyboardButton(text=texts.t('INCY_PLATFORM_ANDROID', '🤖 Android'), callback_data='nz!_incy_dl:android', style='primary')],
+        [InlineKeyboardButton(text=texts.t('INCY_PLATFORM_IOS', '🍎 iOS'), callback_data='nz!_incy_dl:ios', style='primary')],
+        [InlineKeyboardButton(text=texts.t('INCY_PLATFORM_WINDOWS', '💻 Windows'), callback_data='nz!_incy_dl:windows', style='primary')],
+        [InlineKeyboardButton(text=texts.t('INCY_PLATFORM_MACOS', '🖥️ macOS'), callback_data='nz!_incy_dl:macos', style='primary')],
+        [InlineKeyboardButton(text=texts.t('INCY_PLATFORM_LINUX', '🐧 Linux'), callback_data='nz!_incy_dl:linux', style='primary')],
+        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_incy_dl_close', style='danger')],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_incy_download_macos_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+    buttons = [
+        [InlineKeyboardButton(text=texts.t('INCY_ARCH_APPLE_SILICON', '🍏 Apple Silicon'), callback_data='nz!_incy_dl:macos:arm', style='primary')],
+        [InlineKeyboardButton(text=texts.t('INCY_ARCH_INTEL', '💠 Intel'), callback_data='nz!_incy_dl:macos:intel', style='primary')],
+        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_incy_dl', style='danger')],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_incy_download_linux_arch_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+    buttons = [
+        [InlineKeyboardButton(text=texts.t('INCY_ARCH_ARM', 'ARM'), callback_data='nz!_incy_dl:linux:arm', style='primary')],
+        [InlineKeyboardButton(text=texts.t('INCY_ARCH_X64', 'x64'), callback_data='nz!_incy_dl:linux:x64', style='primary')],
+        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_incy_dl', style='danger')],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_incy_download_linux_pkg_keyboard(language: str, arch: str) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+    buttons = [
+        [InlineKeyboardButton(text=texts.t('INCY_PKG_DEB', 'DEB'), callback_data=f'nz!_incy_dl:linux:{arch}:deb', style='primary')],
+        [InlineKeyboardButton(text=texts.t('INCY_PKG_RPM', 'RPM'), callback_data=f'nz!_incy_dl:linux:{arch}:rpm', style='primary')],
+        [InlineKeyboardButton(text=texts.t('INCY_PKG_PORTABLE', 'Portable (zip)'), callback_data=f'nz!_incy_dl:linux:{arch}:portable', style='primary')],
+        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_incy_dl:linux', style='danger')],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_incy_download_link_keyboard(language: str, link: str) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+    buttons = [
+        [InlineKeyboardButton(text=texts.t('INCY_DOWNLOAD_OPEN_LINK', '🔗 Открыть ссылку'), url=link, style='success')],
+        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_incy_dl', style='danger')],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def get_happ_link_not_working_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
     """
     Step 2 of the Happ "link is broken" recovery flow.
