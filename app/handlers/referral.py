@@ -13,7 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
-from app.keyboards.inline import get_referral_keyboard
+from app.keyboards.inline import (
+    get_referral_keyboard,
+    build_back_button,
+)
 from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
 from app.services.referral_withdrawal_service import referral_withdrawal_service
@@ -271,7 +274,7 @@ async def show_referral_qr(
 
     photo = FSInputFile(file_path)
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')]]
+        inline_keyboard=[[build_back_button(texts, 'menu_referrals')]]
     )
 
     caption = texts.t(
@@ -313,7 +316,7 @@ async def show_detailed_referral_list(callback: types.CallbackQuery, db_user: Us
                 '📋 У вас пока нет рефералов.\n\nПоделитесь своей реферальной ссылкой, чтобы начать зарабатывать!',
             ),
             types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')]]
+                inline_keyboard=[[build_back_button(texts, 'menu_referrals')]]
             ),
             parse_mode=None,
         )
@@ -404,7 +407,7 @@ async def show_detailed_referral_list(callback: types.CallbackQuery, db_user: Us
     if nav_buttons:
         keyboard.append(nav_buttons)
 
-    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')])
+    keyboard.append([build_back_button(texts, 'menu_referrals')])
 
     await edit_or_answer_photo(
         callback,
@@ -489,7 +492,7 @@ async def show_referral_analytics(callback: types.CallbackQuery, db_user: User, 
         callback,
         text,
         types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')]]
+            inline_keyboard=[[build_back_button(texts, 'menu_referrals')]]
         ),
     )
     await callback.answer()
@@ -542,7 +545,7 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User):
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')],
+            [build_back_button(texts, 'menu_referrals')],
         ]
     )
 
@@ -611,7 +614,7 @@ async def show_withdrawal_info(callback: types.CallbackQuery, db_user: User, db:
     else:
         text += f'❌ {html_escape(str(reason))}\n'
 
-    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')])
+    keyboard.append([build_back_button(texts, 'menu_referrals')])
 
     await edit_or_answer_photo(callback, text, types.InlineKeyboardMarkup(inline_keyboard=keyboard))
     await callback.answer()
@@ -882,7 +885,7 @@ async def confirm_withdrawal_request(callback: types.CallbackQuery, db_user: Use
     ).format(id=request.id, amount=texts.format_price(amount_kopeks))
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')]]
+        inline_keyboard=[[build_back_button(texts, 'menu_referrals')]]
     )
 
     await edit_or_answer_photo(callback, text, keyboard)
@@ -897,7 +900,7 @@ async def cancel_withdrawal_request(callback: types.CallbackQuery, db_user: User
 
     # Возвращаем в меню партнёрки
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_referrals')]]
+        inline_keyboard=[[build_back_button(texts, 'menu_referrals')]]
     )
     await edit_or_answer_photo(callback, texts.t('REFERRAL_WITHDRAWAL_CANCELLED', '❌ Заявка отменена'), keyboard)
 

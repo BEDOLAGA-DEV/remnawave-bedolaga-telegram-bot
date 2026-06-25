@@ -139,6 +139,7 @@ class UserListItem(BaseModel):
     has_restrictions: bool = False
     restriction_topup: bool = False
     restriction_subscription: bool = False
+    is_recurrent: bool = False
 
 
 class UsersListResponse(BaseModel):
@@ -239,6 +240,9 @@ class UserDetailResponse(BaseModel):
 
     # Remnawave UUID
     remnawave_uuid: str | None = None
+
+    # Recurrent cards
+    recurrent_cards: list[str] = []
 
 
 # === Panel Info ===
@@ -534,6 +538,7 @@ class UsersStatsResponse(BaseModel):
     users_with_active_subscription: int = 0
     users_with_trial: int = 0
     users_with_expired_subscription: int = 0
+    recurrent_users_count: int = 0
 
     # Financial stats
     total_balance_kopeks: int = 0

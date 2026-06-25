@@ -668,6 +668,24 @@ async def _find_or_create_user(
     NOTE: Does NOT commit — caller is responsible for committing the transaction.
     This preserves FOR UPDATE locks held by the caller.
     """
+    landing_referrer_id = None
+    if purchase and purchase.landing and purchase.landing.referrer_id:
+        landing_referrer_id = purchase.landing.referrer_id
+
+    async def _trigger_referral_registration(u_id: int, r_id: int) -> None:
+        try:
+            from app.services.referral_service import process_referral_registration
+            from app.bot_factory import create_bot
+            async with create_bot() as bot:
+                await process_referral_registration(db, u_id, r_id, bot=bot)
+        except Exception as exc:
+            logger.warning(
+                'Failed to process referral registration in guest purchase',
+                user_id=u_id,
+                referrer_id=r_id,
+                error=str(exc),
+            )
+
     if contact_type == 'email':
         result = await db.execute(select(User).where(User.email == contact_value))
         user = result.scalars().first()
@@ -690,6 +708,9 @@ async def _find_or_create_user(
                 user.promo_group_id = default_group.id
             if not user.referral_code:
                 user.referral_code = await create_unique_referral_code(db)
+            if landing_referrer_id and not user.referred_by_id and user.id != landing_referrer_id:
+                user.referred_by_id = landing_referrer_id
+                await _trigger_referral_registration(user.id, landing_referrer_id)
             return user, is_new_account
 
         # Create new email user with verified cabinet account
@@ -711,6 +732,7 @@ async def _find_or_create_user(
             password_hash=hash_password(plain_password),
             promo_group_id=resolved_group.id,
             referral_code=referral_code,
+            referred_by_id=landing_referrer_id,
         )
         if purchase:
             purchase.cabinet_password = plain_password
@@ -740,8 +762,15 @@ async def _find_or_create_user(
                     user.promo_group_id = default_group.id
                 if not user.referral_code:
                     user.referral_code = await create_unique_referral_code(db)
+                if landing_referrer_id and not user.referred_by_id and user.id != landing_referrer_id:
+                    user.referred_by_id = landing_referrer_id
+                    await _trigger_referral_registration(user.id, landing_referrer_id)
                 return user, is_new_account
             raise
+
+        if landing_referrer_id:
+            await _trigger_referral_registration(user.id, landing_referrer_id)
+
         logger.info(
             'Created new email user with cabinet account for guest purchase',
             user_id=user.id,
@@ -810,6 +839,9 @@ async def _find_or_create_user(
             user.promo_group_id = default_group.id
         if not user.referral_code:
             user.referral_code = await create_unique_referral_code(db)
+        if landing_referrer_id and not user.referred_by_id and user.id != landing_referrer_id:
+            user.referred_by_id = landing_referrer_id
+            await _trigger_referral_registration(user.id, landing_referrer_id)
         return user, False
 
     # Create new telegram user
@@ -821,6 +853,7 @@ async def _find_or_create_user(
         telegram_id=resolved_telegram_id,
         promo_group_id=default_group.id,
         referral_code=referral_code,
+        referred_by_id=landing_referrer_id,
     )
     try:
         async with db.begin_nested():
@@ -836,6 +869,9 @@ async def _find_or_create_user(
                     user.promo_group_id = default_group.id
                 if not user.referral_code:
                     user.referral_code = await create_unique_referral_code(db)
+                if landing_referrer_id and not user.referred_by_id and user.id != landing_referrer_id:
+                    user.referred_by_id = landing_referrer_id
+                    await _trigger_referral_registration(user.id, landing_referrer_id)
                 return user, False
         result = await db.execute(select(User).where(func.lower(User.username) == normalized))
         user = result.scalars().first()
@@ -845,8 +881,15 @@ async def _find_or_create_user(
                 user.promo_group_id = default_group.id
             if not user.referral_code:
                 user.referral_code = await create_unique_referral_code(db)
+            if landing_referrer_id and not user.referred_by_id and user.id != landing_referrer_id:
+                user.referred_by_id = landing_referrer_id
+                await _trigger_referral_registration(user.id, landing_referrer_id)
             return user, False
         raise
+
+    if landing_referrer_id:
+        await _trigger_referral_registration(user.id, landing_referrer_id)
+
     logger.info(
         'Created new telegram user for guest purchase',
         user_id=user.id,

@@ -187,6 +187,7 @@ class AdminStates(StatesGroup):
     viewing_user_from_campaign_list = State()
     viewing_user_from_ready_to_renew_list = State()
     viewing_user_from_potential_customers_list = State()
+    viewing_user_from_recurrent_list = State()
 
     # Состояния для управления тарифами
     creating_tariff_name = State()

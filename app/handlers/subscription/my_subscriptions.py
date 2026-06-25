@@ -21,6 +21,7 @@ from app.database.crud.subscription import (
 from app.database.models import Subscription, SubscriptionStatus, User
 from app.localization.texts import get_texts
 from app.services.subscription_service import SubscriptionService
+from app.keyboards.inline import build_back_button
 
 
 logger = structlog.get_logger(__name__)
@@ -70,10 +71,10 @@ def _format_subscription_line(sub, idx: int) -> str:
     end_date = sub.end_date.strftime('%d.%m.%Y') if sub.end_date else '—'
 
     parts = [f'{emoji} <b>{idx}. {tariff_name}</b>{label}']
-    parts.append(f'   📊 Трафик: {traffic}')
+    parts.append(f'   <tg-emoji emoji-id="5931472654660800739">📊</tg-emoji> Трафик: {traffic}')
     if devices:
-        parts.append(f'   📱 Устройства: {devices}')
-    parts.append(f'   📅 До: {end_date}')
+        parts.append(f'   <tg-emoji emoji-id="5877318502947229960">💻</tg-emoji> Устройства: {devices}')
+    parts.append(f'   <tg-emoji emoji-id="5967782394080530708">📅</tg-emoji> До: {end_date}')
 
     return '\n'.join(parts)
 
@@ -86,7 +87,7 @@ def _build_subscriptions_keyboard(subscriptions: list, language: str) -> types.I
         buttons.append(
             [
                 types.InlineKeyboardButton(
-                    text=f'⚙️ {tariff_name}',
+                    text=tariff_name,
                     callback_data=f'sm:{sub.id}',
                 )
             ]
@@ -95,15 +96,20 @@ def _build_subscriptions_keyboard(subscriptions: list, language: str) -> types.I
     # "Buy another tariff" button
     texts = get_texts(language)
     buy_text = getattr(texts, 'MENU_BUY_SUBSCRIPTION', 'Купить ещё тариф')
+    from app.utils.miniapp_buttons import strip_leading_emoji
+    buy_text_clean = strip_leading_emoji(buy_text)
     buttons.append(
         [
-            types.InlineKeyboardButton(text=f'➕ {buy_text}', callback_data='menu_buy'),
+            types.InlineKeyboardButton(
+                text='➕ ' + buy_text_clean,
+                callback_data='menu_buy',
+            ),
         ]
     )
     # Back button
     buttons.append(
         [
-            types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu'),
+            build_back_button(texts, 'back_to_menu'),
         ]
     )
 
@@ -121,29 +127,76 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
     buttons = []
 
     if not is_inactive:
-        buttons.append([types.InlineKeyboardButton(text='🔗 Ссылка подключения', callback_data=f'sl:{sub_id}')])
+        # Open subscription link directly if available; otherwise fallback to handler
+        sub_url = getattr(sub, 'subscription_url', None) if sub else None
+        hide_link = settings.should_hide_subscription_link()
+        if sub_url and not hide_link:
+            link_btn = types.InlineKeyboardButton(
+                text='Ссылка подключения',
+                url=sub_url,
+                icon_custom_emoji_id='5363925338181090618',
+                style='primary',
+            )
+        else:
+            link_btn = types.InlineKeyboardButton(
+                text='Ссылка подключения',
+                callback_data=f'sl:{sub_id}',
+                icon_custom_emoji_id='5363925338181090618',
+                style='primary',
+            )
+        buttons.append([link_btn])
 
-    buttons.append([types.InlineKeyboardButton(text='🔄 Продлить', callback_data=f'se:{sub_id}')])
+    buttons.append([
+        types.InlineKeyboardButton(
+            text='Продлить',
+            callback_data=f'se:{sub_id}',
+            icon_custom_emoji_id='5375338737028841420',
+            style='success',
+        )
+    ])
 
     if not is_inactive:
-        buttons.append([types.InlineKeyboardButton(text='💳 Автоплатеж', callback_data='subscription_autopay')])
-        buttons.append([types.InlineKeyboardButton(text='📊 Трафик', callback_data=f'st:{sub_id}')])
-        buttons.append([types.InlineKeyboardButton(text='📱 Устройства', callback_data=f'sd:{sub_id}')])
+        buttons.append([
+            types.InlineKeyboardButton(
+                text='Устройства',
+                callback_data=f'sd:{sub_id}',
+                icon_custom_emoji_id='5855092747270098407',
+            )
+        ])
+        buttons.append([
+            types.InlineKeyboardButton(
+                text='Автоплатеж',
+                callback_data='subscription_autopay',
+                icon_custom_emoji_id='5231449120635370684',
+            )
+        ])
+        buttons.append([
+            types.InlineKeyboardButton(
+                text='Трафик',
+                callback_data=f'st:{sub_id}',
+                icon_custom_emoji_id='5028746137645876535',
+            )
+        ])
 
     if is_inactive:
         buttons.append([types.InlineKeyboardButton(text='🗑 Удалить подписку', callback_data=f'sub_del:{sub_id}')])
 
     if not is_inactive and settings.is_subscription_revoke_enabled():
-        buttons.append(
-            [
-                types.InlineKeyboardButton(
-                    text='🔄 Перевыпустить',
-                    callback_data=f'sr:{sub_id}',
-                )
-            ]
-        )
+        buttons.append([
+            types.InlineKeyboardButton(
+                text='Перевыпустить',
+                callback_data=f'sr:{sub_id}',
+                icon_custom_emoji_id='5190886504599149767',
+            )
+        ])
 
-    buttons.append([types.InlineKeyboardButton(text='◀️ К списку подписок', callback_data='my_subscriptions')])
+    buttons.append([
+        types.InlineKeyboardButton(
+            text='К списку подписок',
+            callback_data='my_subscriptions',
+            icon_custom_emoji_id='5372990734242706763',
+        )
+    ])
 
     return types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -159,6 +212,7 @@ async def show_my_subscriptions(
         # Fallback to legacy single subscription view
         return
 
+    texts = get_texts(db_user.language)
     subscriptions = await get_all_subscriptions_by_user_id(db, db_user.id)
 
     if not subscriptions:
@@ -166,7 +220,7 @@ async def show_my_subscriptions(
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [types.InlineKeyboardButton(text='🛒 Купить подписку', callback_data='menu_buy')],
-                [types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')],
+                [build_back_button(texts, 'back_to_menu')],
             ]
         )
     else:
@@ -220,13 +274,13 @@ async def show_subscription_detail(
     text = (
         f'📋 <b>{tariff_name}</b>\n\n'
         f'Статус: {status}\n'
-        f'📊 Трафик: {traffic}\n'
-        f'📱 Устройства: {subscription.device_limit}\n'
-        f'📅 До: {end_date}\n'
+        f'<tg-emoji emoji-id="5931472654660800739">📊</tg-emoji> Трафик: {traffic}\n'
+        f'<tg-emoji emoji-id="5877318502947229960">💻</tg-emoji> Устройства: {subscription.device_limit}\n'
+        f'<tg-emoji emoji-id="5967782394080530708">📅</tg-emoji> До: {end_date}\n'
     )
 
     if subscription.subscription_url and not settings.should_hide_subscription_link():
-        text += f'\n🔗 <code>{subscription.subscription_url}</code>'
+        text += f'\n<tg-emoji emoji-id="5778168620278354602">🔗</tg-emoji> <code>{subscription.subscription_url}</code>'
 
     keyboard = _build_subscription_detail_keyboard(sub_id, sub=subscription)
 
@@ -329,6 +383,7 @@ async def handle_subscription_devices(
     else:
         can_buy_devices = settings.is_devices_selection_enabled()
 
+    texts = get_texts(db_user.language)
     current_devices = subscription.device_limit or 0
     text = f'📱 <b>Устройства</b>\n\nТекущий лимит: {current_devices} устройств\n\nВыберите действие:'
 
@@ -340,7 +395,7 @@ async def handle_subscription_devices(
     keyboard.append(
         [types.InlineKeyboardButton(text='📱 Управление устройствами', callback_data=f'device_management:{sub_id}')]
     )
-    keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data=f'sm:{sub_id}')])
+    keyboard.append([build_back_button(texts, f'sm:{sub_id}')])
 
     await callback.message.edit_text(
         text,

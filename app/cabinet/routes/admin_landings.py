@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.utils.locale import (
@@ -24,7 +24,7 @@ from app.database.crud.landing import (
     update_landing,
     update_landing_order,
 )
-from app.database.models import GuestPurchase, GuestPurchaseStatus, LandingPage, Tariff, User
+from app.database.models import GuestPurchase, GuestPurchaseStatus, LandingPage, Tariff, User, SavedPaymentMethod, AntilopayRecurrent, Transaction
 
 from ..dependencies import get_cabinet_db, require_permission
 from .branding import ALLOWED_BG_TYPES, _validate_settings
@@ -187,6 +187,7 @@ class LandingCreateRequest(BaseModel):
     allowed_tariff_ids: list[int] = Field(default_factory=list, max_length=50)
     allowed_periods: dict[str, list[int]] = Field(default_factory=dict)
     payment_methods: list[LandingPaymentMethodInput] = Field(default_factory=list, max_length=10)
+    referrer_id: int | None = None
 
     @field_validator('allowed_periods')
     @classmethod
@@ -320,6 +321,7 @@ class LandingUpdateRequest(BaseModel):
     allowed_tariff_ids: list[int] | None = Field(default=None, max_length=50)
     allowed_periods: dict[str, list[int]] | None = None
     payment_methods: list[LandingPaymentMethodInput] | None = Field(default=None, max_length=10)
+    referrer_id: int | None = None
     gift_enabled: bool | None = None
     custom_css: str | None = Field(default=None, max_length=10000)
     meta_title: dict[str, str] | None = None
@@ -435,6 +437,7 @@ class PurchaseStats(BaseModel):
     pending_activation: int = 0
     failed: int = 0
     expired: int = 0
+    active_cards: int = 0
 
 
 class LandingListItem(BaseModel):
@@ -443,6 +446,7 @@ class LandingListItem(BaseModel):
     title: dict[str, str]
     is_active: bool
     display_order: int
+    referrer_id: int | None = None
     gift_enabled: bool
     tariff_count: int
     method_count: int
@@ -467,6 +471,7 @@ class LandingDetailResponse(BaseModel):
     subtitle: dict[str, str] | None = None
     is_active: bool
     display_order: int
+    referrer_id: int | None = None
     features: list[LandingFeatureInput]
     footer_text: dict[str, str] | None = None
     allowed_tariff_ids: list[int]
@@ -513,6 +518,9 @@ class LandingDailyStat(BaseModel):
     purchases: int
     revenue_kopeks: int
     gifts: int
+    trials: int = 0
+    regular: int = 0
+    renewals: int = 0
 
 
 class LandingTariffStat(BaseModel):
@@ -541,6 +549,11 @@ class LandingStatsResponse(BaseModel):
     total_gifts_claimed: int = 0  # gifts that reached DELIVERED (claimed)
     total_regular: int
     avg_purchase_kopeks: int
+    linked_cards_count: int = 0
+    trial_cards_count: int = 0
+    regular_cards_count: int = 0
+    renewals_count: int = 0
+    renewals_rate: float = 0.0
     # Conversion: created -> paid/delivered
     total_created: int
     total_successful: int  # paid + delivered + pending_activation
@@ -618,6 +631,7 @@ async def list_landings(
                 title=landing.title,
                 is_active=landing.is_active,
                 display_order=landing.display_order,
+                referrer_id=landing.referrer_id,
                 gift_enabled=landing.gift_enabled,
                 tariff_count=len(landing.allowed_tariff_ids or []),
                 method_count=len(landing.payment_methods or []),
@@ -629,6 +643,7 @@ async def list_landings(
                     pending_activation=stats.get('pending_activation', 0),
                     failed=stats.get('failed', 0),
                     expired=stats.get('expired', 0),
+                    active_cards=stats.get('active_cards', 0),
                 ),
                 has_active_discount=discount_active,
                 created_at=landing.created_at,
@@ -636,6 +651,37 @@ async def list_landings(
             )
         )
     return items
+
+
+async def _validate_referrer_id(db: AsyncSession, referrer_id: int | None) -> None:
+    if referrer_id is not None:
+        result = await db.execute(select(User.id).where(User.id == referrer_id))
+        if not result.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f'Referrer user with ID {referrer_id} not found',
+            )
+
+
+async def _backfill_landing_referrals(db: AsyncSession, landing_id: int, referrer_id: int | None) -> None:
+    if referrer_id is None:
+        return
+
+    from sqlalchemy import update as _update
+
+    subq = select(GuestPurchase.user_id).where(
+        GuestPurchase.landing_id == landing_id,
+        GuestPurchase.user_id.is_not(None)
+    ).scalar_subquery()
+
+    await db.execute(
+        _update(User)
+        .where(User.id.in_(subq))
+        .where(User.referred_by_id.is_(None))
+        .where(User.id != referrer_id)
+        .values(referred_by_id=referrer_id)
+    )
+    await db.commit()
 
 
 @router.post('', response_model=LandingDetailResponse, status_code=status.HTTP_201_CREATED)
@@ -657,6 +703,8 @@ async def create_landing_page(
             status_code=status.HTTP_409_CONFLICT,
             detail=f'Landing page with slug "{request.slug}" already exists',
         )
+
+    await _validate_referrer_id(db, request.referrer_id)
 
     landing = await create_landing(
         db,
@@ -684,7 +732,10 @@ async def create_landing_page(
         analytics_view_goal=request.analytics_view_goal,
         analytics_click_enabled=request.analytics_click_enabled,
         analytics_click_goal=request.analytics_click_goal,
+        referrer_id=request.referrer_id,
     )
+
+    await _backfill_landing_referrals(db, landing.id, request.referrer_id)
 
     logger.info('Admin created landing page', admin_id=admin.id, slug=landing.slug, landing_id=landing.id)
 
@@ -743,6 +794,9 @@ async def update_landing_page(
                 detail=f'Landing page with slug "{data["slug"]}" already exists',
             )
 
+    if 'referrer_id' in data:
+        await _validate_referrer_id(db, data['referrer_id'])
+
     # Serialize nested Pydantic models to dicts for JSON storage
     if 'features' in data and data['features'] is not None:
         data['features'] = [f.model_dump() if hasattr(f, 'model_dump') else f for f in data['features']]
@@ -774,6 +828,9 @@ async def update_landing_page(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Landing page not found',
         )
+
+    if 'referrer_id' in data:
+        await _backfill_landing_referrals(db, landing.id, data['referrer_id'])
 
     logger.info('Admin updated landing page', admin_id=admin.id, slug=landing.slug, landing_id=landing.id)
 
@@ -882,6 +939,55 @@ async def get_landing_stats(
     avg_purchase_kopeks = total_revenue_kopeks // total_successful if total_successful > 0 else 0
     conversion_rate = round(total_successful / total_created * 100, 1) if total_created > 0 else 0.0
 
+    # -- Linked cards stats --
+    from sqlalchemy import distinct
+    
+    # YooKassa trial vs regular cards
+    yoo_trial_query = select(func.count(distinct(SavedPaymentMethod.id))).join(
+        GuestPurchase, GuestPurchase.user_id == SavedPaymentMethod.user_id
+    ).where(
+        GuestPurchase.landing_id == landing_id,
+        is_successful,
+        GuestPurchase.amount_kopeks == 1000,
+        SavedPaymentMethod.is_active.is_(True)
+    )
+    yoo_trial_count = (await db.execute(yoo_trial_query)).scalar() or 0
+
+    yoo_regular_query = select(func.count(distinct(SavedPaymentMethod.id))).join(
+        GuestPurchase, GuestPurchase.user_id == SavedPaymentMethod.user_id
+    ).where(
+        GuestPurchase.landing_id == landing_id,
+        is_successful,
+        GuestPurchase.amount_kopeks != 1000,
+        SavedPaymentMethod.is_active.is_(True)
+    )
+    yoo_regular_count = (await db.execute(yoo_regular_query)).scalar() or 0
+
+    # Antilopay trial vs regular cards
+    anti_trial_query = select(func.count(distinct(AntilopayRecurrent.id))).join(
+        GuestPurchase, GuestPurchase.user_id == AntilopayRecurrent.user_id
+    ).where(
+        GuestPurchase.landing_id == landing_id,
+        is_successful,
+        GuestPurchase.amount_kopeks == 1000,
+        AntilopayRecurrent.is_active.is_(True)
+    )
+    anti_trial_count = (await db.execute(anti_trial_query)).scalar() or 0
+
+    anti_regular_query = select(func.count(distinct(AntilopayRecurrent.id))).join(
+        GuestPurchase, GuestPurchase.user_id == AntilopayRecurrent.user_id
+    ).where(
+        GuestPurchase.landing_id == landing_id,
+        is_successful,
+        GuestPurchase.amount_kopeks != 1000,
+        AntilopayRecurrent.is_active.is_(True)
+    )
+    anti_regular_count = (await db.execute(anti_regular_query)).scalar() or 0
+
+    trial_cards_count = yoo_trial_count + anti_trial_count
+    regular_cards_count = yoo_regular_count + anti_regular_count
+    linked_cards_count = trial_cards_count + regular_cards_count
+
     # -- Daily stats for last N days --
     now = datetime.now(UTC)
     cutoff = now - timedelta(days=_STATS_PERIOD_DAYS)
@@ -892,6 +998,8 @@ async def get_landing_stats(
             func.count(GuestPurchase.id).label('purchases'),
             func.coalesce(func.sum(GuestPurchase.amount_kopeks), 0).label('revenue_kopeks'),
             func.count(case((GuestPurchase.is_gift.is_(True), GuestPurchase.id))).label('gifts'),
+            func.count(case((GuestPurchase.amount_kopeks == 1000, GuestPurchase.id))).label('trials'),
+            func.count(case((GuestPurchase.amount_kopeks != 1000, GuestPurchase.id))).label('regular'),
         )
         .where(
             GuestPurchase.landing_id == landing_id,
@@ -919,6 +1027,27 @@ async def get_landing_stats(
     )
     created_rows = {str(r.day): r.created for r in created_result.all()}
 
+    # Renewals per day (based on Transaction.created_at)
+    day_tx_utc = func.date(func.timezone('UTC', Transaction.created_at))
+    renewals_daily_result = await db.execute(
+        select(
+            day_tx_utc.label('day'),
+            func.count(Transaction.id).label('count'),
+        )
+        .join(GuestPurchase, GuestPurchase.user_id == Transaction.user_id)
+        .where(
+            GuestPurchase.landing_id == landing_id,
+            GuestPurchase.status.in_(_SUCCESSFUL_STATUSES),
+            Transaction.is_completed == True,
+            Transaction.type.in_(['deposit', 'subscription_payment']),
+            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'"),
+            Transaction.created_at >= cutoff,
+        )
+        .group_by(day_tx_utc)
+        .order_by(day_tx_utc)
+    )
+    renewals_daily_rows = {str(r.day): r.count for r in renewals_daily_result.all()}
+
     # Fill missing days with zeros
     today = now.date()
     daily_stats: list[LandingDailyStat] = []
@@ -926,6 +1055,7 @@ async def get_landing_stats(
         day = today - timedelta(days=i)
         day_str = day.isoformat()
         day_created = created_rows.get(day_str, 0)
+        day_renewals = renewals_daily_rows.get(day_str, 0)
         if day_str in daily_rows:
             r = daily_rows[day_str]
             daily_stats.append(
@@ -935,6 +1065,9 @@ async def get_landing_stats(
                     purchases=r.purchases,
                     revenue_kopeks=r.revenue_kopeks,
                     gifts=r.gifts,
+                    trials=r.trials,
+                    regular=r.regular,
+                    renewals=day_renewals,
                 )
             )
         else:
@@ -945,6 +1078,9 @@ async def get_landing_stats(
                     purchases=0,
                     revenue_kopeks=0,
                     gifts=0,
+                    trials=0,
+                    regular=0,
+                    renewals=day_renewals,
                 )
             )
 
@@ -1012,6 +1148,21 @@ async def get_landing_stats(
         host_counts[host] += r.purchases
     source_stats = [LandingSourceStat(source=h, purchases=c) for h, c in host_counts.most_common(8)]
 
+    # -- Renewals (subsequent payments/top-ups) --
+    renewals_query = (
+        select(func.count(distinct(GuestPurchase.user_id)))
+        .join(Transaction, Transaction.user_id == GuestPurchase.user_id)
+        .where(
+            GuestPurchase.landing_id == landing_id,
+            is_successful,
+            Transaction.is_completed == True,
+            Transaction.type.in_(['deposit', 'subscription_payment']),
+            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'")
+        )
+    )
+    renewals_count = (await db.execute(renewals_query)).scalar() or 0
+    renewals_rate = round(renewals_count / total_successful * 100, 1) if total_successful > 0 else 0.0
+
     return LandingStatsResponse(
         total_purchases=total_created,
         total_revenue_kopeks=total_revenue_kopeks,
@@ -1019,6 +1170,11 @@ async def get_landing_stats(
         total_gifts_claimed=total_gifts_claimed,
         total_regular=total_regular,
         avg_purchase_kopeks=avg_purchase_kopeks,
+        linked_cards_count=linked_cards_count,
+        trial_cards_count=trial_cards_count,
+        regular_cards_count=regular_cards_count,
+        renewals_count=renewals_count,
+        renewals_rate=renewals_rate,
         total_created=total_created,
         total_successful=total_successful,
         conversion_rate=conversion_rate,
@@ -1154,6 +1310,7 @@ def _landing_to_detail(landing: LandingPage) -> LandingDetailResponse:
         subtitle=landing.subtitle,
         is_active=landing.is_active,
         display_order=landing.display_order,
+        referrer_id=landing.referrer_id,
         features=features,
         footer_text=landing.footer_text,
         allowed_tariff_ids=landing.allowed_tariff_ids or [],

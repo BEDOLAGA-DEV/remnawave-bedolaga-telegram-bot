@@ -9,6 +9,7 @@ from app.keyboards.inline import (
     get_device_selection_keyboard,
     get_happ_cryptolink_keyboard,
     get_happ_download_button_row,
+    build_back_button
 )
 from app.localization.texts import get_texts
 from app.utils.subscription_utils import (
@@ -64,7 +65,7 @@ async def handle_connect_subscription(
                         )
                     ]
                 )
-            keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+            keyboard.append([build_back_button(texts, 'back_to_menu')])
             await callback.message.edit_text(
                 '🔗 <b>Подключиться</b>\n\nВыберите подписку:',
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
@@ -100,7 +101,7 @@ async def handle_connect_subscription(
                         web_app=types.WebAppInfo(url=subscription_link),
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                [build_back_button(texts, back_cb)],
             ]
         )
 
@@ -134,7 +135,7 @@ async def handle_connect_subscription(
                         web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                [build_back_button(texts, back_cb)],
             ]
         )
 
@@ -154,7 +155,7 @@ async def handle_connect_subscription(
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
             rows.append(happ_row)
-        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+        rows.append([build_back_button(texts, back_cb)])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -182,7 +183,7 @@ async def handle_connect_subscription(
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
             rows.append(happ_row)
-        rows.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+        rows.append([build_back_button(texts, back_cb)])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -216,7 +217,7 @@ async def handle_connect_subscription(
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                        [build_back_button(texts, back_cb)],
                     ]
                 ),
                 parse_mode='HTML',
@@ -361,7 +362,7 @@ async def handle_open_subscription_link(
                         else 'subscription_connect',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                [build_back_button(texts, back_cb)],
             ]
         ),
         parse_mode='HTML',

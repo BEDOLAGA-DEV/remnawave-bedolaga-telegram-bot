@@ -295,6 +295,7 @@ def get_language_selection_keyboard(
     *,
     include_back: bool = False,
     language: str = DEFAULT_LANGUAGE,
+    back_callback: str = 'back_to_menu',
 ) -> InlineKeyboardMarkup:
     available_languages = settings.get_available_languages()
 
@@ -303,6 +304,22 @@ def get_language_selection_keyboard(
 
     normalized_current = (current_language or '').lower()
 
+    # Premium custom flag emoji mappings
+    language_custom_emojis = {
+        'ru': '5300987145123538510',
+        'ru-ru': '5300987145123538510',
+        'en': '5300788601670345923',
+        'en-us': '5300788601670345923',
+        'en-gb': '5300788601670345923',
+        'zh': '5300871296970662423',
+        'zh-cn': '5300871296970662423',
+        'zh-hans': '5300871296970662423',
+        'zh-tw': '5300871296970662423',
+        'zh-hant': '5300871296970662423',
+        'fa': '5303384157781498356',
+        'fa-ir': '5303384157781498356',
+    }
+
     for index, lang_code in enumerate(available_languages, start=1):
         normalized_code = lang_code.lower()
         display_name = _LANGUAGE_DISPLAY_NAMES.get(
@@ -310,12 +327,18 @@ def get_language_selection_keyboard(
             normalized_code.upper(),
         )
 
+        custom_emoji_id = language_custom_emojis.get(normalized_code)
+        if custom_emoji_id:
+            from app.utils.miniapp_buttons import strip_leading_emoji
+            display_name = strip_leading_emoji(display_name)
+
         prefix = '✅ ' if normalized_code == normalized_current and normalized_current else ''
 
         row.append(
             InlineKeyboardButton(
                 text=f'{prefix}{display_name}',
                 callback_data=f'language_select:{normalized_code}',
+                icon_custom_emoji_id=custom_emoji_id,
             )
         )
 
@@ -328,7 +351,7 @@ def get_language_selection_keyboard(
 
     if include_back:
         texts = get_texts(language)
-        buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+        buttons.append([build_back_button(texts, back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -702,22 +725,38 @@ def get_main_menu_keyboard(
                 )
             )
 
-    keyboard.append([InlineKeyboardButton(text=balance_button_text, callback_data='menu_balance')])
-
     show_trial = (
         not has_had_paid_subscription
         and not has_active_subscription
         and settings.TRIAL_DURATION_DAYS > 0
         and settings.TRIAL_DISABLED_FOR != 'all'
     )
-
     show_buy = not has_active_subscription or not subscription_is_active
-    current_subscription = subscription
-    bool(
-        current_subscription
-        and not getattr(current_subscription, 'is_trial', False)
-        and getattr(current_subscription, 'is_active', False)
-    )
+
+    if show_trial:
+        from app.utils.miniapp_buttons import strip_leading_emoji
+        trial_text = strip_leading_emoji(texts.MENU_TRIAL)
+        keyboard.append([
+            InlineKeyboardButton(
+                text=trial_text,
+                callback_data='menu_trial',
+                icon_custom_emoji_id='5400037092493388751',
+                style='success',
+            )
+        ])
+
+    if show_buy:
+        from app.utils.miniapp_buttons import strip_leading_emoji
+        buy_text = strip_leading_emoji(texts.MENU_BUY_SUBSCRIPTION)
+        keyboard.append([
+            InlineKeyboardButton(
+                text=buy_text,
+                callback_data='menu_buy',
+                icon_custom_emoji_id='5402536282423320905',
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton(text=balance_button_text, callback_data='menu_balance')])
     simple_purchase_button = None
     if settings.SIMPLE_SUBSCRIPTION_ENABLED:
         simple_purchase_button = InlineKeyboardButton(
@@ -725,16 +764,6 @@ def get_main_menu_keyboard(
             callback_data='simple_subscription_purchase',
         )
 
-    subscription_buttons: list[InlineKeyboardButton] = []
-
-    if show_trial:
-        subscription_buttons.append(InlineKeyboardButton(text=texts.MENU_TRIAL, callback_data='menu_trial'))
-
-    if show_buy:
-        subscription_buttons.append(InlineKeyboardButton(text=texts.MENU_BUY_SUBSCRIPTION, callback_data='menu_buy'))
-
-    if subscription_buttons:
-        paired_buttons.extend(subscription_buttons)
     if simple_purchase_button:
         paired_buttons.append(simple_purchase_button)
 
@@ -765,6 +794,19 @@ def get_main_menu_keyboard(
             InlineKeyboardButton(text=texts.t('CONTESTS_BUTTON', '🎲 Конкурсы'), callback_data='contests_menu')
         )
 
+    # Добавляем кнопку активации
+    if settings.ACTIVATE_BUTTON_VISIBLE:
+        paired_buttons.append(InlineKeyboardButton(text=settings.ACTIVATE_BUTTON_TEXT, callback_data='activate_button'))
+
+    from app.utils.miniapp_buttons import strip_leading_emoji
+    paired_buttons.append(
+        InlineKeyboardButton(
+            text=strip_leading_emoji(texts.t('MENU_INFO', 'ℹ️ Инфо')),
+            callback_data='menu_info',
+            icon_custom_emoji_id='5334544901428229844',
+        )
+    )
+
     try:
         from app.services.support_settings_service import SupportSettingsService
 
@@ -774,20 +816,6 @@ def get_main_menu_keyboard(
 
     if support_enabled:
         paired_buttons.append(InlineKeyboardButton(text=texts.MENU_SUPPORT, callback_data='menu_support'))
-
-    # Добавляем кнопку активации
-    if settings.ACTIVATE_BUTTON_VISIBLE:
-        paired_buttons.append(InlineKeyboardButton(text=settings.ACTIVATE_BUTTON_TEXT, callback_data='activate_button'))
-
-    paired_buttons.append(
-        InlineKeyboardButton(
-            text=texts.t('MENU_INFO', 'ℹ️ Инфо'),
-            callback_data='menu_info',
-        )
-    )
-
-    if settings.is_language_selection_enabled():
-        paired_buttons.append(InlineKeyboardButton(text=texts.MENU_LANGUAGE, callback_data='menu_language'))
 
     for i in range(0, len(paired_buttons), 2):
         row = paired_buttons[i : i + 2]
@@ -833,31 +861,37 @@ def get_info_menu_keyboard(
         )
 
     if show_promo_groups:
+        from app.utils.miniapp_buttons import strip_leading_emoji
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('MENU_PROMO_GROUPS_INFO', '🎯 Промогруппы'),
+                    text=strip_leading_emoji(texts.t('MENU_PROMO_GROUPS_INFO', '🎯 Промогруппы')),
                     callback_data='menu_info_promo_groups',
+                    icon_custom_emoji_id='5778311685638984859',
                 )
             ]
         )
 
     if show_privacy_policy:
+        from app.utils.miniapp_buttons import strip_leading_emoji
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('MENU_PRIVACY_POLICY', '🛡️ Политика конф.'),
+                    text=strip_leading_emoji(texts.t('MENU_PRIVACY_POLICY', '🛡️ Политика конф.')),
                     callback_data='menu_privacy_policy',
+                    icon_custom_emoji_id='6030445631921721471',
                 )
             ]
         )
 
     if show_public_offer:
+        from app.utils.miniapp_buttons import strip_leading_emoji
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('MENU_PUBLIC_OFFER', '📄 Оферта'),
+                    text=strip_leading_emoji(texts.t('MENU_PUBLIC_OFFER', '📄 Оферта')),
                     callback_data='menu_public_offer',
+                    icon_custom_emoji_id='6034969813032374911',
                 )
             ]
         )
@@ -903,7 +937,19 @@ def get_info_menu_keyboard(
             ]
         )
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    if settings.is_language_selection_enabled():
+        from app.utils.miniapp_buttons import strip_leading_emoji
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=strip_leading_emoji(texts.MENU_LANGUAGE),
+                    callback_data='menu_language',
+                    icon_custom_emoji_id='5879585266426973039',
+                )
+            ]
+        )
+
+    buttons.append([build_back_button(texts, 'back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -917,6 +963,132 @@ def get_happ_download_button_row(texts) -> list[InlineKeyboardButton] | None:
             text=texts.t('HAPP_DOWNLOAD_BUTTON', '⬇️ Скачать Happ'), callback_data='subscription_happ_download'
         )
     ]
+
+
+def get_connect_keyboard(
+    texts,
+    subscription_link: str,
+    connect_mode: str,
+) -> InlineKeyboardMarkup:
+    """Создает клавиатуру подключения к подписке (после успешной оплаты или активации триала)."""
+    from app.utils.miniapp_buttons import strip_leading_emoji
+
+    connect_text = strip_leading_emoji(texts.t('CONNECT_BUTTON', '🔗 Подключиться'))
+    back_menu_text = strip_leading_emoji(texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'))
+
+    connect_emoji = '5402520343799685652'
+    back_menu_emoji = '5372990734242706763'
+
+    if connect_mode == 'miniapp_subscription':
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=connect_text,
+                        web_app=types.WebAppInfo(url=subscription_link),
+                        icon_custom_emoji_id=connect_emoji,
+                        style='primary',
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=back_menu_text,
+                        callback_data='back_to_menu',
+                        icon_custom_emoji_id=back_menu_emoji,
+                    )
+                ],
+            ]
+        )
+    if connect_mode == 'miniapp_custom':
+        if not settings.MINIAPP_CUSTOM_URL:
+            return get_back_keyboard(texts.language if hasattr(texts, 'language') else 'ru')
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=connect_text,
+                        web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
+                        icon_custom_emoji_id=connect_emoji,
+                        style='primary',
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=back_menu_text,
+                        callback_data='back_to_menu',
+                        icon_custom_emoji_id=back_menu_emoji,
+                    )
+                ],
+            ]
+        )
+    if connect_mode == 'link':
+        rows = [
+            [
+                InlineKeyboardButton(
+                    text=connect_text,
+                    url=subscription_link,
+                    icon_custom_emoji_id=connect_emoji,
+                    style='primary',
+                )
+            ]
+        ]
+        happ_row = get_happ_download_button_row(texts)
+        if happ_row:
+            rows.append(happ_row)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=back_menu_text,
+                    callback_data='back_to_menu',
+                    icon_custom_emoji_id=back_menu_emoji,
+                )
+            ]
+        )
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+    if connect_mode == 'happ_cryptolink':
+        rows = [
+            [
+                InlineKeyboardButton(
+                    text=connect_text,
+                    callback_data='open_subscription_link',
+                    icon_custom_emoji_id=connect_emoji,
+                    style='primary',
+                )
+            ]
+        ]
+        happ_row = get_happ_download_button_row(texts)
+        if happ_row:
+            rows.append(happ_row)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=back_menu_text,
+                    callback_data='back_to_menu',
+                    icon_custom_emoji_id=back_menu_emoji,
+                )
+            ]
+        )
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=connect_text,
+                    callback_data='subscription_connect',
+                    icon_custom_emoji_id=connect_emoji,
+                    style='primary',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=back_menu_text,
+                    callback_data='back_to_menu',
+                    icon_custom_emoji_id=back_menu_emoji,
+                )
+            ],
+        ]
+    )
 
 
 def get_happ_cryptolink_keyboard(
@@ -965,12 +1137,7 @@ def get_happ_cryptolink_keyboard(
                     callback_data='happ_download_windows',
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
-                    callback_data='back_to_menu',
-                )
-            ],
+            [build_back_button(texts, 'back_to_menu', text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'))],
         ]
     )
 
@@ -992,7 +1159,7 @@ def get_happ_download_platform_keyboard(language: str = DEFAULT_LANGUAGE) -> Inl
                 text=texts.t('HAPP_PLATFORM_WINDOWS', '💻 Windows'), callback_data='happ_download_windows'
             )
         ],
-        [InlineKeyboardButton(text=texts.BACK, callback_data='happ_download_close')],
+        [build_back_button(texts, callback_data='happ_download_close')],
     ]
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -1002,15 +1169,35 @@ def get_happ_download_link_keyboard(language: str, link: str) -> InlineKeyboardM
     texts = get_texts(language)
     buttons = [
         [InlineKeyboardButton(text=texts.t('HAPP_DOWNLOAD_OPEN_LINK', '🔗 Открыть ссылку'), url=link)],
-        [InlineKeyboardButton(text=texts.BACK, callback_data='happ_download_back')],
+        [build_back_button(texts, callback_data='happ_download_back')],
     ]
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def build_back_button(
+    texts,
+    callback_data: str,
+    *,
+    text: str | None = None,
+) -> InlineKeyboardButton:
+    """Кнопка «Назад» с опциональным premium emoji (BACK_BUTTON_CUSTOM_EMOJI_ID)."""
+    label = text if text is not None else texts.BACK
+    emoji_id = (settings.BACK_BUTTON_CUSTOM_EMOJI_ID or '').strip() or None
+    if emoji_id:
+        from app.utils.miniapp_buttons import strip_leading_emoji
+
+        label = strip_leading_emoji(label)
+    return InlineKeyboardButton(
+        text=label,
+        callback_data=callback_data,
+        icon_custom_emoji_id=emoji_id,
+    )
+
+
 def get_back_keyboard(language: str = DEFAULT_LANGUAGE, callback_data: str = 'back_to_menu') -> InlineKeyboardMarkup:
     texts = get_texts(language)
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data=callback_data)]])
+    return InlineKeyboardMarkup(inline_keyboard=[[build_back_button(texts, callback_data)]])
 
 
 def get_server_status_keyboard(
@@ -1050,7 +1237,7 @@ def get_server_status_keyboard(
         if nav_row:
             keyboard.append(nav_row)
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard.append([build_back_button(texts, callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -1281,7 +1468,7 @@ def get_subscription_keyboard(
                     ]
                 )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard.append([build_back_button(texts, callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -1315,12 +1502,7 @@ def get_subscription_confirm_keyboard_with_cart(language: str = 'ru') -> InlineK
         inline_keyboard=[
             [InlineKeyboardButton(text='✅ Подтвердить покупку', callback_data='subscription_confirm')],
             [InlineKeyboardButton(text='🗑️ Очистить корзину', callback_data='clear_saved_cart')],
-            [
-                InlineKeyboardButton(
-                    text=texts.BACK,
-                    callback_data='subscription_config_back',  # Изменили на возврат к настройке
-                )
-            ],
+            [build_back_button(texts, 'subscription_config_back')],
         ]
     )
 
@@ -1352,13 +1534,20 @@ def get_insufficient_balance_keyboard_with_cart(
 
 def get_trial_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
     texts = get_texts(language)
+    from app.utils.miniapp_buttons import strip_leading_emoji
+    activate_text = strip_leading_emoji(texts.t('TRIAL_ACTIVATE_BUTTON', '🎁 Активировать'))
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=texts.t('TRIAL_ACTIVATE_BUTTON', '🎁 Активировать'), callback_data='trial_activate'
-                ),
-                InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu'),
+                    text=activate_text,
+                    callback_data='trial_activate',
+                    icon_custom_emoji_id='5402520343799685652',
+                )
+            ],
+            [
+                build_back_button(texts, callback_data='back_to_menu'),
             ]
         ]
     )
@@ -1407,7 +1596,7 @@ def get_subscription_period_keyboard(
 
     # Кнопка "Простая покупка" была убрана из выбора периода подписки
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard.append([build_back_button(texts, callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -1462,7 +1651,7 @@ def get_traffic_packages_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKey
             ]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='subscription_config_back')])
+    keyboard.append([build_back_button(texts, callback_data='subscription_config_back')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -1508,7 +1697,7 @@ def get_countries_keyboard(
                     text=texts.t('CONTINUE_BUTTON', '✅ Продолжить'), callback_data='countries_continue'
                 )
             ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='subscription_config_back')],
+            [build_back_button(texts, callback_data='subscription_config_back')],
         ]
     )
 
@@ -1543,7 +1732,7 @@ def get_devices_keyboard(current: int, language: str = DEFAULT_LANGUAGE) -> Inli
     keyboard.extend(
         [
             [InlineKeyboardButton(text=texts.t('CONTINUE_BUTTON', '✅ Продолжить'), callback_data='devices_continue')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='subscription_config_back')],
+            [build_back_button(texts, callback_data='subscription_config_back')],
         ]
     )
 
@@ -1570,25 +1759,40 @@ def get_subscription_confirm_keyboard(language: str = DEFAULT_LANGUAGE) -> Inlin
     )
 
 
-def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+def get_balance_keyboard(language: str = DEFAULT_LANGUAGE, has_saved_cards: bool = False) -> InlineKeyboardMarkup:
     texts = get_texts(language)
+    from app.utils.miniapp_buttons import strip_leading_emoji
+
+    history_text = strip_leading_emoji(texts.BALANCE_HISTORY)
+    top_up_text = strip_leading_emoji(texts.BALANCE_TOP_UP)
 
     keyboard = [
         [
-            InlineKeyboardButton(text=texts.BALANCE_HISTORY, callback_data='balance_history'),
-            InlineKeyboardButton(text=texts.BALANCE_TOP_UP, callback_data='balance_topup'),
+            InlineKeyboardButton(
+                text=history_text,
+                callback_data='balance_history',
+                icon_custom_emoji_id='5375380522765679294',
+            ),
+            InlineKeyboardButton(
+                text=top_up_text,
+                callback_data='balance_topup',
+                icon_custom_emoji_id='5375218203066663939',
+                style='success',
+            ),
         ],
     ]
-    if settings.YOOKASSA_RECURRENT_ENABLED:
+    if (settings.YOOKASSA_RECURRENT_ENABLED or settings.ANTILOPAY_RECURRENT_ENABLED) and has_saved_cards:
+        from app.utils.miniapp_buttons import strip_leading_emoji
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('SAVED_CARDS_BUTTON', '💳 Привязанные карты'),
+                    text=strip_leading_emoji(texts.t('SAVED_CARDS_BUTTON', '💳 Привязанные карты')),
                     callback_data='saved_cards_list',
+                    icon_custom_emoji_id='5372929307620440846',
                 )
             ]
         )
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard.append([build_back_button(texts, callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -1620,6 +1824,8 @@ def _apply_payment_name_overrides(keyboard: list[list[InlineKeyboardButton]]) ->
 
 
 def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    import re
+    from app.utils.miniapp_buttons import strip_leading_emoji
     texts = get_texts(language)
     keyboard = []
     has_direct_payment_methods = False
@@ -1631,11 +1837,72 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             return f'topup_amount|{method}|{amount_kopeks}'
         return f'topup_{method}'
 
+    def clean_payment_text(text: str, method: str) -> str:
+        cleaned = strip_leading_emoji(text).strip()
+        cleaned = re.sub(r'\s*\([^)]*\)', '', cleaned).strip()
+        
+        m_lower = method.lower()
+        if m_lower == 'stars':
+            return 'Telegram Stars'
+        elif m_lower.startswith('platega_m'):
+            code_str = m_lower[len('platega_m'):]
+            if code_str.isdigit():
+                m_code = int(code_str)
+                if m_code == 2:
+                    return 'СБП'
+                elif m_code == 11:
+                    return 'Банковская карта'
+                elif m_code == 12:
+                    return 'Иностранная карта'
+                elif m_code == 13:
+                    return 'Криптовалюта'
+        elif 'sbp_qr' in m_lower:
+            return 'СБП'
+        elif 'sbp' in m_lower:
+            if 'antilopay' in m_lower or 'сбп #2' in cleaned.lower():
+                return 'СБП #2'
+            return 'СБП'
+        elif 'heleket' in m_lower or 'cryptobot' in m_lower:
+            return 'Криптовалюта'
+        elif 'tribute' in m_lower or 'mulenpay' in m_lower:
+            return 'Иностранная карта'
+        elif 'card' in m_lower or m_lower in ['yookassa', 'wata', 'cloudpayments', 'riopay', 'severpay', 'paypear', 'rollypay', 'overpay', 'aurapay', 'etoplatezhi', 'antilopay', 'jupiter', 'donut', 'lava', 'platega']:
+            return 'Банковская карта'
+        return cleaned
+
+    def _create_btn(text: str, callback_data: str, method: str, custom_emoji_id: str | None = None) -> InlineKeyboardButton:
+        clean_text = clean_payment_text(text, method)
+        
+        resolved_emoji_id = custom_emoji_id
+        if not resolved_emoji_id:
+            m_lower = method.lower()
+            if m_lower == 'stars':
+                resolved_emoji_id = '4983746717313664194'
+            elif 'sbp_qr' in m_lower or 'sbp' in m_lower or m_lower == 'pal24' or m_lower == 'platega_m2':
+                resolved_emoji_id = '5217837965547427903'
+            elif 'heleket' in m_lower or 'cryptobot' in m_lower or m_lower == 'platega_m13':
+                resolved_emoji_id = '5355123515672510607'
+            elif 'tribute' in m_lower or 'mulenpay' in m_lower or m_lower == 'platega_m12':
+                resolved_emoji_id = '5357274199071146437'
+            elif 'card' in m_lower or m_lower in ['yookassa', 'wata', 'cloudpayments', 'riopay', 'severpay', 'paypear', 'rollypay', 'overpay', 'aurapay', 'etoplatezhi', 'antilopay', 'jupiter', 'donut', 'lava', 'platega_m11']:
+                resolved_emoji_id = '5357079680002310747'
+                
+        clean_text = strip_leading_emoji(clean_text).strip()
+        
+        return InlineKeyboardButton(
+            text=clean_text,
+            callback_data=callback_data,
+            icon_custom_emoji_id=resolved_emoji_id,
+        )
+
     if settings.TELEGRAM_STARS_ENABLED:
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=texts.t('PAYMENT_TELEGRAM_STARS', '⭐ Telegram Stars'), callback_data=_build_callback('stars')
+                _create_btn(
+                    text=texts.t('PAYMENT_TELEGRAM_STARS', '⭐ Telegram Stars'),
+                    callback_data=_build_callback('stars'),
+                    method='stars',
+                    custom_emoji_id='4983746717313664194',
                 )
             ]
         )
@@ -1645,9 +1912,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         if settings.YOOKASSA_SBP_ENABLED:
             keyboard.append(
                 [
-                    InlineKeyboardButton(
+                    _create_btn(
                         text=texts.t('PAYMENT_SBP_YOOKASSA', '🏦 Оплатить по СБП (YooKassa)'),
                         callback_data=_build_callback('yookassa_sbp'),
+                        method='yookassa_sbp',
+                        custom_emoji_id='5217837965547427903',
                     )
                 ]
             )
@@ -1655,9 +1924,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
 
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_CARD_YOOKASSA', '💳 Банковская карта (YooKassa)'),
                     callback_data=_build_callback('yookassa'),
+                    method='yookassa',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1666,9 +1937,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.TRIBUTE_ENABLED:
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_CARD_TRIBUTE', '💳 Банковская карта (Tribute)'),
                     callback_data=_build_callback('tribute'),
+                    method='tribute',
+                    custom_emoji_id='5357274199071146437',
                 )
             ]
         )
@@ -1678,12 +1951,14 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         mulenpay_name = settings.get_mulenpay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t(
                         'PAYMENT_CARD_MULENPAY',
                         '💳 Банковская карта ({mulenpay_name})',
                     ).format(mulenpay_name=mulenpay_name),
                     callback_data=_build_callback('mulenpay'),
+                    method='mulenpay',
+                    custom_emoji_id='5357274199071146437',
                 )
             ]
         )
@@ -1692,9 +1967,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.is_wata_enabled():
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_CARD_WATA', '💳 Банковская карта (WATA)'),
                     callback_data=_build_callback('wata'),
+                    method='wata',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1703,8 +1980,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.is_pal24_enabled():
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=texts.t('PAYMENT_CARD_PAL24', '🏦 СБП (PayPalych)'), callback_data=_build_callback('pal24')
+                _create_btn(
+                    text=texts.t('PAYMENT_CARD_PAL24', '🏦 СБП (PayPalych)'),
+                    callback_data=_build_callback('pal24'),
+                    method='pal24',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -1715,20 +1995,35 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         if settings.PLATEGA_INLINE_METHODS:
             for method_code in settings.get_platega_active_methods():
                 title = settings.get_platega_method_display_title(method_code)
+                icon_emoji_id = None
+                if method_code == 2:
+                    icon_emoji_id = '5217837965547427903'
+                elif method_code == 12:
+                    icon_emoji_id = '5357274199071146437'
+                elif method_code == 11:
+                    icon_emoji_id = '5357079680002310747'
+                elif method_code == 13:
+                    icon_emoji_id = '5355123515672510607'
+                
+                text_label = f'{title} ({platega_name})'
                 keyboard.append(
                     [
-                        InlineKeyboardButton(
-                            text=f'{title} ({platega_name})',
+                        _create_btn(
+                            text=text_label,
                             callback_data=_build_callback(f'platega_m{method_code}'),
+                            method=f'platega_m{method_code}',
+                            custom_emoji_id=icon_emoji_id,
                         )
                     ]
                 )
         else:
             keyboard.append(
                 [
-                    InlineKeyboardButton(
+                    _create_btn(
                         text=texts.t('PAYMENT_PLATEGA', f'💳 {platega_name}'),
                         callback_data=_build_callback('platega'),
+                        method='platega',
+                        custom_emoji_id='5357079680002310747',
                     )
                 ]
             )
@@ -1737,9 +2032,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.is_cryptobot_enabled():
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_CRYPTOBOT', '🪙 Криптовалюта (CryptoBot)'),
                     callback_data=_build_callback('cryptobot'),
+                    method='cryptobot',
+                    custom_emoji_id='5355123515672510607',
                 )
             ]
         )
@@ -1748,9 +2045,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.is_heleket_enabled():
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_HELEKET', '🪙 Криптовалюта (Heleket)'),
                     callback_data=_build_callback('heleket'),
+                    method='heleket',
+                    custom_emoji_id='5355123515672510607',
                 )
             ]
         )
@@ -1759,9 +2058,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
     if settings.is_cloudpayments_enabled():
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_CLOUDPAYMENTS', '💳 Банковская карта (CloudPayments)'),
                     callback_data=_build_callback('cloudpayments'),
+                    method='cloudpayments',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1771,9 +2072,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sbp_name = settings.get_freekassa_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_FREEKASSA_SBP', f'📱 {sbp_name}'),
                     callback_data=_build_callback('freekassa_sbp'),
+                    method='freekassa_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -1783,9 +2086,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         card_name = settings.get_freekassa_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_FREEKASSA_CARD', f'💳 {card_name}'),
                     callback_data=_build_callback('freekassa_card'),
+                    method='freekassa_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1799,9 +2104,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         freekassa_name = settings.get_freekassa_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_FREEKASSA', f'💳 {freekassa_name}'),
                     callback_data=_build_callback('freekassa'),
+                    method='freekassa',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1811,9 +2118,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sbp_name = settings.get_kassa_ai_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_KASSA_AI_SBP', f'📱 {sbp_name}'),
                     callback_data=_build_callback('kassa_ai_sbp'),
+                    method='kassa_ai_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -1823,9 +2132,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         card_name = settings.get_kassa_ai_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_KASSA_AI_CARD', f'💳 {card_name}'),
                     callback_data=_build_callback('kassa_ai_card'),
+                    method='kassa_ai_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1835,9 +2146,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sberpay_name = settings.get_kassa_ai_sberpay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_KASSA_AI_SBERPAY', f'💳 {sberpay_name}'),
                     callback_data=_build_callback('kassa_ai_sberpay'),
+                    method='kassa_ai_sberpay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1852,8 +2165,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         kassa_ai_name = settings.get_kassa_ai_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=texts.t('PAYMENT_KASSA_AI', f'💳 {kassa_ai_name}'), callback_data=_build_callback('kassa_ai')
+                _create_btn(
+                    text=texts.t('PAYMENT_KASSA_AI', f'💳 {kassa_ai_name}'),
+                    callback_data=_build_callback('kassa_ai'),
+                    method='kassa_ai',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1863,9 +2179,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         riopay_name = settings.get_riopay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_RIOPAY', f'💳 Банковская карта ({riopay_name})'),
                     callback_data=_build_callback('riopay'),
+                    method='riopay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1875,9 +2193,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         severpay_name = settings.get_severpay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_SEVERPAY', f'💳 Банковская карта ({severpay_name})'),
                     callback_data=_build_callback('severpay'),
+                    method='severpay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1887,9 +2207,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         paypear_name = settings.get_paypear_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_PAYPEAR', f'💳 Оплата ({paypear_name})'),
                     callback_data=_build_callback('paypear'),
+                    method='paypear',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1899,9 +2221,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         rollypay_name = settings.get_rollypay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ROLLYPAY', f'💳 {rollypay_name}'),
                     callback_data=_build_callback('rollypay'),
+                    method='rollypay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1911,9 +2235,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         overpay_name = settings.get_overpay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_OVERPAY', f'💳 {overpay_name}'),
                     callback_data=_build_callback('overpay'),
+                    method='overpay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1923,9 +2249,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sbp_name = settings.get_aurapay_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_AURAPAY_SBP', f'📱 {sbp_name}'),
                     callback_data=_build_callback('aurapay_sbp'),
+                    method='aurapay_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -1935,9 +2263,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         card_name = settings.get_aurapay_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_AURAPAY_CARD', f'💳 {card_name}'),
                     callback_data=_build_callback('aurapay_card'),
+                    method='aurapay_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1951,9 +2281,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         aurapay_name = settings.get_aurapay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_AURAPAY', f'💳 {aurapay_name}'),
                     callback_data=_build_callback('aurapay'),
+                    method='aurapay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1963,9 +2295,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sbp_name = settings.get_etoplatezhi_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ETOPLATEZHI_SBP', f'📱 {sbp_name}'),
                     callback_data=_build_callback('etoplatezhi_sbp'),
+                    method='etoplatezhi_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -1975,9 +2309,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         card_name = settings.get_etoplatezhi_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ETOPLATEZHI_CARD', f'💳 {card_name}'),
                     callback_data=_build_callback('etoplatezhi_card'),
+                    method='etoplatezhi_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -1991,9 +2327,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         etoplatezhi_name = settings.get_etoplatezhi_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ETOPLATEZHI', f'💳 {etoplatezhi_name}'),
                     callback_data=_build_callback('etoplatezhi'),
+                    method='etoplatezhi',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2003,9 +2341,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sbp_name = settings.get_antilopay_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ANTILOPAY_SBP', f'📱 {sbp_name}'),
                     callback_data=_build_callback('antilopay_sbp'),
+                    method='antilopay_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2015,9 +2355,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         card_name = settings.get_antilopay_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ANTILOPAY_CARD', f'💳 {card_name}'),
                     callback_data=_build_callback('antilopay_card'),
+                    method='antilopay_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2027,9 +2369,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         sberpay_name = settings.get_antilopay_sberpay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ANTILOPAY_SBERPAY', f'💳 {sberpay_name}'),
                     callback_data=_build_callback('antilopay_sberpay'),
+                    method='antilopay_sberpay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2044,9 +2388,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         antilopay_name = settings.get_antilopay_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_ANTILOPAY', f'💳 {antilopay_name}'),
                     callback_data=_build_callback('antilopay'),
+                    method='antilopay',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2056,9 +2402,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         jupiter_sbp_name = settings.get_jupiter_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_JUPITER_SBP', f'📱 {jupiter_sbp_name}'),
                     callback_data=_build_callback('jupiter_sbp'),
+                    method='jupiter_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2068,9 +2416,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         jupiter_name = settings.get_jupiter_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_JUPITER', f'🪐 {jupiter_name}'),
                     callback_data=_build_callback('jupiter'),
+                    method='jupiter',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2080,9 +2430,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         donut_card_name = settings.get_donut_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_DONUT_CARD', f'💳 {donut_card_name}'),
                     callback_data=_build_callback('donut_card'),
+                    method='donut_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2092,9 +2444,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         donut_sbp_name = settings.get_donut_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_DONUT_SBP', f'📱 {donut_sbp_name}'),
                     callback_data=_build_callback('donut_sbp'),
+                    method='donut_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2104,9 +2458,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         donut_qr_name = settings.get_donut_sbp_qr_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_DONUT_SBP_QR', f'🏦 {donut_qr_name}'),
                     callback_data=_build_callback('donut_sbp_qr'),
+                    method='donut_sbp_qr',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2121,9 +2477,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         donut_name = settings.get_donut_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_DONUT', f'🍩 {donut_name}'),
                     callback_data=_build_callback('donut'),
+                    method='donut',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2133,9 +2491,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         lava_card_name = settings.get_lava_card_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_LAVA_CARD', f'💳 {lava_card_name}'),
                     callback_data=_build_callback('lava_card'),
+                    method='lava_card',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
@@ -2145,9 +2505,11 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         lava_sbp_name = settings.get_lava_sbp_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_LAVA_SBP', f'📱 {lava_sbp_name}'),
                     callback_data=_build_callback('lava_sbp'),
+                    method='lava_sbp',
+                    custom_emoji_id='5217837965547427903',
                 )
             ]
         )
@@ -2157,22 +2519,17 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         lava_name = settings.get_lava_display_name()
         keyboard.append(
             [
-                InlineKeyboardButton(
+                _create_btn(
                     text=texts.t('PAYMENT_LAVA', f'🌋 {lava_name}'),
                     callback_data=_build_callback('lava'),
+                    method='lava',
+                    custom_emoji_id='5357079680002310747',
                 )
             ]
         )
         has_direct_payment_methods = True
 
-    if settings.is_support_topup_enabled():
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('PAYMENT_VIA_SUPPORT', '🛠️ Через поддержку'), callback_data='topup_support'
-                )
-            ]
-        )
+
 
     if not keyboard:
         keyboard.append(
@@ -2194,7 +2551,121 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             ],
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+    # Добавляем кнопку "Назад"
+    keyboard.append([build_back_button(texts, 'menu_balance')])
+
+    # Separate payment rows from other rows (e.g., back button, warnings)
+    payment_rows = []
+    other_rows = []
+    for row in keyboard:
+        is_payment_row = False
+        for btn in row:
+            cb = getattr(btn, 'callback_data', None)
+            if cb and (cb.startswith('topup_') or cb.startswith('topup_amount|')):
+                is_payment_row = True
+                break
+        if is_payment_row:
+            payment_rows.append(row)
+        else:
+            other_rows.append(row)
+
+    METHOD_PRIORITIES = {
+        # SBP methods (10)
+        'yookassa_sbp': 10,
+        'pal24': 10,
+        'freekassa_sbp': 10,
+        'kassa_ai_sbp': 10,
+        'aurapay_sbp': 10,
+        'etoplatezhi_sbp': 10,
+        'jupiter_sbp': 10,
+        'donut_sbp': 10,
+        'donut_sbp_qr': 10,
+        'lava_sbp': 10,
+
+        # Card methods (20)
+        'yookassa': 20,
+        'wata': 20,
+        'cloudpayments': 20,
+        'freekassa_card': 20,
+        'freekassa': 20,
+        'kassa_ai_card': 20,
+        'kassa_ai': 20,
+        'riopay': 20,
+        'severpay': 20,
+        'paypear': 20,
+        'rollypay': 20,
+        'overpay': 20,
+        'aurapay_card': 20,
+        'aurapay': 20,
+        'etoplatezhi_card': 20,
+        'etoplatezhi': 20,
+        'antilopay_card': 20,
+        'antilopay': 20,
+        'jupiter': 20,
+        'donut_card': 20,
+        'donut': 20,
+        'lava_card': 20,
+        'lava': 20,
+        'platega': 20,
+        'kassa_ai_sberpay': 20,
+        'antilopay_sberpay': 20,
+
+        # SBP #2 (30)
+        'antilopay_sbp': 30,
+
+        # Stars (40)
+        'stars': 40,
+
+        # Crypto (50)
+        'cryptobot': 50,
+        'heleket': 50,
+
+        # Foreign cards (60)
+        'tribute': 60,
+        'mulenpay': 60,
+
+        # Support (70)
+        'support': 70,
+    }
+
+    def _get_row_priority(row) -> int:
+        for btn in row:
+            cb = getattr(btn, 'callback_data', None)
+            if not cb:
+                continue
+            
+            method = None
+            if cb.startswith('topup_amount|'):
+                parts = cb.split('|')
+                if len(parts) > 1:
+                    method = parts[1]
+            elif cb.startswith('topup_'):
+                method = cb[len('topup_'):]
+                
+            if not method:
+                continue
+                
+            if method.startswith('platega_m'):
+                code_str = method[len('platega_m'):]
+                if code_str.isdigit():
+                    m_code = int(code_str)
+                    if m_code == 2:
+                        return 10
+                    elif m_code == 11:
+                        return 20
+                    elif m_code == 12:
+                        return 60
+                    elif m_code == 13:
+                        return 50
+                
+            priority = METHOD_PRIORITIES.get(method)
+            if priority is not None:
+                return priority
+                
+        return 999
+
+    payment_rows.sort(key=_get_row_priority)
+    keyboard = payment_rows + other_rows
 
     _apply_payment_name_overrides(keyboard)
 
@@ -2272,7 +2743,7 @@ def get_referral_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMar
             ]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    keyboard.append([build_back_button(texts, callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -2310,7 +2781,7 @@ def get_support_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    rows.append([build_back_button(texts, callback_data='back_to_menu')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -2378,7 +2849,7 @@ def get_autopay_keyboard(language: str = DEFAULT_LANGUAGE, sub_id: int | None = 
                     callback_data='autopay_set_period',
                 )
             ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+            [build_back_button(texts, callback_data=back_cb)],
         ]
     )
 
@@ -2417,24 +2888,43 @@ def _get_payment_method_display_name(card, language: str = DEFAULT_LANGUAGE) -> 
     return method_name
 
 
+def _get_antilopay_recurrent_display_name(recurrent, language: str = DEFAULT_LANGUAGE) -> str:
+    if getattr(recurrent, 'title', None):
+        return recurrent.title
+    pay_data = getattr(recurrent, 'pay_data', None)
+    if pay_data:
+        return f'Antilopay {pay_data}'
+    return 'Antilopay recurrent'
+
+
 def get_saved_cards_keyboard(cards: list, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
     texts = get_texts(language)
     keyboard = []
     for card in cards:
-        card_label = f'🗑 {_get_payment_method_display_name(card, language)}'
-        keyboard.append([InlineKeyboardButton(text=card_label, callback_data=f'unlink_card_{card.id}')])
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        if getattr(card, 'provider', None) == 'antilopay' or hasattr(card, 'recurrent_id'):
+            card_label = f'🗑 {_get_antilopay_recurrent_display_name(card, language)}'
+            keyboard.append([InlineKeyboardButton(text=card_label, callback_data=f'unlink_apay_{card.id}')])
+        else:
+            card_label = f'🗑 {_get_payment_method_display_name(card, language)}'
+            keyboard.append([InlineKeyboardButton(text=card_label, callback_data=f'unlink_card_{card.id}')])
+    keyboard.append([build_back_button(texts, callback_data='menu_balance')])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_confirm_unlink_keyboard(card_id: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+def get_confirm_unlink_keyboard(
+    card_id: int,
+    language: str = DEFAULT_LANGUAGE,
+    *,
+    provider: str = 'yookassa',
+) -> InlineKeyboardMarkup:
     texts = get_texts(language)
+    confirm_callback = f'confirm_unlink_apay_{card_id}' if provider == 'antilopay' else f'confirm_unlink_{card_id}'
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=texts.t('SAVED_CARDS_CONFIRM_YES', '✅ Да, отвязать'),
-                    callback_data=f'confirm_unlink_{card_id}',
+                    callback_data=confirm_callback,
                 ),
                 InlineKeyboardButton(
                     text=texts.t('CANCEL', '❌ Отмена'),
@@ -2454,7 +2944,7 @@ def get_autopay_days_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboar
             [InlineKeyboardButton(text=f'{days} {_get_days_word(days)}', callback_data=f'autopay_days_{days}')]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='subscription_autopay')])
+    keyboard.append([build_back_button(texts, callback_data='subscription_autopay')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -2479,7 +2969,7 @@ def get_autopay_period_keyboard(
             label = f'✅ {label}'
         keyboard.append([InlineKeyboardButton(text=label, callback_data=f'autopay_period_{days}')])
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='subscription_autopay')])
+    keyboard.append([build_back_button(texts, callback_data='subscription_autopay')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -2531,7 +3021,7 @@ def get_add_traffic_keyboard(
                         callback_data='no_traffic_packages',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                [build_back_button(texts, callback_data=back_cb)],
             ]
         )
 
@@ -2566,7 +3056,7 @@ def get_add_traffic_keyboard(
 
         buttons.append([InlineKeyboardButton(text=text, callback_data=f'add_traffic_{gb}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+    buttons.append([build_back_button(texts, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2602,7 +3092,7 @@ def get_add_traffic_keyboard_from_tariff(
                         callback_data='no_traffic_packages',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
+                [build_back_button(texts, callback_data=back_cb)],
             ]
         )
 
@@ -2634,7 +3124,7 @@ def get_add_traffic_keyboard_from_tariff(
 
         buttons.append([InlineKeyboardButton(text=text, callback_data=f'add_traffic_{gb}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+    buttons.append([build_back_button(texts, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2729,7 +3219,7 @@ def get_change_devices_keyboard(
             0, [InlineKeyboardButton(text=current_button, callback_data=f'change_devices_{current_devices}')]
         )
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    buttons.append([build_back_button(texts, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2789,14 +3279,7 @@ def get_reset_traffic_confirm_keyboard(
             ]
         )
 
-    buttons.append(
-        [
-            InlineKeyboardButton(
-                text=texts.BACK,
-                callback_data='subscription_settings',
-            )
-        ]
-    )
+    buttons.append([build_back_button(texts, 'subscription_settings')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2886,7 +3369,7 @@ def get_manage_countries_keyboard(
 
     buttons.append([InlineKeyboardButton(text=apply_text, callback_data='countries_apply')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+    buttons.append([build_back_button(texts, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2935,7 +3418,7 @@ def get_device_selection_keyboard(
             ]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
+    keyboard.append([build_back_button(texts, callback_data=back_cb)])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -3073,7 +3556,7 @@ def get_connection_guide_keyboard(
                     callback_data=_sc_cb,
                 )
             ],
-            [InlineKeyboardButton(text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'), callback_data=back_cb)],
+            [build_back_button(texts, back_cb, text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'))],
         ]
     )
 
@@ -3099,11 +3582,7 @@ def get_app_selection_keyboard(device_type: str, apps: list, language: str = DEF
                     callback_data='subscription_connect',
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'), callback_data='menu_subscription'
-                )
-            ],
+            [build_back_button(texts, 'menu_subscription', text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'))],
         ]
     )
 
@@ -3172,7 +3651,7 @@ def get_extend_subscription_keyboard_with_prices(language: str, prices: dict) ->
 
         keyboard.append([InlineKeyboardButton(text=button_text, callback_data=f'extend_period_{days}')])
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    keyboard.append([build_back_button(texts, callback_data='menu_subscription')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -3268,7 +3747,7 @@ def get_devices_management_keyboard(
         ]
     )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    keyboard.append([build_back_button(texts, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -3358,7 +3837,7 @@ def get_updated_subscription_settings_keyboard(
             ]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    keyboard.append([build_back_button(texts, callback_data='menu_subscription')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -3398,11 +3877,7 @@ def get_device_management_help_keyboard(language: str = DEFAULT_LANGUAGE) -> Inl
                     callback_data='subscription_manage_devices',
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'), callback_data='menu_subscription'
-                )
-            ],
+            [build_back_button(texts, 'menu_subscription', text=texts.t('BACK_TO_SUBSCRIPTION', '⬅️ К подписке'))],
         ]
     )
 
@@ -3466,7 +3941,7 @@ def get_my_tickets_keyboard(
 
         keyboard.append(nav_row)
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_support')])
+    keyboard.append([build_back_button(texts, callback_data='menu_support')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -3495,7 +3970,7 @@ def get_ticket_view_keyboard(
             ]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='my_tickets')])
+    keyboard.append([build_back_button(texts, callback_data='my_tickets')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -3608,7 +4083,7 @@ def get_admin_tickets_keyboard(
 
         keyboard.append(nav_row)
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    keyboard.append([build_back_button(texts, callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -3660,7 +4135,7 @@ def get_admin_ticket_view_keyboard(
             ]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='admin_tickets')])
+    keyboard.append([build_back_button(texts, callback_data='admin_tickets')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

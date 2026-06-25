@@ -19,7 +19,7 @@ from app.utils.user_utils import format_referrer_info
 def _extract_transaction_id(payment: Any, remote_link: dict[str, Any] | None = None) -> str | None:
     """Try to find the remote WATA transaction identifier from stored payloads."""
 
-    def _from_mapping(mapping: Any) -> str | None:
+    def _from_mapping(mapping: Any, *, skip_bare_id: bool = False) -> str | None:
         if isinstance(mapping, str):
             try:
                 import json
@@ -29,7 +29,10 @@ def _extract_transaction_id(payment: Any, remote_link: dict[str, Any] | None = N
                 return None
         if not isinstance(mapping, dict):
             return None
-        for key in ('id', 'transaction_id', 'transactionId'):
+        # When parsing remote_link, skip the 'id' key because that is the
+        # payment-link ID itself, not a transaction ID.
+        keys = ('transaction_id', 'transactionId') if skip_bare_id else ('id', 'transaction_id', 'transactionId')
+        for key in keys:
             value = mapping.get(key)
             if not value:
                 continue
@@ -55,7 +58,9 @@ def _extract_transaction_id(payment: Any, remote_link: dict[str, Any] | None = N
         if candidate:
             return candidate
 
-    candidate = _from_mapping(remote_link)
+    # remote_link['id'] is the payment-link UUID, not a transaction ID —
+    # use skip_bare_id=True to avoid mis-identifying it as a transaction.
+    candidate = _from_mapping(remote_link, skip_bare_id=True)
     if candidate:
         return candidate
 
@@ -350,9 +355,20 @@ class WataPaymentMixin:
                                 transaction_payload = item
                                 break
                     except WataAPIError as error:
-                        logger.error(
-                            'Ошибка поиска WATA транзакций', payment_link_id=payment.payment_link_id, error=error
-                        )
+                        # WATA returns 404 when no transactions are found — treat as
+                        # "no results" rather than a hard error.
+                        error_str = str(error)
+                        if '404' in error_str:
+                            logger.debug(
+                                'WATA: транзакции не найдены (404) для',
+                                payment_link_id=payment.payment_link_id,
+                            )
+                        else:
+                            logger.error(
+                                'Ошибка поиска WATA транзакций для',
+                                payment_link_id=payment.payment_link_id,
+                                error=error,
+                            )
                     except Exception as error:  # pragma: no cover - safety net
                         logger.exception('Непредвиденная ошибка при поиске WATA транзакции', error=error)
 

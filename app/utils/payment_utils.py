@@ -420,35 +420,6 @@ def get_payment_methods_text(language: str) -> str:
             'PAYMENT_METHODS_PROMPT',
             'Выберите удобный для вас способ оплаты:',
         )
-        + '\n\n'
-    )
-
-    for method in methods:
-        method_id = method['id'].upper()
-        name = texts.t(
-            f'PAYMENT_METHOD_{method_id}_NAME',
-            f'{method["icon"]} <b>{method["name"]}</b>',
-        )
-        description = texts.t(
-            f'PAYMENT_METHOD_{method_id}_DESCRIPTION',
-            method['description'],
-        )
-        if method_id == 'MULENPAY':
-            mulenpay_name = settings.get_mulenpay_display_name()
-            mulenpay_name_html = settings.get_mulenpay_display_name_html()
-            name = name.format(mulenpay_name=mulenpay_name_html)
-            description = description.format(mulenpay_name=mulenpay_name)
-        elif method_id == 'PLATEGA':
-            platega_name = settings.get_platega_display_name()
-            platega_name_html = settings.get_platega_display_name_html()
-            name = name.format(platega_name=platega_name_html)
-            description = description.format(platega_name=platega_name)
-
-        text += f'{name} - {description}\n'
-
-    text += '\n' + texts.t(
-        'PAYMENT_METHODS_FOOTER',
-        'Выберите способ пополнения:',
     )
 
     return text

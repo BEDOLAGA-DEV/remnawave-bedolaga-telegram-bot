@@ -8,12 +8,19 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Define router before app imports to avoid circular import via routes/__init__.py
+router = APIRouter(prefix='/admin/stats', tags=['Cabinet Admin Stats'])
 
 from app.database.crud.campaign import get_campaign_statistics, get_campaigns_count, get_campaigns_list
 from app.database.crud.server_squad import get_server_statistics
-from app.database.crud.subscription import get_subscriptions_statistics
+from app.database.crud.subscription import (
+    _paid_subscription_filters,
+    _trial_subscription_filters,
+    get_subscriptions_statistics,
+)
 from app.database.crud.transaction import REAL_PAYMENT_METHODS, get_revenue_by_period, get_transactions_statistics
 from app.database.models import (
     ReferralEarning,
@@ -24,7 +31,6 @@ from app.database.models import (
     TransactionType,
     User,
 )
-from app.services.remnawave_service import RemnaWaveService
 from app.services.version_service import version_service
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -33,8 +39,6 @@ from ..dependencies import get_cabinet_db, require_permission
 logger = structlog.get_logger(__name__)
 
 _start_time = time.time()
-
-router = APIRouter(prefix='/admin/stats', tags=['Cabinet Admin Stats'])
 
 
 # ============ Schemas ============
@@ -152,6 +156,9 @@ class SystemInfoResponse(BaseModel):
     uptime_seconds: int
     users_total: int
     subscriptions_active: int
+    paid_subscriptions: int
+    trial_subscriptions: int
+    purchased_today: int
 
 
 # ============ Extended Stats Schemas ============
@@ -343,12 +350,10 @@ async def get_system_info(
         users_total_result = await db.execute(select(func.count()).select_from(User))
         users_total = users_total_result.scalar() or 0
 
-        subs_active_result = await db.execute(
-            select(func.count(Subscription.id)).where(
-                Subscription.status == SubscriptionStatus.ACTIVE.value,
-            )
-        )
-        subscriptions_active = subs_active_result.scalar() or 0
+        sub_stats = await get_subscriptions_statistics(db)
+        paid_subscriptions = sub_stats.get('paid_subscriptions', 0) or 0
+        trial_subscriptions = sub_stats.get('trial_subscriptions', 0) or 0
+        subscriptions_active = paid_subscriptions + trial_subscriptions
 
         return SystemInfoResponse(
             bot_version=version_service.current_version,
@@ -356,6 +361,9 @@ async def get_system_info(
             uptime_seconds=int(time.time() - _start_time),
             users_total=users_total,
             subscriptions_active=subscriptions_active,
+            paid_subscriptions=paid_subscriptions,
+            trial_subscriptions=trial_subscriptions,
+            purchased_today=sub_stats.get('purchased_today', 0) or 0,
         )
     except Exception as e:
         logger.error('Failed to get system info', error=e)
@@ -387,6 +395,8 @@ async def restart_node(
 ):
     """Restart a node."""
     try:
+        from app.services.remnawave_service import RemnaWaveService
+
         service = RemnaWaveService()
         success = await service.manage_node(node_uuid, 'restart')
 
@@ -414,6 +424,8 @@ async def toggle_node(
 ):
     """Enable or disable a node."""
     try:
+        from app.services.remnawave_service import RemnaWaveService
+
         service = RemnaWaveService()
         nodes = await service.get_all_nodes()
 
@@ -448,6 +460,8 @@ async def toggle_node(
 async def _get_nodes_overview() -> NodesOverview:
     """Get overview of all nodes."""
     try:
+        from app.services.remnawave_service import RemnaWaveService
+
         service = RemnaWaveService()
         nodes = await service.get_all_nodes()
 
@@ -517,20 +531,24 @@ async def _get_tariff_stats(db: AsyncSession) -> TariffStats | None:
         total_tariff_subscriptions = 0
 
         for tariff in tariffs:
-            # Активные подписки на этом тарифе
+            # Активные платные подписки на этом тарифе (используем единый фильтр)
             active_result = await db.execute(
                 select(func.count(Subscription.id)).where(
-                    Subscription.tariff_id == tariff.id, Subscription.status == SubscriptionStatus.ACTIVE.value
+                    and_(
+                        _paid_subscription_filters(now),
+                        Subscription.tariff_id == tariff.id,
+                    )
                 )
             )
             active_count = active_result.scalar() or 0
 
-            # Триальные подписки на этом тарифе
+            # Триальные подписки на этом тарифе (используем единый фильтр)
             trial_result = await db.execute(
                 select(func.count(Subscription.id)).where(
-                    Subscription.tariff_id == tariff.id,
-                    Subscription.status == SubscriptionStatus.ACTIVE.value,
-                    Subscription.is_trial == True,
+                    and_(
+                        _trial_subscription_filters(now),
+                        Subscription.tariff_id == tariff.id,
+                    )
                 )
             )
             trial_count = trial_result.scalar() or 0
@@ -581,7 +599,69 @@ async def _get_tariff_stats(db: AsyncSession) -> TariffStats | None:
                 )
             )
 
-            total_tariff_subscriptions += active_count
+            total_tariff_subscriptions += active_count + trial_count
+
+        # Подписки без тарифа (Unknown) — считаем отдельно
+        unknown_paid_result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                and_(
+                    _paid_subscription_filters(now),
+                    Subscription.tariff_id.is_(None),
+                )
+            )
+        )
+        unknown_paid = unknown_paid_result.scalar() or 0
+
+        unknown_trial_result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                and_(
+                    _trial_subscription_filters(now),
+                    Subscription.tariff_id.is_(None),
+                )
+            )
+        )
+        unknown_trial = unknown_trial_result.scalar() or 0
+
+        unknown_today_result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                Subscription.tariff_id.is_(None),
+                Subscription.created_at >= today_start,
+                Subscription.is_trial == False,
+            )
+        )
+        unknown_today = unknown_today_result.scalar() or 0
+
+        unknown_week_result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                Subscription.tariff_id.is_(None),
+                Subscription.created_at >= week_ago,
+                Subscription.is_trial == False,
+            )
+        )
+        unknown_week = unknown_week_result.scalar() or 0
+
+        unknown_month_result = await db.execute(
+            select(func.count(Subscription.id)).where(
+                Subscription.tariff_id.is_(None),
+                Subscription.created_at >= month_ago,
+                Subscription.is_trial == False,
+            )
+        )
+        unknown_month = unknown_month_result.scalar() or 0
+
+        if unknown_paid > 0 or unknown_trial > 0:
+            tariff_items.append(
+                TariffStatItem(
+                    tariff_id=-1,
+                    tariff_name='Unknown (без тарифа)',
+                    active_subscriptions=unknown_paid,
+                    trial_subscriptions=unknown_trial,
+                    purchased_today=unknown_today,
+                    purchased_week=unknown_week,
+                    purchased_month=unknown_month,
+                )
+            )
+            total_tariff_subscriptions += unknown_paid + unknown_trial
 
         logger.info('📊 Всего подписок по тарифам', total_tariff_subscriptions=total_tariff_subscriptions)
 

@@ -9,7 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
-from app.keyboards.inline import get_back_keyboard
+from app.keyboards.inline import (
+    get_back_keyboard,
+    build_back_button,
+)
 from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService, get_user_by_id as fetch_user_by_id
@@ -35,7 +38,7 @@ async def start_wata_payment(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -95,7 +98,7 @@ async def process_wata_payment_amount(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await message.answer(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -172,7 +175,7 @@ async def process_wata_payment_amount(
                     callback_data=f'check_wata_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+            [build_back_button(texts, 'balance_topup')],
         ]
     )
 

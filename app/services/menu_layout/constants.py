@@ -29,16 +29,22 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'max_per_row': 2,
         },
         {
-            'id': 'balance_row',
-            'buttons': ['balance'],
+            'id': 'trial_row',
+            'buttons': ['trial'],
             'conditions': None,
             'max_per_row': 1,
         },
         {
-            'id': 'trial_buy_row',
-            'buttons': ['trial', 'buy_subscription'],
+            'id': 'buy_row',
+            'buttons': ['buy_subscription'],
             'conditions': None,
-            'max_per_row': 2,
+            'max_per_row': 1,
+        },
+        {
+            'id': 'balance_row',
+            'buttons': ['balance'],
+            'conditions': None,
+            'max_per_row': 1,
         },
         {
             'id': 'simple_subscription_row',
@@ -66,14 +72,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         },
         {
             'id': 'support_info_row',
-            'buttons': ['support', 'info'],
+            'buttons': ['info', 'support'],
             'conditions': None,
-            'max_per_row': 2,
-        },
-        {
-            'id': 'language_row',
-            'buttons': ['language'],
-            'conditions': {'language_selection_enabled': True},
             'max_per_row': 2,
         },
         {
@@ -151,6 +151,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'visibility': 'all',
             'conditions': {'show_trial': True},
             'dynamic_text': False,
+            'icon_custom_emoji_id': '5400037092493388751',
+            'style': 'success',
         },
         'buy_subscription': {
             'type': 'builtin',
@@ -161,6 +163,7 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'visibility': 'all',
             'conditions': {'show_buy': True},
             'dynamic_text': False,
+            'icon_custom_emoji_id': '5402536282423320905',
         },
         'simple_subscription': {
             'type': 'builtin',

@@ -10,12 +10,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.transaction import get_user_transactions
 from app.database.models import TransactionType, User
-from app.handlers.subscription.autopay import handle_confirm_unlink, handle_saved_cards_list, handle_unlink_card
+from app.handlers.subscription.autopay import (
+    handle_confirm_unlink,
+    handle_confirm_unlink_apay,
+    handle_saved_cards_list,
+    handle_unlink_apay_recurrent,
+    handle_unlink_card,
+)
 from app.keyboards.inline import (
     get_back_keyboard,
     get_balance_keyboard,
     get_pagination_keyboard,
     get_payment_methods_keyboard,
+    build_back_button
 )
 from app.localization.texts import get_texts
 from app.states import BalanceStates
@@ -233,7 +240,19 @@ async def show_balance_menu(callback: types.CallbackQuery, db_user: User, db: As
 
     balance_text = texts.BALANCE_INFO.format(balance=texts.format_price(db_user.balance_kopeks))
 
-    reply_markup = get_balance_keyboard(db_user.language)
+    has_saved_cards = False
+    if settings.YOOKASSA_RECURRENT_ENABLED or settings.ANTILOPAY_RECURRENT_ENABLED:
+        cards = []
+        if settings.YOOKASSA_RECURRENT_ENABLED:
+            from app.database.crud.saved_payment_method import get_active_payment_methods_by_user
+            cards.extend(await get_active_payment_methods_by_user(db, db_user.id))
+        if settings.ANTILOPAY_RECURRENT_ENABLED:
+            from app.database.crud.antilopay_recurrent import get_active_antilopay_recurrents_by_user
+            cards.extend(await get_active_antilopay_recurrents_by_user(db, db_user.id))
+        if cards:
+            has_saved_cards = True
+
+    reply_markup = get_balance_keyboard(db_user.language, has_saved_cards=has_saved_cards)
 
     try:
         if callback.message and callback.message.text:
@@ -308,7 +327,7 @@ async def show_balance_history(callback: types.CallbackQuery, db_user: User, db:
         pagination_row = get_pagination_keyboard(page, total_pages, 'balance_history', db_user.language)
         keyboard.extend(pagination_row)
 
-    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+    keyboard.append([build_back_button(texts, 'menu_balance')])
 
     await callback.message.edit_text(
         text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode='HTML'
@@ -324,6 +343,7 @@ async def handle_balance_history_pagination(callback: types.CallbackQuery, db_us
 
 @error_handler
 async def show_payment_methods(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    await state.clear()
     from app.config import settings
     from app.utils.payment_utils import get_payment_methods_text
 
@@ -336,7 +356,7 @@ async def show_payment_methods(callback: types.CallbackQuery, db_user: User, db:
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -502,7 +522,7 @@ async def request_support_topup(callback: types.CallbackQuery, db_user: User):
                     text='💬 Написать в поддержку', url=settings.get_support_contact_url() or 'https://t.me/'
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+            [build_back_button(texts, 'balance_topup')],
         ]
     )
 
@@ -880,5 +900,7 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_topup_amount_callback, F.data.startswith('topup_amount|'))
 
     dp.callback_query.register(handle_saved_cards_list, F.data == 'saved_cards_list')
+    dp.callback_query.register(handle_unlink_apay_recurrent, F.data.startswith('unlink_apay_'))
     dp.callback_query.register(handle_unlink_card, F.data.startswith('unlink_card_'))
+    dp.callback_query.register(handle_confirm_unlink_apay, F.data.startswith('confirm_unlink_apay_'))
     dp.callback_query.register(handle_confirm_unlink, F.data.startswith('confirm_unlink_'))

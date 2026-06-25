@@ -166,31 +166,40 @@ async def get_sales_summary(
         )
         manual_topup = manual_topup_result.scalar() or 0
 
-        # Consolidated subscription counts: active paid, active trial, new trials in period
+        # Consolidated subscription counts: new trials, new paid, expired paid
+        # For active counts we want UNIQUE users (not subscription rows) so use
+        # count(distinct user_id) with appropriate filters.
+        current_time = datetime.now(UTC)
+
+        active_paid_result = await db.execute(
+            select(func.count(func.distinct(Subscription.user_id))).where(
+                and_(
+                    Subscription.status == SubscriptionStatus.ACTIVE.value,
+                    Subscription.is_trial.is_(False),
+                    Subscription.end_date.isnot(None),
+                    Subscription.end_date > current_time,
+                )
+            )
+        )
+        active_subs = active_paid_result.scalar() or 0
+
+        active_trial_result = await db.execute(
+            select(func.count(func.distinct(Subscription.user_id))).where(
+                and_(
+                    Subscription.is_trial.is_(True),
+                    Subscription.end_date.isnot(None),
+                    Subscription.end_date > current_time,
+                    Subscription.status.in_([
+                        SubscriptionStatus.ACTIVE.value,
+                        SubscriptionStatus.TRIAL.value,
+                    ]),
+                )
+            )
+        )
+        active_trials = active_trial_result.scalar() or 0
+
         sub_counts_result = await db.execute(
             select(
-                func.sum(
-                    case(
-                        (
-                            and_(
-                                Subscription.status == SubscriptionStatus.ACTIVE.value, Subscription.is_trial.is_(False)
-                            ),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label('active_paid'),
-                func.sum(
-                    case(
-                        (
-                            and_(
-                                Subscription.status == SubscriptionStatus.ACTIVE.value, Subscription.is_trial.is_(True)
-                            ),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label('active_trial'),
                 func.sum(
                     case(
                         (
@@ -235,8 +244,6 @@ async def get_sales_summary(
             )
         )
         row = sub_counts_result.one()
-        active_subs = row.active_paid or 0
-        active_trials = row.active_trial or 0
         new_trials = row.new_trials or 0
         new_paid_subs = row.new_paid or 0
         expired_paid_subs = row.expired_paid or 0
@@ -551,7 +558,7 @@ class SalesByTariffItem(BaseModel):
 
 
 class SalesByPeriodItem(BaseModel):
-    period_days: int
+    period_days: str
     count: int
 
 
@@ -663,8 +670,44 @@ async def get_sales_stats(
             .group_by(period_days_expr)
             .order_by(period_days_expr)
         )
+        
+        buckets = {
+            "< 1": 0,
+            "1": 0,
+            "2 - 7": 0,
+            "8 - 14": 0,
+            "15 - 30": 0,
+            "31 - 90": 0,
+            "91 - 180": 0,
+            "181 - 365": 0,
+            "> 365": 0
+        }
+        for row in by_period_query:
+            days = int(row.period_days or 0)
+            cnt = row.count or 0
+            if days < 1:
+                buckets["< 1"] += cnt
+            elif days == 1:
+                buckets["1"] += cnt
+            elif 2 <= days <= 7:
+                buckets["2 - 7"] += cnt
+            elif 8 <= days <= 14:
+                buckets["8 - 14"] += cnt
+            elif 15 <= days <= 30:
+                buckets["15 - 30"] += cnt
+            elif 31 <= days <= 90:
+                buckets["31 - 90"] += cnt
+            elif 91 <= days <= 180:
+                buckets["91 - 180"] += cnt
+            elif 181 <= days <= 365:
+                buckets["181 - 365"] += cnt
+            else:
+                buckets["> 365"] += cnt
+
         by_period = [
-            SalesByPeriodItem(period_days=int(row.period_days or 0), count=row.count) for row in by_period_query
+            SalesByPeriodItem(period_days=label, count=cnt)
+            for label, cnt in buckets.items()
+            if cnt > 0
         ]
 
         daily_query = await db.execute(
@@ -742,6 +785,9 @@ async def get_sales_stats(
 class DailyRenewalItem(BaseModel):
     date: str
     count: int
+    trials: int = 0
+    regular: int = 0
+    rate: float = 0.0
 
 
 class RenewalPeriodStats(BaseModel):
@@ -912,7 +958,7 @@ async def get_renewals_stats(
         total_sub_payments = total_sub_payments_result.scalar() or 0
         renewal_rate = round((current_count / total_sub_payments * 100), 1) if total_sub_payments > 0 else 0.0
 
-        daily_query = await db.execute(
+        daily_renewals_query = await db.execute(
             select(
                 func.date(Transaction.created_at).label('date'),
                 func.count(Transaction.id).label('count'),
@@ -928,15 +974,64 @@ async def get_renewals_stats(
                 )
             )
             .group_by(func.date(Transaction.created_at))
-            .order_by(func.date(Transaction.created_at))
         )
-        daily = [
-            DailyRenewalItem(
-                date=row.date.isoformat() if hasattr(row.date, 'isoformat') else str(row.date),
-                count=row.count,
+        renewals_by_date = {row.date: row.count for row in daily_renewals_query}
+
+        daily_trials_query = await db.execute(
+            select(
+                func.date(Subscription.created_at).label('date'),
+                func.count(Subscription.id).label('count'),
             )
-            for row in daily_query
-        ]
+            .where(
+                and_(
+                    Subscription.is_trial == True,
+                    Subscription.created_at >= period_start,
+                    Subscription.created_at <= period_end,
+                )
+            )
+            .group_by(func.date(Subscription.created_at))
+        )
+        trials_by_date = {row.date: row.count for row in daily_trials_query}
+
+        daily_regular_query = await db.execute(
+            select(
+                func.date(Transaction.created_at).label('date'),
+                func.count(Transaction.id).label('count'),
+            )
+            .where(
+                and_(
+                    Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                    Transaction.is_completed == True,
+                    not_addon,
+                    Transaction.created_at >= period_start,
+                    Transaction.created_at <= period_end,
+                    ~Transaction.user_id.in_(existing_users_subquery),
+                )
+            )
+            .group_by(func.date(Transaction.created_at))
+        )
+        regular_by_date = {row.date: row.count for row in daily_regular_query}
+
+        daily = []
+        curr_date = period_start.date()
+        end_date_limit = period_end.date()
+        while curr_date <= end_date_limit:
+            renewals_count = renewals_by_date.get(curr_date, 0)
+            trials_count = trials_by_date.get(curr_date, 0)
+            regular_count = regular_by_date.get(curr_date, 0)
+            total = renewals_count + trials_count + regular_count
+            rate = round((renewals_count / total * 100), 1) if total > 0 else 0.0
+
+            daily.append(
+                DailyRenewalItem(
+                    date=curr_date.isoformat(),
+                    count=renewals_count,
+                    trials=trials_count,
+                    regular=regular_count,
+                    rate=rate,
+                )
+            )
+            curr_date += timedelta(days=1)
 
         return RenewalsStatsResponse(
             total_renewals=current_count,

@@ -366,6 +366,60 @@ class UserService:
                 'total_count': 0,
             }
 
+    async def get_recurrent_users(
+        self,
+        db: AsyncSession,
+        page: int = 1,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Возвращает пользователей, которые привязали карту для автопродлений (активный рекуррент)."""
+        try:
+            offset = (page - 1) * limit
+            from app.database.models import AntilopayRecurrent
+            from sqlalchemy import exists
+
+            active_recurrent_exists = exists().where(
+                AntilopayRecurrent.user_id == User.id,
+                AntilopayRecurrent.is_active == True,
+            )
+
+            query = (
+                select(User)
+                .options(
+                    selectinload(User.subscriptions).selectinload(Subscription.tariff),
+                    selectinload(User.antilopay_recurrents),
+                )
+                .where(active_recurrent_exists)
+                .order_by(User.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+
+            result = await db.execute(query)
+            users = result.scalars().unique().all()
+
+            count_query = (
+                select(func.count(User.id)).where(active_recurrent_exists)
+            )
+            total_count = (await db.execute(count_query)).scalar() or 0
+            total_pages = (total_count + limit - 1) // limit if total_count else 0
+
+            return {
+                'users': users,
+                'current_page': page,
+                'total_pages': total_pages,
+                'total_count': total_count,
+            }
+
+        except Exception as e:
+            logger.error('Ошибка получения пользователей с рекуррентными платежами', error=e)
+            return {
+                'users': [],
+                'current_page': 1,
+                'total_pages': 1,
+                'total_count': 0,
+            }
+
     async def get_potential_customers(
         self,
         db: AsyncSession,
