@@ -979,6 +979,13 @@ class Settings(BaseSettings):
     HAPP_DOWNLOAD_LINK_MACOS: str | None = None
     HAPP_DOWNLOAD_LINK_WINDOWS: str | None = None
     HAPP_DOWNLOAD_LINK_PC: str | None = None
+    # ===== INCY =====
+    INCY_SUBSCRIPTION_NAME: str = 'INCY'
+    INCY_CONNECT_REDIRECT_TEMPLATE: str | None = None
+    INCY_IOS_URL: str = 'https://apps.apple.com/us/app/incy/id6756943388'
+    INCY_ANDROID_URL: str = 'https://play.google.com/store/apps/details?id=llc.itdev.incy'
+    INCY_PLATFORMS_REPO: str = 'INCY-DEV/incy-platforms'
+    INCY_RELEASE_CACHE_TTL: int = 21600
     HIDE_SUBSCRIPTION_LINK: bool = False
     SUBSCRIPTION_DOMAIN_OVERRIDE: str | None = None
     ENABLE_LOGO_MODE: bool = True
@@ -2971,6 +2978,34 @@ class Settings(BaseSettings):
         }
         link = links.get(platform_key)
         return link or None
+
+    def get_incy_subscription_name(self) -> str:
+        name = (self.INCY_SUBSCRIPTION_NAME or '').strip()
+        return name or 'INCY'
+
+    def get_incy_connect_redirect_template(self) -> str | None:
+        template = (self.INCY_CONNECT_REDIRECT_TEMPLATE or '').strip()
+        if template:
+            return template
+        # Same redirect host serves any scheme — fall back to the HAPP template.
+        return self.get_happ_cryptolink_redirect_template()
+
+    def get_incy_ios_url(self) -> str | None:
+        return (self.INCY_IOS_URL or '').strip() or None
+
+    def get_incy_android_url(self) -> str | None:
+        return (self.INCY_ANDROID_URL or '').strip() or None
+
+    def get_incy_platforms_repo(self) -> str:
+        repo = (self.INCY_PLATFORMS_REPO or '').strip()
+        return repo or 'INCY-DEV/incy-platforms'
+
+    def get_incy_release_cache_ttl(self) -> int:
+        try:
+            ttl = int(self.INCY_RELEASE_CACHE_TTL)
+        except (TypeError, ValueError):
+            ttl = 21600
+        return max(60, ttl)
 
     def is_maintenance_mode(self) -> bool:
         return self.MAINTENANCE_MODE
