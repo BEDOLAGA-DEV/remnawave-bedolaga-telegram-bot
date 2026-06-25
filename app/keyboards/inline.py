@@ -717,20 +717,7 @@ def get_main_menu_keyboard(
                 style='success',
             )
 
-        if connect_mode == 'miniapp_subscription':
-            if subscription_link:
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                            web_app=types.WebAppInfo(url=subscription_link),
-                            style='success',
-                        )
-                    ]
-                )
-            else:
-                keyboard.append([_fallback_connect_button()])
-        elif connect_mode == 'miniapp_custom':
+        if connect_mode == 'miniapp_custom':
             keyboard.append(
                 [
                     InlineKeyboardButton(
@@ -740,36 +727,6 @@ def get_main_menu_keyboard(
                     )
                 ]
             )
-        elif connect_mode == 'link':
-            if subscription_link:
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                            url=subscription_link,
-                            style='success',
-                        )
-                    ]
-                )
-            else:
-                keyboard.append([_fallback_connect_button()])
-        elif connect_mode == 'happ_cryptolink':
-            if subscription_link:
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                            callback_data=(
-                                'nz!_subscription_connect'
-                                if settings.is_multi_tariff_enabled()
-                                else 'nz!_open_subscription_link'
-                            ),
-                            style='success',
-                        )
-                    ]
-                )
-            else:
-                keyboard.append([_fallback_connect_button()])
         else:
             keyboard.append([_fallback_connect_button()])
 
@@ -1408,17 +1365,7 @@ def get_subscription_keyboard(
         if subscription_link:
             connect_mode = settings.CONNECT_BUTTON_MODE
 
-            if connect_mode == 'miniapp_subscription':
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                            web_app=types.WebAppInfo(url=subscription_link),
-                            style='success',
-                        )
-                    ]
-                )
-            elif connect_mode == 'miniapp_custom':
+            if connect_mode == 'miniapp_custom':
                 if settings.MINIAPP_CUSTOM_URL:
                     keyboard.append(
                         [
@@ -1439,20 +1386,6 @@ def get_subscription_keyboard(
                             )
                         ]
                     )
-            elif connect_mode == 'link':
-                keyboard.append(
-                    [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), url=subscription_link, style='success')]
-                )
-            elif connect_mode == 'happ_cryptolink':
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                            callback_data=f'nz!_open_subscription_link{_sub_suffix}',
-                            style='success',
-                        )
-                    ]
-                )
             else:
                 keyboard.append(
                     [
