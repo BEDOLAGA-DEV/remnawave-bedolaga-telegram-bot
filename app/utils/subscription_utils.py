@@ -139,20 +139,24 @@ async def resolve_crypto_link_for_storage(
     return encrypted or panel_crypto_link
 
 
-def get_happ_cryptolink_redirect_link(subscription_link: str | None) -> str | None:
-    if not subscription_link:
+def build_scheme_redirect_link(deep_link: str | None, template: str | None) -> str | None:
+    """Wrap a custom-scheme deep link (happ://, incy://, ...) in an HTTP redirect.
+
+    Telegram inline buttons reject custom URL schemes, so the deep link is
+    handed to an HTTP redirect host that 302s to the scheme. ``template`` may use
+    ``{link}``/``{subscription_link}`` placeholders (filled with the url-encoded
+    deep link) or simply end with ``=``/``?``/``&`` to have the encoded link
+    appended. Returns None when either argument is empty.
+    """
+    if not deep_link or not template:
         return None
 
-    template = settings.get_happ_cryptolink_redirect_template()
-    if not template:
-        return None
-
-    encoded_link = quote(subscription_link, safe='')
+    encoded_link = quote(deep_link, safe='')
     replacements = {
         '{subscription_link}': encoded_link,
         '{link}': encoded_link,
-        '{subscription_link_raw}': subscription_link,
-        '{link_raw}': subscription_link,
+        '{subscription_link_raw}': deep_link,
+        '{link_raw}': deep_link,
     }
 
     replaced = False
@@ -163,11 +167,13 @@ def get_happ_cryptolink_redirect_link(subscription_link: str | None) -> str | No
 
     if replaced:
         return template
-
-    if template.endswith(('=', '?', '&')):
-        return f'{template}{encoded_link}'
-
     return f'{template}{encoded_link}'
+
+
+def get_happ_cryptolink_redirect_link(subscription_link: str | None) -> str | None:
+    """Backward-compatible HAPP wrapper over :func:`build_scheme_redirect_link`."""
+    template = settings.get_happ_cryptolink_redirect_template()
+    return build_scheme_redirect_link(subscription_link, template)
 
 
 def convert_subscription_link_to_happ_scheme(subscription_link: str | None) -> str | None:
