@@ -93,6 +93,26 @@ def get_display_subscription_link(subscription: Subscription | None) -> str | No
     return apply_subscription_domain_override(base_link)
 
 
+def get_safe_display_subscription_link(subscription: Subscription | None) -> str | None:
+    """Subscription link safe to surface to the user AS TEXT.
+
+    Same as :func:`get_display_subscription_link`, except in happ_cryptolink mode
+    it NEVER falls back to the plain ``subscription_url``: it returns the stored
+    crypt link or ``None``. The whole point of cryptolink mode is to hide the raw
+    host, so display surfaces (e.g. the "Моя подписка" screen) must not leak the
+    plain URL when the crypt link is missing — they show nothing instead.
+
+    Use this for user-facing copyable link text. Keep using
+    :func:`get_display_subscription_link` for connect/keyboard gating, which
+    still needs a usable link (e.g. so the INCY app-choice stays reachable).
+    """
+    if not subscription:
+        return None
+    if settings.is_happ_cryptolink_mode():
+        return getattr(subscription, 'subscription_crypto_link', None) or None
+    return apply_subscription_domain_override(getattr(subscription, 'subscription_url', None))
+
+
 def apply_subscription_domain_override(url: str | None) -> str | None:
     """Swap the host of a subscription link for the configured override host.
 
