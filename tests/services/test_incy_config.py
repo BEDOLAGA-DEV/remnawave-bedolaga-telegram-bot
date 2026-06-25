@@ -2,7 +2,7 @@ from app.config import settings
 
 
 def test_incy_defaults_ready_out_of_the_box():
-    assert settings.get_incy_subscription_name() == 'INCY' or settings.get_incy_subscription_name()
+    assert settings.get_incy_subscription_name() == 'INCY'
     assert 'apps.apple.com' in settings.get_incy_ios_url()
     assert 'play.google.com' in settings.get_incy_android_url()
     assert settings.get_incy_platforms_repo() == 'INCY-DEV/incy-platforms'
