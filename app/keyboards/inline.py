@@ -708,7 +708,6 @@ def get_main_menu_keyboard(
     # Connect button for active subscribers
     if has_active_subscription and subscription_is_active:
         connect_mode = settings.CONNECT_BUTTON_MODE
-        subscription_link = get_display_subscription_link(subscription)
 
         def _fallback_connect_button() -> InlineKeyboardButton:
             return InlineKeyboardButton(
