@@ -3796,6 +3796,7 @@ class PaymentMethodConfig(Base):
 
     # Переопределение отображаемого имени (null = использовать из env)
     display_name = Column(String(255), nullable=True)
+    description = Column(Text, nullable=True)
 
     # Под-опции включения/выключения (JSON): {"card": true, "sbp": false}
     # Для методов с вариантами: yookassa, pal24, platega

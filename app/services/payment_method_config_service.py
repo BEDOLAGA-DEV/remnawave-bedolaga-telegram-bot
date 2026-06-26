@@ -487,6 +487,7 @@ async def update_config(
     updatable_fields = (
         'is_enabled',
         'display_name',
+        'description',
         'sub_options',
         'quick_amounts',
         'min_amount_kopeks',
@@ -634,6 +635,7 @@ async def get_enabled_methods_for_user(
             {
                 'id': method_id,
                 'name': display_name,
+                'description': config.description,
                 'min_amount_kopeks': min_amount,
                 'max_amount_kopeks': max_amount,
                 'options': options,
