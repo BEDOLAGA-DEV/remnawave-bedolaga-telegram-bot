@@ -376,16 +376,16 @@ class UserService:
         try:
             offset = (page - 1) * limit
             from app.database.models import AntilopayRecurrent, SavedPaymentMethod
-            from sqlalchemy import exists, or_
+            from sqlalchemy import or_
 
-            active_recurrent_exists = exists().where(
+            active_recurrent_exists = select(AntilopayRecurrent.id).where(
                 AntilopayRecurrent.user_id == User.id,
                 AntilopayRecurrent.is_active == True,
-            )
-            active_yookassa_exists = exists().where(
+            ).exists()
+            active_yookassa_exists = select(SavedPaymentMethod.id).where(
                 SavedPaymentMethod.user_id == User.id,
                 SavedPaymentMethod.is_active == True,
-            )
+            ).exists()
 
             query = (
                 select(User)
@@ -404,7 +404,9 @@ class UserService:
             users = result.scalars().unique().all()
 
             count_query = (
-                select(func.count(User.id)).where(or_(active_recurrent_exists, active_yookassa_exists))
+                select(func.count(User.id))
+                .select_from(User)
+                .where(or_(active_recurrent_exists, active_yookassa_exists))
             )
             total_count = (await db.execute(count_query)).scalar() or 0
             total_pages = (total_count + limit - 1) // limit if total_count else 0

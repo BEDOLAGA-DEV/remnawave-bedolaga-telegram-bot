@@ -974,14 +974,14 @@ async def get_users_list(
 
     if is_recurrent is not None:
         from app.database.models import AntilopayRecurrent, SavedPaymentMethod
-        active_recurrent_exists = exists().where(
+        active_recurrent_exists = select(AntilopayRecurrent.id).where(
             AntilopayRecurrent.user_id == User.id,
             AntilopayRecurrent.is_active == True,
-        )
-        active_yookassa_exists = exists().where(
+        ).exists()
+        active_yookassa_exists = select(SavedPaymentMethod.id).where(
             SavedPaymentMethod.user_id == User.id,
             SavedPaymentMethod.is_active == True,
-        )
+        ).exists()
         if is_recurrent:
             query = query.where(or_(active_recurrent_exists, active_yookassa_exists))
         else:
@@ -1126,14 +1126,14 @@ async def get_users_count(
 
     if is_recurrent is not None:
         from app.database.models import AntilopayRecurrent, SavedPaymentMethod
-        active_recurrent_exists = exists().where(
+        active_recurrent_exists = select(AntilopayRecurrent.id).where(
             AntilopayRecurrent.user_id == User.id,
             AntilopayRecurrent.is_active == True,
-        )
-        active_yookassa_exists = exists().where(
+        ).exists()
+        active_yookassa_exists = select(SavedPaymentMethod.id).where(
             SavedPaymentMethod.user_id == User.id,
             SavedPaymentMethod.is_active == True,
-        )
+        ).exists()
         if is_recurrent:
             query = query.where(or_(active_recurrent_exists, active_yookassa_exists))
         else:
@@ -1360,16 +1360,18 @@ async def get_users_statistics(db: AsyncSession) -> dict:
     # Recurrent users count
     from app.database.models import AntilopayRecurrent, SavedPaymentMethod
     recurrent_result = await db.execute(
-        select(func.count(User.id)).where(
+        select(func.count(User.id))
+        .select_from(User)
+        .where(
             or_(
-                exists().where(
+                select(AntilopayRecurrent.id).where(
                     AntilopayRecurrent.user_id == User.id,
                     AntilopayRecurrent.is_active == True,
-                ),
-                exists().where(
+                ).exists(),
+                select(SavedPaymentMethod.id).where(
                     SavedPaymentMethod.user_id == User.id,
                     SavedPaymentMethod.is_active == True,
-                ),
+                ).exists(),
             )
         )
     )

@@ -656,18 +656,19 @@ async def get_users_stats(
 
     # Count recurrent users (users with active card)
     from app.database.models import AntilopayRecurrent, SavedPaymentMethod
-    from sqlalchemy import exists, or_
 
-    active_recurrent_exists = exists().where(
+    active_recurrent_exists = select(AntilopayRecurrent.id).where(
         AntilopayRecurrent.user_id == User.id,
         AntilopayRecurrent.is_active == True,
-    )
-    active_yookassa_exists = exists().where(
+    ).exists()
+    active_yookassa_exists = select(SavedPaymentMethod.id).where(
         SavedPaymentMethod.user_id == User.id,
         SavedPaymentMethod.is_active == True,
-    )
-    recurrent_count_q = select(func.count(User.id)).where(
-        or_(active_recurrent_exists, active_yookassa_exists)
+    ).exists()
+    recurrent_count_q = (
+        select(func.count(User.id))
+        .select_from(User)
+        .where(or_(active_recurrent_exists, active_yookassa_exists))
     )
     recurrent_users_count = (await db.execute(recurrent_count_q)).scalar() or 0
 
