@@ -943,6 +943,12 @@ async def get_landing_stats(
     from sqlalchemy import distinct
     
     # YooKassa trial vs regular cards
+    has_trial_subquery = select(GuestPurchase.user_id).where(
+        GuestPurchase.landing_id == landing_id,
+        is_successful,
+        GuestPurchase.amount_kopeks == 1000
+    ).scalar_subquery()
+
     yoo_trial_query = select(func.count(distinct(SavedPaymentMethod.id))).join(
         GuestPurchase, GuestPurchase.user_id == SavedPaymentMethod.user_id
     ).where(
@@ -959,7 +965,8 @@ async def get_landing_stats(
         GuestPurchase.landing_id == landing_id,
         is_successful,
         GuestPurchase.amount_kopeks != 1000,
-        SavedPaymentMethod.is_active.is_(True)
+        SavedPaymentMethod.is_active.is_(True),
+        ~SavedPaymentMethod.user_id.in_(has_trial_subquery)
     )
     yoo_regular_count = (await db.execute(yoo_regular_query)).scalar() or 0
 
@@ -980,7 +987,8 @@ async def get_landing_stats(
         GuestPurchase.landing_id == landing_id,
         is_successful,
         GuestPurchase.amount_kopeks != 1000,
-        AntilopayRecurrent.is_active.is_(True)
+        AntilopayRecurrent.is_active.is_(True),
+        ~AntilopayRecurrent.user_id.in_(has_trial_subquery)
     )
     anti_regular_count = (await db.execute(anti_regular_query)).scalar() or 0
 
