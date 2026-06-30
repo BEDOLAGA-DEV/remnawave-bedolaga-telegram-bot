@@ -275,6 +275,7 @@ async def main():
                 from app.services.payment_method_config_service import (
                     ensure_payment_method_configs,
                     refresh_display_name_overrides,
+                    refresh_sort_order_cache,
                 )
 
                 async with AsyncSessionLocal() as db:
@@ -282,6 +283,9 @@ async def main():
                     # Warm the display-name override cache so bot keyboards show
                     # cabinet-configured method names (matches the cabinet).
                     await refresh_display_name_overrides(db)
+                    # Warm the sort-order cache so bot keyboards respect the order
+                    # set via the cabinet admin/payment-methods page.
+                    await refresh_sort_order_cache(db)
             except Exception as error:
                 stage.warning(f'Не удалось инициализировать платёжные методы: {error}')
                 logger.error('❌ Не удалось инициализировать платёжные методы', error=error)

@@ -37,7 +37,20 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-
+  caddy:
+    image: caddy:2-alpine
+    container_name: remnawave_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /srv/cabinet:/srv/cabinet:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - bot_network
   bot:
     build: .
     container_name: remnawave_bot
@@ -96,9 +109,14 @@ volumes:
     driver: local
   redis_data:
     driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
 
 networks:
   bot_network:
+    name: remnawave_bot_network
     driver: bridge
     ipam:
       config:

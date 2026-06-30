@@ -38,6 +38,22 @@ def get_display_name_override(method_id: str) -> str | None:
     return _display_name_overrides.get(method_id)
 
 
+_sort_order_cache: dict[str, int] = {}
+
+
+async def refresh_sort_order_cache(db: AsyncSession) -> None:
+    """Reload the method_id -> sort_order cache from the DB."""
+    global _sort_order_cache
+    result = await db.execute(select(PaymentMethodConfig.method_id, PaymentMethodConfig.sort_order))
+    _sort_order_cache = {method_id: order for method_id, order in result.all()}
+    logger.debug('Кэш порядка платёжных методов обновлён', count=len(_sort_order_cache))
+
+
+def get_sort_order(method_id: str) -> int:
+    """Sync read of cached sort_order for a method. Falls back to 999 if not cached."""
+    return _sort_order_cache.get(method_id, 999)
+
+
 # ============ Default method definitions ============
 
 
@@ -525,6 +541,7 @@ async def update_sort_order(db: AsyncSession, ordered_method_ids: list[str]) -> 
             config.sort_order = index
 
     await db.commit()
+    await refresh_sort_order_cache(db)
 
 
 async def get_all_promo_groups(db: AsyncSession) -> list[PromoGroup]:
