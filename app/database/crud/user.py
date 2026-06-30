@@ -100,6 +100,7 @@ async def get_user_by_id(db: AsyncSession, user_id: int) -> User | None:
             selectinload(User.referrer),
             selectinload(User.promo_group),
             selectinload(User.antilopay_recurrents),
+            selectinload(User.saved_payment_methods),
         )
         .where(User.id == user_id)
     )
@@ -121,6 +122,7 @@ async def get_user_by_telegram_id(db: AsyncSession, telegram_id: int) -> User | 
             selectinload(User.referrer),
             selectinload(User.promo_group),
             selectinload(User.antilopay_recurrents),
+            selectinload(User.saved_payment_methods),
         )
         .where(User.telegram_id == telegram_id)
     )
@@ -921,6 +923,7 @@ async def get_users_list(
         selectinload(User.promo_group),
         selectinload(User.referrer),
         selectinload(User.antilopay_recurrents),
+        selectinload(User.saved_payment_methods),
     )
 
     if status:
@@ -970,15 +973,19 @@ async def get_users_list(
         )
 
     if is_recurrent is not None:
-        from app.database.models import AntilopayRecurrent
+        from app.database.models import AntilopayRecurrent, SavedPaymentMethod
         active_recurrent_exists = exists().where(
             AntilopayRecurrent.user_id == User.id,
             AntilopayRecurrent.is_active == True,
         )
+        active_yookassa_exists = exists().where(
+            SavedPaymentMethod.user_id == User.id,
+            SavedPaymentMethod.is_active == True,
+        )
         if is_recurrent:
-            query = query.where(active_recurrent_exists)
+            query = query.where(or_(active_recurrent_exists, active_yookassa_exists))
         else:
-            query = query.where(~active_recurrent_exists)
+            query = query.where(and_(~active_recurrent_exists, ~active_yookassa_exists))
 
     if search:
         search_term = f'%{search}%'
@@ -1118,15 +1125,19 @@ async def get_users_count(
         )
 
     if is_recurrent is not None:
-        from app.database.models import AntilopayRecurrent
+        from app.database.models import AntilopayRecurrent, SavedPaymentMethod
         active_recurrent_exists = exists().where(
             AntilopayRecurrent.user_id == User.id,
             AntilopayRecurrent.is_active == True,
         )
+        active_yookassa_exists = exists().where(
+            SavedPaymentMethod.user_id == User.id,
+            SavedPaymentMethod.is_active == True,
+        )
         if is_recurrent:
-            query = query.where(active_recurrent_exists)
+            query = query.where(or_(active_recurrent_exists, active_yookassa_exists))
         else:
-            query = query.where(~active_recurrent_exists)
+            query = query.where(and_(~active_recurrent_exists, ~active_yookassa_exists))
 
     if search:
         search_term = f'%{search}%'
@@ -1347,10 +1358,20 @@ async def get_users_statistics(db: AsyncSession) -> dict:
     new_month = month_result.scalar()
 
     # Recurrent users count
-    from app.database.models import AntilopayRecurrent
+    from app.database.models import AntilopayRecurrent, SavedPaymentMethod
     recurrent_result = await db.execute(
-        select(func.count(func.distinct(AntilopayRecurrent.user_id)))
-        .where(AntilopayRecurrent.is_active == True)
+        select(func.count(User.id)).where(
+            or_(
+                exists().where(
+                    AntilopayRecurrent.user_id == User.id,
+                    AntilopayRecurrent.is_active == True,
+                ),
+                exists().where(
+                    SavedPaymentMethod.user_id == User.id,
+                    SavedPaymentMethod.is_active == True,
+                ),
+            )
+        )
     )
     recurrent_users = recurrent_result.scalar() or 0
 

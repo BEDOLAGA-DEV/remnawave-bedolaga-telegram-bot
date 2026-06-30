@@ -768,6 +768,10 @@ async def show_recurrent_users(
             r.title or r.pay_data
             for r in (getattr(user, 'antilopay_recurrents', None) or [])
             if r.is_active and (r.title or r.pay_data)
+        ] + [
+            s.title or f"{s.card_type or 'Card'} *{s.card_last4 or '****'}"
+            for s in (getattr(user, 'saved_payment_methods', None) or [])
+            if s.is_active
         ]
         card_info = recurrent_cards[0] if recurrent_cards else 'Карта'
 

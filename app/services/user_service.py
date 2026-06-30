@@ -375,12 +375,16 @@ class UserService:
         """Возвращает пользователей, которые привязали карту для автопродлений (активный рекуррент)."""
         try:
             offset = (page - 1) * limit
-            from app.database.models import AntilopayRecurrent
-            from sqlalchemy import exists
+            from app.database.models import AntilopayRecurrent, SavedPaymentMethod
+            from sqlalchemy import exists, or_
 
             active_recurrent_exists = exists().where(
                 AntilopayRecurrent.user_id == User.id,
                 AntilopayRecurrent.is_active == True,
+            )
+            active_yookassa_exists = exists().where(
+                SavedPaymentMethod.user_id == User.id,
+                SavedPaymentMethod.is_active == True,
             )
 
             query = (
@@ -388,8 +392,9 @@ class UserService:
                 .options(
                     selectinload(User.subscriptions).selectinload(Subscription.tariff),
                     selectinload(User.antilopay_recurrents),
+                    selectinload(User.saved_payment_methods),
                 )
-                .where(active_recurrent_exists)
+                .where(or_(active_recurrent_exists, active_yookassa_exists))
                 .order_by(User.created_at.desc())
                 .offset(offset)
                 .limit(limit)
@@ -399,7 +404,7 @@ class UserService:
             users = result.scalars().unique().all()
 
             count_query = (
-                select(func.count(User.id)).where(active_recurrent_exists)
+                select(func.count(User.id)).where(or_(active_recurrent_exists, active_yookassa_exists))
             )
             total_count = (await db.execute(count_query)).scalar() or 0
             total_pages = (total_count + limit - 1) // limit if total_count else 0

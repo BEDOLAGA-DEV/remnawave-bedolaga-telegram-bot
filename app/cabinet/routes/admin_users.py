@@ -177,7 +177,10 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
                 )
             )
 
-    is_recurrent = any(r.is_active for r in getattr(user, 'antilopay_recurrents', []) or [])
+    is_recurrent = (
+        any(r.is_active for r in getattr(user, 'antilopay_recurrents', []) or []) or
+        any(s.is_active for s in getattr(user, 'saved_payment_methods', []) or [])
+    )
 
     return UserListItem(
         id=user.id,
@@ -652,14 +655,20 @@ async def get_users_stats(
     deleted_count = (await db.execute(deleted_q)).scalar() or 0
 
     # Count recurrent users (users with active card)
-    from app.database.models import AntilopayRecurrent
-    from sqlalchemy import exists
+    from app.database.models import AntilopayRecurrent, SavedPaymentMethod
+    from sqlalchemy import exists, or_
 
     active_recurrent_exists = exists().where(
         AntilopayRecurrent.user_id == User.id,
         AntilopayRecurrent.is_active == True,
     )
-    recurrent_count_q = select(func.count(User.id)).where(active_recurrent_exists)
+    active_yookassa_exists = exists().where(
+        SavedPaymentMethod.user_id == User.id,
+        SavedPaymentMethod.is_active == True,
+    )
+    recurrent_count_q = select(func.count(User.id)).where(
+        or_(active_recurrent_exists, active_yookassa_exists)
+    )
     recurrent_users_count = (await db.execute(recurrent_count_q)).scalar() or 0
 
     return UsersStatsResponse(
@@ -833,6 +842,10 @@ async def get_user_detail(
             r.title or r.pay_data
             for r in (getattr(user, 'antilopay_recurrents', None) or [])
             if r.is_active and (r.title or r.pay_data)
+        ] + [
+            s.title or f"{s.card_type or 'Card'} *{s.card_last4 or '****'}"
+            for s in (getattr(user, 'saved_payment_methods', None) or [])
+            if s.is_active
         ],
     )
 
