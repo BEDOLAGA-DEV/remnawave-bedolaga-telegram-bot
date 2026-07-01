@@ -3,11 +3,48 @@ from typing import Any
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.localization.texts import get_texts
+from app.middlewares.admin_permission import resolve_admin_section
+
+
+# Callbacks only superadmins may see, regardless of section permissions.
+_SUPER_ONLY_CALLBACKS = {'admin_bot_roles'}
 
 
 def _t(texts, key: str, default: str) -> str:
     """Helper for localized button labels with fallbacks."""
     return texts.t(key, default)
+
+
+def filter_admin_keyboard(
+    markup: InlineKeyboardMarkup,
+    *,
+    permissions: list[str] | None,
+    is_super: bool,
+) -> InlineKeyboardMarkup:
+    """Drop buttons the admin may not use.
+
+    ``permissions=None`` together with ``is_super=True`` means full access
+    (superadmin) and the keyboard is returned unchanged. For a section admin,
+    a button is kept when its callback has no section (navigation/unmapped) or
+    its section is in ``permissions``. Super-only callbacks are hidden.
+    """
+    if is_super:
+        return markup
+
+    allowed = set(permissions or [])
+    rows: list[list[InlineKeyboardButton]] = []
+    for row in markup.inline_keyboard:
+        kept = []
+        for button in row:
+            cb = button.callback_data or ''
+            if cb in _SUPER_ONLY_CALLBACKS:
+                continue
+            section = resolve_admin_section(cb)
+            if section is None or section in allowed:
+                kept.append(button)
+        if kept:
+            rows.append(kept)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_admin_main_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
