@@ -177,6 +177,22 @@ async def get_effective_tariff_squad_uuids(
     return [squad.squad_uuid for squad in available if squad.squad_uuid]
 
 
+def resolve_effective_squads(
+    connected_squads: list[str] | None,
+    default_uuid: str | None,
+) -> list[str]:
+    """Return connected squads, falling back to the default (main) squad when empty.
+
+    Pure function — no DB. Deduplicates while preserving order.
+    """
+    squads = [squad_uuid for squad_uuid in (connected_squads or []) if squad_uuid]
+    if squads:
+        return list(dict.fromkeys(squads))
+    if default_uuid:
+        return [default_uuid]
+    return []
+
+
 async def get_active_server_squads(db: AsyncSession) -> list[ServerSquad]:
     """Возвращает список активных серверов, доступных для подключения."""
 
