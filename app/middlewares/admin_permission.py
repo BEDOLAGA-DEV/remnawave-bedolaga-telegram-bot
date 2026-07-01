@@ -156,7 +156,91 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_revenue_period', 'analytics'),
     ('admin_mon_', 'analytics'),
     ('admin_wl_analytics', 'analytics'),
+    # --- nz!_ ADMIN actions -------------------------------------------------
+    # The nz!_ namespace is shared: ~120 ADMIN actions and ~312 USER actions
+    # live under it. Only SPECIFIC admin prefixes are mapped here; every prefix
+    # below was proven (against the full nz! classification + actual handler
+    # registration) not to swallow any USER callback. The bare ambiguous
+    # prefixes (nz!_period_, nz!_sync_) are deliberately NOT mapped.
+    # nz! broadcasts
+    ('nz!_broadcast_', 'broadcasts'),
+    ('nz!_criteria_', 'broadcasts'),
+    ('nz!_bcast_', 'broadcasts'),
+    ('nz!_btn_', 'broadcasts'),
+    ('nz!_edit_buttons', 'broadcasts'),
+    ('nz!_buttons_confirm', 'broadcasts'),
+    ('nz!_add_media_', 'broadcasts'),
+    ('nz!_change_media', 'broadcasts'),
+    ('nz!_confirm_media', 'broadcasts'),
+    ('nz!_replace_media', 'broadcasts'),
+    ('nz!_skip_media', 'broadcasts'),
+    ('nz!_user_messages_panel', 'broadcasts'),
+    ('nz!_add_user_message', 'broadcasts'),
+    ('nz!_edit_user_message', 'broadcasts'),
+    ('nz!_delete_user_message', 'broadcasts'),
+    ('nz!_toggle_user_message', 'broadcasts'),
+    ('nz!_view_user_message', 'broadcasts'),
+    ('nz!_list_user_messages', 'broadcasts'),
+    ('nz!_user_messages_stats', 'broadcasts'),
+    # nz! settings
+    ('nz!_welcome_text_panel', 'settings'),
+    ('nz!_edit_welcome_text', 'settings'),
+    ('nz!_preview_welcome_text', 'settings'),
+    ('nz!_reset_welcome_text', 'settings'),
+    ('nz!_toggle_welcome_text', 'settings'),
+    ('nz!_show_welcome_text', 'settings'),
+    ('nz!_show_formatting_help', 'settings'),
+    ('nz!_show_placeholders_help', 'settings'),
+    ('nz!_maintenance_', 'settings'),
+    ('nz!_manual_notify_', 'settings'),
+    ('nz!_reqch', 'settings'),
+    # nz! servers
+    ('nz!_node_', 'servers'),
+    ('nz!_squad_', 'servers'),
+    ('nz!_sqd_', 'servers'),
+    ('nz!_create_squad_finish', 'servers'),
+    ('nz!_create_tgl_', 'servers'),
+    ('nz!_cancel_squad_create', 'servers'),
+    ('nz!_cancel_rename_', 'servers'),
+    # nz!_sync_ is AMBIGUOUS; only the two exact admin sync actions are mapped.
+    ('nz!_sync_all_users', 'servers'),
+    ('nz!_sync_to_panel', 'servers'),
+    ('nz!_remnawave_auto_sync', 'servers'),
+    ('nz!_force_cleanup_orphaned', 'servers'),
+    # nz! promos
+    ('nz!_promo_manage_', 'promos'),
+    ('nz!_promo_toggle_', 'promos'),
+    ('nz!_promo_stats_', 'promos'),
+    ('nz!_promo_delete_', 'promos'),
+    ('nz!_promo_edit_', 'promos'),
+    ('nz!_promo_type_', 'promos'),
+    ('nz!_promo_select_group_', 'promos'),
+    ('nz!_promo_group_', 'promos'),
+    # nz!_promo_offer_ is admin (promo_offers.py); nz!_promo_offer_close is the
+    # one USER token under it and is excluded via NZ_NEVER_GATE below.
+    ('nz!_promo_offer_', 'promos'),
+    ('nz!_poll_create', 'promos'),
+    ('nz!_poll_view', 'promos'),
+    ('nz!_poll_stats', 'promos'),
+    ('nz!_poll_send', 'promos'),
+    ('nz!_poll_delete', 'promos'),
+    ('nz!_poll_target', 'promos'),
+    ('nz!_poll_custom_target', 'promos'),
+    ('nz!_poll_custom_menu', 'promos'),
+    # nz! tariffs
+    ('nz!_tariff_type_daily', 'tariffs'),
+    ('nz!_tariff_type_periodic', 'tariffs'),
 ]
+
+
+# USER callbacks that would otherwise be swallowed by a broad admin prefix
+# above. These share their prefix with an admin family but are handled by a
+# USER handler, so they must NEVER gate. Checked before the prefix map.
+NZ_NEVER_GATE: frozenset[str] = frozenset({
+    # Registered by claim_discount_offer / promo_offer close in the user
+    # subscription flow, but the leading prefix overlaps admin promo actions.
+    'nz!_promo_offer_close',
+})
 
 
 # Navigation-only callbacks: any admin (super or role) can open them.
@@ -169,8 +253,16 @@ ALWAYS_ALLOWED_PREFIXES: tuple[str, ...] = (
 
 
 def resolve_admin_section(callback_data: str) -> str | None:
-    """Return the section a given admin_*/spromo_* callback belongs to, or None if unknown."""
-    if not callback_data or not callback_data.startswith(('admin_', 'spromo_')):
+    """Return the section a given admin_*/nz!_*/spromo_* callback belongs to, or None.
+
+    The nz!_ namespace is shared between admin and user actions; only the
+    specific admin prefixes in ADMIN_CALLBACK_SECTION_MAP resolve to a section,
+    and NZ_NEVER_GATE forces the handful of user tokens that overlap an admin
+    prefix back to None. Everything else (all user callbacks) returns None.
+    """
+    if not callback_data or not callback_data.startswith(('admin_', 'nz!_', 'spromo_')):
+        return None
+    if callback_data in NZ_NEVER_GATE:
         return None
     for prefix, section in ADMIN_CALLBACK_SECTION_MAP:
         if prefix.endswith('_'):
@@ -196,8 +288,13 @@ class AdminPermissionMiddleware(BaseMiddleware):
         if not isinstance(event, CallbackQuery) or not event.data:
             return await handler(event, data)
 
-        cb = event.data
-        if not cb.startswith('admin_'):
+        cb = event.data or ''
+        # Resolution-driven gate: only callbacks that resolve to a section are
+        # gated. Everything else — including every user nz!_ callback and any
+        # unmapped admin_ callback — passes straight through. Do NOT log here:
+        # this branch fires for hundreds of user callbacks per second.
+        required = resolve_admin_section(cb)
+        if required is None:
             return await handler(event, data)
 
         # Always-allowed navigation
@@ -215,15 +312,6 @@ class AdminPermissionMiddleware(BaseMiddleware):
         db = data.get('db')
         db_user = data.get('db_user')
         if db is None or db_user is None:
-            return await handler(event, data)
-
-        # Resolve required section
-        required = resolve_admin_section(cb)
-        if required is None:
-            # Unknown admin callback — fall through to admin_required decorator,
-            # which still gates by "any role". Better than a hard deny while we
-            # haven't mapped every callback.
-            logger.info('admin callback not in section map (fallback to any-admin)', callback_data=cb)
             return await handler(event, data)
 
         try:
