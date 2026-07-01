@@ -3750,6 +3750,16 @@ def get_updated_subscription_settings_keyboard(
 
     # Для суточных тарифов кнопка паузы теперь в главном меню подписки
 
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                text=texts.t('PROTOCOLS_BUTTON', '🧩 Протоколы'),
+                callback_data='nz!_subscription_protocols',
+                style='primary',
+            )
+        ]
+    )
+
     if show_countries_management and not has_tariff:
         keyboard.append(
             [
