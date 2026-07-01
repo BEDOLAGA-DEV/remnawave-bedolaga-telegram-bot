@@ -715,7 +715,13 @@ async def purchase_tariff(
             if existing_subscription is None:
                 from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-                existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
+                # include_inactive=True so an EXPIRED (or disabled) trial of THIS
+                # tariff is found and converted in place via the extend branch
+                # below (same Remnawave user → same link). Without it the expired
+                # trial is invisible → killed → re-created with a new link.
+                existing_subscription = await get_subscription_by_user_and_tariff(
+                    db, user.id, tariff.id, include_inactive=True
+                )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
         device_limit = None

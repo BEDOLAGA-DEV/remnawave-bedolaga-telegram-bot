@@ -492,10 +492,16 @@ async def _build_enrichment(db: AsyncSession, user_map: dict[str, User]) -> dict
             except Exception:
                 logger.warning('Failed to fetch panel users for enrichment', exc_info=True)
 
+            # HWID-устройства в Remnawave 2.8.0 ссылаются на пользователя по
+            # числовому panel id (device['userId']), а не по uuid, поэтому строим
+            # карту panel numeric id → bot user id параллельно с обходом панели.
+            panel_id_to_user_id: dict[int, int] = {}
             for pu in panel_users:
                 uid = uuid_to_user_id.get(pu.uuid)
                 if uid is None:
                     continue
+                if pu.id is not None:
+                    panel_id_to_user_id[pu.id] = uid
                 if pu.user_traffic and pu.user_traffic.last_connected_node_uuid:
                     last_node_uuid_by_user[uid] = pu.user_traffic.last_connected_node_uuid
 
@@ -503,8 +509,7 @@ async def _build_enrichment(db: AsyncSession, user_map: dict[str, User]) -> dict
             try:
                 devices_data = await api.get_all_hwid_devices()
                 for device in devices_data.get('devices', []):
-                    user_uuid = device.get('userUuid', '')
-                    uid = uuid_to_user_id.get(user_uuid)
+                    uid = panel_id_to_user_id.get(device.get('userId'))
                     if uid is not None:
                         devices_by_user[uid] = devices_by_user.get(uid, 0) + 1
             except Exception:

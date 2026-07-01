@@ -54,8 +54,14 @@ router = APIRouter()
 
 
 def _resolve_panel_uuid(subscription: Subscription | None, user: User) -> str | None:
-    """Resolve RemnaWave panel UUID: per-subscription in multi-tariff, user-level otherwise."""
-    if settings.is_multi_tariff_enabled() and subscription and subscription.remnawave_uuid:
+    """Resolve RemnaWave panel UUID: per-subscription in multi-tariff, user-level otherwise.
+
+    Multi-tariff: each subscription is its OWN panel user — return the sub's UUID
+    and do NOT fall back to ``user.remnawave_uuid`` when it's null. The fallback
+    would read/operate on another tariff's panel user, making HWID devices/limit
+    look shared across tariffs (баг с общим лимитом «по наименьшему тарифу»).
+    """
+    if settings.is_multi_tariff_enabled() and subscription is not None:
         return subscription.remnawave_uuid
     return user.remnawave_uuid
 

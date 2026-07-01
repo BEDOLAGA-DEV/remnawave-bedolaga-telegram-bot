@@ -85,6 +85,18 @@ _TEXT_KEY_TO_SETTING: dict[str, str] = {
     'WEBHOOK_TORRENT_DETECTED': 'WEBHOOK_NOTIFY_TORRENT_DETECTED',
 }
 
+# Remnawave 2.8.0 объединил 4 события об истечении (user.expires_in_72_hours,
+# _48_hours, _24_hours, user.expired_24_hours_ago) в одно user.expiration с
+# meta.expiration — знаковым числом часов относительно истечения (отрицательное =
+# за |N| ч ДО, положительное = через N ч ПОСЛЕ). Канонический конфиг панели
+# EXPIRATION_NOTIFICATIONS=[-72, -48, -24, 24] повторяет прежнее поведение.
+_EXPIRATION_HOURS_TO_TEXT_KEY: dict[int, str] = {
+    -72: 'WEBHOOK_SUB_EXPIRES_72H',
+    -48: 'WEBHOOK_SUB_EXPIRES_48H',
+    -24: 'WEBHOOK_SUB_EXPIRES_24H',
+    24: 'WEBHOOK_SUB_EXPIRED_24H_AGO',
+}
+
 # Admin event display names for notification messages
 _ADMIN_NODE_EVENTS: dict[str, str] = {
     'node.created': '🟢 Нода создана',
@@ -102,6 +114,9 @@ _ADMIN_SERVICE_EVENTS: dict[str, str] = {
     'service.login_attempt_failed': '🔐 Неудачная попытка входа в панель',
     'service.login_attempt_success': '🔓 Успешный вход в панель',
     'service.subpage_config_changed': '📄 Конфиг страницы подписки изменён',
+    # 2.8.0: новые события жизненного цикла API-токена панели (security-релевантно)
+    'service.api_token_created': '🔑 Создан API-токен панели',
+    'service.api_token_deleted': '🗝️ Удалён API-токен панели',
 }
 
 _ADMIN_CRM_EVENTS: dict[str, str] = {
@@ -197,10 +212,13 @@ class RemnaWaveWebhookService:
             'user.deleted': self._handle_user_deleted,
             'user.revoked': self._handle_user_revoked,
             'user.created': self._handle_user_created,
+            # Старые (≤2.7.x) события об истечении — оставлены для обратной совместимости.
             'user.expires_in_72_hours': self._handle_expires_in_72h,
             'user.expires_in_48_hours': self._handle_expires_in_48h,
             'user.expires_in_24_hours': self._handle_expires_in_24h,
             'user.expired_24_hours_ago': self._handle_expired_24h_ago,
+            # 2.8.0: единое событие, заменившее 4 выше (meta.expiration — знаковые часы).
+            'user.expiration': self._handle_user_expiration,
             'user.first_connected': self._handle_first_connected,
             'user.bandwidth_usage_threshold_reached': self._handle_bandwidth_threshold,
             'user.not_connected': self._handle_user_not_connected,
@@ -408,8 +426,12 @@ class RemnaWaveWebhookService:
         # Build message from event data (escape all untrusted values to prevent HTML injection)
         lines = [f'<b>{title}</b>']
 
-        # Extract common fields
-        name = html.escape(data.get('name') or data.get('nodeName') or data.get('username') or '')
+        # Extract common fields. 2.8.0 service.api_token_* events nest the token
+        # name under data.apiToken.name (see service.event.interface.ts).
+        api_token = data.get('apiToken') if isinstance(data.get('apiToken'), dict) else {}
+        name = html.escape(
+            data.get('name') or data.get('nodeName') or data.get('username') or api_token.get('name') or ''
+        )
         if name:
             lines.append(f'Имя: <code>{name}</code>')
 
@@ -1155,8 +1177,17 @@ class RemnaWaveWebhookService:
             except (ValueError, TypeError):
                 pass
 
-        # Sync used traffic
-        used_traffic_bytes = data.get('usedTrafficBytes')
+        # Sync used traffic. usedTrafficBytes живёт в nested userTraffic
+        # (ExtendedUsersSchema.userTraffic; базовый UsersSchema плоского поля не
+        # содержит) — читаем nested-first, как _get_user_traffic_bytes в sync-сервисе,
+        # с fallback на плоский ключ для старых панелей. Без этого used-traffic не
+        # синхронизировался из user.modified-вебхуков (поле всегда было None).
+        user_traffic = data.get('userTraffic')
+        used_traffic_bytes = (
+            user_traffic.get('usedTrafficBytes')
+            if isinstance(user_traffic, dict) and user_traffic.get('usedTrafficBytes') is not None
+            else data.get('usedTrafficBytes')
+        )
         if used_traffic_bytes is not None:
             try:
                 new_used_gb = round(int(used_traffic_bytes) / (1024**3), 2)
@@ -1567,6 +1598,54 @@ class RemnaWaveWebhookService:
             subscription=subscription,
         )
 
+    async def _handle_user_expiration(
+        self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
+    ) -> None:
+        """Remnawave 2.8.0: единое событие user.expiration (заменило 4 старых).
+
+        ``meta.expiration`` — знаковые часы относительно истечения подписки
+        (отрицательное = за |N| ч ДО, положительное = через N ч ПОСЛЕ). Канонические
+        значения [-72, -48, -24, 24] маппятся на прежние сообщения 1:1; нестандартные
+        значения из EXPIRATION_NOTIFICATIONS получают ближайшее по смыслу сообщение.
+        """
+        if not subscription:
+            logger.info('Webhook user.expiration: подписка не найдена в БД, пропуск', user_id=user.id)
+            return
+
+        # Ресивер кладёт envelope-meta вебхука в data['_meta'] (см.
+        # remnawave_webhook.py: «Inject meta into data ... via data.get('_meta')»),
+        # ровно как читает сосед _handle_user_not_connected. НЕ 'meta'.
+        meta = data.get('_meta') if isinstance(data.get('_meta'), dict) else {}
+        raw = meta.get('expiration', data.get('expiration'))
+        try:
+            hours = int(raw)
+        except (TypeError, ValueError):
+            logger.warning('Webhook user.expiration: некорректное meta.expiration', user_id=user.id, raw=raw)
+            return
+
+        text_key = _EXPIRATION_HOURS_TO_TEXT_KEY.get(hours)
+        if text_key is None:
+            # Нестандартный EXPIRATION_NOTIFICATIONS: отрицательное → ближайшее «до
+            # истечения», положительное → «истекла» (другого «после»-сообщения нет).
+            if hours < 0:
+                nearest = min((-72, -48, -24), key=lambda h: abs(h - hours))
+                text_key = _EXPIRATION_HOURS_TO_TEXT_KEY[nearest]
+            else:
+                text_key = 'WEBHOOK_SUB_EXPIRED_24H_AGO'
+            logger.info(
+                'Webhook user.expiration: нестандартное значение, выбрано ближайшее сообщение',
+                user_id=user.id,
+                hours=hours,
+                text_key=text_key,
+            )
+
+        await self._notify_user(
+            user,
+            text_key,
+            reply_markup=self._get_renew_keyboard(user, subscription.id),
+            subscription=subscription,
+        )
+
     async def _handle_first_connected(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
     ) -> None:
@@ -1591,8 +1670,8 @@ class RemnaWaveWebhookService:
         # Extract threshold percentage from meta or data
         percent = data.get('thresholdPercent') or data.get('threshold', '')
         if not percent:
-            # Try to extract from meta
-            meta = data.get('meta', {})
+            # Envelope-meta живёт в data['_meta'] (ресивер), не в 'meta'.
+            meta = data.get('_meta', {})
             if isinstance(meta, dict):
                 percent = meta.get('thresholdPercent', '80')
 

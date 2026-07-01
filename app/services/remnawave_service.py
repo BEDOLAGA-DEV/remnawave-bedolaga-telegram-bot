@@ -755,18 +755,32 @@ class RemnaWaveService:
                 except Exception:
                     top = {}
             stats = data.get('stats', {}) or {}
+            by_platform = data.get('byPlatform', []) or []
+
+            # 2.8.0: top-level byApp убран — он переехал внутрь byPlatform[].byApp.
+            # Backward-compat: сначала пробуем top-level (панели 2.7.x), иначе
+            # агрегируем вложенные byApp по всем платформам, суммируя count по имени.
+            by_app_raw = data.get('byApp')
+            if not by_app_raw:
+                app_counts: dict[str, int] = {}
+                for p in by_platform:
+                    nested = p.get('byApp')
+                    if not isinstance(nested, list):  # malformed/absent — skip, don't blow up the whole payload
+                        continue
+                    for a in nested:
+                        name = a.get('app') or 'Unknown'
+                        app_counts[name] = app_counts.get(name, 0) + (a.get('count') or 0)
+                by_app_raw = [{'app': name, 'count': count} for name, count in app_counts.items()]
+
             return {
                 'top_users': [
                     {'username': u.get('username') or '', 'devices_count': u.get('devicesCount', 0)}
                     for u in top.get('users', [])
                 ],
                 'by_platform': [
-                    {'platform': p.get('platform') or 'Unknown', 'count': p.get('count', 0)}
-                    for p in data.get('byPlatform', [])
+                    {'platform': p.get('platform') or 'Unknown', 'count': p.get('count') or 0} for p in by_platform
                 ],
-                'by_app': [
-                    {'app': a.get('app') or 'Unknown', 'count': a.get('count', 0)} for a in data.get('byApp', [])
-                ],
+                'by_app': [{'app': a.get('app') or 'Unknown', 'count': a.get('count') or 0} for a in by_app_raw],
                 'total_unique_devices': stats.get('totalUniqueDevices', 0),
                 'total_hwid_devices': stats.get('totalHwidDevices', 0),
                 'average_devices_per_user': stats.get('averageHwidDevicesPerUser', 0),
@@ -1316,22 +1330,23 @@ class RemnaWaveService:
 
             async with self.get_api_client() as api:
                 panel_users = []
-                start = 0
-                size = 500  # Увеличен размер батча для ускорения загрузки
+                cursor: str | None = None
+                size = 500  # Размер страницы курсорной пагинации
 
                 while True:
-                    logger.info('📥 Загружаем пользователей', start=start, size=size)
+                    logger.info('📥 Загружаем пользователей', cursor=cursor, size=size)
 
-                    # enrich_happ_links=False - happ_crypto_link уже возвращается API в поле happ.cryptoLink
-                    # Не делаем дополнительные HTTP-запросы для каждого пользователя
-                    response = await api.get_all_users(start=start, size=size, enrich_happ_links=False)
-                    users_batch = response['users']
-                    total_users = response['total']
+                    # 2.8.0: курсорная (keyset) пагинация /api/users/stream — устойчива
+                    # к мутациям во время обхода. enrich_happ_links=False: bulk-список
+                    # не содержит happ.cryptoLink, а обогащать каждого пользователя
+                    # отдельным запросом дорого (и happ-encrypt удалён в 2.8.0).
+                    page = await api.get_all_users_page_stream(cursor=cursor, size=size, enrich_happ_links=False)
+                    users_batch = page['users']
 
                     logger.info(
                         '📊 Получена партия пользователей из панели',
                         users_batch_count=len(users_batch),
-                        total_users=total_users,
+                        loaded_so_far=len(panel_users) + len(users_batch),
                     )
 
                     for user_obj in users_batch:
@@ -1352,13 +1367,10 @@ class RemnaWaveService:
                         }
                         panel_users.append(user_dict)
 
-                    if len(users_batch) < size:
+                    if not page['hasMore'] or not page['nextCursor']:
                         break
 
-                    start += size
-
-                    if start > total_users:
-                        break
+                    cursor = page['nextCursor']
 
                 logger.info('✅ Всего загружено пользователей из панели', panel_users_count=len(panel_users))
 
@@ -1887,13 +1899,12 @@ class RemnaWaveService:
             # Load all panel users
             async with self.get_api_client() as api:
                 panel_users = []
-                start = 0
+                cursor: str | None = None
                 size = 500
 
                 while True:
-                    response = await api.get_all_users(start=start, size=size, enrich_happ_links=False)
-                    users_batch = response['users']
-                    total_users = response['total']
+                    page = await api.get_all_users_page_stream(cursor=cursor, size=size, enrich_happ_links=False)
+                    users_batch = page['users']
                     for user_obj in users_batch:
                         panel_users.append(
                             {
@@ -1912,11 +1923,9 @@ class RemnaWaveService:
                                 'activeInternalSquads': user_obj.active_internal_squads,
                             }
                         )
-                    if len(users_batch) < size:
+                    if not page['hasMore'] or not page['nextCursor']:
                         break
-                    start += size
-                    if start > total_users:
-                        break
+                    cursor = page['nextCursor']
 
             logger.info('✅ [multi-tariff] Загружено из панели', panel_users_count=len(panel_users))
 
@@ -2028,7 +2037,7 @@ class RemnaWaveService:
                         else:
                             _sub_status = SubscriptionStatus.DISABLED
 
-                        _traffic_limit_bytes = panel_user.get('trafficLimitBytes', 0) or 0
+                        _traffic_limit_bytes = int(panel_user.get('trafficLimitBytes') or 0)  # 2.8.0: number→int
                         _used_bytes = panel_user.get('usedTrafficBytes', 0) or 0
                         _squads = panel_user.get('activeInternalSquads', []) or []
                         _squad_uuids = []
@@ -2161,7 +2170,7 @@ class RemnaWaveService:
             else:
                 status = SubscriptionStatus.DISABLED
 
-            traffic_limit_bytes = panel_user.get('trafficLimitBytes', 0)
+            traffic_limit_bytes = int(panel_user.get('trafficLimitBytes') or 0)  # 2.8.0: number→int
             traffic_limit_gb = traffic_limit_bytes // (1024**3) if traffic_limit_bytes > 0 else 0
 
             used_traffic_bytes = _get_user_traffic_bytes(panel_user)
@@ -2721,11 +2730,11 @@ class RemnaWaveService:
                 # Если не нашли по username, ищем по email среди всех пользователей (с пагинацией)
                 try:
                     page_size = 500
-                    start = 0
+                    cursor: str | None = None
                     while True:
-                        page_response = await api.get_all_users(start=start, size=page_size)
+                        # 2.8.0: курсорная пагинация /api/users/stream (с ранним выходом по совпадению)
+                        page_response = await api.get_all_users_page_stream(cursor=cursor, size=page_size)
                         users_list = page_response.get('users', [])
-                        total = page_response.get('total', 0)
 
                         for panel_user in users_list:
                             panel_email = panel_user.email if hasattr(panel_user, 'email') else None
@@ -2741,9 +2750,9 @@ class RemnaWaveService:
                                     )
                                     return panel_telegram_id
 
-                        start += len(users_list)
-                        if start >= total or not users_list:
+                        if not page_response.get('hasMore') or not page_response.get('nextCursor'):
                             break
+                        cursor = page_response['nextCursor']
                 except Exception as e:
                     logger.warning('Ошибка поиска пользователя по email', user_identifier=user_identifier, error=e)
 

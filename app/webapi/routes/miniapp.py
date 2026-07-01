@@ -2786,8 +2786,14 @@ async def _resolve_connected_servers(
     return connected_servers
 
 
-async def _load_devices_info(user: User) -> tuple[int, list[MiniAppDevice]]:
-    remnawave_uuid = getattr(user, 'remnawave_uuid', None)
+async def _load_devices_info(user: User, subscription=None) -> tuple[int, list[MiniAppDevice]]:
+    # Multi-tariff: каждая подписка — свой пользователь панели, поэтому берём
+    # UUID подписки, а не общий user.remnawave_uuid (иначе показали бы устройства
+    # другого тарифа и лимит выглядел бы общим). Single-tariff: один пользователь.
+    if subscription is not None and settings.is_multi_tariff_enabled():
+        remnawave_uuid = getattr(subscription, 'remnawave_uuid', None)
+    else:
+        remnawave_uuid = getattr(user, 'remnawave_uuid', None)
     if not remnawave_uuid:
         return 0, []
 
@@ -3381,7 +3387,7 @@ async def get_subscription_details(
         autopay_payload,
     )
 
-    devices_count, devices = await _load_devices_info(user)
+    devices_count, devices = await _load_devices_info(user, subscription)
 
     # Загружаем данные суточного тарифа
     is_daily_tariff = False

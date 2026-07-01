@@ -4,6 +4,7 @@
 Отправляет красивое сообщение с информацией о системе при запуске бота.
 """
 
+import asyncio
 import html
 from datetime import UTC, datetime
 from typing import Final
@@ -283,6 +284,50 @@ class StartupNotificationService:
             logger.error('Ошибка отправки стартового уведомления', e=e)
             return False
 
+    async def prewarm_logo(self) -> bool:
+        """Заранее загрузить логотип один раз и закешировать его Telegram file_id.
+
+        Без прогрева ~700КБ файл логотипа перезаливается на ПЕРВУЮ отправку каждой
+        рассылки/уведомления (file_id кешируется только после первого успеха), что на
+        медленном канале до Telegram подвешивает хвост цикла мониторинга. Шлём фото в
+        админ-чат (или в ЛС первого админа), ловим file_id и сразу удаляем сообщение.
+        Полностью best-effort: на любой ошибке тихо выходим, старт не блокируем.
+        """
+        try:
+            from app.utils.message_patch import _cache_logo_file_id, _logo_file_id, get_logo_media
+
+            if _logo_file_id:
+                return True
+
+            media = get_logo_media()
+            # None → логотип невалиден/отсутствует; str → file_id уже закеширован.
+            if media is None or isinstance(media, str):
+                return media is not None
+
+            target = self.chat_id or next(iter(settings.get_admin_ids()), None)
+            if not target:
+                logger.debug('prewarm_logo: нет целевого чата (admin), пропуск')
+                return False
+
+            send_kwargs: dict = {'chat_id': target, 'photo': media, 'disable_notification': True}
+            if self.topic_id and target == self.chat_id:
+                send_kwargs['message_thread_id'] = self.topic_id
+
+            timeout = getattr(settings, 'MONITORING_NOTIFICATION_SEND_TIMEOUT', 20.0)
+            msg = await asyncio.wait_for(self.bot.send_photo(**send_kwargs), timeout=timeout)
+            _cache_logo_file_id(msg)
+
+            try:
+                await self.bot.delete_message(chat_id=target, message_id=msg.message_id)
+            except Exception:
+                pass  # удаление best-effort — file_id уже пойман
+
+            logger.info('Логотип прогрет на старте: file_id закеширован', chat_id=target)
+            return True
+        except Exception as e:
+            logger.warning('Не удалось прогреть логотип на старте', error=str(e)[:200])
+            return False
+
 
 async def send_bot_startup_notification(bot: Bot) -> bool:
     """
@@ -295,6 +340,9 @@ async def send_bot_startup_notification(bot: Bot) -> bool:
         bool: True если уведомление отправлено успешно
     """
     service = StartupNotificationService(bot)
+    # Прогреваем file_id логотипа до первых рассылок, чтобы ~700КБ файл не
+    # перезаливался на каждой первой отправке (см. баг зависания мониторинга).
+    await service.prewarm_logo()
     return await service.send_startup_notification()
 
 

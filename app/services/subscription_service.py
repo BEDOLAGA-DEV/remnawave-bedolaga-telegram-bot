@@ -276,10 +276,11 @@ class SubscriptionService:
             try:
                 existing = await api.get_user_by_uuid(subscription.remnawave_uuid)
                 if existing:
-                    try:
-                        await api.reset_user_devices(existing.uuid)
-                    except Exception as hwid_error:
-                        logger.warning('⚠️ Не удалось сбросить HWID', hwid_error=hwid_error)
+                    if settings.RESET_DEVICES_ON_RENEWAL:
+                        try:
+                            await api.reset_user_devices(existing.uuid)
+                        except Exception as hwid_error:
+                            logger.warning('⚠️ Не удалось сбросить HWID', hwid_error=hwid_error)
 
                     updated = await api.update_user(uuid=existing.uuid, **common_kwargs)
                     if reset_traffic:
@@ -296,13 +297,20 @@ class SubscriptionService:
         # short_id (6 hex chars) приклеивается к base; helper гарантирует, что
         # итоговая длина ≤ REMNAWAVE_USERNAME_MAX_LENGTH (исторический баг с
         # `didykmarin_email_didykmarin_703_49883b` — 38 chars вместо 36).
+        #
+        # КРИТИЧНО для multi-tariff: суффикс ОБЯЗАН быть уникален per-subscription,
+        # иначе два тарифа одного юзера собирают ОДИНАКОВЫЙ username → панель
+        # возвращает одного и того же пользователя → общий HWID-лимит (баг «лимит
+        # по наименьшему тарифу»). На пустой/legacy short_id ('' из server_default)
+        # падаем на детерминированный per-subscription суффикс по id.
+        short_suffix = subscription.remnawave_short_id or f'sub{subscription.id}'
         username = settings.build_remnawave_subscription_username(
             full_name=user.full_name,
             username=user.username,
             telegram_id=user.telegram_id,
             email=user.email,
             user_id=user.id,
-            suffix=f'_{subscription.remnawave_short_id}',
+            suffix=f'_{short_suffix}',
         )
 
         updated_user = await api.create_user(username=username, **common_kwargs)
@@ -372,11 +380,12 @@ class SubscriptionService:
             logger.info('🔄 Найден существующий пользователь в панели', _format_user_log=self._format_user_log(user))
             remnawave_user = existing_users[0]
 
-            try:
-                await api.reset_user_devices(remnawave_user.uuid)
-                logger.info('🔧 Сброшены HWID устройства', _format_user_log=self._format_user_log(user))
-            except Exception as hwid_error:
-                logger.warning('⚠️ Не удалось сбросить HWID', hwid_error=hwid_error)
+            if settings.RESET_DEVICES_ON_RENEWAL:
+                try:
+                    await api.reset_user_devices(remnawave_user.uuid)
+                    logger.info('🔧 Сброшены HWID устройства', _format_user_log=self._format_user_log(user))
+                except Exception as hwid_error:
+                    logger.warning('⚠️ Не удалось сбросить HWID', hwid_error=hwid_error)
 
             updated_user = await api.update_user(uuid=remnawave_user.uuid, **common_kwargs)
             if reset_traffic:

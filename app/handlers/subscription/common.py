@@ -40,6 +40,18 @@ async def resolve_subscription_from_context(
     2. FSM state 'active_subscription_id' (set by my_subscriptions delegation)
     3. Single active subscription (auto-select)
     4. Legacy: db_user.subscription (single-tariff mode)
+
+    ⚠️ FOOTGUN (issue #3012): priority #1 trusts the LAST colon-segment as a
+    subscription_id. A handler reached by a callback shaped ``prefix:<int>`` where
+    that trailing int is NOT a subscription_id (a period, GB amount, device count,
+    days, tariff_id, page…) will resolve the WRONG subscription whenever that number
+    equals one of the user's OTHER subscription ids — and may renew/switch/charge it.
+    INVARIANT for callers: do NOT route a ``prefix:<non-sub-id-int>`` callback through
+    this resolver. Either put the real subscription_id as the trailing segment, use a
+    non-colon separator (``foo_5`` bypasses priority #1 → FSM), or parse the sub_id
+    explicitly and load via ``get_subscription_by_id_for_user``. The tariff
+    extend/switch flows were fixed this way; the rest of the codebase currently holds
+    this invariant (audited).
     """
     from app.database.crud.subscription import (
         get_active_subscriptions_by_user_id,

@@ -241,6 +241,12 @@ class RemnaWaveTransientError(RemnaWaveAPIError):
 
 
 class RemnaWaveAPI:
+    # Remnawave 2.8.0 удалил POST /api/system/tools/happ/encrypt. Клиент создаётся
+    # на каждый запрос, поэтому флаг доступности happ-encrypt держим на классе: после
+    # первого 404 перестаём звать удалённый эндпоинт (иначе 404 + warning на каждый
+    # вызов get_subscription_info/enrich_user_with_happ_link). Сбрасывается рестартом.
+    _happ_encrypt_unavailable: bool = False
+
     def __init__(
         self,
         base_url: str,
@@ -593,7 +599,10 @@ class RemnaWaveAPI:
         """Get subscription request history for a panel user.
 
         Returns dict with 'total' and 'records' list.
-        Each record has: id, userUuid, requestAt, requestIp, userAgent.
+        Each record has: id, userId, requestAt, requestIp, userAgent.
+
+        Remnawave 2.8.0+: поле ``userUuid`` (uuid) переименовано в ``userId``
+        (числовой внутренний id пользователя панели).
         """
         try:
             response = await self._make_request(
@@ -746,6 +755,49 @@ class RemnaWaveAPI:
             users = [await self.enrich_user_with_happ_link(u) for u in users]
 
         return {'users': users, 'total': response['response']['total']}
+
+    async def get_all_users_page_stream(
+        self, cursor: str | None = None, size: int = 500, enrich_happ_links: bool = False
+    ) -> dict[str, Any]:
+        """Одна страница keyset-пагинации пользователей (Remnawave 2.8.0+).
+
+        ``GET /api/users/stream`` — курсорная пагинация, устойчивая к мутациям
+        во время полного обхода (offset-пагинация ``/api/users`` сдвигается, если
+        пользователей удаляют/создают между страницами). Передавай ``nextCursor``
+        из предыдущего ответа; на первой странице ``cursor=None``.
+
+        Возвращает ``{'users': [...], 'nextCursor': str | None, 'hasMore': bool}``.
+        """
+        params: dict[str, Any] = {'size': size}
+        if cursor is not None:
+            params['cursor'] = cursor
+
+        response = await self._make_request('GET', '/api/users/stream', params=params)
+        data = response['response']
+
+        users = [self._parse_user(user) for user in data['users']]
+        if enrich_happ_links:
+            users = [await self.enrich_user_with_happ_link(u) for u in users]
+
+        return {
+            'users': users,
+            'nextCursor': data.get('nextCursor'),
+            'hasMore': bool(data.get('hasMore')),
+        }
+
+    async def get_all_users_stream(self, size: int = 500, enrich_happ_links: bool = False) -> list[RemnaWaveUser]:
+        """Полный обход всех пользователей панели через курсорную пагинацию (2.8.0+)."""
+        all_users: list[RemnaWaveUser] = []
+        cursor: str | None = None
+
+        while True:
+            page = await self.get_all_users_page_stream(cursor=cursor, size=size, enrich_happ_links=enrich_happ_links)
+            all_users.extend(page['users'])
+            if not page['hasMore'] or not page['nextCursor']:
+                break
+            cursor = page['nextCursor']
+
+        return all_users
 
     async def get_internal_squads(self) -> list[RemnaWaveInternalSquad]:
         response = await self._make_request('GET', '/api/internal-squads')
@@ -926,8 +978,11 @@ class RemnaWaveAPI:
         response = await self._make_request('POST', f'/api/nodes/{uuid}/actions/disable')
         return self._parse_node(response['response'])
 
-    async def restart_node(self, uuid: str) -> bool:
-        response = await self._make_request('POST', f'/api/nodes/{uuid}/actions/restart')
+    async def restart_node(self, uuid: str, force_restart: bool = False) -> bool:
+        # Remnawave 2.8.0+: команда рестарта ноды принимает forceRestart в теле
+        # запроса (раньше body не было). Старые панели игнорируют лишнее поле.
+        data = {'forceRestart': force_restart}
+        response = await self._make_request('POST', f'/api/nodes/{uuid}/actions/restart', data)
         return response['response']['eventSent']
 
     async def restart_all_nodes(self, force_restart: bool = False) -> bool:
@@ -1034,8 +1089,13 @@ class RemnaWaveAPI:
         return response['response']
 
     async def get_hwid_devices_stats(self) -> dict[str, Any]:
-        """HWID device stats: {byPlatform:[{platform,count}], byApp:[{app,count}],
-        stats:{totalUniqueDevices,totalHwidDevices,averageHwidDevicesPerUser}}."""
+        """HWID device stats.
+
+        Remnawave 2.8.0 shape: {byPlatform:[{platform,count,byApp:[{app,count}]}],
+        stats:{totalUniqueDevices,totalHwidDevices,averageHwidDevicesPerUser}}.
+        До 2.8.0 ``byApp`` был top-level массивом (см. backward-compat в
+        ``RemnaWaveService.get_devices_statistics``).
+        """
         response = await self._make_request('GET', '/api/hwid/devices/stats')
         return response['response']
 
@@ -1328,11 +1388,18 @@ class RemnaWaveAPI:
         return True
 
     async def encrypt_happ_crypto_link(self, link_to_encrypt: str) -> str | None:
+        # Эндпоинт удалён в Remnawave 2.8.0 — после первого 404 больше не дёргаем.
+        if RemnaWaveAPI._happ_encrypt_unavailable:
+            return None
         try:
             data = {'linkToEncrypt': link_to_encrypt}
             response = await self._make_request('POST', '/api/system/tools/happ/encrypt', data)
             return response.get('response', {}).get('encryptedLink')
         except RemnaWaveAPIError as e:
+            if e.status_code == 404:
+                RemnaWaveAPI._happ_encrypt_unavailable = True
+                logger.info('happ-encrypt эндпоинт недоступен (удалён в Remnawave 2.8.0) — отключаю до рестарта')
+                return None
             logger.warning('Не удалось зашифровать happ ссылку', message=e.message)
             return None
         except Exception as e:
@@ -1388,7 +1455,9 @@ class RemnaWaveAPI:
             short_uuid=user_data['shortUuid'],
             username=user_data['username'],
             status=status,
-            traffic_limit_bytes=user_data.get('trafficLimitBytes', 0),
+            # Remnawave 2.8.0 ослабил валидацию trafficLimitBytes (integer → number),
+            # поэтому панель может вернуть float — приводим к int явно.
+            traffic_limit_bytes=int(user_data.get('trafficLimitBytes') or 0),
             traffic_limit_strategy=traffic_strategy,
             expire_at=datetime.fromisoformat(user_data['expireAt'].replace('Z', '+00:00')),
             telegram_id=user_data.get('telegramId'),
@@ -1476,8 +1545,16 @@ class RemnaWaveAPI:
             is_connected=node_data.get('isConnected', False),
             is_disabled=node_data.get('isDisabled', False),
             users_online=node_data.get('usersOnline', 0),
-            traffic_used_bytes=node_data.get('trafficUsedBytes'),
-            traffic_limit_bytes=node_data.get('trafficLimitBytes'),
+            # 2.8.0: trafficLimitBytes может прийти float (валидация ослаблена) —
+            # приводим к int, но сохраняем None когда панель поле не вернула.
+            traffic_used_bytes=(
+                None if node_data.get('trafficUsedBytes') is None else self._safe_int(node_data.get('trafficUsedBytes'))
+            ),
+            traffic_limit_bytes=(
+                None
+                if node_data.get('trafficLimitBytes') is None
+                else self._safe_int(node_data.get('trafficLimitBytes'))
+            ),
             port=node_data.get('port'),
             is_connecting=node_data.get('isConnecting', False),
             view_position=node_data.get('viewPosition', 0),

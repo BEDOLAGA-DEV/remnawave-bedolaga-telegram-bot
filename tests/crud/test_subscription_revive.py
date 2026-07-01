@@ -124,6 +124,64 @@ async def test_create_paid_subscription_revives_existing_in_multitariff(monkeypa
     db.add.assert_not_called()  # новую подписку НЕ создавали
 
 
+async def test_create_paid_subscription_revives_expired_trial(monkeypatch):
+    """#3004 (централизовано): ИСТЁКШИЙ ТРИАЛ того же тарифа при платной покупке
+    (бот/гость) теперь реанимируется/конвертируется на месте, а не плодит дубль —
+    та же Remnawave-ссылка. Раньше guard исключал триалы (``not _existing.is_trial``).
+    """
+    monkeypatch.setattr(type(sub_crud.settings), 'is_multi_tariff_enabled', lambda self: True)
+    expired_trial = _sub(id=9, user_id=7, tariff_id=3, is_trial=True, status=SubscriptionStatus.EXPIRED.value)
+    lookup = AsyncMock(return_value=expired_trial)
+    revive = AsyncMock(return_value=expired_trial)
+    monkeypatch.setattr(sub_crud, 'get_subscription_by_user_and_tariff', lookup)
+    monkeypatch.setattr(sub_crud, '_revive_paid_subscription', revive)
+    db = _db()
+
+    result = await sub_crud.create_paid_subscription(db, user_id=7, duration_days=30, traffic_limit_gb=100, tariff_id=3)
+
+    assert result is expired_trial
+    revive.assert_awaited_once()  # истёкший триал теперь уходит в revive
+    db.add.assert_not_called()  # новую подписку/ссылку НЕ создавали
+
+
+async def test_revive_expired_trial_converts_to_paid(monkeypatch):
+    """Реанимация истёкшего ТРИАЛА: снимаем триальный флаг, обнуляем трафик,
+    стартуем свежий платный период — конвертация trial→paid в той же записи."""
+    monkeypatch.setattr(sub_crud, 'deactivate_user_trial_subscriptions', AsyncMock(return_value=[]))
+    db = _db()
+    past = datetime.now(UTC) - timedelta(days=2)
+    s = _sub(
+        id=1,
+        user_id=7,
+        tariff_id=3,
+        status=SubscriptionStatus.EXPIRED.value,
+        end_date=past,
+        start_date=past - timedelta(days=3),
+        is_trial=True,
+        traffic_used_gb=12.0,
+        connected_squads=['sq'],
+        device_limit=1,
+        traffic_limit_gb=50,
+    )
+
+    await sub_crud._revive_paid_subscription(
+        db,
+        s,
+        duration_days=30,
+        traffic_limit_gb=100,
+        device_limit=2,
+        connected_squads=['sq'],
+        update_server_counters=False,
+        commit=True,
+    )
+
+    assert s.is_trial is False
+    assert s.status == SubscriptionStatus.ACTIVE.value
+    assert s.traffic_used_gb == 0.0
+    assert s.end_date > datetime.now(UTC) + timedelta(days=29)
+    db.add.assert_not_called()
+
+
 async def test_create_paid_subscription_does_not_revive_active(monkeypatch):
     """Активную (не истёкшую) НЕ реанимируем — падаем в обычное создание/IntegrityError."""
     monkeypatch.setattr(type(sub_crud.settings), 'is_multi_tariff_enabled', lambda self: True)

@@ -400,6 +400,13 @@ class Settings(BaseSettings):
     SUBSCRIPTION_RENEWAL_BALANCE_THRESHOLD_KOPEKS: int = 20000
 
     MONITORING_INTERVAL: int = 60
+    # Жёсткий per-send таймаут (сек) на отправку уведомлений из MonitoringService.
+    # Дефолтный session timeout aiogram = 60s; при медленном канале до Telegram
+    # или недоступном получателе один send_photo/send_message блокирует ВЕСЬ хвост
+    # цикла мониторинга на минуты (последовательно по многим получателям, без
+    # per-send логов). Этот таймаут даёт быстрый предсказуемый предел: на TimeoutError
+    # получатель пропускается, цикл продолжается.
+    MONITORING_NOTIFICATION_SEND_TIMEOUT: float = 20.0
     LOW_BALANCE_ALERT_EXPIRY_DAYS: int = 3  # Only alert when subscription expires within N days
     # Months of inactivity before a user row is soft-deleted (status=DELETED).
     # 12 months is conservative — VPN users are highly seasonal (vacations,

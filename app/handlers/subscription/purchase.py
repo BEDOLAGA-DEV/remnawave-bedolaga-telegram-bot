@@ -3244,7 +3244,14 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
 
     user_balance_kopeks = getattr(db_user, 'balance_kopeks', 0) or 0
     if user_balance_kopeks < trial_price_kopeks:
-        await callback.answer(texts.t('INSUFFICIENT_BALANCE', '❌ Недостаточно средств на балансе'), show_alert=True)
+        topup_needed_kopeks = trial_price_kopeks - user_balance_kopeks
+        await callback.answer(
+            texts.t(
+                'INSUFFICIENT_BALANCE',
+                '❌ Недостаточно средств на балансе. Пополните баланс на {amount} и попробуйте снова.',
+            ).format(amount=settings.format_price(topup_needed_kopeks)),
+            show_alert=True,
+        )
         return
 
     # Списываем с баланса

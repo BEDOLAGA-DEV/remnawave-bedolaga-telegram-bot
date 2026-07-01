@@ -441,7 +441,20 @@ async def get_logo():
     }
     media_type = media_types.get(suffix, 'image/png')
 
-    return FileResponse(logo_path, media_type=media_type, headers={'Cache-Control': 'public, max-age=3600'})
+    return FileResponse(
+        logo_path,
+        media_type=media_type,
+        headers={
+            'Cache-Control': 'public, max-age=3600',
+            # The logo may be an SVG (admin-uploaded). Rendering via <img> never
+            # runs SVG scripts, but opening /branding/logo as a top-level document
+            # would. Block that XSS surface: nosniff + a sandboxed CSP that forbids
+            # script execution. CSP on this image response is ignored when loaded
+            # as an <img> subresource, so logo display is unaffected.
+            'X-Content-Type-Options': 'nosniff',
+            'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        },
+    )
 
 
 @router.put('/name', response_model=BrandingResponse)
@@ -1118,3 +1131,43 @@ async def update_gift_enabled(
     await set_setting_value(db, GIFT_ENABLED_KEY, str(payload.enabled).lower())
     logger.info('Admin set gift enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
     return GiftEnabledResponse(enabled=payload.enabled)
+
+
+# ============ Legal Footer Routes (custom patch) ============
+
+FOOTER_ENABLED_KEY = 'CABINET_FOOTER_ENABLED'  # Stores "true" or "false"
+
+
+class FooterEnabledResponse(BaseModel):
+    """Legal footer enabled setting."""
+
+    enabled: bool = True
+
+
+class FooterEnabledUpdate(BaseModel):
+    """Request to update legal footer setting."""
+
+    enabled: bool
+
+
+@router.get('/footer-enabled', response_model=FooterEnabledResponse)
+async def get_footer_enabled(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get legal footer enabled setting. Public endpoint - no authentication required."""
+    value = await get_setting_value(db, FOOTER_ENABLED_KEY)
+    if value is not None:
+        return FooterEnabledResponse(enabled=value.lower() == 'true')
+    return FooterEnabledResponse(enabled=True)
+
+
+@router.patch('/footer-enabled', response_model=FooterEnabledResponse)
+async def update_footer_enabled(
+    payload: FooterEnabledUpdate,
+    admin: User = Depends(require_permission('settings:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update legal footer enabled setting. Admin only."""
+    await set_setting_value(db, FOOTER_ENABLED_KEY, str(payload.enabled).lower())
+    logger.info('Admin set footer enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
+    return FooterEnabledResponse(enabled=payload.enabled)

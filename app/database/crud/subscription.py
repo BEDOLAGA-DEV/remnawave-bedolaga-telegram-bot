@@ -422,13 +422,17 @@ async def create_paid_subscription(
     # Multi-tariff invariant: at most ONE subscription per (user, tariff). If a
     # subscription for this tariff has EXPIRED, revive it in place instead of
     # inserting a duplicate — the partial unique index only guards the alive
-    # statuses, so expired duplicates otherwise piled up. Scope intentionally
-    # narrow: an ACTIVE/LIMITED tariff still falls through to the insert and its
-    # existing unique-index "already active" handling; trials and classic mode
-    # (tariff_id is None) always create a fresh record.
+    # statuses, so expired duplicates otherwise piled up. This includes an EXPIRED
+    # TRIAL of the same tariff: re-purchasing converts it in place
+    # (_revive_paid_subscription sets is_trial=False and resets traffic BEFORE the
+    # trial-cleanup, so no self-deactivation) — the user keeps the SAME Remnawave
+    # user/link instead of getting a brand-new one (#3004, prod report 2026-06).
+    # This makes the bot/guest paths match the cabinet purchase flow. Scope still
+    # narrow: an ACTIVE/LIMITED tariff falls through to the insert (its unique-index
+    # "already active" handling); classic mode (tariff_id is None) creates fresh.
     if not is_trial and tariff_id is not None and settings.is_multi_tariff_enabled():
         _existing = await get_subscription_by_user_and_tariff(db, user_id, tariff_id, include_inactive=True)
-        if _existing is not None and not _existing.is_trial and _existing.status == SubscriptionStatus.EXPIRED.value:
+        if _existing is not None and _existing.status == SubscriptionStatus.EXPIRED.value:
             return await _revive_paid_subscription(
                 db,
                 _existing,

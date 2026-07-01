@@ -284,13 +284,14 @@ class TrafficMonitoringServiceV2:
         """
         all_users: list[RemnaWaveUser] = []
         batch_size = self.get_batch_size()
-        offset = 0
+        cursor: str | None = None
         skipped_inactive = 0
 
         try:
             async with self.remnawave_service.get_api_client() as api:
                 while True:
-                    result = await api.get_all_users(start=offset, size=batch_size)
+                    # 2.8.0: курсорная (keyset) пагинация /api/users/stream
+                    result = await api.get_all_users_page_stream(cursor=cursor, size=batch_size)
                     users = result.get('users', [])
 
                     if not users:
@@ -301,11 +302,10 @@ class TrafficMonitoringServiceV2:
                     all_users.extend(monitorable)
                     logger.debug('📊 Загружено пользователей...', all_users_count=len(all_users))
 
-                    # Пагинация — по сырому размеру страницы панели, не по отфильтрованному
-                    if len(users) < batch_size:
+                    if not result.get('hasMore') or not result.get('nextCursor'):
                         break
 
-                    offset += batch_size
+                    cursor = result['nextCursor']
 
             if skipped_inactive:
                 logger.info(

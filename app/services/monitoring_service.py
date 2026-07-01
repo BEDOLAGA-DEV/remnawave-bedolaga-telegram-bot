@@ -235,15 +235,30 @@ class MonitoringService:
             try:
                 from app.utils.message_patch import _cache_logo_file_id, get_logo_media
 
-                result = await self.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=get_logo_media(),
-                    caption=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode,
+                # Жёсткий per-send таймаут: без него залипший send_photo (на медленном
+                # канале это особенно вероятно на ПЕРВОЙ отправке цикла, где грузится
+                # файл логотипа ~700КБ — file_id кешируется только после успеха) держит
+                # await до session timeout (60s) на каждого получателя и блокирует хвост
+                # цикла мониторинга. На TimeoutError пропускаем получателя.
+                result = await asyncio.wait_for(
+                    self.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=get_logo_media(),
+                        caption=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode,
+                    ),
+                    timeout=settings.MONITORING_NOTIFICATION_SEND_TIMEOUT,
                 )
                 _cache_logo_file_id(result)
                 return result
+            except TimeoutError:
+                logger.warning(
+                    'send_photo завис дольше таймаута — пропускаем получателя, цикл продолжается',
+                    chat_id=chat_id,
+                    timeout=settings.MONITORING_NOTIFICATION_SEND_TIMEOUT,
+                )
+                return None
             except TelegramBadRequest as exc:
                 logger.warning(
                     'Не удалось отправить сообщение с логотипом, отправляем текстовое сообщение',
@@ -251,12 +266,23 @@ class MonitoringService:
                     exc=exc,
                 )
 
-        return await self.bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode=parse_mode,
-        )
+        try:
+            return await asyncio.wait_for(
+                self.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                ),
+                timeout=settings.MONITORING_NOTIFICATION_SEND_TIMEOUT,
+            )
+        except TimeoutError:
+            logger.warning(
+                'send_message завис дольше таймаута — пропускаем получателя, цикл продолжается',
+                chat_id=chat_id,
+                timeout=settings.MONITORING_NOTIFICATION_SEND_TIMEOUT,
+            )
+            return None
 
     @staticmethod
     def _is_unreachable_error(error: TelegramBadRequest) -> bool:

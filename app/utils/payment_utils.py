@@ -272,6 +272,42 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    if settings.is_lava_sbp_enabled():
+        sbp_name = settings.get_lava_sbp_display_name()
+        methods.append(
+            {
+                'id': 'lava_sbp',
+                'name': sbp_name,
+                'icon': '📱',
+                'description': f'через {sbp_name}',
+                'callback': 'topup_lava_sbp',
+            }
+        )
+
+    if settings.is_lava_card_enabled():
+        card_name = settings.get_lava_card_display_name()
+        methods.append(
+            {
+                'id': 'lava_card',
+                'name': card_name,
+                'icon': '💳',
+                'description': f'через {card_name}',
+                'callback': 'topup_lava_card',
+            }
+        )
+
+    if settings.is_lava_enabled() and not settings.is_lava_sbp_enabled() and not settings.is_lava_card_enabled():
+        lava_name = settings.get_lava_display_name()
+        methods.append(
+            {
+                'id': 'lava',
+                'name': lava_name,
+                'icon': '💳',
+                'description': f'через {lava_name}',
+                'callback': 'topup_lava',
+            }
+        )
+
     if settings.is_etoplatezhi_sbp_enabled():
         sbp_name = settings.get_etoplatezhi_sbp_display_name()
         methods.append(
@@ -506,6 +542,12 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_aurapay_sbp_enabled()
     if method_id == 'aurapay_card':
         return settings.is_aurapay_card_enabled()
+    if method_id == 'lava':
+        return settings.is_lava_enabled()
+    if method_id == 'lava_sbp':
+        return settings.is_lava_sbp_enabled()
+    if method_id == 'lava_card':
+        return settings.is_lava_card_enabled()
     if method_id == 'etoplatezhi':
         return settings.is_etoplatezhi_enabled()
     if method_id == 'etoplatezhi_sbp':
@@ -550,6 +592,9 @@ def get_payment_method_status() -> dict[str, bool]:
         'aurapay': settings.is_aurapay_enabled(),
         'aurapay_sbp': settings.is_aurapay_sbp_enabled(),
         'aurapay_card': settings.is_aurapay_card_enabled(),
+        'lava': settings.is_lava_enabled(),
+        'lava_sbp': settings.is_lava_sbp_enabled(),
+        'lava_card': settings.is_lava_card_enabled(),
         'etoplatezhi': settings.is_etoplatezhi_enabled(),
         'etoplatezhi_sbp': settings.is_etoplatezhi_sbp_enabled(),
         'etoplatezhi_card': settings.is_etoplatezhi_card_enabled(),
@@ -601,6 +646,8 @@ def get_enabled_payment_methods_count() -> int:
     if settings.is_overpay_enabled():
         count += 1
     if settings.is_aurapay_enabled():
+        count += 1
+    if settings.is_lava_enabled():
         count += 1
     if settings.is_etoplatezhi_enabled():
         count += 1

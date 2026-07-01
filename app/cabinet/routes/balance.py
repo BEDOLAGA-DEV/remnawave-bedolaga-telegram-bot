@@ -207,7 +207,7 @@ async def get_payment_methods(
             PaymentMethodResponse(
                 id=method_id,
                 name=method_data['name'],
-                description=None,
+                description=method_data.get('description'),
                 min_amount_kopeks=method_data['min_amount_kopeks'],
                 max_amount_kopeks=method_data['max_amount_kopeks'],
                 is_available=True,
