@@ -61,7 +61,7 @@ async def handle_manage_protocols(
     )
     await callback.message.edit_text(
         text,
-        reply_markup=get_manage_protocols_keyboard(pool, list(current), db_user.language),
+        reply_markup=get_manage_protocols_keyboard(pool, list(current), db_user.language, sub_id=sub_id),
         parse_mode='HTML',
     )
     await callback.answer()
@@ -75,6 +75,7 @@ async def handle_toggle_protocol(
 
     data = await state.get_data()
     selected = list(data.get('protocols', []))
+    sub_id = data.get('active_subscription_id')
 
     pool = await _build_protocol_pool(db, db_user.promo_group_id, selected)
     allowed = {p['uuid'] for p in pool}
@@ -100,7 +101,7 @@ async def handle_toggle_protocol(
 
     try:
         await callback.message.edit_reply_markup(
-            reply_markup=get_manage_protocols_keyboard(pool, selected, db_user.language)
+            reply_markup=get_manage_protocols_keyboard(pool, selected, db_user.language, sub_id=sub_id)
         )
     except Exception as e:
         logger.error('Ошибка обновления клавиатуры протоколов', error=e)
@@ -158,7 +159,7 @@ async def apply_protocols_changes(
     await state.update_data(protocols=list(selected))
     try:
         await callback.message.edit_reply_markup(
-            reply_markup=get_manage_protocols_keyboard(pool, selected, db_user.language)
+            reply_markup=get_manage_protocols_keyboard(pool, selected, db_user.language, sub_id=sub_id)
         )
     except Exception as e:
         logger.error('Ошибка обновления клавиатуры протоколов', error=e)
