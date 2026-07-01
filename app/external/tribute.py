@@ -11,6 +11,21 @@ from app.config import settings
 logger = structlog.get_logger(__name__)
 
 
+def _stable_tribute_event_payment_id(event_name: str, webhook_data: dict[str, Any], payload: dict[str, Any]) -> str:
+    raw_id = {
+        'name': event_name,
+        'created_at': webhook_data.get('created_at'),
+        'donation_request_id': payload.get('donation_request_id'),
+        'telegram_user_id': payload.get('telegram_user_id'),
+        'trb_user_id': payload.get('trb_user_id'),
+        'amount': payload.get('amount'),
+        'currency': payload.get('currency'),
+        'period': payload.get('period'),
+    }
+    digest = hashlib.sha256(json.dumps(raw_id, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:24]
+    return f'trbt_evt_{digest}'
+
+
 class TributeService:
     def __init__(self):
         self.api_key = settings.TRIBUTE_API_KEY
@@ -91,16 +106,18 @@ class TributeService:
             if not payment_id and 'name' in webhook_data:
                 event_name = webhook_data.get('name')
                 data = webhook_data.get('payload', {})
-                payment_id = str(data.get('donation_request_id'))
                 amount_kopeks = data.get('amount', 0)
                 telegram_user_id = data.get('telegram_user_id')
                 trb_user_id = data.get('trb_user_id')
 
                 if event_name in ('new_donation', 'recurrent_donation'):
+                    payment_id = _stable_tribute_event_payment_id(event_name, webhook_data, data)
                     status = 'paid'
                 elif event_name == 'cancelled_subscription':
+                    payment_id = str(data.get('donation_request_id'))
                     status = 'cancelled'
                 else:
+                    payment_id = str(data.get('donation_request_id'))
                     status = 'unknown'
 
             logger.info(
@@ -128,14 +145,15 @@ class TributeService:
                 logger.error('❌ Некорректный telegram_user_id', telegram_user_id=telegram_user_id)
                 return None
 
+            payment_id = payment_id or f'tribute_{telegram_user_id}_{amount_kopeks}'
             result = {
                 'event_type': 'payment',
-                'payment_id': payment_id or f'tribute_{telegram_user_id}_{amount_kopeks}',
+                'payment_id': payment_id,
                 'user_id': telegram_user_id,
                 'trb_user_id': trb_user_id,
                 'amount_kopeks': int(amount_kopeks) if amount_kopeks else 0,
                 'status': status or 'paid',
-                'external_id': f'donation_{payment_id or "unknown"}',
+                'external_id': f'donation_{payment_id}',
                 'payment_system': 'tribute',
             }
 
