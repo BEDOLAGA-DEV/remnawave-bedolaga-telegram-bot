@@ -3308,6 +3308,38 @@ def get_manage_countries_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def get_manage_protocols_keyboard(
+    protocols: list[dict],
+    selected: list[str],
+    language: str = DEFAULT_LANGUAGE,
+) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+    buttons = []
+
+    for proto in protocols:
+        uuid = proto['uuid']
+        name = proto['name']
+        icon = '✅' if uuid in selected else '⚪'
+        buttons.append(
+            [InlineKeyboardButton(text=f'{icon} {name}', callback_data=f'nz!_protocol_toggle_{uuid}')]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text=texts.t('PROTOCOLS_APPLY_BUTTON', '✅ Применить'),
+                callback_data='nz!_protocols_apply',
+                style='success',
+            )
+        ]
+    )
+    buttons.append(
+        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_settings', style='danger')]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def get_device_selection_keyboard(
     language: str = DEFAULT_LANGUAGE,
     platforms: list[dict] | None = None,
