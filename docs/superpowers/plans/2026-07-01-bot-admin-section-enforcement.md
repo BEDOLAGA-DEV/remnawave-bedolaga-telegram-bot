@@ -139,7 +139,7 @@ import app.handlers.admin.bot_roles as br
 
 @pytest.fixture
 def as_superadmin(monkeypatch):
-    monkeypatch.setattr(settings, 'get_admin_ids', lambda: [111])
+    monkeypatch.setattr(type(settings), 'get_admin_ids', lambda self: [111])
     return 111
 
 
@@ -318,7 +318,7 @@ def _callback(user_id: int) -> MagicMock:
 
 
 async def test_superadmin_passes(monkeypatch):
-    monkeypatch.setattr(settings, 'get_admin_ids', lambda: [111])
+    monkeypatch.setattr(type(settings), 'get_admin_ids', lambda self: [111])
     called = {'v': False}
 
     @super_admin_required
@@ -332,7 +332,7 @@ async def test_superadmin_passes(monkeypatch):
 
 
 async def test_non_superadmin_denied(monkeypatch):
-    monkeypatch.setattr(settings, 'get_admin_ids', lambda: [111])
+    monkeypatch.setattr(type(settings), 'get_admin_ids', lambda self: [111])
     called = {'v': False}
 
     @super_admin_required
@@ -470,7 +470,7 @@ def _data(permissions):
 
 @pytest.fixture
 def not_superadmin(monkeypatch):
-    monkeypatch.setattr(settings, 'get_admin_ids', lambda: [111])
+    monkeypatch.setattr(type(settings), 'get_admin_ids', lambda self: [111])
 
 
 async def test_denies_missing_section(not_superadmin):
@@ -503,7 +503,7 @@ async def test_allows_present_section(not_superadmin):
 
 
 async def test_superadmin_bypass(monkeypatch):
-    monkeypatch.setattr(settings, 'get_admin_ids', lambda: [222])  # event user is super
+    monkeypatch.setattr(type(settings), 'get_admin_ids', lambda self: [222])  # event user is super
     mw = AdminPermissionMiddleware()
     data, _ = _data([])
     handler = AsyncMock(return_value='ran')
