@@ -79,6 +79,7 @@ from app.handlers.admin import (
 from app.handlers.channel_member import register_handlers as register_channel_member_handlers
 from app.handlers.gift_activation import register_handlers as register_gift_activation_handlers
 from app.handlers.stars_payments import register_stars_handlers
+from app.middlewares.admin_permission import AdminPermissionMiddleware
 from app.middlewares.auth import AuthMiddleware
 from app.middlewares.blacklist import BlacklistMiddleware
 from app.middlewares.button_stats import ButtonStatsMiddleware
@@ -191,6 +192,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     dp.callback_query.middleware(channel_checker)
     dp.message.middleware(AuthMiddleware())
     dp.callback_query.middleware(AuthMiddleware())
+    dp.callback_query.middleware(AdminPermissionMiddleware())  # after Auth: needs db_user
     dp.pre_checkout_query.middleware(AuthMiddleware())
     display_name_restriction = DisplayNameRestrictionMiddleware()
     dp.message.middleware(display_name_restriction)

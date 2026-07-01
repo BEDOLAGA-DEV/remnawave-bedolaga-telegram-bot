@@ -109,7 +109,13 @@ def resolve_admin_section(callback_data: str) -> str | None:
     if not callback_data or not callback_data.startswith('admin_'):
         return None
     for prefix, section in ADMIN_CALLBACK_SECTION_MAP:
-        if callback_data == prefix or callback_data.startswith(prefix + ':') or callback_data.startswith(prefix + '_'):
+        if prefix.endswith('_'):
+            # Prefix already ends on a word boundary (e.g. 'admin_user_'):
+            # a plain startswith is unambiguous and correctly matches
+            # children like 'admin_user_balance_5'.
+            if callback_data.startswith(prefix):
+                return section
+        elif callback_data == prefix or callback_data.startswith(prefix + ':') or callback_data.startswith(prefix + '_'):
             return section
     return None
 
