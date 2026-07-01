@@ -25,6 +25,10 @@ SECTION_LABELS = {
     'support': '🛟 Поддержка',
     'settings': '⚙️ Настройки',
     'analytics': '📊 Аналитика',
+    'trials': '🎁 Триалы',
+    'pricing': '💲 Цены',
+    'reviews': '⭐ Отзывы',
+    'offers': '🔥 Акции',
 }
 
 

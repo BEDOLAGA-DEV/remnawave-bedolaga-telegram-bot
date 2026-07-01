@@ -39,11 +39,21 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_ref_', 'users'),
     ('admin_top_ref', 'users'),
     ('admin_test_referral_earning', 'users'),
+    # trials (was payments)
+    ('admin_trials', 'trials'),
+    ('admin_trials_reset', 'trials'),
+    # pricing (was payments; admin_subs_pricing was subscriptions)
+    ('admin_subs_pricing', 'pricing'),   # MUST precede admin_subs_
+    ('admin_pricing', 'pricing'),
+    # reviews (was promos)
+    ('admin_reviews', 'reviews'),
+    ('admin_review_', 'reviews'),
+    # offers (was promos; spromo_* was ungated)
+    ('admin_scheduled_promos', 'offers'),
+    ('spromo_', 'offers'),
     # payments
     ('admin_payments', 'payments'),
     ('admin_payment_', 'payments'),
-    ('admin_pricing', 'payments'),
-    ('admin_trials', 'payments'),
     ('admin_txn_', 'payments'),
     ('admin_stxn_', 'payments'),
     ('admin_withdrawal_', 'payments'),
@@ -78,10 +88,7 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_daily_contests', 'promos'),
     ('admin_daily_', 'promos'),
     ('admin_polls', 'promos'),
-    ('admin_scheduled_promos', 'promos'),
     ('admin_partner_promos', 'promos'),
-    ('admin_reviews', 'promos'),
-    ('admin_review_', 'promos'),
     ('admin_achievements', 'promos'),
     ('admin_ach_', 'promos'),
     ('admin_ach', 'promos'),
@@ -162,8 +169,8 @@ ALWAYS_ALLOWED_PREFIXES: tuple[str, ...] = (
 
 
 def resolve_admin_section(callback_data: str) -> str | None:
-    """Return the section a given admin_* callback belongs to, or None if unknown."""
-    if not callback_data or not callback_data.startswith('admin_'):
+    """Return the section a given admin_*/spromo_* callback belongs to, or None if unknown."""
+    if not callback_data or not callback_data.startswith(('admin_', 'spromo_')):
         return None
     for prefix, section in ADMIN_CALLBACK_SECTION_MAP:
         if prefix.endswith('_'):
