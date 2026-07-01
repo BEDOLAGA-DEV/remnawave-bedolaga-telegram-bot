@@ -33,6 +33,7 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_blocked', 'users'),
     ('admin_blacklist', 'users'),
     ('admin_bulk_ban', 'users'),
+    ('admin_mass_delete', 'users'),
     # payments
     ('admin_payments', 'payments'),
     ('admin_payment_', 'payments'),
@@ -44,6 +45,7 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     # subscriptions
     ('admin_subscriptions', 'subscriptions'),
     ('admin_subscription_', 'subscriptions'),
+    ('admin_subs_', 'subscriptions'),
     # promos / promotions / engagement
     ('admin_promo_groups', 'promos'),
     ('admin_promo_offers', 'promos'),
@@ -51,8 +53,11 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_promo_', 'promos'),
     ('admin_promo', 'promos'),
     ('admin_campaigns', 'promos'),
+    ('admin_campaign_', 'promos'),
     ('admin_contests', 'promos'),
+    ('admin_contest_', 'promos'),
     ('admin_daily_contests', 'promos'),
+    ('admin_daily_', 'promos'),
     ('admin_polls', 'promos'),
     ('admin_scheduled_promos', 'promos'),
     ('admin_partner_promos', 'promos'),
@@ -64,11 +69,14 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     # broadcasts
     ('admin_messages', 'broadcasts'),
     ('admin_message_', 'broadcasts'),
+    ('admin_msg_', 'broadcasts'),
+    ('admin_pinned', 'broadcasts'),
     # servers
     ('admin_servers', 'servers'),
     ('admin_server_', 'servers'),
     ('admin_remnawave', 'servers'),
     ('admin_remna', 'servers'),
+    ('admin_rw_', 'servers'),
     # support
     ('admin_tickets', 'support'),
     ('admin_ticket_', 'support'),
@@ -92,6 +100,10 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_monitoring', 'analytics'),
     ('admin_statistics', 'analytics'),
     ('admin_reports', 'analytics'),
+    ('admin_stats_', 'analytics'),
+    ('admin_successful_topups', 'analytics'),
+    ('admin_mon_', 'analytics'),
+    ('admin_wl_analytics', 'analytics'),
 ]
 
 
@@ -159,6 +171,7 @@ class AdminPermissionMiddleware(BaseMiddleware):
             # Unknown admin callback — fall through to admin_required decorator,
             # which still gates by "any role". Better than a hard deny while we
             # haven't mapped every callback.
+            logger.info('admin callback not in section map (fallback to any-admin)', callback_data=cb)
             return await handler(event, data)
 
         try:

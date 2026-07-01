@@ -21,6 +21,21 @@ def test_resolve_admin_section():
     assert resolve_admin_section('admin_totally_unknown') is None
 
 
+def test_map_covers_known_gaps():
+    # These prefixes were unmapped and leaked to "any admin" before the audit.
+    assert resolve_admin_section('admin_rw_nodes') == 'servers'
+    assert resolve_admin_section('admin_subs_list') == 'subscriptions'
+    assert resolve_admin_section('admin_stats_users') == 'analytics'
+    assert resolve_admin_section('admin_mon_start') == 'analytics'
+    assert resolve_admin_section('admin_mon_settings') == 'settings'  # more specific wins
+    assert resolve_admin_section('admin_msg_all') == 'broadcasts'
+    assert resolve_admin_section('admin_campaign_stats_3') == 'promos'
+    assert resolve_admin_section('admin_contest_toggle_3') == 'promos'
+    assert resolve_admin_section('admin_daily_toggle_3') == 'promos'
+    assert resolve_admin_section('admin_wl_analytics') == 'analytics'
+    assert resolve_admin_section('admin_mass_delete_start') == 'users'
+
+
 def _event(data: str):
     cb = MagicMock(spec=CallbackQuery)
     cb.data = data
