@@ -34,11 +34,23 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_blacklist', 'users'),
     ('admin_bulk_ban', 'users'),
     ('admin_mass_delete', 'users'),
+    ('admin_cleanup_inactive', 'users'),
+    ('admin_referral_diagnostics', 'users'),
+    ('admin_ref_', 'users'),
+    ('admin_top_ref', 'users'),
+    ('admin_test_referral_earning', 'users'),
     # payments
     ('admin_payments', 'payments'),
     ('admin_payment_', 'payments'),
     ('admin_pricing', 'payments'),
     ('admin_trials', 'payments'),
+    ('admin_txn_', 'payments'),
+    ('admin_stxn_', 'payments'),
+    ('admin_withdrawal_', 'payments'),
+    ('admin_nalogo_', 'payments'),
+    ('admin_test_payment', 'payments'),
+    ('admin_cryptobot_test_', 'payments'),
+    ('admin_stars_test_', 'payments'),
     # tariffs
     ('admin_tariffs', 'tariffs'),
     ('admin_tariff_', 'tariffs'),
@@ -46,6 +58,13 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_subscriptions', 'subscriptions'),
     ('admin_subscription_', 'subscriptions'),
     ('admin_subs_', 'subscriptions'),
+    # admin_sub_* are subscription-mutating actions (grant/delete/extend/...)
+    # registered in users.py. Broad prefix — placed after the more-specific
+    # admin_subs_/admin_subscription_ so first-match-wins is a no-op here (same
+    # section). Does NOT match admin_submenu_ (that is 'admin_subm...').
+    ('admin_sub_', 'subscriptions'),
+    ('admin_buy_sub_', 'subscriptions'),
+    ('admin_send_expiry_reminders', 'subscriptions'),
     # promos / promotions / engagement
     ('admin_promo_groups', 'promos'),
     ('admin_promo_offers', 'promos'),
@@ -71,12 +90,17 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_message_', 'broadcasts'),
     ('admin_msg_', 'broadcasts'),
     ('admin_pinned', 'broadcasts'),
+    ('admin_confirm_broadcast', 'broadcasts'),
     # servers
     ('admin_servers', 'servers'),
     ('admin_server_', 'servers'),
     ('admin_remnawave', 'servers'),
     ('admin_remna', 'servers'),
     ('admin_rw_', 'servers'),
+    ('admin_squad_', 'servers'),
+    ('admin_node_', 'servers'),
+    ('admin_restart_all_nodes', 'servers'),
+    ('admin_migration_', 'servers'),
     # support
     ('admin_tickets', 'support'),
     ('admin_ticket_', 'support'),
@@ -87,6 +111,16 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_rules', 'support'),
     ('admin_privacy_policy', 'support'),
     ('admin_public_offer', 'support'),
+    # ticket actions (tokens where 'ticket' is not the leading word) + housekeeping
+    ('admin_close_ticket_', 'support'),
+    ('admin_reply_ticket_', 'support'),
+    ('admin_view_ticket_', 'support'),
+    ('admin_block_user_ticket_', 'support'),
+    ('admin_block_user_perm_ticket_', 'support'),
+    ('admin_unblock_user_ticket_', 'support'),
+    ('admin_mark_answered_', 'support'),
+    ('admin_delete_message_', 'support'),
+    ('admin_close_report', 'support'),
     # settings (configuration / system)
     ('admin_bot_config', 'settings'),
     ('admin_bot_roles', 'settings'),
@@ -96,12 +130,23 @@ ADMIN_CALLBACK_SECTION_MAP: list[tuple[str, str]] = [
     ('admin_system_logs', 'settings'),
     ('admin_updates', 'settings'),
     ('admin_mon_settings', 'settings'),
+    # config toggles / editors living under the settings submenu
+    ('admin_freeze_', 'settings'),
+    ('admin_birthday_', 'settings'),
+    ('admin_traffic_', 'settings'),
+    ('admin_edit_rules', 'settings'),
+    ('admin_save_rules', 'settings'),
+    ('admin_clear_rules', 'settings'),
+    ('admin_confirm_clear_rules', 'settings'),
+    ('admin_view_rules', 'settings'),
     # analytics
     ('admin_monitoring', 'analytics'),
     ('admin_statistics', 'analytics'),
     ('admin_reports', 'analytics'),
     ('admin_stats_', 'analytics'),
     ('admin_successful_topups', 'analytics'),
+    ('admin_stopups_', 'analytics'),
+    ('admin_revenue_period', 'analytics'),
     ('admin_mon_', 'analytics'),
     ('admin_wl_analytics', 'analytics'),
 ]
