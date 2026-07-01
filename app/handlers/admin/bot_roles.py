@@ -9,7 +9,7 @@ from app.database.crud.user import get_user_by_telegram_id
 from app.database.models import User
 from app.localization.texts import get_texts
 from app.states import BotRoleStates
-from app.utils.decorators import admin_required, error_handler
+from app.utils.decorators import error_handler, super_admin_required
 
 
 logger = structlog.get_logger(__name__)
@@ -103,7 +103,7 @@ def _permissions_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def admin_bot_roles(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     roles = await BotRoleCRUD.list_bot_roles(db)
@@ -118,7 +118,7 @@ async def admin_bot_roles(callback: types.CallbackQuery, db_user: User, db: Asyn
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_view(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     user_id = int(callback.data.split(':')[1])
@@ -146,7 +146,7 @@ async def bot_role_view(callback: types.CallbackQuery, db_user: User, db: AsyncS
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_add(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
     await state.set_state(BotRoleStates.waiting_for_telegram_id)
@@ -163,7 +163,7 @@ async def bot_role_add(callback: types.CallbackQuery, db_user: User, state: FSMC
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_add_telegram_id(
     message: types.Message, db_user: User, state: FSMContext, db: AsyncSession
@@ -194,7 +194,7 @@ async def bot_role_add_telegram_id(
     )
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_edit(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
     user_id = int(callback.data.split(':')[1])
@@ -211,7 +211,7 @@ async def bot_role_edit(callback: types.CallbackQuery, db_user: User, state: FSM
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_toggle(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
     parts = callback.data.split(':')
@@ -236,7 +236,7 @@ async def bot_role_toggle(callback: types.CallbackQuery, db_user: User, state: F
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_save(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
     parts = callback.data.split(':')
@@ -268,7 +268,7 @@ async def bot_role_save(callback: types.CallbackQuery, db_user: User, state: FSM
     )
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_delete(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     user_id = int(callback.data.split(':')[1])
@@ -291,7 +291,7 @@ async def bot_role_delete(callback: types.CallbackQuery, db_user: User, db: Asyn
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_delete_confirm(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     user_id = int(callback.data.split(':')[1])
