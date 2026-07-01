@@ -38,7 +38,7 @@ def _build_server_edit_view(server):
     )
 
     trial_status = '✅ Да' if server.is_trial_eligible else '⚪️ Нет'
-    default_status = '⭐ Основной' if getattr(server, 'is_default', False) else '⭐ Обычный'
+    default_status = '⭐ Основной' if getattr(server, 'is_default', False) else '⚪️ Обычный'
 
     text = f"""
 🌐 <b>Редактирование сервера</b>
