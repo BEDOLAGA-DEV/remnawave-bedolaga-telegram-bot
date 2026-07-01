@@ -2194,12 +2194,12 @@ def get_admin_pagination_keyboard(
         row = []
 
         if current_page > 1:
-            row.append(InlineKeyboardButton(text='⬅️', callback_data=f'nz!_{callback_prefix}_page_{current_page - 1}'))
+            row.append(InlineKeyboardButton(text='⬅️', callback_data=f'{callback_prefix}_page_{current_page - 1}'))
 
         row.append(InlineKeyboardButton(text=f'{current_page}/{total_pages}', callback_data='nz!_current_page'))
 
         if current_page < total_pages:
-            row.append(InlineKeyboardButton(text='➡️', callback_data=f'nz!_{callback_prefix}_page_{current_page + 1}'))
+            row.append(InlineKeyboardButton(text='➡️', callback_data=f'{callback_prefix}_page_{current_page + 1}'))
 
         keyboard.append(row)
 
