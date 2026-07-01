@@ -55,7 +55,6 @@ class BotRoleCRUD:
 
         if existing is not None:
             existing.permissions = permissions
-            existing.created_by = created_by
             await db.flush()
             await db.refresh(existing)
             logger.info('Updated bot admin role', user_id=user_id, permissions=permissions)

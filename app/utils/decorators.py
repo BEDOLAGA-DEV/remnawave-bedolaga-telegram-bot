@@ -64,6 +64,38 @@ def admin_required(func: Callable) -> Callable:
     return wrapper
 
 
+def super_admin_required(func: Callable) -> Callable:
+    """Allow only superadmins (ADMIN_IDS). Role-based BotAdminRole holders are denied.
+
+    Use for role management, where a section-admin must not be able to grant
+    themselves more permissions.
+    """
+
+    @functools.wraps(func)
+    async def wrapper(event: types.Update, *args, **kwargs) -> Any:
+        user = None
+        if isinstance(event, (types.Message, types.CallbackQuery)):
+            user = event.from_user
+
+        if user and settings.is_admin(user.id):
+            return await func(event, *args, **kwargs)
+
+        texts = get_texts()
+        try:
+            if isinstance(event, types.Message):
+                await event.answer(texts.ACCESS_DENIED)
+            elif isinstance(event, types.CallbackQuery):
+                await event.answer(texts.ACCESS_DENIED, show_alert=True)
+        except TelegramBadRequest as e:
+            if 'query is too old' not in str(e).lower():
+                raise
+
+        logger.warning('super_admin_required: доступ запрещён', user_id=user.id if user else 'Unknown')
+        return None
+
+    return wrapper
+
+
 def role_required(section: str):
     """Check that the user is a superadmin (ADMIN_IDS) or has the given section in BotAdminRole permissions.
 

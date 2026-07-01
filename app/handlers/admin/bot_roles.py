@@ -9,7 +9,7 @@ from app.database.crud.user import get_user_by_telegram_id
 from app.database.models import User
 from app.localization.texts import get_texts
 from app.states import BotRoleStates
-from app.utils.decorators import admin_required, error_handler
+from app.utils.decorators import error_handler, super_admin_required
 
 
 logger = structlog.get_logger(__name__)
@@ -103,7 +103,7 @@ def _permissions_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def admin_bot_roles(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     roles = await BotRoleCRUD.list_bot_roles(db)
@@ -118,7 +118,7 @@ async def admin_bot_roles(callback: types.CallbackQuery, db_user: User, db: Asyn
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_view(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     user_id = int(callback.data.split(':')[1])
@@ -146,7 +146,7 @@ async def bot_role_view(callback: types.CallbackQuery, db_user: User, db: AsyncS
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_add(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
     await state.set_state(BotRoleStates.waiting_for_telegram_id)
@@ -163,7 +163,7 @@ async def bot_role_add(callback: types.CallbackQuery, db_user: User, state: FSMC
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_add_telegram_id(
     message: types.Message, db_user: User, state: FSMContext, db: AsyncSession
@@ -177,11 +177,13 @@ async def bot_role_add_telegram_id(
 
     user = await get_user_by_telegram_id(db, telegram_id)
     if not user:
-        await message.answer('Пользователь с таким Telegram ID не найден в базе.')
+        await message.answer(
+            'Пользователь ещё не запускал бота. Попросите его открыть бота, затем выдайте роль.'
+        )
         return
 
     existing = await BotRoleCRUD.get_bot_role(db, user.id)
-    selected = list(existing.permissions) if existing else []
+    selected = list(existing.permissions or []) if existing else []
 
     await state.update_data(target_user_id=user.id, selected_permissions=selected)
     await state.set_state(BotRoleStates.selecting_permissions)
@@ -192,12 +194,12 @@ async def bot_role_add_telegram_id(
     )
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_edit(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
     user_id = int(callback.data.split(':')[1])
     role = await BotRoleCRUD.get_bot_role(db, user_id)
-    selected = list(role.permissions) if role else []
+    selected = list(role.permissions or []) if role else []
 
     await state.update_data(target_user_id=user_id, selected_permissions=selected)
     await state.set_state(BotRoleStates.selecting_permissions)
@@ -209,7 +211,7 @@ async def bot_role_edit(callback: types.CallbackQuery, db_user: User, state: FSM
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_toggle(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
     parts = callback.data.split(':')
@@ -217,6 +219,9 @@ async def bot_role_toggle(callback: types.CallbackQuery, db_user: User, state: F
     section = parts[2]
 
     data = await state.get_data()
+    if 'selected_permissions' not in data:
+        await callback.answer('Сессия истекла, откройте роль заново.', show_alert=True)
+        return
     selected = data.get('selected_permissions', [])
 
     if section in selected:
@@ -231,14 +236,22 @@ async def bot_role_toggle(callback: types.CallbackQuery, db_user: User, state: F
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_save(callback: types.CallbackQuery, db_user: User, state: FSMContext, db: AsyncSession):
     parts = callback.data.split(':')
     user_id = int(parts[1])
 
     data = await state.get_data()
+    if 'selected_permissions' not in data:
+        await callback.answer('Сессия истекла, откройте роль заново.', show_alert=True)
+        return
+
     selected = data.get('selected_permissions', [])
+    if not selected:
+        await callback.answer('Выберите хотя бы одну секцию.', show_alert=True)
+        return
+
     await state.clear()
 
     await BotRoleCRUD.set_bot_role(db, user_id, selected, created_by=db_user.id)
@@ -255,7 +268,7 @@ async def bot_role_save(callback: types.CallbackQuery, db_user: User, state: FSM
     )
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_delete(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     user_id = int(callback.data.split(':')[1])
@@ -278,7 +291,7 @@ async def bot_role_delete(callback: types.CallbackQuery, db_user: User, db: Asyn
     await callback.answer()
 
 
-@admin_required
+@super_admin_required
 @error_handler
 async def bot_role_delete_confirm(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     user_id = int(callback.data.split(':')[1])
