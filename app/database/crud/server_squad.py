@@ -193,6 +193,31 @@ def resolve_effective_squads(
     return []
 
 
+async def get_default_protocol_squad_uuid(db: AsyncSession) -> str | None:
+    """UUID of the default ("main") squad, or None if none is set."""
+    result = await db.execute(
+        select(ServerSquad.squad_uuid).where(ServerSquad.is_default.is_(True)).limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def set_default_server_squad(db: AsyncSession, server_id: int) -> ServerSquad | None:
+    """Mark one squad as the default (main), clearing the flag on all others."""
+    server = await get_server_squad_by_id(db, server_id)
+    if not server:
+        return None
+
+    await db.execute(
+        update(ServerSquad).where(ServerSquad.is_default.is_(True)).values(is_default=False)
+    )
+    await db.execute(
+        update(ServerSquad).where(ServerSquad.id == server_id).values(is_default=True)
+    )
+    await db.commit()
+
+    return await get_server_squad_by_id(db, server_id)
+
+
 async def get_active_server_squads(db: AsyncSession) -> list[ServerSquad]:
     """Возвращает список активных серверов, доступных для подключения."""
 
