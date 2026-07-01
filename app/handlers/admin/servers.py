@@ -38,6 +38,7 @@ def _build_server_edit_view(server):
     )
 
     trial_status = '✅ Да' if server.is_trial_eligible else '⚪️ Нет'
+    default_status = '⭐ Основной' if getattr(server, 'is_default', False) else '⚪️ Обычный'
 
     text = f"""
 🌐 <b>Редактирование сервера</b>
@@ -56,6 +57,7 @@ def _build_server_edit_view(server):
 • Текущих пользователей: {server.current_users}
 • Промогруппы: {promo_groups_text}
 • Выдача триала: {trial_status}
+• Тип: {default_status}
 
 <b>Описание:</b>
 {server.description or 'Не указано'}
@@ -84,6 +86,12 @@ def _build_server_edit_view(server):
         [
             types.InlineKeyboardButton(text='🎯 Промогруппы', callback_data=f'admin_server_edit_promo_{server.id}'),
             types.InlineKeyboardButton(text='📝 Описание', callback_data=f'admin_server_edit_desc_{server.id}'),
+        ],
+        [
+            types.InlineKeyboardButton(
+                text='⭐ Основной (уже)' if getattr(server, 'is_default', False) else '⭐ Сделать основным',
+                callback_data=f'admin_server_set_default_{server.id}',
+            )
         ],
         [
             types.InlineKeyboardButton(
@@ -453,6 +461,26 @@ async def toggle_server_availability(callback: types.CallbackQuery, db_user: Use
 
     text, keyboard = _build_server_edit_view(server)
 
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+
+
+@admin_required
+@error_handler
+async def set_server_as_default(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    server_id = int(callback.data.split('_')[-1])
+
+    from app.database.crud.server_squad import set_default_server_squad
+
+    server = await set_default_server_squad(db, server_id)
+    if not server:
+        await callback.answer('❌ Сервер не найден!', show_alert=True)
+        return
+
+    await cache.delete_pattern('available_countries*')
+    await callback.answer('⭐ Назначен основным!')
+
+    server = await get_server_squad_by_id(db, server_id)
+    text, keyboard = _build_server_edit_view(server)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
 
 
@@ -1139,6 +1167,7 @@ def register_handlers(dp: Dispatcher):
         & ~F.data.contains('promo'),
     )
     dp.callback_query.register(toggle_server_availability, F.data.startswith('admin_server_toggle_'))
+    dp.callback_query.register(set_server_as_default, F.data.startswith('admin_server_set_default_'))
     dp.callback_query.register(toggle_server_trial_assignment, F.data.startswith('admin_server_trial_'))
     dp.callback_query.register(show_server_users, F.data.startswith('admin_server_users_'))
 

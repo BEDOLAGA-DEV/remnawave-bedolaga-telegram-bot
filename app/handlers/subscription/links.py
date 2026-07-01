@@ -14,6 +14,7 @@ from app.keyboards.inline import (
 from app.localization.texts import get_texts
 from app.utils.subscription_utils import (
     convert_subscription_link_to_happ_scheme,
+    get_cryptolink_connect_link,
     get_display_subscription_link,
     get_happ_cryptolink_redirect_link,
 )
@@ -311,8 +312,19 @@ async def handle_open_subscription_link(
         return
 
     if settings.is_happ_cryptolink_mode():
-        redirect_link = get_happ_cryptolink_redirect_link(subscription_link)
-        happ_scheme_link = convert_subscription_link_to_happ_scheme(subscription_link)
+        # In cryptolink mode never surface the plain https URL: prefer the crypt
+        # link (generated on the fly if missing), else the happ:// scheme of the
+        # overridden host. get_display_subscription_link's plain fallback is only
+        # used above as a truthiness gate.
+        display_link = await get_cryptolink_connect_link(db, subscription)
+        if not display_link:
+            await callback.answer(
+                texts.t('SUBSCRIPTION_LINK_UNAVAILABLE', '❌ Ссылка подписки недоступна'),
+                show_alert=True,
+            )
+            return
+        redirect_link = get_happ_cryptolink_redirect_link(display_link)
+        happ_scheme_link = convert_subscription_link_to_happ_scheme(display_link)
         happ_message = (
             texts.t(
                 'SUBSCRIPTION_HAPP_OPEN_TITLE',
@@ -339,10 +351,10 @@ async def handle_open_subscription_link(
         happ_message += '\n\n' + texts.t(
             'SUBSCRIPTION_HAPP_CRYPTOLINK_BLOCK',
             '<blockquote expandable><code>{crypto_link}</code></blockquote>',
-        ).format(crypto_link=subscription_link)
+        ).format(crypto_link=display_link)
 
         keyboard = get_happ_cryptolink_keyboard(
-            subscription_link,
+            display_link,
             db_user.language,
             redirect_link=redirect_link,
             show_not_working_button=True,

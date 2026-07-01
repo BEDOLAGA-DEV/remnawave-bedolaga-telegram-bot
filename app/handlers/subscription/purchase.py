@@ -112,6 +112,7 @@ from app.utils.pricing_utils import (
 )
 from app.utils.subscription_utils import (
     get_display_subscription_link,
+    get_safe_display_subscription_link,
     resolve_simple_subscription_device_limit,
 )
 from app.utils.timezone import format_local_datetime
@@ -127,6 +128,11 @@ from .autopay import (
     toggle_autopay,
 )
 from .common import _get_promo_offer_discount_percent, update_traffic_prices
+from app.handlers.subscription.protocols import (
+    apply_protocols_changes,
+    handle_manage_protocols,
+    handle_toggle_protocol,
+)
 from .countries import (
     _build_countries_selection_text,
     _get_available_countries,
@@ -591,7 +597,9 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
             message += texts.t('SUBSCRIPTION_PURCHASED_TRAFFIC_FOOTER', '</blockquote>')
 
-    subscription_link = get_display_subscription_link(subscription)
+    # Safe helper: in cryptolink mode never renders the plain https URL as the
+    # copyable crypt block (returns the crypt link or nothing).
+    subscription_link = get_safe_display_subscription_link(subscription)
     hide_subscription_link = settings.should_hide_subscription_link()
 
     if subscription_link and actual_status in ['trial_active', 'paid_active'] and not hide_subscription_link:
@@ -4281,6 +4289,12 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_manage_country, F.data.startswith('nz!_country_manage_'))
 
     dp.callback_query.register(apply_countries_changes, F.data == 'nz!_countries_apply')
+
+    dp.callback_query.register(handle_manage_protocols, F.data == 'nz!_subscription_protocols')
+
+    dp.callback_query.register(handle_toggle_protocol, F.data.startswith('nz!_protocol_toggle_'))
+
+    dp.callback_query.register(apply_protocols_changes, F.data == 'nz!_protocols_apply')
 
     dp.callback_query.register(claim_discount_offer, F.data.startswith('nz!_claim_discount_'))
 

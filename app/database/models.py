@@ -3290,6 +3290,7 @@ class ServerSquad(Base):
 
     is_available = Column(Boolean, default=True)
     is_trial_eligible = Column(Boolean, default=False, nullable=False)
+    is_default = Column(Boolean, default=False, nullable=False)
 
     price_kopeks = Column(Integer, default=0)
 

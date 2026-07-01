@@ -159,6 +159,64 @@ async def resolve_crypto_link_for_storage(
     return encrypted or panel_crypto_link
 
 
+async def ensure_subscription_crypto_link(db, subscription) -> str | None:
+    """Return a crypt link for the subscription, generating it on the fly if missing.
+
+    Only acts in happ_cryptolink mode. Returns the stored
+    ``subscription_crypto_link`` when present (no panel call). Otherwise encrypts
+    the override-applied subscription URL via the panel API, persists the result
+    and returns it. Returns ``None`` when generation is impossible or fails —
+    callers MUST NOT fall back to the plain ``subscription_url`` in cryptolink
+    mode (use :func:`get_cryptolink_connect_link` for a safe fallback). Never
+    raises; a panel/network error degrades to ``None``.
+    """
+    if subscription is None:
+        return None
+    existing = getattr(subscription, 'subscription_crypto_link', None)
+    if existing:
+        return existing
+    if not settings.is_happ_cryptolink_mode():
+        return None
+    base_url = getattr(subscription, 'subscription_url', None)
+    if not base_url:
+        return None
+    try:
+        from app.services.remnawave_service import RemnaWaveService
+
+        service = RemnaWaveService()
+        async with service.get_api_client() as api:
+            encrypted = await api.encrypt_happ_crypto_link(apply_subscription_domain_override(base_url))
+        if encrypted:
+            subscription.subscription_crypto_link = encrypted
+            try:
+                await db.commit()
+            except Exception:
+                await db.rollback()
+            return encrypted
+    except Exception:
+        logger.debug('ensure_subscription_crypto_link: generation failed')
+    return None
+
+
+async def get_cryptolink_connect_link(db, subscription) -> str | None:
+    """Link to surface on a happ_cryptolink CONNECT screen — never a plain URL.
+
+    Prefers the crypt link (generating + persisting it on the fly when missing
+    via :func:`ensure_subscription_crypto_link`). When no crypt link can be
+    produced, falls back to the ``happ://`` scheme of the override-applied
+    subscription URL — never a plain ``https://`` URL. Returns ``None`` when even
+    that is impossible, in which case the caller should show no link.
+    """
+    crypto = await ensure_subscription_crypto_link(db, subscription)
+    if crypto:
+        return crypto
+    base_url = getattr(subscription, 'subscription_url', None) if subscription else None
+    happ_link = convert_subscription_link_to_happ_scheme(apply_subscription_domain_override(base_url))
+    if happ_link and happ_link.startswith('happ://'):
+        return happ_link
+    return None
+
+
 def build_scheme_redirect_link(deep_link: str | None, template: str | None) -> str | None:
     """Wrap a custom-scheme deep link (happ://, incy://, ...) in an HTTP redirect.
 

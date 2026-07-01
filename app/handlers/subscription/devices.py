@@ -43,6 +43,7 @@ from app.utils.pricing_utils import (
 )
 from app.utils.subscription_utils import (
     get_display_subscription_link,
+    get_safe_display_subscription_link,
 )
 from .common import (
     _get_period_hint_from_subscription,
@@ -1707,6 +1708,8 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
     if subscription is None:
         return
     subscription_link = get_display_subscription_link(subscription)
+    # Text display must never leak the plain https URL in cryptolink mode.
+    safe_link = get_safe_display_subscription_link(subscription)
 
     if not subscription_link:
         await callback.answer(
@@ -1736,7 +1739,7 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
         if isinstance(app.get('name'), str) and app.get('name').strip()
     )
 
-    if hide_subscription_link:
+    if hide_subscription_link or not safe_link:
         link_section = (
             texts.t('SUBSCRIPTION_DEVICE_LINK_TITLE', '🔗 <b>Ссылка подписки:</b>')
             + '\n'
@@ -1749,7 +1752,7 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
     else:
         link_section = (
             texts.t('SUBSCRIPTION_DEVICE_LINK_TITLE', '🔗 <b>Ссылка подписки:</b>')
-            + f'\n<code>{html_mod.escape(subscription_link)}</code>\n\n'
+            + f'\n<code>{html_mod.escape(safe_link)}</code>\n\n'
         )
 
     guide_text = (
@@ -1858,6 +1861,8 @@ async def handle_specific_app_guide(
         return
 
     subscription_link = get_display_subscription_link(subscription)
+    # Text display must never leak the plain https URL in cryptolink mode.
+    safe_link = get_safe_display_subscription_link(subscription)
 
     if not subscription_link:
         await callback.answer(
@@ -1878,7 +1883,7 @@ async def handle_specific_app_guide(
 
     hide_subscription_link = settings.should_hide_subscription_link()
 
-    if hide_subscription_link:
+    if hide_subscription_link or not safe_link:
         link_section = (
             texts.t('SUBSCRIPTION_DEVICE_LINK_TITLE', '🔗 <b>Ссылка подписки:</b>')
             + '\n'
@@ -1891,7 +1896,7 @@ async def handle_specific_app_guide(
     else:
         link_section = (
             texts.t('SUBSCRIPTION_DEVICE_LINK_TITLE', '🔗 <b>Ссылка подписки:</b>')
-            + f'\n<code>{html_mod.escape(subscription_link)}</code>\n\n'
+            + f'\n<code>{html_mod.escape(safe_link)}</code>\n\n'
         )
 
     guide_text = (
@@ -1931,10 +1936,19 @@ async def show_device_connection_help(
     if subscription is None:
         return
     subscription_link = get_display_subscription_link(subscription)
+    # Text display must never leak the plain https URL in cryptolink mode.
+    safe_link = get_safe_display_subscription_link(subscription)
 
     if not subscription_link:
         await callback.answer('❌ Ссылка подписки недоступна', show_alert=True)
         return
+
+    # Never surface the plain https URL as text in cryptolink mode.
+    link_display = (
+        f'<code>{html_mod.escape(safe_link)}</code>'
+        if safe_link
+        else 'ℹ️ Ссылка доступна в разделе "Моя подписка".'
+    )
 
     help_text = f"""
 📱 <b>Как подключить устройство заново</b>
@@ -1954,7 +1968,7 @@ async def show_device_connection_help(
 • Нажмите "Подключить"
 
 <b>🔗 Ваша ссылка подписки:</b>
-<code>{html_mod.escape(subscription_link)}</code>
+{link_display}
 
 💡 <b>Совет:</b> Сохраните эту ссылку - она понадобится для подключения новых устройств
 """
