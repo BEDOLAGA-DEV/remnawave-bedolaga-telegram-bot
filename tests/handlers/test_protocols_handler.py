@@ -94,3 +94,43 @@ async def test_apply_blocks_empty_selection(monkeypatch):
     cb.answer.assert_awaited()
     db.commit.assert_not_awaited()
     assert sub.connected_squads == ['a']
+
+
+@pytest.mark.asyncio
+async def test_apply_enqueues_retry_when_push_fails(monkeypatch):
+    sub = SimpleNamespace(id=5, user_id=1, connected_squads=['a'], updated_at=None)
+
+    async def fake_resolve(cb, u, db, state=None):
+        return sub, 5
+
+    monkeypatch.setattr(common, 'resolve_subscription_from_context', fake_resolve)
+    _patch_available(
+        monkeypatch,
+        [
+            SimpleNamespace(squad_uuid='a', display_name='Main'),
+            SimpleNamespace(squad_uuid='b', display_name='Extra'),
+        ],
+    )
+
+    async def fake_push(self, db, subscription, *, sync_squads=False):
+        return None  # simulate swallowed failure
+
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService.update_remnawave_user', fake_push
+    )
+
+    enqueue_calls = []
+    monkeypatch.setattr(
+        'app.services.remnawave_retry_queue.remnawave_retry_queue.enqueue',
+        lambda **kw: enqueue_calls.append(kw),
+    )
+
+    db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+    state = _State({'protocols': ['b']})
+    cb = _cb('nz!_protocols_apply')
+
+    await protocols.apply_protocols_changes(cb, _user(), db, state)
+
+    assert sub.connected_squads == ['b']
+    assert len(enqueue_calls) == 1
+    assert enqueue_calls[0]['subscription_id'] == 5

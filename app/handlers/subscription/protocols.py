@@ -137,10 +137,14 @@ async def apply_protocols_changes(
     from app.services.subscription_service import SubscriptionService
 
     service = SubscriptionService()
+    push_result = None
     try:
-        await service.update_remnawave_user(db, subscription, sync_squads=True)
+        push_result = await service.update_remnawave_user(db, subscription, sync_squads=True)
     except Exception as rw_err:
         logger.error('Ошибка синхронизации протоколов с RemnaWave', error=rw_err)
+
+    if push_result is None:
+        # update_remnawave_user swallows failures and returns None; enqueue a retry.
         from app.services.remnawave_retry_queue import remnawave_retry_queue
 
         remnawave_retry_queue.enqueue(
