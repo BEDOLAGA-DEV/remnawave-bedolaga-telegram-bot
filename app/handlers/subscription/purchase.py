@@ -128,6 +128,11 @@ from .autopay import (
     toggle_autopay,
 )
 from .common import _get_promo_offer_discount_percent, update_traffic_prices
+from app.handlers.subscription.protocols import (
+    apply_protocols_changes,
+    handle_manage_protocols,
+    handle_toggle_protocol,
+)
 from .countries import (
     _build_countries_selection_text,
     _get_available_countries,
@@ -4284,6 +4289,12 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_manage_country, F.data.startswith('nz!_country_manage_'))
 
     dp.callback_query.register(apply_countries_changes, F.data == 'nz!_countries_apply')
+
+    dp.callback_query.register(handle_manage_protocols, F.data == 'nz!_subscription_protocols')
+
+    dp.callback_query.register(handle_toggle_protocol, F.data.startswith('nz!_protocol_toggle_'))
+
+    dp.callback_query.register(apply_protocols_changes, F.data == 'nz!_protocols_apply')
 
     dp.callback_query.register(claim_discount_offer, F.data.startswith('nz!_claim_discount_'))
 
