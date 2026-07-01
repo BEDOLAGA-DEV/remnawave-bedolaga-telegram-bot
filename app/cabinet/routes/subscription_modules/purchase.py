@@ -1140,6 +1140,20 @@ async def get_trial_info(
     """Get trial subscription info and availability."""
     await db.refresh(user, ['subscriptions'])
 
+    # When trial is globally disabled (TRIAL_DURATION_DAYS=0 and no paid trial),
+    # return is_available=False immediately — same gate as the miniapp.
+    if settings.TRIAL_DURATION_DAYS <= 0 and not settings.TRIAL_PAYMENT_ENABLED:
+        return TrialInfoResponse(
+            is_available=False,
+            duration_days=0,
+            traffic_limit_gb=settings.TRIAL_TRAFFIC_LIMIT_GB,
+            device_limit=settings.TRIAL_DEVICE_LIMIT,
+            requires_payment=False,
+            price_kopeks=0,
+            price_rubles=0,
+            reason_unavailable='Trial is disabled',
+        )
+
     # Проверяем, отключён ли триал для этого типа пользователя
     if settings.is_trial_disabled_for_user(getattr(user, 'auth_type', 'telegram')):
         return TrialInfoResponse(
