@@ -17,7 +17,7 @@ Tests stub `aiosqlite`/`asyncpg` (no live DB) — DB code is tested with mocks; 
 ## File Structure
 
 - `app/database/models.py` — add `ServerSquad.is_default` column.
-- `migrations/alembic/versions/0100_add_is_default_to_server_squads.py` — new migration (Create).
+- `migrations/alembic/versions/0119_add_is_default_to_server_squads.py` — new migration (Create).
 - `app/database/crud/server_squad.py` — add `resolve_effective_squads` (pure), `get_default_protocol_squad_uuid`, `set_default_server_squad`.
 - `app/keyboards/inline.py` — add `get_manage_protocols_keyboard`; add "🧩 Протоколы" button in `get_updated_subscription_settings_keyboard`.
 - `app/handlers/subscription/protocols.py` — new user-facing handler (Create).
@@ -82,22 +82,24 @@ git commit -m "feat(squads): add is_default flag to ServerSquad model"
 ## Task 2: Alembic migration for `is_default`
 
 **Files:**
-- Create: `migrations/alembic/versions/0100_add_is_default_to_server_squads.py`
+- Create: `migrations/alembic/versions/0119_add_is_default_to_server_squads.py`
 
-- [ ] **Step 1: Confirm 0099 is the current head**
+> Head note: the real Alembic head on this branch is `0118` (files run 0001..0118; nothing revises 0118). The new migration chains onto it as `0119`.
 
-Run: `git grep -n "down_revision" -- migrations/alembic/versions | Select-String "'0099'"`
-Expected: NO output (nothing already revises 0099 → it is the head). If something does, bump the new revision id accordingly.
+- [ ] **Step 1: Confirm 0118 is the current head**
+
+Run: `git grep -n "down_revision" -- migrations/alembic/versions | Select-String "'0118'"`
+Expected: NO output (nothing already revises 0118 → it is the head). If something does, bump the new revision id accordingly.
 
 - [ ] **Step 2: Create the migration file**
 
-Create `migrations/alembic/versions/0100_add_is_default_to_server_squads.py`:
+Create `migrations/alembic/versions/0119_add_is_default_to_server_squads.py`:
 
 ```python
 """add is_default to server_squads
 
-Revision ID: 0100
-Revises: 0099
+Revision ID: 0119
+Revises: 0118
 Create Date: 2026-07-01
 
 """
@@ -107,8 +109,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0100'
-down_revision: Union[str, None] = '0099'
+revision: str = '0119'
+down_revision: Union[str, None] = '0118'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -126,13 +128,13 @@ def downgrade() -> None:
 
 - [ ] **Step 3: Sanity-check the file imports**
 
-Run: `.venv\Scripts\python.exe -c "import ast; ast.parse(open('migrations/alembic/versions/0100_add_is_default_to_server_squads.py', encoding='utf-8').read()); print('ok')"`
+Run: `.venv\Scripts\python.exe -c "import ast; ast.parse(open('migrations/alembic/versions/0119_add_is_default_to_server_squads.py', encoding='utf-8').read()); print('ok')"`
 Expected: `ok`
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add migrations/alembic/versions/0100_add_is_default_to_server_squads.py
+git add migrations/alembic/versions/0119_add_is_default_to_server_squads.py
 git commit -m "feat(squads): migration add is_default to server_squads"
 ```
 
