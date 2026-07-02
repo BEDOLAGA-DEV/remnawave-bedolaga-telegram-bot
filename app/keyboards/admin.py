@@ -10,6 +10,19 @@ from app.middlewares.admin_permission import resolve_admin_section
 _SUPER_ONLY_CALLBACKS = {'admin_bot_roles'}
 
 
+# Sections reachable inside each admin submenu (from resolve_admin_section over child buttons).
+# Computed by walking each get_admin_*_submenu_keyboard('ru') markup and collecting the
+# distinct non-None resolve_admin_section() result for every child button's callback_data.
+_SUBMENU_SECTIONS: dict[str, set[str]] = {
+    'admin_submenu_users': {'users', 'subscriptions'},
+    'admin_submenu_promo': {'promos', 'analytics'},
+    'admin_submenu_communications': {'broadcasts', 'promos', 'settings'},
+    'admin_submenu_support': {'support'},
+    'admin_submenu_settings': {'servers', 'analytics', 'settings', 'support'},
+    'admin_submenu_system': {'settings', 'analytics'},
+}
+
+
 def _t(texts, key: str, default: str) -> str:
     """Helper for localized button labels with fallbacks."""
     return texts.t(key, default)
@@ -27,6 +40,9 @@ def filter_admin_keyboard(
     (superadmin) and the keyboard is returned unchanged. For a section admin,
     a button is kept when its callback has no section (navigation/unmapped) or
     its section is in ``permissions``. Super-only callbacks are hidden.
+    A submenu button (e.g. ``admin_submenu_settings``) is kept only when the
+    admin has at least one of the sections reachable inside that submenu,
+    since otherwise it would open onto an empty/hidden menu.
     """
     if is_super:
         return markup
@@ -38,6 +54,10 @@ def filter_admin_keyboard(
         for button in row:
             cb = button.callback_data or ''
             if cb in _SUPER_ONLY_CALLBACKS:
+                continue
+            if cb in _SUBMENU_SECTIONS:
+                if allowed & _SUBMENU_SECTIONS[cb]:
+                    kept.append(button)
                 continue
             section = resolve_admin_section(cb)
             if section is None or section in allowed:
@@ -2194,12 +2214,12 @@ def get_admin_pagination_keyboard(
         row = []
 
         if current_page > 1:
-            row.append(InlineKeyboardButton(text='⬅️', callback_data=f'nz!_{callback_prefix}_page_{current_page - 1}'))
+            row.append(InlineKeyboardButton(text='⬅️', callback_data=f'{callback_prefix}_page_{current_page - 1}'))
 
         row.append(InlineKeyboardButton(text=f'{current_page}/{total_pages}', callback_data='nz!_current_page'))
 
         if current_page < total_pages:
-            row.append(InlineKeyboardButton(text='➡️', callback_data=f'nz!_{callback_prefix}_page_{current_page + 1}'))
+            row.append(InlineKeyboardButton(text='➡️', callback_data=f'{callback_prefix}_page_{current_page + 1}'))
 
         keyboard.append(row)
 

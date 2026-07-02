@@ -23,6 +23,10 @@ BOT_ROLE_SECTIONS = [
     'support',
     'settings',
     'analytics',
+    'trials',
+    'pricing',
+    'reviews',
+    'offers',
 ]
 
 

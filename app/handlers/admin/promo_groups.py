@@ -550,7 +550,7 @@ async def show_promo_group_details(
             [
                 types.InlineKeyboardButton(
                     text=texts.t('ADMIN_PROMO_GROUP_MEMBERS_BUTTON', '👥 Участники'),
-                    callback_data=f'nz!_promo_group_members_{group.id}_page_1',
+                    callback_data=f'promo_group_members_{group.id}_page_1',
                 )
             ]
         )
@@ -1383,7 +1383,7 @@ def register_handlers(dp: Dispatcher):
     )
     dp.callback_query.register(
         show_promo_group_members,
-        F.data.regexp(r'^nz\!_promo_group_members_\d+_page_\d+$'),
+        F.data.regexp(r'^promo_group_members_\d+_page_\d+$'),
     )
 
     dp.message.register(process_create_group_name, AdminStates.creating_promo_group_name)
