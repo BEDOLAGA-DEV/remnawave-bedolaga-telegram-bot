@@ -40,12 +40,8 @@
 !app/**
 !docker/
 !docker/**
-!tests/
-!tests/**
 !migrations/
 !migrations/**
-!docs/
-!docs/**
 !assets/
 !assets/**
 !locales/
@@ -99,6 +95,9 @@ data/
 *.log
 *.db
 *.sqlite3
+
+docs/
+tests/
 
 # OS files
 .DS_Store
