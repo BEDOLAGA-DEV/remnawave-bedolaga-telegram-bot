@@ -6,8 +6,8 @@ charges for, instead of always using the tariff's cheapest period.
 NULL means "use the legacy default" — settings.DEFAULT_AUTOPAY_PERIOD_DAYS
 if set, otherwise tariff.get_shortest_period().
 
-Revision ID: 0087
-Revises: 0086
+Revision ID: 0091
+Revises: 0090
 Create Date: 2026-05-21
 
 Renumbered from upstream 0086 to 0087 to avoid collision with the
@@ -20,8 +20,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0087'
-down_revision: Union[str, None] = '0086'
+revision: str = '0091'
+down_revision: Union[str, None] = '0090'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
