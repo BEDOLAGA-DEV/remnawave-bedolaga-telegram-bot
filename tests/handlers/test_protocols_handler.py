@@ -2,8 +2,14 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from app.config import settings
 import app.handlers.subscription.common as common
 import app.handlers.subscription.protocols as protocols
+
+
+@pytest.fixture(autouse=True)
+def _enable_protocols(monkeypatch):
+    monkeypatch.setattr(type(settings), 'is_protocols_enabled', lambda self: True, raising=False)
 
 
 def _cb(data):

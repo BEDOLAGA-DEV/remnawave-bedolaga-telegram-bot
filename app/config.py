@@ -358,6 +358,10 @@ class Settings(BaseSettings):
     SUBSCRIPTION_REVOKE_ENABLED: bool = True
     SUBSCRIPTION_REVOKE_COOLDOWN_SECONDS: int = 900  # 15 minutes
 
+    # Пользовательский выбор протоколов (internal-squads). Рантайм-тумблер:
+    # выключено по умолчанию, включается администратором в «Настройки бота».
+    PROTOCOLS_ENABLED: bool = False
+
     # Настройки простой покупки
     SIMPLE_SUBSCRIPTION_ENABLED: bool = False
     SIMPLE_SUBSCRIPTION_PERIOD_DAYS: int = 30
@@ -2163,6 +2167,10 @@ class Settings(BaseSettings):
     def is_subscription_revoke_enabled(self) -> bool:
         """Проверяет, включен ли перевыпуск подписки."""
         return self.SUBSCRIPTION_REVOKE_ENABLED
+
+    def is_protocols_enabled(self) -> bool:
+        """Проверяет, включён ли пользовательский выбор протоколов (сквадов)."""
+        return self.PROTOCOLS_ENABLED
 
     def is_multi_tariff_enabled(self) -> bool:
         """Проверяет, включен ли мультитарифный режим."""

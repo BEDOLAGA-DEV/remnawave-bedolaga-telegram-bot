@@ -4,6 +4,7 @@ from aiogram import types
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import get_manage_protocols_keyboard
 from app.localization.texts import get_texts
@@ -15,6 +16,17 @@ from .common import logger
 def validate_protocol_selection(selected: list[str]) -> bool:
     """At least one non-empty protocol must remain selected."""
     return len([s for s in (selected or []) if s]) >= 1
+
+
+async def _protocols_enabled_guard(callback: types.CallbackQuery, language: str) -> bool:
+    """Return True if the protocols feature is on; otherwise alert and refuse."""
+    if settings.is_protocols_enabled():
+        return True
+    await callback.answer(
+        get_texts(language).t('PROTOCOLS_DISABLED', 'ℹ️ Функция временно недоступна'),
+        show_alert=True,
+    )
+    return False
 
 
 async def _build_protocol_pool(db: AsyncSession, promo_group_id, current: list[str] | None) -> list[dict]:
@@ -39,6 +51,9 @@ async def _build_protocol_pool(db: AsyncSession, promo_group_id, current: list[s
 async def handle_manage_protocols(
     callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext
 ):
+    if not await _protocols_enabled_guard(callback, db_user.language):
+        return
+
     from app.database.crud.server_squad import (
         get_default_protocol_squad_uuid,
         resolve_effective_squads,
@@ -70,6 +85,9 @@ async def handle_manage_protocols(
 async def handle_toggle_protocol(
     callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext
 ):
+    if not await _protocols_enabled_guard(callback, db_user.language):
+        return
+
     texts = get_texts(db_user.language)
     uuid = callback.data.split('nz!_protocol_toggle_', 1)[1]
 
@@ -112,6 +130,9 @@ async def handle_toggle_protocol(
 async def apply_protocols_changes(
     callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext
 ):
+    if not await _protocols_enabled_guard(callback, db_user.language):
+        return
+
     texts = get_texts(db_user.language)
     subscription, sub_id = await common.resolve_subscription_from_context(callback, db_user, db, state)
     if subscription is None:

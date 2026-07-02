@@ -1,5 +1,14 @@
 from types import SimpleNamespace
 
+import pytest
+
+from app.config import settings
+
+
+@pytest.fixture(autouse=True)
+def _enable_protocols(monkeypatch):
+    monkeypatch.setattr(type(settings), 'is_protocols_enabled', lambda self: True, raising=False)
+
 
 def test_detail_keyboard_has_protocols_button(monkeypatch):
     # FreezeSettingsService.is_enabled() is called synchronously in the builder;

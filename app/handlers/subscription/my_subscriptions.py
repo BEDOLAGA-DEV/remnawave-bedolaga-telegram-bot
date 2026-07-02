@@ -131,7 +131,8 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
         if settings.WL_TRAFFIC_TOPUP_ENABLED:
             buttons.append([types.InlineKeyboardButton(text='🌍 БС-Трафик', callback_data=f'nz!_swl:{sub_id}')])
         buttons.append([types.InlineKeyboardButton(text='📱 Устройства', callback_data=f'nz!_sd:{sub_id}')])
-        buttons.append([types.InlineKeyboardButton(text='🧩 Протоколы', callback_data='nz!_subscription_protocols')])
+        if settings.is_protocols_enabled():
+            buttons.append([types.InlineKeyboardButton(text='🧩 Протоколы', callback_data='nz!_subscription_protocols')])
         buttons.append([types.InlineKeyboardButton(text='💳 Автоплатеж', callback_data='subscription_autopay')])
         buttons.append([types.InlineKeyboardButton(text='📊 Трафик', callback_data=f'st:{sub_id}')])
         buttons.append([types.InlineKeyboardButton(text='📱 Устройства', callback_data=f'sd:{sub_id}')])
