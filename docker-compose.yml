@@ -74,7 +74,8 @@ services:
       - /etc/localtime:/etc/localtime:ro
       # Загруженные медиафайлы (изображения/видео для новостей)
       - ./uploads:/app/uploads:rw
-      # Логотип для сообщений
+      # Логотип для сообщений (.mp4/.gif — анимация, .png — фото)
+      # - ./nozapret.mp4:/app/nozapret.mp4:ro
       # - ./vpn_logo.png:/app/vpn_logo.png:ro
     ports:
       - '${WEB_API_PORT:-8080}:${WEB_API_PORT:-8080}'

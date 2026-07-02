@@ -162,17 +162,15 @@ class MonitoringService:
             and not caption_exceeds_telegram_limit(text)
         ):
             try:
-                from app.utils.message_patch import _cache_logo_file_id, get_logo_media
+                from app.utils.message_patch import send_logo_media
 
-                result = await self.bot.send_photo(
+                return await send_logo_media(
+                    self.bot,
                     chat_id=chat_id,
-                    photo=get_logo_media(),
                     caption=text,
                     reply_markup=reply_markup,
                     parse_mode=parse_mode,
                 )
-                _cache_logo_file_id(result)
-                return result
             except TelegramBadRequest as exc:
                 logger.warning(
                     'Не удалось отправить сообщение с логотипом пользователю : . Отправляем текстовое сообщение.',

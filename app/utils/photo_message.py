@@ -15,6 +15,8 @@ from .message_patch import (
     get_logo_media,
     is_privacy_restricted_error,
     is_qr_message,
+    logo_input_media_class,
+    logo_is_animation,
     prepare_privacy_safe_kwargs,
 )
 from .premium_emoji import apply_premium_emoji
@@ -27,13 +29,21 @@ RETRY_DELAY = 0.5
 
 
 def _resolve_media(message: types.Message):
+    """Возвращает (media, InputMedia-класс) для edit_media."""
     if isinstance(message, InaccessibleMessage):
-        return get_logo_media()
+        return get_logo_media(), logo_input_media_class()
     if settings.ENABLE_LOGO_MODE and not is_qr_message(message):
-        return get_logo_media()
+        return get_logo_media(), logo_input_media_class()
     if message.photo and not is_qr_message(message):
-        return message.photo[-1].file_id
-    return get_logo_media()
+        return message.photo[-1].file_id, InputMediaPhoto
+    return get_logo_media(), logo_input_media_class()
+
+
+async def _answer_logo(message: types.Message, caption: str, **kwargs):
+    """Отправляет логотип как animation или photo в зависимости от типа файла."""
+    if logo_is_animation():
+        return await message.answer_animation(get_logo_media(), caption=caption, **kwargs)
+    return await message.answer_photo(photo=get_logo_media(), caption=caption, **kwargs)
 
 
 def _get_language(callback: types.CallbackQuery) -> str | None:
@@ -92,9 +102,9 @@ async def edit_or_answer_photo(
     if isinstance(callback.message, InaccessibleMessage):
         try:
             if settings.ENABLE_LOGO_MODE and LOGO_PATH.exists():
-                result = await callback.message.answer_photo(
-                    photo=get_logo_media(),
-                    caption=caption,
+                result = await _answer_logo(
+                    callback.message,
+                    caption,
                     reply_markup=keyboard,
                     parse_mode=resolved_parse_mode,
                 )
@@ -151,7 +161,7 @@ async def edit_or_answer_photo(
             await _answer_text(callback, caption, keyboard, resolved_parse_mode, error)
         return
 
-    media = _resolve_media(callback.message)
+    media, media_cls = _resolve_media(callback.message)
 
     # Logo file unavailable (missing / directory bind-mount) — fall back to text.
     # See #586617: this used to surface as IsADirectoryError on every callback.
@@ -167,7 +177,7 @@ async def edit_or_answer_photo(
     for attempt in range(MAX_RETRIES):
         try:
             await callback.message.edit_media(
-                InputMediaPhoto(media=media, caption=caption, parse_mode=(parse_mode or 'HTML')),
+                media_cls(media=media, caption=caption, parse_mode=(parse_mode or 'HTML')),
                 reply_markup=keyboard,
             )
             return  # Успешно — выходим
@@ -224,10 +234,10 @@ async def edit_or_answer_photo(
                 await _answer_text(callback, caption, keyboard, resolved_parse_mode)
                 return
             try:
-                # Отправим как фото с логотипом
-                result = await callback.message.answer_photo(
-                    photo=logo_media,
-                    caption=caption,
+                # Отправим заново с логотипом
+                result = await _answer_logo(
+                    callback.message,
+                    caption,
                     reply_markup=keyboard,
                     parse_mode=resolved_parse_mode,
                 )
