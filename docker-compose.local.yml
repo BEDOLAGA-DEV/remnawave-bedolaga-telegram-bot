@@ -70,7 +70,8 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
       - ./uploads:/app/uploads:rw
-      # Логотип для сообщений (раскомментируйте, если файл существует)
+      # Логотип для сообщений (раскомментируйте, если файл существует; .mp4/.gif — анимация, .png — фото)
+      # - ./nozapret.mp4:/app/nozapret.mp4:ro
       # - ./vpn_logo.png:/app/vpn_logo.png:ro
     ports:
       - '${WEB_API_PORT:-8181}:${WEB_API_PORT:-8181}'

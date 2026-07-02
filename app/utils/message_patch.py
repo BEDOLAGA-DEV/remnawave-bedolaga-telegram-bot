@@ -5,7 +5,7 @@ from typing import Any
 
 import structlog
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import FSInputFile, InaccessibleMessage, InputMediaPhoto, Message
+from aiogram.types import FSInputFile, InaccessibleMessage, InputMediaAnimation, InputMediaPhoto, Message
 
 from app.config import settings
 from app.localization.texts import get_texts
@@ -137,6 +137,20 @@ _PRIVACY_RESTRICTED_CODE = 'BUTTON_USER_PRIVACY_RESTRICTED'
 # который можно переиспользовать без повторной загрузки файла (экономит 3-4 сек)
 _logo_file_id: str | None = None
 
+# Анимированный логотип (.mp4 без звука / .gif) отправляется через sendAnimation —
+# Telegram показывает его как зацикленную GIF.
+_ANIMATION_SUFFIXES = ('.mp4', '.gif')
+
+
+def logo_is_animation() -> bool:
+    """True, если LOGO_FILE — анимация (mp4/gif), а не статичное фото."""
+    return LOGO_PATH.suffix.lower() in _ANIMATION_SUFFIXES
+
+
+def logo_input_media_class():
+    """InputMedia-класс, соответствующий типу логотипа (для edit_media)."""
+    return InputMediaAnimation if logo_is_animation() else InputMediaPhoto
+
 
 def get_logo_media():
     """Возвращает кешированный file_id или FSInputFile для логотипа.
@@ -145,7 +159,8 @@ def get_logo_media():
     must fall back to text-only sends (see Telegram bug #586617).
 
     If the source file is too large or too high-resolution for Telegram, a
-    cached resized copy is used instead (see Telegram bug #339184).
+    cached resized copy is used instead (see Telegram bug #339184). The resize
+    preflight is Pillow/PNG-only, so animated logos are served as-is.
     """
     if _logo_file_id:
         return _logo_file_id
@@ -153,7 +168,7 @@ def get_logo_media():
         return None
     global _logo_send_path
     if _logo_send_path is None:
-        _logo_send_path = _prepare_logo_for_send(LOGO_PATH)
+        _logo_send_path = LOGO_PATH if logo_is_animation() else _prepare_logo_for_send(LOGO_PATH)
     return FSInputFile(_logo_send_path)
 
 
@@ -164,6 +179,19 @@ def _cache_logo_file_id(result: Message | None) -> None:
         return
     if hasattr(result, 'photo') and result.photo:
         _logo_file_id = result.photo[-1].file_id
+    elif getattr(result, 'animation', None):
+        _logo_file_id = result.animation.file_id
+
+
+async def send_logo_media(bot, chat_id: int, caption: str | None = None, **kwargs):
+    """Отправляет логотип через bot.send_animation/send_photo и кеширует file_id."""
+    media = get_logo_media()
+    if logo_is_animation():
+        result = await bot.send_animation(chat_id=chat_id, animation=media, caption=caption, **kwargs)
+    else:
+        result = await bot.send_photo(chat_id=chat_id, photo=media, caption=caption, **kwargs)
+    _cache_logo_file_id(result)
+    return result
 
 
 _TOPIC_REQUIRED_ERRORS = (
@@ -301,7 +329,10 @@ async def _answer_with_photo(self: Message, text: str = None, **kwargs):
 
     if LOGO_PATH.exists():
         try:
-            result = await self.answer_photo(get_logo_media(), caption=text, **kwargs)
+            if logo_is_animation():
+                result = await self.answer_animation(get_logo_media(), caption=text, **kwargs)
+            else:
+                result = await self.answer_photo(get_logo_media(), caption=text, **kwargs)
             _cache_logo_file_id(result)
             return result
         except TelegramBadRequest as error:
@@ -365,7 +396,7 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
             if 'message is not modified' in str(error).lower():
                 return None
             raise
-    if self.photo:
+    if self.photo or self.animation:
         language = _get_language(self)
         if text:
             text = apply_premium_emoji(text)
@@ -381,8 +412,13 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
             pass
         if LOGO_PATH.exists():
             media = get_logo_media()
-        else:
+            media_cls = logo_input_media_class()
+        elif self.photo:
             media = self.photo[-1].file_id
+            media_cls = InputMediaPhoto
+        else:
+            media = self.animation.file_id
+            media_cls = InputMediaAnimation
         media_kwargs = {'media': media, 'caption': text}
         edit_kwargs = dict(kwargs)
         if 'parse_mode' in edit_kwargs:
@@ -391,7 +427,7 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
         else:
             media_kwargs['parse_mode'] = 'HTML'
         try:
-            return await self.edit_media(InputMediaPhoto(**media_kwargs), **edit_kwargs)
+            return await self.edit_media(media_cls(**media_kwargs), **edit_kwargs)
         except TelegramBadRequest as error:
             if is_topic_required_error(error):
                 return None
@@ -419,7 +455,7 @@ async def _edit_with_photo(self: Message, text: str, **kwargs):
                 if is_topic_required_error(inner_error):
                     return None
                 raise
-    # Не-фото медиа (видео, анимация и т.д.) с включённым логотипом — удаляем и отправляем с фото
+    # Прочее медиа (видео, документ и т.д.) с включённым логотипом — удаляем и отправляем с логотипом
     if self.text is None:
         try:
             await self.delete()

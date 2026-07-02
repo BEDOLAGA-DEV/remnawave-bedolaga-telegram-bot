@@ -993,7 +993,8 @@ class Settings(BaseSettings):
     HIDE_SUBSCRIPTION_LINK: bool = False
     SUBSCRIPTION_DOMAIN_OVERRIDE: str | None = None
     ENABLE_LOGO_MODE: bool = True
-    LOGO_FILE: str = 'vpn_logo.png'
+    # .mp4/.gif отправляется через sendAnimation (GIF), остальное — sendPhoto
+    LOGO_FILE: str = 'nozapret.mp4'
     SKIP_RULES_ACCEPT: bool = False
     SKIP_REFERRAL_CODE: bool = False
 
