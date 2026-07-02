@@ -1,5 +1,14 @@
 from types import SimpleNamespace
 
+import pytest
+
+from app.config import settings
+
+
+@pytest.fixture(autouse=True)
+def _enable_protocols(monkeypatch):
+    monkeypatch.setattr(type(settings), 'is_protocols_enabled', lambda self: True, raising=False)
+
 
 def _cbs(kb):
     return [b.callback_data for row in kb.inline_keyboard for b in row]

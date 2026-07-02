@@ -3312,8 +3312,10 @@ def get_manage_protocols_keyboard(
     protocols: list[dict],
     selected: list[str],
     language: str = DEFAULT_LANGUAGE,
+    sub_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     texts = get_texts(language)
+    back_cb = f'nz!_sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'nz!_subscription_settings'
     buttons = []
 
     for proto in protocols:
@@ -3334,7 +3336,7 @@ def get_manage_protocols_keyboard(
         ]
     )
     buttons.append(
-        [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription_settings', style='danger')]
+        [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb, style='danger')]
     )
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -3750,15 +3752,16 @@ def get_updated_subscription_settings_keyboard(
 
     # Для суточных тарифов кнопка паузы теперь в главном меню подписки
 
-    keyboard.append(
-        [
-            InlineKeyboardButton(
-                text=texts.t('PROTOCOLS_BUTTON', '🧩 Протоколы'),
-                callback_data='nz!_subscription_protocols',
-                style='primary',
-            )
-        ]
-    )
+    if settings.is_protocols_enabled():
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PROTOCOLS_BUTTON', '🧩 Протоколы'),
+                    callback_data='nz!_subscription_protocols',
+                    style='primary',
+                )
+            ]
+        )
 
     if show_countries_management and not has_tariff:
         keyboard.append(

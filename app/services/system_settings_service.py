@@ -263,6 +263,7 @@ class BotConfigurationService:
         'TRAFFIC_PACKAGES_CONFIG': 'TRAFFIC_PACKAGES',
         'MULTI_TARIFF_ENABLED': 'SUBSCRIPTIONS_CORE',
         'MAX_ACTIVE_SUBSCRIPTIONS': 'SUBSCRIPTIONS_CORE',
+        'PROTOCOLS_ENABLED': 'SUBSCRIPTIONS_CORE',
         'BASE_PROMO_GROUP_PERIOD_DISCOUNTS_ENABLED': 'SUBSCRIPTIONS_CORE',
         'BASE_PROMO_GROUP_PERIOD_DISCOUNTS': 'SUBSCRIPTIONS_CORE',
         'DEFAULT_AUTOPAY_ENABLED': 'AUTOPAY',
@@ -621,6 +622,18 @@ class BotConfigurationService:
             'example': '10',
             'warning': 'Большое значение может усложнить управление подписками для пользователя.',
             'dependencies': 'MULTI_TARIFF_ENABLED',
+        },
+        'PROTOCOLS_ENABLED': {
+            'description': (
+                'Разрешает пользователям самостоятельно выбирать активные протоколы (internal-squads) '
+                'в настройках подписки — кнопка «🧩 Протоколы». Выбор бесплатный, минимум один протокол.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'false',
+            'warning': (
+                'При выключении кнопка «Протоколы» скрывается у пользователей; уже назначенные '
+                'сквады подписок не меняются. Требует настроенных сквадов в разделе «Серверы».'
+            ),
         },
         'DEVICES_SELECTION_ENABLED': {
             'description': 'Разрешает пользователям выбирать количество устройств при покупке и продлении подписки.',
