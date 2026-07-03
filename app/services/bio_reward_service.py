@@ -245,6 +245,10 @@ class BioRewardService:
 
     async def _fetch_bio(self, telegram_id: int) -> str | None:
         if self._bot is None or telegram_id is None:
+            # Distinguishes "bot never wired" from transient API errors in
+            # logs: without this, a mis-wired bot reads as endless
+            # fetch_failed with zero signal.
+            logger.warning('bio_reward.fetch_bio.bot_not_set', telegram_id=telegram_id)
             return None
         async with self._semaphore:
             try:

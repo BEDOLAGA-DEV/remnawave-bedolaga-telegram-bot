@@ -200,6 +200,9 @@ async def open_panel(callback: types.CallbackQuery, db_user: User, db: AsyncSess
     await callback.answer()
 
 
+_FETCH_FAILED_MSG = '⚠️ Не удалось проверить профиль. Попробуйте позже'
+
+
 @error_handler
 async def opt_in(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     _, outcome = await bio_reward_service.opt_in(db, db_user)
@@ -221,7 +224,7 @@ async def opt_in(callback: types.CallbackQuery, db_user: User, db: AsyncSession)
         'disabled': '🚫 Эта акция временно недоступна',
         'no_user': 'ℹ️ Не получилось определить ваш Telegram-профиль',
         'noop': 'ℹ️ Изменений нет',
-        'fetch_failed': '⚠️ Не удалось проверить профиль. Попробуйте позже',
+        'fetch_failed': _FETCH_FAILED_MSG,
     }
     await callback.answer(
         answers.get(outcome, outcome), show_alert=outcome in ('cooldown', 'disabled')
@@ -241,7 +244,7 @@ async def recheck(callback: types.CallbackQuery, db_user: User, db: AsyncSession
         return
     outcome = await bio_reward_service.check_user(db, participant, user=db_user)
     if outcome == 'fetch_failed':
-        await callback.answer('⚠️ Не удалось проверить профиль. Попробуйте позже', show_alert=True)
+        await callback.answer(_FETCH_FAILED_MSG, show_alert=True)
     else:
         await callback.answer(f'Проверено: {outcome}')
     bot_username = await _resolve_bot_username(callback)

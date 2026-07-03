@@ -226,6 +226,23 @@ async def test_check_user_fetch_failure_keeps_state(monkeypatch):
     assert participant.grace_started_at is None
 
 
+async def test_check_user_fetch_failure_in_grace_does_not_revoke(monkeypatch):
+    from app.database.models import BioRewardStatus
+    from app.services.bio_reward_service import BioRewardService
+
+    _patch_get_config(monkeypatch, _bio_cfg(grace_period_hours=3))
+    svc = BioRewardService()  # bot не установлен -> _fetch_bio вернёт None
+    grace_started = datetime.now(UTC) - timedelta(hours=10)  # дедлайн давно прошёл
+    participant = _participant(
+        status=BioRewardStatus.GRACE.value, grace_started_at=grace_started
+    )
+    outcome = await svc.check_user(FakeDb(), participant, user=_user())
+    assert outcome == 'fetch_failed'
+    assert participant.status == BioRewardStatus.GRACE.value
+    assert participant.grace_started_at == grace_started
+    assert participant.revoked_at is None
+
+
 async def test_check_user_empty_bio_still_starts_grace(monkeypatch):
     from app.database.models import BioRewardStatus
     from app.services.bio_reward_service import BioRewardService
