@@ -445,6 +445,12 @@ class BioRewardService:
             participant.free_subscription_id = None
             await db.commit()
             return
+        if sub.status == SubscriptionStatus.DISABLED.value:
+            # Revoked (or admin-disabled) free sub still linked to the
+            # participant. Never resurrect it from a scheduler tick — a new
+            # free sub is issued only via _activate. (EXPIRED is different:
+            # re-activating it is the intended scheduler-was-down failsafe.)
+            return
         new_end = datetime.now(UTC) + timedelta(days=cfg.free_sub_window_days)
         end_moved = False
         wl_cleared = False
@@ -475,15 +481,24 @@ class BioRewardService:
             user = participant.user
             if user is not None and getattr(user, 'remnawave_uuid', None):
                 svc = SubscriptionService()
-                await svc.update_remnawave_user(
+                result = await svc.update_remnawave_user(
                     db, sub, reset_traffic=False, sync_squads=False
                 )
-                logger.info(
-                    'bio_reward.free_sub.remnawave_synced',
-                    subscription_id=sub.id,
-                    end_moved=end_moved,
-                    wl_cleared=wl_cleared,
-                )
+                if result is not None:
+                    logger.info(
+                        'bio_reward.free_sub.remnawave_synced',
+                        subscription_id=sub.id,
+                        end_moved=end_moved,
+                        wl_cleared=wl_cleared,
+                    )
+                else:
+                    # update_remnawave_user swallows API errors and returns
+                    # None — surface that here so "synced" can be trusted.
+                    logger.warning(
+                        'bio_reward.free_sub.remnawave_sync_failed',
+                        subscription_id=sub.id,
+                        err='update_remnawave_user returned None',
+                    )
         except Exception as exc:
             logger.warning(
                 'bio_reward.free_sub.remnawave_sync_failed',

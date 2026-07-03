@@ -312,3 +312,20 @@ async def test_extend_no_push_when_nothing_changed(monkeypatch):
     participant = _participant(free_subscription_id=101, user=_user())
     await svc._extend_free_sub(FakeDb(get_map={101: sub}), participant, _bio_cfg(free_sub_window_days=3))
     assert calls == []
+
+
+async def test_extend_never_resurrects_disabled_bio_sub(monkeypatch):
+    from app.database.models import SubscriptionStatus
+    from app.services.bio_reward_service import BioRewardService
+
+    calls = _patch_subscription_service(monkeypatch)
+    svc = BioRewardService()
+    old_end = datetime.now(UTC) - timedelta(days=1)  # отозвана в прошлом
+    sub = _sub(
+        is_bio_reward=True, status=SubscriptionStatus.DISABLED.value, end_date=old_end
+    )
+    participant = _participant(free_subscription_id=101, user=_user())
+    await svc._extend_free_sub(FakeDb(get_map={101: sub}), participant, _bio_cfg())
+    assert sub.status == SubscriptionStatus.DISABLED.value
+    assert sub.end_date == old_end
+    assert calls == []
