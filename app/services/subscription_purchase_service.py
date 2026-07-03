@@ -1099,6 +1099,21 @@ class MiniAppSubscriptionPurchaseService:
             # Remnawave tag flips from FREE to PAID and status_display follows.
             if getattr(subscription, 'is_bio_reward', False):
                 subscription.is_bio_reward = False
+                # Detach from the bio participant: from now on this row is a
+                # paid sub — the bio scheduler must not extend or revoke it.
+                try:
+                    from app.database.crud import bio_reward as bio_crud
+
+                    _participant = await bio_crud.get_participant_by_user_id(db, user.id)
+                    if (
+                        _participant is not None
+                        and _participant.free_subscription_id == subscription.id
+                    ):
+                        _participant.free_subscription_id = None
+                except Exception as _detach_err:  # pragma: no cover - defensive
+                    logger.warning(
+                        'bio_reward.detach_failed', user_id=user.id, err=str(_detach_err)
+                    )
             subscription.status = SubscriptionStatus.ACTIVE.value
             subscription.traffic_limit_gb = pricing.selection.traffic_value
             subscription.device_limit = pricing.selection.devices

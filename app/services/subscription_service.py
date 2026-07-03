@@ -131,8 +131,11 @@ class SubscriptionService:
     @staticmethod
     def _resolve_user_tag(subscription: Subscription) -> str | None:
         # Bio-reward free subs get their own tag (default "FREE") so admins can
-        # filter them apart from regular trials in Remnawave.
-        if getattr(subscription, 'is_bio_reward', False):
+        # filter them apart from regular trials in Remnawave. A live bio free
+        # sub is always is_trial=True; conversion flows may leave a stale
+        # is_bio_reward marker, so require both (same invariant as the _wl
+        # guard) to avoid tagging a converted paid sub as FREE.
+        if getattr(subscription, 'is_bio_reward', False) and getattr(subscription, 'is_trial', False):
             bio_tag = settings.get_bio_reward_user_tag()
             if bio_tag:
                 return bio_tag
@@ -859,6 +862,30 @@ class SubscriptionService:
             # Legacy lookup fallbacks removed — primary_wl now mirrors the main
             # account name on panel, so the only correct WL account is the one
             # named '<main>_wl'.
+
+            # Bio-reward free sub: never provision a paired _wl account —
+            # the free BIO promo carries no white-list traffic at all.
+            # Delete a leftover created before this guard existed.
+            # Paid/trial subs keep the unconditional _wl mirror below.
+            #
+            # A LIVE bio free sub is always is_trial=True (set in
+            # _create_free_sub). Some purchase/conversion flows forget to
+            # clear is_bio_reward on bio->paid conversion, but they always
+            # set is_trial=False. Requiring both flags here prevents
+            # deleting/starving the _wl account of a converted paid sub that
+            # still carries the stale is_bio_reward marker.
+            if getattr(subscription, 'is_bio_reward', False) and getattr(subscription, 'is_trial', False):
+                # get_user_by_username returns None on 404; other API errors
+                # propagate to the outer except (log + skip WL sync).
+                leftover = await api.get_user_by_username(username_wl)
+                if leftover and getattr(leftover, 'uuid', None):
+                    logger.info(
+                        '🧹 Удаляю _wl аккаунт bio-reward подписки',
+                        username_wl=username_wl,
+                        subscription_id=getattr(subscription, 'id', None),
+                    )
+                    await api.delete_user(leftover.uuid)
+                return
 
             description = settings.format_remnawave_user_description(
                 full_name=user.full_name,

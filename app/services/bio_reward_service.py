@@ -245,6 +245,10 @@ class BioRewardService:
 
     async def _fetch_bio(self, telegram_id: int) -> str | None:
         if self._bot is None or telegram_id is None:
+            # Distinguishes "bot never wired" from transient API errors in
+            # logs: without this, a mis-wired bot reads as endless
+            # fetch_failed with zero signal.
+            logger.warning('bio_reward.fetch_bio.bot_not_set', telegram_id=telegram_id)
             return None
         async with self._semaphore:
             try:
@@ -294,6 +298,13 @@ class BioRewardService:
             return 'no_user'
 
         bio = await self._fetch_bio(user.telegram_id)
+        if bio is None and not participant.bypass_check:
+            # Transient fetch failure (Telegram API error, flood limit,
+            # network). NOT the same as "bio removed": leave the state
+            # machine untouched and retry next tick. Only last_check_at
+            # is persisted.
+            await db.commit()
+            return 'fetch_failed'
         participant.bio_snapshot = bio or ''
 
         tokens = build_personal_referral_tokens(user)
@@ -345,11 +356,13 @@ class BioRewardService:
     ) -> None:
         from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
-        active_paid = [
-            s for s in await get_active_subscriptions_by_user_id(db, user.id) if not s.is_trial
-        ]
+        # Any active sub blocks free-sub creation: paid subs for obvious
+        # reasons; trials because in single-panel-user mode a parallel bio
+        # free sub would clobber the trial's panel expiry and delete its
+        # shared _wl account on every scheduler tick.
+        active_subs = await get_active_subscriptions_by_user_id(db, user.id)
         sub: Subscription | None = None
-        if not active_paid:
+        if not active_subs:
             sub = await self._create_free_sub(db, user, cfg)
             participant.free_subscription_id = sub.id
 
@@ -364,7 +377,7 @@ class BioRewardService:
             db,
             participant.id,
             'activated',
-            {'free_subscription_id': sub.id if sub else None, 'has_paid': bool(active_paid)},
+            {'free_subscription_id': sub.id if sub else None, 'has_paid': bool(active_subs)},
         )
         if cfg.notify_on_activate and self._bot and user.telegram_id:
             await self._notify(
@@ -427,50 +440,74 @@ class BioRewardService:
         sub = await db.get(Subscription, participant.free_subscription_id)
         if sub is None:
             return
+        if not (sub.is_bio_reward and sub.is_trial):
+            # Row was converted to a paid subscription (some flows only set
+            # is_trial=False without clearing the bio marker). Detach so the
+            # scheduler never extends or reactivates someone's paid sub.
+            participant.free_subscription_id = None
+            await db.commit()
+            return
+        if sub.status == SubscriptionStatus.DISABLED.value:
+            # Revoked (or admin-disabled) free sub still linked to the
+            # participant. Never resurrect it from a scheduler tick — a new
+            # free sub is issued only via _activate. (EXPIRED is different:
+            # re-activating it is the intended scheduler-was-down failsafe.)
+            return
         new_end = datetime.now(UTC) + timedelta(days=cfg.free_sub_window_days)
-        dirty = False
+        end_moved = False
         wl_cleared = False
         if sub.end_date is None or sub.end_date < new_end:
             sub.end_date = new_end
             sub.status = SubscriptionStatus.ACTIVE.value
-            dirty = True
+            end_moved = True
         # Self-heal: bio-reward subs must never carry WL traffic. Older rows
         # (before forward fix in _create_free_sub) inherited the model default
         # of 5 GB; normalise here so next tick converges them.
-        if sub.is_bio_reward and sub.wl_traffic_limit_gb is not None:
+        if sub.wl_traffic_limit_gb is not None:
             sub.wl_traffic_limit_gb = None
             sub.wl_traffic_used_gb = 0.0
             sub.wl_purchased_traffic_gb = 0
             sub.wl_traffic_reset_at = None
-            dirty = True
             wl_cleared = True
-        if dirty:
+        if end_moved or wl_cleared:
             await db.commit()
+        else:
+            return
 
-        # Push WL clear to Remnawave panel (only on actual WL change to avoid
-        # spamming the panel on every tick when only end_date moved).
-        if wl_cleared:
-            try:
-                from app.services.subscription_service import SubscriptionService
+        # Push to Remnawave: panel sync is authoritative — an un-pushed local
+        # extension gets reverted and the panel account expires at the
+        # original creation+window. One call per participant per tick.
+        try:
+            from app.services.subscription_service import SubscriptionService
 
-                user = participant.user
-                if user is not None and getattr(user, 'remnawave_uuid', None):
-                    svc = SubscriptionService()
-                    await svc.update_remnawave_user(
-                        db, sub, reset_traffic=False, sync_squads=False
-                    )
-                    logger.info(
-                        'bio_reward.wl_self_heal.remnawave_synced',
-                        subscription_id=sub.id,
-                        user_id=user.id,
-                    )
-            except Exception as exc:
-                logger.warning(
-                    'bio_reward.wl_self_heal.remnawave_sync_failed',
-                    subscription_id=sub.id,
-                    err=str(exc),
+            user = participant.user
+            if user is not None and getattr(user, 'remnawave_uuid', None):
+                svc = SubscriptionService()
+                result = await svc.update_remnawave_user(
+                    db, sub, reset_traffic=False, sync_squads=False
                 )
-                # Best-effort; next scheduler tick will retry via the same path.
+                if result is not None:
+                    logger.info(
+                        'bio_reward.free_sub.remnawave_synced',
+                        subscription_id=sub.id,
+                        end_moved=end_moved,
+                        wl_cleared=wl_cleared,
+                    )
+                else:
+                    # update_remnawave_user swallows API errors and returns
+                    # None — surface that here so "synced" can be trusted.
+                    logger.warning(
+                        'bio_reward.free_sub.remnawave_sync_failed',
+                        subscription_id=sub.id,
+                        err='update_remnawave_user returned None',
+                    )
+        except Exception as exc:
+            logger.warning(
+                'bio_reward.free_sub.remnawave_sync_failed',
+                subscription_id=sub.id,
+                err=str(exc),
+            )
+            # Best-effort; next scheduler tick will retry via the same path.
 
     async def _start_grace(
         self, db: AsyncSession, participant: BioRewardParticipant, cfg: BioRewardConfig
@@ -499,10 +536,49 @@ class BioRewardService:
         now = datetime.now(UTC)
         if participant.free_subscription_id:
             sub = await db.get(Subscription, participant.free_subscription_id)
+            if sub is not None and not (sub.is_bio_reward and sub.is_trial):
+                # Converted to paid (some flows only set is_trial=False
+                # without clearing the bio marker) — never disable someone's
+                # paid subscription on bio revoke.
+                sub = None
             if sub is not None and sub.status != SubscriptionStatus.DISABLED.value:
                 sub.status = SubscriptionStatus.DISABLED.value
                 sub.end_date = now
+                # Drop the "live bio free sub" invariant flag: a revoked row
+                # must never pass the is_bio_reward AND is_trial guards again
+                # (e.g. via a retry-queue push deleting a paid _wl later).
+                sub.is_trial = False
                 await db.commit()
+                # Push to Remnawave: without this the user keeps VPN access
+                # until the stale panel expire_at, and the bidirectional
+                # panel sync can revert the local end_date.
+                try:
+                    from app.services.subscription_service import SubscriptionService
+
+                    if getattr(user, 'remnawave_uuid', None):
+                        svc = SubscriptionService()
+                        result = await svc.update_remnawave_user(
+                            db, sub, reset_traffic=False, sync_squads=False
+                        )
+                        if result is None:
+                            # update_remnawave_user swallows API errors and
+                            # returns None — surface it for operators.
+                            logger.warning(
+                                'bio_reward.revoke.remnawave_sync_failed',
+                                subscription_id=sub.id,
+                                err='update_remnawave_user returned None',
+                            )
+                except Exception as exc:
+                    logger.warning(
+                        'bio_reward.revoke.remnawave_sync_failed',
+                        subscription_id=sub.id,
+                        err=str(exc),
+                    )
+            # Whether disabled just now, already disabled, or converted-to-paid:
+            # the participant no longer owns a live free sub. Clear the link so
+            # nothing can extend/resurrect this row later; a fresh free sub is
+            # only issued via _activate. Committed by set_status below.
+            participant.free_subscription_id = None
 
         from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
