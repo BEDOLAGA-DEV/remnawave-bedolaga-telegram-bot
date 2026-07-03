@@ -36,6 +36,7 @@ def _make_subscription(sub_id: int = 42, tariff=None) -> MagicMock:
     sub.end_date = MagicMock()
     sub.status = 'active'
     sub.device_limit = None
+    sub.is_bio_reward = False
     return sub
 
 

@@ -860,6 +860,26 @@ class SubscriptionService:
             # account name on panel, so the only correct WL account is the one
             # named '<main>_wl'.
 
+            # Bio-reward free sub: never provision a paired _wl account —
+            # the free BIO promo carries no white-list traffic at all.
+            # Delete a leftover created before this guard existed.
+            # Paid/trial subs keep the unconditional _wl mirror below.
+            if getattr(subscription, 'is_bio_reward', False):
+                leftover = None
+                try:
+                    leftover = await api.get_user_by_username(username_wl)
+                except RemnaWaveAPIError as lookup_err:
+                    if lookup_err.status_code != 404:
+                        raise
+                if leftover and getattr(leftover, 'uuid', None):
+                    logger.info(
+                        '🧹 Удаляю _wl аккаунт bio-reward подписки',
+                        username_wl=username_wl,
+                        subscription_id=getattr(subscription, 'id', None),
+                    )
+                    await api.delete_user(leftover.uuid)
+                return
+
             description = settings.format_remnawave_user_description(
                 full_name=user.full_name,
                 username=user.username,

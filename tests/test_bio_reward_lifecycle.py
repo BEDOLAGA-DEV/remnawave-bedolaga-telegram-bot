@@ -152,3 +152,49 @@ def _patch_subscription_service(monkeypatch):
 
     monkeypatch.setattr(ss_module, 'SubscriptionService', FakeSvc)
     return calls
+
+
+# ---------- Fix 1: _ensure_wl_user_synced bio guard ----------
+
+
+async def test_wl_sync_skips_bio_sub_and_deletes_leftover():
+    from app.services.subscription_service import SubscriptionService
+
+    svc = SubscriptionService()
+    api = FakeApi(existing={'u_555_wl': SimpleNamespace(uuid='wl-uuid')})
+    await svc._ensure_wl_user_synced(
+        api, _user(), _sub(is_bio_reward=True), True, main_username='u_555'
+    )
+    assert api.created == []
+    assert api.updated == []
+    assert api.deleted == ['wl-uuid']
+
+
+async def test_wl_sync_skips_bio_sub_without_leftover():
+    from app.services.subscription_service import SubscriptionService
+
+    svc = SubscriptionService()
+    api = FakeApi()
+    await svc._ensure_wl_user_synced(
+        api, _user(), _sub(is_bio_reward=True), True, main_username='u_555'
+    )
+    assert api.created == []
+    assert api.updated == []
+    assert api.deleted == []
+
+
+async def test_wl_sync_still_creates_wl_for_paid_sub():
+    from app.services.subscription_service import SubscriptionService
+
+    svc = SubscriptionService()
+    api = FakeApi()
+    await svc._ensure_wl_user_synced(
+        api,
+        _user(),
+        _sub(is_bio_reward=False, is_trial=False, wl_traffic_limit_gb=5),
+        True,
+        main_username='u_555',
+    )
+    assert len(api.created) == 1
+    assert api.created[0]['username'] == 'u_555_wl'
+    assert api.deleted == []
