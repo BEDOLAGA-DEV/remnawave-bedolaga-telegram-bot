@@ -271,3 +271,44 @@ async def test_check_user_fetch_failure_with_bypass_still_matches(monkeypatch):
     )
     outcome = await svc.check_user(FakeDb(), participant, user=_user())
     assert outcome == 'extended'
+
+
+# ---------- Fix 3 + 5: _extend_free_sub ----------
+
+
+async def test_extend_detaches_converted_paid_sub(monkeypatch):
+    from app.services.bio_reward_service import BioRewardService
+
+    calls = _patch_subscription_service(monkeypatch)
+    svc = BioRewardService()
+    sub = _sub(is_bio_reward=False, status='active', end_date=datetime.now(UTC) + timedelta(hours=5))
+    old_end = sub.end_date
+    participant = _participant(free_subscription_id=101, user=_user())
+    await svc._extend_free_sub(FakeDb(get_map={101: sub}), participant, _bio_cfg())
+    assert participant.free_subscription_id is None
+    assert sub.end_date == old_end
+    assert sub.status == 'active'
+    assert calls == []
+
+
+async def test_extend_pushes_end_date_to_panel(monkeypatch):
+    from app.services.bio_reward_service import BioRewardService
+
+    calls = _patch_subscription_service(monkeypatch)
+    svc = BioRewardService()
+    sub = _sub(is_bio_reward=True, end_date=datetime.now(UTC) + timedelta(days=1))
+    participant = _participant(free_subscription_id=101, user=_user())
+    await svc._extend_free_sub(FakeDb(get_map={101: sub}), participant, _bio_cfg(free_sub_window_days=3))
+    assert sub.end_date > datetime.now(UTC) + timedelta(days=2)
+    assert calls == [sub]
+
+
+async def test_extend_no_push_when_nothing_changed(monkeypatch):
+    from app.services.bio_reward_service import BioRewardService
+
+    calls = _patch_subscription_service(monkeypatch)
+    svc = BioRewardService()
+    sub = _sub(is_bio_reward=True, end_date=datetime.now(UTC) + timedelta(days=10))
+    participant = _participant(free_subscription_id=101, user=_user())
+    await svc._extend_free_sub(FakeDb(get_map={101: sub}), participant, _bio_cfg(free_sub_window_days=3))
+    assert calls == []

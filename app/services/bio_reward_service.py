@@ -438,50 +438,59 @@ class BioRewardService:
         sub = await db.get(Subscription, participant.free_subscription_id)
         if sub is None:
             return
+        if not sub.is_bio_reward:
+            # Row was converted to a paid subscription (purchase flow clears
+            # the marker). Detach so the scheduler never extends or
+            # reactivates someone's paid sub.
+            participant.free_subscription_id = None
+            await db.commit()
+            return
         new_end = datetime.now(UTC) + timedelta(days=cfg.free_sub_window_days)
-        dirty = False
+        end_moved = False
         wl_cleared = False
         if sub.end_date is None or sub.end_date < new_end:
             sub.end_date = new_end
             sub.status = SubscriptionStatus.ACTIVE.value
-            dirty = True
+            end_moved = True
         # Self-heal: bio-reward subs must never carry WL traffic. Older rows
         # (before forward fix in _create_free_sub) inherited the model default
         # of 5 GB; normalise here so next tick converges them.
-        if sub.is_bio_reward and sub.wl_traffic_limit_gb is not None:
+        if sub.wl_traffic_limit_gb is not None:
             sub.wl_traffic_limit_gb = None
             sub.wl_traffic_used_gb = 0.0
             sub.wl_purchased_traffic_gb = 0
             sub.wl_traffic_reset_at = None
-            dirty = True
             wl_cleared = True
-        if dirty:
+        if end_moved or wl_cleared:
             await db.commit()
+        else:
+            return
 
-        # Push WL clear to Remnawave panel (only on actual WL change to avoid
-        # spamming the panel on every tick when only end_date moved).
-        if wl_cleared:
-            try:
-                from app.services.subscription_service import SubscriptionService
+        # Push to Remnawave: panel sync is authoritative — an un-pushed local
+        # extension gets reverted and the panel account expires at the
+        # original creation+window. One call per participant per tick.
+        try:
+            from app.services.subscription_service import SubscriptionService
 
-                user = participant.user
-                if user is not None and getattr(user, 'remnawave_uuid', None):
-                    svc = SubscriptionService()
-                    await svc.update_remnawave_user(
-                        db, sub, reset_traffic=False, sync_squads=False
-                    )
-                    logger.info(
-                        'bio_reward.wl_self_heal.remnawave_synced',
-                        subscription_id=sub.id,
-                        user_id=user.id,
-                    )
-            except Exception as exc:
-                logger.warning(
-                    'bio_reward.wl_self_heal.remnawave_sync_failed',
-                    subscription_id=sub.id,
-                    err=str(exc),
+            user = participant.user
+            if user is not None and getattr(user, 'remnawave_uuid', None):
+                svc = SubscriptionService()
+                await svc.update_remnawave_user(
+                    db, sub, reset_traffic=False, sync_squads=False
                 )
-                # Best-effort; next scheduler tick will retry via the same path.
+                logger.info(
+                    'bio_reward.free_sub.remnawave_synced',
+                    subscription_id=sub.id,
+                    end_moved=end_moved,
+                    wl_cleared=wl_cleared,
+                )
+        except Exception as exc:
+            logger.warning(
+                'bio_reward.free_sub.remnawave_sync_failed',
+                subscription_id=sub.id,
+                err=str(exc),
+            )
+            # Best-effort; next scheduler tick will retry via the same path.
 
     async def _start_grace(
         self, db: AsyncSession, participant: BioRewardParticipant, cfg: BioRewardConfig
