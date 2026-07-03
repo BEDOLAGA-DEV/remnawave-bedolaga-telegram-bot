@@ -356,11 +356,13 @@ class BioRewardService:
     ) -> None:
         from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
-        active_paid = [
-            s for s in await get_active_subscriptions_by_user_id(db, user.id) if not s.is_trial
-        ]
+        # Any active sub blocks free-sub creation: paid subs for obvious
+        # reasons; trials because in single-panel-user mode a parallel bio
+        # free sub would clobber the trial's panel expiry and delete its
+        # shared _wl account on every scheduler tick.
+        active_subs = await get_active_subscriptions_by_user_id(db, user.id)
         sub: Subscription | None = None
-        if not active_paid:
+        if not active_subs:
             sub = await self._create_free_sub(db, user, cfg)
             participant.free_subscription_id = sub.id
 
@@ -375,7 +377,7 @@ class BioRewardService:
             db,
             participant.id,
             'activated',
-            {'free_subscription_id': sub.id if sub else None, 'has_paid': bool(active_paid)},
+            {'free_subscription_id': sub.id if sub else None, 'has_paid': bool(active_subs)},
         )
         if cfg.notify_on_activate and self._bot and user.telegram_id:
             await self._notify(
@@ -438,10 +440,10 @@ class BioRewardService:
         sub = await db.get(Subscription, participant.free_subscription_id)
         if sub is None:
             return
-        if not sub.is_bio_reward:
-            # Row was converted to a paid subscription (purchase flow clears
-            # the marker). Detach so the scheduler never extends or
-            # reactivates someone's paid sub.
+        if not (sub.is_bio_reward and sub.is_trial):
+            # Row was converted to a paid subscription (some flows only set
+            # is_trial=False without clearing the bio marker). Detach so the
+            # scheduler never extends or reactivates someone's paid sub.
             participant.free_subscription_id = None
             await db.commit()
             return
@@ -534,9 +536,10 @@ class BioRewardService:
         now = datetime.now(UTC)
         if participant.free_subscription_id:
             sub = await db.get(Subscription, participant.free_subscription_id)
-            if sub is not None and not sub.is_bio_reward:
-                # Converted to paid by the purchase flow — never disable
-                # someone's paid subscription on bio revoke.
+            if sub is not None and not (sub.is_bio_reward and sub.is_trial):
+                # Converted to paid (some flows only set is_trial=False
+                # without clearing the bio marker) — never disable someone's
+                # paid subscription on bio revoke.
                 sub = None
             if sub is not None and sub.status != SubscriptionStatus.DISABLED.value:
                 sub.status = SubscriptionStatus.DISABLED.value

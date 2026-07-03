@@ -370,3 +370,83 @@ async def test_revoke_disables_bio_sub_pushes_and_detaches(monkeypatch):
     assert sub.status == SubscriptionStatus.DISABLED.value
     assert calls == [sub]
     assert participant.free_subscription_id is None
+
+
+# ---------- Hardening: stale is_bio_reward marker on converted rows ----------
+# Some purchase flows set is_trial=False without clearing is_bio_reward.
+# A LIVE bio free sub always has is_trial=True, so guards key on both.
+
+
+async def test_wl_sync_provisions_wl_for_stale_marked_converted_sub():
+    from app.services.subscription_service import SubscriptionService
+
+    svc = SubscriptionService()
+    api = FakeApi(existing={'u_555_wl': SimpleNamespace(uuid='wl-uuid')})
+    await svc._ensure_wl_user_synced(
+        api,
+        _user(),
+        _sub(is_bio_reward=True, is_trial=False, wl_traffic_limit_gb=5),
+        True,
+        main_username='u_555',
+    )
+    assert api.deleted == []
+    assert len(api.updated) == 1  # existing _wl updated, not deleted
+
+
+async def test_extend_detaches_stale_marked_converted_sub(monkeypatch):
+    from app.services.bio_reward_service import BioRewardService
+
+    calls = _patch_subscription_service(monkeypatch)
+    svc = BioRewardService()
+    sub = _sub(
+        is_bio_reward=True, is_trial=False, status='active',
+        end_date=datetime.now(UTC) + timedelta(hours=5), wl_traffic_limit_gb=15,
+    )
+    old_end = sub.end_date
+    participant = _participant(free_subscription_id=101, user=_user())
+    await svc._extend_free_sub(FakeDb(get_map={101: sub}), participant, _bio_cfg())
+    assert participant.free_subscription_id is None
+    assert sub.end_date == old_end
+    assert sub.wl_traffic_limit_gb == 15  # tariff WL must NOT be wiped
+    assert calls == []
+
+
+async def test_revoke_does_not_disable_stale_marked_converted_sub(monkeypatch):
+    from app.services.bio_reward_service import BioRewardService
+
+    _patch_no_active_paid(monkeypatch)
+    calls = _patch_subscription_service(monkeypatch)
+    svc = BioRewardService()
+    sub = _sub(is_bio_reward=True, is_trial=False, status='active')
+    participant = _participant(free_subscription_id=101)
+    await svc._revoke(FakeDb(get_map={101: sub}), participant, _user(), _bio_cfg())
+    assert sub.status == 'active'
+    assert participant.free_subscription_id is None
+    assert calls == []
+
+
+async def test_activate_skips_free_sub_when_trial_active(monkeypatch):
+    from app.database.models import BioRewardStatus
+    from app.services.bio_reward_service import BioRewardService
+
+    import app.database.crud.subscription as sub_crud
+
+    trial = _sub(id=55, is_bio_reward=False, is_trial=True, status='active')
+
+    async def one_trial(db, user_id):
+        return [trial]
+
+    monkeypatch.setattr(sub_crud, 'get_active_subscriptions_by_user_id', one_trial)
+    svc = BioRewardService()
+    created = []
+
+    async def fake_create(db, user, cfg):
+        created.append(1)
+        return _sub()
+
+    svc._create_free_sub = fake_create
+    participant = _participant(status=BioRewardStatus.PENDING.value)
+    await svc._activate(FakeDb(), participant, _user(), _bio_cfg())
+    assert created == []
+    assert participant.free_subscription_id is None
+    assert participant.status == BioRewardStatus.ACTIVE.value

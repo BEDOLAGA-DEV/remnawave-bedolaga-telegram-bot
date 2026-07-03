@@ -864,7 +864,14 @@ class SubscriptionService:
             # the free BIO promo carries no white-list traffic at all.
             # Delete a leftover created before this guard existed.
             # Paid/trial subs keep the unconditional _wl mirror below.
-            if getattr(subscription, 'is_bio_reward', False):
+            #
+            # A LIVE bio free sub is always is_trial=True (set in
+            # _create_free_sub). Some purchase/conversion flows forget to
+            # clear is_bio_reward on bio->paid conversion, but they always
+            # set is_trial=False. Requiring both flags here prevents
+            # deleting/starving the _wl account of a converted paid sub that
+            # still carries the stale is_bio_reward marker.
+            if getattr(subscription, 'is_bio_reward', False) and getattr(subscription, 'is_trial', False):
                 # get_user_by_username returns None on 404; other API errors
                 # propagate to the outer except (log + skip WL sync).
                 leftover = await api.get_user_by_username(username_wl)
