@@ -131,8 +131,11 @@ class SubscriptionService:
     @staticmethod
     def _resolve_user_tag(subscription: Subscription) -> str | None:
         # Bio-reward free subs get their own tag (default "FREE") so admins can
-        # filter them apart from regular trials in Remnawave.
-        if getattr(subscription, 'is_bio_reward', False):
+        # filter them apart from regular trials in Remnawave. A live bio free
+        # sub is always is_trial=True; conversion flows may leave a stale
+        # is_bio_reward marker, so require both (same invariant as the _wl
+        # guard) to avoid tagging a converted paid sub as FREE.
+        if getattr(subscription, 'is_bio_reward', False) and getattr(subscription, 'is_trial', False):
             bio_tag = settings.get_bio_reward_user_tag()
             if bio_tag:
                 return bio_tag
