@@ -7,6 +7,7 @@ callback is denied with ACCESS_DENIED.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -276,6 +277,53 @@ def resolve_admin_section(callback_data: str) -> str | None:
     return None
 
 
+def _find_button_text(markup, callback_data: str) -> str | None:
+    """Return the text of the inline button whose callback_data matches, if any."""
+    if markup is None or not getattr(markup, 'inline_keyboard', None):
+        return None
+    for row in markup.inline_keyboard:
+        for button in row:
+            if getattr(button, 'callback_data', None) == callback_data:
+                return getattr(button, 'text', None)
+    return None
+
+
+def _schedule_action_log(
+    *,
+    bot,
+    admin_telegram_id: int,
+    admin_display: str,
+    permissions: list[str],
+    callback_data: str,
+    section: str,
+    allowed: bool,
+    button_text: str | None,
+) -> None:
+    """Fire-and-forget audit notification. Must never raise into the caller."""
+
+    async def _send() -> None:
+        try:
+            from app.services.admin_notification_service import AdminNotificationService
+
+            await AdminNotificationService(bot).send_admin_action_notification(
+                admin_telegram_id=admin_telegram_id,
+                admin_display=admin_display,
+                permissions=permissions,
+                callback_data=callback_data,
+                section=section,
+                allowed=allowed,
+                button_text=button_text,
+            )
+        except Exception as e:
+            logger.warning('admin action log failed', error=str(e)[:200], callback_data=callback_data)
+
+    try:
+        asyncio.create_task(_send())
+    except RuntimeError:
+        # no running loop (should not happen inside aiogram) — drop silently
+        logger.warning('admin action log skipped: no event loop', callback_data=callback_data)
+
+
 class AdminPermissionMiddleware(BaseMiddleware):
     """Gate admin_* callbacks by BotAdminRole permissions."""
 
@@ -323,7 +371,31 @@ class AdminPermissionMiddleware(BaseMiddleware):
             role = None
 
         permissions = list(role.permissions or []) if role else []
-        if required in permissions:
+        allowed = required in permissions
+
+        # Audit: log every gated click by a section-admin (role holder).
+        # Superadmins returned earlier; role-less users are not admins — skip.
+        if role is not None:
+            try:
+                display = (
+                    getattr(db_user, 'first_name', None)
+                    or getattr(db_user, 'username', None)
+                    or str(user.id)
+                )
+                _schedule_action_log(
+                    bot=event.bot,
+                    admin_telegram_id=user.id,
+                    admin_display=display,
+                    permissions=permissions,
+                    callback_data=cb,
+                    section=required,
+                    allowed=allowed,
+                    button_text=_find_button_text(getattr(event.message, 'reply_markup', None), cb),
+                )
+            except Exception as e:
+                logger.warning('admin action log scheduling failed', error=str(e)[:200])
+
+        if allowed:
             return await handler(event, data)
 
         texts = get_texts(getattr(db_user, 'language', 'ru'))
