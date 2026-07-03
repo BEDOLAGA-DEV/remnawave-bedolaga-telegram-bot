@@ -198,3 +198,59 @@ async def test_wl_sync_still_creates_wl_for_paid_sub():
     assert len(api.created) == 1
     assert api.created[0]['username'] == 'u_555_wl'
     assert api.deleted == []
+
+
+# ---------- Fix 6: transient fetch failure ----------
+
+
+def _patch_get_config(monkeypatch, cfg):
+    from app.database.crud import bio_reward as bio_crud_module
+
+    async def fake_get_config(db):
+        return cfg
+
+    monkeypatch.setattr(bio_crud_module, 'get_config', fake_get_config)
+
+
+async def test_check_user_fetch_failure_keeps_state(monkeypatch):
+    from app.database.models import BioRewardStatus
+    from app.services.bio_reward_service import BioRewardService
+
+    _patch_get_config(monkeypatch, _bio_cfg())
+    svc = BioRewardService()  # bot не установлен -> _fetch_bio вернёт None
+    participant = _participant(status=BioRewardStatus.ACTIVE.value, bio_snapshot='keep-me')
+    outcome = await svc.check_user(FakeDb(), participant, user=_user())
+    assert outcome == 'fetch_failed'
+    assert participant.status == BioRewardStatus.ACTIVE.value
+    assert participant.bio_snapshot == 'keep-me'
+    assert participant.grace_started_at is None
+
+
+async def test_check_user_empty_bio_still_starts_grace(monkeypatch):
+    from app.database.models import BioRewardStatus
+    from app.services.bio_reward_service import BioRewardService
+
+    _patch_get_config(monkeypatch, _bio_cfg())
+    svc = BioRewardService()
+
+    async def fake_fetch(telegram_id):
+        return ''  # bio реально пуст — это НЕ ошибка запроса
+
+    svc._fetch_bio = fake_fetch
+    participant = _participant(status=BioRewardStatus.ACTIVE.value)
+    outcome = await svc.check_user(FakeDb(), participant, user=_user())
+    assert outcome == 'grace_started'
+    assert participant.status == BioRewardStatus.GRACE.value
+
+
+async def test_check_user_fetch_failure_with_bypass_still_matches(monkeypatch):
+    from app.database.models import BioRewardStatus
+    from app.services.bio_reward_service import BioRewardService
+
+    _patch_get_config(monkeypatch, _bio_cfg())
+    svc = BioRewardService()
+    participant = _participant(
+        status=BioRewardStatus.ACTIVE.value, bypass_check=True, free_subscription_id=None
+    )
+    outcome = await svc.check_user(FakeDb(), participant, user=_user())
+    assert outcome == 'extended'

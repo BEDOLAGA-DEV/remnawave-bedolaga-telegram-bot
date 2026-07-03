@@ -294,6 +294,13 @@ class BioRewardService:
             return 'no_user'
 
         bio = await self._fetch_bio(user.telegram_id)
+        if bio is None and not participant.bypass_check:
+            # Transient fetch failure (Telegram API error, flood limit,
+            # network). NOT the same as "bio removed": leave the state
+            # machine untouched and retry next tick. Only last_check_at
+            # is persisted.
+            await db.commit()
+            return 'fetch_failed'
         participant.bio_snapshot = bio or ''
 
         tokens = build_personal_referral_tokens(user)

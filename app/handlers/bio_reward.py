@@ -221,6 +221,7 @@ async def opt_in(callback: types.CallbackQuery, db_user: User, db: AsyncSession)
         'disabled': '🚫 Эта акция временно недоступна',
         'no_user': 'ℹ️ Не получилось определить ваш Telegram-профиль',
         'noop': 'ℹ️ Изменений нет',
+        'fetch_failed': '⚠️ Не удалось проверить профиль. Попробуйте позже',
     }
     await callback.answer(
         answers.get(outcome, outcome), show_alert=outcome in ('cooldown', 'disabled')
@@ -239,7 +240,10 @@ async def recheck(callback: types.CallbackQuery, db_user: User, db: AsyncSession
         await callback.answer('Сначала нажмите «Я участвую»', show_alert=True)
         return
     outcome = await bio_reward_service.check_user(db, participant, user=db_user)
-    await callback.answer(f'Проверено: {outcome}')
+    if outcome == 'fetch_failed':
+        await callback.answer('⚠️ Не удалось проверить профиль. Попробуйте позже', show_alert=True)
+    else:
+        await callback.answer(f'Проверено: {outcome}')
     bot_username = await _resolve_bot_username(callback)
     text, kb = await _build_status_text(db, db_user, bot_username)
     await callback.message.edit_text(
