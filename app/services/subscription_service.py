@@ -865,12 +865,9 @@ class SubscriptionService:
             # Delete a leftover created before this guard existed.
             # Paid/trial subs keep the unconditional _wl mirror below.
             if getattr(subscription, 'is_bio_reward', False):
-                leftover = None
-                try:
-                    leftover = await api.get_user_by_username(username_wl)
-                except RemnaWaveAPIError as lookup_err:
-                    if lookup_err.status_code != 404:
-                        raise
+                # get_user_by_username returns None on 404; other API errors
+                # propagate to the outer except (log + skip WL sync).
+                leftover = await api.get_user_by_username(username_wl)
                 if leftover and getattr(leftover, 'uuid', None):
                     logger.info(
                         '🧹 Удаляю _wl аккаунт bio-reward подписки',
