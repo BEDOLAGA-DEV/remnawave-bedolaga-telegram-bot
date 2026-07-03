@@ -1,0 +1,14 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "GET",
+  "path": "/cabinet/admin/mobile/subscriptions/lookup?subscription_url=https%3A%2F%2Fexample.test%2Fsub%2Fabc",
+  "status": 403,
+  "auth": "cabinet_jwt_disallowed_current_role",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": ["users:read"],
+  "response_schema": "HTTPError",
+  "fixture_kind": "error",
+  "body": {
+    "detail": "Mobile cabinet admin access requires current Superadmin, Admin, or Moderator role"
+  }
+}

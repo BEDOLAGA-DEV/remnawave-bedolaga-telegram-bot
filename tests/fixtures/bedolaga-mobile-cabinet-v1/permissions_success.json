@@ -1,0 +1,16 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "GET",
+  "path": "/cabinet/auth/me/permissions",
+  "status": 200,
+  "auth": "cabinet_jwt",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": [],
+  "response_schema": "PermissionService.get_user_permissions",
+  "fixture_kind": "success",
+  "body": {
+    "roles": ["Admin"],
+    "permissions": ["users:*", "tickets:*", "stats:*"],
+    "role_level": 100
+  }
+}

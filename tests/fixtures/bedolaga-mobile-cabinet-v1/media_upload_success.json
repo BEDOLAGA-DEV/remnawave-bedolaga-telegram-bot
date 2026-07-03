@@ -1,0 +1,18 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "POST",
+  "path": "/cabinet/admin/mobile/media/upload",
+  "status": 201,
+  "auth": "cabinet_jwt_allowed_role",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": ["tickets:reply"],
+  "response_schema": "MediaUploadResponse",
+  "fixture_kind": "success",
+  "body": {
+    "media_type": "photo",
+    "file_id": "BAADAgADabcdef_-1234567890",
+    "media_url": "https://example.test/cabinet/media/BAADAgADabcdef_-1234567890?token=<signed_media_token>",
+    "download_auth_model": "signed_media_token",
+    "no_admin_token_headers": true
+  }
+}

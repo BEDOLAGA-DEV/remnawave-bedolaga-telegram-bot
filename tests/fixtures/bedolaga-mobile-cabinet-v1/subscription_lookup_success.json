@@ -1,0 +1,28 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "GET",
+  "path": "/cabinet/admin/mobile/subscriptions/lookup?subscription_url=https%3A%2F%2Fexample.test%2Fsub%2Fabc",
+  "status": 200,
+  "auth": "cabinet_jwt_allowed_role",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": ["users:read"],
+  "response_schema": "MobileSubscriptionResponse",
+  "fixture_kind": "success",
+  "body": {
+    "contract_version": "bedolaga-mobile-cabinet-v1",
+    "id": 7,
+    "user_id": 42,
+    "status": "active",
+    "actual_status": "active",
+    "is_trial": false,
+    "traffic_limit_gb": 100,
+    "traffic_used_gb": 12.5,
+    "device_limit": 3,
+    "autopay_enabled": false,
+    "subscription_url": "https://example.test/sub/abc",
+    "connected_squads": ["squad-a"],
+    "required_role_names": ["Superadmin", "Admin", "Moderator"],
+    "auth": "cabinet_jwt_allowed_role",
+    "legacy_auth": "rejected"
+  }
+}

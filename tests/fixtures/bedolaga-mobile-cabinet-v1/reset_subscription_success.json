@@ -1,0 +1,17 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "POST",
+  "path": "/cabinet/admin/mobile/users/42/reset-subscription",
+  "status": 200,
+  "auth": "cabinet_jwt_allowed_role",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": ["users:subscription"],
+  "response_schema": "ResetSubscriptionResponse",
+  "fixture_kind": "success",
+  "body": {
+    "contract_version": "bedolaga-mobile-cabinet-v1",
+    "success": true,
+    "message": "Subscription reset successfully",
+    "subscription_deleted": true
+  }
+}

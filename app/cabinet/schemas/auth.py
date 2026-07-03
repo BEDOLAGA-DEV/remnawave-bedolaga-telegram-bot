@@ -105,6 +105,7 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = 'bearer'
     expires_in: int = Field(..., description='Access token expiration in seconds')
+    refresh_expires_in: int = Field(..., description='Refresh token remaining lifetime in seconds')
 
 
 class UserResponse(BaseModel):
@@ -160,6 +161,7 @@ class AuthResponse(BaseModel):
     refresh_token: str
     token_type: str = 'bearer'
     expires_in: int
+    refresh_expires_in: int = Field(..., description='Refresh token remaining lifetime in seconds')
     user: UserResponse
     campaign_bonus: CampaignBonusInfo | None = None
 

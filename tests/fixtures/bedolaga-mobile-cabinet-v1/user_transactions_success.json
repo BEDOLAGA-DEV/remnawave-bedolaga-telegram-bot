@@ -1,0 +1,30 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "GET",
+  "path": "/cabinet/admin/mobile/users/42/transactions",
+  "status": 200,
+  "auth": "cabinet_jwt_allowed_role",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": ["users:read"],
+  "response_schema": "MobileTransactionListResponse",
+  "fixture_kind": "success",
+  "body": {
+    "contract_version": "bedolaga-mobile-cabinet-v1",
+    "items": [
+      {
+        "id": 9001,
+        "user_id": 42,
+        "type": "deposit",
+        "amount_kopeks": 49900,
+        "amount_rubles": 499.0,
+        "payment_method": "yookassa",
+        "is_completed": true,
+        "created_at": "2026-07-03T12:00:00Z"
+      }
+    ],
+    "total": 1,
+    "limit": 50,
+    "offset": 0,
+    "completed_real_payment_only": true
+  }
+}

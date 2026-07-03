@@ -1,0 +1,19 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "GET",
+  "path": "/cabinet/admin/mobile/subscriptions/7",
+  "status": 200,
+  "auth": "cabinet_jwt_allowed_role",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": ["users:read"],
+  "response_schema": "MobileSubscriptionResponse",
+  "fixture_kind": "success",
+  "body": {
+    "contract_version": "bedolaga-mobile-cabinet-v1",
+    "id": 7,
+    "user_id": 42,
+    "status": "active",
+    "actual_status": "active",
+    "is_trial": false
+  }
+}

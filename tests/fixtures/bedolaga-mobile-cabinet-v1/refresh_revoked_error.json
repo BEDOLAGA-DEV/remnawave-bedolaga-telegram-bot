@@ -1,0 +1,14 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "POST",
+  "path": "/cabinet/auth/refresh",
+  "status": 401,
+  "auth": "revoked_refresh_token",
+  "required_role_names": [],
+  "required_permissions": [],
+  "response_schema": "HTTPError",
+  "fixture_kind": "error",
+  "body": {
+    "detail": "Refresh token not found or revoked"
+  }
+}

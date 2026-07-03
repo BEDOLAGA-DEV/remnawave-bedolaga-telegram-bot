@@ -1,0 +1,20 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "GET",
+  "path": "/cabinet/admin/mobile/transactions/monthly-income?year=2026&month=7",
+  "status": 200,
+  "auth": "cabinet_jwt_allowed_role",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": ["stats:read"],
+  "response_schema": "MobileIncomeResponse",
+  "fixture_kind": "success",
+  "body": {
+    "contract_version": "bedolaga-mobile-cabinet-v1",
+    "period_start": "2026-07-01T00:00:00Z",
+    "period_end": "2026-08-01T00:00:00Z",
+    "income_kopeks": 129900,
+    "income_rubles": 1299.0,
+    "transaction_count": 3,
+    "completed_real_payment_only": true
+  }
+}

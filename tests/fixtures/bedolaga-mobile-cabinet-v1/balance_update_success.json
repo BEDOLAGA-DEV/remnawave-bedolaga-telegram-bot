@@ -1,0 +1,17 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "POST",
+  "path": "/cabinet/admin/mobile/users/42/balance",
+  "status": 200,
+  "auth": "cabinet_jwt_allowed_role",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": ["users:balance"],
+  "response_schema": "UpdateBalanceResponse",
+  "fixture_kind": "success",
+  "body": {
+    "success": true,
+    "old_balance_kopeks": 0,
+    "new_balance_kopeks": 50000,
+    "message": "Balance updated"
+  }
+}

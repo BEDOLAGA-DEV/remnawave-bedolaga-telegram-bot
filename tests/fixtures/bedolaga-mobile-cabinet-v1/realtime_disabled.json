@@ -1,0 +1,17 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "GET",
+  "path": "/cabinet/admin/mobile/realtime",
+  "status": 200,
+  "auth": "cabinet_jwt_allowed_role",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": ["tickets:read"],
+  "response_schema": "MobileDisabledFeatureResponse",
+  "fixture_kind": "disabled",
+  "body": {
+    "contract_version": "bedolaga-mobile-cabinet-v1",
+    "feature": "realtime_tickets",
+    "enabled": false,
+    "reason": "Mobile v1 must not use /ws?api_key=... or /cabinet/ws?token=... query-token websockets."
+  }
+}

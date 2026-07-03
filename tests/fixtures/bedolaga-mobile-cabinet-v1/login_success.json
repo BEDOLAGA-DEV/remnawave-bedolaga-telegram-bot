@@ -1,0 +1,18 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "POST",
+  "path": "/cabinet/auth/email/login",
+  "status": 200,
+  "auth": "email_password",
+  "required_role_names": [],
+  "required_permissions": [],
+  "response_schema": "AuthResponse",
+  "fixture_kind": "success",
+  "body": {
+    "access_token": "<cabinet-access-jwt>",
+    "refresh_token": "<cabinet-refresh-jwt>",
+    "token_type": "bearer",
+    "expires_in": 900,
+    "refresh_expires_in": 2592000
+  }
+}

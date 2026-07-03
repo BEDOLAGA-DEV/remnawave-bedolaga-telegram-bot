@@ -24,6 +24,8 @@ logger = structlog.get_logger(__name__)
 
 security = HTTPBearer(auto_error=False)
 
+MOBILE_ADMIN_ALLOWED_ROLE_NAMES = frozenset({'Superadmin', 'Admin', 'Moderator'})
+
 
 async def get_cabinet_db() -> AsyncSession:
     """Get database session for cabinet operations."""
@@ -430,6 +432,100 @@ def require_permission(*permissions: str):
             details=details,
         )
         await db.commit()
+        return user
+
+    return dependency
+
+
+async def ensure_mobile_admin_access(
+    db: AsyncSession,
+    user: User,
+    *permissions: str,
+    request: Request | None = None,
+) -> tuple[list[str], list[str], int]:
+    """Verify the versioned mobile cabinet-admin predicate from current DB RBAC state.
+
+    The mobile contract deliberately does not trust RBAC claims embedded in an
+    access token: role names and permissions are reloaded from the database on
+    every request so role downgrades take effect immediately.
+    """
+    from app.database.crud.rbac import UserRoleCRUD
+    from app.services.permission_service import PermissionService
+
+    current_permissions, current_role_names, current_role_level = await UserRoleCRUD.get_user_permissions(db, user.id)
+    allowed_roles = MOBILE_ADMIN_ALLOWED_ROLE_NAMES.intersection(current_role_names)
+    if not allowed_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Mobile cabinet admin access requires current Superadmin, Admin, or Moderator role',
+        )
+
+    client_ip = None
+    user_agent = ''
+    request_path = ''
+    request_method = ''
+    if request is not None:
+        try:
+            client_ip = get_client_ip(request)
+        except HTTPException:
+            logger.warning('Unable to determine client IP in ensure_mobile_admin_access')
+            client_ip = 'unknown'
+        user_agent = request.headers.get('user-agent', '')
+        request_path = str(request.url.path)
+        request_method = request.method
+
+    resource_type = None
+    if permissions and ':' in permissions[0]:
+        resource_type = permissions[0].split(':', maxsplit=1)[0]
+
+    for permission in permissions:
+        allowed, reason = await PermissionService.check_permission(db, user, permission, ip_address=client_ip)
+        if not allowed:
+            await PermissionService.log_action(
+                db,
+                user_id=user.id,
+                action=permission,
+                resource_type=resource_type,
+                status='denied',
+                ip_address=client_ip,
+                user_agent=user_agent,
+                request_method=request_method,
+                request_path=request_path,
+                details={'reason': reason, 'contract': 'bedolaga-mobile-cabinet-v1'},
+            )
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f'Mobile cabinet admin permission denied: {reason}',
+            )
+
+    if permissions:
+        await PermissionService.log_action(
+            db,
+            user_id=user.id,
+            action=','.join(permissions),
+            resource_type=resource_type,
+            status='success',
+            ip_address=client_ip,
+            user_agent=user_agent,
+            request_method=request_method,
+            request_path=request_path,
+            details={'contract': 'bedolaga-mobile-cabinet-v1'},
+        )
+        await db.commit()
+
+    return current_permissions, current_role_names, current_role_level
+
+
+def require_mobile_admin_permission(*permissions: str):
+    """FastAPI dependency for the Bedolaga mobile cabinet v1 admin contract."""
+
+    async def dependency(
+        request: Request,
+        user: User = Depends(get_current_cabinet_user),
+        db: AsyncSession = Depends(get_cabinet_db),
+    ) -> User:
+        await ensure_mobile_admin_access(db, user, *permissions, request=request)
         return user
 
     return dependency

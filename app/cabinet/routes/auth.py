@@ -160,12 +160,14 @@ async def _create_auth_response(user: User, db: AsyncSession) -> AuthResponse:
     )
     refresh_token = create_refresh_token(user.id)
     expires_in = settings.get_cabinet_access_token_expire_minutes() * 60
+    refresh_expires_in = settings.get_cabinet_refresh_token_expire_days() * 24 * 60 * 60
 
     return AuthResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         token_type='bearer',
         expires_in=expires_in,
+        refresh_expires_in=refresh_expires_in,
         user=_user_to_response(user),
     )
 
@@ -1761,12 +1763,14 @@ async def refresh_token(
         role_level=user_role_level,
     )
     expires_in = settings.get_cabinet_access_token_expire_minutes() * 60
+    refresh_expires_in = max(0, int((token_record.expires_at - datetime.now(UTC)).total_seconds()))
 
     return TokenResponse(
         access_token=access_token,
         refresh_token=request.refresh_token,
         token_type='bearer',
         expires_in=expires_in,
+        refresh_expires_in=refresh_expires_in,
     )
 
 

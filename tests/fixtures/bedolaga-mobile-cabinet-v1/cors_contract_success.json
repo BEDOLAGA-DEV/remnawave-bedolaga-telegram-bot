@@ -1,0 +1,20 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "GET",
+  "path": "/cabinet/admin/mobile/settings/cors",
+  "status": 200,
+  "auth": "cabinet_jwt_allowed_role",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": ["settings:read"],
+  "response_schema": "MobileSettingsCorsContractResponse",
+  "fixture_kind": "success",
+  "body": {
+    "contract_version": "bedolaga-mobile-cabinet-v1",
+    "pre_auth_behavior": "local/operator-guidance-only",
+    "server_side_edit": "allowed only after cabinet JWT, mobile role allowlist, settings:edit, and env-lock checks",
+    "allowed_keys": [
+      {"key": "WEB_API_ALLOWED_ORIGINS", "mode": "editable-after-auth", "env_locked": false, "secret": false},
+      {"key": "CABINET_ALLOWED_ORIGINS", "mode": "editable-after-auth", "env_locked": false, "secret": false}
+    ]
+  }
+}

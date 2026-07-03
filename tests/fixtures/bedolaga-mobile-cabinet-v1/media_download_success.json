@@ -1,0 +1,16 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "GET",
+  "path": "/cabinet/media/{file_id}?token={signed_media_token}",
+  "status": 200,
+  "auth": "signed_media_download_token",
+  "required_role_names": [],
+  "required_permissions": [],
+  "response_schema": "BinaryMediaResponse",
+  "fixture_kind": "success",
+  "body": {
+    "download_auth_model": "signed_media_token",
+    "no_admin_token_headers": true,
+    "token_properties": ["hmac_signed", "file_bound", "expiring"]
+  }
+}

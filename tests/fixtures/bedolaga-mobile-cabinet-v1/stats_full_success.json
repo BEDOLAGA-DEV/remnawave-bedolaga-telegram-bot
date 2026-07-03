@@ -1,0 +1,19 @@
+{
+  "contract_version": "bedolaga-mobile-cabinet-v1",
+  "method": "GET",
+  "path": "/cabinet/admin/mobile/stats/full",
+  "status": 200,
+  "auth": "cabinet_jwt_allowed_role",
+  "required_role_names": ["Superadmin", "Admin", "Moderator"],
+  "required_permissions": ["stats:read"],
+  "response_schema": "MobileDashboardStatsResponse",
+  "fixture_kind": "success",
+  "body": {
+    "contract_version": "bedolaga-mobile-cabinet-v1",
+    "overview": {},
+    "users": {},
+    "subscriptions": {},
+    "transactions": {},
+    "referrals": {}
+  }
+}
