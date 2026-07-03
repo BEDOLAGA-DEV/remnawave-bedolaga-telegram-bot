@@ -534,10 +534,44 @@ class BioRewardService:
         now = datetime.now(UTC)
         if participant.free_subscription_id:
             sub = await db.get(Subscription, participant.free_subscription_id)
+            if sub is not None and not sub.is_bio_reward:
+                # Converted to paid by the purchase flow — never disable
+                # someone's paid subscription on bio revoke.
+                sub = None
             if sub is not None and sub.status != SubscriptionStatus.DISABLED.value:
                 sub.status = SubscriptionStatus.DISABLED.value
                 sub.end_date = now
                 await db.commit()
+                # Push to Remnawave: without this the user keeps VPN access
+                # until the stale panel expire_at, and the bidirectional
+                # panel sync can revert the local end_date.
+                try:
+                    from app.services.subscription_service import SubscriptionService
+
+                    if getattr(user, 'remnawave_uuid', None):
+                        svc = SubscriptionService()
+                        result = await svc.update_remnawave_user(
+                            db, sub, reset_traffic=False, sync_squads=False
+                        )
+                        if result is None:
+                            # update_remnawave_user swallows API errors and
+                            # returns None — surface it for operators.
+                            logger.warning(
+                                'bio_reward.revoke.remnawave_sync_failed',
+                                subscription_id=sub.id,
+                                err='update_remnawave_user returned None',
+                            )
+                except Exception as exc:
+                    logger.warning(
+                        'bio_reward.revoke.remnawave_sync_failed',
+                        subscription_id=sub.id,
+                        err=str(exc),
+                    )
+            # Whether disabled just now, already disabled, or converted-to-paid:
+            # the participant no longer owns a live free sub. Clear the link so
+            # nothing can extend/resurrect this row later; a fresh free sub is
+            # only issued via _activate. Committed by set_status below.
+            participant.free_subscription_id = None
 
         from app.database.crud.subscription import get_active_subscriptions_by_user_id
 

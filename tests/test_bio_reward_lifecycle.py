@@ -329,3 +329,44 @@ async def test_extend_never_resurrects_disabled_bio_sub(monkeypatch):
     assert sub.status == SubscriptionStatus.DISABLED.value
     assert sub.end_date == old_end
     assert calls == []
+
+
+# ---------- Fix 4: _revoke ----------
+
+
+def _patch_no_active_paid(monkeypatch):
+    import app.database.crud.subscription as sub_crud
+
+    async def no_paid(db, user_id):
+        return []
+
+    monkeypatch.setattr(sub_crud, 'get_active_subscriptions_by_user_id', no_paid)
+
+
+async def test_revoke_does_not_disable_converted_paid_sub(monkeypatch):
+    from app.services.bio_reward_service import BioRewardService
+
+    _patch_no_active_paid(monkeypatch)
+    calls = _patch_subscription_service(monkeypatch)
+    svc = BioRewardService()
+    sub = _sub(is_bio_reward=False, status='active')
+    participant = _participant(free_subscription_id=101)
+    await svc._revoke(FakeDb(get_map={101: sub}), participant, _user(), _bio_cfg())
+    assert sub.status == 'active'
+    assert participant.free_subscription_id is None
+    assert calls == []
+
+
+async def test_revoke_disables_bio_sub_pushes_and_detaches(monkeypatch):
+    from app.database.models import SubscriptionStatus
+    from app.services.bio_reward_service import BioRewardService
+
+    _patch_no_active_paid(monkeypatch)
+    calls = _patch_subscription_service(monkeypatch)
+    svc = BioRewardService()
+    sub = _sub(is_bio_reward=True, status='active')
+    participant = _participant(free_subscription_id=101)
+    await svc._revoke(FakeDb(get_map={101: sub}), participant, _user(), _bio_cfg())
+    assert sub.status == SubscriptionStatus.DISABLED.value
+    assert calls == [sub]
+    assert participant.free_subscription_id is None
