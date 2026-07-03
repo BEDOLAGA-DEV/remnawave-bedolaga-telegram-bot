@@ -72,6 +72,7 @@ class NotificationCategory(StrEnum):
     PARTNERS = 'partners'  # Партнёрки, выводы, админ-действия
     TICKETS = 'tickets'  # Тикеты (уже существует)
     ACHIEVEMENTS = 'achievements'  # Достижения пользователей
+    ADMIN_ACTIONS = 'admin_actions'  # Действия section-админов (аудит)
 
 
 logger = structlog.get_logger(__name__)
@@ -98,6 +99,7 @@ class AdminNotificationService:
             NotificationCategory.PARTNERS: getattr(settings, 'ADMIN_NOTIFICATIONS_PARTNERS_TOPIC_ID', None),
             NotificationCategory.TICKETS: self.ticket_topic_id,
             NotificationCategory.ACHIEVEMENTS: getattr(settings, 'ADMIN_NOTIFICATIONS_ACHIEVEMENTS_TOPIC_ID', None),
+            NotificationCategory.ADMIN_ACTIONS: getattr(settings, 'ADMIN_NOTIFICATIONS_ADMIN_ACTIONS_TOPIC_ID', None),
         }
 
         # Per-category enabled flags (default True — backwards compatible)
@@ -1549,6 +1551,38 @@ class AdminNotificationService:
         if not self._is_enabled():
             return False
         return await self._send_message(text, reply_markup=reply_markup, category=category)
+
+    async def send_admin_action_notification(
+        self,
+        *,
+        admin_telegram_id: int,
+        admin_display: str,
+        permissions: list[str],
+        callback_data: str,
+        section: str,
+        allowed: bool,
+        button_text: str | None,
+    ) -> bool:
+        """Аудит: клик section-админа по гейтанному callback'у (разрешён или нет)."""
+        if not self.enabled:
+            return False
+
+        marker = '✅' if allowed else '⛔'
+        lines = [
+            '👮 <b>Действие админа</b>',
+            '',
+            f'Админ: {html.escape(admin_display)} (ID <code>{admin_telegram_id}</code>)',
+            f'Роль: {html.escape(", ".join(permissions)) if permissions else "—"}',
+        ]
+        if button_text:
+            lines.append(f'Действие: {marker} «{html.escape(button_text)}»')
+        else:
+            lines.append(f'Действие: {marker}')
+        lines.append(f'Callback: <code>{html.escape(callback_data)}</code> → секция <code>{html.escape(section)}</code>')
+        if not allowed:
+            lines.append(f'Отклонено: нет секции <code>{html.escape(section)}</code>')
+
+        return await self._send_message('\n'.join(lines), category=NotificationCategory.ADMIN_ACTIONS)
 
     async def send_guest_purchase_notification(
         self,
