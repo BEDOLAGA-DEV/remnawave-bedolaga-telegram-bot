@@ -163,6 +163,10 @@ class BackupService:
         self.data_dir = self.backup_dir.parent
         self.archive_format_version = '2.0'
         self._auto_backup_task = None
+        # Сериализует start/stop: конкурентные рестарты (по одному на каждый
+        # BACKUP_*-ключ при загрузке настроек из БД) без лока теряли указатель
+        # на таску и плодили циклы-сироты — по бекапу на каждый в 03:00.
+        self._auto_backup_restart_lock = asyncio.Lock()
         self._settings = self._load_settings()
 
         self._base_backup_models = [
@@ -1879,31 +1883,33 @@ class BackupService:
     async def start_auto_backup(self):
         # Дожидаемся отмены старой таски, чтобы не было двух циклов параллельно
         # во время рестарта scheduler'а после изменения BACKUP_TIME из кабинета.
-        if self._auto_backup_task and not self._auto_backup_task.done():
-            self._auto_backup_task.cancel()
-            import contextlib
+        async with self._auto_backup_restart_lock:
+            if self._auto_backup_task and not self._auto_backup_task.done():
+                self._auto_backup_task.cancel()
+                import contextlib
 
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._auto_backup_task
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._auto_backup_task
 
-        if self._settings.auto_backup_enabled:
-            next_run = self._calculate_next_backup_datetime()
-            interval = self._get_backup_interval()
-            self._auto_backup_task = asyncio.create_task(self._auto_backup_loop(next_run))
-            logger.info(
-                '📄 Автобекапы включены, интервал: ч, ближайший запуск',
-                total_seconds=interval.total_seconds() / 3600,
-                next_run=next_run.strftime('%d.%m.%Y %H:%M:%S'),
-            )
+            if self._settings.auto_backup_enabled:
+                next_run = self._calculate_next_backup_datetime()
+                interval = self._get_backup_interval()
+                self._auto_backup_task = asyncio.create_task(self._auto_backup_loop(next_run))
+                logger.info(
+                    '📄 Автобекапы включены, интервал: ч, ближайший запуск',
+                    total_seconds=interval.total_seconds() / 3600,
+                    next_run=next_run.strftime('%d.%m.%Y %H:%M:%S'),
+                )
 
     async def stop_auto_backup(self):
-        if self._auto_backup_task and not self._auto_backup_task.done():
-            self._auto_backup_task.cancel()
-            import contextlib
+        async with self._auto_backup_restart_lock:
+            if self._auto_backup_task and not self._auto_backup_task.done():
+                self._auto_backup_task.cancel()
+                import contextlib
 
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._auto_backup_task
-            logger.info('ℹ️ Автобекапы остановлены')
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._auto_backup_task
+                logger.info('ℹ️ Автобекапы остановлены')
 
     async def _auto_backup_loop(self, next_run: datetime | None = None):
         # Перечитываем настройки в начале цикла — на случай если admin изменил
