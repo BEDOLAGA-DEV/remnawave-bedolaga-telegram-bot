@@ -3,10 +3,12 @@
 import json
 
 import pytest
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.methods import SendMessage
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from app.utils import premium_emoji
 from app.utils.premium_emoji import apply_premium_emoji_to_markup
+from app.utils.premium_emoji_middleware import PremiumEmojiRequestMiddleware
 
 
 HEART = '❤️'
@@ -124,3 +126,69 @@ def test_text_replacement_still_works_after_refactor(emoji_map):
     diamond_id = emoji_map['\U0001f48e']
     expected = f'<tg-emoji emoji-id="{diamond_id}">\U0001f48e</tg-emoji>'
     assert expected in out
+
+
+def _capture():
+    captured = {}
+
+    async def fake_make_request(bot, method):
+        captured['method'] = method
+        return 'ok'
+
+    return captured, fake_make_request
+
+
+@pytest.mark.asyncio
+async def test_middleware_transforms_send_message(emoji_map):
+    mw = PremiumEmojiRequestMiddleware()
+    captured, fake_make_request = _capture()
+    method = SendMessage(chat_id=1, text='hi', reply_markup=_kb('\U0001f48e Купить'))
+
+    result = await mw(fake_make_request, None, method)
+
+    assert result == 'ok'
+    btn = captured['method'].reply_markup.inline_keyboard[0][0]
+    assert btn.text == 'Купить'
+    assert btn.icon_custom_emoji_id == emoji_map['\U0001f48e']
+
+
+@pytest.mark.asyncio
+async def test_middleware_passthrough_reply_keyboard(emoji_map):
+    mw = PremiumEmojiRequestMiddleware()
+    captured, fake_make_request = _capture()
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='\U0001f48e Купить')]])
+    method = SendMessage(chat_id=1, text='hi', reply_markup=kb)
+
+    await mw(fake_make_request, None, method)
+
+    assert captured['method'] is method
+
+
+@pytest.mark.asyncio
+async def test_middleware_passthrough_no_markup(emoji_map):
+    mw = PremiumEmojiRequestMiddleware()
+    captured, fake_make_request = _capture()
+    method = SendMessage(chat_id=1, text='hi')
+
+    await mw(fake_make_request, None, method)
+
+    assert captured['method'] is method
+
+
+@pytest.mark.asyncio
+async def test_middleware_error_sends_original(emoji_map, monkeypatch):
+    import app.utils.premium_emoji_middleware as mw_module
+
+    mw = PremiumEmojiRequestMiddleware()
+    captured, fake_make_request = _capture()
+
+    def boom(markup):
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(mw_module, 'apply_premium_emoji_to_markup', boom)
+    method = SendMessage(chat_id=1, text='hi', reply_markup=_kb('\U0001f48e Купить'))
+
+    result = await mw(fake_make_request, None, method)
+
+    assert result == 'ok'
+    assert captured['method'] is method
