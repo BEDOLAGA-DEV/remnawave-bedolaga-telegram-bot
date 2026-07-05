@@ -63,13 +63,13 @@ def _build_revoke_success_keyboard(
 ) -> InlineKeyboardMarkup:
     """Build success keyboard with connect and back buttons."""
     texts = get_texts(language)
-    back_callback = 'my_subscriptions' if multi_tariff else 'menu_subscription'
+    back_callback = 'nz!_my_subscriptions' if multi_tariff else 'nz!_menu_subscription'
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=texts.t('SUBSCRIPTION_REVOKE_CONNECT_BTN', '🔗 Подключиться'),
-                    callback_data='subscription_connect',
+                    callback_data='nz!_subscription_connect',
                 ),
             ],
             [
@@ -223,7 +223,7 @@ async def confirm_subscription_revoke(
             texts.t('SUBSCRIPTION_REVOKE_ERROR', '❌ Ошибка при перевыпуске подписки. Попробуйте позже.'),
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                    [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')],
                 ]
             ),
             parse_mode='HTML',

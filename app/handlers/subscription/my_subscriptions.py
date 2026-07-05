@@ -133,7 +133,7 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
         buttons.append([types.InlineKeyboardButton(text='📱 Устройства', callback_data=f'nz!_sd:{sub_id}')])
         if settings.is_protocols_enabled():
             buttons.append([types.InlineKeyboardButton(text='🧩 Протоколы', callback_data='nz!_subscription_protocols')])
-        buttons.append([types.InlineKeyboardButton(text='💳 Автоплатеж', callback_data='subscription_autopay')])
+        buttons.append([types.InlineKeyboardButton(text='💳 Автоплатеж', callback_data='nz!_subscription_autopay')])
 
     if is_inactive:
         buttons.append([types.InlineKeyboardButton(text='🗑 Удалить подписку', callback_data=f'nz!_sub_del:{sub_id}')])

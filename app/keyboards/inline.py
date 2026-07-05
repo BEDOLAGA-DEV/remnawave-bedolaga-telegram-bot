@@ -3869,7 +3869,7 @@ def get_updated_subscription_settings_keyboard(
             ]
         )
 
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
