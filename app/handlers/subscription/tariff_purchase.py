@@ -2463,8 +2463,8 @@ async def show_tariff_extend(
 
         keyboard = []
         for t in active_tariffs:
-            keyboard.append([InlineKeyboardButton(text=f'📦 {t.name}', callback_data=f'tariff_select:{t.id}')])
-        keyboard.append([InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+            keyboard.append([InlineKeyboardButton(text=f'📦 {t.name}', callback_data=f'nz!_tariff_select:{t.id}')])
+        keyboard.append([InlineKeyboardButton(text='◀️ Назад', callback_data='nz!_back_to_menu')])
 
         await callback.message.edit_text(
             '🔄 <b>Выберите тариф для продления</b>\n\n'

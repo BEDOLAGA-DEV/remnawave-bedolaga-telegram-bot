@@ -1913,7 +1913,7 @@ def get_monitoring_logs_navigation_keyboard(
         if current_page > 1:
             nav_row.append(InlineKeyboardButton(text='⬅️', callback_data=f'admin_mon_logs_page_{current_page - 1}'))
 
-        nav_row.append(InlineKeyboardButton(text=f'{current_page}/{total_pages}', callback_data='nz!_current_page_info'))
+        nav_row.append(InlineKeyboardButton(text=f'{current_page}/{total_pages}', callback_data='nz!_current_page'))
 
         if current_page < total_pages:
             nav_row.append(InlineKeyboardButton(text='➡️', callback_data=f'admin_mon_logs_page_{current_page + 1}'))

@@ -614,14 +614,14 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
         if amount_rubles < 1:
             await message.answer(
                 'Минимальная сумма пополнения: 1 ₽',
-                reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
+                reply_markup=get_back_keyboard(db_user.language, callback_data='nz!_balance_topup'),
             )
             return
 
         if amount_rubles > 50000:
             await message.answer(
                 'Максимальная сумма пополнения: 50,000 ₽',
-                reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
+                reply_markup=get_back_keyboard(db_user.language, callback_data='nz!_balance_topup'),
             )
             return
 
@@ -634,7 +634,7 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
                 min_rubles = settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100
                 await message.answer(
                     f'❌ Минимальная сумма для оплаты через YooKassa: {min_rubles:.0f} ₽',
-                    reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
+                    reply_markup=get_back_keyboard(db_user.language, callback_data='nz!_balance_topup'),
                 )
                 return
 
@@ -642,7 +642,7 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
                 max_rubles = settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100
                 await message.answer(
                     f'❌ Максимальная сумма для оплаты через YooKassa: {max_rubles:,.0f} ₽'.replace(',', ' '),
-                    reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
+                    reply_markup=get_back_keyboard(db_user.language, callback_data='nz!_balance_topup'),
                 )
                 return
 
@@ -902,13 +902,13 @@ def register_balance_handlers(dp: Dispatcher):
 
     from .overpay import start_overpay_topup
 
-    dp.callback_query.register(start_overpay_topup, F.data == 'topup_overpay')
+    dp.callback_query.register(start_overpay_topup, F.data == 'nz!_topup_overpay')
 
     from .aurapay import start_aurapay_card_topup, start_aurapay_sbp_topup, start_aurapay_topup
 
     dp.callback_query.register(start_aurapay_topup, F.data == 'nz!_topup_aurapay')
-    dp.callback_query.register(start_aurapay_sbp_topup, F.data == 'topup_aurapay_sbp')
-    dp.callback_query.register(start_aurapay_card_topup, F.data == 'topup_aurapay_card')
+    dp.callback_query.register(start_aurapay_sbp_topup, F.data == 'nz!_topup_aurapay_sbp')
+    dp.callback_query.register(start_aurapay_card_topup, F.data == 'nz!_topup_aurapay_card')
 
     from .lolz import start_lolz_topup
 
@@ -916,9 +916,9 @@ def register_balance_handlers(dp: Dispatcher):
 
     from .etoplatezhi import start_etoplatezhi_card_topup, start_etoplatezhi_sbp_topup, start_etoplatezhi_topup
 
-    dp.callback_query.register(start_etoplatezhi_topup, F.data == 'topup_etoplatezhi')
-    dp.callback_query.register(start_etoplatezhi_sbp_topup, F.data == 'topup_etoplatezhi_sbp')
-    dp.callback_query.register(start_etoplatezhi_card_topup, F.data == 'topup_etoplatezhi_card')
+    dp.callback_query.register(start_etoplatezhi_topup, F.data == 'nz!_topup_etoplatezhi')
+    dp.callback_query.register(start_etoplatezhi_sbp_topup, F.data == 'nz!_topup_etoplatezhi_sbp')
+    dp.callback_query.register(start_etoplatezhi_card_topup, F.data == 'nz!_topup_etoplatezhi_card')
 
     from .antilopay import (
         start_antilopay_card_topup,
@@ -927,15 +927,15 @@ def register_balance_handlers(dp: Dispatcher):
         start_antilopay_topup,
     )
 
-    dp.callback_query.register(start_antilopay_topup, F.data == 'topup_antilopay')
-    dp.callback_query.register(start_antilopay_sbp_topup, F.data == 'topup_antilopay_sbp')
-    dp.callback_query.register(start_antilopay_card_topup, F.data == 'topup_antilopay_card')
-    dp.callback_query.register(start_antilopay_sberpay_topup, F.data == 'topup_antilopay_sberpay')
+    dp.callback_query.register(start_antilopay_topup, F.data == 'nz!_topup_antilopay')
+    dp.callback_query.register(start_antilopay_sbp_topup, F.data == 'nz!_topup_antilopay_sbp')
+    dp.callback_query.register(start_antilopay_card_topup, F.data == 'nz!_topup_antilopay_card')
+    dp.callback_query.register(start_antilopay_sberpay_topup, F.data == 'nz!_topup_antilopay_sberpay')
 
     from .jupiter import start_jupiter_sbp_topup, start_jupiter_topup
 
-    dp.callback_query.register(start_jupiter_topup, F.data == 'topup_jupiter')
-    dp.callback_query.register(start_jupiter_sbp_topup, F.data == 'topup_jupiter_sbp')
+    dp.callback_query.register(start_jupiter_topup, F.data == 'nz!_topup_jupiter')
+    dp.callback_query.register(start_jupiter_sbp_topup, F.data == 'nz!_topup_jupiter_sbp')
 
     from .donut import (
         start_donut_card_topup,
@@ -944,16 +944,16 @@ def register_balance_handlers(dp: Dispatcher):
         start_donut_topup,
     )
 
-    dp.callback_query.register(start_donut_topup, F.data == 'topup_donut')
-    dp.callback_query.register(start_donut_card_topup, F.data == 'topup_donut_card')
-    dp.callback_query.register(start_donut_sbp_topup, F.data == 'topup_donut_sbp')
-    dp.callback_query.register(start_donut_sbp_qr_topup, F.data == 'topup_donut_sbp_qr')
+    dp.callback_query.register(start_donut_topup, F.data == 'nz!_topup_donut')
+    dp.callback_query.register(start_donut_card_topup, F.data == 'nz!_topup_donut_card')
+    dp.callback_query.register(start_donut_sbp_topup, F.data == 'nz!_topup_donut_sbp')
+    dp.callback_query.register(start_donut_sbp_qr_topup, F.data == 'nz!_topup_donut_sbp_qr')
 
     from .lava import start_lava_card_topup, start_lava_sbp_topup, start_lava_topup
 
-    dp.callback_query.register(start_lava_topup, F.data == 'topup_lava')
-    dp.callback_query.register(start_lava_card_topup, F.data == 'topup_lava_card')
-    dp.callback_query.register(start_lava_sbp_topup, F.data == 'topup_lava_sbp')
+    dp.callback_query.register(start_lava_topup, F.data == 'nz!_topup_lava')
+    dp.callback_query.register(start_lava_card_topup, F.data == 'nz!_topup_lava_card')
+    dp.callback_query.register(start_lava_sbp_topup, F.data == 'nz!_topup_lava_sbp')
 
     from .mulenpay import check_mulenpay_payment_status
 

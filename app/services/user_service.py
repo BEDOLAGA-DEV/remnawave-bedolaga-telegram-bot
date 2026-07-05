@@ -121,11 +121,11 @@ class UserService:
             extend_callback = 'nz!_menu_subscription' if settings.is_multi_tariff_enabled() else 'nz!_subscription_extend'
             keyboard = types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='🚀 АКТИВИРОВАТЬ ПОДПИСКУ', callback_data='nz!_subscription_buy')],
+                    [types.InlineKeyboardButton(text='🚀 АКТИВИРОВАТЬ ПОДПИСКУ', callback_data='nz!_menu_buy')],
                     [types.InlineKeyboardButton(text='💎 ПРОДЛИТЬ ПОДПИСКУ', callback_data=extend_callback)],
                     [
                         types.InlineKeyboardButton(
-                            text='📱 ДОБАВИТЬ УСТРОЙСТВА', callback_data='nz!_subscription_add_devices'
+                            text='📱 ДОБАВИТЬ УСТРОЙСТВА', callback_data='nz!_subscription_change_devices'
                         )
                     ],
                 ]
