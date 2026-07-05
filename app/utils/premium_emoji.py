@@ -28,6 +28,28 @@ _replacement_cache: dict[str, str] | None = None
 # Кеш сырого маппинга: emoji_char -> document_id
 _raw_map_cache: dict[str, str] | None = None
 
+# Variation Selector-16: превращает базовый символ в эмодзи-форму (⭐ vs ⭐️)
+_VS16 = '️'
+
+
+def _expand_vs16_variants(mapping: dict[str, str]) -> dict[str, str]:
+    """Дополняет маппинг bare/VS16-вариантами эмодзи.
+
+    В коде и в JSON один и тот же эмодзи встречается то с U+FE0F, то без
+    (⭐ и ⭐️) — обе формы должны находить один document_id. Явно заданные
+    в JSON ключи имеют приоритет и не перезаписываются.
+    """
+    expanded = dict(mapping)
+    for emoji_char, doc_id in mapping.items():
+        bare = emoji_char.replace(_VS16, '')
+        if bare and bare not in expanded:
+            expanded[bare] = doc_id
+        if len(emoji_char) == 1:
+            vs16 = emoji_char + _VS16
+            if vs16 not in expanded:
+                expanded[vs16] = doc_id
+    return expanded
+
 
 def _load_raw_map() -> dict[str, str]:
     """Загружает сырой маппинг emoji -> document_id из JSON."""
@@ -48,11 +70,11 @@ def _load_raw_map() -> dict[str, str]:
         _raw_map_cache = {}
         return _raw_map_cache
 
-    _raw_map_cache = {
+    _raw_map_cache = _expand_vs16_variants({
         emoji_char: doc_id.strip()
         for emoji_char, doc_id in raw.items()
         if doc_id and isinstance(doc_id, str) and doc_id.strip()
-    }
+    })
     return _raw_map_cache
 
 
