@@ -66,9 +66,18 @@ def update_mapping(text: str, entities: list) -> list[tuple[str, str, str]]:
     return updated
 
 
-def _empty_left() -> int:
+def _empty_keys() -> list[str]:
+    """Незаполненные эмодзи в порядке файла (отсортированы по частоте использования)."""
     emojis = json.loads(JSON_PATH.read_text(encoding='utf-8'))['emojis']
-    return sum(1 for v in emojis.values() if not v.strip())
+    return [k for k, v in emojis.items() if not v.strip()]
+
+
+def _progress_footer(batch: int = 10) -> str:
+    empty = _empty_keys()
+    if not empty:
+        return '\n\nВсе эмодзи заполнены! Теперь: docker restart remnawave_bot'
+    nxt = ' '.join(empty[:batch])
+    return f'\n\nОсталось незаполненных: {len(empty)}\nСледующие: {nxt}'
 
 
 async def main() -> None:
@@ -98,8 +107,8 @@ async def main() -> None:
         if not updated:
             await message.answer(
                 'Премиум-эмодзи в сообщении не найдено (нужны custom emoji, не обычные), '
-                'либо все id уже записаны.\n'
-                f'Осталось незаполненных: {_empty_left()}'
+                'либо все id уже записаны.'
+                + _progress_footer()
             )
             return
 
@@ -107,9 +116,7 @@ async def main() -> None:
             f'{e} -> {new_id}' + (' (заменил старый)' if old else '')
             for e, new_id, old in updated
         ]
-        await message.answer(
-            'Записано:\n' + '\n'.join(lines) + f'\n\nОсталось незаполненных: {_empty_left()}'
-        )
+        await message.answer('Записано:\n' + '\n'.join(lines) + _progress_footer())
 
     print(f'JSON: {JSON_PATH}')
     print('Бот запущен. Отправь ему премиум-эмодзи. Ctrl+C для остановки.')
