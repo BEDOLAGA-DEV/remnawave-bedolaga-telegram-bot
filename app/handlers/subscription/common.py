@@ -574,7 +574,7 @@ def create_deep_link(app: dict[str, Any], subscription_url: str) -> str | None:
 
 
 def get_reset_devices_confirm_keyboard(
-    language: str = 'ru', back_callback: str = 'menu_subscription'
+    language: str = 'ru', back_callback: str = 'nz!_menu_subscription'
 ) -> InlineKeyboardMarkup:
     get_texts(language)
     return InlineKeyboardMarkup(
@@ -591,7 +591,7 @@ def get_traffic_switch_keyboard(
     subscription_end_date: datetime = None,
     discount_percent: int = 0,
     base_traffic_gb: int = None,
-    back_callback: str = 'subscription_settings',
+    back_callback: str = 'nz!_subscription_settings',
 ) -> InlineKeyboardMarkup:
     from app.config import settings
 

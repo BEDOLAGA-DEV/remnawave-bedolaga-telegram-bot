@@ -2008,7 +2008,7 @@ async def confirm_tariff_purchase(
                         text='📱 Моя подписка',
                         callback_data=f'nz!_sm:{subscription.id}'
                         if settings.is_multi_tariff_enabled() and subscription
-                        else 'menu_subscription',
+                        else 'nz!_menu_subscription',
                     )
                 ],
                 [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
@@ -2294,7 +2294,7 @@ async def confirm_daily_tariff_purchase(
                         text='📱 Моя подписка',
                         callback_data=f'nz!_sm:{subscription.id}'
                         if settings.is_multi_tariff_enabled() and subscription
-                        else 'menu_subscription',
+                        else 'nz!_menu_subscription',
                     )
                 ],
                 [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
@@ -2971,7 +2971,7 @@ async def show_tariff_switch_list(
         await callback.message.edit_text(
             '🚫 <b>Смена тарифа недоступна</b>\n\nАдминистратор отключил возможность смены тарифа.',
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')]]
+                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')]]
             ),
             parse_mode='HTML',
         )
@@ -3973,7 +3973,7 @@ async def show_instant_switch_list(
         await callback.message.edit_text(
             '🚫 <b>Смена тарифа недоступна</b>\n\nАдминистратор отключил возможность смены тарифа.',
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')]]
+                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')]]
             ),
             parse_mode='HTML',
         )
