@@ -5,6 +5,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from app.config import settings
+from app.utils.premium_emoji_middleware import PremiumEmojiRequestMiddleware
 
 
 def create_bot(token: str | None = None, **kwargs) -> Bot:
@@ -25,4 +26,6 @@ def create_bot(token: str | None = None, **kwargs) -> Bot:
         session = AiohttpSession(**session_kwargs)
 
     kwargs.setdefault('default', DefaultBotProperties(parse_mode=ParseMode.HTML))
-    return Bot(token=token or settings.BOT_TOKEN, session=session, **kwargs)
+    bot = Bot(token=token or settings.BOT_TOKEN, session=session, **kwargs)
+    bot.session.middleware.register(PremiumEmojiRequestMiddleware())
+    return bot

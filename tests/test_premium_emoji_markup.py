@@ -192,3 +192,17 @@ async def test_middleware_error_sends_original(emoji_map, monkeypatch):
 
     assert result == 'ok'
     assert captured['method'] is method
+
+
+def test_create_bot_registers_premium_emoji_middleware(monkeypatch):
+    from app import bot_factory
+
+    monkeypatch.setattr(type(bot_factory.settings), 'get_proxy_url', lambda self: None)
+    monkeypatch.setattr(type(bot_factory.settings), 'get_telegram_api_url', lambda self: None)
+
+    bot = bot_factory.create_bot(token='42:TEST')
+
+    assert any(
+        isinstance(m, PremiumEmojiRequestMiddleware)
+        for m in bot.session.middleware
+    )
