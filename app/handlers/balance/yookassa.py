@@ -406,7 +406,7 @@ async def process_yookassa_sbp_payment_amount(
         else:
             # Если ссылка недоступна, предлагаем оплатить через ID платежа в приложении банка
             keyboard_buttons.append(
-                [types.InlineKeyboardButton(text='📱 Оплатить в приложении банка', callback_data='nz!_temp_disabled')]
+                [types.InlineKeyboardButton(text='📱 Оплатить в приложении банка', callback_data='nz!_noop')]
             )
 
         # Добавляем общие кнопки

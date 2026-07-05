@@ -829,7 +829,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')])
 
         await callback.message.edit_text(
             f'🚫 <b>Активация подписки ограничена</b>\n\n{reason}\n\n'
@@ -1908,7 +1908,7 @@ async def confirm_extend_subscription(
     if not callback.data:
         await callback.answer('⚠ Ошибка данных', show_alert=True)
         return
-    days = int(callback.data.split('_')[2])
+    days = int(callback.data.split('_')[3])
     texts = get_texts(db_user.language)
 
     # Block classic subscription renewal when tariff mode is active
@@ -2193,7 +2193,7 @@ async def select_devices(callback: types.CallbackQuery, state: FSMContext, db_us
         return
 
     try:
-        devices = int(callback.data.split('_')[1])
+        devices = int(callback.data.split('_')[2])
     except (ValueError, IndexError):
         await callback.answer(texts.t('DEVICES_INVALID_COUNT', '❌ Некорректное количество устройств'), show_alert=True)
         return
@@ -2253,7 +2253,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')])
 
         await callback.message.edit_text(
             f'🚫 <b>Покупка/продление подписки ограничено</b>\n\n{reason}\n\n'
@@ -3928,7 +3928,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'nz!_check_trial_cryptobot_{pending_subscription.id}',
+                                callback_data=f'nz!_check_cryptobot_{payment_result["local_payment_id"]}',
                             )
                         ],
                         [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
@@ -3966,7 +3966,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'nz!_check_trial_heleket_{pending_subscription.id}',
+                                callback_data=f'nz!_check_heleket_{payment_result["local_payment_id"]}',
                             )
                         ],
                         [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
@@ -4003,7 +4003,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'nz!_check_trial_mulenpay_{pending_subscription.id}',
+                                callback_data=f'nz!_check_mulenpay_{payment_result["local_payment_id"]}',
                             )
                         ],
                         [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
@@ -4041,7 +4041,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'nz!_check_trial_pal24_{pending_subscription.id}',
+                                callback_data=f'nz!_check_pal24_{payment_result["local_payment_id"]}',
                             )
                         ],
                         [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
@@ -4077,7 +4077,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'nz!_check_trial_wata_{pending_subscription.id}',
+                                callback_data=f'nz!_check_wata_{payment_result["local_payment_id"]}',
                             )
                         ],
                         [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
@@ -4125,7 +4125,7 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
                         [
                             InlineKeyboardButton(
                                 text=texts.t('CHECK_PAYMENT', '🔄 Проверить оплату'),
-                                callback_data=f'nz!_check_trial_platega_{pending_subscription.id}',
+                                callback_data=f'nz!_check_platega_{payment_result["local_payment_id"]}',
                             )
                         ],
                         [InlineKeyboardButton(text=texts.BACK, callback_data='nz!_trial_activate')],
@@ -4269,7 +4269,7 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_autopay_days, F.data == 'nz!_autopay_set_days')
 
     dp.callback_query.register(handle_subscription_config_back, F.data == 'nz!_subscription_config_back')
-    dp.callback_query.register(show_autopay_period, F.data == 'autopay_set_period')
+    dp.callback_query.register(show_autopay_period, F.data == 'nz!_autopay_set_period')
 
     dp.callback_query.register(handle_subscription_config_back, F.data == 'subscription_config_back')
 

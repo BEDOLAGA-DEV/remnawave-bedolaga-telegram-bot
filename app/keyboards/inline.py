@@ -536,7 +536,7 @@ def _build_cabinet_main_menu_keyboard(
                     row_buttons.append(
                         InlineKeyboardButton(
                             text=lang_text,
-                            callback_data='menu_language',
+                            callback_data='nz!_menu_language',
                             style=resolved_lang_style,
                             icon_custom_emoji_id=resolved_lang_emoji,
                         )
@@ -3687,7 +3687,7 @@ def get_devices_management_keyboard(
             [
                 InlineKeyboardButton(
                     text=texts.t('DEVICE_RENAME_BUTTON', '✏️'),
-                    callback_data=f'nz!_sub_rename_{i}_{pagination.page}',
+                    callback_data=f'device_rename_{i}_{pagination.page}',
                     style='primary',
                 ),
                 InlineKeyboardButton(

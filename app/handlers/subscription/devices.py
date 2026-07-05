@@ -964,7 +964,7 @@ async def show_devices_page(
 
 
 async def handle_devices_page(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
-    page = int(callback.data.split('_')[2])
+    page = int(callback.data.split('_')[-1])
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     remnawave_uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
@@ -1419,7 +1419,7 @@ async def handle_all_devices_reset_from_management(
 
 
 async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
-    devices_count = int(callback.data.split('_')[2])
+    devices_count = int(callback.data.split('_')[-1])
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
@@ -1706,7 +1706,7 @@ async def confirm_reset_devices(
 
 
 async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
-    device_type = callback.data.split('_')[2]
+    device_type = callback.data.split('_', 3)[3]
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
@@ -1854,11 +1854,11 @@ async def handle_app_selection(callback: types.CallbackQuery, db_user: User, db:
 async def handle_specific_app_guide(
     callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
 ):
-    parts = callback.data.split('_', 2)
-    if len(parts) < 3:
+    parts = callback.data.split('_', 3)
+    if len(parts) < 4:
         await callback.answer('Invalid callback data', show_alert=True)
         return
-    _, device_type, app_id = parts
+    device_type, app_id = parts[2], parts[3]
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:

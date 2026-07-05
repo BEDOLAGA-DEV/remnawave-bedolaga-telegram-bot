@@ -53,7 +53,7 @@ async def start_simple_subscription_purchase(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_subscription')])
+        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_subscription')])
 
         await callback.message.edit_text(
             f'🚫 <b>Покупка подписки ограничена</b>\n\n{reason}\n\n'
@@ -1006,7 +1006,7 @@ async def handle_simple_subscription_payment_method(
             else:
                 # Если ссылка недоступна, предлагаем оплатить через ID платежа в приложении банка
                 keyboard_buttons.append(
-                    [types.InlineKeyboardButton(text='📱 Оплатить в приложении банка', callback_data='nz!_temp_disabled')]
+                    [types.InlineKeyboardButton(text='📱 Оплатить в приложении банка', callback_data='nz!_noop')]
                 )
 
             # Добавляем общие кнопки

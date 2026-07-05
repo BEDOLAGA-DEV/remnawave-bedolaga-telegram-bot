@@ -1237,7 +1237,7 @@ async def show_promo_group_members(
             page,
             total_pages,
             f'promo_group_members_{group_id}',
-            f'promo_group_manage_{group_id}',
+            f'nz!_promo_group_manage_{group_id}',
             db_user.language,
         )
         keyboard.extend(pagination.inline_keyboard)
@@ -1280,8 +1280,8 @@ async def request_delete_promo_group(
     await callback.message.edit_text(
         confirm_text,
         reply_markup=get_confirmation_keyboard(
-            confirm_action=f'promo_group_delete_confirm_{group.id}',
-            cancel_action=f'promo_group_manage_{group.id}',
+            confirm_action=f'nz!_promo_group_delete_confirm_{group.id}',
+            cancel_action=f'nz!_promo_group_manage_{group.id}',
             language=db_user.language,
         ),
     )

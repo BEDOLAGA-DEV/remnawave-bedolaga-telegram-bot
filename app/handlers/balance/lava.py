@@ -42,7 +42,7 @@ def _check_topup_restriction(db_user: User, texts) -> InlineKeyboardMarkup | Non
     support_url = settings.get_support_contact_url()
     if support_url:
         keyboard.append([InlineKeyboardButton(text='\U0001f198 Обжаловать', url=support_url)])
-    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='nz!_menu_balance')])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -112,7 +112,7 @@ async def _create_lava_payment_and_respond(
             [
                 InlineKeyboardButton(
                     text=texts.t('BACK_BUTTON', '◀️ Назад'),
-                    callback_data='menu_balance',
+                    callback_data='nz!_menu_balance',
                 )
             ],
         ]
@@ -231,7 +231,7 @@ async def _start_lava_topup_impl(
             [
                 InlineKeyboardButton(
                     text=texts.t('BACK_BUTTON', '◀️ Назад'),
-                    callback_data='menu_balance',
+                    callback_data='nz!_menu_balance',
                 )
             ]
         ]

@@ -811,7 +811,7 @@ async def handle_switch_traffic(
 async def confirm_switch_traffic(
     callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
 ):
-    new_traffic_gb = int(callback.data.split('_')[2])
+    new_traffic_gb = int(callback.data.split('_')[3])
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
