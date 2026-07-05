@@ -1237,7 +1237,7 @@ async def show_promo_group_members(
             page,
             total_pages,
             f'promo_group_members_{group_id}',
-            f'promo_group_manage_{group_id}',
+            f'nz!_promo_group_manage_{group_id}',
             db_user.language,
         )
         keyboard.extend(pagination.inline_keyboard)
