@@ -206,3 +206,72 @@ def test_create_bot_registers_premium_emoji_middleware(monkeypatch):
         isinstance(m, PremiumEmojiRequestMiddleware)
         for m in bot.session.middleware
     )
+
+
+# --- VS16 (U+FE0F) normalization: bare/вариантные формы эмодзи ---
+
+VS16 = '️'
+STAR_BARE = '⭐'  # ⭐
+STAR_VS16 = STAR_BARE + VS16  # ⭐️
+CALENDAR_BARE = '\U0001f5d3'  # 🗓
+CALENDAR_VS16 = CALENDAR_BARE + VS16  # 🗓️
+BOLT_BARE = '⚡'  # ⚡
+BOLT_VS16 = BOLT_BARE + VS16  # ⚡️
+
+
+def _use_mapping(monkeypatch, tmp_path, mapping):
+    path = tmp_path / 'premium_emoji.json'
+    path.write_text(json.dumps({'emojis': mapping}, ensure_ascii=False), encoding='utf-8')
+    monkeypatch.setattr(premium_emoji, '_EMOJI_MAP_PATH', path)
+    premium_emoji.reload_premium_emoji()
+
+
+def test_vs16_text_matches_bare_mapping(monkeypatch, tmp_path):
+    _use_mapping(monkeypatch, tmp_path, {CALENDAR_BARE: '6000000000000000001'})
+    try:
+        markup = _kb(f'{CALENDAR_VS16} План')
+        result = apply_premium_emoji_to_markup(markup)
+        btn = result.inline_keyboard[0][0]
+        assert btn.text == 'План'  # без остаточного U+FE0F
+        assert btn.icon_custom_emoji_id == '6000000000000000001'
+    finally:
+        monkeypatch.undo()
+        premium_emoji.reload_premium_emoji()
+
+
+def test_bare_text_matches_vs16_mapping(monkeypatch, tmp_path):
+    _use_mapping(monkeypatch, tmp_path, {STAR_VS16: '6000000000000000002'})
+    try:
+        markup = _kb(f'{STAR_BARE} Звёзды')
+        result = apply_premium_emoji_to_markup(markup)
+        btn = result.inline_keyboard[0][0]
+        assert btn.text == 'Звёзды'
+        assert btn.icon_custom_emoji_id == '6000000000000000002'
+    finally:
+        monkeypatch.undo()
+        premium_emoji.reload_premium_emoji()
+
+
+def test_explicit_variant_ids_not_overwritten(monkeypatch, tmp_path):
+    _use_mapping(monkeypatch, tmp_path, {
+        BOLT_BARE: '6000000000000000003',
+        BOLT_VS16: '6000000000000000004',
+    })
+    try:
+        result = apply_premium_emoji_to_markup(_kb(f'{BOLT_BARE} A'))
+        assert result.inline_keyboard[0][0].icon_custom_emoji_id == '6000000000000000003'
+        result = apply_premium_emoji_to_markup(_kb(f'{BOLT_VS16} B'))
+        assert result.inline_keyboard[0][0].icon_custom_emoji_id == '6000000000000000004'
+    finally:
+        monkeypatch.undo()
+        premium_emoji.reload_premium_emoji()
+
+
+def test_text_replacement_vs16_normalized(monkeypatch, tmp_path):
+    _use_mapping(monkeypatch, tmp_path, {STAR_VS16: '6000000000000000005'})
+    try:
+        out = premium_emoji.apply_premium_emoji(f'баланс {STAR_BARE}')
+        assert '<tg-emoji emoji-id="6000000000000000005">' in out
+    finally:
+        monkeypatch.undo()
+        premium_emoji.reload_premium_emoji()
