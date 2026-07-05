@@ -817,7 +817,11 @@ async def handle_device_management(
     if subscription is None:
         return
 
-    if not subscription or subscription.is_trial:
+    # Bio-reward free subs are technically trials, but their owners must be
+    # able to kick a stale device (free-sub device_limit is usually 1).
+    # Buying extra devices (handle_change_devices) stays paid-only.
+    is_bio_free_sub = getattr(subscription, 'is_bio_reward', False) and subscription.is_trial
+    if not subscription or (subscription.is_trial and not is_bio_free_sub):
         await callback.answer(
             texts.t('PAID_FEATURE_ONLY', '⚠️ Эта функция доступна только для платных подписок'),
             show_alert=True,
