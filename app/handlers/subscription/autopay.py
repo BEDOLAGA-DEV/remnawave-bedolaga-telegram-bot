@@ -183,7 +183,9 @@ async def set_autopay_days(callback: types.CallbackQuery, db_user: User, db: Asy
     if subscription is None:
         return
     base_data = callback.data.split(':')[0]
-    days = int(base_data.split('_')[2])
+    # Кнопки шлют 'nz!_autopay_days_{N}' — берём последний сегмент, а не
+    # позиционный индекс (старый [2] ломался о префикс nz!_: int('days')).
+    days = int(base_data.split('_')[-1])
 
     await update_subscription_autopay(db, subscription, subscription.autopay_enabled, days)
 
