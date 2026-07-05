@@ -425,10 +425,23 @@ class BioRewardService:
             from app.services.subscription_service import SubscriptionService
 
             svc = SubscriptionService()
-            if user.remnawave_uuid:
-                await svc.update_remnawave_user(db, sub, reset_traffic=True, sync_squads=True)
+            # Multi-tariff: every subscription owns its panel user, and a
+            # fresh bio sub has no remnawave_uuid yet — update_remnawave_user
+            # refuses to guess (returns None) and the user is left without a
+            # subscription_url. Always provision via create there; in single
+            # mode reuse the shared panel account when it already exists.
+            if settings.is_multi_tariff_enabled() or not user.remnawave_uuid:
+                result = await svc.create_remnawave_user(db, sub, reset_traffic=True)
             else:
-                await svc.create_remnawave_user(db, sub, reset_traffic=True)
+                result = await svc.update_remnawave_user(
+                    db, sub, reset_traffic=True, sync_squads=True
+                )
+            if result is None:
+                logger.warning(
+                    'bio_reward.remnawave_provision_failed',
+                    user_id=user.id,
+                    err='panel call returned None',
+                )
         except Exception as exc:
             logger.warning('bio_reward.remnawave_provision_failed', user_id=user.id, err=str(exc))
 
@@ -483,11 +496,22 @@ class BioRewardService:
             from app.services.subscription_service import SubscriptionService
 
             user = participant.user
-            if user is not None and getattr(user, 'remnawave_uuid', None):
+            if user is not None:
                 svc = SubscriptionService()
-                result = await svc.update_remnawave_user(
-                    db, sub, reset_traffic=False, sync_squads=False
+                # Self-heal rows whose activation-time provisioning failed:
+                # update_remnawave_user can't target a panel user that was
+                # never created (multi-tariff: no sub.remnawave_uuid; any
+                # mode: no user.remnawave_uuid) — provision via create.
+                needs_provision = not getattr(user, 'remnawave_uuid', None) or (
+                    settings.is_multi_tariff_enabled()
+                    and not getattr(sub, 'remnawave_uuid', None)
                 )
+                if needs_provision:
+                    result = await svc.create_remnawave_user(db, sub, reset_traffic=False)
+                else:
+                    result = await svc.update_remnawave_user(
+                        db, sub, reset_traffic=False, sync_squads=False
+                    )
                 if result is not None:
                     logger.info(
                         'bio_reward.free_sub.remnawave_synced',

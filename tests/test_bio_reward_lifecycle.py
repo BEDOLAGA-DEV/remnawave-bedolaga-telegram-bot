@@ -154,6 +154,34 @@ def _patch_subscription_service(monkeypatch):
     return calls
 
 
+def _patch_subscription_service_split(monkeypatch):
+    """Recorder distinguishing create vs update panel calls."""
+    import app.services.subscription_service as ss_module
+
+    calls: dict = {'created': [], 'updated': []}
+
+    class FakeSvc:
+        async def create_remnawave_user(self, db, sub, *, reset_traffic=False, reset_reason=None):
+            calls['created'].append(sub)
+            return SimpleNamespace(uuid='created')
+
+        async def update_remnawave_user(
+            self, db, sub, *, reset_traffic=False, reset_reason=None, sync_squads=False
+        ):
+            calls['updated'].append(sub)
+            return SimpleNamespace(uuid='pushed')
+
+    monkeypatch.setattr(ss_module, 'SubscriptionService', FakeSvc)
+    return calls
+
+
+def _force_multi_tariff(monkeypatch, enabled: bool):
+    from app.config import settings
+
+    # pydantic v2 blocks instance-level method setattr — patch the class.
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: enabled)
+
+
 # ---------- Fix 1: _ensure_wl_user_synced bio guard ----------
 
 
@@ -329,6 +357,64 @@ async def test_extend_never_resurrects_disabled_bio_sub(monkeypatch):
     assert sub.status == SubscriptionStatus.DISABLED.value
     assert sub.end_date == old_end
     assert calls == []
+
+
+# ---------- Multi-tariff provisioning of the free sub ----------
+# In multi-tariff mode each subscription owns its panel user; a fresh bio
+# sub has no remnawave_uuid, so update_remnawave_user refuses (returns
+# None) and the user gets no subscription_url ("ссылка ещё генерируется").
+
+
+async def test_create_free_sub_provisions_via_create_in_multi_tariff(monkeypatch):
+    import app.services.bio_reward_service as bio_module
+    from app.services.bio_reward_service import BioRewardService
+
+    _force_multi_tariff(monkeypatch, True)
+    calls = _patch_subscription_service_split(monkeypatch)
+
+    async def fake_short_id(db):
+        return 'abc123'
+
+    monkeypatch.setattr(bio_module, 'generate_unique_short_id', fake_short_id)
+    svc = BioRewardService()
+    user = _user()  # у юзера ЕСТЬ user.remnawave_uuid — раньше это уводило в update
+    sub = await svc._create_free_sub(FakeDb(), user, _bio_cfg())
+    assert calls['updated'] == []
+    assert calls['created'] == [sub]
+
+
+async def test_create_free_sub_still_updates_in_single_mode(monkeypatch):
+    import app.services.bio_reward_service as bio_module
+    from app.services.bio_reward_service import BioRewardService
+
+    _force_multi_tariff(monkeypatch, False)
+    calls = _patch_subscription_service_split(monkeypatch)
+
+    async def fake_short_id(db):
+        return 'abc123'
+
+    monkeypatch.setattr(bio_module, 'generate_unique_short_id', fake_short_id)
+    svc = BioRewardService()
+    sub = await svc._create_free_sub(FakeDb(), _user(), _bio_cfg())
+    assert calls['created'] == []
+    assert calls['updated'] == [sub]
+
+
+async def test_extend_self_heals_unprovisioned_sub_in_multi_tariff(monkeypatch):
+    from app.services.bio_reward_service import BioRewardService
+
+    _force_multi_tariff(monkeypatch, True)
+    calls = _patch_subscription_service_split(monkeypatch)
+    svc = BioRewardService()
+    sub = _sub(
+        is_bio_reward=True,
+        remnawave_uuid=None,  # провижининг при активации не удался
+        end_date=datetime.now(UTC) + timedelta(days=1),
+    )
+    participant = _participant(free_subscription_id=101, user=_user())
+    await svc._extend_free_sub(FakeDb(get_map={101: sub}), participant, _bio_cfg())
+    assert calls['updated'] == []
+    assert calls['created'] == [sub]
 
 
 # ---------- Fix 4: _revoke ----------
