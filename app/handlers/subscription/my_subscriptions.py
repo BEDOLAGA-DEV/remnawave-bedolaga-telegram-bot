@@ -375,7 +375,9 @@ async def handle_subscription_devices(
         tariff_device_price = getattr(tariff, 'device_price_kopeks', None) if tariff else None
         can_buy_devices = bool(tariff_device_price and tariff_device_price > 0)
     else:
-        can_buy_devices = settings.is_devices_selection_enabled()
+        # Триалы/bio free subs не могут докупать устройства (handle_change_devices
+        # отвергнет как paid-only) — не показываем тупиковую кнопку.
+        can_buy_devices = settings.is_devices_selection_enabled() and not subscription.is_trial
 
     current_devices = subscription.device_limit or 0
     text = f'📱 <b>Устройства</b>\n\nТекущий лимит: {current_devices} устройств\n\nВыберите действие:'

@@ -536,3 +536,77 @@ async def test_activate_skips_free_sub_when_trial_active(monkeypatch):
     assert created == []
     assert participant.free_subscription_id is None
     assert participant.status == BioRewardStatus.ACTIVE.value
+
+
+# ---------- Device management access for bio free subs ----------
+# device_limit of the free sub is usually 1 — its owner must be able to
+# kick a stale device, even though the sub is technically a trial.
+
+
+class _FakeCallback:
+    def __init__(self):
+        self.alerts: list = []
+        self.edited: list = []
+        outer = self
+
+        class _Msg:
+            async def edit_text(self, text, **kwargs):
+                outer.edited.append(text)
+
+        self.message = _Msg()
+        self.data = 'nz!_device_management:101'
+
+    async def answer(self, text=None, show_alert=False):
+        self.alerts.append((text, show_alert))
+
+
+def _patch_device_management_deps(monkeypatch, sub):
+    import app.handlers.subscription.devices as devices_module
+    import app.services.remnawave_service as rw_module
+
+    async def fake_resolve(callback, db_user, db, state=None):
+        return sub, sub.id
+
+    monkeypatch.setattr(devices_module, '_resolve_subscription', fake_resolve)
+
+    class _FakeApiCtx:
+        async def __aenter__(self):
+            class _Api:
+                async def _make_request(self, method, path):
+                    return {'response': {'total': 0, 'devices': []}}
+
+            return _Api()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _FakeRwService:
+        def get_api_client(self):
+            return _FakeApiCtx()
+
+    monkeypatch.setattr(rw_module, 'RemnaWaveService', _FakeRwService)
+
+
+async def test_device_management_allowed_for_bio_free_sub(monkeypatch):
+    from app.handlers.subscription.devices import handle_device_management
+
+    sub = _sub(is_bio_reward=True, is_trial=True, remnawave_uuid='sub-uuid')
+    _patch_device_management_deps(monkeypatch, sub)
+    cb = _FakeCallback()
+    db_user = SimpleNamespace(language='ru', remnawave_uuid='user-uuid')
+    await handle_device_management(cb, db_user, FakeDb())
+    blocked = [a for a in cb.alerts if a[0] and 'платных подписок' in a[0]]
+    assert blocked == []
+    assert cb.edited  # показан список/пустое состояние устройств
+
+
+async def test_device_management_still_blocked_for_plain_trial(monkeypatch):
+    from app.handlers.subscription.devices import handle_device_management
+
+    sub = _sub(is_bio_reward=False, is_trial=True, remnawave_uuid='sub-uuid')
+    _patch_device_management_deps(monkeypatch, sub)
+    cb = _FakeCallback()
+    db_user = SimpleNamespace(language='ru', remnawave_uuid='user-uuid')
+    await handle_device_management(cb, db_user, FakeDb())
+    assert any(a[0] and 'платных подписок' in a[0] for a in cb.alerts)
+    assert cb.edited == []
