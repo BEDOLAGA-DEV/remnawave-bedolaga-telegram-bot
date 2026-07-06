@@ -84,7 +84,11 @@ class ReportingService:
             return
 
         self._task = asyncio.create_task(self._auto_daily_loop(send_time))
-        logger.info('📊 Сервис отчетов запущен: ежедневная отправка в по МСК', send_time=send_time.strftime('%H:%M'))
+        logger.info(
+            '📊 Сервис отчетов запущен: ежедневно в по МСК; еженедельно по понедельникам; '
+            'ежемесячно 1-го числа',
+            send_time=send_time.strftime('%H:%M'),
+        )
 
     async def stop(self) -> None:
         if self._task and not self._task.done():
@@ -132,6 +136,31 @@ class ReportingService:
                 except Exception as exc:
                     logger.error('Ошибка автоматической отправки отчета', exc=exc)
 
+                # Еженедельный (по понедельникам, за прошлую пн-вс) и ежемесячный
+                # (1-го числа, за прошлый календарный месяц) отчёты идут следом
+                # за ежедневным, в тот же чат/топик. Каждый — best-effort.
+                run_date = report_date + timedelta(days=1)  # день фактической отправки (МСК)
+                for extra_period, extra_date in self._extra_periods_for(run_date):
+                    try:
+                        await self.send_report(
+                            extra_period,
+                            report_date=extra_date,
+                            send_to_topic=True,
+                        )
+                        logger.info(
+                            '📊 Автоматический периодический отчет отправлен',
+                            period=extra_period.value,
+                            run_date=extra_date.strftime('%d.%m.%Y'),
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        logger.error(
+                            'Ошибка автоматической отправки периодического отчета',
+                            period=extra_period.value,
+                            exc=exc,
+                        )
+
                 next_run_utc, report_date = self._calculate_next_run(send_time)
 
         except asyncio.CancelledError:
@@ -152,6 +181,19 @@ class ReportingService:
 
         report_date = (candidate - timedelta(days=1)).date()
         return candidate.astimezone(UTC), report_date
+
+    def _extra_periods_for(self, run_date: date) -> list[tuple[ReportPeriod, date]]:
+        """Периодические отчёты, отправляемые в день run_date вместе с ежедневным.
+
+        Понедельник -> WEEKLY (период = прошлые пн-вс), 1-е число -> MONTHLY
+        (период = прошлый календарный месяц). Оба могут совпасть.
+        """
+        extra: list[tuple[ReportPeriod, date]] = []
+        if run_date.weekday() == 0:
+            extra.append((ReportPeriod.WEEKLY, run_date))
+        if run_date.day == 1:
+            extra.append((ReportPeriod.MONTHLY, run_date))
+        return extra
 
     async def _deliver_report(self, report_text: str) -> None:
         if not self.bot:
@@ -335,7 +377,13 @@ class ReportingService:
             end = datetime.combine(end_date, datetime_time.min, tzinfo=self._moscow_tz)
         elif period == ReportPeriod.MONTHLY:
             end_date = report_date or now_msk.date()
-            start_date = end_date - timedelta(days=30)
+            if end_date.day == 1:
+                # Автоотчёт 1-го числа: ровно прошлый календарный месяц
+                # (30-дневное окно промахивается на 31-дневных месяцах и феврале).
+                start_date = (end_date - timedelta(days=1)).replace(day=1)
+            else:
+                # Ручной запуск из админки: скользящие 30 дней, как раньше.
+                start_date = end_date - timedelta(days=30)
             start = datetime.combine(start_date, datetime_time.min, tzinfo=self._moscow_tz)
             end = datetime.combine(end_date, datetime_time.min, tzinfo=self._moscow_tz)
         else:  # pragma: no cover - defensive branch
