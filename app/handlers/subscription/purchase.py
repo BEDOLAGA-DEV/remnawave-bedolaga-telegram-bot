@@ -285,11 +285,16 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
         days_left = delta.days
         hours_left = delta.seconds // 3600
 
+        _hours_suffix = f' {hours_left} ч.' if hours_left > 0 else ''
         if days_left > 1:
-            time_left_text = texts.t('SUBSCRIPTION_TIME_LEFT_DAYS', '{days} дн.').format(days=days_left)
+            time_left_text = texts.t('SUBSCRIPTION_TIME_LEFT_DAYS', '{days} дн.{hours_suffix}').format(
+                days=days_left, hours_suffix=_hours_suffix
+            )
             warning_text = ''
         elif days_left == 1:
-            time_left_text = texts.t('SUBSCRIPTION_TIME_LEFT_DAYS', '{days} дн.').format(days=days_left)
+            time_left_text = texts.t('SUBSCRIPTION_TIME_LEFT_DAYS', '{days} дн.{hours_suffix}').format(
+                days=days_left, hours_suffix=_hours_suffix
+            )
             warning_text = texts.t('SUBSCRIPTION_WARNING_TOMORROW', '\n⚠️ истекает завтра!')
         elif hours_left > 0:
             time_left_text = texts.t('SUBSCRIPTION_TIME_LEFT_HOURS', '{hours} ч.').format(hours=hours_left)

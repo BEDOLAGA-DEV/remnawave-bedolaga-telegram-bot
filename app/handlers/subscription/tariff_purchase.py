@@ -805,9 +805,13 @@ async def select_tariff(
         _active = await get_active_subscriptions_by_user_id(db, db_user.id)
         _existing = next((s for s in _active if s.tariff_id == tariff_id and not s.is_trial), None)
         if _existing:
-            days_left = max(0, (_existing.end_date - datetime.now(UTC)).days) if _existing.end_date else 0
+            from app.utils.formatters import format_time_left_units
+
+            days_left, hours_suffix = (
+                format_time_left_units(_existing.end_date) if _existing.end_date else (0, '')
+            )
             await callback.answer(
-                f'Тариф «{tariff.name}» уже активен ({days_left} дн.). Продлите через "Мои подписки".',
+                f'Тариф «{tariff.name}» уже активен ({days_left} дн.{hours_suffix}). Продлите через "Мои подписки".',
                 show_alert=True,
             )
             return

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import Date, Integer, and_, func, select
+from sqlalchemy import Date, Integer, and_, func, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -338,11 +338,21 @@ async def _get_user_stat(db: AsyncSession, user: User, condition_type: str) -> i
     elif condition_type == 'first_paid_subscription':
         # 1 if user has any non-trial subscription, else 0. Triggered by first
         # paid purchase (single-tier badge / starter reward).
+        # Отозванная bio free sub тоже становится is_trial=False (revoke
+        # снимает флаг) — платежом не является. Бесплатные bio-строки
+        # опознаются по маркеру без тарифа; конвертированные в платные
+        # (bio-маркер + tariff_id) считаются — это реальная покупка.
         result = await db.execute(
             select(func.count(Subscription.id)).where(
                 and_(
                     Subscription.user_id == user.id,
                     Subscription.is_trial.is_(False),
+                    not_(
+                        and_(
+                            Subscription.is_bio_reward.is_(True),
+                            Subscription.tariff_id.is_(None),
+                        )
+                    ),
                 )
             )
         )

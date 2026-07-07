@@ -1166,14 +1166,35 @@ def _get_subscription_status(user: User, texts, is_daily_tariff: bool = False) -
 
     is_trial_like_status = actual_status == 'trial' or (is_trial_subscription and actual_status in {'active', 'trial'})
 
+    from app.utils.formatters import format_time_left_units
+
+    delta_days, hours_suffix = format_time_left_units(subscription.end_date, current_time)
+
     if is_trial_like_status:
+        # Живая bio free sub — отдельный лейбл, чтобы не путать с триалом.
+        if getattr(subscription, 'is_bio_reward', False):
+            if days_left > 1 and end_date_text:
+                return texts.t(
+                    'SUB_STATUS_BIO_ACTIVE',
+                    '🎁 Бесплатная подписка\n📅 до {end_date} ({days} дн.{hours_suffix})',
+                ).format(end_date=end_date_text, days=delta_days, hours_suffix=hours_suffix)
+            if days_left == 1:
+                return texts.t(
+                    'SUB_STATUS_BIO_TOMORROW',
+                    '🎁 Бесплатная подписка\n⚠️ истекает завтра!',
+                )
+            return texts.t(
+                'SUB_STATUS_BIO_TODAY',
+                '🎁 Бесплатная подписка\n⚠️ истекает сегодня!',
+            )
         if days_left > 1 and end_date_text:
             return texts.t(
                 'SUB_STATUS_TRIAL_ACTIVE',
-                '🎁 Тестовая подписка\n📅 до {end_date} ({days} дн.)',
+                '🎁 Тестовая подписка\n📅 до {end_date} ({days} дн.{hours_suffix})',
             ).format(
                 end_date=end_date_text,
-                days=days_left,
+                days=delta_days,
+                hours_suffix=hours_suffix,
             )
         if days_left == 1:
             return texts.t(
@@ -1193,16 +1214,17 @@ def _get_subscription_status(user: User, texts, is_daily_tariff: bool = False) -
         if days_left > 7 and end_date_text:
             return texts.t(
                 'SUB_STATUS_ACTIVE_LONG',
-                '💎 Активна\n📅 до {end_date} ({days} дн.)',
+                '💎 Активна\n📅 до {end_date} ({days} дн.{hours_suffix})',
             ).format(
                 end_date=end_date_text,
-                days=days_left,
+                days=delta_days,
+                hours_suffix=hours_suffix,
             )
         if days_left > 1:
             return texts.t(
                 'SUB_STATUS_ACTIVE_FEW_DAYS',
-                '💎 Активна\n⚠️ истекает через {days} дн.',
-            ).format(days=days_left)
+                '💎 Активна\n⚠️ истекает через {days} дн.{hours_suffix}',
+            ).format(days=delta_days, hours_suffix=hours_suffix)
         if days_left == 1:
             return texts.t(
                 'SUB_STATUS_ACTIVE_TOMORROW',
@@ -1262,9 +1284,11 @@ async def _get_multi_tariff_status(user, texts, db: AsyncSession) -> tuple[str, 
         elif actual == 'limited':
             status_suffix = ' — лимит трафика'
         elif sub.end_date and sub.end_date > current_time:
-            days_left = (sub.end_date - current_time).days
+            from app.utils.formatters import format_time_left_units
+
+            days_left, hours_suffix = format_time_left_units(sub.end_date, current_time)
             end_str = format_local_datetime(sub.end_date, '%d.%m.%Y')
-            status_suffix = f' — до {end_str} ({days_left} дн.)'
+            status_suffix = f' — до {end_str} ({days_left} дн.{hours_suffix})'
         else:
             status_suffix = ''
 

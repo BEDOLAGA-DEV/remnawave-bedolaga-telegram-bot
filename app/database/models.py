@@ -2423,6 +2423,8 @@ class Subscription(Base):
         minutes = (delta.seconds % 3600) // 60
 
         if days > 0:
+            if hours > 0:
+                return f'{days} дн. {hours} ч.'
             return f'{days} дн.'
         if hours > 0:
             return f'{hours} ч.'
