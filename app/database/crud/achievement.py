@@ -336,23 +336,20 @@ async def _get_user_stat(db: AsyncSession, user: User, condition_type: str) -> i
         return int(result.scalar() or 0)
 
     elif condition_type == 'first_paid_subscription':
-        # 1 if user has any non-trial subscription, else 0. Triggered by first
-        # paid purchase (single-tier badge / starter reward).
-        # Отозванная bio free sub тоже становится is_trial=False (revoke
-        # снимает флаг) — платежом не является. Бесплатные bio-строки
-        # опознаются по маркеру без тарифа; конвертированные в платные
-        # (bio-маркер + tariff_id) считаются — это реальная покупка.
+        # «Первый платёж» считается по завершённой оплате подписки, а не по
+        # существованию non-trial строки: панельный синк импортирует платные
+        # строки без единой транзакции, а revoke bio-подписки снимает
+        # is_trial — оба случая ложно выдавали ачивку. Списание при отзыве
+        # bio-акции тоже пишется типом SUBSCRIPTION_PAYMENT — исключаем его
+        # по описанию (см. BioRewardService._revoke).
         result = await db.execute(
-            select(func.count(Subscription.id)).where(
+            select(func.count(Transaction.id)).where(
                 and_(
-                    Subscription.user_id == user.id,
-                    Subscription.is_trial.is_(False),
-                    not_(
-                        and_(
-                            Subscription.is_bio_reward.is_(True),
-                            Subscription.tariff_id.is_(None),
-                        )
-                    ),
+                    Transaction.user_id == user.id,
+                    Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                    Transaction.is_completed.is_(True),
+                    Transaction.amount_kopeks > 0,
+                    not_(Transaction.description.ilike('bio-reward revoke%')),
                 )
             )
         )
