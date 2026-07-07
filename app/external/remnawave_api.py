@@ -896,8 +896,12 @@ class RemnaWaveAPI:
         response = await self._make_request('POST', f'/api/nodes/{uuid}/actions/disable')
         return self._parse_node(response['response'])
 
-    async def restart_node(self, uuid: str) -> bool:
-        response = await self._make_request('POST', f'/api/nodes/{uuid}/actions/restart')
+    async def restart_node(self, uuid: str, force_restart: bool = False) -> bool:
+        # RemnaWave >=2.8: forceRestart обязателен в body (для старых панелей
+        # лишнее поле безвредно).
+        response = await self._make_request(
+            'POST', f'/api/nodes/{uuid}/actions/restart', {'forceRestart': force_restart}
+        )
         return response['response']['eventSent']
 
     async def restart_all_nodes(self, force_restart: bool = False) -> bool:
@@ -1201,6 +1205,23 @@ class RemnaWaveAPI:
 
         return {'devices': all_devices, 'total': len(all_devices)}
 
+    @staticmethod
+    def _hwid_delete_payload(user_uuid: str, device_hwid: str, records: list[dict] | None) -> dict:
+        """Body для POST /api/hwid/devices/delete.
+
+        RemnaWave >=2.8 переименовал userUuid -> userId (число) и в записях
+        устройств, и в теле delete. Берём userId из записей, если панель его
+        отдаёт; иначе остаёмся на userUuid (панели <2.8).
+        """
+        user_id = None
+        for record in records or []:
+            if isinstance(record, dict) and record.get('userId') is not None:
+                user_id = record['userId']
+                break
+        if user_id is not None:
+            return {'userId': user_id, 'hwid': device_hwid}
+        return {'userUuid': user_uuid, 'hwid': device_hwid}
+
     async def reset_user_devices(self, user_uuid: str) -> bool:
         try:
             devices_info = await self.get_user_devices_all(user_uuid)
@@ -1214,7 +1235,7 @@ class RemnaWaveAPI:
                 device_hwid = device.get('hwid')
                 if device_hwid:
                     try:
-                        delete_data = {'userUuid': user_uuid, 'hwid': device_hwid}
+                        delete_data = self._hwid_delete_payload(user_uuid, device_hwid, devices)
                         await self._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
                     except Exception as device_error:
                         logger.error('Ошибка удаления устройства', device_hwid=device_hwid, device_error=device_error)
@@ -1228,7 +1249,12 @@ class RemnaWaveAPI:
 
     async def remove_device(self, user_uuid: str, device_hwid: str) -> bool:
         try:
-            delete_data = {'userUuid': user_uuid, 'hwid': device_hwid}
+            # Записи нужны, чтобы узнать userId для панелей >=2.8 (см. helper).
+            try:
+                records = (await self.get_user_devices(user_uuid)).get('devices') or []
+            except Exception:
+                records = []
+            delete_data = self._hwid_delete_payload(user_uuid, device_hwid, records)
             await self._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
             return True
         except Exception as e:
@@ -1267,7 +1293,15 @@ class RemnaWaveAPI:
             
             logger.info('v5 не сработал, пробуем через RemnaWave API')
             data = {'linkToEncrypt': link_to_encrypt}
-            response = await self._make_request('POST', '/api/system/tools/happ/encrypt', data)
+            try:
+                response = await self._make_request('POST', '/api/system/tools/happ/encrypt', data)
+            except RemnaWaveAPIError as api_error:
+                if api_error.status_code == 404:
+                    # RemnaWave >=2.8 удалил /api/system/tools/happ/encrypt —
+                    # fallback недоступен, остаёмся без crypto-ссылки.
+                    logger.info('Панельный happ/encrypt удалён (RemnaWave >=2.8), fallback пропущен')
+                    return None
+                raise
             encrypted = response.get('response', {}).get('encryptedLink')
             
             if encrypted:

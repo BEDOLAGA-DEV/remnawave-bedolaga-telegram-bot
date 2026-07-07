@@ -197,10 +197,15 @@ class RemnaWaveWebhookService:
             'user.deleted': self._handle_user_deleted,
             'user.revoked': self._handle_user_revoked,
             'user.created': self._handle_user_created,
+            # RemnaWave <2.8: четыре отдельных события (оставлены для старых панелей)
             'user.expires_in_72_hours': self._handle_expires_in_72h,
             'user.expires_in_48_hours': self._handle_expires_in_48h,
             'user.expires_in_24_hours': self._handle_expires_in_24h,
             'user.expired_24_hours_ago': self._handle_expired_24h_ago,
+            # RemnaWave >=2.8: единое событие с meta.expiration (часы, ±).
+            # На панели должно быть включено: EXPIRATION_NOTIFICATIONS_ENABLED=true
+            # и EXPIRATION_NOTIFICATIONS=[-72,-48,-24,24] (по умолчанию выключено).
+            'user.expiration': self._handle_user_expiration,
             'user.first_connected': self._handle_first_connected,
             'user.bandwidth_usage_threshold_reached': self._handle_bandwidth_threshold,
             'user.not_connected': self._handle_user_not_connected,
@@ -1535,6 +1540,32 @@ class RemnaWaveWebhookService:
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
     ) -> None:
         logger.info('Webhook: user created externally in panel (uuid=)', user_id=user.id, data=data.get('uuid'))
+
+    async def _handle_user_expiration(
+        self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
+    ) -> None:
+        """RemnaWave >=2.8: user.expiration с meta.expiration (часы, знак = до/после).
+
+        Раскладываем по существующим бакетам уведомлений: <=-72 → 72ч,
+        (-72;-48] → 48ч, (-48;0) → 24ч, >0 → «истекла N часов назад».
+        Панель шлёт только значения из своего EXPIRATION_NOTIFICATIONS.
+        """
+        meta = data.get('_meta') or {}
+        try:
+            hours = int(meta.get('expiration'))
+        except (TypeError, ValueError):
+            logger.warning(
+                'Webhook user.expiration: некорректный meta.expiration', user_id=user.id, meta=meta
+            )
+            return
+        if hours <= -72:
+            await self._handle_expires_in_72h(db, user, subscription, data)
+        elif hours <= -48:
+            await self._handle_expires_in_48h(db, user, subscription, data)
+        elif hours < 0:
+            await self._handle_expires_in_24h(db, user, subscription, data)
+        else:
+            await self._handle_expired_24h_ago(db, user, subscription, data)
 
     async def _handle_expires_in_72h(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
