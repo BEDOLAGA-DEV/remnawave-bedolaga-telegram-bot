@@ -1,6 +1,20 @@
 from datetime import UTC, datetime
 
 
+def format_time_left_units(end_date: datetime, now: datetime | None = None) -> tuple[int, str]:
+    """(целые дни, суффикс часов) до end_date для строк '({days} дн.{hours_suffix})'.
+
+    Суффикс — ' N ч.' при ненулевом остатке часов, иначе ''. Дни считаются от
+    точной дельты (не календарных дат), чтобы '2 дн. 23 ч.' не расходились.
+    """
+    now = now or datetime.now(UTC)
+    delta = end_date - now
+    if delta.total_seconds() <= 0:
+        return 0, ''
+    hours = delta.seconds // 3600
+    return delta.days, f' {hours} ч.' if hours > 0 else ''
+
+
 def format_datetime(dt: datetime | str, format_str: str = '%d.%m.%Y %H:%M') -> str:
     if isinstance(dt, str):
         if dt == 'now' or dt == '':
