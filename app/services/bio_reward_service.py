@@ -570,10 +570,6 @@ class BioRewardService:
             if sub is not None and sub.status != SubscriptionStatus.DISABLED.value:
                 sub.status = SubscriptionStatus.DISABLED.value
                 sub.end_date = now
-                # Drop the "live bio free sub" invariant flag: a revoked row
-                # must never pass the is_bio_reward AND is_trial guards again
-                # (e.g. via a retry-queue push deleting a paid _wl later).
-                sub.is_trial = False
                 await db.commit()
                 # Push to Remnawave: without this the user keeps VPN access
                 # until the stale panel expire_at, and the bidirectional
@@ -600,6 +596,15 @@ class BioRewardService:
                         subscription_id=sub.id,
                         err=str(exc),
                     )
+                # Drop the "live bio free sub" invariant flag ONLY AFTER the
+                # panel push above: that push runs _ensure_wl_user_synced,
+                # whose bio-guard (is_bio_reward AND is_trial) must still see
+                # a live bio sub to skip/delete the _wl mirror — clearing the
+                # flag first made this very push CREATE a _wl account for the
+                # revoked free sub. After the push the cleared flag keeps any
+                # future retry-queue push from resurrecting the row's _wl.
+                sub.is_trial = False
+                await db.commit()
             # Whether disabled just now, already disabled, or converted-to-paid:
             # the participant no longer owns a live free sub. Clear the link so
             # nothing can extend/resurrect this row later; a fresh free sub is

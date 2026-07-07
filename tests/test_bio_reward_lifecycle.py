@@ -612,6 +612,33 @@ async def test_device_management_still_blocked_for_plain_trial(monkeypatch):
     assert cb.edited == []
 
 
+async def test_revoke_pushes_while_still_flagged_live(monkeypatch):
+    """Push внутри revoke должен идти ДО снятия is_trial: _ensure_wl_user_synced
+    пропускает/удаляет _wl только для живой bio-подписки (is_bio_reward AND
+    is_trial). Снятый до push флаг заставлял этот же push СОЗДАТЬ _wl."""
+    import app.services.subscription_service as ss_module
+
+    from app.services.bio_reward_service import BioRewardService
+
+    _patch_no_active_paid(monkeypatch)
+    snapshots: list[tuple[bool, bool]] = []
+
+    class FakeSvc:
+        async def update_remnawave_user(
+            self, db, sub, *, reset_traffic=False, reset_reason=None, sync_squads=False
+        ):
+            snapshots.append((sub.is_bio_reward, sub.is_trial))
+            return SimpleNamespace(uuid='pushed')
+
+    monkeypatch.setattr(ss_module, 'SubscriptionService', FakeSvc)
+    svc = BioRewardService()
+    sub = _sub(is_bio_reward=True, is_trial=True, status='active')
+    participant = _participant(free_subscription_id=101)
+    await svc._revoke(FakeDb(get_map={101: sub}), participant, _user(), _bio_cfg())
+    assert snapshots == [(True, True)]  # в момент push guard ещё активен
+    assert sub.is_trial is False  # но после revoke флаг снят
+
+
 # ---------- WL display: NULL = отключено, не дефолт ----------
 
 
