@@ -610,3 +610,39 @@ async def test_device_management_still_blocked_for_plain_trial(monkeypatch):
     await handle_device_management(cb, db_user, FakeDb())
     assert any(a[0] and 'платных подписок' in a[0] for a in cb.alerts)
     assert cb.edited == []
+
+
+# ---------- WL display: NULL = отключено, не дефолт ----------
+
+
+def _swl_buttons(markup) -> list[str]:
+    return [
+        b.callback_data
+        for row in markup.inline_keyboard
+        for b in row
+        if b.callback_data and b.callback_data.startswith('nz!_swl:')
+    ]
+
+
+async def test_sub_card_hides_wl_button_when_wl_disabled(monkeypatch):
+    from app.config import settings
+    from app.handlers.subscription.my_subscriptions import (
+        _build_subscription_detail_keyboard,
+    )
+
+    monkeypatch.setattr(type(settings), 'WL_TRAFFIC_TOPUP_ENABLED', True, raising=False)
+    sub = _sub(is_bio_reward=True, is_trial=True, wl_traffic_limit_gb=None, actual_status='active')
+    markup = _build_subscription_detail_keyboard(101, sub=sub)
+    assert _swl_buttons(markup) == []
+
+
+async def test_sub_card_keeps_wl_button_for_wl_sub(monkeypatch):
+    from app.config import settings
+    from app.handlers.subscription.my_subscriptions import (
+        _build_subscription_detail_keyboard,
+    )
+
+    monkeypatch.setattr(type(settings), 'WL_TRAFFIC_TOPUP_ENABLED', True, raising=False)
+    sub = _sub(is_bio_reward=False, is_trial=False, wl_traffic_limit_gb=5, actual_status='active')
+    markup = _build_subscription_detail_keyboard(101, sub=sub)
+    assert _swl_buttons(markup) == ['nz!_swl:101']

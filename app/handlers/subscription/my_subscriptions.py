@@ -128,7 +128,9 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
 
     if not is_inactive:
         buttons.append([types.InlineKeyboardButton(text='📊 Трафик', callback_data=f'nz!_st:{sub_id}')])
-        if settings.WL_TRAFFIC_TOPUP_ENABLED:
+        # NULL wl_traffic_limit_gb = WL отключён для подписки (bio free sub,
+        # тариф без БС) — кнопка была бы тупиковой.
+        if settings.WL_TRAFFIC_TOPUP_ENABLED and (sub is None or sub.wl_traffic_limit_gb is not None):
             buttons.append([types.InlineKeyboardButton(text='🌍 БС-Трафик', callback_data=f'nz!_swl:{sub_id}')])
         buttons.append([types.InlineKeyboardButton(text='📱 Устройства', callback_data=f'nz!_sd:{sub_id}')])
         if settings.is_protocols_enabled():
