@@ -320,9 +320,11 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             '{used} / {limit} ГБ',
         ).format(used=used_traffic, limit=subscription.traffic_limit_gb)
 
-    if settings.WL_TRAFFIC_TOPUP_ENABLED:
+    # NULL wl_traffic_limit_gb = WL отключён (bio free sub, тариф без БС):
+    # строку не показываем вместо подстановки дефолтных ГБ, которых нет.
+    if settings.WL_TRAFFIC_TOPUP_ENABLED and subscription.wl_traffic_limit_gb is not None:
         wl_used_traffic = f'{subscription.wl_traffic_used_gb:.1f}'
-        wl_limit = subscription.wl_traffic_limit_gb if subscription.wl_traffic_limit_gb is not None else settings.WL_DEFAULT_TRAFFIC_LIMIT_GB
+        wl_limit = subscription.wl_traffic_limit_gb
         if wl_limit == 0:
             wl_traffic_str = texts.t(
                 'SUBSCRIPTION_WL_TRAFFIC_UNLIMITED',
