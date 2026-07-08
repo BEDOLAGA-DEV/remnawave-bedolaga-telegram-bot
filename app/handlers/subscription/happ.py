@@ -133,18 +133,20 @@ async def handle_happ_link_broken_crypt4(callback: types.CallbackQuery, db_user:
         )
         return
 
-    # Call RemnaWave API to get crypt4 encrypted link
-    crypt4_link = None
-    try:
-        from app.services.remnawave_service import RemnaWaveService
+    # Зашифрованная happ-ссылка: сперва сохранённая при синке, иначе общий
+    # шифратор клиента (crypto.happ.su v5 с fallback'ами). Прямой вызов
+    # панельного /api/system/tools/happ/encrypt убран — endpoint удалён в
+    # RemnaWave >=2.8 и давал ложное «сервис перенаправления не настроен».
+    crypt4_link = getattr(subscription, 'subscription_crypto_link', None)
+    if not crypt4_link:
+        try:
+            from app.services.remnawave_service import RemnaWaveService
 
-        service = RemnaWaveService()
-        async with service.get_api_client() as api:
-            data = {'linkToEncrypt': subscription_url}
-            response = await api._make_request('POST', '/api/system/tools/happ/encrypt', data)
-            crypt4_link = response.get('response', {}).get('encryptedLink')
-    except Exception as e:
-        logger.warning('Failed to get crypt4 link from API', error=str(e))
+            service = RemnaWaveService()
+            async with service.get_api_client() as api:
+                crypt4_link = await api.encrypt_happ_crypto_link(subscription_url)
+        except Exception as e:
+            logger.warning('Failed to get happ crypto link', error=str(e))
 
     if not crypt4_link:
         await callback.answer(
