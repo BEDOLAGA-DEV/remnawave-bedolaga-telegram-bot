@@ -230,6 +230,11 @@ class RemnaWaveAPIError(Exception):
 
 
 class RemnaWaveAPI:
+    # RemnaWave >=2.8 удалил /api/system/tools/happ/encrypt. Class-level,
+    # т.к. клиент создаётся заново на каждый get_api_client() — после
+    # первого 404 больше не ходим в удалённый endpoint до рестарта бота.
+    _happ_encrypt_endpoint_gone: bool = False
+
     def __init__(
         self,
         base_url: str,
@@ -400,11 +405,13 @@ class RemnaWaveAPI:
                         )
                         # 404 on lookup endpoints is expected (caller handles as None).
                         # Avoid spamming error log + Telegram error notifications for the
-                        # lookup-then-create flow used by WL user sync.
+                        # lookup-then-create flow used by WL user sync. happ/encrypt
+                        # удалён в RemnaWave >=2.8 — его 404 тоже ожидаемый.
                         is_lookup_404 = response.status == 404 and (
                             '/by-username/' in endpoint
                             or '/by-email/' in endpoint
                             or '/by-telegram-id/' in endpoint
+                            or endpoint == '/api/system/tools/happ/encrypt'
                         )
                         log = (
                             logger.warning
@@ -1291,6 +1298,11 @@ class RemnaWaveAPI:
             if v5:
                 return v5
             
+            if RemnaWaveAPI._happ_encrypt_endpoint_gone:
+                # RemnaWave >=2.8 удалил панельный happ/encrypt — после первого
+                # 404 больше не дёргаем его на каждый fallback.
+                return None
+
             logger.info('v5 не сработал, пробуем через RemnaWave API')
             data = {'linkToEncrypt': link_to_encrypt}
             try:
@@ -1299,7 +1311,8 @@ class RemnaWaveAPI:
                 if api_error.status_code == 404:
                     # RemnaWave >=2.8 удалил /api/system/tools/happ/encrypt —
                     # fallback недоступен, остаёмся без crypto-ссылки.
-                    logger.info('Панельный happ/encrypt удалён (RemnaWave >=2.8), fallback пропущен')
+                    RemnaWaveAPI._happ_encrypt_endpoint_gone = True
+                    logger.info('Панельный happ/encrypt удалён (RemnaWave >=2.8), fallback отключён')
                     return None
                 raise
             encrypted = response.get('response', {}).get('encryptedLink')
