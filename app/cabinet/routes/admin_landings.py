@@ -24,7 +24,7 @@ from app.database.crud.landing import (
     update_landing,
     update_landing_order,
 )
-from app.database.models import GuestPurchase, GuestPurchaseStatus, LandingPage, Tariff, User, SavedPaymentMethod, AntilopayRecurrent, Transaction
+from app.database.models import GuestPurchase, GuestPurchaseStatus, LandingPage, Tariff, User, SavedPaymentMethod, AntilopayRecurrent, Transaction, TransactionType
 
 from ..dependencies import get_cabinet_db, require_permission
 from .branding import ALLOWED_BG_TYPES, _validate_settings
@@ -932,9 +932,25 @@ async def get_landing_stats(
     row = summary_result.one()
     total_created: int = row.total_created
     total_successful: int = row.total_successful
-    total_revenue_kopeks: int = row.total_revenue_kopeks
+    initial_revenue_kopeks: int = row.total_revenue_kopeks
     total_gifts: int = row.total_gifts
     total_gifts_claimed: int = row.total_gifts_claimed
+
+    # -- Calculate total renewals revenue --
+    renewals_revenue_query = (
+        select(func.coalesce(func.sum(Transaction.amount_kopeks), 0))
+        .join(GuestPurchase, GuestPurchase.user_id == Transaction.user_id)
+        .where(
+            GuestPurchase.landing_id == landing_id,
+            is_successful,
+            Transaction.is_completed == True,
+            Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'")
+        )
+    )
+    total_renewals_revenue = (await db.execute(renewals_revenue_query)).scalar() or 0
+    total_revenue_kopeks = initial_revenue_kopeks + total_renewals_revenue
+
     total_regular = total_successful - total_gifts
     avg_purchase_kopeks = total_revenue_kopeks // total_successful if total_successful > 0 else 0
     conversion_rate = round(total_successful / total_created * 100, 1) if total_created > 0 else 0.0
@@ -1041,20 +1057,21 @@ async def get_landing_stats(
         select(
             day_tx_utc.label('day'),
             func.count(Transaction.id).label('count'),
+            func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('revenue_kopeks'),
         )
         .join(GuestPurchase, GuestPurchase.user_id == Transaction.user_id)
         .where(
             GuestPurchase.landing_id == landing_id,
             GuestPurchase.status.in_(_SUCCESSFUL_STATUSES),
             Transaction.is_completed == True,
-            Transaction.type.in_(['deposit', 'subscription_payment']),
+            Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
             Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'"),
             Transaction.created_at >= cutoff,
         )
         .group_by(day_tx_utc)
         .order_by(day_tx_utc)
     )
-    renewals_daily_rows = {str(r.day): r.count for r in renewals_daily_result.all()}
+    renewals_daily_rows = {str(r.day): r for r in renewals_daily_result.all()}
 
     # Fill missing days with zeros
     today = now.date()
@@ -1063,7 +1080,9 @@ async def get_landing_stats(
         day = today - timedelta(days=i)
         day_str = day.isoformat()
         day_created = created_rows.get(day_str, 0)
-        day_renewals = renewals_daily_rows.get(day_str, 0)
+        r_renewal = renewals_daily_rows.get(day_str)
+        day_renewals = r_renewal.count if r_renewal else 0
+        day_renewal_revenue = r_renewal.revenue_kopeks if r_renewal else 0
         if day_str in daily_rows:
             r = daily_rows[day_str]
             daily_stats.append(
@@ -1071,7 +1090,7 @@ async def get_landing_stats(
                     date=day_str,
                     created=day_created,
                     purchases=r.purchases,
-                    revenue_kopeks=r.revenue_kopeks,
+                    revenue_kopeks=r.revenue_kopeks + day_renewal_revenue,
                     gifts=r.gifts,
                     trials=r.trials,
                     regular=r.regular,
@@ -1084,7 +1103,7 @@ async def get_landing_stats(
                     date=day_str,
                     created=day_created,
                     purchases=0,
-                    revenue_kopeks=0,
+                    revenue_kopeks=day_renewal_revenue,
                     gifts=0,
                     trials=0,
                     regular=0,
@@ -1092,7 +1111,24 @@ async def get_landing_stats(
                 )
             )
 
-    # -- Tariff breakdown --
+    # -- Tariff breakdown (including renewals) --
+    renewals_tariff_result = await db.execute(
+        select(
+            GuestPurchase.tariff_id,
+            func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('revenue_kopeks'),
+        )
+        .join(Transaction, Transaction.user_id == GuestPurchase.user_id)
+        .where(
+            GuestPurchase.landing_id == landing_id,
+            is_successful,
+            Transaction.is_completed == True,
+            Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'")
+        )
+        .group_by(GuestPurchase.tariff_id)
+    )
+    renewals_tariff_dict = {r.tariff_id: r.revenue_kopeks for r in renewals_tariff_result.all()}
+
     tariff_result = await db.execute(
         select(
             GuestPurchase.tariff_id,
@@ -1106,17 +1142,17 @@ async def get_landing_stats(
             is_successful,
         )
         .group_by(GuestPurchase.tariff_id, Tariff.name)
-        .order_by(func.coalesce(func.sum(GuestPurchase.amount_kopeks), 0).desc())
     )
     tariff_stats = [
         LandingTariffStat(
             tariff_id=r.tariff_id,
             tariff_name=r.tariff_name,
             purchases=r.purchases,
-            revenue_kopeks=r.revenue_kopeks,
+            revenue_kopeks=r.revenue_kopeks + renewals_tariff_dict.get(r.tariff_id, 0),
         )
         for r in tariff_result.all()
     ]
+    tariff_stats.sort(key=lambda x: x.revenue_kopeks, reverse=True)
 
     # -- Payment method breakdown (successful purchases) --
     pm_result = await db.execute(
@@ -1164,7 +1200,7 @@ async def get_landing_stats(
             GuestPurchase.landing_id == landing_id,
             is_successful,
             Transaction.is_completed == True,
-            Transaction.type.in_(['deposit', 'subscription_payment']),
+            Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
             Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'")
         )
     )
