@@ -940,7 +940,7 @@ async def get_landing_stats(
     # Use EXISTS subquery to avoid fan-out when user has multiple GuestPurchases on same landing
     _gp_alias_rev = GuestPurchase.__table__.alias('gp_rev')
     renewals_revenue_query = (
-        select(func.coalesce(func.sum(Transaction.amount_kopeks), 0))
+        select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0))
         .where(
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
@@ -1067,7 +1067,7 @@ async def get_landing_stats(
         select(
             day_tx_utc.label('day'),
             func.count(Transaction.id.distinct()).label('count'),
-            func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('revenue_kopeks'),
+            func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('revenue_kopeks'),
         )
         .where(
             Transaction.is_completed == True,
@@ -1128,20 +1128,30 @@ async def get_landing_stats(
             )
 
     # -- Tariff breakdown (including renewals) --
+    # Use EXISTS to avoid fan-out; ABS() to protect against refund transactions
+    _gp_alias_tariff = GuestPurchase.__table__.alias('gp_tariff')
     renewals_tariff_result = await db.execute(
         select(
-            GuestPurchase.tariff_id,
-            func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('revenue_kopeks'),
+            _gp_alias_tariff.c.tariff_id,
+            func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('revenue_kopeks'),
         )
-        .join(Transaction, Transaction.user_id == GuestPurchase.user_id)
+        .select_from(Transaction)
         .where(
-            GuestPurchase.landing_id == landing_id,
-            is_successful,
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'")
+            select(func.count())
+            .select_from(_gp_alias_tariff)
+            .where(
+                _gp_alias_tariff.c.user_id == Transaction.user_id,
+                _gp_alias_tariff.c.landing_id == landing_id,
+                _gp_alias_tariff.c.status.in_(_SUCCESSFUL_STATUSES),
+                Transaction.created_at > func.coalesce(_gp_alias_tariff.c.delivered_at, _gp_alias_tariff.c.paid_at) + text("INTERVAL '23 hours'"),
+            )
+            .correlate(Transaction.__table__)
+            .scalar_subquery() > 0,
         )
-        .group_by(GuestPurchase.tariff_id)
+        .join(_gp_alias_tariff, _gp_alias_tariff.c.user_id == Transaction.user_id)
+        .group_by(_gp_alias_tariff.c.tariff_id)
     )
     renewals_tariff_dict = {r.tariff_id: r.revenue_kopeks for r in renewals_tariff_result.all()}
 
