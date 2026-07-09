@@ -937,15 +937,23 @@ async def get_landing_stats(
     total_gifts_claimed: int = row.total_gifts_claimed
 
     # -- Calculate total renewals revenue --
+    # Use EXISTS subquery to avoid fan-out when user has multiple GuestPurchases on same landing
+    _gp_alias_rev = GuestPurchase.__table__.alias('gp_rev')
     renewals_revenue_query = (
         select(func.coalesce(func.sum(Transaction.amount_kopeks), 0))
-        .join(GuestPurchase, GuestPurchase.user_id == Transaction.user_id)
         .where(
-            GuestPurchase.landing_id == landing_id,
-            is_successful,
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'")
+            select(func.count())
+            .select_from(_gp_alias_rev)
+            .where(
+                _gp_alias_rev.c.user_id == Transaction.user_id,
+                _gp_alias_rev.c.landing_id == landing_id,
+                _gp_alias_rev.c.status.in_(_SUCCESSFUL_STATUSES),
+                Transaction.created_at > func.coalesce(_gp_alias_rev.c.delivered_at, _gp_alias_rev.c.paid_at) + text("INTERVAL '23 hours'"),
+            )
+            .correlate(Transaction.__table__)
+            .scalar_subquery() > 0,
         )
     )
     total_renewals_revenue = (await db.execute(renewals_revenue_query)).scalar() or 0
@@ -1052,21 +1060,29 @@ async def get_landing_stats(
     created_rows = {str(r.day): r.created for r in created_result.all()}
 
     # Renewals per day (based on Transaction.created_at)
+    # Use EXISTS to avoid fan-out when user has multiple GuestPurchases on the same landing
+    _gp_alias_daily = GuestPurchase.__table__.alias('gp_daily')
     day_tx_utc = func.date(func.timezone('UTC', Transaction.created_at))
     renewals_daily_result = await db.execute(
         select(
             day_tx_utc.label('day'),
-            func.count(Transaction.id).label('count'),
+            func.count(Transaction.id.distinct()).label('count'),
             func.coalesce(func.sum(Transaction.amount_kopeks), 0).label('revenue_kopeks'),
         )
-        .join(GuestPurchase, GuestPurchase.user_id == Transaction.user_id)
         .where(
-            GuestPurchase.landing_id == landing_id,
-            GuestPurchase.status.in_(_SUCCESSFUL_STATUSES),
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'"),
             Transaction.created_at >= cutoff,
+            select(func.count())
+            .select_from(_gp_alias_daily)
+            .where(
+                _gp_alias_daily.c.user_id == Transaction.user_id,
+                _gp_alias_daily.c.landing_id == landing_id,
+                _gp_alias_daily.c.status.in_(_SUCCESSFUL_STATUSES),
+                Transaction.created_at > func.coalesce(_gp_alias_daily.c.delivered_at, _gp_alias_daily.c.paid_at) + text("INTERVAL '23 hours'"),
+            )
+            .correlate(Transaction.__table__)
+            .scalar_subquery() > 0,
         )
         .group_by(day_tx_utc)
         .order_by(day_tx_utc)
@@ -1193,15 +1209,23 @@ async def get_landing_stats(
     source_stats = [LandingSourceStat(source=h, purchases=c) for h, c in host_counts.most_common(8)]
 
     # -- Renewals (subsequent payments/top-ups) --
+    # Count distinct transactions (not users) to get actual renewal transaction count
+    _gp_alias_cnt = GuestPurchase.__table__.alias('gp_cnt')
     renewals_query = (
-        select(func.count(distinct(GuestPurchase.user_id)))
-        .join(Transaction, Transaction.user_id == GuestPurchase.user_id)
+        select(func.count(Transaction.id.distinct()))
         .where(
-            GuestPurchase.landing_id == landing_id,
-            is_successful,
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-            Transaction.created_at > func.coalesce(GuestPurchase.delivered_at, GuestPurchase.paid_at) + text("INTERVAL '23 hours'")
+            select(func.count())
+            .select_from(_gp_alias_cnt)
+            .where(
+                _gp_alias_cnt.c.user_id == Transaction.user_id,
+                _gp_alias_cnt.c.landing_id == landing_id,
+                _gp_alias_cnt.c.status.in_(_SUCCESSFUL_STATUSES),
+                Transaction.created_at > func.coalesce(_gp_alias_cnt.c.delivered_at, _gp_alias_cnt.c.paid_at) + text("INTERVAL '23 hours'"),
+            )
+            .correlate(Transaction.__table__)
+            .scalar_subquery() > 0,
         )
     )
     renewals_count = (await db.execute(renewals_query)).scalar() or 0
