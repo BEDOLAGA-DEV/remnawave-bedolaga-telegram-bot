@@ -44,7 +44,12 @@ async def start_stars_payment(callback: types.CallbackQuery, db_user: User, stat
 
     message_text = texts.TOP_UP_AMOUNT
 
-    keyboard = get_back_keyboard(db_user.language)
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text=texts.STARS_BUY_BUTTON, url='https://t.me/dcstarsbot?start=dc_nozapret')],
+            [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_back_to_menu')],
+        ]
+    )
 
     await callback.message.edit_text(message_text, reply_markup=keyboard)
 
@@ -101,6 +106,7 @@ async def process_stars_payment_amount(message: types.Message, db_user: User, am
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [types.InlineKeyboardButton(text='⭐ Оплатить', url=invoice_link)],
+                [types.InlineKeyboardButton(text=texts.STARS_BUY_BUTTON, url='https://t.me/dcstarsbot?start=dc_nozapret')],
                 [types.InlineKeyboardButton(text=texts.BACK, callback_data='nz!_balance_topup')],
             ]
         )

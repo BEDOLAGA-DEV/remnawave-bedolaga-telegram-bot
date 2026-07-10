@@ -1611,6 +1611,7 @@
   "TOPUP_BALANCE_BUTTON": "💳 شارژ موجودی",
   "TOP_UP_AMOUNT": "💰 مبلغ: {amount}",
   "TOP_UP_METHODS": "💳 روش‌های شارژ",
+  "STARS_BUY_BUTTON": "⭐ خرید Stars",
   "TOP_UP_STARS": "⭐ Telegram Stars",
   "TOP_UP_TRIBUTE": "💳 شارژ از طریق Tribute",
   "TRAFFIC_100GB": "📊 ۱۰۰ گیگ - {settings.format_price(settings.PRICE_TRAFFIC_100GB)}",

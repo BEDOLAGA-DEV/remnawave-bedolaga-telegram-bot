@@ -15,6 +15,7 @@ from app.keyboards.inline import (
 )
 from app.localization.texts import get_texts
 from app.utils.subscription_utils import (
+    apply_subscription_domain_override,
     build_redhash_url,
     ensure_single_subscription,
 )
