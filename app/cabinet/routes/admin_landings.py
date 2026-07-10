@@ -1128,30 +1128,37 @@ async def get_landing_stats(
             )
 
     # -- Tariff breakdown (including renewals) --
-    # Use EXISTS to avoid fan-out; ABS() to protect against refund transactions
+    # Use a correlated scalar subquery to get the tariff_id of the FIRST successful
+    # purchase per user on this landing — avoids fan-out when a user has both a trial
+    # and a regular purchase (which would incorrectly attribute the renewal to both tariffs).
     _gp_alias_tariff = GuestPurchase.__table__.alias('gp_tariff')
+    # Subquery: tariff_id from the earliest successful GuestPurchase for this user on this landing
+    first_tariff_subq = (
+        select(_gp_alias_tariff.c.tariff_id)
+        .where(
+            _gp_alias_tariff.c.user_id == Transaction.user_id,
+            _gp_alias_tariff.c.landing_id == landing_id,
+            _gp_alias_tariff.c.status.in_(_SUCCESSFUL_STATUSES),
+            Transaction.created_at > func.coalesce(
+                _gp_alias_tariff.c.delivered_at, _gp_alias_tariff.c.paid_at
+            ) + text("INTERVAL '23 hours'"),
+        )
+        .order_by(_gp_alias_tariff.c.paid_at.asc())
+        .limit(1)
+        .correlate(Transaction.__table__)
+        .scalar_subquery()
+    )
     renewals_tariff_result = await db.execute(
         select(
-            _gp_alias_tariff.c.tariff_id,
+            first_tariff_subq.label('tariff_id'),
             func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('revenue_kopeks'),
         )
-        .select_from(Transaction)
         .where(
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-            select(func.count())
-            .select_from(_gp_alias_tariff)
-            .where(
-                _gp_alias_tariff.c.user_id == Transaction.user_id,
-                _gp_alias_tariff.c.landing_id == landing_id,
-                _gp_alias_tariff.c.status.in_(_SUCCESSFUL_STATUSES),
-                Transaction.created_at > func.coalesce(_gp_alias_tariff.c.delivered_at, _gp_alias_tariff.c.paid_at) + text("INTERVAL '23 hours'"),
-            )
-            .correlate(Transaction.__table__)
-            .scalar_subquery() > 0,
+            first_tariff_subq.isnot(None),
         )
-        .join(_gp_alias_tariff, _gp_alias_tariff.c.user_id == Transaction.user_id)
-        .group_by(_gp_alias_tariff.c.tariff_id)
+        .group_by(first_tariff_subq)
     )
     renewals_tariff_dict = {r.tariff_id: r.revenue_kopeks for r in renewals_tariff_result.all()}
 
