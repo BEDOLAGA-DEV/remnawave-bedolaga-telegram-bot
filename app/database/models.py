@@ -2126,6 +2126,8 @@ class User(Base):
 
     # Партнёрская система
     partner_status = Column(String(20), default=PartnerStatus.NONE.value, nullable=False, index=True)
+    referral_withdrawal_min_kopeks = Column(Integer, nullable=True)
+    referral_withdrawal_cooldown_days = Column(Integer, nullable=True)
 
     @property
     def is_partner(self) -> bool:

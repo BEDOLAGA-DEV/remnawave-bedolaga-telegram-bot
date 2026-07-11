@@ -22,6 +22,7 @@ from app.services.partner_stats_service import PartnerStatsService
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.partners import (
+    AdminAddPartnerRequest,
     AdminApproveRequest,
     AdminPartnerApplicationItem,
     AdminPartnerApplicationsResponse,
@@ -369,7 +370,7 @@ async def list_partners(
     result = await db.execute(
         select(User)
         .where(User.partner_status == PartnerStatus.APPROVED.value)
-        .order_by(desc(User.created_at))
+        .order_by(desc(User.updated_at))
         .offset(offset)
         .limit(limit)
     )
@@ -404,6 +405,8 @@ async def list_partners(
                 first_name=user.first_name,
                 telegram_id=user.telegram_id,
                 commission_percent=user.referral_commission_percent,
+                referral_withdrawal_min_kopeks=user.referral_withdrawal_min_kopeks,
+                referral_withdrawal_cooldown_days=user.referral_withdrawal_cooldown_days,
                 total_referrals=referral_count_map.get(user.id, 0),
                 total_earnings_kopeks=earnings_map.get(user.id, 0),
                 balance_kopeks=user.balance_kopeks,
@@ -413,6 +416,68 @@ async def list_partners(
         )
 
     return AdminPartnerListResponse(items=items, total=total)
+
+
+# ==================== Manual partner addition ====================
+
+
+@router.post('/add-manual')
+async def add_manual_partner(
+    request: AdminAddPartnerRequest,
+    admin: User = Depends(require_permission('partners:approve')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Manually add a partner by Telegram ID."""
+    from app.utils.user_utils import generate_unique_referral_code
+
+    result = await db.execute(
+        select(User).where(User.telegram_id == request.telegram_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Пользователь с таким Telegram ID не найден',
+        )
+
+    if user.partner_status == PartnerStatus.APPROVED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Пользователь уже является партнёром',
+        )
+
+    user.partner_status = PartnerStatus.APPROVED.value
+    user.referral_commission_percent = request.commission_percent
+    if request.referral_withdrawal_min_kopeks is not None:
+        user.referral_withdrawal_min_kopeks = request.referral_withdrawal_min_kopeks
+    if request.referral_withdrawal_cooldown_days is not None:
+        user.referral_withdrawal_cooldown_days = request.referral_withdrawal_cooldown_days
+
+    if not user.referral_code:
+        user.referral_code = await generate_unique_referral_code(db)
+
+    # Create a PartnerApplication record for audit trail
+    application = PartnerApplication(
+        user_id=user.id,
+        status=PartnerStatus.APPROVED.value,
+        approved_commission_percent=request.commission_percent,
+        processed_at=datetime.now(UTC),
+        processed_by=admin.id,
+        description=f'Manual addition by admin #{admin.id}',
+    )
+    db.add(application)
+    user.updated_at = datetime.now(UTC)
+    await db.commit()
+
+    logger.info(
+        'Партнёр добавлен вручную',
+        user_id=user.id,
+        telegram_id=request.telegram_id,
+        commission_percent=request.commission_percent,
+        admin_id=admin.id,
+    )
+
+    return {'success': True}
 
 
 # ==================== Partner detail (parametric paths last) ====================
@@ -465,6 +530,8 @@ async def get_partner_detail(
         first_name=user.first_name,
         telegram_id=user.telegram_id,
         commission_percent=user.referral_commission_percent,
+        referral_withdrawal_min_kopeks=user.referral_withdrawal_min_kopeks,
+        referral_withdrawal_cooldown_days=user.referral_withdrawal_cooldown_days,
         partner_status=user.partner_status,
         balance_kopeks=user.balance_kopeks,
         total_referrals=summary['total_referrals'],
@@ -503,6 +570,10 @@ async def update_commission(
 
     old_commission = user.referral_commission_percent
     user.referral_commission_percent = request.commission_percent
+    if 'referral_withdrawal_min_kopeks' in request.model_fields_set:
+        user.referral_withdrawal_min_kopeks = request.referral_withdrawal_min_kopeks
+    if 'referral_withdrawal_cooldown_days' in request.model_fields_set:
+        user.referral_withdrawal_cooldown_days = request.referral_withdrawal_cooldown_days
     await db.commit()
 
     logger.info(
