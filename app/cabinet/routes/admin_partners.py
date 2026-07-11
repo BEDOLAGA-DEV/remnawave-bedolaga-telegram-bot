@@ -371,7 +371,7 @@ async def list_partners(
     result = await db.execute(
         select(User)
         .where(User.partner_status == PartnerStatus.APPROVED.value)
-        .order_by(desc(User.created_at))
+        .order_by(desc(User.updated_at))
         .offset(offset)
         .limit(limit)
     )

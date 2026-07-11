@@ -555,8 +555,8 @@ async def update_existing_campaign(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail='Partner user not found',
                 )
-        campaign.partner_user_id = new_partner_id
-        campaign.updated_at = datetime.now(UTC)
+        updates['partner_user_id'] = new_partner_id
+        updates['updated_at'] = datetime.now(UTC)
         partner_changed = True
 
     if updates:
