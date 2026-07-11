@@ -1517,6 +1517,7 @@
   "TOPUP_BALANCE_BUTTON": "💳充值余额",
   "TOP_UP_AMOUNT": "💳请输入充值金额（卢布）：",
   "TOP_UP_METHODS": "\n💳<b>请选择支付方式</b>\n\n金额：{amount}\n",
+  "STARS_BUY_BUTTON": "⭐购买Stars",
   "TOP_UP_STARS": "⭐TelegramStars",
   "TOP_UP_TRIBUTE": "💎银行卡",
   "TRAFFIC_100GB": "📊100GB-{settings.format_price(settings.PRICE_TRAFFIC_100GB)}",

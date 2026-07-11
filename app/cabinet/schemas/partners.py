@@ -242,14 +242,27 @@ class AdminUpdateCommissionRequest(BaseModel):
     """Request to update partner commission."""
 
     commission_percent: int = Field(..., ge=1, le=100)
+<<<<<<< HEAD
     referral_withdrawal_min_kopeks: int | None = None
     referral_withdrawal_cooldown_days: int | None = None
+=======
+    referral_withdrawal_min_kopeks: int | None = Field(None, ge=0)
+    referral_withdrawal_cooldown_days: int | None = Field(None, ge=0)
+>>>>>>> 0439a5e9268b8c9e8146b8438233489a1168e1d3
 
 
 class AdminAddPartnerRequest(BaseModel):
     """Request to manually add a partner by Telegram ID."""
 
+<<<<<<< HEAD
     telegram_id: int
     commission_percent: int = Field(20, ge=1, le=100)
     referral_withdrawal_min_kopeks: int | None = None
     referral_withdrawal_cooldown_days: int | None = None
+=======
+    telegram_id: int = Field(..., ge=1)
+    commission_percent: int = Field(..., ge=1, le=100)
+    referral_withdrawal_min_kopeks: int | None = Field(None, ge=0)
+    referral_withdrawal_cooldown_days: int | None = Field(None, ge=0)
+
+>>>>>>> 0439a5e9268b8c9e8146b8438233489a1168e1d3

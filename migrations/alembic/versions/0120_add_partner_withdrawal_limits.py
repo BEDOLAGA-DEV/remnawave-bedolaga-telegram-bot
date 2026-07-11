@@ -29,5 +29,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+<<<<<<< HEAD
     op.drop_column('users', 'referral_withdrawal_cooldown_days')
     op.drop_column('users', 'referral_withdrawal_min_kopeks')
+=======
+    op.drop_column('users', 'referral_withdrawal_min_kopeks')
+    op.drop_column('users', 'referral_withdrawal_cooldown_days')
+>>>>>>> 0439a5e9268b8c9e8146b8438233489a1168e1d3
