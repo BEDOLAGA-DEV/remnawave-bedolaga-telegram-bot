@@ -907,7 +907,7 @@ async def get_landing_stats(
     # -- Summary stats (single query) --
     is_successful = GuestPurchase.status.in_(_SUCCESSFUL_STATUSES)
 
-    from app.database.crud.transaction import addon_description_clause, REAL_PAYMENT_METHODS
+    from app.database.crud.transaction import addon_description_clause
     from sqlalchemy import or_
 
     successful_payment_ids_subq = (
@@ -957,7 +957,6 @@ async def get_landing_stats(
         .where(
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-            Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
             or_(
                 Transaction.external_id.is_(None),
                 Transaction.external_id == '',
@@ -1095,7 +1094,6 @@ async def get_landing_stats(
         .where(
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-            Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
             Transaction.created_at >= cutoff,
             or_(
                 Transaction.external_id.is_(None),
@@ -1275,7 +1273,6 @@ async def get_landing_stats(
         .where(
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-            Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
             or_(
                 Transaction.external_id.is_(None),
                 Transaction.external_id == '',
