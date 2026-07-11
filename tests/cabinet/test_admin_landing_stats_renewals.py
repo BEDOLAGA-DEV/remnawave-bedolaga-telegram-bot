@@ -152,3 +152,44 @@ async def test_get_landing_stats_renewals_and_revenue() -> None:
     assert day_stat.purchases == 2
     assert day_stat.renewals == 5
     assert day_stat.revenue_kopeks == 700000
+
+
+@pytest.mark.asyncio
+async def test_get_landing_stats_query_filters() -> None:
+    landing_mock = LandingPage(
+        id=42,
+        slug="test-landing",
+        title="Test Landing",
+        subtitle="Subtitle",
+        is_active=True,
+    )
+    db = AsyncMock()
+
+    # Capture the compiled query strings
+    executed_queries = []
+
+    def mock_execute(query, *args, **kwargs):
+        query_str = str(query)
+        executed_queries.append(query_str)
+        result = MagicMock()
+        if "total_created" in query_str.lower():
+            row = MagicMock()
+            row.total_created = 0
+            row.total_successful = 0
+            row.total_revenue_kopeks = 0
+            row.total_gifts = 0
+            row.total_gifts_claimed = 0
+            result.one = MagicMock(return_value=row)
+        else:
+            result.all = MagicMock(return_value=[])
+            result.scalar = MagicMock(return_value=0)
+        return result
+
+    db.execute.side_effect = mock_execute
+
+    with patch("app.cabinet.routes.admin_landings.get_landing_by_id", AsyncMock(return_value=landing_mock)):
+        await get_landing_stats(landing_id=42, admin=MagicMock(), db=db)
+
+    # Verify that the renewals queries contain external_id check and addon description pattern checks
+    assert any("external_id" in q for q in executed_queries)
+    assert any("description" in q for q in executed_queries)

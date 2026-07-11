@@ -906,6 +906,19 @@ async def get_landing_stats(
 
     # -- Summary stats (single query) --
     is_successful = GuestPurchase.status.in_(_SUCCESSFUL_STATUSES)
+
+    from app.database.crud.transaction import addon_description_clause
+    from sqlalchemy import or_
+
+    successful_payment_ids_subq = (
+        select(GuestPurchase.payment_id)
+        .where(
+            GuestPurchase.status.in_(_SUCCESSFUL_STATUSES),
+            GuestPurchase.payment_id.isnot(None),
+            GuestPurchase.payment_id != '',
+        )
+    )
+
     summary_result = await db.execute(
         select(
             func.count(GuestPurchase.id).label('total_created'),
@@ -944,6 +957,15 @@ async def get_landing_stats(
         .where(
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+            or_(
+                Transaction.external_id.is_(None),
+                Transaction.external_id == '',
+                ~Transaction.external_id.in_(successful_payment_ids_subq),
+            ),
+            or_(
+                Transaction.description.is_(None),
+                ~addon_description_clause(Transaction.description),
+            ),
             select(func.count())
             .select_from(_gp_alias_rev)
             .where(
@@ -1073,6 +1095,15 @@ async def get_landing_stats(
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
             Transaction.created_at >= cutoff,
+            or_(
+                Transaction.external_id.is_(None),
+                Transaction.external_id == '',
+                ~Transaction.external_id.in_(successful_payment_ids_subq),
+            ),
+            or_(
+                Transaction.description.is_(None),
+                ~addon_description_clause(Transaction.description),
+            ),
             select(func.count())
             .select_from(_gp_alias_daily)
             .where(
@@ -1156,6 +1187,15 @@ async def get_landing_stats(
         .where(
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+            or_(
+                Transaction.external_id.is_(None),
+                Transaction.external_id == '',
+                ~Transaction.external_id.in_(successful_payment_ids_subq),
+            ),
+            or_(
+                Transaction.description.is_(None),
+                ~addon_description_clause(Transaction.description),
+            ),
             first_tariff_subq.isnot(None),
         )
         .group_by(first_tariff_subq)
@@ -1233,6 +1273,15 @@ async def get_landing_stats(
         .where(
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+            or_(
+                Transaction.external_id.is_(None),
+                Transaction.external_id == '',
+                ~Transaction.external_id.in_(successful_payment_ids_subq),
+            ),
+            or_(
+                Transaction.description.is_(None),
+                ~addon_description_clause(Transaction.description),
+            ),
             select(func.count())
             .select_from(_gp_alias_cnt)
             .where(
