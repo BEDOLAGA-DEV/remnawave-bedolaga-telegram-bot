@@ -212,11 +212,34 @@ class ReferralWithdrawalService:
                 },
             )
 
+        # Получаем пользователя для проверки персональных лимитов
+        user = await db.get(User, user_id)
+        if not user:
+            return (
+                False,
+                'Пользователь не найден',
+                stats or {
+                    'total_earned': 0,
+                    'own_deposits': 0,
+                    'spending': 0,
+                    'referral_spent': 0,
+                    'withdrawn': 0,
+                    'pending': 0,
+                    'available_referral': 0,
+                    'available_total': 0,
+                    'only_referral_mode': settings.REFERRAL_WITHDRAWAL_ONLY_REFERRAL_BALANCE,
+                },
+            )
+
         # Проверяем доступный баланс
         if stats is None:
             stats = await self.get_referral_balance_stats(db, user_id)
         available = stats['available_total']
-        min_amount = settings.REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS
+        min_amount = (
+            user.referral_withdrawal_min_kopeks
+            if user.referral_withdrawal_min_kopeks is not None
+            else settings.REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS
+        )
 
         if available < min_amount:
             return False, f'Минимальная сумма вывода: {min_amount / 100:.0f}₽. Доступно: {available / 100:.0f}₽', stats
@@ -226,7 +249,11 @@ class ReferralWithdrawalService:
         if last_request:
             # В тестовом режиме пропускаем проверку cooldown
             if not settings.REFERRAL_WITHDRAWAL_TEST_MODE:
-                cooldown_days = settings.REFERRAL_WITHDRAWAL_COOLDOWN_DAYS
+                cooldown_days = (
+                    user.referral_withdrawal_cooldown_days
+                    if user.referral_withdrawal_cooldown_days is not None
+                    else settings.REFERRAL_WITHDRAWAL_COOLDOWN_DAYS
+                )
                 cooldown_end = last_request.created_at + timedelta(days=cooldown_days)
 
                 if datetime.now(UTC) < cooldown_end:
