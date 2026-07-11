@@ -582,8 +582,16 @@ async def show_withdrawal_info(callback: types.CallbackQuery, db_user: User, db:
 
     # Получаем детальную статистику баланса
     stats = await referral_withdrawal_service.get_referral_balance_stats(db, db_user.id)
-    min_amount = settings.REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS
-    cooldown_days = settings.REFERRAL_WITHDRAWAL_COOLDOWN_DAYS
+    min_amount = (
+        db_user.referral_withdrawal_min_kopeks
+        if db_user.referral_withdrawal_min_kopeks is not None
+        else settings.REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS
+    )
+    cooldown_days = (
+        db_user.referral_withdrawal_cooldown_days
+        if db_user.referral_withdrawal_cooldown_days is not None
+        else settings.REFERRAL_WITHDRAWAL_COOLDOWN_DAYS
+    )
 
     # Проверяем возможность вывода
     can_request, reason, _stats = await referral_withdrawal_service.can_request_withdrawal(db, db_user.id)
@@ -682,7 +690,11 @@ async def process_withdrawal_amount(message: types.Message, db_user: User, db: A
             await message.answer(texts.t('REFERRAL_WITHDRAWAL_INVALID_AMOUNT', '❌ Введите положительную сумму'))
             return
 
-        min_amount = settings.REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS
+        min_amount = (
+            db_user.referral_withdrawal_min_kopeks
+            if db_user.referral_withdrawal_min_kopeks is not None
+            else settings.REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS
+        )
         if amount_kopeks < min_amount:
             await message.answer(
                 texts.t('REFERRAL_WITHDRAWAL_MIN_ERROR', '❌ Минимальная сумма: {amount}').format(

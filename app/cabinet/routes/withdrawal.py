@@ -40,7 +40,11 @@ async def get_withdrawal_balance(
         available_referral=stats['available_referral'],
         available_total=stats['available_total'],
         only_referral_mode=stats['only_referral_mode'],
-        min_amount_kopeks=settings.REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS,
+        min_amount_kopeks=(
+            user.referral_withdrawal_min_kopeks
+            if user.referral_withdrawal_min_kopeks is not None
+            else settings.REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS
+        ),
         is_withdrawal_enabled=settings.is_referral_withdrawal_enabled(),
         can_request=can_request,
         cannot_request_reason=reason if not can_request else None,

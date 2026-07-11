@@ -1339,7 +1339,7 @@ requires-dist = [
     { name = "redis", specifier = ">=7.1.1" },
     { name = "rich", specifier = ">=14.0" },
     { name = "sqlalchemy", specifier = ">=2.0.46" },
-    { name = "structlog", specifier = ">=25.1.0,<26" },
+    { name = "structlog", specifier = ">=25.1.0,<27" },
     { name = "yookassa", specifier = ">=3.10.0" },
 ]
 
