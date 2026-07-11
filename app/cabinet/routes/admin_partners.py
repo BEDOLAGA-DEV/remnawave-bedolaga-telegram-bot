@@ -571,15 +571,10 @@ async def update_commission(
 
     old_commission = user.referral_commission_percent
     user.referral_commission_percent = request.commission_percent
-<<<<<<< HEAD
     if 'referral_withdrawal_min_kopeks' in request.model_fields_set:
         user.referral_withdrawal_min_kopeks = request.referral_withdrawal_min_kopeks
     if 'referral_withdrawal_cooldown_days' in request.model_fields_set:
         user.referral_withdrawal_cooldown_days = request.referral_withdrawal_cooldown_days
-=======
-    user.referral_withdrawal_min_kopeks = request.referral_withdrawal_min_kopeks
-    user.referral_withdrawal_cooldown_days = request.referral_withdrawal_cooldown_days
->>>>>>> 0439a5e9268b8c9e8146b8438233489a1168e1d3
     await db.commit()
 
     logger.info(
