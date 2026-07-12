@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import and_, case, func, select, text
+from sqlalchemy import and_, case, distinct, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.utils.locale import (
@@ -961,7 +961,7 @@ async def get_landing_stats(
     # -- Calculate total renewals revenue & counts --
     # Use EXISTS subquery to avoid fan-out when user has multiple GuestPurchases on same landing
     _gp_alias_rev = GuestPurchase.__table__.alias('gp_rev')
-    from sqlalchemy import case, distinct
+
     renewals_summary_query = (
         select(
             func.count(distinct(Transaction.id)).label('count'),
@@ -1010,7 +1010,7 @@ async def get_landing_stats(
     renewals_rate = round(renewals_count / total_successful * 100, 1) if total_successful > 0 else 0.0
 
     # -- Linked cards stats --
-    from sqlalchemy import distinct
+
     
     # YooKassa trial vs regular cards
     has_trial_subquery = select(GuestPurchase.user_id).where(
