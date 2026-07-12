@@ -521,10 +521,6 @@ class LandingDailyStat(BaseModel):
     trials: int = 0
     regular: int = 0
     renewals: int = 0
-    renewals_regular: int = 0
-    renewals_trial: int = 0
-    renewals_regular_revenue_kopeks: int = 0
-    renewals_trial_revenue_kopeks: int = 0
 
 
 class LandingTariffStat(BaseModel):
@@ -558,11 +554,6 @@ class LandingStatsResponse(BaseModel):
     regular_cards_count: int = 0
     renewals_count: int = 0
     renewals_rate: float = 0.0
-    renewals_regular_count: int = 0
-    renewals_trial_count: int = 0
-    renewals_revenue_kopeks: int = 0
-    renewals_regular_revenue_kopeks: int = 0
-    renewals_trial_revenue_kopeks: int = 0
     # Conversion: created -> paid/delivered
     total_created: int
     total_successful: int  # paid + delivered + pending_activation
@@ -959,26 +950,20 @@ async def get_landing_stats(
     total_gifts_claimed: int = row.total_gifts_claimed
 
     # -- Calculate total renewals revenue & counts --
-    # Use EXISTS subquery to avoid fan-out when user has multiple GuestPurchases on same landing
+    # Use EXISTS subquery to avoid fan-out when user has multiple GuestPurchases on same landing.
+    # NOTE: We deliberately do NOT filter by external_id here — the 23-hour EXISTS check already
+    # guarantees this is a renewal (not the initial purchase), so external_id filtering is
+    # both redundant and harmful (it incorrectly excludes antilopay recurrent payments whose
+    # external_id happens to match the original GuestPurchase payment_id).
     _gp_alias_rev = GuestPurchase.__table__.alias('gp_rev')
-
-    renewals_summary_query = (
+    renewals_revenue_query = (
         select(
             func.count(distinct(Transaction.id)).label('count'),
-            func.count(distinct(case(((Transaction.amount_kopeks == 1000), Transaction.id)))).label('count_trial'),
-            func.count(distinct(case(((Transaction.amount_kopeks != 1000), Transaction.id)))).label('count_regular'),
             func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('revenue_kopeks'),
-            func.coalesce(func.sum(case(((Transaction.amount_kopeks == 1000), func.abs(Transaction.amount_kopeks)))), 0).label('revenue_kopeks_trial'),
-            func.coalesce(func.sum(case(((Transaction.amount_kopeks != 1000), func.abs(Transaction.amount_kopeks)))), 0).label('revenue_kopeks_regular'),
         )
         .where(
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-            or_(
-                Transaction.external_id.is_(None),
-                Transaction.external_id == '',
-                ~Transaction.external_id.in_(successful_payment_ids_subq),
-            ),
             or_(
                 Transaction.description.is_(None),
                 ~addon_description_clause(Transaction.description),
@@ -995,15 +980,11 @@ async def get_landing_stats(
             .scalar_subquery() > 0,
         )
     )
-    r_summary = (await db.execute(renewals_summary_query)).one()
-    renewals_count = r_summary.count or 0
-    renewals_trial_count = r_summary.count_trial or 0
-    renewals_regular_count = r_summary.count_regular or 0
-    renewals_revenue_kopeks = r_summary.revenue_kopeks or 0
-    renewals_trial_revenue_kopeks = r_summary.revenue_kopeks_trial or 0
-    renewals_regular_revenue_kopeks = r_summary.revenue_kopeks_regular or 0
+    r_renewals = (await db.execute(renewals_revenue_query)).one()
+    renewals_count = r_renewals.count or 0
+    total_renewals_revenue = r_renewals.revenue_kopeks or 0
 
-    total_revenue_kopeks = initial_revenue_kopeks + renewals_revenue_kopeks
+    total_revenue_kopeks = initial_revenue_kopeks + total_renewals_revenue
     total_regular = total_successful - total_gifts
     avg_purchase_kopeks = total_revenue_kopeks // total_successful if total_successful > 0 else 0
     conversion_rate = round(total_successful / total_created * 100, 1) if total_created > 0 else 0.0
@@ -1106,28 +1087,20 @@ async def get_landing_stats(
     created_rows = {str(r.day): r.created for r in created_result.all()}
 
     # Renewals per day (based on Transaction.created_at)
-    # Use EXISTS to avoid fan-out when user has multiple GuestPurchases on the same landing
+    # Use EXISTS to avoid fan-out when user has multiple GuestPurchases on the same landing.
+    # No external_id filter — see comment in renewals_revenue_query above.
     _gp_alias_daily = GuestPurchase.__table__.alias('gp_daily')
     day_tx_utc = func.date(func.timezone('UTC', Transaction.created_at))
     renewals_daily_result = await db.execute(
         select(
             day_tx_utc.label('day'),
             func.count(Transaction.id.distinct()).label('count'),
-            func.count(distinct(case(((Transaction.amount_kopeks == 1000), Transaction.id)))).label('count_trial'),
-            func.count(distinct(case(((Transaction.amount_kopeks != 1000), Transaction.id)))).label('count_regular'),
             func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('revenue_kopeks'),
-            func.coalesce(func.sum(case(((Transaction.amount_kopeks == 1000), func.abs(Transaction.amount_kopeks)))), 0).label('revenue_kopeks_trial'),
-            func.coalesce(func.sum(case(((Transaction.amount_kopeks != 1000), func.abs(Transaction.amount_kopeks)))), 0).label('revenue_kopeks_regular'),
         )
         .where(
             Transaction.is_completed == True,
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
             Transaction.created_at >= cutoff,
-            or_(
-                Transaction.external_id.is_(None),
-                Transaction.external_id == '',
-                ~Transaction.external_id.in_(successful_payment_ids_subq),
-            ),
             or_(
                 Transaction.description.is_(None),
                 ~addon_description_clause(Transaction.description),
@@ -1157,11 +1130,7 @@ async def get_landing_stats(
         day_created = created_rows.get(day_str, 0)
         r_renewal = renewals_daily_rows.get(day_str)
         day_renewals = r_renewal.count if r_renewal else 0
-        day_renewals_regular = r_renewal.count_regular if r_renewal else 0
-        day_renewals_trial = r_renewal.count_trial if r_renewal else 0
         day_renewal_revenue = r_renewal.revenue_kopeks if r_renewal else 0
-        day_renewal_revenue_regular = r_renewal.revenue_kopeks_regular if r_renewal else 0
-        day_renewal_revenue_trial = r_renewal.revenue_kopeks_trial if r_renewal else 0
         if day_str in daily_rows:
             r = daily_rows[day_str]
             daily_stats.append(
@@ -1174,10 +1143,6 @@ async def get_landing_stats(
                     trials=r.trials,
                     regular=r.regular,
                     renewals=day_renewals,
-                    renewals_regular=day_renewals_regular,
-                    renewals_trial=day_renewals_trial,
-                    renewals_regular_revenue_kopeks=day_renewal_revenue_regular,
-                    renewals_trial_revenue_kopeks=day_renewal_revenue_trial,
                 )
             )
         else:
@@ -1191,10 +1156,6 @@ async def get_landing_stats(
                     trials=0,
                     regular=0,
                     renewals=day_renewals,
-                    renewals_regular=day_renewals_regular,
-                    renewals_trial=day_renewals_trial,
-                    renewals_regular_revenue_kopeks=day_renewal_revenue_regular,
-                    renewals_trial_revenue_kopeks=day_renewal_revenue_trial,
                 )
             )
 
@@ -1317,11 +1278,6 @@ async def get_landing_stats(
         regular_cards_count=regular_cards_count,
         renewals_count=renewals_count,
         renewals_rate=renewals_rate,
-        renewals_regular_count=renewals_regular_count,
-        renewals_trial_count=renewals_trial_count,
-        renewals_revenue_kopeks=renewals_revenue_kopeks,
-        renewals_regular_revenue_kopeks=renewals_regular_revenue_kopeks,
-        renewals_trial_revenue_kopeks=renewals_trial_revenue_kopeks,
         total_created=total_created,
         total_successful=total_successful,
         conversion_rate=conversion_rate,
