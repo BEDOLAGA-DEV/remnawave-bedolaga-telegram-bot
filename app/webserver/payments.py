@@ -1526,6 +1526,40 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 logger.error('Antilopay webhook: failed to parse JSON', parse_error=parse_error)
                 return JSONResponse({'status': False}, status_code=status.HTTP_400_BAD_REQUEST)
 
+            # Проксирование вебхуков для пополнения Steam
+            order_id = payload.get('order_id')
+            if isinstance(order_id, str) and order_id.startswith('slig_steam_'):
+                logger.info('Antilopay webhook: forwarding to steam_top_up service', order_id=order_id)
+                import httpx
+                try:
+                    headers = {
+                        'Content-Type': 'application/json',
+                    }
+                    callback_sig = request.headers.get('X-Apay-Callback')
+                    if callback_sig:
+                        headers['X-Apay-Callback'] = callback_sig
+                    
+                    async with httpx.AsyncClient() as client:
+                        response = await client.post(
+                            'http://slig_steam:8000/webhooks/antilopay/callback',
+                            content=raw_body,
+                            headers=headers,
+                            timeout=10.0,
+                        )
+                    logger.info(
+                        'Antilopay webhook forwarded successfully',
+                        order_id=order_id,
+                        status_code=response.status_code,
+                    )
+                    return JSONResponse({'status': True}, status_code=status.HTTP_200_OK)
+                except Exception as forward_error:
+                    logger.exception(
+                        'Antilopay webhook: failed to forward to steam_top_up service',
+                        order_id=order_id,
+                        error=forward_error,
+                    )
+                    return JSONResponse({'status': False, 'error': 'forwarding_failed'}, status_code=status.HTTP_200_OK)
+
             # Подпись в заголовке X-Apay-Callback, верифицируется публичным ключом
             from app.services.antilopay_service import antilopay_service
 
