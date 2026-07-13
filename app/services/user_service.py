@@ -209,23 +209,27 @@ class UserService:
             if not user:
                 return None
 
+            active_subscriptions: list[Subscription] = []
             if settings.is_multi_tariff_enabled():
                 from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
-                active_subs = await get_active_subscriptions_by_user_id(db, user_id)
-                if active_subs:
-                    _non_daily = [s for s in active_subs if not getattr(s, 'is_daily_tariff', False)]
-                    _pool = _non_daily or active_subs
+                active_subscriptions = await get_active_subscriptions_by_user_id(db, user_id)
+                if active_subscriptions:
+                    _non_daily = [s for s in active_subscriptions if not getattr(s, 'is_daily_tariff', False)]
+                    _pool = _non_daily or active_subscriptions
                     subscription = max(_pool, key=lambda s: s.days_left)
                 else:
                     subscription = None
             else:
                 subscription = await get_subscription_by_user_id(db, user_id)
+                if subscription is not None:
+                    active_subscriptions = [subscription]
             transactions_count = await get_user_transactions_count(db, user_id)
 
             return {
                 'user': user,
                 'subscription': subscription,
+                'active_subscriptions': active_subscriptions,
                 'transactions_count': transactions_count,
                 'is_admin': settings.is_admin(user.telegram_id, user.email),
                 'registration_days': (datetime.now(UTC) - user.created_at).days,
