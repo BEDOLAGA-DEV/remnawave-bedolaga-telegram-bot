@@ -59,9 +59,37 @@ def test_trial_does_not_carry_by_default(monkeypatch):
     assert sub_crud._should_carry_remaining_days(is_trial=True, source_is_free=False) is False
 
 
-def test_trial_carries_when_setting_on(monkeypatch):
+def test_trial_carries_only_when_add_on_and_reset_off(monkeypatch):
+    # Перенос триальных дней возможен ТОЛЬКО когда add включён И сброс выключен.
     monkeypatch.setattr(sub_crud.settings, 'TRIAL_ADD_REMAINING_DAYS_TO_PAID', True)
+    monkeypatch.setattr(sub_crud.settings, 'TARIFF_SWITCH_RESET_FREE_DAYS', False)
     assert sub_crud._should_carry_remaining_days(is_trial=True, source_is_free=False) is True
+
+
+def test_reset_free_days_overrides_trial_add(monkeypatch):
+    """Ядро фикса: TARIFF_SWITCH_RESET_FREE_DAYS=true перебивает
+    TRIAL_ADD_REMAINING_DAYS_TO_PAID=true — триальный остаток НЕ переносится
+    (раньше флаг сброса был мёртвым для триалов)."""
+    monkeypatch.setattr(sub_crud.settings, 'TRIAL_ADD_REMAINING_DAYS_TO_PAID', True)
+    monkeypatch.setattr(sub_crud.settings, 'TARIFF_SWITCH_RESET_FREE_DAYS', True)
+    assert sub_crud._should_carry_remaining_days(is_trial=True, source_is_free=False) is False
+
+
+# ── should_carry_trial_remaining_days (единый источник правды для всех путей) ──
+
+
+def test_carry_trial_helper_matrix(monkeypatch):
+    cases = {
+        # (TRIAL_ADD, RESET_FREE_DAYS): переносить ли остаток триала
+        (False, False): False,
+        (False, True): False,
+        (True, False): True,  # единственный случай переноса
+        (True, True): False,  # сброс перебивает
+    }
+    for (add, reset), expected in cases.items():
+        monkeypatch.setattr(sub_crud.settings, 'TRIAL_ADD_REMAINING_DAYS_TO_PAID', add)
+        monkeypatch.setattr(sub_crud.settings, 'TARIFF_SWITCH_RESET_FREE_DAYS', reset)
+        assert sub_crud.should_carry_trial_remaining_days() is expected, f'add={add} reset={reset}'
 
 
 # ── _is_free_source_tariff (DB lookup wrapper) ──

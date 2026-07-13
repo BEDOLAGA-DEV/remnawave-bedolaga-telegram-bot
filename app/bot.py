@@ -28,6 +28,7 @@ from app.handlers.admin import (
     bulk_ban as admin_bulk_ban,
     campaigns as admin_campaigns,
     contests as admin_contests,
+    coupons as admin_coupons,
     daily_contests as admin_daily_contests,
     faq as admin_faq,
     main as admin_main,
@@ -156,10 +157,13 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     dp.message.middleware(throttling_middleware)
     dp.callback_query.middleware(throttling_middleware)
 
-    # Middleware для автоматического логирования кликов по кнопкам
-    if settings.MENU_LAYOUT_ENABLED:
+    # Middleware для автоматического логирования кликов по кнопкам и команд:
+    # статистика конструктора меню (MENU_LAYOUT_ENABLED) и/или лог действий
+    # юзера для таймлайна активности (USER_ACTION_LOG_ENABLED).
+    if settings.MENU_LAYOUT_ENABLED or settings.USER_ACTION_LOG_ENABLED:
         button_stats_middleware = ButtonStatsMiddleware()
         dp.callback_query.middleware(button_stats_middleware)
+        dp.message.middleware(button_stats_middleware)
         logger.info('📊 ButtonStatsMiddleware активирован')
 
     from app.middlewares.channel_checker import ChannelCheckerMiddleware
@@ -199,6 +203,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_polls.register_handlers(dp)
     admin_promo_groups.register_handlers(dp)
     admin_campaigns.register_handlers(dp)
+    admin_coupons.register_handlers(dp)
     admin_contests.register_handlers(dp)
     admin_daily_contests.register_handlers(dp)
     admin_promo_offers.register_handlers(dp)

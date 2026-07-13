@@ -22,6 +22,10 @@ from app.database.crud.public_offer import (
     get_public_offer,
     upsert_public_offer,
 )
+from app.database.crud.recurrent_payments import (
+    get_recurrent_payments,
+    upsert_recurrent_payments,
+)
 from app.database.crud.rules import clear_all_rules, create_or_update_rules, get_rules_by_language
 from app.database.models import FaqPage, User
 from app.services.system_settings_service import bot_configuration_service
@@ -37,6 +41,7 @@ router = APIRouter(prefix='/admin/legal-pages', tags=['Cabinet Admin Legal Pages
 _DISPLAY_MODE_KEYS = {
     'privacy-policy': 'PRIVACY_POLICY_DISPLAY_MODE',
     'public-offer': 'PUBLIC_OFFER_DISPLAY_MODE',
+    'recurrent-payments': 'RECURRENT_PAYMENTS_DISPLAY_MODE',
     'rules': 'SERVICE_RULES_DISPLAY_MODE',
     'faq': 'FAQ_DISPLAY_MODE',
 }
@@ -228,6 +233,25 @@ async def _build_offer_response(db: AsyncSession) -> LegalDocumentResponse:
     )
 
 
+async def _build_recurrent_payments_response(db: AsyncSession) -> LegalDocumentResponse:
+    items: list[LegalDocumentItem] = []
+    for lang in _available_languages():
+        document = await get_recurrent_payments(db, lang)
+        items.append(
+            LegalDocumentItem(
+                language=lang,
+                content=document.content if document else '',
+                is_enabled=bool(document.is_enabled) if document else False,
+                updated_at=document.updated_at.isoformat() if document and document.updated_at else None,
+            )
+        )
+    return LegalDocumentResponse(
+        display_mode=normalize_display_mode(settings.RECURRENT_PAYMENTS_DISPLAY_MODE),
+        display_mode_env_locked=_display_mode_env_locked('recurrent-payments'),
+        items=items,
+    )
+
+
 async def _build_rules_response(db: AsyncSession) -> RulesResponse:
     items: list[RulesItem] = []
     for lang in _available_languages():
@@ -327,6 +351,37 @@ async def update_public_offer_admin(
         await _set_display_mode(db, 'public-offer', request.display_mode)
     logger.info('Admin updated public offer via cabinet', admin_id=admin.id)
     return await _build_offer_response(db)
+
+
+@router.get('/recurrent-payments', response_model=LegalDocumentResponse)
+async def get_recurrent_payments_admin(
+    admin: User = Depends(require_permission('info_pages:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> LegalDocumentResponse:
+    return await _build_recurrent_payments_response(db)
+
+
+@router.put('/recurrent-payments', response_model=LegalDocumentResponse)
+async def update_recurrent_payments_admin(
+    request: LegalDocumentUpdateRequest,
+    admin: User = Depends(require_permission('info_pages:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> LegalDocumentResponse:
+    items = request.items or []
+    languages = [_require_language(item.language) for item in items]
+    _check_display_mode_writable('recurrent-payments', request.display_mode)
+    for lang, item in zip(languages, items, strict=True):
+        try:
+            await upsert_recurrent_payments(db, lang, item.content, is_enabled=item.is_enabled)
+        except IntegrityError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f'Recurring-payments document for language {lang} already exists',
+            )
+    if request.display_mode:
+        await _set_display_mode(db, 'recurrent-payments', request.display_mode)
+    logger.info('Admin updated recurring-payments document via cabinet', admin_id=admin.id)
+    return await _build_recurrent_payments_response(db)
 
 
 @router.get('/rules', response_model=RulesResponse)

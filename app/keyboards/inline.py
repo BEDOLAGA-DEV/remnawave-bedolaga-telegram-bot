@@ -1254,8 +1254,14 @@ def get_subscription_keyboard(
                         )
                     )
                 else:
-                    # Для суточных тарифов переходим на список тарифов, для обычных - мгновенное переключение
-                    tariff_callback = 'tariff_switch' if is_daily_tariff else 'instant_switch'
+                    # Для суточных тарифов переходим на список тарифов, для обычных - мгновенное переключение.
+                    # Бесплатный (0₽) тариф — тоже через список с выбором периода: prorated
+                    # instant-switch посчитал бы доплату за весь остаток бесплатных дней
+                    # и перенёс бы их на платный тариф вопреки TARIFF_SWITCH_RESET_FREE_DAYS.
+                    is_free_tariff = bool(
+                        tariff and getattr(tariff, 'is_free', False) and settings.TARIFF_SWITCH_RESET_FREE_DAYS
+                    )
+                    tariff_callback = 'tariff_switch' if (is_daily_tariff or is_free_tariff) else 'instant_switch'
                     settings_row.append(
                         InlineKeyboardButton(
                             text=texts.t('CHANGE_TARIFF_BUTTON', '📦 Тариф'), callback_data=tariff_callback

@@ -483,7 +483,12 @@ async def reply_to_ticket(
 
     message = TicketMessage(
         ticket_id=ticket.id,
-        user_id=ticket.user_id,
+        # Автор сообщения — реально ответивший админ, а не владелец тикета:
+        # иначе при нескольких сотрудниках поддержки невозможно установить,
+        # кто отвечал (#3029). Бот-путь (handlers/admin/tickets.py) пишет id
+        # админа с самого начала — выравниваем семантику. Отображение стороны
+        # сообщения везде идёт по is_from_admin, а не по user_id.
+        user_id=admin.id,
         message_text=request.message,
         is_from_admin=True,
         has_media=has_media,

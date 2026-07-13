@@ -1,5 +1,5 @@
 # Основные зависимости
-aiogram==3.22.0
+aiogram==3.29.1
 aiohttp==3.12.15
 aiohttp-socks>=0.10.1
 asyncpg==0.31.0
@@ -36,6 +36,7 @@ APScheduler==3.11.0
 python-dateutil==2.9.0.post0
 pytz==2023.4
 cryptography>=44.0.1
+pycryptodome>=3.21.0  # Crypto.Cipher в app/external/remnawave_api.py (есть в pyproject.toml, здесь отсутствовал)
 qrcode[pil]==8.0
 
 # Личный кабинет (Cabinet)

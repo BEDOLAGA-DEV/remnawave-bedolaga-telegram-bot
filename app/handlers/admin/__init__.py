@@ -7,6 +7,7 @@ from . import (
     bulk_ban,
     campaigns,
     contests,
+    coupons,
     daily_contests,
     faq,
     main,

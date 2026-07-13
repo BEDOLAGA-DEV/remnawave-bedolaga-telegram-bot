@@ -134,11 +134,21 @@ def create_broadcast_keyboard(
             action_value = btn.get('action_value', '')
             if not label or not action_value:
                 continue
+            # Необязательный custom emoji перед текстом кнопки (#3025)
+            icon_emoji = btn.get('icon_custom_emoji_id') or None
             if action_type == 'url':
-                keyboard.append([types.InlineKeyboardButton(text=label, url=action_value)])
+                keyboard.append(
+                    [types.InlineKeyboardButton(text=label, url=action_value, icon_custom_emoji_id=icon_emoji)]
+                )
             else:
                 # callback type
-                keyboard.append([types.InlineKeyboardButton(text=label, callback_data=action_value)])
+                keyboard.append(
+                    [
+                        types.InlineKeyboardButton(
+                            text=label, callback_data=action_value, icon_custom_emoji_id=icon_emoji
+                        )
+                    ]
+                )
 
     if not keyboard:
         return None

@@ -2504,6 +2504,24 @@ async def start_edit_setting(
     await callback.answer()
 
 
+def _build_save_confirmation(key: str) -> str:
+    """Сообщение после сохранения настройки.
+
+    set_value всегда пишет значение в БД, но для ключей, заданных через
+    окружение, рантайм продолжает использовать значение из .env — «✅ обновлена»
+    в этом случае вводит в заблуждение: админ видит подтверждение, а поведение
+    бота не меняется (#2749, вся секция рефералки из .env.example). Говорим
+    честно, какая переменная блокирует применение и что с ней сделать.
+    """
+    if bot_configuration_service.is_env_overridden(key):
+        return (
+            '💾 Сохранено в БД, но <b>не применено</b>: значение задаётся переменной '
+            f'окружения <code>{html.escape(key)}</code> из .env.\n'
+            'Уберите её из .env и перезапустите бота, чтобы управлять этой настройкой отсюда.'
+        )
+    return '✅ Настройка обновлена'
+
+
 @admin_required
 @error_handler
 async def handle_edit_setting(
@@ -2544,7 +2562,7 @@ async def handle_edit_setting(
 
     text = _render_setting_text(key)
     keyboard = _build_setting_keyboard(key, group_key, category_page, settings_page)
-    await message.answer('✅ Настройка обновлена')
+    await message.answer(_build_save_confirmation(key))
     await message.answer(text, reply_markup=keyboard)
     await state.clear()
     await _store_setting_context(
@@ -2595,7 +2613,7 @@ async def handle_direct_setting_input(
 
     text = _render_setting_text(key)
     keyboard = _build_setting_keyboard(key, group_key, category_page, settings_page)
-    await message.answer('✅ Настройка обновлена')
+    await message.answer(_build_save_confirmation(key))
     await message.answer(text, reply_markup=keyboard)
 
     await state.clear()

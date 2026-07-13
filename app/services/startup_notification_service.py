@@ -47,6 +47,7 @@ COMMUNITY_URL: Final[str] = 'https://t.me/+wTdMtSWq8YdmZmVi'
 DEVELOPER_CONTACT_URL: Final[str] = 'https://t.me/fringg'
 
 # Ключевые слова для определения типа ошибки
+PERMISSION_ERROR_KEYWORDS: Final[tuple[str, ...]] = ('permission denied', 'errno 13')
 WEBHOOK_ERROR_KEYWORDS: Final[tuple[str, ...]] = ('webhook', 'failed to resolve host')
 DATABASE_ERROR_KEYWORDS: Final[tuple[str, ...]] = ('database', 'postgres', 'connection refused')
 REDIS_ERROR_KEYWORD: Final[str] = 'redis'
@@ -357,6 +358,17 @@ def _get_error_recommendations(error_message: str) -> str | None:
         Рекомендации в формате HTML blockquote или None
     """
     error_lower = error_message.lower()
+
+    # Ошибки прав доступа к примонтированным каталогам (logs/data/locales/uploads)
+    if any(keyword in error_lower for keyword in PERMISSION_ERROR_KEYWORDS):
+        tips = [
+            '• Бот в контейнере работает от пользователя с uid 1000',
+            '• Похоже, примонтированные каталоги принадлежат другому пользователю',
+            '• Проверьте права на каталоги logs, data, locales (и uploads)',
+            '• Обычно лечится на хосте: <code>chown -R 1000:1000 logs data locales</code>',
+            '• После исправления: docker compose restart bot',
+        ]
+        return '<blockquote expandable>💡 <b>Рекомендации:</b>\n' + '\n'.join(tips) + '</blockquote>'
 
     # Ошибки вебхука
     if any(keyword in error_lower for keyword in WEBHOOK_ERROR_KEYWORDS):

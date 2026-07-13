@@ -11,6 +11,7 @@ from app.database.models import User
 from app.services.faq_service import FaqService
 from app.services.privacy_policy_service import PrivacyPolicyService
 from app.services.public_offer_service import PublicOfferService
+from app.services.recurrent_payments_service import RecurrentPaymentsService
 from app.utils.display_mode import is_visible_in_web
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
@@ -78,6 +79,13 @@ class PublicOfferResponse(BaseModel):
     updated_at: str | None = None
 
 
+class RecurrentPaymentsResponse(BaseModel):
+    """Recurring-payments terms document."""
+
+    content: str
+    updated_at: str | None = None
+
+
 class ServiceInfoResponse(BaseModel):
     """General service info."""
 
@@ -102,6 +110,7 @@ class InfoVisibilityResponse(BaseModel):
     rules: bool
     privacy: bool
     offer: bool
+    recurrent: bool
 
 
 # ============ Routes ============
@@ -250,6 +259,34 @@ async def get_public_offer(
     )
 
 
+@router.get('/recurrent-payments', response_model=RecurrentPaymentsResponse)
+async def get_recurrent_payments(
+    language: str = Query('ru', min_length=2, max_length=10),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get recurring-payments terms document."""
+    if not is_visible_in_web(settings.RECURRENT_PAYMENTS_DISPLAY_MODE):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Recurring-payments document is not available',
+        )
+    requested_lang = RecurrentPaymentsService.normalize_language(language)
+    document = await RecurrentPaymentsService.get_document(db, requested_lang, fallback=True)
+
+    if document and document.content:
+        updated_at = document.updated_at.isoformat() if document.updated_at else None
+        return RecurrentPaymentsResponse(content=document.content, updated_at=updated_at)
+
+    # Return default document if none found
+    return RecurrentPaymentsResponse(
+        content="""# Рекуррентные платежи
+
+Условия автоматических регулярных списаний.
+""",
+        updated_at=None,
+    )
+
+
 @router.get('/service', response_model=ServiceInfoResponse)
 async def get_service_info():
     """Get general service information."""
@@ -346,4 +383,5 @@ async def get_info_visibility():
         rules=is_visible_in_web(settings.SERVICE_RULES_DISPLAY_MODE),
         privacy=is_visible_in_web(settings.PRIVACY_POLICY_DISPLAY_MODE),
         offer=is_visible_in_web(settings.PUBLIC_OFFER_DISPLAY_MODE),
+        recurrent=is_visible_in_web(settings.RECURRENT_PAYMENTS_DISPLAY_MODE),
     )

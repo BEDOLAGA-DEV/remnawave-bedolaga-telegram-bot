@@ -3,6 +3,7 @@ from typing import Any
 
 import structlog
 from aiogram import BaseMiddleware
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import CallbackQuery, Message, TelegramObject, User as TgUser
 
 from app.config import settings
@@ -10,6 +11,16 @@ from app.services.maintenance_service import maintenance_service
 
 
 logger = structlog.get_logger(__name__)
+
+# Ожидаемые отказы Telegram при показе заглушки техработ: устаревший callback
+# (юзер жмёт кнопки старого сообщения, апдейт долежал в очереди дольше лимита
+# ответа), удалённый аккаунт, недоступный чат. Это штатный шум — без traceback.
+_EXPECTED_NOTIFY_ERRORS = (
+    'query is too old',
+    'query id is invalid',
+    'chat not found',
+    'user is deactivated',
+)
 
 
 class MaintenanceMiddleware(BaseMiddleware):
@@ -48,6 +59,17 @@ class MaintenanceMiddleware(BaseMiddleware):
                 await event.answer(maintenance_message, parse_mode='HTML')
             elif isinstance(event, CallbackQuery):
                 await event.answer(maintenance_message, show_alert=True)
+        except TelegramForbiddenError as e:
+            logger.debug('Сообщение о техработах не доставлено: бот заблокирован', user_id=user.id, error=str(e))
+        except TelegramBadRequest as e:
+            if any(marker in str(e).lower() for marker in _EXPECTED_NOTIFY_ERRORS):
+                logger.debug(
+                    'Сообщение о техработах не доставлено (устаревший callback/недоступный чат)',
+                    user_id=user.id,
+                    error=str(e),
+                )
+            else:
+                logger.error('Ошибка отправки сообщения о техработах пользователю', user_id=user.id, error=e)
         except Exception as e:
             logger.error('Ошибка отправки сообщения о техработах пользователю', user_id=user.id, error=e)
 

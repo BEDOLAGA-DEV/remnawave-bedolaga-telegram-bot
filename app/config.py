@@ -199,9 +199,11 @@ class Settings(BaseSettings):
     RESET_DEVICES_ON_RENEWAL: bool = False
     TARIFF_SWITCH_UPGRADE_ENABLED: bool = True
     TARIFF_SWITCH_DOWNGRADE_ENABLED: bool = True
-    # При смене тарифа НЕ переносить остаток дней, наспамленных на бесплатном (0₽)
-    # тарифе, на новый платный тариф (иначе юзер бесплатно уносит, напр., 1000 дней).
-    # Платные подписки переносят дни как обычно. Выключите, чтобы вернуть перенос.
+    # Мастер-переключатель сброса бесплатного периода при переходе на платный.
+    # При True остаток НЕ переносится ни для триала («бесплатная версия» бота),
+    # ни для 0₽-тарифа — даже если TRIAL_ADD_REMAINING_DAYS_TO_PAID=true (сброс
+    # перебивает перенос). Платные подписки переносят дни как обычно. Выключите,
+    # чтобы разрешить перенос (тогда для триалов действует TRIAL_ADD_REMAINING_DAYS_TO_PAID).
     TARIFF_SWITCH_RESET_FREE_DAYS: bool = True
     MAX_DEVICES_LIMIT: int = 20
 
@@ -585,6 +587,11 @@ class Settings(BaseSettings):
     PLATEGA_SECRET: str | None = None
     PLATEGA_DISPLAY_NAME: str = 'Platega'
     PLATEGA_BASE_URL: str = 'https://app.platega.io'
+    # 'v1' — документированный POST /transaction/process с обязательным paymentMethod
+    # (ответ несёт ссылку в поле `redirect`); 'v2' — POST /v2/transaction/process
+    # (ссылка в поле `url`), нужен мерчантам, у которых карточные каскады доступны
+    # только в v2 (#2934: v1 отдаёт 400 «No available card cascades» для карт).
+    PLATEGA_API_VERSION: str = 'v1'
     PLATEGA_RETURN_URL: str | None = None
     PLATEGA_FAILED_URL: str | None = None
     PLATEGA_CURRENCY: str = 'RUB'
@@ -917,6 +924,30 @@ class Settings(BaseSettings):
     ETOPLATEZHI_CARD_DISPLAY_NAME: str = 'Карта (Etoplatezhi)'
 
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
+    # Rich-меню (Bot API 10.1): заголовки, таблица подписок, details-блоки, tg-time.
+    # Требует telegram-bot-api с Bot API 10.1+; при недоступности бот сам откатывается
+    # на классический рендер до рестарта. В rich-режиме главное меню идёт без логотипа.
+    MAIN_MENU_RICH_ENABLED: bool = True
+    # Эффект сообщения при отправке rich-меню (только личные чаты). Известные id:
+    # 🎉 5046509860389126442, ❤️ 5044134455711629726, 🔥 5104841245755180586,
+    # 👍 5107584321108051014, 👎 5104858069142078462, 💩 5046589136895476101.
+    # Пусто — без эффекта. При отказе сервера эффект отключается сам до рестарта.
+    MAIN_MENU_RICH_EFFECT_ID: str = '5046509860389126442'
+    # Сворачивать таблицу подписок в раскрываемый details-блок, когда у юзера
+    # больше одной подписки (мультитариф) — меню компактнее.
+    MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE: bool = True
+    # Публичный HTTPS-URL картинки-логотипа в шапке rich-меню. Пусто — авто-режим:
+    # при заданном WEBHOOK_URL и существующем LOGO_FILE логотип отдаётся своим
+    # эндпоинтом {origin WEBHOOK_URL}/cabinet/branding/bot-logo. Если Telegram не
+    # сможет скачать картинку, меню продолжит отправляться без логотипа до рестарта.
+    MAIN_MENU_RICH_LOGO_URL: str = ''
+
+    # Лог действий пользователя (нажатия кнопок в боте + мутационные запросы в
+    # кабинете) в button_click_logs — источник таймлайна «Активность» в карточке
+    # юзера админ-кабинета.
+    USER_ACTION_LOG_ENABLED: bool = True
+    # Сколько дней хранить записи логов действий (0 = не чистить).
+    USER_ACTION_LOG_RETENTION_DAYS: int = 90
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
     CABINET_BUTTON_STYLE: str = ''
     CONNECT_BUTTON_MODE: str = 'miniapp_subscription'
@@ -941,6 +972,14 @@ class Settings(BaseSettings):
     MINIAPP_SERVICE_DESCRIPTION_RU: str = 'Безопасное и быстрое подключение'
     CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED: bool = False
     HAPP_CRYPTOLINK_REDIRECT_TEMPLATE: str | None = None
+    # Remnawave 2.8.0 удалил /api/system/tools/happ/encrypt — недостающие crypt-ссылки
+    # генерируются локально (RSA публичным ключом Happ, как на subpage панели ->
+    # happ://crypt4/...). Выключатель на случай ротации ключа Happ: тогда до обновления
+    # бота ссылки поедут через панель/внешний API.
+    HAPP_CRYPTOLINK_LOCAL_ENCRYPTION_ENABLED: bool = True
+    # Запасной путь — официальный Happ API (crypto.happ.su -> happ://crypt5/...).
+    # Выключатель на случай проблем с внешним сервисом.
+    HAPP_CRYPTOLINK_API_FALLBACK_ENABLED: bool = True
     HAPP_DOWNLOAD_LINK_IOS: str | None = None
     HAPP_DOWNLOAD_LINK_ANDROID: str | None = None
     HAPP_DOWNLOAD_LINK_MACOS: str | None = None
@@ -958,6 +997,7 @@ class Settings(BaseSettings):
 
     PRIVACY_POLICY_DISPLAY_MODE: str = 'both'
     PUBLIC_OFFER_DISPLAY_MODE: str = 'both'
+    RECURRENT_PAYMENTS_DISPLAY_MODE: str = 'both'
     SERVICE_RULES_DISPLAY_MODE: str = 'both'
     FAQ_DISPLAY_MODE: str = 'both'
 

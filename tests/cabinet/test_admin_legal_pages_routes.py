@@ -13,6 +13,7 @@ def test_admin_legal_pages_routes_registered():
     paths = {route.path for route in router.routes}
     assert '/cabinet/admin/legal-pages/privacy-policy' in paths
     assert '/cabinet/admin/legal-pages/public-offer' in paths
+    assert '/cabinet/admin/legal-pages/recurrent-payments' in paths
     assert '/cabinet/admin/legal-pages/rules' in paths
     assert '/cabinet/admin/legal-pages/faq' in paths
     assert '/cabinet/admin/legal-pages/faq/pages' in paths

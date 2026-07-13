@@ -7,6 +7,7 @@ from app.config import settings
 DISPLAY_KEYS = (
     'PRIVACY_POLICY_DISPLAY_MODE',
     'PUBLIC_OFFER_DISPLAY_MODE',
+    'RECURRENT_PAYMENTS_DISPLAY_MODE',
     'SERVICE_RULES_DISPLAY_MODE',
     'FAQ_DISPLAY_MODE',
 )
@@ -23,6 +24,7 @@ async def test_visibility_defaults_all_true(monkeypatch):
     assert response.rules is True
     assert response.privacy is True
     assert response.offer is True
+    assert response.recurrent is True
 
 
 @pytest.mark.asyncio
@@ -67,6 +69,16 @@ async def test_offer_endpoint_404_when_bot_only(monkeypatch):
     monkeypatch.setattr(settings, 'PUBLIC_OFFER_DISPLAY_MODE', 'bot', raising=False)
     with pytest.raises(HTTPException) as exc_info:
         await get_public_offer(language='ru', db=None)
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_recurrent_endpoint_404_when_bot_only(monkeypatch):
+    from app.cabinet.routes.info import get_recurrent_payments
+
+    monkeypatch.setattr(settings, 'RECURRENT_PAYMENTS_DISPLAY_MODE', 'bot', raising=False)
+    with pytest.raises(HTTPException) as exc_info:
+        await get_recurrent_payments(language='ru', db=None)
     assert exc_info.value.status_code == 404
 
 

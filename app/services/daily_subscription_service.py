@@ -103,6 +103,22 @@ class DailySubscriptionService:
 
         return stats
 
+    async def _reload_daily_subscription(self, db, subscription_id: int) -> Subscription:
+        """Пере-фетчит суточную подписку с eager-load user+tariff.
+
+        После ``db.commit()`` (expire_on_commit) eager-loaded связи ``user``/``tariff``
+        истекают; последующее обращение ``subscription.user``/``.tariff`` в async-сессии
+        уходит в lazy-load → ``MissingGreenlet``. Пере-фетч с selectinload восстанавливает
+        связи на объекте, чтобы _process_single_charge и его нотификации читали их
+        безопасно (см. ERROR REPORT: MissingGreenlet в process_auto_resume).
+        """
+        result = await db.execute(
+            select(Subscription)
+            .options(selectinload(Subscription.user), selectinload(Subscription.tariff))
+            .where(Subscription.id == subscription_id)
+        )
+        return result.scalar_one()
+
     async def _process_single_charge(self, db, subscription) -> str:
         """
         Обрабатывает списание для одной подписки.
@@ -229,8 +245,9 @@ class DailySubscriptionService:
                         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
                     if squads:
                         subscription.connected_squads = squads
+                        _sub_id = subscription.id
                         await db.commit()
-                        await db.refresh(subscription)
+                        subscription = await self._reload_daily_subscription(db, _sub_id)
             except Exception as sq_err:
                 logger.warning('Не удалось восстановить connected_squads', error=sq_err)
 
@@ -754,9 +771,10 @@ class DailySubscriptionService:
                             # чтобы _process_single_charge корректно его обновил при списании.
                             # Если списание упадёт, подписка останется без last_daily_charge_at
                             # и будет подхвачена на следующем цикле.
+                            _sub_id = subscription.id
                             subscription.status = SubscriptionStatus.ACTIVE.value
                             await db.commit()
-                            await db.refresh(subscription)
+                            subscription = await self._reload_daily_subscription(db, _sub_id)
 
                             logger.info(
                                 '✅ Суточная подписка возобновлена (DISABLED→ACTIVE, баланс пополнен)',
@@ -787,9 +805,10 @@ class DailySubscriptionService:
                     for subscription in expired_subs:
                         try:
                             # Восстанавливаем в ACTIVE — charge обновит end_date и last_daily_charge_at
+                            _sub_id = subscription.id
                             subscription.status = SubscriptionStatus.ACTIVE.value
                             await db.commit()
-                            await db.refresh(subscription)
+                            subscription = await self._reload_daily_subscription(db, _sub_id)
 
                             logger.warning(
                                 '🔄 Суточная подписка восстановлена (EXPIRED→ACTIVE, ошибочный expire)',

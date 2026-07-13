@@ -2,14 +2,17 @@ import asyncio
 import base64
 import json
 import ssl
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 import aiohttp
 import structlog
+from Crypto.Cipher import PKCS1_v1_5
+from Crypto.PublicKey import RSA
 
 from app.config import settings
 
@@ -240,12 +243,56 @@ class RemnaWaveTransientError(RemnaWaveAPIError):
     surfaced by the monitoring service, not by per-request error logs."""
 
 
+# Публичный RSA-ключ Happ для crypt4-ссылок — тот же, которым официальная страница
+# подписки Remnawave шифрует ссылку в браузере (@kastov/cryptohapp: JSEncrypt =
+# RSA PKCS#1 v1.5 + base64). Ключ публичный, расшифровать ссылку может только
+# приложение Happ своим приватным ключом.
+HAPP_CRYPTO_V4_PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
+MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA3UZ0M3L4K+WjM3vkbQnz
+ozHg/cRbEXvQ6i4A8RVN4OM3rK9kU01FdjyoIgywve8OEKsFnVwERZAQZ1Trv60B
+hmaM76QQEE+EUlIOL9EpwKWGtTL5lYC1sT9XJMNP3/CI0gP5wwQI88cY/xedpOEB
+W72EmOOShHUm/b/3m+HPmqwc4ugKj5zWV5SyiT829aFA5DxSjmIIFBAms7DafmSq
+LFTYIQL5cShDY2u+/sqyAw9yZIOoqW2TFIgIHhLPWek/ocDU7zyOrlu1E0SmcQQb
+LFqHq02fsnH6IcqTv3N5Adb/CkZDDQ6HvQVBmqbKZKf7ZdXkqsc/Zw27xhG7OfXC
+tUmWsiL7zA+KoTd3avyOh93Q9ju4UQsHthL3Gs4vECYOCS9dsXXSHEY/1ngU/hjO
+WFF8QEE/rYV6nA4PTyUvo5RsctSQL/9DJX7XNh3zngvif8LsCN2MPvx6X+zLouBX
+zgBkQ9DFfZAGLWf9TR7KVjZC/3NsuUCDoAOcpmN8pENBbeB0puiKMMWSvll36+2M
+YR1Xs0MgT8Y9TwhE2+TnnTJOhzmHi/BxiUlY/w2E0s4ax9GHAmX0wyF4zeV7kDkc
+vHuEdc0d7vDmdw0oqCqWj0Xwq86HfORu6tm1A8uRATjb4SzjTKclKuoElVAVa5Jo
+oh/uZMozC65SmDw+N5p6Su8CAwEAAQ==
+-----END PUBLIC KEY-----"""
+
+HAPP_CRYPTO_V4_DEEP_LINK_PREFIX = 'happ://crypt4/'
+
+# Официальный Happ crypto API: POST {"url": ...} -> {"encrypted_link": "happ://crypt5/..."}.
+# Запасной источник crypt-ссылок, если локальное шифрование выключено/не удалось.
+HAPP_CRYPTO_API_URL = 'https://crypto.happ.su/api-v2.php'
+HAPP_CRYPTO_API_COOLDOWN_SECONDS = 600
+HAPP_CRYPTO_API_CACHE_MAX = 512
+
+
 class RemnaWaveAPI:
-    # Remnawave 2.8.0 удалил POST /api/system/tools/happ/encrypt. Клиент создаётся
-    # на каждый запрос, поэтому флаг доступности happ-encrypt держим на классе: после
-    # первого 404 перестаём звать удалённый эндпоинт (иначе 404 + warning на каждый
-    # вызов get_subscription_info/enrich_user_with_happ_link). Сбрасывается рестартом.
+    # Remnawave 2.8.0 удалил POST /api/system/tools/happ/encrypt (панель теперь
+    # генерирует crypt-ссылки на клиенте своего subpage). Клиент создаётся на каждый
+    # запрос, поэтому состояние happ-шифрования держим на классе (сбрасывается рестартом):
+    #  - _happ_encrypt_unavailable: после первого 404 не дёргаем удалённый эндпоинт
+    #    (иначе 404 + warning на каждый вызов get_subscription_info/enrich_user_with_happ_link);
+    #  - _happ_api_disabled_until: monotonic-метка охлаждения официального Happ API после
+    #    сбоя сервиса (сеть/5xx), чтобы внешний сервис не тормозил горячие пути
+    #    (enrich на каждом get_user_by_*);
+    #  - _happ_api_cache: subscription_url -> crypt-ссылка, спасает от повторных внешних
+    #    вызовов, пока ссылка не сохранена в БД (клиент пересоздаётся на каждый запрос);
+    #  - _happ_api_failed_urls: URL, которые Happ API отверг (4xx/мусор в ответе) —
+    #    их не ретраим, но и весь fallback из-за них не выключаем.
+    #  - _happ_local_cache: subscription_url -> crypt4-ссылка локального шифрования.
+    #    Паддинг PKCS#1 v1.5 случайный, без кэша каждый вызов даёт новую ссылку для
+    #    того же URL — и синки (сравнение с сохранённой subscription_crypto_link)
+    #    видели бы ложное «изменение» на каждом проходе.
     _happ_encrypt_unavailable: bool = False
+    _happ_api_disabled_until: float = 0.0
+    _happ_api_cache: ClassVar[dict[str, str]] = {}
+    _happ_api_failed_urls: ClassVar[set[str]] = set()
+    _happ_local_cache: ClassVar[dict[str, str]] = {}
 
     def __init__(
         self,
@@ -1388,6 +1435,46 @@ class RemnaWaveAPI:
         return True
 
     async def encrypt_happ_crypto_link(self, link_to_encrypt: str) -> str | None:
+        encrypted = self._encrypt_locally(link_to_encrypt)
+        if encrypted:
+            return encrypted
+        encrypted = await self._encrypt_via_panel(link_to_encrypt)
+        if encrypted:
+            return encrypted
+        return await self._encrypt_via_happ_api(link_to_encrypt)
+
+    @staticmethod
+    def _encrypt_locally(link_to_encrypt: str) -> str | None:
+        """Шифрует ссылку подписки в happ://crypt4/... локально, без сети.
+
+        Повторяет алгоритм официальной страницы подписки Remnawave
+        (@kastov/cryptohapp): RSA PKCS#1 v1.5 публичным ключом Happ + base64.
+        В отличие от панельного эндпоинта (удалён в 2.8.0) и внешнего Happ API
+        (лимиты, cooldown, утечка URL подписки вовне) работает всегда и бесплатно.
+        """
+        if not settings.HAPP_CRYPTOLINK_LOCAL_ENCRYPTION_ENABLED:
+            return None
+        cached = RemnaWaveAPI._happ_local_cache.get(link_to_encrypt)
+        if cached:
+            return cached
+        try:
+            key = RSA.import_key(HAPP_CRYPTO_V4_PUBLIC_KEY)
+            payload = link_to_encrypt.encode('utf-8')
+            # Лимит PKCS#1 v1.5 — размер ключа минус 11 байт (501 для RSA-4096)
+            if len(payload) > key.size_in_bytes() - 11:
+                logger.warning('Ссылка слишком длинная для happ crypt4', length=len(payload))
+                return None
+            encrypted = PKCS1_v1_5.new(key).encrypt(payload)
+            link = HAPP_CRYPTO_V4_DEEP_LINK_PREFIX + base64.b64encode(encrypted).decode('ascii')
+            if len(RemnaWaveAPI._happ_local_cache) >= HAPP_CRYPTO_API_CACHE_MAX:
+                RemnaWaveAPI._happ_local_cache.clear()
+            RemnaWaveAPI._happ_local_cache[link_to_encrypt] = link
+            return link
+        except Exception as e:
+            logger.warning('Не удалось локально зашифровать happ ссылку', error=e)
+            return None
+
+    async def _encrypt_via_panel(self, link_to_encrypt: str) -> str | None:
         # Эндпоинт удалён в Remnawave 2.8.0 — после первого 404 больше не дёргаем.
         if RemnaWaveAPI._happ_encrypt_unavailable:
             return None
@@ -1398,7 +1485,10 @@ class RemnaWaveAPI:
         except RemnaWaveAPIError as e:
             if e.status_code == 404:
                 RemnaWaveAPI._happ_encrypt_unavailable = True
-                logger.info('happ-encrypt эндпоинт недоступен (удалён в Remnawave 2.8.0) — отключаю до рестарта')
+                logger.info(
+                    'happ-encrypt эндпоинт недоступен (удалён в Remnawave 2.8.0) — '
+                    'переключаюсь на официальный Happ API до рестарта'
+                )
                 return None
             logger.warning('Не удалось зашифровать happ ссылку', message=e.message)
             return None
@@ -1406,9 +1496,98 @@ class RemnaWaveAPI:
             logger.warning('Ошибка при шифровании happ ссылки', error=e)
             return None
 
+    async def _encrypt_via_happ_api(self, link_to_encrypt: str) -> str | None:
+        """Fallback: официальный Happ crypto API v2 -> happ://crypt5/... ."""
+        if not settings.HAPP_CRYPTOLINK_API_FALLBACK_ENABLED:
+            return None
+
+        cached = RemnaWaveAPI._happ_api_cache.get(link_to_encrypt)
+        if cached:
+            return cached
+
+        if link_to_encrypt in RemnaWaveAPI._happ_api_failed_urls:
+            return None
+
+        if time.monotonic() < RemnaWaveAPI._happ_api_disabled_until:
+            return None
+
+        try:
+            encrypted = await self._call_happ_crypto_api(link_to_encrypt)
+        except RemnaWaveAPIError as e:
+            # 429 — троттлинг сервиса (лечится паузой ниже), остальные 4xx — отказ
+            # по конкретному URL: не выключаем fallback глобально, просто не ретраим
+            # этот URL до рестарта.
+            if e.status_code is not None and 400 <= e.status_code < 500 and e.status_code != 429:
+                self._remember_failed_happ_url(link_to_encrypt)
+                logger.warning('Happ crypto API отклонил ссылку', status=e.status_code)
+                return None
+            RemnaWaveAPI._happ_api_disabled_until = time.monotonic() + HAPP_CRYPTO_API_COOLDOWN_SECONDS
+            logger.warning(
+                'Happ crypto API недоступен — пауза перед повторными попытками',
+                error=e,
+                cooldown_seconds=HAPP_CRYPTO_API_COOLDOWN_SECONDS,
+            )
+            return None
+        except Exception as e:
+            RemnaWaveAPI._happ_api_disabled_until = time.monotonic() + HAPP_CRYPTO_API_COOLDOWN_SECONDS
+            logger.warning(
+                'Happ crypto API недоступен — пауза перед повторными попытками',
+                error=e,
+                cooldown_seconds=HAPP_CRYPTO_API_COOLDOWN_SECONDS,
+            )
+            return None
+
+        if not encrypted or not encrypted.startswith('happ://'):
+            # 200 с мусором в теле — считаем проблемой конкретного URL, не сервиса.
+            self._remember_failed_happ_url(link_to_encrypt)
+            logger.warning('Happ crypto API вернул неожиданный ответ', has_link=bool(encrypted))
+            return None
+
+        if len(RemnaWaveAPI._happ_api_cache) >= HAPP_CRYPTO_API_CACHE_MAX:
+            RemnaWaveAPI._happ_api_cache.clear()
+        RemnaWaveAPI._happ_api_cache[link_to_encrypt] = encrypted
+        return encrypted
+
+    @staticmethod
+    def _remember_failed_happ_url(link_to_encrypt: str) -> None:
+        if len(RemnaWaveAPI._happ_api_failed_urls) >= HAPP_CRYPTO_API_CACHE_MAX:
+            RemnaWaveAPI._happ_api_failed_urls.clear()
+        RemnaWaveAPI._happ_api_failed_urls.add(link_to_encrypt)
+
+    async def _call_happ_crypto_api(self, link_to_encrypt: str) -> str | None:
+        # Отдельная сессия: панельные заголовки (X-Api-Key/Authorization) не должны
+        # утекать на внешний сервис.
+        timeout = aiohttp.ClientTimeout(total=10, connect=5)
+        async with (
+            aiohttp.ClientSession(timeout=timeout) as session,
+            session.post(HAPP_CRYPTO_API_URL, json={'url': link_to_encrypt}) as response,
+        ):
+            if response.status != 200:
+                raise RemnaWaveAPIError(f'Happ crypto API вернул статус {response.status}', response.status)
+            try:
+                payload = await response.json(content_type=None)
+            except ValueError:
+                # 200 с не-JSON телом — мусор по конкретному URL, а не сбой сервиса:
+                # None уводит вызывающего в per-URL ветку, а не в глобальный cooldown.
+                payload = None
+        if not isinstance(payload, dict):
+            return None
+        encrypted = payload.get('encrypted_link')
+        return encrypted if isinstance(encrypted, str) else None
+
     async def enrich_user_with_happ_link(self, user: RemnaWaveUser) -> RemnaWaveUser:
         if not user.happ_crypto_link and user.subscription_url:
-            encrypted = await self.encrypt_happ_crypto_link(user.subscription_url)
+            # Сначала локальное шифрование (мгновенно, без сети), затем панельный
+            # эндпоинт (2.7.x). Внешний Happ API на этом горячем пути (enrich зовётся
+            # на каждом get_user_by_*) дёргаем только когда crypt-ссылки реально нужны
+            # боту (happ_cryptolink-режим); кабинет генерирует недостающие ссылки сам —
+            # по факту CRYPT-шаблона в app-config, — так что URL подписок не утекают
+            # вовне без надобности.
+            encrypted = self._encrypt_locally(user.subscription_url) or await self._encrypt_via_panel(
+                user.subscription_url
+            )
+            if not encrypted and settings.is_happ_cryptolink_mode():
+                encrypted = await self._encrypt_via_happ_api(user.subscription_url)
             if encrypted:
                 user.happ_crypto_link = encrypted
         return user

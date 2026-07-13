@@ -60,6 +60,7 @@ PERMISSION_REGISTRY: dict[str, list[str]] = {
     'broadcasts': ['read', 'create', 'edit', 'delete', 'send'],
     'tariffs': ['read', 'create', 'edit', 'delete'],
     'promocodes': ['read', 'create', 'edit', 'delete', 'stats'],
+    'coupons': ['read', 'create', 'edit'],
     'promo_groups': ['read', 'create', 'edit', 'delete'],
     'promo_offers': ['read', 'create', 'edit', 'send'],
     'campaigns': ['read', 'create', 'edit', 'delete', 'stats'],

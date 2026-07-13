@@ -318,6 +318,43 @@ class PaymentCommonMixin:
             return False
 
 
+async def notify_email_user_topup(user: Any, amount_kopeks: int) -> None:
+    """«Пополнение успешно» для юзеров без Telegram (#2952).
+
+    Провайдерские webhook-обработчики шлют это сообщение только в Telegram
+    (гейт ``if bot and user.telegram_id``) — email-юзеры (telegram_id IS NULL)
+    не получали ничего. Вызываем мультиканальный роутер ТОЛЬКО для юзеров без
+    telegram_id: telegram-юзерам провайдер уже отправил сообщение напрямую, а
+    роутер сам проверяет email_verified и статус аккаунта. Сбои глотаем —
+    уведомление не должно ронять webhook после зачисления денег.
+    """
+    if user is None or getattr(user, 'telegram_id', None) or not getattr(user, 'email', None):
+        return
+    try:
+        from app.services.notification_delivery_service import (
+            NotificationType,
+            notification_delivery_service,
+        )
+
+        await notification_delivery_service.send_notification(
+            user=user,
+            notification_type=NotificationType.BALANCE_TOPUP,
+            context={
+                'formatted_amount': settings.format_price(amount_kopeks),
+                'formatted_balance': settings.format_price(getattr(user, 'balance_kopeks', 0) or 0),
+                'amount_kopeks': amount_kopeks,
+                'new_balance_kopeks': getattr(user, 'balance_kopeks', 0) or 0,
+            },
+            bot=None,
+        )
+    except Exception as error:
+        logger.error(
+            'Не удалось отправить email-уведомление о пополнении',
+            user_id=getattr(user, 'id', None),
+            error=error,
+        )
+
+
 async def send_cart_notification_after_topup(
     user: Any,
     amount_kopeks: int,
@@ -330,7 +367,12 @@ async def send_cart_notification_after_topup(
     Само сообщение «Баланс пополнен…» больше не шлётся — оно дублировало
     основное «Пополнение успешно!» и ломало MAIN_MENU_MODE=cabinet.
     """
-    del amount_kopeks  # больше не используется после удаления второго сообщения
+    # Единственная общая точка после зачисления во ВСЕХ провайдерах — поэтому
+    # email/WS-канал для юзеров без Telegram подключён здесь, а не в 18+
+    # webhook-обработчиках. Уходит до автопокупки, чтобы уведомления пришли в
+    # хронологическом порядке «пополнение → подписка» (#2952). Для
+    # telegram-юзеров это no-op — им сообщение уже отправил провайдер.
+    await notify_email_user_topup(user, amount_kopeks)
 
     from app.services.subscription_auto_purchase_service import (
         auto_purchase_saved_cart_after_topup,

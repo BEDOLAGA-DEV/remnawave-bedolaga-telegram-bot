@@ -45,6 +45,54 @@ def _format_user_id(user: User) -> str:
     return str(user.telegram_id) if user.telegram_id else f'email:{user.id}'
 
 
+async def _notify_email_user_auto_purchase(
+    user: User,
+    subscription: Subscription | None,
+    tariff_name: str | None,
+    *,
+    renewed: bool,
+) -> None:
+    """Email/WS-уведомление об автопокупке для юзеров без Telegram (#2952).
+
+    Все user-уведомления в этом сервисе гейтятся ``if bot and user.telegram_id``
+    — email-юзеры (авторизация только по email) не узнавали о результате
+    автопокупки вообще. Мультиканальный роутер вызываем ТОЛЬКО для юзеров без
+    telegram_id: telegram-юзерам сообщение уже отправлено ботом напрямую, а
+    роутер сам проверяет email_verified и статус аккаунта. Сбои глотаем —
+    подписка уже оформлена, уведомление не должно ронять flow.
+    """
+    if user is None or getattr(user, 'telegram_id', None) or not getattr(user, 'email', None):
+        return
+    try:
+        from app.services.notification_delivery_service import (
+            NotificationType,
+            notification_delivery_service,
+        )
+
+        end_date = getattr(subscription, 'end_date', None)
+        end_date_str = end_date.strftime('%d.%m.%Y') if end_date else ''
+        await notification_delivery_service.send_notification(
+            user=user,
+            notification_type=(
+                NotificationType.SUBSCRIPTION_RENEWED if renewed else NotificationType.SUBSCRIPTION_ACTIVATED
+            ),
+            context={
+                'expires_at': end_date_str,
+                'new_expires_at': end_date_str,
+                'traffic_limit_gb': getattr(subscription, 'traffic_limit_gb', None),
+                'device_limit': getattr(subscription, 'device_limit', None),
+                'tariff_name': tariff_name or '',
+            },
+            bot=None,
+        )
+    except Exception as error:
+        logger.error(
+            'Не удалось отправить email-уведомление об автопокупке',
+            user_id=getattr(user, 'id', None),
+            error=error,
+        )
+
+
 @dataclass(slots=True)
 class AutoPurchaseContext:
     """Aggregated data prepared for automatic checkout processing."""
@@ -727,6 +775,10 @@ async def _auto_extend_subscription(
                 error=error,
             )
 
+    # Конвертация триала в платную — это первая активация, а не продление
+    # (email иначе получил бы «Подписка продлена» вместо «активирована», #2952).
+    await _notify_email_user_auto_purchase(user, updated_subscription, prepared.tariff_name, renewed=not was_trial)
+
     logger.info(
         '✅ Автопокупка: подписка продлена на дней для пользователя',
         period_days=prepared.period_days,
@@ -1093,6 +1145,11 @@ async def _auto_purchase_tariff(
                 error=error,
             )
 
+    # Триал→платный = первая активация, не продление (иначе email врёт «продлена»).
+    await _notify_email_user_auto_purchase(
+        user, subscription, tariff_name_for_label, renewed=bool(existing_subscription) and not was_trial_conversion
+    )
+
     logger.info(
         '✅ Автопокупка тарифа: подписка на тариф (дней) оформлена для пользователя',
         tariff_name=tariff.name,
@@ -1444,6 +1501,11 @@ async def _auto_purchase_daily_tariff(
                 telegram_id=user.telegram_id or user.id,
                 error=error,
             )
+
+    # Триал→платный = первая активация, не продление (иначе email врёт «продлена»).
+    await _notify_email_user_auto_purchase(
+        user, subscription, tariff.name, renewed=bool(existing_subscription) and not was_trial_conversion
+    )
 
     logger.info(
         '✅ Автопокупка суточного тарифа: тариф активирован для пользователя',
@@ -2535,6 +2597,8 @@ async def try_auto_extend_expired_after_topup(
                 error=error,
             )
 
+    await _notify_email_user_auto_purchase(user, updated_subscription, tariff_name_for_label, renewed=True)
+
     logger.info(
         '✅ Автопродление expired: подписка продлена для пользователя',
         period_days=period_days,
@@ -2912,6 +2976,8 @@ async def try_resume_disabled_daily_after_topup(
                 telegram_id=user.telegram_id or user.id,
                 error=error,
             )
+
+    await _notify_email_user_auto_purchase(user, subscription, tariff.name, renewed=True)
 
     logger.info(
         '✅ Авто-возобновление daily: подписка возобновлена для пользователя',

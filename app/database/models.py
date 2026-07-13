@@ -2485,6 +2485,69 @@ class PromoCodeUse(Base):
     user = relationship('User')
 
 
+class CouponStatus(StrEnum):
+    ACTIVE = 'active'
+    REDEEMED = 'redeemed'
+    REVOKED = 'revoked'
+
+
+class CouponBatch(Base):
+    """Batch of one-time coupons for wholesale/partner sales.
+
+    The admin generates N coupons for a tariff+period, hands the links to a
+    partner and settles payment outside the bot; ``wholesale_price_kopeks``
+    is bookkeeping only.
+    """
+
+    __tablename__ = 'coupon_batches'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    tariff_id = Column(Integer, ForeignKey('tariffs.id', ondelete='SET NULL'), nullable=True, index=True)
+    period_days = Column(Integer, nullable=False)
+    coupons_total = Column(Integer, nullable=False)
+    wholesale_price_kopeks = Column(Integer, nullable=False, default=0)  # за купон; 0 — не указана
+    valid_until = Column(AwareDateTime(), nullable=True)
+    # Display-only cache for list views; per-coupon Coupon.status is the
+    # authority (redemption never consults this flag)
+    is_revoked = Column(Boolean, nullable=False, default=False)
+    created_by = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+    coupons = relationship('Coupon', back_populates='batch', lazy='noload')
+    tariff = relationship('Tariff', lazy='selectin')
+
+    @property
+    def is_expired(self) -> bool:
+        return self.valid_until is not None and _aware(self.valid_until) < datetime.now(UTC)
+
+    def __repr__(self) -> str:
+        return f"<CouponBatch id={self.id} name='{self.name}'>"
+
+
+class Coupon(Base):
+    """One-time coupon redeemed via the ``/start coupon_<token>`` deep link."""
+
+    __tablename__ = 'coupons'
+    __table_args__ = (Index('ix_coupons_batch_status', 'batch_id', 'status'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey('coupon_batches.id', ondelete='CASCADE'), nullable=False)
+    token = Column(String(64), unique=True, nullable=False, index=True)
+    status = Column(String(20), nullable=False, default=CouponStatus.ACTIVE.value)
+    redeemed_by = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    redeemed_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+
+    batch = relationship('CouponBatch', back_populates='coupons', lazy='selectin')
+    user = relationship('User', foreign_keys=[redeemed_by], lazy='noload')
+
+    def __repr__(self) -> str:
+        token_prefix = self.token[:5] if self.token else '?'
+        return f"<Coupon token='{token_prefix}...' status='{self.status}'>"
+
+
 class ReferralEarning(Base):
     __tablename__ = 'referral_earnings'
 
@@ -2783,6 +2846,17 @@ class PrivacyPolicy(Base):
 
 class PublicOffer(Base):
     __tablename__ = 'public_offers'
+
+    id = Column(Integer, primary_key=True, index=True)
+    language = Column(String(10), nullable=False, unique=True)
+    content = Column(Text, nullable=False)
+    is_enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+
+class RecurrentPayments(Base):
+    __tablename__ = 'recurrent_payments'
 
     id = Column(Integer, primary_key=True, index=True)
     language = Column(String(10), nullable=False, unique=True)

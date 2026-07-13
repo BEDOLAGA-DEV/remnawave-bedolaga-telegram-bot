@@ -389,6 +389,7 @@ class MonitoringService:
                 await self._retry_stuck_guest_purchases(db)
                 await self._retry_pending_account_deletions()
                 await self._cleanup_expired_refresh_tokens(db)
+                await self._cleanup_button_click_logs(db)
                 await self._cleanup_inactive_users(db)
                 await self._sync_with_remnawave(db)
 
@@ -1835,6 +1836,9 @@ class MonitoringService:
                 '💳 <b>Автоплатеж:</b> {autopay_status}\n\n'
                 '{action_text}\n',
             ).format(
+                # Кастомные/старые локали используют {days} вместо {days_text} —
+                # передаём оба, иначе .format() падает с KeyError('days') (#2737).
+                days=days,
                 days_text=days_text,
                 end_date=end_date,
                 autopay_status=autopay_status,
@@ -2615,6 +2619,34 @@ class MonitoringService:
                 logger.info('Cleaned up expired/revoked refresh tokens', deleted_count=deleted)
         except Exception as error:
             logger.error('Error cleaning up refresh tokens', error=error)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+    async def _cleanup_button_click_logs(self, db: AsyncSession):
+        """Чистит старые записи лога действий юзеров (USER_ACTION_LOG_RETENTION_DAYS)."""
+        try:
+            retention_days = settings.USER_ACTION_LOG_RETENTION_DAYS
+            if retention_days <= 0:
+                return
+
+            now = datetime.now(UTC)
+            if now.hour != 4:
+                return
+
+            from sqlalchemy import delete
+
+            from app.database.models import ButtonClickLog
+
+            stmt = delete(ButtonClickLog).where(ButtonClickLog.clicked_at < now - timedelta(days=retention_days))
+            result = await db.execute(stmt)
+            deleted = result.rowcount
+            if deleted > 0:
+                await db.commit()
+                logger.info('Очищены старые записи лога действий', deleted_count=deleted)
+        except Exception as error:
+            logger.error('Ошибка очистки лога действий', error=error)
             try:
                 await db.rollback()
             except Exception:

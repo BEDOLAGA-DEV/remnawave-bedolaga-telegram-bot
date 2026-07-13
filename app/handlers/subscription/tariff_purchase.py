@@ -3913,6 +3913,16 @@ async def show_instant_switch_list(
         await callback.answer('Текущий тариф не найден', show_alert=True)
         return
 
+    # Смена С бесплатного (0₽) тарифа: prorated instant-switch неприменим —
+    # доплата считалась бы за весь наспамленный/подаренный остаток (сотни дней),
+    # а сами дни переносились бы на платный тариф вопреки
+    # TARIFF_SWITCH_RESET_FREE_DAYS. Отправляем в флоу с выбором периода:
+    # там оплачивается полная стоимость периода, а extend_subscription
+    # сбрасывает бесплатный остаток.
+    if settings.TARIFF_SWITCH_RESET_FREE_DAYS and current_tariff.is_free:
+        await show_tariff_switch_list(callback, db_user, db, state)
+        return
+
     # Рассчитываем оставшиеся дни
     now = datetime.now(UTC)
     remaining_days = 0
@@ -4027,6 +4037,12 @@ async def preview_instant_switch(
     current_tariff = await get_tariff_by_id(db, current_tariff_id)
     if not current_tariff:
         await callback.answer('Текущий тариф не найден', show_alert=True)
+        return
+
+    # Бесплатный (0₽) исходный тариф не переключается через prorated instant-switch
+    # (см. show_instant_switch_list) — кнопка могла остаться в старом сообщении.
+    if settings.TARIFF_SWITCH_RESET_FREE_DAYS and current_tariff.is_free:
+        await show_tariff_switch_list(callback, db_user, db, state)
         return
 
     if not remaining_days and subscription.end_date:
@@ -4202,6 +4218,13 @@ async def confirm_instant_switch(
     if not current_tariff:
         await callback.answer('Текущий тариф не найден', show_alert=True)
         return
+
+    # Бесплатный (0₽) исходный тариф: prorated-списание запрещено — переключение
+    # идёт только через флоу с выбором периода (полная цена, сброс бесплатных дней).
+    if settings.TARIFF_SWITCH_RESET_FREE_DAYS and current_tariff.is_free:
+        await show_tariff_switch_list(callback, db_user, db, state)
+        return
+
     remaining_days = max(0, (subscription.end_date - datetime.now(UTC)).days) if subscription.end_date else 0
 
     # Use full TariffSwitchResult to access offer_discount_pct for consume_promo_offer flag

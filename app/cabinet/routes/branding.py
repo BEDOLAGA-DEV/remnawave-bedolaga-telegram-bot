@@ -457,6 +457,41 @@ async def get_logo():
     )
 
 
+@router.get('/bot-logo')
+async def get_bot_logo():
+    """
+    Get the BOT's menu logo (settings.LOGO_FILE, e.g. vpn_logo.png).
+
+    Distinct from /logo (the cabinet WebApp branding logo uploaded via the admin
+    UI): this serves the same local file the bot attaches to photo-mode menus, so
+    the rich main menu can embed it by public URL (rich media accepts only
+    HTTP(S) URLs). Public like /logo. 404 if the file is missing.
+    """
+    logo_path = Path(settings.LOGO_FILE)
+
+    if not settings.LOGO_FILE or not await asyncio.to_thread(logo_path.is_file):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot logo is not configured')
+
+    suffix = logo_path.suffix.lower()
+    media_types = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp',
+    }
+    media_type = media_types.get(suffix, 'image/png')
+
+    return FileResponse(
+        logo_path,
+        media_type=media_type,
+        headers={
+            'Cache-Control': 'public, max-age=3600',
+            'X-Content-Type-Options': 'nosniff',
+            'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        },
+    )
+
+
 @router.put('/name', response_model=BrandingResponse)
 async def update_branding_name(
     payload: BrandingNameUpdate,

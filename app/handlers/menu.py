@@ -42,6 +42,7 @@ from app.utils.promo_offer import (
     build_promo_offer_hint,
     build_test_access_hint,
 )
+from app.utils.rich_menu import try_edit_rich_main_menu
 from app.utils.telegram_html import html_to_telegram, info_page_faq_to_telegram, split_telegram_text
 from app.utils.timezone import format_local_datetime
 
@@ -198,8 +199,6 @@ async def show_main_menu(
     has_active_subscription = any(sub.is_active or getattr(sub, 'actual_status', None) == 'limited' for sub in _subs)
     subscription_is_active = has_active_subscription
 
-    menu_text = await get_main_menu_text(db_user, texts, db)
-
     draft_exists = await has_subscription_checkout_draft(db_user.id)
     show_resume_checkout = should_offer_checkout_resume(db_user, draft_exists)
 
@@ -238,12 +237,14 @@ async def show_main_menu(
         custom_buttons=custom_buttons,
     )
 
-    await edit_or_answer_photo(
-        callback=callback,
-        caption=menu_text,
-        keyboard=keyboard,
-        parse_mode='HTML',
-    )
+    if not await try_edit_rich_main_menu(callback, db_user, texts, db, keyboard):
+        menu_text = await get_main_menu_text(db_user, texts, db)
+        await edit_or_answer_photo(
+            callback=callback,
+            caption=menu_text,
+            keyboard=keyboard,
+            parse_mode='HTML',
+        )
     if not skip_callback_answer:
         await callback.answer()
 
@@ -288,16 +289,58 @@ async def show_service_rules(callback: types.CallbackQuery, db_user: User, db: A
         )
         return
 
+    raw_page = 1
+    if callback.data and ':' in callback.data:
+        try:
+            raw_page = int(callback.data.split(':', 1)[1])
+        except ValueError:
+            raw_page = 1
+    raw_page = max(raw_page, 1)
+
     rules_text = await get_current_rules_content(db, db_user.language)
 
     if not rules_text:
         rules_text = await get_rules(db_user.language)
 
+    # Правила могут быть длиннее лимита Telegram (4096) — пагинация как у
+    # политики конфиденциальности и оферты
+    pages = split_telegram_text(rules_text, max_length=3500) or ['']
+    total_pages = len(pages)
+    current_page = min(raw_page, total_pages)
+
+    message_text = f'{texts.t("RULES_HEADER", "📋 <b>Правила сервиса</b>")}\n\n{pages[current_page - 1]}'
+
+    keyboard_rows: list[list[types.InlineKeyboardButton]] = []
+
+    if total_pages > 1:
+        nav_row: list[types.InlineKeyboardButton] = []
+        if current_page > 1:
+            nav_row.append(
+                types.InlineKeyboardButton(
+                    text=texts.t('PAGINATION_PREV', '⬅️'),
+                    callback_data=f'menu_rules:{current_page - 1}',
+                )
+            )
+        nav_row.append(
+            types.InlineKeyboardButton(
+                text=f'{current_page}/{total_pages}',
+                callback_data='noop',
+            )
+        )
+        if current_page < total_pages:
+            nav_row.append(
+                types.InlineKeyboardButton(
+                    text=texts.t('PAGINATION_NEXT', '➡️'),
+                    callback_data=f'menu_rules:{current_page + 1}',
+                )
+            )
+        keyboard_rows.append(nav_row)
+
+    keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+
     await callback.message.edit_text(
-        f'{texts.t("RULES_HEADER", "📋 <b>Правила сервиса</b>")}\n\n{rules_text}',
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')]]
-        ),
+        message_text,
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
     )
     await callback.answer()
 
@@ -1189,8 +1232,6 @@ async def handle_back_to_menu(callback: types.CallbackQuery, state: FSMContext, 
     has_active_subscription = any(sub.is_active or getattr(sub, 'actual_status', None) == 'limited' for sub in _subs)
     subscription_is_active = has_active_subscription
 
-    menu_text = await get_main_menu_text(db_user, texts, db)
-
     draft_exists = await has_subscription_checkout_draft(db_user.id)
     show_resume_checkout = should_offer_checkout_resume(db_user, draft_exists)
 
@@ -1229,12 +1270,14 @@ async def handle_back_to_menu(callback: types.CallbackQuery, state: FSMContext, 
         custom_buttons=custom_buttons,
     )
 
-    await edit_or_answer_photo(
-        callback=callback,
-        caption=menu_text,
-        keyboard=keyboard,
-        parse_mode='HTML',
-    )
+    if not await try_edit_rich_main_menu(callback, db_user, texts, db, keyboard):
+        menu_text = await get_main_menu_text(db_user, texts, db)
+        await edit_or_answer_photo(
+            callback=callback,
+            caption=menu_text,
+            keyboard=keyboard,
+            parse_mode='HTML',
+        )
     await callback.answer()
 
 
@@ -1680,6 +1723,11 @@ def register_handlers(dp: Dispatcher):
     )
 
     dp.callback_query.register(show_service_rules, F.data == 'menu_rules')
+
+    dp.callback_query.register(
+        show_service_rules,
+        F.data.startswith('menu_rules:'),
+    )
 
     dp.callback_query.register(
         show_info_menu,

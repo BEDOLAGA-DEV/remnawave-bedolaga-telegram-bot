@@ -833,16 +833,30 @@ async def _apply_base_limit_preserving_active_purchases(
     return purchased_gb, subscription.traffic_limit_gb
 
 
+def should_carry_trial_remaining_days() -> bool:
+    """Переносить ли остаток триальных дней на платную подписку при переходе.
+
+    ``TARIFF_SWITCH_RESET_FREE_DAYS`` — мастер-переключатель сброса бесплатного
+    периода: пока он включён, остаток триала НЕ переносится ни на одном пути
+    покупки, даже если ``TRIAL_ADD_REMAINING_DAYS_TO_PAID=true`` (иначе флаг сброса
+    оставался мёртвым для триалов — «бесплатная версия» бота это именно триал, а
+    не 0₽-тариф). Перенос возможен только когда сброс ВЫКЛЮЧЕН и явно включён
+    ``TRIAL_ADD_REMAINING_DAYS_TO_PAID``.
+    """
+    return bool(settings.TRIAL_ADD_REMAINING_DAYS_TO_PAID and not settings.TARIFF_SWITCH_RESET_FREE_DAYS)
+
+
 def _should_carry_remaining_days(*, is_trial: bool, source_is_free: bool) -> bool:
     """Переносить ли остаток дней при СМЕНЕ тарифа на новый срок.
 
-    - Триал: переносим только если включён TRIAL_ADD_REMAINING_DAYS_TO_PAID.
+    - Триал: по ``should_carry_trial_remaining_days`` (TARIFF_SWITCH_RESET_FREE_DAYS
+      перебивает TRIAL_ADD_REMAINING_DAYS_TO_PAID).
     - Бесплатный 0₽ тариф (``source_is_free`` уже учитывает TARIFF_SWITCH_RESET_FREE_DAYS):
       не переносим — наспамленные дни нельзя бесплатно унести на платный тариф.
     - Обычная платная подписка: переносим как раньше.
     """
-    if is_trial and not settings.TRIAL_ADD_REMAINING_DAYS_TO_PAID:
-        return False
+    if is_trial:
+        return should_carry_trial_remaining_days()
     if source_is_free:
         return False
     return True
@@ -1172,7 +1186,21 @@ async def extend_subscription(
     else:
         await db.flush()
 
-    await clear_notifications(db, subscription.id, commit=commit)
+    # Best-effort cleanup: the extension is already committed above. A failure here
+    # must not propagate — a caller that wraps extend_subscription in a compensating
+    # refund guard would otherwise roll back (a no-op for the committed extension) and
+    # refund a subscription that was actually delivered.
+    try:
+        await clear_notifications(db, subscription.id, commit=commit)
+    except Exception as clear_err:
+        logger.warning('Failed to clear notifications on extend', error=clear_err)
+        if commit:
+            # A failed internal commit leaves the session in an errored state; reset it
+            # so the caller can keep using it (the extension itself is already durable).
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
     # Kill other trial subscriptions if this extension converts trial to paid
     if not subscription.is_trial and days > 0:
