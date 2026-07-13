@@ -6,8 +6,9 @@ per-link secret token). Redeeming a coupon via the ``/start coupon_<token>``
 deep link grants a new subscription for the batch period or extends an
 existing one. ON DELETE CASCADE ties coupons to their batch.
 
-Revision ID: 0095
-Revises: 0094
+Revision ID: 0099
+Revises: 0098
+
 Create Date: 2026-07-11
 
 """

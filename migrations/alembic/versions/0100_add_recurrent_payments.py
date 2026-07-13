@@ -12,8 +12,8 @@ no incremental migration created it. The cabinet endpoint
 Idempotent: guarded by the inspector so it is a no-op where the table is
 already present (fresh installs via create_all).
 
-Revision ID: 0096
-Revises: 0095
+Revision ID: 0100
+Revises: 0099
 Create Date: 2026-07-12
 
 """
