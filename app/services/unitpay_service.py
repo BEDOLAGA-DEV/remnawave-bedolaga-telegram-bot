@@ -1,4 +1,5 @@
 """UnitPay API client."""
+
 from __future__ import annotations
 
 import hashlib
@@ -31,9 +32,7 @@ class UnitPayService:
         data = method + '{up}' + '{up}'.join(values) + '{up}' + secret_key
         return hashlib.sha256(data.encode()).hexdigest()
 
-    def verify_webhook_signature(
-        self, method: str, params: dict[str, Any], received_sign: str
-    ) -> bool:
+    def verify_webhook_signature(self, method: str, params: dict[str, Any], received_sign: str) -> bool:
         """Verify incoming webhook signature; excludes 'signature' key from params."""
         from app.config import settings
 
@@ -90,9 +89,7 @@ class UnitPayService:
         if customer_phone:
             params['customerPhone'] = customer_phone
 
-        params['signature'] = self._compute_signature(
-            'initPayment', params, settings.UNITPAY_SECRET_KEY or ''
-        )
+        params['signature'] = self._compute_signature('initPayment', params, settings.UNITPAY_SECRET_KEY or '')
 
         flat: dict[str, Any] = {'method': 'initPayment'}
         for k, v in params.items():

@@ -3,6 +3,7 @@
 UnitPay рекуррент работает через тот же initPayment API с параметром
 `subscriptionId` (ID подписки, полученный при первом платеже с subscription=true).
 """
+
 from __future__ import annotations
 
 from typing import Any

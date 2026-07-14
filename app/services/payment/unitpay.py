@@ -1,4 +1,5 @@
 """Mixin для интеграции с UnitPay (unitpay.ru)."""
+
 from __future__ import annotations
 
 import uuid
@@ -223,7 +224,9 @@ class UnitPayPaymentMixin:
 
         user = await payment_module.get_user_by_id(db, payment.user_id)
         if not user:
-            logger.error('Пользователь не найден для UnitPay платежа', user_id=payment.user_id, order_id=payment.order_id)
+            logger.error(
+                'Пользователь не найден для UnitPay платежа', user_id=payment.user_id, order_id=payment.order_id
+            )
             return False
 
         transaction = await payment_module.create_transaction(

@@ -1,4 +1,5 @@
 """CRUD for UnitPay payments."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -65,9 +66,7 @@ async def get_unitpay_payment_by_id(db: AsyncSession, payment_id: int) -> UnitPa
 
 
 async def get_unitpay_payment_by_id_for_update(db: AsyncSession, payment_id: int) -> UnitPayPayment | None:
-    result = await db.execute(
-        select(UnitPayPayment).where(UnitPayPayment.id == payment_id).with_for_update()
-    )
+    result = await db.execute(select(UnitPayPayment).where(UnitPayPayment.id == payment_id).with_for_update())
     return result.scalar_one_or_none()
 
 
