@@ -331,7 +331,7 @@ class RemnaWaveAPI:
                 logger.debug('Используем куки: =***', key_name=key_name)
             else:
                 cookies = {self.secret_key: self.secret_key}
-                logger.debug('Используем куки: =***', secret_key=self.secret_key)
+                logger.debug('Используем куки: =***')
 
         connector_kwargs = {}
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from typing import Any
 
 import structlog
@@ -206,8 +207,8 @@ def create_telegram_router(
     @router.post(webhook_path)
     async def telegram_webhook(request: Request) -> JSONResponse:
         if secret_token:
-            header_token = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
-            if header_token != secret_token:
+            header_token = request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
+            if not secrets.compare_digest(header_token, secret_token):
                 logger.warning('Получен Telegram webhook с неверным секретом')
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='invalid_secret_token')
 
