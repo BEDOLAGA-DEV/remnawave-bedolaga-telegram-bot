@@ -278,6 +278,15 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     elif settings.is_cabinet_mode():
         logger.info('🏠 Режим Cabinet активен, базовый URL', MINIAPP_CUSTOM_URL=settings.MINIAPP_CUSTOM_URL)
 
+    # Load the presentation overlay independently of menu mode. It decorates all
+    # outgoing bot messages while failing closed to upstream text/emoji.
+    try:
+        from app.services.bot_presentation_service import load_bot_presentation_cache
+
+        await load_bot_presentation_cache()
+    except Exception as e:
+        logger.warning('Failed to load bot presentation cache', error=e)
+
     # Load per-section button styles cache and menu layout cache
     if settings.is_cabinet_mode():
         try:

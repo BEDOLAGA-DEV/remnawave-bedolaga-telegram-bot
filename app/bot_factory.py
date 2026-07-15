@@ -25,4 +25,11 @@ def create_bot(token: str | None = None, **kwargs) -> Bot:
         session = AiohttpSession(**session_kwargs)
 
     kwargs.setdefault('default', DefaultBotProperties(parse_mode=ParseMode.HTML))
-    return Bot(token=token or settings.BOT_TOKEN, session=session, **kwargs)
+    bot = Bot(token=token or settings.BOT_TOKEN, session=session, **kwargs)
+
+    # Presentation is applied at the Bot API boundary so handler/callback logic and
+    # upstream keyboards remain untouched.
+    from app.middlewares.bot_presentation_request import BotPresentationRequestMiddleware
+
+    bot.session.middleware(BotPresentationRequestMiddleware())
+    return bot

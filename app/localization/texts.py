@@ -185,11 +185,23 @@ class Texts:
         if item == 'RULES_TEXT':
             return _get_cached_rules_value(self.language)
 
+        # Presentation overrides are a DB-backed Russian-only overlay. Emoji
+        # markers are scoped to this localization key, so equal glyphs in other
+        # contexts and languages remain untouched.
+        from app.services.bot_presentation_service import (
+            decorate_localized_text,
+            get_text_override,
+        )
+
+        override = get_text_override(self.language, item)
+        if override is not None:
+            return decorate_localized_text(self.language, item, override)
+
         if item in self._values:
-            return self._values[item]
+            return decorate_localized_text(self.language, item, self._values[item])
 
         if item in self._fallback_values:
-            return self._fallback_values[item]
+            return decorate_localized_text(self.language, item, self._fallback_values[item])
 
         # Предупреждаем только когда у вызова НЕТ запасного текста. t(key, default) и
         # get(key, default) передают warn=False: для них отсутствие ключа штатно —

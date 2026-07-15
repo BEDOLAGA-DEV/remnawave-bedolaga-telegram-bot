@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,6 +22,15 @@ from . import payments, telegram
 
 
 logger = structlog.get_logger(__name__)
+
+
+async def _warm_bot_presentation_catalog() -> None:
+    from app.services.bot_presentation_catalog import build_bot_presentation_catalog
+
+    try:
+        await asyncio.to_thread(build_bot_presentation_catalog)
+    except Exception:
+        logger.exception('Failed to warm bot presentation catalog')
 
 
 def _attach_docs_alias(app: FastAPI, docs_url: str | None) -> None:
@@ -225,6 +235,7 @@ def create_unified_app(
     else:
         telegram_processor = None
 
+    startup_handlers.append(_warm_bot_presentation_catalog)
     startup_handlers.append(disposable_email_service.start)
     shutdown_handlers.append(disposable_email_service.stop)
 

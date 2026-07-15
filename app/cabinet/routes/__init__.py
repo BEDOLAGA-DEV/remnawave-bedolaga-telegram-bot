@@ -8,6 +8,7 @@ from .account_linking import merge_router as merge_router, router as account_lin
 from .admin_apps import router as admin_apps_router
 from .admin_audit_log import router as admin_audit_log_router
 from .admin_ban_system import router as admin_ban_system_router
+from .admin_bot_presentation import router as admin_bot_presentation_router
 from .admin_broadcasts import router as admin_broadcasts_router
 from .admin_bulk_actions import router as admin_bulk_actions_router
 from .admin_button_styles import router as admin_button_styles_router
@@ -152,6 +153,7 @@ router.include_router(admin_updates_router)
 router.include_router(admin_traffic_router)
 router.include_router(admin_pinned_messages_router)
 router.include_router(admin_button_styles_router)
+router.include_router(admin_bot_presentation_router)
 router.include_router(admin_menu_layout_router)
 router.include_router(admin_channels_router)
 router.include_router(admin_apps_router)
