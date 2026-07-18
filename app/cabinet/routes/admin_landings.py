@@ -997,7 +997,8 @@ async def get_landing_stats(
     has_trial_subquery = select(GuestPurchase.user_id).where(
         GuestPurchase.landing_id == landing_id,
         is_successful,
-        GuestPurchase.amount_kopeks == 1000
+        GuestPurchase.amount_kopeks == 1000,
+        GuestPurchase.user_id.isnot(None)
     ).scalar_subquery()
 
     yoo_trial_query = select(func.count(distinct(SavedPaymentMethod.id))).join(
