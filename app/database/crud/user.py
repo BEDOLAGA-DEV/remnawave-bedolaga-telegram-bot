@@ -1217,10 +1217,8 @@ async def get_referrals(db: AsyncSession, user_id: int) -> list[User]:
     )
     users = result.scalars().all()
 
-    # Загружаем дополнительные зависимости для всех пользователей
     for user in users:
         if user and user.subscription:
-            # Загружаем дополнительные зависимости для subscription
             _ = user.subscription.is_active
 
     return users
@@ -1279,10 +1277,8 @@ async def get_users_for_promo_segment(db: AsyncSession, segment: str) -> list[Us
     result = await db.execute(query.order_by(User.id))
     users = result.scalars().unique().all()
 
-    # Загружаем дополнительные зависимости для всех пользователей
     for user in users:
         if user and user.subscription:
-            # Загружаем дополнительные зависимости для subscription
             _ = user.subscription.is_active
 
     return users
@@ -1291,8 +1287,6 @@ async def get_users_for_promo_segment(db: AsyncSession, segment: str) -> list[Us
 async def get_inactive_users(db: AsyncSession, months: int = 3) -> list[User]:
     threshold_date = datetime.now(UTC) - timedelta(days=months * 30)
 
-    # Подзапрос: пользователи, у которых есть подписка с end_date >= threshold
-    # (активная или недавно истёкшая) — таких удалять нельзя
     users_with_recent_subs = (
         select(Subscription.user_id).where(Subscription.end_date >= threshold_date).distinct().scalar_subquery()
     )
@@ -1315,10 +1309,8 @@ async def get_inactive_users(db: AsyncSession, months: int = 3) -> list[User]:
     )
     users = result.scalars().all()
 
-    # Загружаем дополнительные зависимости для всех пользователей
     for user in users:
         if user and user.subscription:
-            # Загружаем дополнительные зависимости для subscription
             _ = user.subscription.is_active
 
     return users
@@ -1359,7 +1351,6 @@ async def get_users_statistics(db: AsyncSession) -> dict:
     )
     new_month = month_result.scalar()
 
-    # Recurrent users count
     from app.database.models import AntilopayRecurrent, SavedPaymentMethod
     recurrent_result = await db.execute(
         select(func.count(User.id))
