@@ -39,7 +39,10 @@ async def test_get_landing_stats_renewals_and_revenue() -> None:
 
         elif "transactions" in query_str and "sum" in query_str and "group by" not in query_str:
             # Total renewals revenue query
-            result.scalar = MagicMock(return_value=500000)  # 5000.00
+            row = MagicMock()
+            row.count = 4
+            row.revenue_kopeks = 500000  # 5000.00
+            result.one = MagicMock(return_value=row)
             return result
 
         elif "saved_payment_methods" in query_str and "1000" in query_str and "not" not in query_str:

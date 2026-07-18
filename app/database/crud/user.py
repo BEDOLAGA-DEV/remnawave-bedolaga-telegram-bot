@@ -1209,6 +1209,8 @@ async def get_referrals(db: AsyncSession, user_id: int) -> list[User]:
             selectinload(User.user_promo_groups).selectinload(UserPromoGroup.promo_group),
             selectinload(User.referrer),
             selectinload(User.promo_group),
+            selectinload(User.antilopay_recurrents),
+            selectinload(User.saved_payment_methods),
         )
         .where(User.referred_by_id == user_id)
         .order_by(User.created_at.desc())
