@@ -56,6 +56,8 @@ from app.utils.timezone import panel_datetime_to_utc
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.users import (
+    AdminResetPasswordResponse,
+    AdminGenerateLoginLinkResponse,
     AdminUserGiftItem,
     AdminUserGiftsResponse,
     AssignReferrerRequest,
@@ -2848,6 +2850,69 @@ async def disable_user(
         panel_deactivated=panel_deactivated,
         user_blocked=True,
         panel_error=panel_error,
+    )
+
+
+@router.post('/{user_id}/reset-password', response_model=AdminResetPasswordResponse)
+async def reset_user_password(
+    user_id: int,
+    admin: User = Depends(require_permission('users:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Generate a new random password for user, set it, and return plaintext."""
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='User not found',
+        )
+
+    import secrets
+    import string
+    alphabet = string.ascii_letters + string.digits
+    new_pwd = ''.join(secrets.choice(alphabet) for _ in range(12))
+
+    from app.cabinet.auth import hash_password
+    user.password_hash = hash_password(new_pwd)
+    user.updated_at = datetime.now(UTC)
+    await db.commit()
+
+    logger.info('Admin reset password for user', admin_id=admin.id, user_id=user_id)
+
+    return AdminResetPasswordResponse(
+        success=True,
+        message='Password reset successfully',
+        new_password=new_pwd,
+    )
+
+
+@router.post('/{user_id}/generate-login-link', response_model=AdminGenerateLoginLinkResponse)
+async def generate_user_login_link(
+    user_id: int,
+    admin: User = Depends(require_permission('users:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Generate an auto-login link for user."""
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='User not found',
+        )
+
+    from app.cabinet.auth import create_auto_login_token
+    token = create_auto_login_token(user.id, ttl_hours=72)
+
+    cabinet_url = settings.CABINET_URL or 'https://example.com/cabinet'
+    cabinet_url = cabinet_url.rstrip('/')
+    login_link = f"{cabinet_url}/auto-login?token={token}"
+
+    logger.info('Admin generated login link for user', admin_id=admin.id, user_id=user_id)
+
+    return AdminGenerateLoginLinkResponse(
+        success=True,
+        message='Login link generated successfully',
+        login_link=login_link,
     )
 
 

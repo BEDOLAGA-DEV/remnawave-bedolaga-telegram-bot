@@ -394,10 +394,7 @@ async def fulfill_purchase(
             await _create_nalogo_receipt_for_purchase(db, purchase, user)
             await db.refresh(purchase)  # guard: inner rollback may expire the object
 
-            # Clear plaintext password after email delivery
-            if purchase.cabinet_password:
-                purchase.cabinet_password = None
-                await db.commit()
+            # Plaintext password cleanup is handled on first read or after expiry in landing.py
 
             logger.info(
                 'Guest purchase held for activation (existing subscription)',
@@ -565,10 +562,7 @@ async def fulfill_purchase(
         # Refresh purchase: если внутри nalogo helper был rollback, объект expired
         await db.refresh(purchase)
 
-        # Clear plaintext password after email delivery — no longer needed in DB
-        if purchase.cabinet_password:
-            purchase.cabinet_password = None
-            await db.commit()
+        # Plaintext password cleanup is handled on first read or after expiry in landing.py
 
         logger.info(
             'Guest purchase fulfilled',
@@ -1418,10 +1412,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
 
         await _send_admin_notification(purchase, notification_tariff_name, is_pending_activation=False)
 
-        # Clear plaintext password after email delivery
-        if purchase.cabinet_password:
-            purchase.cabinet_password = None
-            await db.commit()
+        # Plaintext password cleanup is handled on first read or after expiry in landing.py
 
         logger.info(
             'Guest purchase activated',

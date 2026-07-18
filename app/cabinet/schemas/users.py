@@ -824,3 +824,20 @@ class AdminUserGiftsResponse(BaseModel):
     received: list[AdminUserGiftItem] = []
     sent_total: int = 0
     received_total: int = 0
+
+
+class AdminResetPasswordResponse(BaseModel):
+    """Response returned when admin resets user password."""
+
+    success: bool
+    message: str
+    new_password: str | None = None
+
+
+class AdminGenerateLoginLinkResponse(BaseModel):
+    """Response returned when admin generates user auto-login link."""
+
+    success: bool
+    message: str
+    login_link: str | None = None
+
