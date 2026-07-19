@@ -1,8 +1,9 @@
 import asyncio
+from contextlib import suppress
 
 import structlog
 from aiogram import types
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
 from aiogram.types import InaccessibleMessage, InputMediaPhoto
 
 from app.config import settings
@@ -52,6 +53,35 @@ def _build_base_kwargs(keyboard: types.InlineKeyboardMarkup | None, parse_mode: 
     if keyboard is not None:
         kwargs['reply_markup'] = keyboard
     return kwargs
+
+
+async def safe_edit_or_resend(
+    message: types.Message,
+    text: str,
+    reply_markup: types.InlineKeyboardMarkup | None = None,
+) -> None:
+    """Безопасно отредактировать текст сообщения или отправить новое при ошибке.
+
+    Если edit_text() не работает (например, для фото-уведомлений или старых сообщений),
+    удаляет исходное и отправляет новое сообщение.
+
+    Args:
+        message: Целевое сообщение.
+        text: Текст для отправки/редактирования.
+        reply_markup: Клавиатура (опционально).
+    """
+    try:
+        await message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as error:
+        # Контент не изменился (повторное нажатие кнопки) — ничего не делаем,
+        # иначе будем без нужды пересоздавать сообщение и спамить чат.
+        if 'message is not modified' in str(error).lower():
+            return
+        # Уведомление-фото или недоступное сообщение: edit_text не работает
+        # Удаляем исходное и отправляем новое
+        with suppress(TelegramAPIError):
+            await message.delete()
+        await message.answer(text, reply_markup=reply_markup)
 
 
 async def _answer_text(
@@ -172,7 +202,7 @@ async def edit_or_answer_photo(
         except TelegramNetworkError as net_error:
             if attempt < MAX_RETRIES - 1:
                 logger.warning(
-                    'Сетевая ошибка edit_media (попытка /)',
+                    'Сетевая ошибка edit_media, повторная попытка',
                     attempt=attempt + 1,
                     MAX_RETRIES=MAX_RETRIES,
                     net_error=net_error,

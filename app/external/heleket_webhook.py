@@ -97,12 +97,12 @@ async def start_heleket_webhook_server(payment_service: PaymentService) -> None:
     try:
         await site.start()
         logger.info(
-            'Heleket webhook сервер запущен на',
+            'Heleket webhook сервер запущен',
             HELEKET_WEBHOOK_HOST=settings.HELEKET_WEBHOOK_HOST,
             HELEKET_WEBHOOK_PORT=settings.HELEKET_WEBHOOK_PORT,
         )
         logger.info(
-            'Heleket webhook URL: http://',
+            'Heleket webhook URL',
             HELEKET_WEBHOOK_HOST=settings.HELEKET_WEBHOOK_HOST,
             HELEKET_WEBHOOK_PORT=settings.HELEKET_WEBHOOK_PORT,
             HELEKET_WEBHOOK_PATH=settings.HELEKET_WEBHOOK_PATH,

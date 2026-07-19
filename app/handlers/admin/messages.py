@@ -134,11 +134,21 @@ def create_broadcast_keyboard(
             action_value = btn.get('action_value', '')
             if not label or not action_value:
                 continue
+            # Необязательный custom emoji перед текстом кнопки (#3025)
+            icon_emoji = btn.get('icon_custom_emoji_id') or None
             if action_type == 'url':
-                keyboard.append([types.InlineKeyboardButton(text=label, url=action_value)])
+                keyboard.append(
+                    [types.InlineKeyboardButton(text=label, url=action_value, icon_custom_emoji_id=icon_emoji)]
+                )
             else:
                 # callback type
-                keyboard.append([types.InlineKeyboardButton(text=label, callback_data=action_value)])
+                keyboard.append(
+                    [
+                        types.InlineKeyboardButton(
+                            text=label, callback_data=action_value, icon_custom_emoji_id=icon_emoji
+                        )
+                    ]
+                )
 
     if not keyboard:
         return None
@@ -177,7 +187,7 @@ async def _persist_broadcast_result(
                 broadcast_history = await session.get(BroadcastHistory, broadcast_id)
                 if not broadcast_history:
                     logger.critical(
-                        'Не удалось найти запись BroadcastHistory # для записи результатов', broadcast_id=broadcast_id
+                        'Не удалось найти запись BroadcastHistory для записи результатов', broadcast_id=broadcast_id
                     )
                     return
 
@@ -189,7 +199,7 @@ async def _persist_broadcast_result(
                 await session.commit()
 
                 logger.info(
-                    'Результаты рассылки сохранены (id sent failed blocked status=)',
+                    'Результаты рассылки сохранены',
                     broadcast_id=broadcast_id,
                     sent_count=sent_count,
                     failed_count=failed_count,
@@ -200,7 +210,7 @@ async def _persist_broadcast_result(
 
         except InterfaceError as error:
             logger.warning(
-                'Ошибка соединения при сохранении результатов рассылки (попытка /)',
+                'Ошибка соединения при сохранении результатов рассылки, повтор',
                 attempt=attempt,
                 max_retries=max_retries,
                 error=error,
@@ -210,14 +220,14 @@ async def _persist_broadcast_result(
                 retry_delay *= 2
             else:
                 logger.critical(
-                    'Не удалось сохранить результаты рассылки после попыток (id=)',
+                    'Не удалось сохранить результаты рассылки после всех попыток',
                     max_retries=max_retries,
                     broadcast_id=broadcast_id,
                 )
 
         except Exception as error:
             logger.critical(
-                'Неожиданная ошибка при сохранении результатов рассылки (id=)',
+                'Неожиданная ошибка при сохранении результатов рассылки',
                 broadcast_id=broadcast_id,
                 exc_info=error,
             )
@@ -1318,7 +1328,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
                 wait_seconds = e.retry_after + 1
                 flood_wait_until = asyncio.get_event_loop().time() + wait_seconds
                 logger.warning(
-                    'FloodWait: Telegram просит подождать сек (пользователь , попытка /)',
+                    'FloodWait: Telegram просит подождать перед повтором отправки',
                     retry_after=e.retry_after,
                     telegram_id=telegram_id,
                     attempt=attempt + 1,
@@ -1338,7 +1348,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
 
             except Exception as e:
                 logger.error(
-                    'Ошибка отправки пользователю (попытка /)',
+                    'Ошибка отправки пользователю, повтор',
                     telegram_id=telegram_id,
                     attempt=attempt + 1,
                     MAX_SEND_RETRIES=_MAX_SEND_RETRIES,
@@ -1504,7 +1514,7 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
 
     await state.clear()
     logger.info(
-        'Рассылка завершена админом : sent failed total= (медиа:)',
+        'Рассылка завершена админом',
         admin_telegram_id=admin_telegram_id,
         sent_count=sent_count,
         failed_count=failed_count,

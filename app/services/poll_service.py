@@ -159,7 +159,7 @@ async def send_poll_to_users(
                     # Проверяем, является ли ошибка связанной с лимитом подключений
                     if 'too many clients' in str(error).lower():
                         logger.warning(
-                            '⚠️ Ограничение на количество подключений к БД: пользователю',
+                            '⚠️ Ограничение на количество подключений к БД при обработке пользователя',
                             poll_id=poll_id,
                             telegram_id=user_snapshot.telegram_id,
                         )

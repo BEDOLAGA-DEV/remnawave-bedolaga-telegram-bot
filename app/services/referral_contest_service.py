@@ -200,7 +200,7 @@ class ReferralContestService:
         )
 
         if not leaderboard:
-            logger.info('Конкурс : пока нет участников', contest_id=contest.id)
+            logger.info('Конкурс: пока нет участников', contest_id=contest.id)
 
         if is_final:
             await mark_final_summary_sent(db, contest)

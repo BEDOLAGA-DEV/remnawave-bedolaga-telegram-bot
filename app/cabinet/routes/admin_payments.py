@@ -60,6 +60,7 @@ class PendingPaymentResponse(BaseModel):
     user_telegram_id: int | None = None
     user_username: str | None = None
     user_email: str | None = None
+    decline_reason: str | None = None
 
     class Config:
         from_attributes = True
@@ -262,6 +263,39 @@ def _get_payment_url(record: PendingPayment) -> str | None:
     return payment_url
 
 
+def _extract_decline_reason(record: PendingPayment) -> str | None:
+    """Достаёт причину отклонения платежа из callback_payload (EtoPlatezhi и др.)."""
+    status = (record.status or '').lower()
+    if status not in ('declined', 'decline', 'error', 'failed'):
+        return None
+    payment = getattr(record, 'payment', None)
+    if payment is None:
+        return None
+    import json as _json
+
+    raw = getattr(payment, 'callback_payload', None)
+    data = None
+    if isinstance(raw, dict):
+        data = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            data = _json.loads(raw)
+        except (ValueError, TypeError):
+            data = None
+    if not isinstance(data, dict):
+        return None
+    op = data.get('operation') if isinstance(data.get('operation'), dict) else {}
+    code = op.get('code') or data.get('decline_code')
+    msg = op.get('message') or data.get('decline_message') or op.get('description')
+    if msg and code:
+        return f'{msg} (код {code})'
+    if msg:
+        return str(msg)
+    if code:
+        return f'Код отказа: {code}'
+    return None
+
+
 def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
     """Convert PendingPayment to API response."""
     status_emoji, status_text = _get_status_info(record)
@@ -284,6 +318,7 @@ def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
         user_telegram_id=record.user.telegram_id if record.user else None,
         user_username=record.user.username if record.user else None,
         user_email=record.user.email if record.user else None,
+        decline_reason=_extract_decline_reason(record),
     )
 
 

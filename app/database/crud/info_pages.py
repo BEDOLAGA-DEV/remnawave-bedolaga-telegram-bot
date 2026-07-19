@@ -24,6 +24,7 @@ _ALLOWED_UPDATE_FIELDS: frozenset[str] = frozenset(
         'sort_order',
         'icon',
         'replaces_tab',
+        'display_mode',
     }
 )
 
@@ -47,6 +48,7 @@ async def create_info_page(
     sort_order: int = 0,
     icon: str | None = None,
     replaces_tab: str | None = None,
+    display_mode: str = 'both',
 ) -> InfoPage:
     """Create a new info page.
 
@@ -62,6 +64,7 @@ async def create_info_page(
         sort_order=sort_order,
         icon=icon,
         replaces_tab=replaces_tab,
+        display_mode=display_mode,
     )
 
     db.add(page)
@@ -93,6 +96,7 @@ async def get_all_info_pages(
     *,
     include_inactive: bool = False,
     page_type: str | None = None,
+    visible_in: str | None = None,
 ) -> list[InfoPage]:
     """Get all info pages, ordered by sort_order ascending."""
     stmt = select(InfoPage)
@@ -100,6 +104,8 @@ async def get_all_info_pages(
         stmt = stmt.where(InfoPage.is_active.is_(True))
     if page_type is not None:
         stmt = stmt.where(InfoPage.page_type == page_type)
+    if visible_in in ('bot', 'web'):
+        stmt = stmt.where(InfoPage.display_mode.in_((visible_in, 'both')))
 
     stmt = stmt.order_by(InfoPage.sort_order.asc(), InfoPage.id.asc())
     result = await db.execute(stmt)
@@ -154,7 +160,7 @@ async def delete_info_page(db: AsyncSession, page_id: int) -> None:
     logger.info('Deleted info page', page_id=page_id)
 
 
-async def get_tab_replacements(db: AsyncSession) -> dict[str, str | None]:
+async def get_tab_replacements(db: AsyncSession, *, visible_in: str | None = None) -> dict[str, str | None]:
     """Return a mapping of tab name to info page slug for active pages with replaces_tab set.
 
     Returns dict like ``{'faq': 'my-custom-faq', 'rules': None, 'privacy': None, 'offer': None}``.
@@ -170,6 +176,8 @@ async def get_tab_replacements(db: AsyncSession) -> dict[str, str | None]:
         InfoPage.is_active.is_(True),
         InfoPage.replaces_tab.isnot(None),
     )
+    if visible_in in ('bot', 'web'):
+        stmt = stmt.where(InfoPage.display_mode.in_((visible_in, 'both')))
     result = await db.execute(stmt)
     for page in result.scalars().all():
         if page.replaces_tab in result_map:

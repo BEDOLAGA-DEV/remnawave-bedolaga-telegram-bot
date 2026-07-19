@@ -16,12 +16,14 @@ from app.database.models import Ticket, TicketStatus, User
 from app.keyboards.inline import (
     get_my_tickets_keyboard,
     get_ticket_cancel_keyboard,
+    get_ticket_notification_keyboard,
     get_ticket_reply_cancel_keyboard,
     get_ticket_view_keyboard,
 )
 from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService
 from app.utils.cache import RateLimitCache, cache, cache_key
+from app.utils.miniapp_buttons import build_admin_ticket_cabinet_button
 from app.utils.photo_message import edit_or_answer_photo
 from app.utils.timezone import format_local_datetime
 
@@ -890,7 +892,7 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
         await state.clear()
 
         # Уведомить админов об ответе пользователя
-        logger.info('Attempting to notify admins about ticket reply #', ticket_id=ticket_id)
+        logger.info('Attempting to notify admins about ticket reply', ticket_id=ticket_id)
         await notify_admins_about_ticket_reply(
             ticket, reply_text, db, media_file_id=media_file_id, media_type=media_type
         )
@@ -994,6 +996,41 @@ async def close_ticket_notification(callback: types.CallbackQuery, db_user: User
     await callback.answer(texts.t('NOTIFICATION_CLOSED', 'Уведомление закрыто.'))
 
 
+def _build_ticket_notification_keyboard(service: AdminNotificationService, ticket: Ticket, user: User | None):
+    """Собирает клавиатуру действий для уведомления о тикете по роли получателя.
+
+    Возвращает None только для роли 'none' (посторонний в личке / строковый
+    chat_id). Для группового/супергруппа админ-чата ('group') показываем урезанный
+    набор без FSM-кнопок — «Ответить»/«Блок по времени» в общем чате не работают
+    из-за privacy mode бота, остаются надёжные URL/callback-кнопки.
+    """
+    from app.config import settings
+
+    role = service.resolve_recipient_role()
+    if role == 'none':
+        return None
+    # В cabinet-режиме добавляем кнопку «открыть тикет в кабинете»: web_app в личке,
+    # t.me Mini App диплинк в группе (где web_app недоступен). None — если не
+    # cabinet-режим / кабинет не настроен / в группе нет зарегистрированного Mini App.
+    cabinet_button = build_admin_ticket_cabinet_button(
+        ticket.id,
+        text=get_texts(settings.DEFAULT_LANGUAGE).t('OPEN_TICKET_IN_CABINET', '🗂 Открыть в кабинете'),
+        in_group=(role == 'group'),
+    )
+    return get_ticket_notification_keyboard(
+        ticket.id,
+        user_id=user.id if user else None,
+        telegram_id=user.telegram_id if user else None,
+        username=user.username if user else None,
+        is_closed=ticket.is_closed,
+        is_user_blocked=getattr(ticket, 'is_user_reply_blocked', False),
+        is_admin=(role == 'admin'),
+        fsm_enabled=(role != 'group'),
+        cabinet_button=cabinet_button,
+        language=settings.DEFAULT_LANGUAGE,
+    )
+
+
 async def notify_admins_about_new_ticket(ticket: Ticket, db: AsyncSession):
     """Уведомить админов о новом тикете"""
     try:
@@ -1001,7 +1038,7 @@ async def notify_admins_about_new_ticket(ticket: Ticket, db: AsyncSession):
 
         if not settings.is_admin_notifications_enabled():
             logger.info(
-                'Admin notifications disabled. Ticket # created by user', ticket_id=ticket.id, user_id=ticket.user_id
+                'Admin notifications disabled. Ticket created by user', ticket_id=ticket.id, user_id=ticket.user_id
             )
             return
 
@@ -1054,8 +1091,13 @@ async def notify_admins_about_new_ticket(ticket: Ticket, db: AsyncSession):
             return
 
         service = AdminNotificationService(bot)
+
+        # Определяем роль получателя до отправки (без I/O — данные в памяти).
+        # В личном чате chat_id == telegram_id, что позволяет проверить права заранее.
+        keyboard = _build_ticket_notification_keyboard(service, ticket, user)
+
         await service.send_ticket_event_notification(
-            notification_text, None, media_file_id=media_file_id, media_type=media_type
+            notification_text, keyboard, media_file_id=media_file_id, media_type=media_type
         )
     except Exception as e:
         logger.error('Error notifying admins about new ticket', error=e)
@@ -1070,12 +1112,12 @@ async def notify_admins_about_ticket_reply(
     media_type: str | None = None,
 ):
     """Уведомить админов об ответе пользователя на тикет"""
-    logger.info('notify_admins_about_ticket_reply called for ticket #', ticket_id=ticket.id)
+    logger.info('notify_admins_about_ticket_reply called for ticket', ticket_id=ticket.id)
     try:
         from app.config import settings
 
         if not settings.is_admin_notifications_enabled():
-            logger.info('Admin notifications disabled. Reply to ticket #', ticket_id=ticket.id)
+            logger.info('Admin notifications disabled. Reply to ticket', ticket_id=ticket.id)
             return
 
         title = (ticket.title or '').strip()
@@ -1111,10 +1153,13 @@ async def notify_admins_about_ticket_reply(
             return
 
         service = AdminNotificationService(bot)
+
+        keyboard = _build_ticket_notification_keyboard(service, ticket, user)
+
         result = await service.send_ticket_event_notification(
-            notification_text, None, media_file_id=media_file_id, media_type=media_type
+            notification_text, keyboard, media_file_id=media_file_id, media_type=media_type
         )
-        logger.info('Ticket # reply notification sent', ticket_id=ticket.id, result=result)
+        logger.info('Ticket reply notification sent', ticket_id=ticket.id, result=result)
     except Exception as e:
         logger.error('Error notifying admins about ticket reply', error=e)
 

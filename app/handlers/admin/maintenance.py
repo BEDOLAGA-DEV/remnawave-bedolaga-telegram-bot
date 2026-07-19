@@ -10,6 +10,7 @@ from app.database.models import User
 from app.keyboards.admin import get_admin_main_keyboard, get_maintenance_keyboard
 from app.localization.texts import get_texts
 from app.services.maintenance_service import maintenance_service
+from app.services.system_settings_service import bot_configuration_service
 from app.utils.decorators import admin_required, error_handler
 
 
@@ -19,6 +20,14 @@ logger = structlog.get_logger(__name__)
 class MaintenanceStates(StatesGroup):
     waiting_for_reason = State()
     waiting_for_notification_message = State()
+
+
+async def _persist_maintenance_mode(db: AsyncSession, enabled: bool) -> None:
+    try:
+        await bot_configuration_service.set_value(db, 'MAINTENANCE_MODE', enabled)
+        await db.commit()
+    except Exception as error:
+        logger.error('Не удалось сохранить MAINTENANCE_MODE после переключения из бота', enabled=enabled, error=error)
 
 
 @admin_required
@@ -103,6 +112,8 @@ async def toggle_maintenance_mode(callback: types.CallbackQuery, db_user: User, 
     if is_active:
         success = await maintenance_service.disable_maintenance()
         if success:
+            await _persist_maintenance_mode(db, False)
+        if success:
             await callback.answer('Режим техработ выключен', show_alert=True)
         else:
             await callback.answer('Ошибка выключения режима техработ', show_alert=True)
@@ -131,6 +142,8 @@ async def process_maintenance_reason(message: types.Message, db_user: User, db: 
         reason = message.text[:200]
 
     success = await maintenance_service.enable_maintenance(reason=reason, auto=False)
+    if success:
+        await _persist_maintenance_mode(db, True)
 
     if success:
         response_text = 'Режим техработ включен'

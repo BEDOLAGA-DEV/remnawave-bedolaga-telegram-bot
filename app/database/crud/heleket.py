@@ -50,7 +50,7 @@ async def create_heleket_payment(
     await db.refresh(payment)
 
     logger.info(
-        'Создан Heleket платеж: uuid= order_id= amount= для пользователя',
+        'Создан Heleket платеж',
         uuid=uuid,
         order_id=order_id,
         amount=amount,
@@ -140,7 +140,7 @@ async def update_heleket_payment(
     await db.refresh(payment)
 
     logger.info(
-        'Обновлен Heleket платеж : статус= payer_amount',
+        'Обновлен Heleket платеж',
         uuid=uuid,
         payment_status=payment.status,
         payer_amount=payment.payer_amount,

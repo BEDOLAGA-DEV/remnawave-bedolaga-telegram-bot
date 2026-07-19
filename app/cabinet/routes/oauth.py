@@ -272,11 +272,12 @@ async def oauth_callback(
             )
 
     # 8. Create new user
-    # Сохраняем email вне зависимости от verified-флага — иначе VK/Yandex юзеры
-    # (для которых email_verified теперь принудительно False) останутся без
-    # email вообще, что ломает password recovery и cross-provider linking.
-    # Защита от admin escalation остаётся на уровне email_verified=False:
-    # ensure_superadmin_role_on_login проверяет именно его, а не наличие email.
+    # email_verified отражает подтверждение провайдера (флаг Google; для Yandex/VK —
+    # bool(email)): verified-for-UX, чтобы пользователю приходили email-уведомления и
+    # работали password recovery / panel sync. Защита от admin escalation завязана НЕ
+    # на этот булев флаг, а на email_verification_source: 'oauth_vk'/'oauth_yandex' не
+    # входят в TRUSTED_EMAIL_VERIFICATION_SOURCES, поэтому match с ADMIN_EMAILS от
+    # недоверенного провайдера не выдаёт Superadmin.
     user = await create_user_by_oauth(
         db=db,
         provider=provider,

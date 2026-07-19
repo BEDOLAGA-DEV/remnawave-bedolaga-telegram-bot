@@ -26,7 +26,7 @@ from app.database.models import (
 from app.services.guest_purchase_service import (
     GuestPurchaseError,
     create_purchase,
-    fulfill_purchase,
+    notify_gift_claim_available,
 )
 from app.services.payment_method_config_service import get_enabled_methods_for_user
 from app.utils.cache import RateLimitCache
@@ -301,10 +301,10 @@ async def create_gift_purchase(
         buyer_contact_type = 'telegram'
         buyer_contact_value = f'id:{user.telegram_id or user.id}'
 
-    # Pre-check: try to resolve Telegram username — DB first, then Bot API.
-    # Only relevant when a recipient is explicitly specified.
+    # Pre-check: verify the Telegram username is known — DB first, then Bot API —
+    # purely to warn the buyer if it can't be found. Binding happens at claim
+    # time (whoever activates the link), so we no longer pre-resolve for delivery.
     recipient_warning: str | None = None
-    pre_resolved_telegram_id: int | None = None
     if has_recipient and body.recipient_type == 'telegram':
         tg_username = body.recipient_value.lstrip('@')
         normalized_username = tg_username.lower()
@@ -316,18 +316,13 @@ async def create_gift_purchase(
                 User.telegram_id.isnot(None),
             )
         )
-        db_telegram_id = db_result.scalar_one_or_none()
-
-        if db_telegram_id is not None:
-            pre_resolved_telegram_id = db_telegram_id
-        else:
+        if db_result.scalar_one_or_none() is None:
             # 2) Fall back to Bot API (works for public usernames the bot has seen)
             try:
                 from app.bot_factory import create_bot
 
                 async with create_bot() as bot:
-                    chat = await asyncio.wait_for(bot.get_chat(chat_id=f'@{tg_username}'), timeout=5.0)
-                    pre_resolved_telegram_id = chat.id
+                    await asyncio.wait_for(bot.get_chat(chat_id=f'@{tg_username}'), timeout=5.0)
             except Exception:
                 recipient_warning = 'telegram_unresolvable'
                 logger.warning(
@@ -534,19 +529,17 @@ async def create_gift_purchase(
         description=tx_description,
     )
 
-    # Capture token before fulfill_purchase — session state may change after rollback inside fulfill
     purchase_token = purchase.token
 
-    # Only fulfill immediately when a specific recipient was provided.
-    # Code-only gifts (no recipient) stay in PAID status until someone activates via code.
+    # Unified claimable model: ALL gifts (code-only AND directed) stay in PAID
+    # until claimed via the gift link — the buyer shares it, whoever activates it
+    # gets the subscription. For a directed gift, best-effort notify the recipient
+    # (and a backstop copy to the buyer); never block on notification.
     if has_recipient:
         try:
-            await fulfill_purchase(db, purchase_token, pre_resolved_telegram_id=pre_resolved_telegram_id)
+            await notify_gift_claim_available(purchase, tariff_name=tariff.name, period_days=body.period_days)
         except Exception:
-            logger.exception(
-                'Gift purchase fulfillment failed (purchase is paid, will retry)',
-                purchase_id=purchase.id,
-            )
+            logger.warning('Failed to send gift claim notification', purchase_id=purchase.id)
 
     return GiftPurchaseResponse(
         status='ok',
@@ -629,12 +622,20 @@ async def get_gift_purchase_status(
         recipient_contact_value = purchase.gift_recipient_value
 
     is_code_only = purchase.is_gift and not purchase.gift_recipient_type
+    # Unified model: every gift waiting to be claimed (PAID, or PENDING_ACTIVATION
+    # mid-claim) is shareable — expose the claim token so the buyer sees the link
+    # for directed gifts too, not only code-only ones.
+    is_claimable = purchase.is_gift and purchase.status in (
+        GuestPurchaseStatus.PAID.value,
+        GuestPurchaseStatus.PENDING_ACTIVATION.value,
+    )
 
     return GiftPurchaseStatusResponse(
         status=purchase.status,
         is_gift=True,
         is_code_only=is_code_only,
-        purchase_token=purchase.token[:12] if is_code_only else None,
+        is_claimable=is_claimable,
+        purchase_token=purchase.token[:12] if is_claimable else None,
         recipient_contact_value=recipient_contact_value,
         gift_message=purchase.gift_message,
         tariff_name=tariff_name,

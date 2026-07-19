@@ -17,6 +17,7 @@ class InfoPageResponse(BaseModel):
     sort_order: int
     icon: str | None = None
     replaces_tab: str | None = None
+    display_mode: str = 'both'
     created_at: datetime
     updated_at: datetime | None = None
 
@@ -34,6 +35,7 @@ class InfoPageListItem(BaseModel):
     sort_order: int
     icon: str | None = None
     replaces_tab: str | None = None
+    display_mode: str = 'both'
     updated_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -50,6 +52,7 @@ class InfoPageCreateRequest(BaseModel):
     sort_order: int = 0
     icon: str | None = Field(None, max_length=50)
     replaces_tab: str | None = Field(None, pattern=r'^(faq|rules|privacy|offer)$')
+    display_mode: str = Field(default='both', pattern=r'^(bot|web|both)$')
 
 
 class InfoPageUpdateRequest(BaseModel):
@@ -63,6 +66,7 @@ class InfoPageUpdateRequest(BaseModel):
     sort_order: int | None = None
     icon: str | None = Field(None, max_length=50)
     replaces_tab: str | None = Field(None, pattern=r'^(faq|rules|privacy|offer)$')
+    display_mode: str | None = Field(None, pattern=r'^(bot|web|both)$')
 
 
 class ReorderItem(BaseModel):

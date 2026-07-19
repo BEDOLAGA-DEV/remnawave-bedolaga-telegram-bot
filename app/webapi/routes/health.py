@@ -14,7 +14,12 @@ router = APIRouter()
 
 
 @router.get('/health', tags=['health'], response_model=HealthCheckResponse)
-async def health_check(_: object = Security(require_api_token)) -> HealthCheckResponse:
+async def health_check() -> HealthCheckResponse:
+    # Public liveness probe — Docker/LB/monitoring/cabinet healthchecks must reach
+    # it WITHOUT an API token (this endpoint previously 401'd them). Only
+    # non-sensitive status/version/feature flags are returned, consistent with the
+    # already-public /health/unified. The detailed database/pool endpoints below
+    # stay token-gated.
     return HealthCheckResponse(
         status='ok',
         api_version=settings.WEB_API_VERSION,

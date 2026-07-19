@@ -168,7 +168,7 @@ class WataPaymentMixin:
         )
 
         logger.info(
-            'Создан WATA платеж на ₽ для пользователя',
+            'Создан WATA платеж',
             payment_link_id=payment_link_id,
             amount_kopeks=amount_kopeks / 100,
             user_id=user_id,
@@ -218,9 +218,7 @@ class WataPaymentMixin:
             payment = await payment_module.get_wata_payment_by_link_id(db, payment_link_id)
 
         if not payment:
-            logger.error(
-                'WATA платеж не найден (order_id payment_link_id=)', order_id=order_id, payment_link_id=payment_link_id
-            )
+            logger.error('WATA платеж не найден', order_id=order_id, payment_link_id=payment_link_id)
             return False
 
         # Lock payment row immediately to prevent concurrent webhook processing (TOCTOU race)
@@ -353,7 +351,7 @@ class WataPaymentMixin:
                                 break
                     except WataAPIError as error:
                         logger.error(
-                            'Ошибка поиска WATA транзакций для', payment_link_id=payment.payment_link_id, error=error
+                            'Ошибка поиска WATA транзакций', payment_link_id=payment.payment_link_id, error=error
                         )
                     except Exception as error:  # pragma: no cover - safety net
                         logger.exception('Непредвиденная ошибка при поиске WATA транзакции', error=error)

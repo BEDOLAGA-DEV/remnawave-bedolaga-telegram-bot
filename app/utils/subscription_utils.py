@@ -34,7 +34,7 @@ async def cleanup_duplicate_subscriptions(db: AsyncSession) -> int:
             await db.delete(old_subscription)
             total_deleted += 1
             logger.info(
-                '🗑️ Удалена дублирующаяся подписка ID пользователя',
+                '🗑️ Удалена дублирующаяся подписка',
                 old_subscription_id=old_subscription.id,
                 user_id=user_id,
             )

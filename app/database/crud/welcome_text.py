@@ -155,7 +155,7 @@ async def create_welcome_text(
     await db.refresh(welcome_text)
 
     logger.info(
-        '✅ Создан приветственный текст ID (активный включен=)',
+        '✅ Создан приветственный текст',
         welcome_text_id=welcome_text.id,
         is_active=welcome_text.is_active,
         is_enabled=welcome_text.is_enabled,
@@ -189,7 +189,7 @@ async def update_welcome_text(
     await db.refresh(welcome_text)
 
     logger.info(
-        '📝 Обновлен приветственный текст ID (активный включен=)',
+        '📝 Обновлен приветственный текст',
         welcome_text_id=welcome_text.id,
         is_active=welcome_text.is_active,
         is_enabled=welcome_text.is_enabled,

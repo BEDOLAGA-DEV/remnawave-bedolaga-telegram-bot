@@ -278,12 +278,26 @@ class MiniAppPromoCode(BaseModel):
 class MiniAppPromoCodeActivationRequest(BaseModel):
     init_data: str = Field(..., alias='initData')
     code: str
+    # Multi-tariff SUBSCRIPTION_DAYS promos may require choosing which subscription
+    # to extend; the client re-submits with the chosen subscription_id.
+    subscription_id: int | None = None
+
+
+class MiniAppEligibleSubscription(BaseModel):
+    id: int
+    tariff_name: str | None = None
+    days_left: int = 0
 
 
 class MiniAppPromoCodeActivationResponse(BaseModel):
     success: bool = True
     description: str | None = None
     promocode: MiniAppPromoCode | None = None
+    # Set when a multi-tariff days-promo needs the user to pick a subscription:
+    # error == 'select_subscription' + the eligible list to choose from.
+    error: str | None = None
+    eligible_subscriptions: list[MiniAppEligibleSubscription] | None = None
+    code: str | None = None
 
 
 class MiniAppFaqItem(BaseModel):

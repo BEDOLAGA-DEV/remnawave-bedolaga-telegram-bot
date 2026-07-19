@@ -55,7 +55,7 @@ async def create_platega_payment(
     await db.refresh(payment)
 
     logger.info(
-        'Создан Platega платеж # (tx=) на сумму копеек для пользователя',
+        'Создан Platega платеж',
         payment_id=payment.id,
         platega_transaction_id=platega_transaction_id,
         amount_kopeks=amount_kopeks,

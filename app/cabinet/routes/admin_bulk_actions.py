@@ -175,6 +175,7 @@ async def _do_cancel_subscription(
 
     sub.status = SubscriptionStatus.EXPIRED.value
     sub.end_date = datetime.now(UTC)
+    sub.grace_suppressed_until = sub.end_date
     # For daily tariffs: mark as paused to prevent auto-resume by DailySubscriptionService
     if sub.tariff and getattr(sub.tariff, 'is_daily', False):
         sub.is_daily_paused = True
@@ -287,11 +288,12 @@ async def _do_change_tariff(
     # Set squads from tariff
     sub.connected_squads = tariff.allowed_squads or []
 
-    # Convert trial subscription to paid when switching to a non-trial tariff
-    if sub.is_trial and not tariff.is_trial_available:
-        sub.is_trial = False
-        if sub.end_date and sub.end_date > datetime.now(UTC):
-            sub.status = SubscriptionStatus.ACTIVE.value
+    # NB: changing the tariff is a *relabel*, not a purchase — we deliberately
+    # do NOT flip is_trial here. Bug #629889: flipping a 1-day trial to
+    # is_trial=False left a phantom "paid" subscription that, once its trial
+    # day expired, got picked up by try_auto_extend_expired_after_topup (which
+    # only renews is_trial=False subs) and granted a full ~30-day tariff period.
+    # A trial stays a trial across a tariff change and expires normally.
 
     # Reset purchased traffic on tariff change
     await db.execute(sa_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == sub.id))
@@ -520,6 +522,25 @@ async def _do_delete_subscription(
             username=user.username,
         )
 
+    from app.services.grace_access_runtime import (
+        GraceAccessDeletionBlocked,
+        ensure_no_open_grace_for_subscriptions,
+    )
+
+    blocked_user_id = user.id
+    blocked_username = user.username
+    blocked_subscriptions = _build_subscription_info(getattr(user, 'subscriptions', None) or [])
+    try:
+        await ensure_no_open_grace_for_subscriptions(db, (sub.id,))
+    except GraceAccessDeletionBlocked:
+        return BulkUserResult(
+            user_id=blocked_user_id,
+            success=False,
+            message=f'Skipped: {tariff_name} has open grace access; drain/restore it first',
+            username=blocked_username,
+            subscriptions=blocked_subscriptions,
+        )
+
     # Deactivate in RemnaWave panel first
     _sub_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else getattr(user, 'remnawave_uuid', None)
     if _sub_uuid:
@@ -527,7 +548,7 @@ async def _do_delete_subscription(
             from app.services.subscription_service import SubscriptionService
 
             subscription_service = SubscriptionService()
-            await subscription_service.disable_remnawave_user(_sub_uuid)
+            await subscription_service.disable_remnawave_user(_sub_uuid, db=db)
         except Exception as e:
             logger.warning('Failed to disable user in RemnaWave during subscription delete', error=e)
 

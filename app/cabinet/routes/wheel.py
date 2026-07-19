@@ -187,6 +187,7 @@ async def get_spin_history(
         items.append(
             SpinHistoryItem(
                 id=spin.id,
+                prize_id=spin.prize_id,
                 payment_type=spin.payment_type,
                 payment_amount=spin.payment_amount,
                 prize_type=spin.prize_type,

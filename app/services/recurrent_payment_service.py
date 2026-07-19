@@ -410,6 +410,29 @@ async def _process_single_subscription(
             except Exception as notify_error:
                 logger.warning('Ошибка уведомления об автоплатеже', notify_error=notify_error)
 
+        if not user.telegram_id and result.get('paid') and user.email and getattr(user, 'email_verified', False):
+            try:
+                from app.services.notification_delivery_service import (
+                    NotificationType,
+                    notification_delivery_service,
+                )
+
+                # Не AUTOPAY_SUCCESS: его шаблон пишет «подписка продлена до X»,
+                # а этот шаг лишь пополняет баланс картой — продление сделает
+                # отдельный джоб, и end_date здесь ещё старый. PAYMENT_RECEIVED
+                # честно сообщает «платёж получен, баланс пополнен».
+                await notification_delivery_service.send_notification(
+                    user=user,
+                    notification_type=NotificationType.PAYMENT_RECEIVED,
+                    context={
+                        'amount_kopeks': topup_amount_kopeks,
+                        'amount_rubles': topup_amount_kopeks / 100,
+                        'formatted_amount': settings.format_price(topup_amount_kopeks),
+                    },
+                )
+            except Exception as email_error:
+                logger.warning('Ошибка email-уведомления об автоплатеже', email_error=email_error)
+
         return 'created'
 
     # Все карты не сработали — уведомляем пользователя
@@ -433,5 +456,18 @@ async def _process_single_subscription(
             )
         except Exception as notify_error:
             logger.warning('Ошибка уведомления о неудачном автоплатеже', notify_error=notify_error)
+
+    if not user.telegram_id and user.email and getattr(user, 'email_verified', False):
+        try:
+            from app.services.notification_delivery_service import (
+                notification_delivery_service,
+            )
+
+            await notification_delivery_service.notify_autopay_failed(
+                user=user,
+                reason='',
+            )
+        except Exception as email_error:
+            logger.warning('Ошибка email-уведомления о неудачном автоплатеже', email_error=email_error)
 
     return 'all_cards_failed'

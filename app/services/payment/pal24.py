@@ -377,7 +377,7 @@ class Pal24PaymentMixin:
 
         # FOR UPDATE lock already acquired by caller — just check idempotency
         if payment.transaction_id:
-            logger.info('Pal24 платеж уже привязан к транзакции (trigger=)', bill_id=payment.bill_id, trigger=trigger)
+            logger.info('Pal24 платеж уже привязан к транзакции', bill_id=payment.bill_id, trigger=trigger)
             return True
 
         # --- Guest purchase flow (landing page) ---
@@ -397,7 +397,7 @@ class Pal24PaymentMixin:
         user = await payment_module.get_user_by_id(db, payment.user_id)
         if not user:
             logger.error(
-                'Пользователь не найден для Pal24 платежа (trigger=)',
+                'Пользователь не найден для Pal24 платежа',
                 user_id=payment.user_id,
                 bill_id=payment.bill_id,
                 trigger=trigger,
@@ -512,7 +512,7 @@ class Pal24PaymentMixin:
             )
 
         logger.info(
-            '✅ Обработан Pal24 платеж для пользователя (trigger=)',
+            '✅ Обработан Pal24 платеж для пользователя',
             bill_id=payment.bill_id,
             user_id=payment.user_id,
             trigger=trigger,

@@ -72,7 +72,7 @@ class BlacklistService:
                 # Получаем содержимое файла
                 async with aiohttp.ClientSession() as session, session.get(raw_url) as response:
                     if response.status != 200:
-                        logger.error('Ошибка при получении черного списка: статус', status=response.status)
+                        logger.error('Ошибка при получении черного списка', status=response.status)
                         return False
 
                     content = await response.text()

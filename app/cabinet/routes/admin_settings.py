@@ -20,6 +20,23 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/admin/settings', tags=['Admin Settings'])
 
+# Returned (HTTP 409) when an edit targets a key pinned in .env. Such a key's
+# value shadows the DB, so writing it would be silently ignored — we reject the
+# edit and tell the operator where the value actually lives.
+_ENV_LOCKED_DETAIL = (
+    "Setting '{key}' is fixed in the environment (.env) and cannot be changed here. "
+    'Remove it from .env (and restart) to manage it from the cabinet.'
+)
+
+
+async def _sync_maintenance_mode_if_needed(key: str) -> None:
+    if key != 'MAINTENANCE_MODE':
+        return
+
+    from app.services.maintenance_service import maintenance_service
+
+    await maintenance_service.sync_with_settings()
+
 
 # ============ Schemas ============
 
@@ -69,6 +86,13 @@ class SettingDefinition(BaseModel):
     original: Any = Field(default=None)
     has_override: bool
     read_only: bool = Field(default=False)
+    # True when the value is a secret (token/secret/password/key). The current/original
+    # fields are masked for such keys; the frontend should render a secret input and
+    # only send a new value when the admin actually changes it.
+    is_secret: bool = Field(default=False)
+    # True when the key is pinned in .env: its value shadows the DB, so it can be
+    # viewed but not changed from the cabinet (edits would be silently discarded).
+    env_locked: bool = Field(default=False)
     choices: list[SettingChoice] = Field(default_factory=list)
     hint: SettingHint | None = None
 
@@ -132,8 +156,16 @@ def _coerce_value(key: str, value: Any) -> Any:
 
 def _serialize_definition(definition, include_choices: bool = True) -> SettingDefinition:
     """Serialize setting definition to response model."""
-    current = bot_configuration_service.get_current_value(definition.key)
-    original = bot_configuration_service.get_original_value(definition.key)
+    raw_current = bot_configuration_service.get_current_value(definition.key)
+    # SECURITY: never echo plaintext secrets (payment keys, SMTP/panel passwords, API
+    # tokens) over the settings API. is_masked_secret gates on a non-empty *string* value so
+    # numeric settings whose names merely contain TOKEN/KEY (e.g. *_EXPIRE_MINUTES) stay
+    # visible and editable.
+    is_secret = bot_configuration_service.is_masked_secret(definition.key, raw_current)
+    current = bot_configuration_service.mask_secret_value(definition.key, raw_current)
+    original = bot_configuration_service.mask_secret_value(
+        definition.key, bot_configuration_service.get_original_value(definition.key)
+    )
     has_override = bot_configuration_service.has_override(definition.key)
 
     choices: list[SettingChoice] = []
@@ -169,6 +201,8 @@ def _serialize_definition(definition, include_choices: bool = True) -> SettingDe
         original=original,
         has_override=has_override,
         read_only=bot_configuration_service.is_read_only(definition.key),
+        is_secret=is_secret,
+        env_locked=bot_configuration_service.is_env_locked(definition.key),
         choices=choices,
         hint=hint,
     )
@@ -241,14 +275,26 @@ async def update_setting(
     except KeyError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'Setting not found') from error
 
+    if bot_configuration_service.is_env_locked(key):
+        raise HTTPException(status.HTTP_409_CONFLICT, _ENV_LOCKED_DETAIL.format(key=key))
+
+    # The masked sentinel is what we return for secrets; if it comes back unchanged the
+    # admin didn't edit the field, so preserve the stored secret instead of overwriting
+    # it with the mask string.
+    if bot_configuration_service.is_secret_key(key) and payload.value == bot_configuration_service.SECRET_MASK:
+        return _serialize_definition(definition)
+
     value = _coerce_value(key, payload.value)
     try:
         await bot_configuration_service.set_value(db, key, value)
     except ReadOnlySettingError as error:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+    await _sync_maintenance_mode_if_needed(key)
     await db.commit()
 
-    logger.info('Admin updated setting to', telegram_id=admin.telegram_id, key=key, value=value)
+    # Never log secret values in plaintext.
+    log_value = bot_configuration_service.SECRET_MASK if bot_configuration_service.is_secret_key(key) else value
+    logger.info('Admin updated setting to', telegram_id=admin.telegram_id, key=key, value=log_value)
     return _serialize_definition(definition)
 
 
@@ -264,10 +310,14 @@ async def reset_setting(
     except KeyError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'Setting not found') from error
 
+    if bot_configuration_service.is_env_locked(key):
+        raise HTTPException(status.HTTP_409_CONFLICT, _ENV_LOCKED_DETAIL.format(key=key))
+
     try:
         await bot_configuration_service.reset_value(db, key)
     except ReadOnlySettingError as error:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+    await _sync_maintenance_mode_if_needed(key)
     await db.commit()
 
     logger.info('Admin reset setting', telegram_id=admin.telegram_id, key=key)

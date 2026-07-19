@@ -56,7 +56,7 @@ class CurrencyConverter:
                 if rate and 50 < rate < 200:  # Разумные границы курса
                     return rate
             except Exception as e:
-                logger.debug('Ошибка получения курса из', __name__=source.__name__, error=e)
+                logger.debug('Ошибка получения курса из источника', __name__=source.__name__, error=e)
                 continue
 
         return None

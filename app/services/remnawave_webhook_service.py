@@ -36,6 +36,8 @@ from app.database.crud.user import get_user_by_id, get_user_by_remnawave_uuid, g
 from app.database.models import Subscription, SubscriptionServer, SubscriptionStatus, User
 from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService
+from app.services.grace_access_runtime import get_open_grace_subscription_ids, grace_access_runtime
+from app.services.grace_access_service import GraceReason
 from app.services.notification_delivery_service import NotificationType, notification_delivery_service
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 
@@ -85,6 +87,18 @@ _TEXT_KEY_TO_SETTING: dict[str, str] = {
     'WEBHOOK_TORRENT_DETECTED': 'WEBHOOK_NOTIFY_TORRENT_DETECTED',
 }
 
+# Remnawave 2.8.0 объединил 4 события об истечении (user.expires_in_72_hours,
+# _48_hours, _24_hours, user.expired_24_hours_ago) в одно user.expiration с
+# meta.expiration — знаковым числом часов относительно истечения (отрицательное =
+# за |N| ч ДО, положительное = через N ч ПОСЛЕ). Канонический конфиг панели
+# EXPIRATION_NOTIFICATIONS=[-72, -48, -24, 24] повторяет прежнее поведение.
+_EXPIRATION_HOURS_TO_TEXT_KEY: dict[int, str] = {
+    -72: 'WEBHOOK_SUB_EXPIRES_72H',
+    -48: 'WEBHOOK_SUB_EXPIRES_48H',
+    -24: 'WEBHOOK_SUB_EXPIRES_24H',
+    24: 'WEBHOOK_SUB_EXPIRED_24H_AGO',
+}
+
 # Admin event display names for notification messages
 _ADMIN_NODE_EVENTS: dict[str, str] = {
     'node.created': '🟢 Нода создана',
@@ -102,6 +116,9 @@ _ADMIN_SERVICE_EVENTS: dict[str, str] = {
     'service.login_attempt_failed': '🔐 Неудачная попытка входа в панель',
     'service.login_attempt_success': '🔓 Успешный вход в панель',
     'service.subpage_config_changed': '📄 Конфиг страницы подписки изменён',
+    # 2.8.0: новые события жизненного цикла API-токена панели (security-релевантно)
+    'service.api_token_created': '🔑 Создан API-токен панели',
+    'service.api_token_deleted': '🗝️ Удалён API-токен панели',
 }
 
 _ADMIN_CRM_EVENTS: dict[str, str] = {
@@ -197,10 +214,13 @@ class RemnaWaveWebhookService:
             'user.deleted': self._handle_user_deleted,
             'user.revoked': self._handle_user_revoked,
             'user.created': self._handle_user_created,
+            # Старые (≤2.7.x) события об истечении — оставлены для обратной совместимости.
             'user.expires_in_72_hours': self._handle_expires_in_72h,
             'user.expires_in_48_hours': self._handle_expires_in_48h,
             'user.expires_in_24_hours': self._handle_expires_in_24h,
             'user.expired_24_hours_ago': self._handle_expired_24h_ago,
+            # 2.8.0: единое событие, заменившее 4 выше (meta.expiration — знаковые часы).
+            'user.expiration': self._handle_user_expiration,
             'user.first_connected': self._handle_first_connected,
             'user.bandwidth_usage_threshold_reached': self._handle_bandwidth_threshold,
             'user.not_connected': self._handle_user_not_connected,
@@ -348,6 +368,19 @@ class RemnaWaveWebhookService:
             )
             return False
 
+        if subscription and await grace_access_runtime.should_suppress_webhook(
+            subscription.id,
+            event_name,
+            data,
+            db=db,
+        ):
+            logger.info(
+                'RemnaWave webhook suppressed as a grace overlay echo',
+                event_name=event_name,
+                subscription_id=subscription.id,
+            )
+            return True
+
         user_id = user.id
         try:
             await handler(db, user, subscription, data)
@@ -408,8 +441,12 @@ class RemnaWaveWebhookService:
         # Build message from event data (escape all untrusted values to prevent HTML injection)
         lines = [f'<b>{title}</b>']
 
-        # Extract common fields
-        name = html.escape(data.get('name') or data.get('nodeName') or data.get('username') or '')
+        # Extract common fields. 2.8.0 service.api_token_* events nest the token
+        # name under data.apiToken.name (see service.event.interface.ts).
+        api_token = data.get('apiToken') if isinstance(data.get('apiToken'), dict) else {}
+        name = html.escape(
+            data.get('name') or data.get('nodeName') or data.get('username') or api_token.get('name') or ''
+        )
         if name:
             lines.append(f'Имя: <code>{name}</code>')
 
@@ -1011,12 +1048,21 @@ class RemnaWaveWebhookService:
             await db.commit()
             return
 
+        candidate_at = datetime.now(UTC)
+        subscription.grace_candidate_reason = GraceReason.EXPIRED.value
+        subscription.grace_candidate_at = candidate_at
         self._stamp_webhook_update(subscription)
         if subscription.status != SubscriptionStatus.EXPIRED.value:
             await expire_subscription(db, subscription)
             logger.info('Webhook: subscription expired for user', subscription_id=subscription.id, user_id=user.id)
         else:
             await db.commit()
+
+        await grace_access_runtime.consider_candidate(
+            subscription.id,
+            GraceReason.EXPIRED,
+            source='webhook',
+        )
 
         await self._notify_user(
             user,
@@ -1062,6 +1108,8 @@ class RemnaWaveWebhookService:
             await db.commit()
             return
 
+        subscription.grace_candidate_reason = None
+        subscription.grace_candidate_at = None
         self._stamp_webhook_update(subscription)
         if subscription.status != SubscriptionStatus.DISABLED.value:
             await deactivate_subscription(db, subscription)
@@ -1098,6 +1146,9 @@ class RemnaWaveWebhookService:
             logger.info('Webhook user.limited: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
             return
 
+        candidate_at = datetime.now(UTC)
+        subscription.grace_candidate_reason = GraceReason.LIMITED.value
+        subscription.grace_candidate_at = candidate_at
         self._stamp_webhook_update(subscription)
         if subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value):
             subscription.status = SubscriptionStatus.LIMITED.value
@@ -1109,6 +1160,12 @@ class RemnaWaveWebhookService:
             )
         else:
             await db.commit()
+
+        await grace_access_runtime.consider_candidate(
+            subscription.id,
+            GraceReason.LIMITED,
+            source='webhook',
+        )
 
         await self._notify_user(
             user, 'WEBHOOK_SUB_LIMITED', reply_markup=self._get_traffic_keyboard(user), subscription=subscription
@@ -1143,10 +1200,11 @@ class RemnaWaveWebhookService:
             return
 
         changed = False
+        grace_open = subscription.id in await get_open_grace_subscription_ids(db)
 
         # Sync traffic limit
         traffic_limit_bytes = data.get('trafficLimitBytes')
-        if traffic_limit_bytes is not None:
+        if traffic_limit_bytes is not None and not grace_open:
             try:
                 new_limit_gb = int(traffic_limit_bytes) // (1024**3)
                 if subscription.traffic_limit_gb != new_limit_gb:
@@ -1155,8 +1213,17 @@ class RemnaWaveWebhookService:
             except (ValueError, TypeError):
                 pass
 
-        # Sync used traffic
-        used_traffic_bytes = data.get('usedTrafficBytes')
+        # Sync used traffic. usedTrafficBytes живёт в nested userTraffic
+        # (ExtendedUsersSchema.userTraffic; базовый UsersSchema плоского поля не
+        # содержит) — читаем nested-first, как _get_user_traffic_bytes в sync-сервисе,
+        # с fallback на плоский ключ для старых панелей. Без этого used-traffic не
+        # синхронизировался из user.modified-вебхуков (поле всегда было None).
+        user_traffic = data.get('userTraffic')
+        used_traffic_bytes = (
+            user_traffic.get('usedTrafficBytes')
+            if isinstance(user_traffic, dict) and user_traffic.get('usedTrafficBytes') is not None
+            else data.get('usedTrafficBytes')
+        )
         if used_traffic_bytes is not None:
             try:
                 new_used_gb = round(int(used_traffic_bytes) / (1024**3), 2)
@@ -1165,9 +1232,14 @@ class RemnaWaveWebhookService:
             except (ValueError, TypeError):
                 pass
 
-        # Sync expire date — panel is the source of truth for user.modified events
+        # Sync expire date — panel is the source of truth for user.modified events.
+        # НО: если подписка намеренно ОТКЛЮЧЕНА в боте (обнуление/деактивация админом),
+        # не воскрешаем её срок из устаревшего panel expireAt — иначе наспамленные дни
+        # могли бы «вернуться» после обнуления (см. crud.reset_subscription). Статус
+        # отдельно синхронизируется ниже: при panel ACTIVE + future end_date подписка
+        # всё равно может корректно реактивироваться через обычное продление/активацию.
         expire_at = data.get('expireAt')
-        if expire_at:
+        if expire_at and not grace_open and subscription.status != SubscriptionStatus.DISABLED.value:
             try:
                 parsed_dt = datetime.fromisoformat(expire_at.replace('Z', '+00:00'))
                 new_end_date = parsed_dt.astimezone(UTC)
@@ -1177,7 +1249,7 @@ class RemnaWaveWebhookService:
                     changed = True
                     if old_end_date and new_end_date < old_end_date:
                         logger.info(
-                            'Webhook: end_date обновлена назад (панель авторитетна): → ',
+                            'Webhook: end_date обновлена назад (панель авторитетна)',
                             subscription_id=subscription.id,
                             old_end_date=old_end_date,
                             new_end_date=new_end_date,
@@ -1187,7 +1259,7 @@ class RemnaWaveWebhookService:
 
         # Sync status from panel
         panel_status = data.get('status')
-        if panel_status:
+        if panel_status and not grace_open:
             now = datetime.now(UTC)
             end_date = subscription.end_date
             if panel_status == 'ACTIVE' and end_date and end_date > now:
@@ -1226,6 +1298,11 @@ class RemnaWaveWebhookService:
 
         # Always stamp to protect from sync overwrite, even if no fields changed
         self._stamp_webhook_update(subscription)
+        if grace_open:
+            logger.debug(
+                'Webhook user.modified: grace-owned fields masked; usage/links still synchronized',
+                subscription_id=subscription.id,
+            )
         if changed:
             subscription.updated_at = datetime.now(UTC)
             logger.info(
@@ -1353,6 +1430,7 @@ class RemnaWaveWebhookService:
         # that are actually gone (verified via API), leave alive ones untouched.
         await db.refresh(user, ['subscriptions'])
         now = datetime.now(UTC)
+        from app.database.models import _aware
         from app.services.subscription_service import SubscriptionService
 
         subscription_service = SubscriptionService()
@@ -1361,18 +1439,37 @@ class RemnaWaveWebhookService:
                 continue
             if other_sub.status in (SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value):
                 continue
-            # Check if this sibling's panel user still exists
-            sibling_uuid = getattr(other_sub, 'remnawave_uuid', None) if settings.is_multi_tariff_enabled() else None
-            if not sibling_uuid and not settings.is_multi_tariff_enabled():
-                sibling_uuid = getattr(user, 'remnawave_uuid', None)
-            if sibling_uuid and subscription_service.is_configured:
-                try:
-                    async with subscription_service.get_api_client() as api:
-                        panel_user = await api.get_user_by_uuid(sibling_uuid)
-                    if panel_user is not None:
-                        continue  # still alive in panel, don't touch
-                except Exception:
-                    pass  # API error — deactivate to be safe
+
+            # Never expire a sibling that is still valid by its own end_date. Another
+            # subscription's panel user being deleted must not retroactively kill a
+            # paid, not-yet-expired sub — e.g. a pre-multi-tariff sub whose panel UUID
+            # lives on user.remnawave_uuid. (Bug: deleting a 2nd, expired sub expired
+            # the original active one and wiped its squads.)
+            other_end = _aware(other_sub.end_date)
+            if other_end is not None and other_end > now:
+                continue
+
+            # Resolve the sibling's panel UUID — fall back to user.remnawave_uuid in
+            # BOTH modes, since pre-multi-tariff subs store the panel UUID there.
+            sibling_uuid = getattr(other_sub, 'remnawave_uuid', None) or getattr(user, 'remnawave_uuid', None)
+
+            # Only expire when the panel POSITIVELY reports the user is gone. If we
+            # cannot verify (no uuid, API not configured, or a transient error), leave
+            # the sub untouched — an unverifiable check must never expire a live sub.
+            if not sibling_uuid or not subscription_service.is_configured:
+                continue
+            try:
+                async with subscription_service.get_api_client() as api:
+                    panel_user = await api.get_user_by_uuid(sibling_uuid)
+            except Exception as exc:
+                logger.warning(
+                    'Webhook user.deleted: sibling liveness check failed, leaving subscription untouched',
+                    other_sub_id=other_sub.id,
+                    error=str(exc),
+                )
+                continue
+            if panel_user is not None:
+                continue  # still alive in panel, don't touch
 
             other_sub.status = SubscriptionStatus.EXPIRED.value
             other_sub.subscription_url = None
@@ -1488,7 +1585,7 @@ class RemnaWaveWebhookService:
     async def _handle_user_created(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
     ) -> None:
-        logger.info('Webhook: user created externally in panel (uuid=)', user_id=user.id, data=data.get('uuid'))
+        logger.info('Webhook: user created externally in panel', user_id=user.id, data=data.get('uuid'))
 
     async def _handle_expires_in_72h(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
@@ -1542,6 +1639,54 @@ class RemnaWaveWebhookService:
             subscription=subscription,
         )
 
+    async def _handle_user_expiration(
+        self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
+    ) -> None:
+        """Remnawave 2.8.0: единое событие user.expiration (заменило 4 старых).
+
+        ``meta.expiration`` — знаковые часы относительно истечения подписки
+        (отрицательное = за |N| ч ДО, положительное = через N ч ПОСЛЕ). Канонические
+        значения [-72, -48, -24, 24] маппятся на прежние сообщения 1:1; нестандартные
+        значения из EXPIRATION_NOTIFICATIONS получают ближайшее по смыслу сообщение.
+        """
+        if not subscription:
+            logger.info('Webhook user.expiration: подписка не найдена в БД, пропуск', user_id=user.id)
+            return
+
+        # Ресивер кладёт envelope-meta вебхука в data['_meta'] (см.
+        # remnawave_webhook.py: «Inject meta into data ... via data.get('_meta')»),
+        # ровно как читает сосед _handle_user_not_connected. НЕ 'meta'.
+        meta = data.get('_meta') if isinstance(data.get('_meta'), dict) else {}
+        raw = meta.get('expiration', data.get('expiration'))
+        try:
+            hours = int(raw)
+        except (TypeError, ValueError):
+            logger.warning('Webhook user.expiration: некорректное meta.expiration', user_id=user.id, raw=raw)
+            return
+
+        text_key = _EXPIRATION_HOURS_TO_TEXT_KEY.get(hours)
+        if text_key is None:
+            # Нестандартный EXPIRATION_NOTIFICATIONS: отрицательное → ближайшее «до
+            # истечения», положительное → «истекла» (другого «после»-сообщения нет).
+            if hours < 0:
+                nearest = min((-72, -48, -24), key=lambda h: abs(h - hours))
+                text_key = _EXPIRATION_HOURS_TO_TEXT_KEY[nearest]
+            else:
+                text_key = 'WEBHOOK_SUB_EXPIRED_24H_AGO'
+            logger.info(
+                'Webhook user.expiration: нестандартное значение, выбрано ближайшее сообщение',
+                user_id=user.id,
+                hours=hours,
+                text_key=text_key,
+            )
+
+        await self._notify_user(
+            user,
+            text_key,
+            reply_markup=self._get_renew_keyboard(user, subscription.id),
+            subscription=subscription,
+        )
+
     async def _handle_first_connected(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
     ) -> None:
@@ -1566,8 +1711,8 @@ class RemnaWaveWebhookService:
         # Extract threshold percentage from meta or data
         percent = data.get('thresholdPercent') or data.get('threshold', '')
         if not percent:
-            # Try to extract from meta
-            meta = data.get('meta', {})
+            # Envelope-meta живёт в data['_meta'] (ресивер), не в 'meta'.
+            meta = data.get('_meta', {})
             if isinstance(meta, dict):
                 percent = meta.get('thresholdPercent', '80')
 

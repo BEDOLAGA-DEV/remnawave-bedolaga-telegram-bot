@@ -1,5 +1,6 @@
 """Admin routes for landing page management in cabinet."""
 
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -37,6 +38,8 @@ router = APIRouter(prefix='/admin/landings', tags=['Cabinet Admin Landings'])
 _RESERVED_SLUGS = frozenset(
     {
         'purchase',
+        'gift',
+        'success',
         'admin',
         'api',
         'health',
@@ -519,11 +522,23 @@ class LandingTariffStat(BaseModel):
     revenue_kopeks: int
 
 
+class LandingPaymentMethodStat(BaseModel):
+    method: str
+    purchases: int
+    revenue_kopeks: int
+
+
+class LandingSourceStat(BaseModel):
+    source: str  # referrer host, or 'direct'
+    purchases: int
+
+
 class LandingStatsResponse(BaseModel):
     # Summary
     total_purchases: int
     total_revenue_kopeks: int
-    total_gifts: int
+    total_gifts: int  # gifts paid (sent)
+    total_gifts_claimed: int = 0  # gifts that reached DELIVERED (claimed)
     total_regular: int
     avg_purchase_kopeks: int
     # Conversion: created -> paid/delivered
@@ -532,8 +547,10 @@ class LandingStatsResponse(BaseModel):
     conversion_rate: float  # percent
     # Daily chart data (last 30 days)
     daily_stats: list[LandingDailyStat]
-    # Tariff breakdown
+    # Breakdowns
     tariff_stats: list[LandingTariffStat]
+    payment_method_stats: list[LandingPaymentMethodStat] = []
+    source_stats: list[LandingSourceStat] = []
 
 
 class LandingPurchaseItem(BaseModel):
@@ -842,6 +859,17 @@ async def get_landing_stats(
             func.count(case((and_(is_successful, GuestPurchase.is_gift.is_(True)), GuestPurchase.id))).label(
                 'total_gifts'
             ),
+            func.count(
+                case(
+                    (
+                        and_(
+                            GuestPurchase.is_gift.is_(True),
+                            GuestPurchase.status == GuestPurchaseStatus.DELIVERED.value,
+                        ),
+                        GuestPurchase.id,
+                    )
+                )
+            ).label('total_gifts_claimed'),
         ).where(GuestPurchase.landing_id == landing_id)
     )
     row = summary_result.one()
@@ -849,6 +877,7 @@ async def get_landing_stats(
     total_successful: int = row.total_successful
     total_revenue_kopeks: int = row.total_revenue_kopeks
     total_gifts: int = row.total_gifts
+    total_gifts_claimed: int = row.total_gifts_claimed
     total_regular = total_successful - total_gifts
     avg_purchase_kopeks = total_revenue_kopeks // total_successful if total_successful > 0 else 0
     conversion_rate = round(total_successful / total_created * 100, 1) if total_created > 0 else 0.0
@@ -945,10 +974,49 @@ async def get_landing_stats(
         for r in tariff_result.all()
     ]
 
+    # -- Payment method breakdown (successful purchases) --
+    pm_result = await db.execute(
+        select(
+            func.coalesce(GuestPurchase.payment_method, 'unknown').label('method'),
+            func.count(GuestPurchase.id).label('purchases'),
+            func.coalesce(func.sum(GuestPurchase.amount_kopeks), 0).label('revenue_kopeks'),
+        )
+        .where(GuestPurchase.landing_id == landing_id, is_successful)
+        .group_by(GuestPurchase.payment_method)
+        .order_by(func.count(GuestPurchase.id).desc())
+    )
+    payment_method_stats = [
+        LandingPaymentMethodStat(method=r.method, purchases=r.purchases, revenue_kopeks=r.revenue_kopeks)
+        for r in pm_result.all()
+    ]
+
+    # -- Traffic source breakdown (by referrer host; raw URLs are aggregated to hosts) --
+    source_result = await db.execute(
+        select(
+            GuestPurchase.referrer,
+            func.count(GuestPurchase.id).label('purchases'),
+        )
+        .where(GuestPurchase.landing_id == landing_id, is_successful)
+        .group_by(GuestPurchase.referrer)
+    )
+    host_counts: Counter[str] = Counter()
+    for r in source_result.all():
+        ref = r.referrer
+        if not ref:
+            host = 'direct'
+        else:
+            try:
+                host = urlparse(ref).hostname or ref
+            except ValueError:
+                host = ref
+        host_counts[host] += r.purchases
+    source_stats = [LandingSourceStat(source=h, purchases=c) for h, c in host_counts.most_common(8)]
+
     return LandingStatsResponse(
         total_purchases=total_created,
         total_revenue_kopeks=total_revenue_kopeks,
         total_gifts=total_gifts,
+        total_gifts_claimed=total_gifts_claimed,
         total_regular=total_regular,
         avg_purchase_kopeks=avg_purchase_kopeks,
         total_created=total_created,
@@ -956,6 +1024,8 @@ async def get_landing_stats(
         conversion_rate=conversion_rate,
         daily_stats=daily_stats,
         tariff_stats=tariff_stats,
+        payment_method_stats=payment_method_stats,
+        source_stats=source_stats,
     )
 
 

@@ -103,7 +103,7 @@ class MulenPayPaymentMixin:
             )
 
             logger.info(
-                'Создан платеж на ₽ для пользователя',
+                'Создан MulenPay платеж',
                 display_name=display_name,
                 mulen_payment_id=mulen_payment_id,
                 amount_rubles=amount_rubles,
@@ -167,7 +167,7 @@ class MulenPayPaymentMixin:
 
             if not payment:
                 logger.error(
-                    'платеж не найден (uuid id=)',
+                    'MulenPay платеж не найден',
                     display_name=display_name,
                     uuid_value=uuid_value,
                     mulen_payment_id_raw=mulen_payment_id_raw,

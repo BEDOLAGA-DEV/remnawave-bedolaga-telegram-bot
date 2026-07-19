@@ -34,6 +34,7 @@ from app.database.models import (
     User,
 )
 from app.utils.message_patch import caption_exceeds_telegram_limit
+from app.utils.rich_admin import classic_admin_html_to_rich, try_send_rich_admin_message
 from app.utils.timezone import format_local_datetime
 
 
@@ -304,6 +305,7 @@ class AdminNotificationService:
             PromoCodeType.TRIAL_SUBSCRIPTION.value: '🎁 Триал подписка',
             PromoCodeType.PROMO_GROUP.value: '👥 Промогруппа',
             PromoCodeType.DISCOUNT.value: '💸 Скидка',
+            PromoCodeType.BALANCE_AND_DAYS.value: '💰📅 Баланс + дни подписки',
         }
 
         if not promo_type:
@@ -1421,6 +1423,41 @@ class AdminNotificationService:
                 return topic
         return self.topic_id
 
+    def resolve_recipient_role(self) -> str:
+        """Определяет роль получателя уведомления по chat_id.
+
+        В личном чате chat_id совпадает с telegram_id получателя, что позволяет
+        проверить права до отправки без I/O (данные читаются из памяти).
+
+        Returns:
+            'admin'     — полный набор кнопок;
+            'moderator' — набор без «👤 К пользователю» (@admin_required);
+            'group'     — групповой/супергруппа/канал админ-чат: только надёжные
+                          (не-FSM) кнопки, т.к. конкретного получателя не определить
+                          и FSM-ввод в общем чате не работает (privacy mode бота);
+            'none'      — без кнопок (посторонний в личке, либо
+                          ADMIN_NOTIFICATIONS_CHAT_ID задан строкой @username).
+        """
+        try:
+            chat_id = int(self.chat_id)
+        except (TypeError, ValueError):
+            return 'none'  # строка @username или None — тип чата не определить
+        if chat_id < 0:
+            # супергруппа / канал / старая группа — доверенный админ-чат оператора,
+            # но конкретного получателя не определить → только надёжные кнопки.
+            return 'group'
+        if chat_id == 0:
+            return 'none'  # невалидный chat_id
+        if settings.is_admin(chat_id):
+            return 'admin'
+
+        from app.services.support_settings_service import SupportSettingsService
+
+        if SupportSettingsService.is_moderator(chat_id):
+            return 'moderator'
+
+        return 'none'  # личка постороннего — не показываем кнопки
+
     async def _send_message(
         self,
         text: str,
@@ -1437,13 +1474,27 @@ class AdminNotificationService:
             logger.debug('Уведомление подавлено (категория отключена)', category=category.value)
             return False
 
+        thread_id = self._resolve_topic_id(category)
+
+        # Rich-вид (Bot API 10.1): заголовок, разделители, footer с tg-time.
+        # При недоступности/ошибке молча продолжаем классическим путём ниже
+        # (там ретраи и обработка flood control).
+        try:
+            rich_html = classic_admin_html_to_rich(text)
+            if await try_send_rich_admin_message(
+                self.bot, self.chat_id, rich_html, thread_id=thread_id, reply_markup=reply_markup
+            ):
+                logger.info('Rich-уведомление отправлено в чат', chat_id=self.chat_id, category=category)
+                return True
+        except Exception as rich_error:
+            logger.warning('Сбой rich-рендера админ-уведомления', error=str(rich_error))
+
         message_kwargs: dict[str, Any] = {
             'chat_id': self.chat_id,
             'text': text,
             'parse_mode': 'HTML',
             'disable_web_page_preview': True,
         }
-        thread_id = self._resolve_topic_id(category)
         if thread_id:
             message_kwargs['message_thread_id'] = thread_id
         if reply_markup is not None:
@@ -1657,6 +1708,7 @@ class AdminNotificationService:
             'cloudpayments': f'💳 {settings.get_cloudpayments_display_name()}',
             'freekassa': f'💳 {settings.get_freekassa_display_name()}',
             'kassa_ai': f'💳 {settings.get_kassa_ai_display_name()}',
+            'cispay': f'💳 {settings.get_cispay_display_name()}',
             'manual': '🛠️ Вручную (админ)',
             'balance': '💰 С баланса',
         }
@@ -2208,7 +2260,7 @@ class AdminNotificationService:
             runtime_enabled = True
         if not (self._is_enabled() and runtime_enabled):
             logger.info(
-                'Ticket notification skipped: _is_enabled=, runtime_enabled',
+                'Ticket notification skipped',
                 _is_enabled=self._is_enabled(),
                 runtime_enabled=runtime_enabled,
             )

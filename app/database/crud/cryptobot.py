@@ -42,7 +42,7 @@ async def create_cryptobot_payment(
     await db.refresh(payment)
 
     logger.info(
-        'Создан CryptoBot платеж: на для пользователя',
+        'Создан CryptoBot платеж',
         invoice_id=invoice_id,
         amount=amount,
         asset=asset,

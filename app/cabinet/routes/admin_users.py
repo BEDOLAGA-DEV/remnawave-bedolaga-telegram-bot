@@ -36,19 +36,29 @@ from app.database.crud.user_device_alias import (
 )
 from app.database.crud.user_promo_group import sync_user_primary_promo_group
 from app.database.models import (
+    ButtonClickLog,
+    CabinetRefreshToken,
+    Coupon,
     GuestPurchase,
     PaymentMethod,
+    PollResponse,
+    PromoCode,
+    PromoCodeUse,
     PromoGroup,
     ReferralEarning,
     Subscription,
+    SubscriptionEvent,
     SubscriptionServer,
     SubscriptionStatus,
+    Ticket,
     TrafficPurchase,
     Transaction,
     TransactionType,
     User,
     UserPromoGroup,
     UserStatus,
+    WheelSpin,
+    WithdrawalRequest,
 )
 from app.services.permission_service import PermissionService
 from app.utils.subscription_utils import coerce_panel_device_limit
@@ -80,6 +90,8 @@ from ..schemas.users import (
     ResetSubscriptionResponse,
     ResetTrialRequest,
     ResetTrialResponse,
+    SendUserMessageRequest,
+    SendUserMessageResponse,
     SortByEnum,
     SubscriptionListItem,
     SyncFromPanelRequest,
@@ -99,6 +111,8 @@ from ..schemas.users import (
     UpdateSubscriptionResponse,
     UpdateUserStatusRequest,
     UpdateUserStatusResponse,
+    UserActivityItem,
+    UserActivityResponse,
     UserAvailableTariffItem,
     UserAvailableTariffsResponse,
     UserDetailResponse,
@@ -293,6 +307,10 @@ async def _sync_subscription_to_panel(
     try:
         from app.config import settings
         from app.external.remnawave_api import UserStatus as PanelUserStatus
+        from app.services.grace_access_runtime import (
+            create_panel_user_grace_safe,
+            update_panel_user_grace_safe,
+        )
         from app.services.remnawave_service import RemnaWaveService
         from app.services.subscription_service import get_traffic_reset_strategy
         from app.utils.subscription_utils import resolve_hwid_device_limit_for_payload
@@ -405,7 +423,11 @@ async def _sync_subscription_to_panel(
                     update_kwargs['external_squad_uuid'] = ext_squad_uuid
 
                 try:
-                    updated_panel_user = await api.update_user(**update_kwargs)
+                    updated_panel_user = await update_panel_user_grace_safe(
+                        api,
+                        subscription.id,
+                        **update_kwargs,
+                    )
                     subscription.subscription_url = updated_panel_user.subscription_url
                     subscription.subscription_crypto_link = updated_panel_user.happ_crypto_link
                     subscription.remnawave_short_uuid = updated_panel_user.short_uuid
@@ -441,7 +463,11 @@ async def _sync_subscription_to_panel(
                 # multi-tariff suffix уже встроен в `username` через
                 # build_remnawave_subscription_username — больше ничего не клеим.
 
-                new_panel_user = await api.create_user(**create_kwargs)
+                new_panel_user = await create_panel_user_grace_safe(
+                    api,
+                    subscription.id,
+                    **create_kwargs,
+                )
                 subscription.remnawave_uuid = new_panel_user.uuid
                 subscription.remnawave_short_uuid = new_panel_user.short_uuid
                 subscription.subscription_url = new_panel_user.subscription_url
@@ -1287,11 +1313,16 @@ async def update_user_subscription(
             )
 
         # Сокращение через отрицательный аргумент: extend_subscription(-N) уменьшает end_date
-        await extend_subscription(db, subscription, -request.days)
+        await extend_subscription(db, subscription, -request.days, commit=False)
+        now = datetime.now(UTC)
+        if subscription.end_date <= now:
+            subscription.status = SubscriptionStatus.EXPIRED.value
+            subscription.grace_suppressed_until = now
+        await db.commit()
         await db.refresh(subscription)
 
         # Check if subscription expired after shortening
-        if subscription.end_date <= datetime.now(UTC):
+        if subscription.end_date <= now:
             subscription.status = SubscriptionStatus.EXPIRED.value
             await db.commit()
             await db.refresh(subscription)
@@ -1321,6 +1352,7 @@ async def update_user_subscription(
             subscription.status = SubscriptionStatus.ACTIVE.value
         else:
             subscription.status = SubscriptionStatus.EXPIRED.value
+            subscription.grace_suppressed_until = datetime.now(UTC)
 
         await db.commit()
         await db.refresh(subscription)
@@ -1379,12 +1411,12 @@ async def update_user_subscription(
         if tariff.allowed_squads:
             subscription.connected_squads = tariff.allowed_squads
 
-        # Convert trial subscription to paid when switching to a non-trial tariff
-        if subscription.is_trial and not tariff.is_trial_available:
-            subscription.is_trial = False
-            if subscription.end_date and subscription.end_date > datetime.now(UTC):
-                subscription.status = SubscriptionStatus.ACTIVE.value
-            logger.info('Converted trial subscription to paid', user_id=user_id, tariff_name=tariff.name)
+        # NB: changing the tariff is a *relabel*, not a purchase — we deliberately
+        # do NOT flip is_trial here. Bug #629889: flipping a 1-day trial to
+        # is_trial=False left a phantom "paid" subscription that, once its trial
+        # day expired, got picked up by try_auto_extend_expired_after_topup (which
+        # only renews is_trial=False subs) and granted a full ~30-day tariff period.
+        # A trial stays a trial across a tariff change and expires normally.
 
         # Сбрасываем докупленный трафик при смене тарифа
         from sqlalchemy import delete as sql_delete
@@ -1475,6 +1507,7 @@ async def update_user_subscription(
     if request.action == 'cancel':
         subscription.status = SubscriptionStatus.EXPIRED.value
         subscription.end_date = datetime.now(UTC)
+        subscription.grace_suppressed_until = subscription.end_date
         # For daily tariffs: mark as paused to prevent auto-resume by DailySubscriptionService
         if subscription.tariff and getattr(subscription.tariff, 'is_daily', False):
             subscription.is_daily_paused = True
@@ -1489,6 +1522,29 @@ async def update_user_subscription(
         return UpdateSubscriptionResponse(
             success=True,
             message='Subscription cancelled',
+            subscription=await _build_subscription_info_async(db, subscription),
+        )
+
+    if request.action == 'reset':
+        # Полностью обнулить подписку «как будто пользователь её не оформлял»: снять
+        # наспамленные дни, обнулить трафик/сквады, пометить DISABLED и ОТКЛЮЧИТЬ в
+        # панели RemnaWave (не удаляя). Пользователь и его тикеты сохраняются —
+        # дальше юзер сам покупает тариф с нуля и выбирает срок.
+        from app.services.subscription_service import reset_subscription_with_panel
+
+        result = await reset_subscription_with_panel(db, user, subscription)
+
+        logger.info(
+            'Admin reset subscription for user',
+            admin_id=admin.id,
+            user_id=user_id,
+            subscription_id=subscription.id,
+            panel_disabled=result.get('panel_disabled'),
+        )
+
+        return UpdateSubscriptionResponse(
+            success=True,
+            message='Subscription reset',
             subscription=await _build_subscription_info_async(db, subscription),
         )
 
@@ -1851,6 +1907,101 @@ async def unblock_user(
         new_status='active',
         message='User unblocked',
     )
+
+
+# === Direct Message ===
+
+
+@router.post('/{user_id}/send-message', response_model=SendUserMessageResponse)
+async def send_user_message(
+    user_id: int,
+    request: SendUserMessageRequest,
+    admin: User = Depends(require_permission('users:send_message')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Send a direct Telegram message to the user via the bot.
+
+    Parity with the bot's «✉️ Отправить сообщение» action in the admin user
+    card. Email-only users (no telegram_id) cannot receive Telegram messages —
+    the endpoint returns 400 with a distinct code so the frontend can explain.
+    """
+    from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+
+    from app.bot_factory import create_bot
+
+    target_user = await get_user_by_id(db, user_id)
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    if not target_user.telegram_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'no_telegram_id',
+                'message': 'User is registered by email only and cannot receive Telegram messages',
+            },
+        )
+
+    if not settings.BOT_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={'code': 'bot_not_configured', 'message': 'Bot token is not configured'},
+        )
+
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={'code': 'empty_message', 'message': 'Message text is empty'},
+        )
+
+    bot = create_bot()
+    try:
+        await bot.send_message(target_user.telegram_id, text, parse_mode='HTML')
+    except TelegramForbiddenError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'forbidden',
+                'message': 'User has blocked the bot or cannot receive messages',
+            },
+        )
+    except TelegramBadRequest as err:
+        logger.error(
+            'Cabinet: Telegram rejected direct message to user',
+            user_id=user_id,
+            telegram_id=target_user.telegram_id,
+            error=str(err),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'bad_request',
+                'message': 'Telegram rejected the message — check the text (HTML markup) and try again',
+            },
+        )
+    except Exception as err:
+        logger.error(
+            'Cabinet: unexpected error sending direct message to user',
+            user_id=user_id,
+            telegram_id=target_user.telegram_id,
+            error=str(err),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={'code': 'send_failed', 'message': 'Failed to send the message, try again later'},
+        )
+    finally:
+        await bot.session.close()
+
+    logger.info(
+        'Cabinet: direct message sent to user',
+        admin_id=admin.id,
+        user_id=user_id,
+        telegram_id=target_user.telegram_id,
+        text_length=len(text),
+    )
+    return SendUserMessageResponse(success=True, message='Message sent')
 
 
 # === Restrictions Management ===
@@ -2485,6 +2636,18 @@ async def delete_user(
         await soft_delete_user(db, user)
         action = 'soft deleted'
     else:
+        from app.services.grace_access_runtime import (
+            GraceAccessDeletionBlocked,
+            ensure_no_open_grace_for_user,
+        )
+
+        try:
+            await ensure_no_open_grace_for_user(db, user.id)
+        except GraceAccessDeletionBlocked as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail='Open grace access must be drained or restored before permanent deletion.',
+            ) from error
         # Hard delete
         await db.delete(user)
         await db.commit()
@@ -2532,6 +2695,14 @@ async def full_delete_user(
         db, user_id, admin_id_val, force_panel_delete=request.delete_from_panel
     )
 
+    if delete_result.grace_blocked:
+        # Паритет с обычным delete-эндпоинтом: блокировка открытым grace — это
+        # конфликт состояния, а не «успешный» ответ с success=false.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Open grace access must be drained or restored before permanent deletion.',
+        )
+
     reason_text = f' (reason: {request.reason})' if request.reason else ''
     logger.info(
         'Admin fully deleted user',
@@ -2564,7 +2735,6 @@ async def reset_user_trial(
 
     Actions:
     - Delete current subscription if exists
-    - Reset has_used_trial flag to False
     - User can now activate a new trial
     """
     user = await get_user_by_id(db, user_id)
@@ -2598,28 +2768,14 @@ async def reset_user_trial(
                     user_id=user_id,
                 )
             else:
-                # Deactivate in Remnawave panel first
-                from app.services.subscription_service import SubscriptionService
+                # Снос триала — общий код с ботовым bulk-сбросом: удаляет панель-юзера
+                # ПЕРВЫМ (race-safe относительно синк-воскрешения), затем строки в БД и
+                # чистит устаревший single-tariff remnawave_uuid.
+                from app.database.crud.subscription import wipe_trial_subscriptions
 
-                subscription_service = SubscriptionService()
-                for sub in subs_to_delete:
-                    _sub_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
-                    if _sub_uuid:
-                        try:
-                            await subscription_service.disable_remnawave_user(_sub_uuid)
-                        except Exception as e:
-                            logger.warning('Failed to disable Remnawave during trial reset', error=e)
+                wiped = await wipe_trial_subscriptions(db, subs_to_delete)
+                subscription_deleted = wiped > 0
 
-                # Delete only target subscriptions
-                from sqlalchemy import delete
-
-                for sub in subs_to_delete:
-                    await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id == sub.id))
-                    await db.execute(delete(Subscription).where(Subscription.id == sub.id))
-                subscription_deleted = True
-
-    # Reset trial flag
-    user.has_used_trial = False
     user.updated_at = datetime.now(UTC)
 
     await db.commit()
@@ -2670,6 +2826,19 @@ async def reset_user_subscription(
             panel_deactivated=False,
         )
 
+    from app.services.grace_access_runtime import (
+        GraceAccessDeletionBlocked,
+        ensure_no_open_grace_for_subscriptions,
+    )
+
+    try:
+        await ensure_no_open_grace_for_subscriptions(db, tuple(sub.id for sub in subs))
+    except GraceAccessDeletionBlocked as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Open grace access must be drained or restored before resetting subscriptions.',
+        ) from error
+
     # Deactivate in Remnawave panel if requested
     if request.deactivate_in_panel:
         try:
@@ -2680,12 +2849,12 @@ async def reset_user_subscription(
                 for sub in subs:
                     if sub.remnawave_uuid:
                         try:
-                            await subscription_service.disable_remnawave_user(sub.remnawave_uuid)
+                            await subscription_service.disable_remnawave_user(sub.remnawave_uuid, db=db)
                         except Exception:
                             pass
                 panel_deactivated = True
             elif user.remnawave_uuid:
-                panel_deactivated = await subscription_service.disable_remnawave_user(user.remnawave_uuid)
+                panel_deactivated = await subscription_service.disable_remnawave_user(user.remnawave_uuid, db=db)
             if panel_deactivated:
                 logger.info('Disabled Remnawave users for subscription reset', user_id=user_id)
         except Exception as e:
@@ -2762,12 +2931,12 @@ async def disable_user(
                 for sub in subs:
                     if sub.remnawave_uuid:
                         try:
-                            await subscription_service.disable_remnawave_user(sub.remnawave_uuid)
+                            await subscription_service.disable_remnawave_user(sub.remnawave_uuid, db=db)
                         except Exception:
                             pass
                 panel_deactivated = True
             elif user.remnawave_uuid:
-                panel_deactivated = await subscription_service.disable_remnawave_user(user.remnawave_uuid)
+                panel_deactivated = await subscription_service.disable_remnawave_user(user.remnawave_uuid, db=db)
             if panel_deactivated:
                 logger.info('Disabled Remnawave user(s)', user_id=user_id)
         except Exception as e:
@@ -2906,6 +3075,307 @@ async def get_user_transactions(
         'offset': offset,
         'limit': limit,
     }
+
+
+def _activity_sources(user_id: int) -> dict[str, tuple]:
+    """Источники таймлайна активности: type -> (select, count_select, mapper).
+
+    Дедупликация пересечений:
+    - транзакции, на которые ссылается SubscriptionEvent.transaction_id или
+      ReferralEarning.referral_transaction_id, исключаются (событие/начисление
+      богаче: message/reason);
+    - события promocode_activation исключаются — PromoCodeUse полнее (события
+      пишутся только вместе с админ-уведомлениями).
+    """
+    event_referenced = select(SubscriptionEvent.transaction_id).where(
+        SubscriptionEvent.user_id == user_id,
+        SubscriptionEvent.transaction_id.is_not(None),
+    )
+    earning_referenced = select(ReferralEarning.referral_transaction_id).where(
+        ReferralEarning.user_id == user_id,
+        ReferralEarning.referral_transaction_id.is_not(None),
+    )
+    transactions_where = and_(
+        Transaction.user_id == user_id,
+        Transaction.id.not_in(event_referenced),
+        Transaction.id.not_in(earning_referenced),
+    )
+    events_where = and_(
+        SubscriptionEvent.user_id == user_id,
+        SubscriptionEvent.event_type != 'promocode_activation',
+    )
+
+    def _map_transaction(t: Transaction) -> UserActivityItem:
+        return UserActivityItem(
+            type='transaction',
+            subtype=t.type,
+            title=t.description,
+            amount_kopeks=t.amount_kopeks,
+            timestamp=t.created_at,
+            meta={'payment_method': t.payment_method, 'is_completed': t.is_completed},
+        )
+
+    def _map_event(e: SubscriptionEvent) -> UserActivityItem:
+        return UserActivityItem(
+            type='event',
+            subtype=e.event_type,
+            title=e.message,
+            amount_kopeks=e.amount_kopeks,
+            timestamp=e.occurred_at,
+            meta=e.extra if isinstance(e.extra, dict) else None,
+        )
+
+    def _map_promocode(row) -> UserActivityItem:
+        use, code = row
+        return UserActivityItem(type='promocode', source='bot', title=code, timestamp=use.used_at)
+
+    def _map_coupon(c: Coupon) -> UserActivityItem:
+        return UserActivityItem(type='coupon', subtype=c.status, title=c.token, timestamp=c.redeemed_at)
+
+    def _map_ticket(t: Ticket) -> UserActivityItem:
+        return UserActivityItem(
+            type='ticket',
+            subtype=t.status,
+            title=t.title,
+            timestamp=t.created_at,
+            meta={'ticket_id': t.id},
+        )
+
+    def _map_wheel(w: WheelSpin) -> UserActivityItem:
+        return UserActivityItem(
+            type='wheel_spin',
+            subtype=w.prize_type,
+            source='bot',
+            title=w.prize_display_name,
+            amount_kopeks=w.prize_value_kopeks,
+            timestamp=w.created_at,
+        )
+
+    def _map_poll(p: PollResponse) -> UserActivityItem:
+        return UserActivityItem(
+            type='poll',
+            source='bot',
+            amount_kopeks=p.reward_amount_kopeks if p.reward_given else None,
+            timestamp=p.completed_at,
+        )
+
+    def _map_gift_sent(g: GuestPurchase) -> UserActivityItem:
+        return UserActivityItem(
+            type='gift_sent',
+            subtype=g.status,
+            title=g.gift_recipient_value,
+            amount_kopeks=g.amount_kopeks,
+            timestamp=g.paid_at or g.created_at,
+        )
+
+    def _map_gift_received(g: GuestPurchase) -> UserActivityItem:
+        return UserActivityItem(
+            type='gift_received',
+            subtype=g.status,
+            amount_kopeks=g.amount_kopeks,
+            timestamp=g.delivered_at or g.created_at,
+        )
+
+    def _map_earning(e: ReferralEarning) -> UserActivityItem:
+        return UserActivityItem(
+            type='referral_earning',
+            subtype=e.reason,
+            amount_kopeks=e.amount_kopeks,
+            timestamp=e.created_at,
+        )
+
+    def _map_login(token: CabinetRefreshToken) -> UserActivityItem:
+        return UserActivityItem(
+            type='cabinet_login',
+            source='cabinet',
+            title=token.device_info,
+            timestamp=token.created_at,
+        )
+
+    def _map_withdrawal(w: WithdrawalRequest) -> UserActivityItem:
+        return UserActivityItem(
+            type='withdrawal',
+            subtype=w.status,
+            amount_kopeks=w.amount_kopeks,
+            timestamp=w.created_at,
+        )
+
+    def _map_button_click(c: ButtonClickLog) -> UserActivityItem:
+        return UserActivityItem(
+            type='button_click',
+            subtype='command' if c.button_type == 'command' else None,
+            source='bot',
+            title=c.button_text or c.callback_data or c.button_id,
+            timestamp=c.clicked_at,
+            meta={'callback_data': c.callback_data} if c.callback_data else None,
+        )
+
+    def _map_cabinet_action(c: ButtonClickLog) -> UserActivityItem:
+        return UserActivityItem(
+            type='cabinet_action',
+            source='cabinet',
+            title=c.button_id,
+            timestamp=c.clicked_at,
+            meta={'path': c.callback_data} if c.callback_data else None,
+        )
+
+    # button_click_logs делится на нажатия кнопок бота (пишет ButtonStatsMiddleware)
+    # и действия в кабинете (button_type='cabinet', пишет user_action_log_service).
+    bot_clicks_where = and_(
+        ButtonClickLog.user_id == user_id,
+        or_(ButtonClickLog.button_type.is_(None), ButtonClickLog.button_type != 'cabinet'),
+    )
+    cabinet_actions_where = and_(ButtonClickLog.user_id == user_id, ButtonClickLog.button_type == 'cabinet')
+
+    return {
+        'transaction': (
+            select(Transaction).where(transactions_where),
+            select(func.count(Transaction.id)).where(transactions_where),
+            Transaction.created_at,
+            _map_transaction,
+        ),
+        'event': (
+            select(SubscriptionEvent).where(events_where),
+            select(func.count(SubscriptionEvent.id)).where(events_where),
+            SubscriptionEvent.occurred_at,
+            _map_event,
+        ),
+        'promocode': (
+            select(PromoCodeUse, PromoCode.code)
+            .join(PromoCode, PromoCode.id == PromoCodeUse.promocode_id)
+            .where(PromoCodeUse.user_id == user_id),
+            select(func.count(PromoCodeUse.id)).where(PromoCodeUse.user_id == user_id),
+            PromoCodeUse.used_at,
+            _map_promocode,
+        ),
+        'coupon': (
+            select(Coupon).where(Coupon.redeemed_by == user_id, Coupon.redeemed_at.is_not(None)),
+            select(func.count(Coupon.id)).where(Coupon.redeemed_by == user_id, Coupon.redeemed_at.is_not(None)),
+            Coupon.redeemed_at,
+            _map_coupon,
+        ),
+        'ticket': (
+            select(Ticket).where(Ticket.user_id == user_id),
+            select(func.count(Ticket.id)).where(Ticket.user_id == user_id),
+            Ticket.created_at,
+            _map_ticket,
+        ),
+        'wheel_spin': (
+            select(WheelSpin).where(WheelSpin.user_id == user_id),
+            select(func.count(WheelSpin.id)).where(WheelSpin.user_id == user_id),
+            WheelSpin.created_at,
+            _map_wheel,
+        ),
+        'poll': (
+            select(PollResponse).where(PollResponse.user_id == user_id, PollResponse.completed_at.is_not(None)),
+            select(func.count(PollResponse.id)).where(
+                PollResponse.user_id == user_id, PollResponse.completed_at.is_not(None)
+            ),
+            PollResponse.completed_at,
+            _map_poll,
+        ),
+        'gift_sent': (
+            select(GuestPurchase).where(GuestPurchase.buyer_user_id == user_id, GuestPurchase.is_gift.is_(True)),
+            select(func.count(GuestPurchase.id)).where(
+                GuestPurchase.buyer_user_id == user_id, GuestPurchase.is_gift.is_(True)
+            ),
+            GuestPurchase.created_at,
+            _map_gift_sent,
+        ),
+        'gift_received': (
+            select(GuestPurchase).where(GuestPurchase.user_id == user_id, GuestPurchase.is_gift.is_(True)),
+            select(func.count(GuestPurchase.id)).where(
+                GuestPurchase.user_id == user_id, GuestPurchase.is_gift.is_(True)
+            ),
+            GuestPurchase.created_at,
+            _map_gift_received,
+        ),
+        'referral_earning': (
+            select(ReferralEarning).where(ReferralEarning.user_id == user_id),
+            select(func.count(ReferralEarning.id)).where(ReferralEarning.user_id == user_id),
+            ReferralEarning.created_at,
+            _map_earning,
+        ),
+        'cabinet_login': (
+            select(CabinetRefreshToken).where(CabinetRefreshToken.user_id == user_id),
+            select(func.count(CabinetRefreshToken.id)).where(CabinetRefreshToken.user_id == user_id),
+            CabinetRefreshToken.created_at,
+            _map_login,
+        ),
+        'withdrawal': (
+            select(WithdrawalRequest).where(WithdrawalRequest.user_id == user_id),
+            select(func.count(WithdrawalRequest.id)).where(WithdrawalRequest.user_id == user_id),
+            WithdrawalRequest.created_at,
+            _map_withdrawal,
+        ),
+        'button_click': (
+            select(ButtonClickLog).where(bot_clicks_where),
+            select(func.count(ButtonClickLog.id)).where(bot_clicks_where),
+            ButtonClickLog.clicked_at,
+            _map_button_click,
+        ),
+        'cabinet_action': (
+            select(ButtonClickLog).where(cabinet_actions_where),
+            select(func.count(ButtonClickLog.id)).where(cabinet_actions_where),
+            ButtonClickLog.clicked_at,
+            _map_cabinet_action,
+        ),
+    }
+
+
+@router.get('/{user_id}/activity', response_model=UserActivityResponse)
+async def get_user_activity(
+    user_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    types: str | None = Query(None, description='CSV фильтр по типам записей (см. UserActivityItem.type)'),
+    admin: User = Depends(require_permission('users:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Таймлайн активности пользователя в боте и кабинете.
+
+    Fan-in по существующим таблицам: из каждого источника берутся первые
+    offset+limit записей по времени, сливаются и сортируются — глубокая
+    пагинация дороже, но limit ограничен и таймлайн листают сверху.
+    """
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='User not found',
+        )
+
+    sources = _activity_sources(user.id)
+    if types:
+        requested = {t.strip() for t in types.split(',') if t.strip()}
+        unknown = requested - sources.keys()
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f'Unknown activity types: {", ".join(sorted(unknown))}',
+            )
+        sources = {key: value for key, value in sources.items() if key in requested}
+
+    window = offset + limit
+    merged: list[UserActivityItem] = []
+    total = 0
+    for query, count_query, ts_column, mapper in sources.values():
+        total += (await db.execute(count_query)).scalar() or 0
+        rows = (await db.execute(query.order_by(ts_column.desc()).limit(window))).all()
+        for row in rows:
+            value = row[0] if len(row) == 1 else row
+            item = mapper(value)
+            if item.timestamp is not None:
+                merged.append(item)
+
+    merged.sort(key=lambda item: item.timestamp, reverse=True)
+
+    return UserActivityResponse(
+        items=merged[offset : offset + limit],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 # === Panel Sync ===
@@ -3154,11 +3624,37 @@ async def sync_user_from_panel(
                     # Specific subscription requested — use its UUID directly
                     panel_user = await api.get_user_by_uuid(selected_sub.remnawave_uuid)
                 elif selected_sub and not selected_sub.remnawave_uuid:
-                    # Specific subscription requested but not yet linked to panel — cannot sync
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail='This subscription is not linked to the panel yet. Sync to panel first.',
-                    )
+                    # The subscription lost its panel UUID (e.g. a spurious user.deleted
+                    # webhook wiped it). Re-link it to its live panel user by
+                    # telegram_id/email — but only UNAMBIGUOUSLY: choose a panel user that
+                    # is NOT already linked to another of this user's subscriptions, so we
+                    # never bind two subs to the same panel user (telegram_id is one-to-many
+                    # in multi-tariff). This is what makes the panel->bot repair work after
+                    # the sibling-expiry corruption.
+                    linked_uuids = {s.remnawave_uuid for s in from_subs if s.id != selected_sub.id and s.remnawave_uuid}
+                    candidates = []
+                    if user.telegram_id:
+                        candidates = list(await api.get_user_by_telegram_id(user.telegram_id) or [])
+                    if not candidates and user.email:
+                        candidates = list(await api.get_user_by_email(user.email) or [])
+                    orphans = [pu for pu in candidates if pu.uuid not in linked_uuids]
+                    if len(orphans) == 1:
+                        panel_user = orphans[0]
+                        changes['remnawave_uuid'] = {'old': None, 'new': panel_user.uuid}
+                        selected_sub.remnawave_uuid = panel_user.uuid
+                    elif len(orphans) > 1:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=(
+                                'Multiple panel users match this account; cannot safely re-link '
+                                'this subscription. Resolve manually.'
+                            ),
+                        )
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail='This subscription is not linked to the panel and no matching panel user was found.',
+                        )
                 else:
                     # No specific subscription — iterate all subscription UUIDs
                     sub_uuids = [s.remnawave_uuid for s in from_subs if s.remnawave_uuid]
@@ -3186,14 +3682,21 @@ async def sync_user_from_panel(
                     errors=['No user found in Remnawave panel by UUID, telegram_id, or email'],
                 )
 
-            # Build panel info
+            # Build panel info. active_internal_squads is a list[dict] (see the
+            # diagnostic in get_user_sync_status / auth.py); the previous .uuid/str
+            # checks matched nothing, so panel squads were never extracted and the
+            # repair could not restore connected_squads. Handle dict (real), str and
+            # object forms defensively.
             active_squads = []
-            if hasattr(panel_user, 'active_internal_squads') and panel_user.active_internal_squads:
-                for squad in panel_user.active_internal_squads:
-                    if hasattr(squad, 'uuid'):
-                        active_squads.append(squad.uuid)
-                    elif isinstance(squad, str):
-                        active_squads.append(squad)
+            for squad in getattr(panel_user, 'active_internal_squads', None) or []:
+                if isinstance(squad, dict):
+                    squad_uuid = squad.get('uuid')
+                elif isinstance(squad, str):
+                    squad_uuid = squad
+                else:
+                    squad_uuid = getattr(squad, 'uuid', None)
+                if squad_uuid:
+                    active_squads.append(squad_uuid)
 
             panel_info = PanelUserInfo(
                 uuid=panel_user.uuid,
@@ -3396,6 +3899,10 @@ async def sync_user_to_panel(
     try:
         from app.config import settings
         from app.external.remnawave_api import UserStatus as PanelUserStatus
+        from app.services.grace_access_runtime import (
+            create_panel_user_grace_safe,
+            update_panel_user_grace_safe,
+        )
         from app.services.remnawave_service import RemnaWaveService
         from app.services.subscription_service import get_traffic_reset_strategy
         from app.utils.subscription_utils import resolve_hwid_device_limit_for_payload
@@ -3522,7 +4029,11 @@ async def sync_user_to_panel(
                     update_kwargs['external_squad_uuid'] = ext_squad_uuid
 
                 try:
-                    await api.update_user(**update_kwargs)
+                    await update_panel_user_grace_safe(
+                        api,
+                        sub.id,
+                        **update_kwargs,
+                    )
                     action = 'updated'
                 except Exception as update_error:
                     error_code = (getattr(update_error, 'response_data', None) or {}).get('errorCode', '')
@@ -3556,7 +4067,11 @@ async def sync_user_to_panel(
                 # multi-tariff suffix уже встроен в `username` через
                 # build_remnawave_subscription_username — больше ничего не клеим.
 
-                new_panel_user = await api.create_user(**create_kwargs)
+                new_panel_user = await create_panel_user_grace_safe(
+                    api,
+                    sub.id,
+                    **create_kwargs,
+                )
                 panel_uuid = new_panel_user.uuid
                 sub.remnawave_uuid = new_panel_user.uuid
                 sub.remnawave_short_uuid = new_panel_user.short_uuid

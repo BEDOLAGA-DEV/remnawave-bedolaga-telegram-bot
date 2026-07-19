@@ -237,3 +237,56 @@ def build_miniapp_or_callback_button(
                 )
 
     return InlineKeyboardButton(text=text, callback_data=callback_data)
+
+
+# Префикс startapp/маршрута для диплинка на конкретный тикет в админ-кабинете.
+# Должен совпадать с разбором на стороне фронта (bedolaga-cabinet): start_param
+# 'admin_ticket_<id>' и маршрут '/admin/tickets/<id>'.
+ADMIN_TICKET_DEEPLINK_PREFIX = 'admin_ticket_'
+
+
+def build_miniapp_startapp_url(start_param: str) -> str:
+    """Собрать t.me Mini App deep link, открывающий кабинет в ЛЮБОМ типе чата.
+
+    ``https://t.me/<bot>/<app>?startapp=<start_param>`` — работает и в группах/
+    каналах, где ``web_app``-кнопки недоступны. Требует и имя бота, и
+    зарегистрированное короткое имя Mini App (``MINIAPP_APP_SHORT_NAME``,
+    BotFather → /newapp). Возвращает '' если чего-то не хватает.
+    """
+    bot_username = settings.get_bot_username()
+    app_name = (getattr(settings, 'MINIAPP_APP_SHORT_NAME', '') or '').strip()
+    if not bot_username or not app_name:
+        return ''
+    return f'https://t.me/{bot_username}/{app_name}?startapp={start_param}'
+
+
+def build_admin_ticket_cabinet_button(
+    ticket_id: int,
+    *,
+    text: str,
+    in_group: bool,
+) -> InlineKeyboardButton | None:
+    """Кнопка «открыть тикет в админ-кабинете» для уведомления о тикете.
+
+    Строится только в cabinet-режиме (``is_cabinet_mode``):
+    - личный чат (``in_group=False``) → ``web_app`` на ``/admin/tickets/<id>``
+      (Telegram сам прокидывает initData → кабинет авторизует и роутит к тикету);
+    - группа/канал (``in_group=True``) → ``web_app`` недоступен, поэтому t.me
+      Mini App startapp-диплинк (нужен ``MINIAPP_APP_SHORT_NAME``).
+
+    Возвращает ``None``, если подходящую кнопку построить нельзя (не cabinet-режим,
+    не задан URL кабинета, или в группе не зарегистрирован Mini App).
+    """
+    if not settings.is_cabinet_mode():
+        return None
+
+    if in_group:
+        url = build_miniapp_startapp_url(f'{ADMIN_TICKET_DEEPLINK_PREFIX}{ticket_id}')
+        if not url:
+            return None
+        return InlineKeyboardButton(text=text, url=url)
+
+    url = build_cabinet_url(f'/admin/tickets/{ticket_id}')
+    if not url:
+        return None
+    return InlineKeyboardButton(text=text, web_app=types.WebAppInfo(url=url))

@@ -36,6 +36,8 @@ class MaintenanceService:
 
     def set_bot(self, bot):
         self._bot = bot
+        if settings.is_maintenance_mode() and not self._status.is_active:
+            asyncio.create_task(self.enable_maintenance(reason='Включено из системных настроек', auto=False))
         logger.info('Бот установлен для maintenance_service')
 
     @property
@@ -154,7 +156,7 @@ class MaintenanceService:
 
             await self._notify_admins(notification_msg, 'warning' if auto else 'info')
 
-            logger.warning('🔧 Режим техработ ВКЛЮЧЕН. Причина', reason=self._status.reason)
+            logger.warning('🔧 Режим техработ ВКЛЮЧЕН', reason=self._status.reason)
             return True
 
         except Exception as e:
@@ -207,6 +209,11 @@ class MaintenanceService:
             logger.error('Ошибка выключения режима техработ', error=e)
             return False
 
+    async def sync_with_settings(self) -> bool:
+        if settings.is_maintenance_mode():
+            return await self.enable_maintenance(reason='Включено из системных настроек', auto=False)
+        return await self.disable_maintenance()
+
     async def start_monitoring(self) -> bool:
         try:
             if self._check_task and not self._check_task.done():
@@ -217,7 +224,7 @@ class MaintenanceService:
 
             self._check_task = asyncio.create_task(self._monitoring_loop())
             logger.info(
-                '🔄 Запущен мониторинг API Remnawave (интервал: с, попыток:)',
+                '🔄 Запущен мониторинг API Remnawave',
                 get_maintenance_check_interval=settings.get_maintenance_check_interval(),
                 get_maintenance_retry_attempts=settings.get_maintenance_retry_attempts(),
             )

@@ -84,6 +84,7 @@ async def show_promocodes_list(callback: types.CallbackQuery, db_user: User, db:
             'trial_subscription': '🎁',
             'promo_group': '🏷️',
             'discount': '💸',
+            'balance_and_days': '💰📅',
         }.get(promo.type, '🎫')
 
         text += f'{status_emoji} {type_emoji} <code>{promo.code}</code>\n'
@@ -92,6 +93,9 @@ async def show_promocodes_list(callback: types.CallbackQuery, db_user: User, db:
         if promo.type == PromoCodeType.BALANCE.value:
             text += f'💰 Бонус: {settings.format_price(promo.balance_bonus_kopeks)}\n'
         elif promo.type == PromoCodeType.SUBSCRIPTION_DAYS.value:
+            text += f'📅 Дней: {promo.subscription_days}\n'
+        elif promo.type == PromoCodeType.BALANCE_AND_DAYS.value:
+            text += f'💰 Бонус: {settings.format_price(promo.balance_bonus_kopeks)}\n'
             text += f'📅 Дней: {promo.subscription_days}\n'
         elif promo.type == PromoCodeType.PROMO_GROUP.value:
             if promo.promo_group:
@@ -102,6 +106,11 @@ async def show_promocodes_list(callback: types.CallbackQuery, db_user: User, db:
                 text += f'💸 Скидка: {promo.balance_bonus_kopeks}% ({discount_hours} ч.)\n'
             else:
                 text += f'💸 Скидка: {promo.balance_bonus_kopeks}% (до покупки)\n'
+
+        # Промогруппа комбинируется с любым типом (назначается при активации
+        # независимо от type) — показываем прикреплённую группу и у составных
+        if promo.type != PromoCodeType.PROMO_GROUP.value and promo.promo_group:
+            text += f'🏷️ Промогруппа: {html.escape(promo.promo_group.name)}\n'
 
         if promo.valid_until:
             text += f'⏰ До: {format_datetime(promo.valid_until)}\n'
@@ -155,6 +164,7 @@ async def show_promocode_management(callback: types.CallbackQuery, db_user: User
         'trial_subscription': '🎁',
         'promo_group': '🏷️',
         'discount': '💸',
+        'balance_and_days': '💰📅',
     }.get(promo.type, '🎫')
 
     text = f"""
@@ -169,6 +179,9 @@ async def show_promocode_management(callback: types.CallbackQuery, db_user: User
         text += f'💰 <b>Бонус:</b> {settings.format_price(promo.balance_bonus_kopeks)}\n'
     elif promo.type == PromoCodeType.SUBSCRIPTION_DAYS.value:
         text += f'📅 <b>Дней:</b> {promo.subscription_days}\n'
+    elif promo.type == PromoCodeType.BALANCE_AND_DAYS.value:
+        text += f'💰 <b>Бонус:</b> {settings.format_price(promo.balance_bonus_kopeks)}\n'
+        text += f'📅 <b>Дней:</b> {promo.subscription_days}\n'
     elif promo.type == PromoCodeType.PROMO_GROUP.value:
         if promo.promo_group:
             text += f'🏷️ <b>Промогруппа:</b> {html.escape(promo.promo_group.name)} (приоритет: {promo.promo_group.priority})\n'
@@ -180,6 +193,11 @@ async def show_promocode_management(callback: types.CallbackQuery, db_user: User
             text += f'💸 <b>Скидка:</b> {promo.balance_bonus_kopeks}% (срок: {discount_hours} ч.)\n'
         else:
             text += f'💸 <b>Скидка:</b> {promo.balance_bonus_kopeks}% (до первой покупки)\n'
+
+    # Промогруппа комбинируется с любым типом (назначается при активации
+    # независимо от type) — показываем прикреплённую группу и у составных
+    if promo.type != PromoCodeType.PROMO_GROUP.value and promo.promo_group:
+        text += f'🏷️ <b>Промогруппа:</b> {html.escape(promo.promo_group.name)}\n'
 
     if promo.valid_until:
         text += f'⏰ <b>Действует до:</b> {format_datetime(promo.valid_until)}\n'
@@ -233,6 +251,9 @@ async def show_promocode_edit_menu(callback: types.CallbackQuery, db_user: User,
         text += f'• Бонус: {settings.format_price(promo.balance_bonus_kopeks)}\n'
     elif promo.type in [PromoCodeType.SUBSCRIPTION_DAYS.value, PromoCodeType.TRIAL_SUBSCRIPTION.value]:
         text += f'• Дней: {promo.subscription_days}\n'
+    elif promo.type == PromoCodeType.BALANCE_AND_DAYS.value:
+        text += f'• Бонус: {settings.format_price(promo.balance_bonus_kopeks)}\n'
+        text += f'• Дней: {promo.subscription_days}\n'
 
     text += f'• Использований: {promo.current_uses}/{promo.max_uses}\n'
 
@@ -255,6 +276,13 @@ async def show_promocode_edit_menu(callback: types.CallbackQuery, db_user: User,
     elif promo.type in [PromoCodeType.SUBSCRIPTION_DAYS.value, PromoCodeType.TRIAL_SUBSCRIPTION.value]:
         keyboard.insert(
             1, [types.InlineKeyboardButton(text='📅 Количество дней', callback_data=f'promo_edit_days_{promo.id}')]
+        )
+    elif promo.type == PromoCodeType.BALANCE_AND_DAYS.value:
+        keyboard.insert(
+            1, [types.InlineKeyboardButton(text='💰 Сумма бонуса', callback_data=f'promo_edit_amount_{promo.id}')]
+        )
+        keyboard.insert(
+            2, [types.InlineKeyboardButton(text='📅 Количество дней', callback_data=f'promo_edit_days_{promo.id}')]
         )
 
     keyboard.extend([[types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'promo_manage_{promo.id}')]])
@@ -407,6 +435,7 @@ async def select_promocode_type(callback: types.CallbackQuery, db_user: User, st
         'trial': '🎁 Тестовая подписка',
         'group': '🏷️ Промогруппа',
         'discount': '💸 Одноразовая скидка',
+        'combo': '💰📅 Баланс + дни подписки',
     }
 
     await state.update_data(promocode_type=promo_type)
@@ -445,6 +474,12 @@ async def process_promocode_code(message: types.Message, db_user: User, state: F
 
     if promo_type == 'balance':
         await message.answer(f'💰 <b>Промокод:</b> <code>{code}</code>\n\nВведите сумму пополнения баланса (в рублях):')
+        await state.set_state(AdminStates.setting_promocode_value)
+    elif promo_type == 'combo':
+        await message.answer(
+            f'💰📅 <b>Промокод:</b> <code>{code}</code>\n\n'
+            f'Шаг 1 из 2: введите сумму пополнения баланса (в рублях), дни подписки спрошу следующим шагом:'
+        )
         await state.set_state(AdminStates.setting_promocode_value)
     elif promo_type == 'days':
         await message.answer(f'📅 <b>Промокод:</b> <code>{code}</code>\n\nВведите количество дней подписки:')
@@ -535,7 +570,7 @@ async def process_promocode_value(message: types.Message, db_user: User, state: 
 
         promo_type = data.get('promocode_type')
 
-        if promo_type == 'balance' and (value < 1 or value > 10000):
+        if promo_type in ['balance', 'combo'] and (value < 1 or value > 10000):
             await message.answer('❌ Сумма должна быть от 1 до 10,000 рублей')
             return
         if promo_type in ['days', 'trial'] and (value < 1 or value > 3650):
@@ -547,11 +582,37 @@ async def process_promocode_value(message: types.Message, db_user: User, state: 
 
         await state.update_data(promocode_value=value)
 
+        # Для комбинированного типа сумма — только первый шаг, дальше дни
+        if promo_type == 'combo':
+            await message.answer('📅 Шаг 2 из 2: введите количество дней подписки:')
+            await state.set_state(AdminStates.setting_promocode_combo_days)
+            return
+
         await message.answer('📊 Введите количество использований промокода (или 0 для безлимита):')
         await state.set_state(AdminStates.setting_promocode_uses)
 
     except ValueError:
         await message.answer('❌ Введите корректное число')
+
+
+@admin_required
+@error_handler
+async def process_promocode_combo_days(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
+    """Шаг 2 комбинированного промокода (BALANCE_AND_DAYS): ввод дней подписки."""
+    try:
+        days = int(message.text.strip())
+
+        if days < 1 or days > 3650:
+            await message.answer('❌ Количество дней должно быть от 1 до 3650')
+            return
+
+        await state.update_data(promocode_combo_days=days)
+
+        await message.answer('📊 Введите количество использований промокода (или 0 для безлимита):')
+        await state.set_state(AdminStates.setting_promocode_uses)
+
+    except ValueError:
+        await message.answer('❌ Введите корректное число дней')
 
 
 async def handle_edit_value(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
@@ -732,14 +793,22 @@ async def process_promocode_expiry(message: types.Message, db_user: User, state:
             'days': PromoCodeType.SUBSCRIPTION_DAYS,
             'trial': PromoCodeType.TRIAL_SUBSCRIPTION,
             'group': PromoCodeType.PROMO_GROUP,
+            'combo': PromoCodeType.BALANCE_AND_DAYS,
         }
+
+        if promo_type == 'combo':
+            balance_bonus_kopeks = value * 100
+            subscription_days = data.get('promocode_combo_days', 0)
+        else:
+            balance_bonus_kopeks = value * 100 if promo_type == 'balance' else 0
+            subscription_days = value if promo_type in ['days', 'trial'] else 0
 
         promocode = await create_promocode(
             db=db,
             code=code,
             type=type_map[promo_type],
-            balance_bonus_kopeks=value * 100 if promo_type == 'balance' else 0,
-            subscription_days=value if promo_type in ['days', 'trial'] else 0,
+            balance_bonus_kopeks=balance_bonus_kopeks,
+            subscription_days=subscription_days,
             max_uses=max_uses,
             valid_until=valid_until,
             created_by=db_user.id,
@@ -751,6 +820,7 @@ async def process_promocode_expiry(message: types.Message, db_user: User, state:
             'days': 'Дни подписки',
             'trial': 'Тестовая подписка',
             'group': 'Промогруппа',
+            'combo': 'Баланс + дни подписки',
         }
 
         summary_text = f"""
@@ -763,6 +833,9 @@ async def process_promocode_expiry(message: types.Message, db_user: User, state:
         if promo_type == 'balance':
             summary_text += f'💰 <b>Сумма:</b> {settings.format_price(promocode.balance_bonus_kopeks)}\n'
         elif promo_type in ['days', 'trial']:
+            summary_text += f'📅 <b>Дней:</b> {promocode.subscription_days}\n'
+        elif promo_type == 'combo':
+            summary_text += f'💰 <b>Сумма:</b> {settings.format_price(promocode.balance_bonus_kopeks)}\n'
             summary_text += f'📅 <b>Дней:</b> {promocode.subscription_days}\n'
         elif promo_type == 'group' and promo_group_name:
             summary_text += f'🏷️ <b>Промогруппа:</b> {promo_group_name}\n'
@@ -1116,6 +1189,7 @@ def register_handlers(dp: Dispatcher):
 
     dp.message.register(process_promocode_code, AdminStates.creating_promocode)
     dp.message.register(process_promocode_value, AdminStates.setting_promocode_value)
+    dp.message.register(process_promocode_combo_days, AdminStates.setting_promocode_combo_days)
     dp.message.register(process_promocode_uses, AdminStates.setting_promocode_uses)
     dp.message.register(process_promocode_expiry, AdminStates.setting_promocode_expiry)
     dp.message.register(process_discount_hours, AdminStates.setting_discount_hours)

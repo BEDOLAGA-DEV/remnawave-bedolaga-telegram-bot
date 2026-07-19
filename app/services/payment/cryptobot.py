@@ -253,7 +253,7 @@ class CryptoBotPaymentMixin:
                     amount_kopeks = int(amount_rubles_rounded * 100)
                     conversion_rate = amount_rubles / amount_usd if amount_usd > 0 else 0
                     logger.info(
-                        'Конвертация USD->RUB: $ -> ₽ (округлено до ₽, курс:)',
+                        'Конвертация USD->RUB',
                         amount_usd=amount_usd,
                         amount_rubles=amount_rubles,
                         amount_rubles_rounded=amount_rubles_rounded,

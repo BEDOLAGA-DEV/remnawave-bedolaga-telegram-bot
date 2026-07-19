@@ -34,6 +34,9 @@ class NotificationType(Enum):
     SUBSCRIPTION_EXPIRING = 'subscription_expiring'
     SUBSCRIPTION_EXPIRED = 'subscription_expired'
     SUBSCRIPTION_RENEWED = 'subscription_renewed'
+    WINBACK_EXPIRED_1D = 'winback_expired_1d'
+    WINBACK_DISCOUNT = 'winback_discount'
+    WINBACK_TRIAL_ENDING = 'winback_trial_ending'
 
     # Autopay notifications
     AUTOPAY_SUCCESS = 'autopay_success'
@@ -65,6 +68,7 @@ class NotificationType(Enum):
     # Auth emails
     EMAIL_VERIFICATION = 'email_verification'
     PASSWORD_RESET = 'password_reset'
+    EMAIL_CHANGE_CODE = 'email_change_code'
 
     # Webhook subscription events
     WEBHOOK_SUB_EXPIRED = 'webhook_sub_expired'
@@ -85,6 +89,7 @@ class NotificationType(Enum):
     # Other
     BROADCAST = 'broadcast'
     PAYMENT_RECEIVED = 'payment_received'
+    PROMO_OFFER = 'promo_offer'
 
     # Guest purchase notifications
     GUEST_SUBSCRIPTION_DELIVERED = 'guest_subscription_delivered'
@@ -183,7 +188,7 @@ class NotificationDeliveryService:
 
             if email_sent or ws_sent:
                 logger.info(
-                    'Уведомление отправлено email-пользователю (email ws=)',
+                    'Уведомление отправлено email-пользователю',
                     notification_type_value=notification_type.value,
                     user_id=user.id,
                     email_sent=email_sent,
@@ -345,6 +350,8 @@ class NotificationDeliveryService:
             # Inject common context values used across all email templates
             context = {
                 'cabinet_url': getattr(settings, 'CABINET_URL', '') or '',
+                'username': user.first_name or user.username or '',
+                'email': user.email or '',
                 **context,
             }
 
@@ -385,7 +392,9 @@ class NotificationDeliveryService:
                 template = self.email_templates.get_template(notification_type, language, context)
 
             if not template:
-                logger.warning('Не найден email шаблон для', notification_type_value=notification_type.value)
+                logger.warning(
+                    'Не найден email шаблон для типа уведомления', notification_type_value=notification_type.value
+                )
                 return False
 
             # Send email (sync smtplib — run in thread to avoid blocking event loop)

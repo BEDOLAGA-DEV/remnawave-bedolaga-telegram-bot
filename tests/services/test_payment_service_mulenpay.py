@@ -30,6 +30,9 @@ class DummySession:
     async def refresh(self, *_args: Any, **_kwargs: Any) -> None:
         return None
 
+    async def flush(self) -> None:
+        return None
+
 
 class DummyLocalPayment:
     def __init__(self, payment_id: int = 501) -> None:
@@ -155,6 +158,7 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
 
     class DummyPayment:
         def __init__(self) -> None:
+            self.id = 501
             self.user_id = 42
             self.amount_kopeks = 1500
             self.description = 'Пополнение'
@@ -163,6 +167,11 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
             self.mulen_payment_id: int | None = None
             self.status = 'created'
             self.is_paid = False
+            self.metadata_json: dict[str, Any] = {}
+            self.paid_at: datetime | None = None
+            self.updated_at: datetime | None = None
+            self.callback_payload: dict[str, Any] | None = None
+            self.created_at = datetime.now(UTC)
 
     payment = DummyPayment()
 
@@ -195,6 +204,8 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
             self.telegram_id = 99
             self.balance_kopeks = 0
             self.has_made_first_topup = False
+            self.referred_by_id: int | None = None
+            self.updated_at: datetime | None = None
             self.language = 'ru'
             self.promo_group = None
             self.subscription = None
@@ -209,26 +220,21 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
         assert user_id == payment.user_id
         return dummy_user
 
-    balance_call: dict[str, Any] = {}
+    async def fake_get_mulenpay_payment_by_id_for_update(_db: DummySession, _payment_id: int) -> DummyPayment:
+        assert _payment_id == payment.id
+        return payment
 
-    async def fake_add_user_balance(
-        _db: DummySession,
-        user: DummyUser,
-        amount_kopeks: int,
-        description: str,
-        *,
-        create_transaction: bool = True,
-        **_kwargs: Any,
-    ) -> bool:
-        balance_call.update(
-            {
-                'create_transaction': create_transaction,
-                'description': description,
-                'amount_kopeks': amount_kopeks,
-            }
-        )
-        user.balance_kopeks += amount_kopeks
-        return True
+    async def fake_lock_user_for_update(_db: DummySession, user: DummyUser) -> DummyUser:
+        return user
+
+    async def fake_emit_transaction_side_effects(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    async def fake_try_fulfill_guest_purchase(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    async def fake_send_cart_notification_after_topup(*_args: Any, **_kwargs: Any) -> None:
+        return None
 
     async def fake_process_referral_topup(*_args: Any, **_kwargs: Any) -> None:
         return None
@@ -285,10 +291,32 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
         fake_get_user_by_id,
         raising=False,
     )
+
+    # FOR UPDATE row lock — patch at SOURCE module (reached via import_module)
     monkeypatch.setattr(
-        payment_service_module,
-        'add_user_balance',
-        fake_add_user_balance,
+        'app.database.crud.mulenpay.get_mulenpay_payment_by_id_for_update',
+        fake_get_mulenpay_payment_by_id_for_update,
+        raising=False,
+    )
+    # Locally-imported helpers — patch at their SOURCE modules
+    monkeypatch.setattr(
+        'app.database.crud.user.lock_user_for_update',
+        fake_lock_user_for_update,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        'app.database.crud.transaction.emit_transaction_side_effects',
+        fake_emit_transaction_side_effects,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        'app.services.payment.common.try_fulfill_guest_purchase',
+        fake_try_fulfill_guest_purchase,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        'app.services.payment.common.send_cart_notification_after_topup',
+        fake_send_cart_notification_after_topup,
         raising=False,
     )
 
@@ -298,7 +326,9 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
     )
 
     assert result is True
-    assert transaction_calls, 'create_transaction should be called'
-    assert balance_call['create_transaction'] is False
+    # Exactly one transaction created (no double-credit / idempotent webhook)
+    assert len(transaction_calls) == 1, 'exactly one transaction should be created'
+    # Balance credited exactly once with the full payment amount
     assert dummy_user.balance_kopeks == payment.amount_kopeks
+    # Payment linked to its transaction
     assert payment.transaction_id is not None

@@ -35,9 +35,7 @@ class TributePaymentMixin:
 
             payment_url = f'https://tribute.ru/pay?amount={amount_kopeks}&user={user_id}'
 
-            logger.info(
-                'Создан Tribute платеж на ₽ для пользователя', amount_kopeks=amount_kopeks / 100, user_id=user_id
-            )
+            logger.info('Создан Tribute платеж', amount_kopeks=amount_kopeks / 100, user_id=user_id)
             return payment_url
 
         except Exception as error:

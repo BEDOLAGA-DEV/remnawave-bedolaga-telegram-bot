@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import json
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 import structlog
@@ -31,6 +32,20 @@ from app.config import settings
 
 
 logger = structlog.get_logger(__name__)
+
+
+def _strip_url_query(url: str) -> str:
+    """Return ``url`` without its query string or fragment.
+
+    Lava Business rejects successUrl/failUrl that carry a query string ("ошибочный формат
+    ссылки", HTTP 422). Callers should pass clean URLs, but strip defensively so a stray
+    ``?param=`` (e.g. a misconfigured LAVA_RETURN_URL) can't break invoice creation.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, '', ''))
 
 
 class LavaAPIError(Exception):
@@ -187,9 +202,9 @@ class LavaService:
         if hook_url:
             payload['hookUrl'] = hook_url[:500]
         if success_url:
-            payload['successUrl'] = success_url[:500]
+            payload['successUrl'] = _strip_url_query(success_url)[:500]
         if fail_url:
-            payload['failUrl'] = fail_url[:500]
+            payload['failUrl'] = _strip_url_query(fail_url)[:500]
         if expire_minutes is not None:
             # Lava лимит: 1..7200 минут (5 дней)
             payload['expire'] = max(1, min(7200, int(expire_minutes)))

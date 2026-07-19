@@ -158,7 +158,7 @@ async def rollback_trial_subscription_activation(
         await decrement_subscription_server_counts(db, subscription)
     except Exception as error:  # pragma: no cover - defensive logging
         logger.error(
-            'Failed to decrement server counters during trial rollback for', user_id=subscription.user_id, error=error
+            'Failed to decrement server counters during trial rollback', user_id=subscription.user_id, error=error
         )
 
     try:

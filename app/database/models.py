@@ -145,6 +145,7 @@ class PromoCodeType(Enum):
     TRIAL_SUBSCRIPTION = 'trial_subscription'
     PROMO_GROUP = 'promo_group'
     DISCOUNT = 'discount'  # Одноразовая процентная скидка (balance_bonus_kopeks = процент, subscription_days = часы)
+    BALANCE_AND_DAYS = 'balance_and_days'  # Комбинированный: и бонус на баланс, и дни подписки одним кодом
 
 
 class PaymentMethod(Enum):
@@ -170,6 +171,7 @@ class PaymentMethod(Enum):
     ETOPLATEZHI = 'etoplatezhi'
     ANTILOPAY = 'antilopay'
     JUPITER = 'jupiter'
+    CISPAY = 'cispay'
     DONUT = 'donut'
     LAVA = 'lava'
     MANUAL = 'manual'
@@ -1558,6 +1560,73 @@ class LavaPayment(Base):
         )
 
 
+class CisPayPayment(Base):
+    """Платежи через cisPay (api.cispay.app, H2H карта/СБП)."""
+
+    __tablename__ = 'cispay_payments'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+
+    # Идентификаторы
+    order_id = Column(String(64), unique=True, nullable=False, index=True)  # Наш order_id
+    cispay_payment_id = Column(String(64), unique=True, nullable=True, index=True)  # id (UUIDv7) от cisPay
+
+    # Суммы
+    amount_kopeks = Column(Integer, nullable=False)
+    # Сумма к оплате покупателем (может включать комиссию, если её платит покупатель)
+    charged_amount_kopeks = Column(Integer, nullable=True)
+    currency = Column(String(10), nullable=False, default='RUB')
+    description = Column(Text, nullable=True)
+
+    # Статусы
+    status = Column(String(32), nullable=False, default='pending')
+    is_paid = Column(Boolean, default=False)
+
+    # Данные платежа
+    payment_url = Column(Text, nullable=True)
+    payment_method = Column(String(32), nullable=True)  # 'CARD' / 'SBP'
+
+    # Метаданные
+    metadata_json = Column(JSON, nullable=True)
+    callback_payload = Column(JSON, nullable=True)
+
+    # Временные метки
+    paid_at = Column(AwareDateTime(), nullable=True)
+    expires_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    # Связь с транзакцией
+    transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+
+    # Relationships
+    user = relationship('User', backref='cispay_payments')
+    transaction = relationship('Transaction', backref='cispay_payment')
+
+    @property
+    def amount_rubles(self) -> float:
+        return self.amount_kopeks / 100
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == 'pending'
+
+    @property
+    def is_success(self) -> bool:
+        return self.status == 'success' and self.is_paid
+
+    @property
+    def is_failed(self) -> bool:
+        return self.status in ['failed', 'declined', 'expired', 'refunded', 'amount_mismatch', 'error']
+
+    def __repr__(self) -> str:  # pragma: no cover - debug helper
+        return (
+            f'<CisPayPayment(id={self.id}, order_id={self.order_id}, '
+            f'amount={self.amount_rubles}₽, status={self.status})>'
+        )
+
+
 class PromoGroup(Base):
     __tablename__ = 'promo_groups'
 
@@ -1753,10 +1822,45 @@ class Tariff(Base):
         prices = self.period_prices or {}
         return prices.get(str(period_days))
 
+    @property
+    def is_free(self) -> bool:
+        """Тариф полностью бесплатный (все доступные цены = 0).
+
+        Используется при смене тарифа: дни, наспамленные на бесплатном (0₽) тарифе,
+        не переносятся на платный — см. extend_subscription / TARIFF_SWITCH_RESET_FREE_DAYS.
+        """
+        if self.is_daily:
+            return (self.daily_price_kopeks or 0) <= 0
+        prices = list((self.period_prices or {}).values())
+        if not prices:
+            return False
+        return all((price or 0) <= 0 for price in prices)
+
     def get_available_periods(self) -> list[int]:
         """Возвращает список доступных периодов в днях."""
         prices = self.period_prices or {}
         return sorted([int(p) for p in prices.keys()])
+
+    def get_purchasable_periods(self) -> list[int]:
+        """Периоды, доступные для покупки, с учётом суточных тарифов.
+
+        У суточных тарифов ``period_prices`` пуст — оплата идёт за день,
+        поэтому единственный «период» покупки равен 1 дню. Для обычных
+        тарифов поведение совпадает с :meth:`get_available_periods`.
+        """
+        if self.is_daily and self.daily_price_kopeks:
+            return [1]
+        return self.get_available_periods()
+
+    def get_purchasable_price_for_period(self, period_days: int) -> int | None:
+        """Цена за период с учётом суточных тарифов.
+
+        Для суточного тарифа период в 1 день стоит ``daily_price_kopeks``;
+        в остальных случаях используется обычная цена из ``period_prices``.
+        """
+        if self.is_daily and period_days == 1:
+            return self.daily_price_kopeks or None
+        return self.get_price_for_period(period_days)
 
     def get_shortest_period(self) -> int | None:
         """Возвращает минимальный доступный период в днях (для автопродления)."""
@@ -1922,6 +2026,21 @@ class User(Base):
         # Fallback to most recent (already ordered by created_at desc)
         return self.subscriptions[0]
 
+    def is_trial_already_used(self) -> bool:
+        """Единый гейт доступности триала для бота И кабинета.
+
+        Раньше проверка дублировалась 4× в боте (purchase.py) и 2× в кабинете, причём
+        с разной логикой. Триал недоступен, если пользователь уже оплачивал подписку
+        ЛИБО у него есть ЛЮБАЯ подписка — кроме PENDING-триала (это повторная попытка
+        оплаты того же триала). Проверяются ВСЕ подписки (multi-tariff-safe). Требует
+        загруженного `subscriptions`.
+        """
+        if self.has_had_paid_subscription:
+            return True
+        return any(
+            not (sub.status == SubscriptionStatus.PENDING.value and sub.is_trial) for sub in (self.subscriptions or [])
+        )
+
     transactions = relationship('Transaction', back_populates='user')
     referral_earnings = relationship('ReferralEarning', foreign_keys='ReferralEarning.user_id', back_populates='user')
     discount_offers = relationship('DiscountOffer', back_populates='user')
@@ -2040,6 +2159,8 @@ class Subscription(Base):
         Index('ix_subscriptions_user_id', 'user_id'),
         Index('ix_subscriptions_user_status', 'user_id', 'status'),
         Index('ix_subscriptions_user_tariff_status', 'user_id', 'tariff_id', 'status'),
+        Index('ix_subscriptions_grace_expiry_scan', 'status', 'is_trial', 'end_date'),
+        Index('ix_subscriptions_grace_candidate', 'grace_candidate_at', 'grace_candidate_reason'),
         Index(
             'uq_subscriptions_user_tariff_active',
             'user_id',
@@ -2084,6 +2205,15 @@ class Subscription(Base):
     last_webhook_update_at = Column(AwareDateTime(), nullable=True)
     last_revoke_at = Column(AwareDateTime(), nullable=True)
 
+    # Grace-access ingress marker.  Only trusted status transitions set the
+    # candidate timestamp; generic updated_at/webhooks must not resurrect old
+    # expired subscriptions when the feature is enabled.
+    grace_candidate_reason = Column(String(16), nullable=True)
+    grace_candidate_at = Column(AwareDateTime(), nullable=True)
+    # Administrative cancellation/shortening suppresses only the current
+    # incident. A later renewal has a newer end_date and becomes eligible again.
+    grace_suppressed_until = Column(AwareDateTime(), nullable=True)
+
     remnawave_short_uuid = Column(String(255), nullable=True)
     remnawave_uuid = Column(String(255), nullable=True)
     remnawave_short_id = Column(
@@ -2107,6 +2237,9 @@ class Subscription(Base):
     )
     traffic_purchases = relationship(
         'TrafficPurchase', back_populates='subscription', passive_deletes=True, cascade='all, delete-orphan'
+    )
+    grace_access_sessions = relationship(
+        'GraceAccessSessionModel', back_populates='subscription', passive_deletes=True, lazy='noload'
     )
 
     @property
@@ -2268,6 +2401,90 @@ class Subscription(Base):
         return True
 
 
+class GraceAccessSessionModel(Base):
+    """Persistent snapshot for one restricted grace-access incident."""
+
+    __tablename__ = 'grace_access_sessions'
+    __table_args__ = (
+        UniqueConstraint(
+            'subscription_id',
+            'incident_key',
+            name='uq_grace_access_sessions_incident',
+        ),
+        CheckConstraint(
+            "reason IN ('expired', 'limited')",
+            name='ck_grace_access_sessions_reason',
+        ),
+        CheckConstraint(
+            "state IN ('pending', 'active', 'restoring', 'completed')",
+            name='ck_grace_access_sessions_state',
+        ),
+        CheckConstraint(
+            """
+            (
+                state = 'completed'
+                AND completion_reason IS NOT NULL
+                AND completion_reason IN ('paid', 'timeout', 'drained', 'conflict', 'revoked')
+                AND completed_at IS NOT NULL
+            )
+            OR
+            (
+                state <> 'completed'
+                AND completion_reason IS NULL
+                AND completed_at IS NULL
+            )
+            """,
+            name='ck_grace_access_sessions_completion',
+        ),
+        CheckConstraint(
+            'grace_until > started_at',
+            name='ck_grace_access_sessions_dates',
+        ),
+        CheckConstraint(
+            'snapshot_version > 0',
+            name='ck_grace_access_sessions_snapshot_version',
+        ),
+        CheckConstraint(
+            'version > 0',
+            name='ck_grace_access_sessions_version',
+        ),
+        Index(
+            'uq_grace_access_sessions_one_open',
+            'subscription_id',
+            unique=True,
+            postgresql_where=text("state IN ('pending', 'active', 'restoring')"),
+            sqlite_where=text("state IN ('pending', 'active', 'restoring')"),
+        ),
+        Index(
+            'ix_grace_access_sessions_state_until',
+            'state',
+            'grace_until',
+        ),
+    )
+
+    id = Column(String(36), primary_key=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False)
+    remnawave_uuid = Column(String(255), nullable=False)
+    reason = Column(String(16), nullable=False)
+    incident_key = Column(String(255), nullable=False)
+    state = Column(String(16), nullable=False)
+
+    snapshot_version = Column(Integer, nullable=False, default=2, server_default='2')
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    billing_before = Column(JSON, nullable=False)
+    panel_before = Column(JSON, nullable=False)
+    overlay = Column(JSON, nullable=False)
+
+    started_at = Column(AwareDateTime(), nullable=False)
+    grace_until = Column(AwareDateTime(), nullable=False)
+    updated_at = Column(AwareDateTime(), nullable=False)
+    completion_reason = Column(String(16), nullable=True)
+    completed_at = Column(AwareDateTime(), nullable=True)
+    last_error = Column(Text, nullable=True)
+
+    subscription = relationship('Subscription', back_populates='grace_access_sessions')
+
+
 class TrafficPurchase(Base):
     """Докупка трафика с индивидуальной датой истечения."""
 
@@ -2425,6 +2642,69 @@ class PromoCodeUse(Base):
 
     promocode = relationship('PromoCode', back_populates='uses')
     user = relationship('User')
+
+
+class CouponStatus(StrEnum):
+    ACTIVE = 'active'
+    REDEEMED = 'redeemed'
+    REVOKED = 'revoked'
+
+
+class CouponBatch(Base):
+    """Batch of one-time coupons for wholesale/partner sales.
+
+    The admin generates N coupons for a tariff+period, hands the links to a
+    partner and settles payment outside the bot; ``wholesale_price_kopeks``
+    is bookkeeping only.
+    """
+
+    __tablename__ = 'coupon_batches'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    tariff_id = Column(Integer, ForeignKey('tariffs.id', ondelete='SET NULL'), nullable=True, index=True)
+    period_days = Column(Integer, nullable=False)
+    coupons_total = Column(Integer, nullable=False)
+    wholesale_price_kopeks = Column(Integer, nullable=False, default=0)  # за купон; 0 — не указана
+    valid_until = Column(AwareDateTime(), nullable=True)
+    # Display-only cache for list views; per-coupon Coupon.status is the
+    # authority (redemption never consults this flag)
+    is_revoked = Column(Boolean, nullable=False, default=False)
+    created_by = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+    coupons = relationship('Coupon', back_populates='batch', lazy='noload')
+    tariff = relationship('Tariff', lazy='selectin')
+
+    @property
+    def is_expired(self) -> bool:
+        return self.valid_until is not None and _aware(self.valid_until) < datetime.now(UTC)
+
+    def __repr__(self) -> str:
+        return f"<CouponBatch id={self.id} name='{self.name}'>"
+
+
+class Coupon(Base):
+    """One-time coupon redeemed via the ``/start coupon_<token>`` deep link."""
+
+    __tablename__ = 'coupons'
+    __table_args__ = (Index('ix_coupons_batch_status', 'batch_id', 'status'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey('coupon_batches.id', ondelete='CASCADE'), nullable=False)
+    token = Column(String(64), unique=True, nullable=False, index=True)
+    status = Column(String(20), nullable=False, default=CouponStatus.ACTIVE.value)
+    redeemed_by = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    redeemed_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), server_default=func.now())
+
+    batch = relationship('CouponBatch', back_populates='coupons', lazy='selectin')
+    user = relationship('User', foreign_keys=[redeemed_by], lazy='noload')
+
+    def __repr__(self) -> str:
+        token_prefix = self.token[:5] if self.token else '?'
+        return f"<Coupon token='{token_prefix}...' status='{self.status}'>"
 
 
 class ReferralEarning(Base):
@@ -2725,6 +3005,17 @@ class PrivacyPolicy(Base):
 
 class PublicOffer(Base):
     __tablename__ = 'public_offers'
+
+    id = Column(Integer, primary_key=True, index=True)
+    language = Column(String(10), nullable=False, unique=True)
+    content = Column(Text, nullable=False)
+    is_enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+
+class RecurrentPayments(Base):
+    __tablename__ = 'recurrent_payments'
 
     id = Column(Integer, primary_key=True, index=True)
     language = Column(String(10), nullable=False, unique=True)
@@ -3661,6 +3952,11 @@ class WheelSpin(Base):
     # Сгенерированный промокод (если приз - промокод)
     generated_promocode_id = Column(Integer, ForeignKey('promocodes.id'), nullable=True)
 
+    # Telegram Stars charge id — идемпотентность: Telegram доставляет successful_payment
+    # «как минимум один раз», поэтому при повторной доставке апдейта спин по этому charge_id
+    # не должен начислить приз второй раз. Уникальный индекс — гарантия на уровне БД.
+    telegram_charge_id = Column(String(255), nullable=True, unique=True)
+
     # Флаг успешного начисления
     is_applied = Column(Boolean, default=False, nullable=False)
     applied_at = Column(AwareDateTime(), nullable=True)
@@ -3741,10 +4037,13 @@ class PaymentMethodConfig(Base):
 
     # Переопределение отображаемого имени (null = использовать из env)
     display_name = Column(String(255), nullable=True)
+    description = Column(Text, nullable=True)
 
     # Под-опции включения/выключения (JSON): {"card": true, "sbp": false}
     # Для методов с вариантами: yookassa, pal24, platega
     sub_options = Column(JSON, nullable=True, default=None)
+
+    quick_amounts = Column(JSON, nullable=True, default=None)
 
     # Переопределение мин/макс сумм (null = из env)
     min_amount_kopeks = Column(Integer, nullable=True)
@@ -4155,6 +4454,7 @@ class YandexClientIdMap(Base):
     registration_sent = Column(Boolean, default=False, server_default=text('false'), nullable=False)
     trial_sent = Column(Boolean, default=False, server_default=text('false'), nullable=False)
     subid = Column(String(255), nullable=True)
+    yclid = Column(String(64), nullable=True)
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
 
@@ -4172,6 +4472,7 @@ class InfoPage(Base):
     sort_order = Column(Integer, nullable=False, default=0, server_default='0')
     icon = Column(String(50), nullable=True)
     replaces_tab = Column(String(20), nullable=True)  # 'faq', 'rules', 'privacy', 'offer', or null
+    display_mode = Column(String(10), nullable=False, default='both', server_default='both')
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
 

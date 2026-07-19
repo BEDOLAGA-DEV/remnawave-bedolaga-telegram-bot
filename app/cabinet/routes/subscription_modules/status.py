@@ -162,6 +162,10 @@ async def get_connection_link(
         'display_link': display_link if not hide_subscription_link else None,
         'happ_redirect_link': happ_redirect,
         'happ_scheme_link': happ_scheme_link,
+        # Сохранённая crypt-ссылка (happ://crypt4/... или happ://crypt5/...) — фронт
+        # предпочитает её клиентской генерации crypt4. Не прячем при hide_link:
+        # crypt-ссылка и есть способ скрыть исходный subscription_url.
+        'happ_crypto_link': subscription.subscription_crypto_link,
         'connect_mode': connect_mode,
         'hide_link': hide_subscription_link,
         'instructions': {
@@ -358,6 +362,12 @@ def _create_deep_link(
                 '_create_deep_link: app requires crypto link but none available', get=app.get('name', 'unknown')
             )
             return None
+        # The stored crypto link is already a full deep link (happ://crypt4/... from
+        # the old panel endpoint or happ://crypt5/... from the Happ API). Gluing it
+        # onto another happ:// scheme would produce happ://crypt4/happ://crypt5/...;
+        # https redirect wrappers (e.g. ...?url=) must still be applied though.
+        if subscription_crypto_link.lower().startswith('happ://') and scheme.lower().startswith('happ://'):
+            return subscription_crypto_link
         payload = subscription_crypto_link
     else:
         if not subscription_url:
@@ -394,6 +404,11 @@ def _resolve_button_url(
     if subscription_url:
         result = result.replace('{{SUBSCRIPTION_LINK}}', subscription_url)
     if subscription_crypto_link:
+        # {{HAPP_CRYPT*_LINK}} resolves to a FULL happ://crypt.../ deep link; when the
+        # template also hardcodes the prefix (happ://crypt4/{{HAPP_CRYPT4_LINK}}),
+        # collapse it so we don't produce happ://crypt4/happ://crypt5/...
+        if subscription_crypto_link.lower().startswith('happ://'):
+            result = re.sub(r'happ://crypt\d+/(?=\{\{HAPP_CRYPT[34]_LINK\}\})', '', result, flags=re.IGNORECASE)
         result = result.replace('{{HAPP_CRYPT3_LINK}}', subscription_crypto_link)
         result = result.replace('{{HAPP_CRYPT4_LINK}}', subscription_crypto_link)
     return result

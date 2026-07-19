@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import get_back_keyboard
+from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
@@ -65,7 +66,7 @@ async def start_cryptobot_payment(callback: types.CallbackQuery, db_user: User, 
         f'Сумма будет автоматически конвертирована в USD для оплаты.'
     )
 
-    keyboard = get_back_keyboard(db_user.language)
+    keyboard = await get_topup_amount_keyboard('cryptobot', db_user.language, back_callback='back_to_menu')
 
     await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
 
@@ -194,7 +195,7 @@ async def process_cryptobot_payment_amount(
         except Exception as delete_error:  # pragma: no cover - depends on bot rights
             logger.warning('Не удалось удалить сообщение с суммой CryptoBot', delete_error=delete_error)
 
-        if prompt_message_id:
+        if prompt_message_id and prompt_message_id != message.message_id:
             try:
                 await message.bot.delete_message(prompt_chat_id, prompt_message_id)
             except Exception as delete_error:  # pragma: no cover - diagnostics
@@ -227,7 +228,7 @@ async def process_cryptobot_payment_amount(
         await state.clear()
 
         logger.info(
-            'Создан CryptoBot платеж для пользователя ₽ ( USD), ID',
+            'Создан CryptoBot платеж',
             telegram_id=db_user.telegram_id,
             amount_rubles=round(amount_rubles, 0),
             amount_usd=round(amount_usd, 2),

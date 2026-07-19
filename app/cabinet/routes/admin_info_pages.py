@@ -88,6 +88,7 @@ async def create_page(
             sort_order=request.sort_order,
             icon=request.icon,
             replaces_tab=request.replaces_tab,
+            display_mode=request.display_mode,
         )
     except IntegrityError:
         raise HTTPException(

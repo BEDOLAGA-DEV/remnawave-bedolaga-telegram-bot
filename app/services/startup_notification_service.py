@@ -4,6 +4,7 @@
 Отправляет красивое сообщение с информацией о системе при запуске бота.
 """
 
+import asyncio
 import html
 from datetime import UTC, datetime
 from typing import Final
@@ -46,6 +47,7 @@ COMMUNITY_URL: Final[str] = 'https://t.me/+wTdMtSWq8YdmZmVi'
 DEVELOPER_CONTACT_URL: Final[str] = 'https://t.me/fringg'
 
 # Ключевые слова для определения типа ошибки
+PERMISSION_ERROR_KEYWORDS: Final[tuple[str, ...]] = ('permission denied', 'errno 13')
 WEBHOOK_ERROR_KEYWORDS: Final[tuple[str, ...]] = ('webhook', 'failed to resolve host')
 DATABASE_ERROR_KEYWORDS: Final[tuple[str, ...]] = ('database', 'postgres', 'connection refused')
 REDIS_ERROR_KEYWORD: Final[str] = 'redis'
@@ -264,6 +266,42 @@ class StartupNotificationService:
                 ]
             )
 
+            # Rich-вид (Bot API 10.1): логотип, заголовок, таблица показателей,
+            # footer с tg-time. При недоступности — классический вид ниже.
+            try:
+                from app.utils.rich_admin import rich_footer_now, rich_kv_table, try_send_rich_admin_message
+                from app.utils.rich_menu import _resolve_rich_logo_url
+
+                stats_rows = [
+                    ('Версия', f'<code>{html.escape(version)}</code>'),
+                    ('Пользователей', f'{users_count:,}'.replace(',', ' ')),
+                    ('Сумма балансов', html.escape(self._format_balance(total_balance_kopeks))),
+                    ('Платных подписок', f'{paid_subscriptions_count:,}'.replace(',', ' ')),
+                    ('Триальных подписок', f'{trial_subscriptions_count:,}'.replace(',', ' ')),
+                    ('Открытых тикетов', f'{open_tickets_count:,}'.replace(',', ' ')),
+                    ('Remnawave', f'{remnawave_icon} {html.escape(remnawave_status)}'),
+                ]
+                rich_blocks = []
+                logo_url = _resolve_rich_logo_url()
+                if logo_url:
+                    rich_blocks.append(f'<img src="{html.escape(logo_url, quote=True)}"/>')
+                rich_blocks.extend(
+                    [
+                        '<h5>🤖 Remnawave Bedolaga Bot</h5>',
+                        '<p>✅ Бот успешно запущен</p>',
+                        rich_kv_table(stats_rows),
+                        '<hr/>',
+                        rich_footer_now(),
+                    ]
+                )
+                if await try_send_rich_admin_message(
+                    self.bot, self.chat_id, ''.join(rich_blocks), thread_id=self.topic_id, reply_markup=keyboard
+                ):
+                    logger.info('Rich-стартовое уведомление отправлено в чат', chat_id=self.chat_id)
+                    return True
+            except Exception as rich_error:
+                logger.warning('Сбой rich-рендера стартового уведомления', error=str(rich_error))
+
             message_kwargs: dict = {
                 'chat_id': self.chat_id,
                 'text': message,
@@ -283,6 +321,50 @@ class StartupNotificationService:
             logger.error('Ошибка отправки стартового уведомления', e=e)
             return False
 
+    async def prewarm_logo(self) -> bool:
+        """Заранее загрузить логотип один раз и закешировать его Telegram file_id.
+
+        Без прогрева ~700КБ файл логотипа перезаливается на ПЕРВУЮ отправку каждой
+        рассылки/уведомления (file_id кешируется только после первого успеха), что на
+        медленном канале до Telegram подвешивает хвост цикла мониторинга. Шлём фото в
+        админ-чат (или в ЛС первого админа), ловим file_id и сразу удаляем сообщение.
+        Полностью best-effort: на любой ошибке тихо выходим, старт не блокируем.
+        """
+        try:
+            from app.utils.message_patch import _cache_logo_file_id, _logo_file_id, get_logo_media
+
+            if _logo_file_id:
+                return True
+
+            media = get_logo_media()
+            # None → логотип невалиден/отсутствует; str → file_id уже закеширован.
+            if media is None or isinstance(media, str):
+                return media is not None
+
+            target = self.chat_id or next(iter(settings.get_admin_ids()), None)
+            if not target:
+                logger.debug('prewarm_logo: нет целевого чата (admin), пропуск')
+                return False
+
+            send_kwargs: dict = {'chat_id': target, 'photo': media, 'disable_notification': True}
+            if self.topic_id and target == self.chat_id:
+                send_kwargs['message_thread_id'] = self.topic_id
+
+            timeout = getattr(settings, 'MONITORING_NOTIFICATION_SEND_TIMEOUT', 20.0)
+            msg = await asyncio.wait_for(self.bot.send_photo(**send_kwargs), timeout=timeout)
+            _cache_logo_file_id(msg)
+
+            try:
+                await self.bot.delete_message(chat_id=target, message_id=msg.message_id)
+            except Exception:
+                pass  # удаление best-effort — file_id уже пойман
+
+            logger.info('Логотип прогрет на старте: file_id закеширован', chat_id=target)
+            return True
+        except Exception as e:
+            logger.warning('Не удалось прогреть логотип на старте', error=str(e)[:200])
+            return False
+
 
 async def send_bot_startup_notification(bot: Bot) -> bool:
     """
@@ -295,6 +377,9 @@ async def send_bot_startup_notification(bot: Bot) -> bool:
         bool: True если уведомление отправлено успешно
     """
     service = StartupNotificationService(bot)
+    # Прогреваем file_id логотипа до первых рассылок, чтобы ~700КБ файл не
+    # перезаливался на каждой первой отправке (см. баг зависания мониторинга).
+    await service.prewarm_logo()
     return await service.send_startup_notification()
 
 
@@ -309,6 +394,17 @@ def _get_error_recommendations(error_message: str) -> str | None:
         Рекомендации в формате HTML blockquote или None
     """
     error_lower = error_message.lower()
+
+    # Ошибки прав доступа к примонтированным каталогам (logs/data/locales/uploads)
+    if any(keyword in error_lower for keyword in PERMISSION_ERROR_KEYWORDS):
+        tips = [
+            '• Бот в контейнере работает от пользователя с uid 1000',
+            '• Похоже, примонтированные каталоги принадлежат другому пользователю',
+            '• Проверьте права на каталоги logs, data, locales (и uploads)',
+            '• Обычно лечится на хосте: <code>chown -R 1000:1000 logs data locales</code>',
+            '• После исправления: docker compose restart bot',
+        ]
+        return '<blockquote expandable>💡 <b>Рекомендации:</b>\n' + '\n'.join(tips) + '</blockquote>'
 
     # Ошибки вебхука
     if any(keyword in error_lower for keyword in WEBHOOK_ERROR_KEYWORDS):

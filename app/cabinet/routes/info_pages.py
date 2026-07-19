@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.crud.info_pages import get_all_info_pages, get_info_page_by_slug, get_tab_replacements
+from app.utils.display_mode import is_visible_in_web
 
 from ..dependencies import get_cabinet_db
 from ..schemas.info_pages import InfoPageListItem, InfoPageResponse
@@ -22,7 +23,7 @@ async def list_active_info_pages(
 ) -> list[InfoPageListItem]:
     """Get all active info pages (public, no auth required)."""
     try:
-        pages = await get_all_info_pages(db, include_inactive=False, page_type=page_type)
+        pages = await get_all_info_pages(db, include_inactive=False, page_type=page_type, visible_in='web')
         return [InfoPageListItem.model_validate(p) for p in pages]
     except Exception:
         logger.exception('Failed to list active info pages')
@@ -42,7 +43,7 @@ async def get_info_page_tab_replacements(
     or null if no replacement is set: ``{faq: slug_or_null, ...}``.
     """
     try:
-        return await get_tab_replacements(db)
+        return await get_tab_replacements(db, visible_in='web')
     except Exception:
         logger.exception('Failed to get tab replacements')
         raise HTTPException(
@@ -59,7 +60,7 @@ async def get_info_page_by_slug_public(
     """Get a single info page by slug (public, no auth required)."""
     page = await get_info_page_by_slug(db, slug)
 
-    if not page or not page.is_active:
+    if not page or not page.is_active or not is_visible_in_web(page.display_mode):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Info page not found',

@@ -13,7 +13,7 @@ wheels = [
 
 [[package]]
 name = "aiogram"
-version = "3.25.0"
+version = "3.29.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -23,9 +23,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/31/360c4ce76e60e9e7bcdda1af1ab4331d78837fbb22847a62121ad32b7672/aiogram-3.25.0.tar.gz", hash = "sha256:8a8b0c34f8c4ca8a6501b954abb0eeba26743449e35e20b70c0d810347354c3c", size = 1721010, upload-time = "2026-02-10T21:50:25.473Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/02/fc/16efb82a4a27c3046ba79614727371bd155d4df2b8919f4ce6df31f0e9ec/aiogram-3.29.1.tar.gz", hash = "sha256:7ac92c64b71d33eb8e3656de4517a1533a88b61728e5dd00b1e11393b669b521", size = 1903827, upload-time = "2026-07-01T23:43:31.805Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cf/be/1090252415e192687985517162dbdcee2ec4150cda1fa52bf57ae1f1c2a8/aiogram-3.25.0-py3-none-any.whl", hash = "sha256:0243966e93fbde14e90c0dfd0b3776c637ebf7ddcca2c7ee81ecbd68d9490cce", size = 713972, upload-time = "2026-02-10T21:50:23.253Z" },
+    { url = "https://files.pythonhosted.org/packages/75/bd/27556763072b5b4df006e20afc14f4f750c06b796edbef95df7e489e6e6f/aiogram-3.29.1-py3-none-any.whl", hash = "sha256:63cd0123e8ab065f78974ad58ff57c1a5c8c35aac1055761859c4a5ad27eaf04", size = 804448, upload-time = "2026-07-01T23:43:30.19Z" },
 ]
 
 [[package]]
@@ -1241,7 +1241,7 @@ wheels = [
 
 [[package]]
 name = "remnawave-bedolaga-telegram-bot"
-version = "3.54.0"
+version = "3.62.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aiogram" },
@@ -1278,7 +1278,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiogram", specifier = ">=3.25.0" },
+    { name = "aiogram", specifier = ">=3.29.1" },
     { name = "aiohttp-socks", specifier = ">=0.10.1" },
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "alembic", specifier = ">=1.18.4" },

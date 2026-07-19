@@ -147,15 +147,16 @@ async def process_new_message_text(message: types.Message, state: FSMContext, db
         )
 
 
-@admin_required
-@error_handler
-async def list_user_messages(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    page = 0
-    if ':' in callback.data:
-        try:
-            page = int(callback.data.split(':')[1])
-        except (ValueError, IndexError):
-            page = 0
+async def _render_user_messages_list(message: types.Message, db: AsyncSession, language: str, page: int = 0) -> None:
+    """Рендерит (edit) список сообщений в `message`. НЕ отвечает на callback —
+    это делает вызывающий хендлер.
+
+    Раньше `delete_message_confirm` пере-вызывал `list_user_messages` через
+    вручную собранный CallbackQuery, который не привязан к боту → `callback.answer()`
+    внутри падал (`method is not mounted to a bot instance`) + попытка второго ответа
+    на тот же callback.id. Рендер вынесен сюда и вызывается напрямую.
+    """
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     limit = 5
     offset = page * limit
@@ -163,12 +164,11 @@ async def list_user_messages(callback: types.CallbackQuery, db_user: User, db: A
     messages = await get_all_user_messages(db, offset=offset, limit=limit)
 
     if not messages:
-        await callback.message.edit_text(
+        await message.edit_text(
             '📋 <b>Список сообщений</b>\n\nСообщений пока нет. Добавьте первое сообщение!',
-            reply_markup=get_user_messages_keyboard(db_user.language),
+            reply_markup=get_user_messages_keyboard(language),
             parse_mode='HTML',
         )
-        await callback.answer()
         return
 
     text = '📋 <b>Список сообщений</b>\n\n'
@@ -179,8 +179,6 @@ async def list_user_messages(callback: types.CallbackQuery, db_user: User, db: A
         preview = preview.replace('<', '&lt;').replace('>', '&gt;')
 
         text += f'{status_emoji} <b>ID {msg.id}</b>\n{preview}\n📅 {msg.created_at.strftime("%d.%m.%Y %H:%M")}\n\n'
-
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     keyboard = []
 
@@ -204,9 +202,20 @@ async def list_user_messages(callback: types.CallbackQuery, db_user: User, db: A
 
     keyboard.append([InlineKeyboardButton(text='🔙 Назад', callback_data='user_messages_panel')])
 
-    await callback.message.edit_text(
-        text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode='HTML'
-    )
+    await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode='HTML')
+
+
+@admin_required
+@error_handler
+async def list_user_messages(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    page = 0
+    if ':' in callback.data:
+        try:
+            page = int(callback.data.split(':')[1])
+        except (ValueError, IndexError):
+            page = 0
+
+    await _render_user_messages_list(callback.message, db, db_user.language, page)
     await callback.answer()
 
 
@@ -281,17 +290,9 @@ async def delete_message_confirm(callback: types.CallbackQuery, db_user: User, d
 
     if success:
         await callback.answer('✅ Сообщение удалено')
-        await list_user_messages(
-            types.CallbackQuery(
-                id=callback.id,
-                from_user=callback.from_user,
-                chat_instance=callback.chat_instance,
-                data='list_user_messages:0',
-                message=callback.message,
-            ),
-            db_user,
-            db,
-        )
+        # Рендерим список напрямую (callback уже отвечен выше) — без фейкового
+        # CallbackQuery, который терял привязку к боту.
+        await _render_user_messages_list(callback.message, db, db_user.language, 0)
     else:
         await callback.answer('❌ Ошибка удаления сообщения', show_alert=True)
 

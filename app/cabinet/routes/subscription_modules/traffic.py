@@ -9,6 +9,7 @@ POST /subscription/traffic/save-cart
 
 from __future__ import annotations
 
+import asyncio
 import math
 from datetime import UTC, datetime
 from typing import Any
@@ -37,6 +38,12 @@ from .helpers import _apply_addon_discount, resolve_subscription
 
 
 logger = structlog.get_logger(__name__)
+
+# Cap inline RemnaWave panel sync on user-facing cabinet requests. The product is
+# committed before the sync, so a slow/unavailable panel must not hold the HTTP
+# response open (the cabinet pay button is bound to the request and would spin
+# after delivery). Past this budget the sync is deferred to remnawave_retry_queue.
+REMNAWAVE_SYNC_TIMEOUT = 10.0
 
 router = APIRouter()
 
@@ -336,7 +343,11 @@ async def purchase_traffic(
 
     await reactivate_subscription(db, subscription)
 
-    # Синхронизируем с RemnaWave
+    # Синхронизируем с RemnaWave с ограничением по времени: товар (трафик) уже
+    # зафиксирован в БД выше, и медленная/недоступная панель не должна держать
+    # HTTP-ответ открытым (из-за чего кнопка оплаты в кабинете крутится «бесконечно»).
+    # Если синк не уложился в бюджет — отдаём ответ сразу, а синк уходит в
+    # remnawave_retry_queue (та же ветка обработки, что и при ошибке).
     try:
         subscription_service = SubscriptionService()
         if settings.is_multi_tariff_enabled():
@@ -344,18 +355,19 @@ async def purchase_traffic(
         else:
             _should_create = not getattr(user, 'remnawave_uuid', None)
 
-        if _should_create:
-            await subscription_service.create_remnawave_user(db, subscription)
-        else:
-            await subscription_service.update_remnawave_user(db, subscription)
-            if subscription.status == 'active':
-                _enable_uuid = (
-                    subscription.remnawave_uuid
-                    if settings.is_multi_tariff_enabled()
-                    else getattr(user, 'remnawave_uuid', None)
-                )
-                if _enable_uuid:
-                    await subscription_service.enable_remnawave_user(_enable_uuid)
+        async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
+            if _should_create:
+                await subscription_service.create_remnawave_user(db, subscription)
+            else:
+                await subscription_service.update_remnawave_user(db, subscription)
+                if subscription.status == 'active':
+                    _enable_uuid = (
+                        subscription.remnawave_uuid
+                        if settings.is_multi_tariff_enabled()
+                        else getattr(user, 'remnawave_uuid', None)
+                    )
+                    if _enable_uuid:
+                        await subscription_service.enable_remnawave_user(_enable_uuid)
     except Exception as e:
         logger.error('Failed to sync traffic with RemnaWave', error=e)
         from app.services.remnawave_retry_queue import remnawave_retry_queue
@@ -380,12 +392,11 @@ async def purchase_traffic(
 
     # Отправляем уведомление админам
     try:
-        from aiogram import Bot
-
+        from app.bot_factory import create_bot
         from app.services.admin_notification_service import AdminNotificationService
 
-        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
+        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+            bot = create_bot()
             try:
                 notification_service = AdminNotificationService(bot)
                 old_traffic = subscription.traffic_limit_gb - request.gb
@@ -407,10 +418,11 @@ async def purchase_traffic(
     try:
         from app.services import yandex_offline_conv_service as yandex_conv
 
-        await yandex_conv.store_cid_and_fire_purchase(
+        # Purchase event fires centrally from create_transaction; here we only
+        # persist the request-body CID synchronously (#558449).
+        await yandex_conv.store_cid_only(
             user.id,
             request.yandex_cid,
-            final_price,
         )
     except Exception as yconv_err:
         logger.debug('yandex_conv purchase hook failed (non-fatal)', user_id=user.id, error=str(yconv_err))
@@ -649,7 +661,8 @@ async def switch_traffic_package(
     subscription.updated_at = datetime.now(UTC)
     await db.commit()
 
-    # Sync with RemnaWave
+    # Sync with RemnaWave (time-bounded — see REMNAWAVE_SYNC_TIMEOUT; product is
+    # already committed, defer slow syncs to remnawave_retry_queue).
     try:
         subscription_service = SubscriptionService()
         if settings.is_multi_tariff_enabled():
@@ -657,10 +670,11 @@ async def switch_traffic_package(
         else:
             _should_create = not getattr(user, 'remnawave_uuid', None)
 
-        if _should_create:
-            await subscription_service.create_remnawave_user(db, subscription)
-        else:
-            await subscription_service.update_remnawave_user(db, subscription)
+        async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
+            if _should_create:
+                await subscription_service.create_remnawave_user(db, subscription)
+            else:
+                await subscription_service.update_remnawave_user(db, subscription)
     except Exception as e:
         logger.error('Failed to sync traffic switch with RemnaWave', error=e)
         from app.services.remnawave_retry_queue import remnawave_retry_queue
@@ -682,10 +696,11 @@ async def switch_traffic_package(
         try:
             from app.services import yandex_offline_conv_service as yandex_conv
 
-            await yandex_conv.store_cid_and_fire_purchase(
+            # Purchase event fires centrally from create_transaction; here we
+            # only persist the request-body CID synchronously (#558449).
+            await yandex_conv.store_cid_only(
                 user.id,
                 request.yandex_cid,
-                charged,
             )
         except Exception as yconv_err:
             logger.debug(

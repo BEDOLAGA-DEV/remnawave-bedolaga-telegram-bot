@@ -22,6 +22,7 @@ async def upsert_cid(
     source: str = 'web',
     counter_id: str | None = None,
     subid: str | None = None,
+    yclid: str | None = None,
 ) -> YandexClientIdMap:
     """Insert or update Yandex ClientID for a user (race-safe via ON CONFLICT)."""
     now = datetime.now(UTC)
@@ -34,10 +35,14 @@ async def upsert_cid(
         values['counter_id'] = counter_id
     if subid:
         values['subid'] = subid
+    # Only overwrite yclid when a non-empty one is provided — never null-out
+    # an existing yclid on a later call that lacks it.
+    if yclid:
+        values['yclid'] = yclid
 
     stmt = (
         pg_insert(YandexClientIdMap)
-        .values(user_id=user_id, yandex_cid=cid, source=source, counter_id=counter_id, subid=subid)
+        .values(user_id=user_id, yandex_cid=cid, source=source, counter_id=counter_id, subid=subid, yclid=yclid)
         .on_conflict_do_update(index_elements=['user_id'], set_=values)
         .returning(YandexClientIdMap)
     )

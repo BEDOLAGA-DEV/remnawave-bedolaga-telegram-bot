@@ -8,8 +8,15 @@ from pydantic import BaseModel
 from sqlalchemy import Integer as SAInteger, and_, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.crud.transaction import REAL_PAYMENT_METHODS
+from app.database.crud.payment_gateway_stats import get_gateway_success_rates
+from app.database.crud.transaction import (
+    REAL_PAYMENT_METHODS,
+    addon_description_clause,
+    device_addon_clause,
+    traffic_addon_clause,
+)
 from app.database.models import (
+    GuestPurchase,
     PaymentMethod,
     Subscription,
     SubscriptionConversion,
@@ -92,6 +99,8 @@ class SalesSummary(BaseModel):
     active_subscriptions: int
     active_trials: int
     new_trials: int
+    new_paid_subscriptions: int
+    expired_subscriptions: int
     trial_to_paid_conversion: float
     renewals_count: int
     addon_revenue_kopeks: int
@@ -125,6 +134,23 @@ async def get_sales_summary(
             )
         )
         total_revenue = revenue_result.scalar() or 0
+
+        # Gateway-funded gifts never create a Transaction (the recipient "didn't
+        # pay"), so the buyer's real payment was otherwise invisible to revenue.
+        # Count it from GuestPurchase. Balance-funded gifts carry payment_method
+        # 'balance' and are excluded here — they're already counted via the deposit
+        # that funded the balance.
+        gift_revenue_result = await db.execute(
+            select(func.coalesce(func.sum(GuestPurchase.amount_kopeks), 0)).where(
+                and_(
+                    GuestPurchase.is_gift.is_(True),
+                    GuestPurchase.payment_method.in_(REAL_PAYMENT_METHODS),
+                    GuestPurchase.paid_at >= period_start,
+                    GuestPurchase.paid_at <= period_end,
+                )
+            )
+        )
+        total_revenue += gift_revenue_result.scalar() or 0
 
         # Manual top-ups by admins
         manual_topup_result = await db.execute(
@@ -178,12 +204,42 @@ async def get_sales_summary(
                         else_=0,
                     )
                 ).label('new_trials'),
+                # New PAID subscriptions started in the period.
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                Subscription.is_trial.is_(False),
+                                Subscription.created_at >= period_start,
+                                Subscription.created_at <= period_end,
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label('new_paid'),
+                # Paid subscriptions that ENDED in the period (for net active growth).
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                Subscription.is_trial.is_(False),
+                                Subscription.end_date >= period_start,
+                                Subscription.end_date <= period_end,
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label('expired_paid'),
             )
         )
         row = sub_counts_result.one()
         active_subs = row.active_paid or 0
         active_trials = row.active_trial or 0
         new_trials = row.new_trials or 0
+        new_paid_subs = row.new_paid or 0
+        expired_paid_subs = row.expired_paid or 0
 
         # Trial-to-paid conversion in period
         # Method 1: SubscriptionConversion records (only created by some purchase flows)
@@ -236,6 +292,10 @@ async def get_sales_summary(
                 and_(
                     Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                     Transaction.is_completed == True,
+                    # A renewal is a repeat subscription payment — NOT a traffic/device
+                    # top-up (those are add-ons with their own tab); exclude them so
+                    # renewals don't double-count add-on purchases.
+                    ~addon_description_clause(Transaction.description),
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
                     Transaction.user_id.in_(renewals_subquery),
@@ -244,13 +304,15 @@ async def get_sales_summary(
         )
         renewals_count = renewals_result.scalar() or 0
 
-        # Add-on revenue
+        # Add-on revenue for the summary card = ALL add-ons (traffic + devices),
+        # so "Доп. услуги" matches the sum of the Add-ons tab. (Previously this was
+        # traffic-only and silently dropped device revenue.)
         addon_revenue_result = await db.execute(
             select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
                 and_(
                     Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                     Transaction.is_completed == True,
-                    Transaction.description.ilike('%трафик%'),
+                    addon_description_clause(Transaction.description),
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
                 )
@@ -259,11 +321,15 @@ async def get_sales_summary(
         addon_revenue = addon_revenue_result.scalar() or 0
 
         return SalesSummary(
-            total_revenue_kopeks=total_revenue + manual_topup,
+            # Gateway revenue only — manual admin top-ups are reported separately
+            # (manual_topup_kopeks) so the headline "Доход" isn't muddied by them.
+            total_revenue_kopeks=total_revenue,
             manual_topup_kopeks=manual_topup,
             active_subscriptions=active_subs,
             active_trials=active_trials,
             new_trials=new_trials,
+            new_paid_subscriptions=new_paid_subs,
+            expired_subscriptions=expired_paid_subs,
             trial_to_paid_conversion=conversion_rate,
             renewals_count=renewals_count,
             addon_revenue_kopeks=addon_revenue,
@@ -537,8 +603,14 @@ async def get_sales_stats(
         totals = totals_result.one()
         total_sales = totals.count
 
+        # Revenue and the number of payments that make it up, so the average is
+        # money-per-payment. (Previously divided by the count of *new* subscriptions,
+        # while the sum included renewals/add-ons too — that inflated the average.)
         revenue_result = await db.execute(
-            select(func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0)).where(
+            select(
+                func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('revenue'),
+                func.count(Transaction.id).label('payments'),
+            ).where(
                 and_(
                     Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                     Transaction.is_completed == True,
@@ -547,8 +619,10 @@ async def get_sales_stats(
                 )
             )
         )
-        total_revenue = revenue_result.scalar() or 0
-        avg_order = total_revenue // total_sales if total_sales > 0 else 0
+        rev_row = revenue_result.one()
+        total_revenue = rev_row.revenue or 0
+        sub_payment_count = rev_row.payments or 0
+        avg_order = total_revenue // sub_payment_count if sub_payment_count > 0 else 0
 
         by_tariff_query = await db.execute(
             select(
@@ -707,14 +781,19 @@ async def get_renewals_stats(
         period_start, period_end = _parse_period(days, start_date, end_date)
         is_all_time = days is not None and days == 0
 
+        # Renewals must NOT include traffic/device top-ups (they share the
+        # SUBSCRIPTION_PAYMENT type but belong to the Add-ons tab).
+        not_addon = ~addon_description_clause(Transaction.description)
+
         if is_all_time:
-            # For "all time": renewals = users with more than 1 subscription payment
+            # For "all time": renewals = users with more than 1 real subscription payment
             repeat_users_subquery = (
                 select(Transaction.user_id)
                 .where(
                     and_(
                         Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                         Transaction.is_completed == True,
+                        not_addon,
                     )
                 )
                 .group_by(Transaction.user_id)
@@ -730,6 +809,7 @@ async def get_renewals_stats(
                     and_(
                         Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                         Transaction.is_completed == True,
+                        not_addon,
                         Transaction.user_id.in_(repeat_users_subquery),
                     )
                 )
@@ -765,6 +845,7 @@ async def get_renewals_stats(
                     and_(
                         Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                         Transaction.is_completed == True,
+                        not_addon,
                         Transaction.created_at >= period_start,
                         Transaction.created_at <= period_end,
                         Transaction.user_id.in_(existing_users_subquery),
@@ -794,6 +875,7 @@ async def get_renewals_stats(
                     and_(
                         Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                         Transaction.is_completed == True,
+                        not_addon,
                         Transaction.created_at >= prev_start,
                         Transaction.created_at <= prev_end,
                         Transaction.user_id.in_(prev_existing_subquery),
@@ -814,11 +896,14 @@ async def get_renewals_stats(
         else:
             trend = 'stable'
 
+        # Denominator for renewal_rate excludes add-ons too, so the rate is
+        # renewals / (new + renewals), not diluted by traffic/device top-ups.
         total_sub_payments_result = await db.execute(
             select(func.count(Transaction.id)).where(
                 and_(
                     Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                     Transaction.is_completed == True,
+                    not_addon,
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
                 )
@@ -836,6 +921,7 @@ async def get_renewals_stats(
                 and_(
                     Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                     Transaction.is_completed == True,
+                    not_addon,
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
                     Transaction.user_id.in_(existing_users_subquery),
@@ -939,7 +1025,7 @@ async def get_addons_stats(
                 and_(
                     Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                     Transaction.is_completed == True,
-                    Transaction.description.ilike('%трафик%'),
+                    traffic_addon_clause(Transaction.description),
                     Transaction.created_at >= period_start,
                     Transaction.created_at <= period_end,
                 )
@@ -977,11 +1063,11 @@ async def get_addons_stats(
             for row in daily_query
         ]
 
-        # Device purchases (transactions with 'устройств' in description)
+        # Device purchases (transactions whose description looks like a devices add-on)
         device_filter = and_(
             Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
             Transaction.is_completed == True,
-            Transaction.description.ilike('%устройств%'),
+            device_addon_clause(Transaction.description),
             Transaction.created_at >= period_start,
             Transaction.created_at <= period_end,
         )
@@ -1168,4 +1254,79 @@ async def get_deposits_stats(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to load deposits statistics',
+        )
+
+
+# ============ Payment Health Schemas ============
+
+
+class GatewaySuccessItem(BaseModel):
+    method: str
+    total: int
+    paid: int
+    success_rate: float
+
+
+class PaymentHealthResponse(BaseModel):
+    total_attempts: int
+    total_paid: int
+    success_rate: float
+    failed_purchases: int
+    by_gateway: list[GatewaySuccessItem]
+
+
+# ============ Payment Health Endpoint ============
+
+
+@router.get('/payment-health', response_model=PaymentHealthResponse)
+async def get_payment_health(
+    days: int | None = Query(default=30),
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
+    admin: User = Depends(require_permission('sales_stats:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> PaymentHealthResponse:
+    """Payment reliability: per-gateway success-rate + failed-purchase rollbacks.
+
+    success-rate = paid / created per gateway (rows are inserted at initiation).
+    failed_purchases = internal balance rollbacks after a failed/guarded purchase
+    (REFUND with no payment_method) — a signal of how often purchases error out,
+    NOT money returned to customers.
+    """
+    try:
+        period_start, period_end = _parse_period(days, start_date, end_date)
+
+        gateways = await get_gateway_success_rates(db, period_start, period_end)
+        total_attempts = sum(g['total'] for g in gateways)
+        total_paid = sum(g['paid'] for g in gateways)
+        success_rate = round(total_paid / total_attempts * 100, 1) if total_attempts > 0 else 0.0
+
+        failed_result = await db.execute(
+            select(func.count(Transaction.id)).where(
+                and_(
+                    Transaction.type == TransactionType.REFUND.value,
+                    Transaction.is_completed == True,
+                    Transaction.payment_method.is_(None),
+                    Transaction.created_at >= period_start,
+                    Transaction.created_at <= period_end,
+                )
+            )
+        )
+        failed_purchases = failed_result.scalar() or 0
+
+        return PaymentHealthResponse(
+            total_attempts=total_attempts,
+            total_paid=total_paid,
+            success_rate=success_rate,
+            failed_purchases=failed_purchases,
+            by_gateway=[GatewaySuccessItem(**g) for g in gateways],
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error('Failed to get payment health', error=e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to load payment health',
         )

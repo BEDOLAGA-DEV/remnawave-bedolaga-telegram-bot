@@ -41,7 +41,7 @@ async def create_mulenpay_payment(
     await db.refresh(payment)
 
     logger.info(
-        'Создан платеж # (uuid=) на сумму копеек для пользователя',
+        'Создан платеж MulenPay',
         get_mulenpay_display_name=settings.get_mulenpay_display_name(),
         mulen_payment_id=payment.mulen_payment_id,
         uuid=uuid,

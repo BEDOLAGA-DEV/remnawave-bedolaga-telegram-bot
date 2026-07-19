@@ -9,6 +9,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.cabinet.routes.media import make_media_token
 from app.cabinet.routes.websocket import notify_admins_new_ticket, notify_admins_ticket_reply
 from app.config import settings
 from app.database.crud.ticket_notification import TicketNotificationCRUD
@@ -39,6 +40,8 @@ def _message_to_response(message: TicketMessage) -> TicketMessageResponse:
     if raw_items:
         try:
             items = [TicketMediaItem(**it) for it in raw_items]
+            for it in items:
+                it.token = make_media_token(it.file_id)
         except (TypeError, KeyError, ValueError) as exc:
             logger.warning('Failed to parse media_items', message_id=message.id, error=str(exc))
             items = None
@@ -49,6 +52,7 @@ def _message_to_response(message: TicketMessage) -> TicketMessageResponse:
         has_media=bool(message.media_file_id) or bool(items),
         media_type=message.media_type,
         media_file_id=message.media_file_id,
+        media_token=make_media_token(message.media_file_id) if message.media_file_id else None,
         media_caption=message.media_caption,
         media_items=items,
         created_at=message.created_at,

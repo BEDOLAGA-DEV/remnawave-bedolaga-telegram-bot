@@ -14,6 +14,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+import app.database.crud.wata as wata_crud_module
 import app.services.payment_service as payment_service_module
 from app.config import settings
 from app.services.payment_service import PaymentService
@@ -30,6 +31,9 @@ class DummySession:
         return None
 
     async def refresh(self, *_: Any) -> None:  # pragma: no cover - no logic required
+        return None
+
+    async def flush(self) -> None:  # pragma: no cover - no logic required
         return None
 
 
@@ -237,6 +241,16 @@ async def test_process_wata_webhook_updates_status(monkeypatch: pytest.MonkeyPat
         raising=False,
     )
 
+    async def fake_lock(_db: Any, _payment_id: int) -> DummyWataPayment:
+        return payment
+
+    monkeypatch.setattr(
+        wata_crud_module,
+        'get_wata_payment_by_id_for_update',
+        fake_lock,
+        raising=False,
+    )
+
     payload = {
         'orderId': payment.order_id,
         'transactionStatus': 'Declined',
@@ -312,6 +326,16 @@ async def test_process_wata_webhook_finalizes_paid(monkeypatch: pytest.MonkeyPat
         service,
         '_finalize_wata_payment',
         fake_finalize,
+        raising=False,
+    )
+
+    async def fake_lock(_db: Any, _payment_id: int) -> DummyWataPayment:
+        return payment
+
+    monkeypatch.setattr(
+        wata_crud_module,
+        'get_wata_payment_by_id_for_update',
+        fake_lock,
         raising=False,
     )
 

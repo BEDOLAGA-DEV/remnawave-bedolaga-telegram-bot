@@ -80,7 +80,9 @@ class WebAPIServer:
                 raise
 
         logger.info(
-            '🌐 Запуск административного API на', WEB_API_HOST=settings.WEB_API_HOST, WEB_API_PORT=settings.WEB_API_PORT
+            '🌐 Запуск административного API',
+            WEB_API_HOST=settings.WEB_API_HOST,
+            WEB_API_PORT=settings.WEB_API_PORT,
         )
         self._task = asyncio.create_task(_serve(), name='web-api-server')
 

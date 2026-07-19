@@ -81,7 +81,7 @@ class CryptoBotService:
         result = await self._make_request('POST', 'createInvoice', data)
 
         if result:
-            logger.info('Создан CryptoBot invoice на', get=result.get('invoice_id'), amount=amount, asset=asset)
+            logger.info('Создан CryptoBot invoice', get=result.get('invoice_id'), amount=amount, asset=asset)
 
         return result
 

@@ -66,7 +66,7 @@ async def get_public_ip() -> str:
                                 logger.info('KassaAI: определён публичный IP сервера', ip=ip)
                                 return ip
                 except Exception as e:
-                    logger.debug('KassaAI: не удалось получить IP от', service_url=service_url, error=e)
+                    logger.debug('KassaAI: не удалось получить IP от сервиса', service_url=service_url, error=e)
                     continue
 
         fallback_ip = '127.0.0.1'
@@ -186,7 +186,7 @@ class KassaAiService:
         params['signature'] = self._generate_hmac_signature(params)
 
         logger.info(
-            'KassaAI API create_order: shop_id=, order_id=, amount=, ps_id',
+            'KassaAI API create_order',
             shop_id=self.shop_id,
             order_id=order_id,
             final_amount=final_amount,

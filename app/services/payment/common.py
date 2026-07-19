@@ -306,7 +306,7 @@ class PaymentCommonMixin:
         """Общая точка учёта успешных платежей (используется провайдерами при необходимости)."""
         try:
             logger.info(
-                'Обработан успешный платеж ₽, пользователь , метод',
+                'Обработан успешный платеж',
                 payment_id=payment_id,
                 amount_kopeks=amount_kopeks / 100,
                 user_id=user_id,
@@ -316,6 +316,43 @@ class PaymentCommonMixin:
         except Exception as error:
             logger.error('Ошибка обработки платежа', payment_id=payment_id, error=error)
             return False
+
+
+async def notify_email_user_topup(user: Any, amount_kopeks: int) -> None:
+    """«Пополнение успешно» для юзеров без Telegram (#2952).
+
+    Провайдерские webhook-обработчики шлют это сообщение только в Telegram
+    (гейт ``if bot and user.telegram_id``) — email-юзеры (telegram_id IS NULL)
+    не получали ничего. Вызываем мультиканальный роутер ТОЛЬКО для юзеров без
+    telegram_id: telegram-юзерам провайдер уже отправил сообщение напрямую, а
+    роутер сам проверяет email_verified и статус аккаунта. Сбои глотаем —
+    уведомление не должно ронять webhook после зачисления денег.
+    """
+    if user is None or getattr(user, 'telegram_id', None) or not getattr(user, 'email', None):
+        return
+    try:
+        from app.services.notification_delivery_service import (
+            NotificationType,
+            notification_delivery_service,
+        )
+
+        await notification_delivery_service.send_notification(
+            user=user,
+            notification_type=NotificationType.BALANCE_TOPUP,
+            context={
+                'formatted_amount': settings.format_price(amount_kopeks),
+                'formatted_balance': settings.format_price(getattr(user, 'balance_kopeks', 0) or 0),
+                'amount_kopeks': amount_kopeks,
+                'new_balance_kopeks': getattr(user, 'balance_kopeks', 0) or 0,
+            },
+            bot=None,
+        )
+    except Exception as error:
+        logger.error(
+            'Не удалось отправить email-уведомление о пополнении',
+            user_id=getattr(user, 'id', None),
+            error=error,
+        )
 
 
 async def send_cart_notification_after_topup(
@@ -330,7 +367,12 @@ async def send_cart_notification_after_topup(
     Само сообщение «Баланс пополнен…» больше не шлётся — оно дублировало
     основное «Пополнение успешно!» и ломало MAIN_MENU_MODE=cabinet.
     """
-    del amount_kopeks  # больше не используется после удаления второго сообщения
+    # Единственная общая точка после зачисления во ВСЕХ провайдерах — поэтому
+    # email/WS-канал для юзеров без Telegram подключён здесь, а не в 18+
+    # webhook-обработчиках. Уходит до автопокупки, чтобы уведомления пришли в
+    # хронологическом порядке «пополнение → подписка» (#2952). Для
+    # telegram-юзеров это no-op — им сообщение уже отправил провайдер.
+    await notify_email_user_topup(user, amount_kopeks)
 
     from app.services.subscription_auto_purchase_service import (
         auto_purchase_saved_cart_after_topup,
@@ -489,12 +531,15 @@ async def try_fulfill_guest_purchase(
             paid_at=datetime.now(UTC),
         )
 
-        # Code-only gifts (is_gift=True, no recipient) stay in PAID status
-        # — buyer shares the code manually, recipient activates via cabinet/bot
-        if existing and existing.is_gift and not existing.gift_recipient_type:
+        # ALL gifts stay in PAID status until claimed via the gift link.
+        # The subscription is created at claim time and binds to whoever
+        # activates the link, so a directed gift (with a typed recipient) is
+        # never eagerly fulfilled to a phantom recipient user. The typed
+        # recipient contact is best-effort auto-notify only (handled below).
+        if existing and existing.is_gift:
             await db.commit()
             logger.info(
-                'Code-only gift marked as PAID, skipping fulfillment',
+                'Gift marked as PAID, deferred until claim',
                 purchase_token_prefix=purchase_token[:5],
                 provider=provider_name,
             )
@@ -514,6 +559,23 @@ async def try_fulfill_guest_purchase(
             except Exception:
                 logger.exception(
                     'Failed to create NaloGO receipt for code-only gift',
+                    purchase_token_prefix=purchase_token[:5],
+                )
+            # Best-effort: send the claim link to the recipient (if email) and a
+            # durable backstop copy to the buyer. Never blocks the payment flow.
+            try:
+                from app.database.crud.tariff import get_tariff_by_id
+                from app.services.guest_purchase_service import notify_gift_claim_available
+
+                _gift_tariff = await get_tariff_by_id(db, existing.tariff_id)
+                await notify_gift_claim_available(
+                    existing,
+                    tariff_name=_gift_tariff.name if _gift_tariff else '',
+                    period_days=existing.period_days,
+                )
+            except Exception:
+                logger.warning(
+                    'Failed to send gift claim notification',
                     purchase_token_prefix=purchase_token[:5],
                 )
             return True

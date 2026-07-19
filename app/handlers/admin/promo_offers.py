@@ -71,13 +71,9 @@ async def _safe_delete_message_by_id(bot, chat_id: int, message_id: int) -> None
         await bot.delete_message(chat_id, message_id)
     except TelegramBadRequest as exc:
         if 'message to delete not found' not in str(exc).lower():
-            logger.debug(
-                'Не удалось удалить сообщение администратора (,)', chat_id=chat_id, message_id=message_id, exc=exc
-            )
+            logger.debug('Не удалось удалить сообщение администратора', chat_id=chat_id, message_id=message_id, exc=exc)
     except TelegramForbiddenError:
-        logger.debug(
-            'Недостаточно прав для удаления сообщения администратора (,)', chat_id=chat_id, message_id=message_id
-        )
+        logger.debug('Недостаточно прав для удаления сообщения администратора', chat_id=chat_id, message_id=message_id)
 
 
 async def _clear_promo_offer_search_prompt(state: FSMContext, bot) -> None:
@@ -1983,9 +1979,11 @@ async def _send_offer_to_users(
 
     async def send_single_offer(user):
         """Отправляет одно предложение с семафором ограничения"""
-        # Skip email-only users (no telegram_id)
-        if not user.telegram_id:
-            logger.debug('Пропуск email-пользователя при рассылке промо', user_id=user.id)
+        # Email-only юзеры (без telegram_id) раньше пропускались целиком —
+        # ни оффера, ни уведомления. Теперь оффер создаётся, а уведомление
+        # уходит на подтверждённую почту (активация — в кабинете).
+        if not user.telegram_id and not (user.email and user.email_verified):
+            logger.debug('У пользователя нет ни Telegram, ни подтверждённого email — промо пропущено', user_id=user.id)
             return False
 
         async with semaphore:
@@ -2025,6 +2023,26 @@ async def _send_offer_to_users(
                         },
                     )
 
+                    message_text = _render_template_text(
+                        template,
+                        user.language or db_user.language,
+                        server_name=squad_name,
+                    )
+
+                    if not user.telegram_id:
+                        # Email-only юзер: тот же текст на почту, кнопке «Получить»
+                        # соответствует ссылка на кабинет внутри шаблона письма.
+                        from app.services.promo_offer_email import send_promo_offer_email
+
+                        return await send_promo_offer_email(
+                            email=user.email,
+                            language=user.language or db_user.language,
+                            username=user.first_name or user.username or '',
+                            message_text=message_text,
+                            valid_hours=template.valid_hours,
+                            discount_percent=template.discount_percent or 0,
+                        )
+
                     user_texts = get_texts(user.language or db_user.language)
                     keyboard_rows: list[list[InlineKeyboardButton]] = [
                         [
@@ -2046,11 +2064,6 @@ async def _send_offer_to_users(
 
                     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
-                    message_text = _render_template_text(
-                        template,
-                        user.language or db_user.language,
-                        server_name=squad_name,
-                    )
                     await bot.send_message(
                         chat_id=user.telegram_id,
                         text=message_text,

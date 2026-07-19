@@ -6,7 +6,7 @@ from typing import Any
 
 import structlog
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, TelegramObject
+from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from app.config import settings
 from app.database.database import AsyncSessionLocal
@@ -86,7 +86,7 @@ BUILTIN_CALLBACKS: set[str] = {
 
 
 class ButtonStatsMiddleware(BaseMiddleware):
-    """Middleware для автоматического логирования статистики кликов по кнопкам."""
+    """Middleware для автоматического логирования кликов по кнопкам и команд бота."""
 
     async def __call__(
         self,
@@ -94,27 +94,29 @@ class ButtonStatsMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Перехватывает CallbackQuery и логирует клики по кнопкам."""
+        """Перехватывает CallbackQuery (клики) и Message-команды (/start и т.п.)."""
 
-        # Обрабатываем только CallbackQuery
-        if not isinstance(event, CallbackQuery):
+        # Пропускаем, если выключены и статистика конструктора меню,
+        # и лог действий юзера (таймлайн активности в карточке).
+        if not (settings.MENU_LAYOUT_ENABLED or settings.USER_ACTION_LOG_ENABLED):
             return await handler(event, data)
 
-        # Пропускаем, если статистика отключена
-        if not settings.MENU_LAYOUT_ENABLED:
-            return await handler(event, data)
+        if isinstance(event, CallbackQuery):
+            self._log_callback(event)
+        elif isinstance(event, Message):
+            self._log_command(event)
 
-        # Логируем клик асинхронно, не блокируя обработку
+        # Продолжаем обработку
+        return await handler(event, data)
+
+    def _log_callback(self, event: CallbackQuery) -> None:
+        """Логирует клик по inline-кнопке (асинхронно, не блокируя обработку)."""
         try:
-            # Получаем callback_data
             callback_data = event.data
             if not callback_data:
-                return await handler(event, data)
+                return
 
-            # Получаем user_id
             user_id = event.from_user.id if event.from_user else None
-
-            # Определяем тип кнопки по callback_data
             button_type = self._determine_button_type(callback_data)
 
             # Получаем текст кнопки, если возможно
@@ -122,7 +124,6 @@ class ButtonStatsMiddleware(BaseMiddleware):
             if event.message and hasattr(event.message, 'reply_markup'):
                 button_text = self._extract_button_text(event.message.reply_markup, callback_data)
 
-            # Логируем в фоне, не блокируя обработку
             asyncio.create_task(
                 self._log_button_click_async(
                     button_id=callback_data,
@@ -136,8 +137,38 @@ class ButtonStatsMiddleware(BaseMiddleware):
             # Не прерываем обработку при ошибке логирования
             logger.error('Ошибка логирования клика по кнопке', error=e, exc_info=True)
 
-        # Продолжаем обработку
-        return await handler(event, data)
+    def _log_command(self, event: Message) -> None:
+        """Логирует команды бота (/start, /menu, ...).
+
+        Обычные текстовые сообщения не пишутся вовсе (промокоды, переписка с
+        поддержкой). Payload команды тоже не сохраняется: в диплинках /start
+        бывают секретные токены (webauth_, GIFT_, coupon_) — фиксируется лишь
+        факт его наличия.
+        """
+        try:
+            text = event.text
+            if not text or not text.startswith('/'):
+                return
+
+            parts = text.split(maxsplit=1)
+            command = parts[0].split('@', 1)[0][:100]  # '/start@my_bot arg' -> '/start'
+            if len(command) < 2:
+                return
+            has_payload = len(parts) > 1
+
+            user_id = event.from_user.id if event.from_user else None
+
+            asyncio.create_task(
+                self._log_button_click_async(
+                    button_id=command,
+                    user_id=user_id,
+                    callback_data=None,
+                    button_type='command',
+                    button_text=f'{command} …' if has_payload else command,
+                )
+            )
+        except Exception as e:
+            logger.error('Ошибка логирования команды бота', error=e, exc_info=True)
 
     def _determine_button_type(self, callback_data: str) -> str:
         """Определяет тип кнопки по callback_data.

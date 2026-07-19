@@ -1,5 +1,7 @@
+import hashlib
 import html as html_module
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -65,8 +67,8 @@ def _prepare_logo_for_send(path: Path) -> Path:
     """Return a path safe to hand to `FSInputFile`.
 
     If the source logo already fits Telegram's limits we use it as-is. Otherwise
-    resize it (preserving aspect ratio) and persist the result next to the
-    original so subsequent sends reuse the cached copy.
+    resize it (preserving aspect ratio) and cache the result in a writable temp dir
+    so subsequent sends reuse the cached copy.
     """
     try:
         size = path.stat().st_size
@@ -80,7 +82,13 @@ def _prepare_logo_for_send(path: Path) -> Path:
             if not needs_resize:
                 return path
 
-            resized_path = path.with_name(path.stem + _LOGO_RESIZED_SUFFIX)
+            # Cache the resized copy in a WRITABLE temp dir, not next to the source: the
+            # logo/app directory is read-only in container deploys, so saving beside the
+            # original raised "[Errno 13] Permission denied" and every send fell back to the
+            # oversized original. Hash the resolved source path so distinct logos don't
+            # collide or reuse a stale temp file.
+            cache_key = hashlib.sha1(str(path.resolve()).encode()).hexdigest()[:10]
+            resized_path = Path(tempfile.gettempdir()) / f'{path.stem}.{cache_key}{_LOGO_RESIZED_SUFFIX}'
             # If the cached resized copy exists and is newer than the source, reuse it.
             if (
                 resized_path.exists()

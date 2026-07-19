@@ -74,9 +74,7 @@ class MulenPayService:
 
                     if data is None:
                         if raw_text:
-                            logger.warning(
-                                'MulenPay returned unexpected payload for', endpoint=endpoint, raw_text=raw_text
-                            )
+                            logger.warning('MulenPay returned unexpected payload', endpoint=endpoint, raw_text=raw_text)
                         return None
 
                     return data
@@ -86,7 +84,7 @@ class MulenPayService:
             except TimeoutError as error:
                 last_error = error
                 logger.warning(
-                    'MulenPay request timeout attempt /',
+                    'MulenPay request timeout, retrying',
                     method=method,
                     endpoint=endpoint,
                     attempt=attempt,
@@ -95,7 +93,7 @@ class MulenPayService:
             except aiohttp.ClientError as error:
                 last_error = error
                 logger.warning(
-                    'MulenPay client error attempt /',
+                    'MulenPay client error, retrying',
                     method=method,
                     endpoint=endpoint,
                     attempt=attempt,
@@ -111,14 +109,14 @@ class MulenPayService:
 
         if isinstance(last_error, asyncio.TimeoutError):
             logger.error(
-                'MulenPay request timed out after attempts',
+                'MulenPay request timed out after all retries',
                 max_retries=self._max_retries,
                 method=method,
                 endpoint=endpoint,
             )
         elif last_error is not None:
             logger.error(
-                'MulenPay request failed after attempts',
+                'MulenPay request failed after all retries',
                 max_retries=self._max_retries,
                 method=method,
                 endpoint=endpoint,

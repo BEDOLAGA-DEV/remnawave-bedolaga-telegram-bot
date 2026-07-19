@@ -163,7 +163,7 @@ async def route_payment_by_method(
             await process_rollypay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
-    if payment_method == 'overpay':
+    if payment_method in ('overpay', 'overpay_fps', 'overpay_card', 'overpay_int'):
         from .overpay import process_overpay_payment_amount
 
         async with AsyncSessionLocal() as db:
@@ -210,6 +210,13 @@ async def route_payment_by_method(
 
         async with AsyncSessionLocal() as db:
             await process_lava_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
+    if payment_method in ('cispay', 'cispay_card', 'cispay_sbp'):
+        from .cispay import process_cispay_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_cispay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
     if payment_method == 'riopay':
@@ -800,9 +807,17 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.callback_query.register(start_rollypay_topup, F.data == 'topup_rollypay')
 
-    from .overpay import start_overpay_topup
+    from .overpay import (
+        start_overpay_card_topup,
+        start_overpay_fps_topup,
+        start_overpay_int_topup,
+        start_overpay_topup,
+    )
 
     dp.callback_query.register(start_overpay_topup, F.data == 'topup_overpay')
+    dp.callback_query.register(start_overpay_fps_topup, F.data == 'topup_overpay_fps')
+    dp.callback_query.register(start_overpay_card_topup, F.data == 'topup_overpay_card')
+    dp.callback_query.register(start_overpay_int_topup, F.data == 'topup_overpay_int')
 
     from .aurapay import start_aurapay_card_topup, start_aurapay_sbp_topup, start_aurapay_topup
 
@@ -850,6 +865,12 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_lava_topup, F.data == 'topup_lava')
     dp.callback_query.register(start_lava_card_topup, F.data == 'topup_lava_card')
     dp.callback_query.register(start_lava_sbp_topup, F.data == 'topup_lava_sbp')
+
+    from .cispay import start_cispay_card_topup, start_cispay_sbp_topup, start_cispay_topup
+
+    dp.callback_query.register(start_cispay_topup, F.data == 'topup_cispay')
+    dp.callback_query.register(start_cispay_card_topup, F.data == 'topup_cispay_card')
+    dp.callback_query.register(start_cispay_sbp_topup, F.data == 'topup_cispay_sbp')
 
     from .mulenpay import check_mulenpay_payment_status
 

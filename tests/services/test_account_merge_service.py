@@ -16,6 +16,17 @@ from app.services.account_merge_service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _stub_grace_delete_guard(monkeypatch):
+    """These merge-unit tests use a tiny DB double, not a real AsyncSession."""
+    guard = AsyncMock()
+    monkeypatch.setattr(
+        'app.services.grace_access_runtime.ensure_no_open_grace_for_users',
+        guard,
+    )
+    return guard
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -753,6 +764,36 @@ class TestExecuteMergeSubscription:
         # Secondary subscription transferred
         assert sub_s.user_id == 1
         assert primary.remnawave_uuid == 'rw-secondary'
+
+    async def test_deferred_deletions_not_executed_during_merge(self, monkeypatch):
+        """When the caller passes a deletions list, the discarded panel user is NOT
+        deleted during the merge — an external delete can't be rolled back with the
+        DB, so a failed merge must not leave a deleted panel user. The UUID is
+        collected for the caller to flush after commit (regression: data loss when
+        the merge raised mid-way after the panel user was already deleted)."""
+        db = _make_db()
+        sub = _make_subscription(user_id=1)
+        primary = _make_user(id=1, subscription=sub, remnawave_uuid='rw-primary')
+        secondary = _make_user(id=2, remnawave_uuid='rw-secondary')
+        monkeypatch.setattr(
+            account_merge_service,
+            'get_user_by_id',
+            AsyncMock(side_effect=[primary, secondary]),
+        )
+        deferred: list[str] = []
+        with _patch_remnawave_delete() as mock_del:
+            await execute_merge(db, 1, 2, deferred_remnawave_deletions=deferred)
+            mock_del.assert_not_awaited()  # deferred — nothing deleted inside the txn
+
+        assert deferred == ['rw-secondary']  # collected for post-commit deletion
+        assert secondary.remnawave_uuid is None  # DB reference cleared either way
+
+    async def test_flush_remnawave_deletions_deletes_each(self):
+        with _patch_remnawave_delete() as mock_del:
+            await account_merge_service.flush_remnawave_deletions(['rw-a', 'rw-b'])
+        assert mock_del.await_count == 2
+        mock_del.assert_any_await('rw-a')
+        mock_del.assert_any_await('rw-b')
 
 
 # ---------------------------------------------------------------------------

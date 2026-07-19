@@ -68,10 +68,58 @@ class ReadOnlySettingError(RuntimeError):
 
 
 class BotConfigurationService:
-    EXCLUDED_KEYS: set[str] = {'BOT_TOKEN', 'ADMIN_IDS'}
+    # SECURITY: keys that must NEVER be editable through the settings API. Beyond
+    # the bot token, this covers admin IDENTITY and core AUTH secrets — a
+    # delegated admin holding only `settings:edit` could otherwise add their own
+    # email to ADMIN_EMAILS and become a full superadmin, or overwrite the JWT /
+    # web-api / webhook secrets to forge sessions and requests. Payment-provider
+    # secrets are intentionally NOT here: operators configure those via the UI.
+    EXCLUDED_KEYS: set[str] = {
+        'BOT_TOKEN',
+        'ADMIN_IDS',
+        'ADMIN_EMAILS',
+        'CABINET_JWT_SECRET',
+        'WEB_API_DEFAULT_TOKEN',
+        'WEB_API_TOKEN_HMAC_SECRET',
+        'WEBHOOK_SECRET_TOKEN',
+    }
 
     READ_ONLY_KEYS: set[str] = set()
     PLAIN_TEXT_KEYS: set[str] = set()
+
+    # Placeholder returned to clients in place of a secret's real value. When this
+    # exact sentinel comes back on an update, the write is skipped so the stored
+    # secret is preserved (the admin left the masked field untouched).
+    SECRET_MASK: str = '••••••••'
+
+    @classmethod
+    def is_secret_key(cls, key: str) -> bool:
+        """True if a setting holds a secret whose value must never be echoed to clients.
+
+        Mirrors the masking heuristic used by ``format_value`` for the bot UI so the
+        REST settings API (cabinet + web API) never returns plaintext payment keys,
+        SMTP/panel passwords, API tokens, etc.
+        """
+        if key in cls.PLAIN_TEXT_KEYS:
+            return False
+        return any(keyword in key.upper() for keyword in ('TOKEN', 'SECRET', 'PASSWORD', 'PASSPHRASE', 'KEY'))
+
+    @classmethod
+    def is_masked_secret(cls, key: str, value: Any) -> bool:
+        """True if (key, value) is a secret string whose value must be masked.
+
+        Only *string* values are masked: the name heuristic matches some non-secret numeric
+        settings (e.g. CABINET_ACCESS_TOKEN_EXPIRE_MINUTES, WATA_PUBLIC_KEY_CACHE_SECONDS) that
+        must stay visible and editable, so gate on the value actually being a non-empty str.
+        """
+        return cls.is_secret_key(key) and isinstance(value, str) and value != ''
+
+    @classmethod
+    def mask_secret_value(cls, key: str, value: Any) -> Any:
+        """Return ``SECRET_MASK`` for a set secret string value, otherwise the value unchanged."""
+        if cls.is_masked_secret(key, value):
+            return cls.SECRET_MASK
+        return value
 
     CATEGORY_TITLES: dict[str, str] = {
         'CORE': '🤖 Основные настройки',
@@ -98,6 +146,7 @@ class BotConfigurationService:
         'ANTILOPAY': '🦌 Antilopay',
         'ETOPLATEZHI': '💳 Etoplatezhi',
         'JUPITER': '🪐 Jupiter',
+        'CISPAY': '💳 CisPay',
         'DONUT': '🍩 Donut',
         'LAVA': '🌋 Lava',
         'YOOKASSA': '🟣 YooKassa',
@@ -143,6 +192,7 @@ class BotConfigurationService:
         'DEBUG': '🧪 Режим разработки',
         'MODERATION': '🛡️ Модерация и фильтры',
         'BAN_NOTIFICATIONS': '🚫 Тексты уведомлений о блокировках',
+        'INFO_PAGES': '📄 Инфо-страницы',
     }
 
     CATEGORY_DESCRIPTIONS: dict[str, str] = {
@@ -167,6 +217,7 @@ class BotConfigurationService:
         'ANTILOPAY': 'Antilopay: lk.antilopay.com, оплата картой, СБП и SberPay.',
         'ETOPLATEZHI': 'Etoplatezhi: paymentpage.etoplatezhi.ru, оплата картой и через СБП.',
         'JUPITER': 'Jupiter (FPGate P2P v2.1): app.juppiter.tech, эквайринг СБП с HMAC-SHA256.',
+        'CISPAY': 'cisPay: api.cispay.app, H2H-оплата картой и СБП на хостинговой странице, вебхуки с HMAC-SHA256.',
         'DONUT': 'Donut P2P: gw.donut.business, P2P-оплата картой, СБП по телефону и QR.',
         'LAVA': 'Lava Business: gate.lava.ru, оплата картой и СБП с HMAC-SHA256 и подтверждением через webhook.',
         'PLATEGA': '{platega_name}: merchant ID, секрет, ссылки возврата и методы оплаты.',
@@ -214,6 +265,7 @@ class BotConfigurationService:
         'DEBUG': 'Отладочные функции и безопасный режим.',
         'MODERATION': 'Настройки фильтров отображаемых имен и защиты от фишинга.',
         'BAN_NOTIFICATIONS': 'Тексты уведомлений о блокировках, которые отправляются пользователям.',
+        'INFO_PAGES': 'Видимость встроенных страниц (правила, политика, оферта, FAQ) в боте и веб-кабинете.',
     }
 
     @staticmethod
@@ -276,6 +328,7 @@ class BotConfigurationService:
         'SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS': 'SUPPORT',
         'SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES': 'SUPPORT',
         'ADMIN_NOTIFICATIONS_ENABLED': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_RICH_ENABLED': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_CHAT_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_TICKET_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
@@ -329,6 +382,12 @@ class BotConfigurationService:
         'LOGO_FILE': 'INTERFACE_BRANDING',
         'HIDE_SUBSCRIPTION_LINK': 'INTERFACE_SUBSCRIPTION',
         'MAIN_MENU_MODE': 'INTERFACE',
+        'MAIN_MENU_RICH_ENABLED': 'INTERFACE',
+        'MAIN_MENU_RICH_EFFECT_ID': 'INTERFACE',
+        'MAIN_MENU_RICH_LOGO_URL': 'INTERFACE',
+        'MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE': 'INTERFACE',
+        'USER_ACTION_LOG_ENABLED': 'MONITORING',
+        'USER_ACTION_LOG_RETENTION_DAYS': 'MONITORING',
         'CABINET_BUTTON_STYLE': 'INTERFACE',
         'CONNECT_BUTTON_MODE': 'CONNECT_BUTTON',
         'MINIAPP_CUSTOM_URL': 'CONNECT_BUTTON',
@@ -354,6 +413,11 @@ class BotConfigurationService:
         # (expires_at, new_expires_at). Lives in the TIMEZONE
         # category so operators find it next to TIMEZONE itself.
         'EMAIL_DATE_FORMAT': 'TIMEZONE',
+        'PRIVACY_POLICY_DISPLAY_MODE': 'INFO_PAGES',
+        'PUBLIC_OFFER_DISPLAY_MODE': 'INFO_PAGES',
+        'RECURRENT_PAYMENTS_DISPLAY_MODE': 'INFO_PAGES',
+        'SERVICE_RULES_DISPLAY_MODE': 'INFO_PAGES',
+        'FAQ_DISPLAY_MODE': 'INFO_PAGES',
     }
 
     CATEGORY_PREFIX_OVERRIDES: dict[str, str] = {
@@ -390,6 +454,7 @@ class BotConfigurationService:
         'ANTILOPAY_': 'ANTILOPAY',
         'ETOPLATEZHI_': 'ETOPLATEZHI',
         'JUPITER_': 'JUPITER',
+        'CISPAY_': 'CISPAY',
         'DONUT_': 'DONUT',
         'LAVA_': 'LAVA',
         'PLATEGA_': 'PLATEGA',
@@ -535,6 +600,31 @@ class BotConfigurationService:
             ChoiceOption('medium', '🟡 Medium'),
             ChoiceOption('small', '🟢 Small'),
         ],
+        'PRIVACY_POLICY_DISPLAY_MODE': [
+            ChoiceOption('bot', '🤖 Только бот'),
+            ChoiceOption('web', '🌐 Только веб'),
+            ChoiceOption('both', '🔁 Бот и веб'),
+        ],
+        'PUBLIC_OFFER_DISPLAY_MODE': [
+            ChoiceOption('bot', '🤖 Только бот'),
+            ChoiceOption('web', '🌐 Только веб'),
+            ChoiceOption('both', '🔁 Бот и веб'),
+        ],
+        'RECURRENT_PAYMENTS_DISPLAY_MODE': [
+            ChoiceOption('bot', '🤖 Только бот'),
+            ChoiceOption('web', '🌐 Только веб'),
+            ChoiceOption('both', '🔁 Бот и веб'),
+        ],
+        'SERVICE_RULES_DISPLAY_MODE': [
+            ChoiceOption('bot', '🤖 Только бот'),
+            ChoiceOption('web', '🌐 Только веб'),
+            ChoiceOption('both', '🔁 Бот и веб'),
+        ],
+        'FAQ_DISPLAY_MODE': [
+            ChoiceOption('bot', '🤖 Только бот'),
+            ChoiceOption('web', '🌐 Только веб'),
+            ChoiceOption('both', '🔁 Бот и веб'),
+        ],
     }
 
     SETTING_HINTS: dict[str, dict[str, str]] = {
@@ -590,6 +680,93 @@ class BotConfigurationService:
             'format': 'Выберите сквад из списка или очистите значение.',
             'example': 'd4aa2b8c-9a36-4f31-93a2-6f07dad05fba',
             'warning': 'Убедитесь, что выбранный сквад активен и доступен для подписки.',
+        },
+        'MAIN_MENU_RICH_ENABLED': {
+            'description': (
+                'Rich-меню (Bot API 10.1): главное меню с заголовками, таблицей подписок, '
+                'сворачиваемыми блоками акций и датами в часовом поясе пользователя (tg-time).'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': (
+                'Требует telegram-bot-api с поддержкой Bot API 10.1 (официальный сервер поддерживает). '
+                'Если сервер не поддерживает rich-сообщения, бот сам вернётся к классическому меню до рестарта. '
+                'В rich-режиме главное меню отображается без логотипа (rich-сообщение не является фото), '
+                'а при включённом ENABLE_LOGO_MODE переходы меню и разделов пересоздают сообщение.'
+            ),
+            'dependencies': 'ENABLE_LOGO_MODE',
+        },
+        'MAIN_MENU_RICH_EFFECT_ID': {
+            'description': (
+                'Эффект сообщения (конфетти и т.п.) при отправке rich-меню новым сообщением. '
+                'Работает только в личных чатах и только при MAIN_MENU_RICH_ENABLED.'
+            ),
+            'format': 'Идентификатор эффекта Telegram или пустая строка (без эффекта).',
+            'example': '5046509860389126442',
+            'warning': (
+                'Известные id: 🎉 5046509860389126442, ❤️ 5044134455711629726, 🔥 5104841245755180586, '
+                '👍 5107584321108051014, 👎 5104858069142078462, 💩 5046589136895476101. '
+                'Если сервер отклонит эффект, бот отправит меню без него и отключит эффект до рестарта.'
+            ),
+            'dependencies': 'MAIN_MENU_RICH_ENABLED',
+        },
+        'MAIN_MENU_RICH_LOGO_URL': {
+            'description': (
+                'Публичный HTTPS-URL картинки-логотипа в шапке rich-меню. '
+                'Пусто — авто-режим: при заданном WEBHOOK_URL и существующем LOGO_FILE '
+                'логотип отдаётся эндпоинтом /cabinet/branding/bot-logo.'
+            ),
+            'format': 'HTTPS-URL картинки (png/jpg/webp) или пустая строка.',
+            'example': 'https://example.com/logo.png',
+            'warning': (
+                'URL должен быть доступен серверам Telegram. Если картинку скачать не удалось, '
+                'бот один раз повторит отправку без логотипа и отключит его до рестарта.'
+            ),
+            'dependencies': 'MAIN_MENU_RICH_ENABLED, WEBHOOK_URL, LOGO_FILE',
+        },
+        'ADMIN_NOTIFICATIONS_RICH_ENABLED': {
+            'description': (
+                'Rich-вид сообщений админ-чата (Bot API 10.1): заголовки и разделители у уведомлений, '
+                'таблица показателей в стартовом сообщении и отчётах, сворачиваемые трейсбеки '
+                'в error-отчётах (полный лог инлайн вместо .txt-файла).'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': (
+                'Требует telegram-bot-api с Bot API 10.1 (официальный сервер поддерживает). '
+                'При недоступности бот сам вернётся к классическому виду до рестарта.'
+            ),
+            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED',
+        },
+        'MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE': {
+            'description': (
+                'Сворачивать таблицу подписок rich-меню в раскрываемый блок, когда у пользователя '
+                'больше одной подписки (мультитарифный режим). Заголовок блока показывает счётчик.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': 'Действует только при MAIN_MENU_RICH_ENABLED и включённом мультитарифе.',
+            'dependencies': 'MAIN_MENU_RICH_ENABLED, MULTI_TARIFF_ENABLED',
+        },
+        'USER_ACTION_LOG_ENABLED': {
+            'description': (
+                'Лог действий пользователя: нажатия кнопок в боте и действия в кабинете. '
+                'Показывается на вкладке «Активность» в карточке юзера админ-кабинета.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': (
+                'Каждое нажатие кнопки — строка в button_click_logs. '
+                'Старые записи чистятся автоматически (USER_ACTION_LOG_RETENTION_DAYS).'
+            ),
+            'dependencies': 'USER_ACTION_LOG_RETENTION_DAYS',
+        },
+        'USER_ACTION_LOG_RETENTION_DAYS': {
+            'description': 'Сколько дней хранить записи лога действий пользователей (button_click_logs).',
+            'format': 'Целое число дней; 0 — не удалять.',
+            'example': '90',
+            'warning': 'Чистка выполняется раз в сутки циклом мониторинга.',
+            'dependencies': 'USER_ACTION_LOG_ENABLED',
         },
         'MULTI_TARIFF_ENABLED': {
             'description': (
@@ -1042,6 +1219,10 @@ class BotConfigurationService:
         return key in cls._env_override_keys
 
     @classmethod
+    def is_env_overridden(cls, key: str) -> bool:
+        return cls._is_env_override(key)
+
+    @classmethod
     def _format_numeric_with_unit(cls, key: str, value: float) -> str | None:
         if isinstance(value, bool):
             return None
@@ -1101,8 +1282,8 @@ class BotConfigurationService:
                 return '—'
             if key in cls.PLAIN_TEXT_KEYS:
                 return cleaned
-            if any(keyword in key.upper() for keyword in ('TOKEN', 'SECRET', 'PASSWORD', 'KEY')):
-                return '••••••••'
+            if cls.is_secret_key(key):
+                return cls.SECRET_MASK
             items = cls._split_comma_values(cleaned)
             if items:
                 return ', '.join(items)
@@ -1273,6 +1454,13 @@ class BotConfigurationService:
         if cls._is_env_override(key):
             return False
         return key in cls._overrides_raw
+
+    @classmethod
+    def is_env_locked(cls, key: str) -> bool:
+        """True if the key is pinned in the environment (.env), so its value
+        shadows the DB and cannot be changed from the cabinet. Edits to such a
+        key would be silently discarded — callers must surface this instead."""
+        return cls._is_env_override(key)
 
     @classmethod
     def get_current_value(cls, key: str) -> Any:

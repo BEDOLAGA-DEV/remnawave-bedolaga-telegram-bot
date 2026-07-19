@@ -42,6 +42,10 @@ from app.keyboards.admin import (
     get_user_restrictions_keyboard,
 )
 from app.localization.texts import get_texts
+from app.services.grace_access_runtime import (
+    create_panel_user_grace_safe,
+    update_panel_user_grace_safe,
+)
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_service import UserService
@@ -49,6 +53,7 @@ from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.formatters import format_datetime, format_time_ago
 from app.utils.formatting import user_html_link
+from app.utils.photo_message import safe_edit_or_resend
 from app.utils.subscription_utils import (
     resolve_hwid_device_limit_for_payload,
 )
@@ -1001,6 +1006,12 @@ async def _render_user_subscription_overview(
                     types.InlineKeyboardButton(text='🗑 Удалить', callback_data=f'admin_sub_delete_{user_id}{_sid}')
                 )
             keyboard.append(row)
+
+        # Обнулить подписку «как будто не оформляли»: сбросить наспамленные дни и доступ,
+        # отключить в панели — но СОХРАНИТЬ пользователя и его тикеты (в отличие от удаления).
+        keyboard.append(
+            [types.InlineKeyboardButton(text='🧹 Обнулить подписку', callback_data=f'admin_sub_reset_{user_id}{_sid}')]
+        )
     else:
         text += '❌ <b>Подписка отсутствует</b>\n\n'
         text += 'Пользователь еще не активировал подписку.'
@@ -1400,7 +1411,15 @@ async def show_user_management(callback: types.CallbackQuery, db_user: User, db:
     except Exception:
         pass
 
-    await callback.message.edit_text(text, reply_markup=kb)
+    message = callback.message
+    if not isinstance(message, types.Message):
+        # None или InaccessibleMessage (например, уведомление старше 48ч) — редактировать нельзя
+        texts = get_texts(db_user.language)
+        await callback.answer(
+            texts.t('MESSAGE_TOO_OLD', '⚠️ Сообщение устарело, откройте тикет в панели.'), show_alert=True
+        )
+        return
+    await safe_edit_or_resend(message, text, kb)
     await callback.answer()
 
 
@@ -3308,6 +3327,85 @@ async def confirm_subscription_deactivation(callback: types.CallbackQuery, db_us
 
 @admin_required
 @error_handler
+async def reset_user_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Подтверждение полного обнуления подписки (с сохранением пользователя и тикетов)."""
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+
+    _sid = f'_s{subscription_id}' if subscription_id else ''
+    back_cb = (
+        f'admin_user_sub_select_{user_id}_{subscription_id}'
+        if subscription_id
+        else f'admin_user_subscription_{user_id}'
+    )
+
+    await callback.message.edit_text(
+        '🧹 <b>Обнуление подписки</b>\n\n'
+        'Подписка будет полностью обнулена «как будто пользователь её не оформлял»:\n'
+        '• срок и наспамленные дни сбрасываются\n'
+        '• трафик и доступ к серверам снимаются\n'
+        '• пользователь <b>отключается</b> в панели RemnaWave (не удаляется)\n\n'
+        '✅ Сам пользователь и его тикеты <b>остаются</b> в боте.\n'
+        'После этого он сможет купить тариф с нуля и выбрать срок.',
+        reply_markup=get_confirmation_keyboard(f'admin_sub_reset_confirm_{user_id}{_sid}', back_cb, db_user.language),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def confirm_subscription_reset(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    user_id, subscription_id = _extract_admin_sub_context(callback.data)
+
+    back_cb = (
+        f'admin_user_sub_select_{user_id}_{subscription_id}'
+        if subscription_id
+        else f'admin_user_subscription_{user_id}'
+    )
+
+    success = await _reset_user_subscription(db, user_id, db_user.id, subscription_id=subscription_id)
+
+    message = (
+        '✅ Подписка обнулена. Пользователь и его тикеты сохранены.' if success else '❌ Ошибка обнуления подписки'
+    )
+    await callback.message.edit_text(
+        message,
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[[types.InlineKeyboardButton(text='📱 К подписке', callback_data=back_cb)]]
+        ),
+    )
+    await callback.answer()
+
+
+async def _reset_user_subscription(
+    db: AsyncSession, user_id: int, admin_id: int, subscription_id: int | None = None
+) -> bool:
+    try:
+        from app.services.subscription_service import reset_subscription_with_panel
+
+        subscription = await _resolve_admin_subscription(db, user_id, subscription_id)
+        if not subscription:
+            logger.error('Подписка не найдена для пользователя', user_id=user_id)
+            return False
+
+        user = await get_user_by_id(db, user_id)
+        result = await reset_subscription_with_panel(db, user, subscription)
+
+        logger.info(
+            'Админ обнулил подписку пользователя (пользователь и тикеты сохранены)',
+            admin_id=admin_id,
+            user_id=user_id,
+            subscription_id=subscription.id,
+            panel_disabled=result.get('panel_disabled'),
+        )
+        return True
+
+    except Exception as e:
+        logger.error('Ошибка обнуления подписки', error=e)
+        return False
+
+
+@admin_required
+@error_handler
 async def delete_user_subscription(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     """Show confirmation for deleting a subscription (multi-tariff only)."""
     user_id, subscription_id = _extract_admin_sub_context(callback.data)
@@ -3343,11 +3441,25 @@ async def confirm_subscription_deletion(callback: types.CallbackQuery, db_user: 
         await callback.answer('Подписка не найдена', show_alert=True)
         return
 
+    from app.services.grace_access_runtime import (
+        GraceAccessDeletionBlocked,
+        ensure_no_open_grace_for_subscriptions,
+    )
+
+    try:
+        await ensure_no_open_grace_for_subscriptions(db, (subscription.id,))
+    except GraceAccessDeletionBlocked:
+        await callback.answer(
+            'Сначала завершите или восстановите активный grace-доступ.',
+            show_alert=True,
+        )
+        return
+
     # Disable on Remnawave side first
     _uuid = getattr(subscription, 'remnawave_uuid', None)
     if _uuid:
         subscription_service = SubscriptionService()
-        await subscription_service.disable_remnawave_user(_uuid)
+        await subscription_service.disable_remnawave_user(_uuid, db=db)
 
     # Delete traffic purchases
     from sqlalchemy import delete as sql_delete
@@ -3713,7 +3825,9 @@ async def toggle_user_server(callback: types.CallbackQuery, db_user: User, db: A
             try:
                 remnawave_service = RemnaWaveService()
                 async with remnawave_service.get_api_client() as api:
-                    await api.update_user(
+                    await update_panel_user_grace_safe(
+                        api,
+                        subscription.id,
                         uuid=_uuid,
                         active_internal_squads=current_squads,
                         description=settings.format_remnawave_user_description(
@@ -4260,7 +4374,9 @@ async def _update_user_traffic(
 
                 remnawave_service = RemnaWaveService()
                 async with remnawave_service.get_api_client() as api:
-                    await api.update_user(
+                    await update_panel_user_grace_safe(
+                        api,
+                        subscription.id,
                         uuid=_uuid,
                         traffic_limit_bytes=traffic_gb * (1024**3) if traffic_gb > 0 else 0,
                         traffic_limit_strategy=get_traffic_reset_strategy(
@@ -4353,7 +4469,13 @@ async def _extend_subscription_by_days(
             logger.error('Подписка не найдена для пользователя', user_id=user_id)
             return False
 
-        await extend_subscription(db, subscription, days)
+        await extend_subscription(db, subscription, days, commit=False)
+        now = datetime.now(UTC)
+        if days < 0 and subscription.end_date <= now:
+            subscription.status = SubscriptionStatus.EXPIRED.value
+            subscription.grace_suppressed_until = now
+        await db.commit()
+        await db.refresh(subscription)
 
         subscription_service = SubscriptionService()
         await subscription_service.update_remnawave_user(db, subscription)
@@ -5019,7 +5141,11 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                         if ext_squad_uuid is not None:
                             update_kwargs['external_squad_uuid'] = ext_squad_uuid
 
-                        remnawave_user = await api.update_user(**update_kwargs)
+                        remnawave_user = await update_panel_user_grace_safe(
+                            api,
+                            subscription.id,
+                            **update_kwargs,
+                        )
                 else:
                     # При multi-tariff подписке username должен включать
                     # `_<remnawave_short_id>` (как и в трёх других create-path'ах:
@@ -5064,7 +5190,11 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                         if ext_squad_uuid is not None:
                             create_kwargs['external_squad_uuid'] = ext_squad_uuid
 
-                        remnawave_user = await api.create_user(**create_kwargs)
+                        remnawave_user = await create_panel_user_grace_safe(
+                            api,
+                            subscription.id,
+                            **create_kwargs,
+                        )
 
                     if remnawave_user and hasattr(remnawave_user, 'uuid'):
                         if settings.is_multi_tariff_enabled() and subscription:
@@ -6295,6 +6425,12 @@ def register_handlers(dp: Dispatcher):
     )
 
     dp.callback_query.register(confirm_subscription_deactivation, F.data.startswith('admin_sub_deactivate_confirm_'))
+
+    dp.callback_query.register(
+        reset_user_subscription, F.data.startswith('admin_sub_reset_') & ~F.data.contains('confirm')
+    )
+
+    dp.callback_query.register(confirm_subscription_reset, F.data.startswith('admin_sub_reset_confirm_'))
 
     dp.callback_query.register(activate_user_subscription, F.data.startswith('admin_sub_activate_'))
 

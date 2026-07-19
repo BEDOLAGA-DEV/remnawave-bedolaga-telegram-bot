@@ -23,6 +23,15 @@ from ..schemas.config import (
 router = APIRouter()
 
 
+async def _sync_maintenance_mode_if_needed(key: str) -> None:
+    if key != 'MAINTENANCE_MODE':
+        return
+
+    from app.services.maintenance_service import maintenance_service
+
+    await maintenance_service.sync_with_settings()
+
+
 def _coerce_value(key: str, value: Any) -> Any:
     definition = bot_configuration_service.get_definition(key)
 
@@ -71,8 +80,15 @@ def _coerce_value(key: str, value: Any) -> Any:
 
 
 def _serialize_definition(definition, include_choices: bool = True) -> SettingDefinition:
-    current = bot_configuration_service.get_current_value(definition.key)
-    original = bot_configuration_service.get_original_value(definition.key)
+    # SECURITY: never echo plaintext secrets (payment keys, SMTP/panel passwords, API
+    # tokens) over the settings API. is_masked_secret gates on a non-empty *string* value so
+    # numeric settings whose names merely contain TOKEN/KEY stay visible and editable.
+    raw_current = bot_configuration_service.get_current_value(definition.key)
+    is_secret = bot_configuration_service.is_masked_secret(definition.key, raw_current)
+    current = bot_configuration_service.mask_secret_value(definition.key, raw_current)
+    original = bot_configuration_service.mask_secret_value(
+        definition.key, bot_configuration_service.get_original_value(definition.key)
+    )
     has_override = bot_configuration_service.has_override(definition.key)
 
     choices: list[SettingChoice] = []
@@ -99,6 +115,7 @@ def _serialize_definition(definition, include_choices: bool = True) -> SettingDe
         original=original,
         has_override=has_override,
         read_only=bot_configuration_service.is_read_only(definition.key),
+        is_secret=is_secret,
         choices=choices,
     )
 
@@ -154,11 +171,16 @@ async def update_setting(
     except KeyError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'Setting not found') from error
 
+    # Re-sent mask sentinel means the secret was left untouched — don't overwrite it.
+    if bot_configuration_service.is_secret_key(key) and payload.value == bot_configuration_service.SECRET_MASK:
+        return _serialize_definition(definition)
+
     value = _coerce_value(key, payload.value)
     try:
         await bot_configuration_service.set_value(db, key, value)
     except ReadOnlySettingError as error:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+    await _sync_maintenance_mode_if_needed(key)
     await db.commit()
 
     return _serialize_definition(definition)
@@ -179,5 +201,6 @@ async def reset_setting(
         await bot_configuration_service.reset_value(db, key)
     except ReadOnlySettingError as error:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+    await _sync_maintenance_mode_if_needed(key)
     await db.commit()
     return _serialize_definition(definition)

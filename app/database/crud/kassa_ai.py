@@ -42,7 +42,7 @@ async def create_kassa_ai_payment(
     db.add(payment)
     await db.commit()
     await db.refresh(payment)
-    logger.info('Создан платеж KassaAI: order_id=, user_id', order_id=order_id, user_id=user_id)
+    logger.info('Создан платеж KassaAI', order_id=order_id, user_id=user_id)
     return payment
 
 
@@ -104,7 +104,7 @@ async def update_kassa_ai_payment_status(
     await db.commit()
     await db.refresh(payment)
     logger.info(
-        'Обновлен статус платежа KassaAI: order_id=, status=, is_paid',
+        'Обновлен статус платежа KassaAI',
         order_id=payment.order_id,
         status=status,
         is_paid=is_paid,

@@ -190,7 +190,7 @@ class BroadcastService:
             keyboard = self._build_keyboard(config.selected_buttons, config.custom_buttons)
 
             logger.info(
-                'Рассылка : начинаем отправку получателям (batch delay=s)',
+                'Рассылка: начинаем отправку получателям',
                 broadcast_id=broadcast_id,
                 recipient_ids_count=len(recipient_ids),
                 TG_BATCH_SIZE=_TG_BATCH_SIZE,
@@ -544,7 +544,7 @@ class BroadcastService:
             except InterfaceError as exc:
                 attempts += 1
                 logger.warning(
-                    'Проблемы с соединением при обновлении статуса рассылки : . Повтор /2',
+                    'Проблемы с соединением при обновлении статуса рассылки, повтор',
                     broadcast_id=broadcast_id,
                     exc=exc,
                     attempts=attempts,
@@ -900,7 +900,7 @@ class EmailBroadcastService:
                     return success
                 except Exception as exc:
                     logger.error(
-                        'Ошибка отправки email рассылки на', broadcast_id=broadcast_id, email=recipient.email, exc=exc
+                        'Ошибка отправки email рассылки', broadcast_id=broadcast_id, email=recipient.email, exc=exc
                     )
                     return False
 
@@ -1024,7 +1024,7 @@ class EmailBroadcastService:
             except InterfaceError as exc:
                 attempts += 1
                 logger.warning(
-                    'Connection issue updating email broadcast : . Retry /2',
+                    'Connection issue updating email broadcast, retrying',
                     broadcast_id=broadcast_id,
                     exc=exc,
                     attempts=attempts,

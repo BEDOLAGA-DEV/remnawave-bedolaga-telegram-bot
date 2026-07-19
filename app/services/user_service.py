@@ -70,6 +70,8 @@ class DeleteUserResult:
     bot_deleted: bool = False
     panel_deleted: bool = False
     panel_error: str | None = None
+    # Удаление отклонено guard'ом открытого grace-доступа (HTTP-слой мапит в 409)
+    grace_blocked: bool = False
 
 
 class UserService:
@@ -605,7 +607,7 @@ class UserService:
             await db.refresh(user)
 
             logger.info(
-                "👥 Промогруппа пользователя обновлена на ''",
+                '👥 Промогруппа пользователя обновлена',
                 telegram_id=user.telegram_id,
                 promo_group_name=promo_group.name,
             )
@@ -802,15 +804,30 @@ class UserService:
                 return result
 
             user_id_display = user.telegram_id or user.email or f'#{user.id}'
-            logger.info(
-                '🗑️ Начинаем полное удаление пользователя (ID: )', user_id=user_id, user_id_display=user_id_display
-            )
+            logger.info('🗑️ Начинаем полное удаление пользователя', user_id=user_id, user_id_display=user_id_display)
 
             from app.config import settings
             from app.database.crud.subscription import is_active_paid_subscription
 
             # Collect all panel UUIDs to process
             subs = getattr(user, 'subscriptions', None) or []
+            from app.services.grace_access_runtime import (
+                GraceAccessDeletionBlocked,
+                ensure_no_open_grace_for_subscriptions,
+            )
+
+            try:
+                await ensure_no_open_grace_for_subscriptions(db, tuple(sub.id for sub in subs))
+            except GraceAccessDeletionBlocked as error:
+                result.panel_error = str(error)
+                result.grace_blocked = True
+                logger.warning(
+                    'User deletion blocked until grace access is restored',
+                    user_id=user_id,
+                    subscription_ids=error.subscription_ids,
+                )
+                return result
+
             if settings.is_multi_tariff_enabled():
                 panel_uuids = [sub.remnawave_uuid for sub in subs if sub.remnawave_uuid]
             else:
@@ -860,7 +877,7 @@ class UserService:
                                 from app.services.subscription_service import SubscriptionService
 
                                 subscription_service = SubscriptionService()
-                                disabled = await subscription_service.disable_remnawave_user(panel_uuid)
+                                disabled = await subscription_service.disable_remnawave_user(panel_uuid, db=db)
                                 result.panel_deleted = disabled
                                 if disabled:
                                     logger.info(
@@ -889,7 +906,7 @@ class UserService:
                                     from app.services.subscription_service import SubscriptionService
 
                                     subscription_service = SubscriptionService()
-                                    disabled = await subscription_service.disable_remnawave_user(panel_uuid)
+                                    disabled = await subscription_service.disable_remnawave_user(panel_uuid, db=db)
                                     if disabled:
                                         result.panel_deleted = True
                                         result.panel_error = 'Удаление не удалось, пользователь деактивирован'
@@ -1161,6 +1178,7 @@ class UserService:
                 AntilopayPayment,
                 AppleTransaction,
                 AuraPayPayment,
+                CisPayPayment,
                 DonutPayment,
                 EtoplatezhiPayment,
                 JupiterPayment,
@@ -1184,6 +1202,7 @@ class UserService:
                 JupiterPayment,
                 DonutPayment,
                 LavaPayment,
+                CisPayPayment,
             )
             for model in extra_payment_models:
                 try:
@@ -1384,7 +1403,7 @@ class UserService:
 
             result.bot_deleted = True
             logger.info(
-                '✅ Пользователь (ID: ) полностью удален администратором',
+                '✅ Пользователь полностью удалён администратором',
                 user_id_display=user_id_display,
                 user_id=user_id,
                 admin_id=admin_id,

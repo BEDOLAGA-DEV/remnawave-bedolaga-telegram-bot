@@ -169,19 +169,19 @@ class Texts:
 
     def get(self, item: str, default: Any = None) -> Any:
         try:
-            return self._get_value(item)
+            return self._get_value(item, warn=False)
         except KeyError:
             return default
 
     def t(self, key: str, default: Any = None) -> Any:
         try:
-            return self._get_value(key)
+            return self._get_value(key, warn=default is None)
         except KeyError:
             if default is not None:
                 return default
             raise
 
-    def _get_value(self, item: str) -> Any:
+    def _get_value(self, item: str, warn: bool = True) -> Any:
         if item == 'RULES_TEXT':
             return _get_cached_rules_value(self.language)
 
@@ -191,7 +191,13 @@ class Texts:
         if item in self._fallback_values:
             return self._fallback_values[item]
 
-        _logger.warning("Missing localization key '' for language ''", item=item, language=self.language)
+        # Предупреждаем только когда у вызова НЕТ запасного текста. t(key, default) и
+        # get(key, default) передают warn=False: для них отсутствие ключа штатно —
+        # показывается переданный fallback (часто это динамическая строка вроде
+        # настраиваемого названия платёжки), засорять логи warning'ами не нужно.
+        # Доступ через атрибут/[] без запасного варианта по-прежнему предупреждает.
+        if warn:
+            _logger.warning('Missing localization key', item=item, language=self.language)
         raise KeyError(item)
 
     @staticmethod
@@ -229,7 +235,7 @@ async def get_rules_from_db(language: str = DEFAULT_LANGUAGE) -> str:
                 return rules
 
     except Exception as error:  # pragma: no cover - defensive logging
-        _logger.warning('Failed to load rules from DB for', language=language, error=error)
+        _logger.warning('Failed to load rules from DB', language=language, error=error)
 
     default = _get_default_rules(language)
     _cached_rules[language] = default

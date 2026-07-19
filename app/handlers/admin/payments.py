@@ -52,6 +52,8 @@ def _method_display(method: PaymentMethod) -> str:
         return settings.get_riopay_display_name()
     if method == PaymentMethod.FREEKASSA:
         return settings.get_freekassa_display_name()
+    if method == PaymentMethod.CISPAY:
+        return settings.get_cispay_display_name()
     return method.value
 
 
@@ -618,13 +620,13 @@ async def manual_check_payment(
         return
 
     method, payment_id = parsed
-    logger.info('Checking payment: method id', method=method, payment_id=payment_id)
+    logger.info('Checking payment', method=method, payment_id=payment_id)
 
     record = await get_payment_record(db, method, payment_id)
     texts = get_texts(db_user.language)
 
     if not record:
-        logger.warning('Payment not found: method id', method=method, payment_id=payment_id)
+        logger.warning('Payment not found', method=method, payment_id=payment_id)
         await callback.answer(texts.t('ADMIN_PAYMENT_NOT_FOUND', 'Payment not found.'), show_alert=True)
         return
 

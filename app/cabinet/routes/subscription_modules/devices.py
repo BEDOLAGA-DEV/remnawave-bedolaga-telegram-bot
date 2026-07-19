@@ -13,6 +13,7 @@ POST /subscription/devices/save-cart
 
 from __future__ import annotations
 
+import asyncio
 import math
 from datetime import UTC, datetime
 from typing import Any
@@ -43,12 +44,24 @@ from .helpers import _apply_addon_discount, resolve_subscription
 
 logger = structlog.get_logger(__name__)
 
+# Cap inline RemnaWave panel sync on user-facing cabinet requests. The product is
+# committed before the sync, so a slow/unavailable panel must not hold the HTTP
+# response open (the cabinet pay button is bound to the request and would spin
+# after delivery). Past this budget the sync is deferred to remnawave_retry_queue.
+REMNAWAVE_SYNC_TIMEOUT = 10.0
+
 router = APIRouter()
 
 
 def _resolve_panel_uuid(subscription: Subscription | None, user: User) -> str | None:
-    """Resolve RemnaWave panel UUID: per-subscription in multi-tariff, user-level otherwise."""
-    if settings.is_multi_tariff_enabled() and subscription and subscription.remnawave_uuid:
+    """Resolve RemnaWave panel UUID: per-subscription in multi-tariff, user-level otherwise.
+
+    Multi-tariff: each subscription is its OWN panel user — return the sub's UUID
+    and do NOT fall back to ``user.remnawave_uuid`` when it's null. The fallback
+    would read/operate on another tariff's panel user, making HWID devices/limit
+    look shared across tariffs (баг с общим лимитом «по наименьшему тарифу»).
+    """
+    if settings.is_multi_tariff_enabled() and subscription is not None:
         return subscription.remnawave_uuid
     return user.remnawave_uuid
 
@@ -259,7 +272,8 @@ async def purchase_devices_legacy(
     await db.refresh(subscription)
     await db.refresh(user)
 
-    # Sync with RemnaWave
+    # Sync with RemnaWave (time-bounded — see REMNAWAVE_SYNC_TIMEOUT; product is
+    # already committed, defer slow syncs to remnawave_retry_queue).
     try:
         service = SubscriptionService()
         if settings.is_multi_tariff_enabled():
@@ -267,10 +281,11 @@ async def purchase_devices_legacy(
         else:
             _should_create = not getattr(user, 'remnawave_uuid', None)
 
-        if _should_create:
-            await service.create_remnawave_user(db, subscription)
-        else:
-            await service.update_remnawave_user(db, subscription)
+        async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
+            if _should_create:
+                await service.create_remnawave_user(db, subscription)
+            else:
+                await service.update_remnawave_user(db, subscription)
     except Exception as e:
         logger.error('Failed to sync devices with RemnaWave (legacy endpoint)', error=e)
         from app.services.remnawave_retry_queue import remnawave_retry_queue
@@ -283,12 +298,11 @@ async def purchase_devices_legacy(
 
     # Отправляем уведомление админам
     try:
-        from aiogram import Bot
-
+        from app.bot_factory import create_bot
         from app.services.admin_notification_service import AdminNotificationService
 
-        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-            bot = Bot(token=settings.BOT_TOKEN)
+        if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+            bot = create_bot()
             try:
                 notification_service = AdminNotificationService(bot)
                 await notification_service.send_subscription_update_notification(
@@ -533,7 +547,8 @@ async def purchase_devices(
         await db.commit()
         await db.refresh(subscription)
 
-        # Sync with RemnaWave
+        # Sync with RemnaWave (time-bounded — see REMNAWAVE_SYNC_TIMEOUT; product is
+        # already committed, defer slow syncs to remnawave_retry_queue).
         service = SubscriptionService()
         try:
             if settings.is_multi_tariff_enabled():
@@ -541,10 +556,11 @@ async def purchase_devices(
             else:
                 _should_create = not getattr(user, 'remnawave_uuid', None)
 
-            if _should_create:
-                await service.create_remnawave_user(db, subscription)
-            else:
-                await service.update_remnawave_user(db, subscription)
+            async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
+                if _should_create:
+                    await service.create_remnawave_user(db, subscription)
+                else:
+                    await service.update_remnawave_user(db, subscription)
         except Exception as e:
             logger.error('Failed to sync devices with RemnaWave', error=e)
             from app.services.remnawave_retry_queue import remnawave_retry_queue
@@ -573,12 +589,11 @@ async def purchase_devices(
 
         # Отправляем уведомление админам
         try:
-            from aiogram import Bot
-
+            from app.bot_factory import create_bot
             from app.services.admin_notification_service import AdminNotificationService
 
-            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) and settings.BOT_TOKEN:
-                bot = Bot(token=settings.BOT_TOKEN)
+            if getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False):
+                bot = create_bot()
                 try:
                     notification_service = AdminNotificationService(bot)
                     await notification_service.send_subscription_update_notification(
@@ -599,10 +614,11 @@ async def purchase_devices(
         try:
             from app.services import yandex_offline_conv_service as yandex_conv
 
-            await yandex_conv.store_cid_and_fire_purchase(
+            # Purchase event fires centrally from create_transaction; here we
+            # only persist the request-body CID synchronously (#558449).
+            await yandex_conv.store_cid_only(
                 user.id,
                 request.yandex_cid,
-                price_kopeks,
             )
         except Exception as yconv_err:
             logger.debug('yandex_conv purchase hook failed (non-fatal)', user_id=user.id, error=str(yconv_err))

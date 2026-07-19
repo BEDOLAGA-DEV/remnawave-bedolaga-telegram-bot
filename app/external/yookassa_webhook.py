@@ -208,32 +208,36 @@ class YooKassaWebhookHandler:
         try:
             logger.info('📥 Получен YooKassa webhook', method=request.method, path=request.path)
 
-            header_ip_candidates = collect_yookassa_ip_candidates(
-                request.headers.get('X-Forwarded-For'),
-                request.headers.get('X-Real-IP'),
-                request.headers.get('Cf-Connecting-Ip'),
-            )
-            client_ip = resolve_yookassa_ip(
-                header_ip_candidates,
-                remote=request.remote,
-            )
-
-            if client_ip is None:
-                logger.warning(
-                    '🚫 Не удалось определить IP-адрес отправителя YooKassa webhook. Кандидаты',
-                    header_ip_candidates=header_ip_candidates + ([request.remote] if request.remote else []),
+            # IP-гейт можно отключить (YOOKASSA_SKIP_IP_CHECK) для схем за Anti-DDoS/прокси,
+            # который не пробрасывает реальный IP отправителя. В этом режиме подлинность
+            # платежа гарантирует fail-closed API-проверка в process_yookassa_webhook.
+            if not settings.YOOKASSA_SKIP_IP_CHECK:
+                header_ip_candidates = collect_yookassa_ip_candidates(
+                    request.headers.get('X-Forwarded-For'),
+                    request.headers.get('X-Real-IP'),
+                    request.headers.get('Cf-Connecting-Ip'),
                 )
-                return web.Response(status=403, text='Forbidden')
-
-            if not is_yookassa_ip_allowed(client_ip):
-                logger.warning(
-                    '🚫 YooKassa webhook отклонён: IP %s не входит в доверенные диапазоны (%s)',
-                    client_ip,
-                    ', '.join(str(network) for network in YOOKASSA_ALLOWED_IP_NETWORKS),
+                client_ip = resolve_yookassa_ip(
+                    header_ip_candidates,
+                    remote=request.remote,
                 )
-                return web.Response(status=403, text='Forbidden')
 
-            logger.info('🌐 IP-адрес YooKassa подтверждён', client_ip=client_ip)
+                if client_ip is None:
+                    logger.warning(
+                        '🚫 Не удалось определить IP-адрес отправителя YooKassa webhook. Кандидаты',
+                        header_ip_candidates=header_ip_candidates + ([request.remote] if request.remote else []),
+                    )
+                    return web.Response(status=403, text='Forbidden')
+
+                if not is_yookassa_ip_allowed(client_ip):
+                    logger.warning(
+                        '🚫 YooKassa webhook отклонён: IP %s не входит в доверенные диапазоны (%s)',
+                        client_ip,
+                        ', '.join(str(network) for network in YOOKASSA_ALLOWED_IP_NETWORKS),
+                    )
+                    return web.Response(status=403, text='Forbidden')
+
+                logger.info('🌐 IP-адрес YooKassa подтверждён', client_ip=client_ip)
 
             body = await request.text()
 
@@ -295,14 +299,14 @@ class YooKassaWebhookHandler:
                     if success:
                         await db.commit()
                         logger.info(
-                            '✅ Успешно обработан webhook YooKassa: для платежа',
+                            '✅ Успешно обработан webhook YooKassa',
                             event_type=event_type,
                             yookassa_payment_id=yookassa_payment_id,
                         )
                         return web.Response(status=200, text='OK')
                     await db.rollback()
                     logger.error(
-                        '❌ Ошибка обработки webhook YooKassa: для платежа',
+                        '❌ Ошибка обработки webhook YooKassa',
                         event_type=event_type,
                         yookassa_payment_id=yookassa_payment_id,
                     )
@@ -323,7 +327,7 @@ class YooKassaWebhookHandler:
         app.router.add_get(webhook_path, self._get_handler)
         app.router.add_options(webhook_path, self._options_handler)
 
-        logger.info('✅ Настроен YooKassa webhook на пути: POST', webhook_path=webhook_path)
+        logger.info('✅ Настроен YooKassa webhook (POST)', webhook_path=webhook_path)
 
     async def _get_handler(self, request: web.Request) -> web.Response:
         return web.json_response(
@@ -385,12 +389,12 @@ async def start_yookassa_webhook_server(payment_service: PaymentService) -> None
         await site.start()
 
         logger.info(
-            '✅ YooKassa webhook сервер запущен на',
+            '✅ YooKassa webhook сервер запущен',
             YOOKASSA_WEBHOOK_HOST=settings.YOOKASSA_WEBHOOK_HOST,
             YOOKASSA_WEBHOOK_PORT=settings.YOOKASSA_WEBHOOK_PORT,
         )
         logger.info(
-            '🎯 YooKassa webhook URL: http://',
+            '🎯 YooKassa webhook URL',
             YOOKASSA_WEBHOOK_HOST=settings.YOOKASSA_WEBHOOK_HOST,
             YOOKASSA_WEBHOOK_PORT=settings.YOOKASSA_WEBHOOK_PORT,
             YOOKASSA_WEBHOOK_PATH=settings.YOOKASSA_WEBHOOK_PATH,

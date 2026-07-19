@@ -194,7 +194,7 @@ async def update_promo_group(
     await db.commit()
     await db.refresh(group)
 
-    logger.info("Обновлена промогруппа '' (id=)", group_name=group.name, group_id=group.id)
+    logger.info('Обновлена промогруппа', group_name=group.name, group_id=group.id)
     return group
 
 
@@ -242,7 +242,7 @@ async def delete_promo_group(db: AsyncSession, group: PromoGroup) -> bool:
     await db.commit()
 
     logger.info(
-        "Промогруппа '' (id=) удалена, пользователи переведены в ''",
+        'Промогруппа удалена, пользователи переведены в дефолтную',
         group_name=group.name,
         group_id=group.id,
         default_group_name=default_group.name,

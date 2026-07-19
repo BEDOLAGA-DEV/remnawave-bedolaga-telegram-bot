@@ -31,23 +31,33 @@ def _is_sqlite_url(url: str) -> bool:
     return url.startswith('sqlite') or ':memory:' in url
 
 
-DATABASE_URL = settings.get_database_url()
-IS_SQLITE = _is_sqlite_url(DATABASE_URL)
+def _build_pool_kwargs(is_sqlite: bool) -> dict:
+    """Собрать kwargs пула SQLAlchemy для engine.
 
-if IS_SQLITE:
-    poolclass = NullPool
-    pool_kwargs = {}
-else:
-    poolclass = AsyncAdaptedQueuePool
-    pool_kwargs = {
-        'pool_size': 20,  # Уменьшен с 30, чтобы не превышать max_connections PostgreSQL
-        'max_overflow': 20,  # Уменьшен с 50, макс 40 соединений вместо 80
-        'pool_timeout': 30,  # Уменьшен с 60, быстрее отдавать 503 при перегрузке
+    Для SQLite используется ``NullPool`` (без пулинга), поэтому kwargs пустые.
+    Для PostgreSQL размер пула / overflow / timeout читаются из настроек
+    (env-настраиваемые: масштабирование пула под нагрузку без пересборки образа,
+    см. DATABASE_POOL_SIZE / DATABASE_MAX_OVERFLOW / DATABASE_POOL_TIMEOUT).
+    recycle / pre_ping / reset_on_return остаются безопасными prod-дефолтами.
+    """
+    if is_sqlite:
+        return {}
+    return {
+        'pool_size': settings.DATABASE_POOL_SIZE,  # держим ниже max_connections PostgreSQL
+        'max_overflow': settings.DATABASE_MAX_OVERFLOW,  # доп. соединения сверх pool_size при всплесках
+        'pool_timeout': settings.DATABASE_POOL_TIMEOUT,  # сек ожидания свободного соединения до TimeoutError
         'pool_recycle': 1800,  # 30 мин для более быстрого recycling
         'pool_pre_ping': True,
         # Агрессивная очистка мертвых соединений
         'pool_reset_on_return': 'rollback',
     }
+
+
+DATABASE_URL = settings.get_database_url()
+IS_SQLITE = _is_sqlite_url(DATABASE_URL)
+
+poolclass = NullPool if IS_SQLITE else AsyncAdaptedQueuePool
+pool_kwargs = _build_pool_kwargs(IS_SQLITE)
 
 # ============================================================================
 # ENGINE WITH ADVANCED OPTIMIZATIONS
@@ -64,6 +74,12 @@ _pg_connect_args = {
     'command_timeout': 30,  # Уменьшен с 60, быстрее обнаруживать зависшие запросы
     'timeout': 10,  # Уменьшен с 60, быстрый провал при недоступности PostgreSQL
 }
+_sqlite_connect_args = {
+    # Grace-safe panel writes deliberately hold a SQLite writer transaction
+    # across one HTTP request.  Let competing local work wait instead of
+    # failing with a short default "database is locked" timeout.
+    'timeout': 60,
+}
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -72,12 +88,30 @@ engine = create_async_engine(
     future=True,
     # Кеш скомпилированных запросов (правильное размещение)
     query_cache_size=500,
-    connect_args=_pg_connect_args if not IS_SQLITE else {},
+    connect_args=_pg_connect_args if not IS_SQLITE else _sqlite_connect_args,
     execution_options={
         'isolation_level': 'READ COMMITTED',
     },
     **pool_kwargs,
 )
+
+if IS_SQLITE:
+
+    @event.listens_for(engine.sync_engine, 'connect')
+    def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
+        """Enable concurrency settings on every SQLite connection.
+
+        PRAGMA foreign_keys здесь сознательно НЕ включаем: у существующих
+        SQLite-инсталляций могут быть orphan-строки из старых версий схемы,
+        и глобальный флип enforcement ломал бы их DELETE/UPDATE. Защита
+        grace-снимка держится на DB-триггере, а не на FK.
+        """
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute('PRAGMA busy_timeout=60000')
+            cursor.execute('PRAGMA journal_mode=WAL')
+        finally:
+            cursor.close()
 
 # ============================================================================
 # SESSION FACTORY WITH OPTIMIZATIONS

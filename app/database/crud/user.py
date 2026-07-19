@@ -1,3 +1,4 @@
+import hmac
 import secrets
 import string
 from datetime import UTC, datetime, timedelta
@@ -30,6 +31,35 @@ from app.utils.validators import sanitize_telegram_name
 
 
 logger = structlog.get_logger(__name__)
+
+# PostgreSQL BIGINT upper bound. A numeric search term larger than this fits a
+# Python int but overflows the telegram_id BigInteger column, so comparing against
+# it raises a DB error instead of returning no rows.
+_BIGINT_MAX = 9223372036854775807
+
+
+def _user_search_conditions(search: str) -> list:
+    """Build the OR-conditions for the admin user search box (id/name/username).
+
+    Always matches the text columns; matches telegram_id only when the term is an
+    in-range BIGINT number. A digit string that overflows BIGINT (or a non-ASCII
+    "digit" that int() rejects) would otherwise crash the query, so it falls back
+    to text-only matching instead.
+    """
+    search_term = f'%{search}%'
+    conditions = [
+        User.first_name.ilike(search_term),
+        User.last_name.ilike(search_term),
+        User.username.ilike(search_term),
+    ]
+    if search.isdigit():
+        try:
+            search_int = int(search)
+        except ValueError:
+            search_int = None
+        if search_int is not None and 0 <= search_int <= _BIGINT_MAX:
+            conditions.append(User.telegram_id == search_int)
+    return conditions
 
 
 def _normalize_language_code(language: str | None, fallback: str = 'ru') -> str:
@@ -325,6 +355,21 @@ async def create_user_no_commit(
     return user
 
 
+def _violated_constraint(exc: IntegrityError) -> str:
+    """Return the violated DB constraint name for an IntegrityError.
+
+    Prefers asyncpg's programmatic ``constraint_name`` (robust against driver
+    message changes) and falls back to the stringified original error.
+    """
+    orig = getattr(exc, 'orig', None)
+    # SQLAlchemy wraps the dbapi error; the real asyncpg exception is its cause.
+    cause = getattr(orig, '__cause__', None)
+    constraint = getattr(cause, 'constraint_name', None) or getattr(orig, 'constraint_name', None)
+    if constraint:
+        return str(constraint)
+    return str(orig if orig is not None else exc)
+
+
 async def create_user(
     db: AsyncSession,
     telegram_id: int,
@@ -414,11 +459,28 @@ async def create_user(
         except IntegrityError as exc:
             await db.rollback()
 
-            if (
-                isinstance(getattr(exc, 'orig', None), Exception)
-                and 'users_pkey' in str(exc.orig)
-                and attempt < attempts
-            ):
+            constraint = _violated_constraint(exc)
+
+            # Гонка регистраций: параллельный поток уже создал пользователя
+            # с таким telegram_id. Возвращаем существующего вместо падения.
+            if 'telegram_id' in constraint:
+                logger.info(
+                    'Пользователь с таким telegram_id уже существует (гонка регистраций), '
+                    'возвращаем существующего пользователя',
+                    telegram_id=telegram_id,
+                    constraint=constraint,
+                )
+                existing_user = await get_user_by_telegram_id(db, telegram_id)
+                if existing_user:
+                    return existing_user
+
+                # Маловероятно: конфликт был, но пользователь не найден — пробуем ещё раз
+                if attempt < attempts:
+                    continue
+
+                raise
+
+            if 'users_pkey' in constraint and attempt < attempts:
                 logger.warning(
                     '⚠️ Обнаружено несоответствие последовательности users_id_seq при создании пользователя . Выполняем повторную синхронизацию (попытка /)',
                     telegram_id=telegram_id,
@@ -765,7 +827,7 @@ async def subtract_user_balance(
                         log_error=log_error,
                     )
 
-        logger.info('✅ Средства списаны: →', old_balance=old_balance, balance_kopeks=user.balance_kopeks)
+        logger.info('✅ Средства списаны', old_balance=old_balance, balance_kopeks=user.balance_kopeks)
         return True
 
     except Exception as e:
@@ -933,24 +995,7 @@ async def get_users_list(
         )
 
     if search:
-        search_term = f'%{search}%'
-        conditions = [
-            User.first_name.ilike(search_term),
-            User.last_name.ilike(search_term),
-            User.username.ilike(search_term),
-        ]
-
-        if search.isdigit():
-            try:
-                search_int = int(search)
-                # Добавляем условие поиска по telegram_id, который является BigInteger
-                # и может содержать большие значения, в отличие от User.id (INTEGER)
-                conditions.append(User.telegram_id == search_int)
-            except ValueError:
-                # Если не удалось преобразовать в int, просто ищем по текстовым полям
-                pass
-
-        query = query.where(or_(*conditions))
+        query = query.where(or_(*_user_search_conditions(search)))
 
     if email:
         query = query.where(User.email.ilike(f'%{email}%'))
@@ -1069,24 +1114,7 @@ async def get_users_count(
         )
 
     if search:
-        search_term = f'%{search}%'
-        conditions = [
-            User.first_name.ilike(search_term),
-            User.last_name.ilike(search_term),
-            User.username.ilike(search_term),
-        ]
-
-        if search.isdigit():
-            try:
-                search_int = int(search)
-                # Добавляем условие поиска по telegram_id, который является BigInteger
-                # и может содержать большие значения, в отличие от User.id (INTEGER)
-                conditions.append(User.telegram_id == search_int)
-            except ValueError:
-                # Если не удалось преобразовать в int, просто ищем по текстовым полям
-                pass
-
-        query = query.where(or_(*conditions))
+        query = query.where(or_(*_user_search_conditions(search)))
 
     if email:
         query = query.where(User.email.ilike(f'%{email}%'))
@@ -1482,7 +1510,7 @@ async def verify_and_apply_email_change(db: AsyncSession, user: User, code: str)
         await db.commit()
         return False, 'Verification code has expired'
 
-    if user.email_change_code != code:
+    if not hmac.compare_digest(str(user.email_change_code), str(code)):
         return False, 'Invalid verification code'
 
     # Check if new email is still available
@@ -1593,6 +1621,10 @@ async def create_user_by_oauth(
     referred_by_id: int | None = None,
 ) -> User:
     """Create a new user via OAuth provider."""
+    # Normalize the provider email to lowercase so it matches every other flow
+    # (email registration and the OAuth-link backfill both lowercase) and the
+    # case-insensitive unique-email lookups stay consistent.
+    email = email.strip().lower() if email else None
     referral_code = await create_unique_referral_code(db)
     normalized_language = _normalize_language_code(language)
     default_group = await _get_or_create_default_promo_group(db)
@@ -1632,9 +1664,7 @@ async def create_user_by_oauth(
     await db.refresh(user)
 
     user.promo_group = default_group
-    logger.info(
-        'Created OAuth user via (provider_id=) with id', provider=provider, provider_id=provider_id, user_id=user.id
-    )
+    logger.info('Created OAuth user', provider=provider, provider_id=provider_id, user_id=user.id)
 
     try:
         from app.services.event_emitter import event_emitter

@@ -32,11 +32,17 @@ def _make_user(uuid: str, status: UserStatus) -> MagicMock:
 
 
 def _mock_api_client(service, batches: list[list[MagicMock]]) -> AsyncMock:
-    """Подменяет get_api_client() контекст-менеджером, чьи get_all_users
-    отдают переданные батчи по порядку (последний короткий батч завершает цикл).
+    """Подменяет get_api_client() контекст-менеджером, чьи get_all_users_page_stream
+    отдают переданные батчи по порядку курсорной пагинацией (hasMore=False на последнем).
     """
     api = MagicMock()
-    api.get_all_users = AsyncMock(side_effect=[{'users': batch, 'total': len(batch)} for batch in batches])
+    last = len(batches) - 1
+    api.get_all_users_page_stream = AsyncMock(
+        side_effect=[
+            {'users': batch, 'nextCursor': str(i + 1) if i < last else None, 'hasMore': i < last}
+            for i, batch in enumerate(batches)
+        ]
+    )
 
     acm = MagicMock()
     acm.__aenter__ = AsyncMock(return_value=api)
@@ -108,5 +114,5 @@ async def test_filter_applies_across_paginated_batches(service):
     assert 'disabled-mid' not in {u.uuid for u in result}
     assert 'expired-last' not in {u.uuid for u in result}
     assert 'active-last' in {u.uuid for u in result}
-    # Должно быть две страницы (первый батч был «полным» = 100)
-    assert api.get_all_users.call_count == 2
+    # Должно быть две страницы (первая вернула hasMore=True)
+    assert api.get_all_users_page_stream.call_count == 2

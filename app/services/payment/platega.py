@@ -83,7 +83,7 @@ class PlategaPaymentMixin:
             return None
 
         transaction_id = response.get('transactionId') or response.get('id')
-        redirect_url = response.get('redirect')
+        redirect_url = PlategaService.parse_redirect_url(response)
         status = str(response.get('status') or 'PENDING').upper()
         expires_at = PlategaService.parse_expires_at(response.get('expiresIn'))
 
@@ -150,7 +150,7 @@ class PlategaPaymentMixin:
             )
 
         if not payment:
-            logger.warning('Platega webhook: платеж не найден (id=)', transaction_id=transaction_id)
+            logger.warning('Platega webhook: платеж не найден', transaction_id=transaction_id)
             return False
 
         # Lock payment row immediately to prevent concurrent webhook processing (TOCTOU race)

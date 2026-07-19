@@ -39,6 +39,21 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/admin/promo-offers', tags=['Admin Promo Offers'])
 
+# Broadcasts with more than this many recipients send notifications in the background so
+# the HTTP request returns before the proxy timeout (offers are committed per-recipient).
+_SYNC_NOTIFY_LIMIT = 30
+
+# Strong refs to detached notification fan-out tasks — asyncio.create_task may garbage
+# collect a task that nothing references. Mirrors broadcast_service's task tracking.
+_promo_broadcast_tasks: set[asyncio.Task] = set()
+
+
+def _schedule_promo_notifications(coro) -> None:
+    """Run a notification fan-out coroutine detached from the request lifecycle."""
+    task = asyncio.create_task(coro)
+    _promo_broadcast_tasks.add(task)
+    task.add_done_callback(_promo_broadcast_tasks.discard)
+
 
 # ============== Schemas ==============
 
@@ -405,19 +420,23 @@ def _build_default_promo_message(
 
 
 async def _send_promo_notifications(
-    offers_to_notify: list[tuple[User, DiscountOffer]],
+    targets: list[tuple[int, int]],
     message_text: str | None,
     button_text: str | None,
     discount_percent: int,
     bonus_amount_kopeks: int,
     valid_hours: int,
 ) -> tuple[int, int]:
-    """Send Telegram notifications for promo offers.
+    """Send Telegram promo notifications.
+
+    Args:
+        targets: list of (telegram_id, offer_id). Plain ids (not ORM objects) so this
+            can run as a detached background task after the request's DB session closed.
 
     Returns:
         Tuple of (sent_count, failed_count)
     """
-    if not offers_to_notify:
+    if not targets:
         return 0, 0
 
     bot = _get_bot()
@@ -436,10 +455,8 @@ async def _send_promo_notifications(
 
     semaphore = asyncio.Semaphore(20)
 
-    async def send_single(user: User, offer: DiscountOffer) -> bool:
-        # Skip email-only users (no telegram_id)
-        if not user.telegram_id:
-            logger.debug('Skipping promo notification for email-only user', user_id=user.id)
+    async def send_single(telegram_id: int, offer_id: int) -> bool:
+        if not telegram_id:
             return False
 
         async with semaphore:
@@ -449,7 +466,7 @@ async def _send_promo_notifications(
                         [
                             build_miniapp_or_callback_button(
                                 text=btn_text,
-                                callback_data=f'claim_discount_{offer.id}',
+                                callback_data=f'claim_discount_{offer_id}',
                             )
                         ],
                         [
@@ -462,23 +479,23 @@ async def _send_promo_notifications(
                 )
 
                 await bot.send_message(
-                    chat_id=user.telegram_id,
+                    chat_id=telegram_id,
                     text=text,
                     reply_markup=keyboard,
                 )
                 return True
             except (TelegramForbiddenError, TelegramBadRequest) as exc:
-                logger.warning('Failed to send promo notification to user', telegram_id=user.telegram_id, exc=exc)
+                logger.warning('Failed to send promo notification to user', telegram_id=telegram_id, exc=exc)
                 return False
             except Exception as exc:
-                logger.error('Error sending promo notification to user', telegram_id=user.telegram_id, exc=exc)
+                logger.error('Error sending promo notification to user', telegram_id=telegram_id, exc=exc)
                 return False
 
     # Send in batches
     batch_size = 50
-    for i in range(0, len(offers_to_notify), batch_size):
-        batch = offers_to_notify[i : i + batch_size]
-        tasks = [send_single(user, offer) for user, offer in batch]
+    for i in range(0, len(targets), batch_size):
+        batch = targets[i : i + batch_size]
+        tasks = [send_single(tg_id, offer_id) for tg_id, offer_id in batch]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for result in results:
@@ -488,13 +505,60 @@ async def _send_promo_notifications(
                 failed += 1
 
         # Small delay between batches
-        if i + batch_size < len(offers_to_notify):
+        if i + batch_size < len(targets):
             await asyncio.sleep(0.1)
 
     # Close bot session
     await bot.session.close()
 
     return sent, failed
+
+
+async def _send_promo_email_notifications(
+    targets: list[tuple[str, str, str]],
+    *,
+    message_text: str | None,
+    discount_percent: int,
+    bonus_amount_kopeks: int,
+    valid_hours: int,
+) -> tuple[int, int]:
+    """Send promo offer notifications to email-only users.
+
+    Args:
+        targets: list of (email, language, username). Скалярные значения (не
+            ORM) — как и Telegram-фан-аут, может бежать detached после
+            закрытия сессии запроса.
+
+    Returns:
+        Tuple of (sent_count, failed_count)
+    """
+    if not targets:
+        return 0, 0
+
+    from app.services.promo_offer_email import send_promo_offer_email
+
+    # SMTP медленнее и капризнее Telegram — небольшой параллелизм
+    semaphore = asyncio.Semaphore(4)
+
+    async def send_single(email: str, language: str, username: str) -> bool:
+        async with semaphore:
+            try:
+                return await send_promo_offer_email(
+                    email=email,
+                    language=language,
+                    username=username,
+                    message_text=message_text,
+                    valid_hours=valid_hours,
+                    discount_percent=discount_percent,
+                    bonus_amount_kopeks=bonus_amount_kopeks,
+                )
+            except Exception as exc:
+                logger.warning('Не удалось отправить промо-письмо', email=email, exc=exc)
+                return False
+
+    results = await asyncio.gather(*(send_single(*target) for target in targets), return_exceptions=True)
+    sent = sum(1 for result in results if result is True)
+    return sent, len(targets) - sent
 
 
 @router.post('/broadcast', response_model=PromoOfferBroadcastResponse, status_code=status.HTTP_201_CREATED)
@@ -571,11 +635,27 @@ async def broadcast_offer(
             created_offers += 1
             offers_to_notify.append((recipient, offer))
 
-    # Send Telegram notifications if requested
+    # Reduce to plain (telegram_id, offer_id) so the fan-out can run detached: the
+    # request's DB session closes on return, and ORM objects would then fail to lazy-load.
+    notify_targets = [
+        (recipient.telegram_id, offer.id) for recipient, offer in offers_to_notify if recipient.telegram_id
+    ]
+
+    # Email-only юзеры (без telegram_id): оффер у них уже создан выше, но о нём
+    # никто не узнавал — Telegram-уведомление им физически не отправить. Шлём
+    # на подтверждённую почту тот же текст (скалярные поля — фан-аут может
+    # бежать detached после закрытия сессии запроса).
+    email_targets = [
+        (recipient.email, recipient.language or 'ru', recipient.first_name or recipient.username or '')
+        for recipient, _offer in offers_to_notify
+        if not recipient.telegram_id and recipient.email and recipient.email_verified
+    ]
+
+    # Send Telegram/email notifications if requested
     notifications_sent = 0
     notifications_failed = 0
 
-    if payload.send_notification and offers_to_notify:
+    if payload.send_notification and (notify_targets or email_targets):
         # Render placeholders in custom message text
         rendered_message_text = payload.message_text
         if rendered_message_text:
@@ -591,14 +671,56 @@ async def broadcast_offer(
             except (KeyError, ValueError, IndexError):
                 logger.warning('Failed to render promo message placeholders')
 
-        notifications_sent, notifications_failed = await _send_promo_notifications(
-            offers_to_notify=offers_to_notify,
-            message_text=rendered_message_text,
-            button_text=payload.button_text,
-            discount_percent=payload.discount_percent,
-            bonus_amount_kopeks=payload.bonus_amount_kopeks,
-            valid_hours=payload.valid_hours,
-        )
+        notify_kwargs = {
+            'message_text': rendered_message_text,
+            'button_text': payload.button_text,
+            'discount_percent': payload.discount_percent,
+            'bonus_amount_kopeks': payload.bonus_amount_kopeks,
+            'valid_hours': payload.valid_hours,
+        }
+
+        if notify_targets:
+            if len(notify_targets) <= _SYNC_NOTIFY_LIMIT:
+                # Small batch: send inline so exact sent/failed counts come back immediately.
+                notifications_sent, notifications_failed = await _send_promo_notifications(
+                    notify_targets, **notify_kwargs
+                )
+            else:
+                # Mass broadcast: a synchronous fan-out to thousands of users overruns the
+                # proxy timeout — the cabinet showed an error while the offers were already
+                # committed and notifications kept sending (Telegram bug #652234). Detach it:
+                # the request returns now with created_offers; delivery is observable via /logs.
+                _schedule_promo_notifications(_send_promo_notifications(notify_targets, **notify_kwargs))
+                logger.info(
+                    'Promo broadcast: notifications dispatched in background',
+                    recipients=len(notify_targets),
+                )
+
+        if email_targets:
+            # Email-путь получает тот же текст, что и Telegram (кнопке «Получить»
+            # соответствует ссылка на кабинет внутри шаблона письма).
+            email_kwargs = {
+                'message_text': rendered_message_text
+                or _build_default_promo_message(
+                    discount_percent=payload.discount_percent,
+                    bonus_amount_kopeks=payload.bonus_amount_kopeks,
+                    valid_hours=payload.valid_hours,
+                ),
+                'discount_percent': payload.discount_percent,
+                'bonus_amount_kopeks': payload.bonus_amount_kopeks,
+                'valid_hours': payload.valid_hours,
+            }
+            if len(email_targets) <= _SYNC_NOTIFY_LIMIT:
+                _email_sent, _email_failed = await _send_promo_email_notifications(email_targets, **email_kwargs)
+                notifications_sent += _email_sent
+                notifications_failed += _email_failed
+            else:
+                # SMTP-фан-аут ещё медленнее Telegram — большие пачки только в фоне.
+                _schedule_promo_notifications(_send_promo_email_notifications(email_targets, **email_kwargs))
+                logger.info(
+                    'Promo broadcast: email notifications dispatched in background',
+                    recipients=len(email_targets),
+                )
 
     return PromoOfferBroadcastResponse(
         created_offers=created_offers,

@@ -184,6 +184,12 @@ class EmailChangeVerifyRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=6, pattern=r'^\d{6}$', description='6-digit verification code')
 
 
+class EmailMergeVerifyRequest(BaseModel):
+    """Request to confirm an email account merge with the emailed code."""
+
+    code: str = Field(..., min_length=6, max_length=6, pattern=r'^\d{6}$', description='6-digit confirmation code')
+
+
 class EmailChangeResponse(BaseModel):
     """Response for email change initiation."""
 

@@ -11,6 +11,8 @@ from app.database.models import User
 from app.services.faq_service import FaqService
 from app.services.privacy_policy_service import PrivacyPolicyService
 from app.services.public_offer_service import PublicOfferService
+from app.services.recurrent_payments_service import RecurrentPaymentsService
+from app.utils.display_mode import is_visible_in_web
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 
@@ -77,6 +79,13 @@ class PublicOfferResponse(BaseModel):
     updated_at: str | None = None
 
 
+class RecurrentPaymentsResponse(BaseModel):
+    """Recurring-payments terms document."""
+
+    content: str
+    updated_at: str | None = None
+
+
 class ServiceInfoResponse(BaseModel):
     """General service info."""
 
@@ -96,6 +105,14 @@ class SupportConfigResponse(BaseModel):
     support_username: str | None = None
 
 
+class InfoVisibilityResponse(BaseModel):
+    faq: bool
+    rules: bool
+    privacy: bool
+    offer: bool
+    recurrent: bool
+
+
 # ============ Routes ============
 
 
@@ -105,6 +122,8 @@ async def get_faq_pages(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get list of FAQ pages."""
+    if not is_visible_in_web(settings.FAQ_DISPLAY_MODE):
+        return []
     requested_lang = FaqService.normalize_language(language)
     pages = await FaqService.get_pages(
         db,
@@ -131,6 +150,11 @@ async def get_faq_page(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get a specific FAQ page by ID."""
+    if not is_visible_in_web(settings.FAQ_DISPLAY_MODE):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='FAQ is not available',
+        )
     requested_lang = FaqService.normalize_language(language)
     page = await FaqService.get_page(
         db,
@@ -160,6 +184,11 @@ async def get_rules(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get service rules - uses same function as bot."""
+    if not is_visible_in_web(settings.SERVICE_RULES_DISPLAY_MODE):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Rules are not available',
+        )
     requested_lang = language.split('-', maxsplit=1)[0].lower()
 
     # Use the same function as bot to ensure consistent content
@@ -180,6 +209,11 @@ async def get_privacy_policy(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get privacy policy."""
+    if not is_visible_in_web(settings.PRIVACY_POLICY_DISPLAY_MODE):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Privacy policy is not available',
+        )
     requested_lang = PrivacyPolicyService.normalize_language(language)
     policy = await PrivacyPolicyService.get_policy(db, requested_lang, fallback=True)
 
@@ -203,6 +237,11 @@ async def get_public_offer(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Get public offer."""
+    if not is_visible_in_web(settings.PUBLIC_OFFER_DISPLAY_MODE):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Public offer is not available',
+        )
     requested_lang = PublicOfferService.normalize_language(language)
     offer = await PublicOfferService.get_offer(db, requested_lang, fallback=True)
 
@@ -215,6 +254,34 @@ async def get_public_offer(
         content="""# Публичная оферта
 
 Условия использования сервиса.
+""",
+        updated_at=None,
+    )
+
+
+@router.get('/recurrent-payments', response_model=RecurrentPaymentsResponse)
+async def get_recurrent_payments(
+    language: str = Query('ru', min_length=2, max_length=10),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get recurring-payments terms document."""
+    if not is_visible_in_web(settings.RECURRENT_PAYMENTS_DISPLAY_MODE):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Recurring-payments document is not available',
+        )
+    requested_lang = RecurrentPaymentsService.normalize_language(language)
+    document = await RecurrentPaymentsService.get_document(db, requested_lang, fallback=True)
+
+    if document and document.content:
+        updated_at = document.updated_at.isoformat() if document.updated_at else None
+        return RecurrentPaymentsResponse(content=document.content, updated_at=updated_at)
+
+    # Return default document if none found
+    return RecurrentPaymentsResponse(
+        content="""# Рекуррентные платежи
+
+Условия автоматических регулярных списаний.
 """,
         updated_at=None,
     )
@@ -306,4 +373,15 @@ async def get_support_config():
         support_type=support_type,
         support_url=None,  # Cabinet doesn't use custom URLs
         support_username=settings.SUPPORT_USERNAME,  # Always return for fallback
+    )
+
+
+@router.get('/visibility', response_model=InfoVisibilityResponse)
+async def get_info_visibility():
+    return InfoVisibilityResponse(
+        faq=is_visible_in_web(settings.FAQ_DISPLAY_MODE),
+        rules=is_visible_in_web(settings.SERVICE_RULES_DISPLAY_MODE),
+        privacy=is_visible_in_web(settings.PRIVACY_POLICY_DISPLAY_MODE),
+        offer=is_visible_in_web(settings.PUBLIC_OFFER_DISPLAY_MODE),
+        recurrent=is_visible_in_web(settings.RECURRENT_PAYMENTS_DISPLAY_MODE),
     )
