@@ -307,12 +307,41 @@ async def test_blocked_user_is_not_retried_as_message(monkeypatch):
     bot.send_message.assert_not_awaited()
 
 
+class _FakeStreamContent:
+    """Эмулирует aiohttp StreamReader реалистично: iter_chunked отдаёт тело
+    порциями сетевого размера (может не совпадать с размером, запрошенным
+    у read()), а read(n) — как настоящий aiohttp — возвращает ТОЛЬКО то, что
+    уже накопилось в буфере (первую порцию), а не всё тело. Это и есть
+    механизм регресса: код, вызывающий read(n) в расчёте «прочитает всё до
+    лимита», получает обрезанный файл.
+    """
+
+    def __init__(self, body: bytes, network_chunk_size: int = 8192):
+        self._body = body
+        self._network_chunk_size = network_chunk_size
+
+    async def iter_chunked(self, _requested_size: int):
+        for i in range(0, len(self._body), self._network_chunk_size):
+            yield self._body[i : i + self._network_chunk_size]
+
+    async def read(self, n: int) -> bytes:
+        return self._body[: min(n, self._network_chunk_size)]
+
+
 class _FakeResponse:
-    def __init__(self, *, status=200, content_type='image/jpeg', body=b'jpeg-bytes', content_length=None):
+    def __init__(
+        self,
+        *,
+        status=200,
+        content_type='image/jpeg',
+        body=b'jpeg-bytes',
+        content_length=None,
+        network_chunk_size=8192,
+    ):
         self.status = status
         self.headers = {'Content-Type': content_type}
         self.content_length = content_length if content_length is not None else len(body)
-        self.content = SimpleNamespace(read=AsyncMock(return_value=body))
+        self.content = _FakeStreamContent(body, network_chunk_size=network_chunk_size)
 
     async def __aenter__(self):
         return self
@@ -368,3 +397,23 @@ async def test_download_rejects_oversized_receipt(monkeypatch):
     # Content-Length занижен/отсутствует, но тело превышает лимит при чтении
     _patch_aiohttp(monkeypatch, _FakeResponse(body=b'x' * (_RECEIPT_MAX_BYTES + 1), content_length=0))
     assert await _REAL_DOWNLOAD('https://x/print') is None
+
+
+async def test_download_reads_full_body_not_just_first_network_chunk(monkeypatch):
+    """Регресс: resp.content.read(n) отдаёт только текущий буфер (первую
+    сетевую порцию), а не всё тело до n байт. Печатная форма чека приходила
+    клиенту физически обрезанной (валидный JPEG-заголовок, серый/пустой
+    низ картинки) — воспроизведено и подтверждено байтово в проде 20.07.2026.
+    Тело здесь специально больше одной сетевой порции (network_chunk_size),
+    чтобы старая реализация на read(n) вернула только её начало.
+    """
+    body = b'\xff\xd8' + b'X' * 50_000 + b'\xff\xd9'  # больше одного сетевого чанка
+    _patch_aiohttp(monkeypatch, _FakeResponse(body=body, network_chunk_size=8192))
+
+    result = await _REAL_DOWNLOAD('https://x/print')
+
+    assert result is not None
+    data, content_type = result
+    assert content_type == 'image/jpeg'
+    assert data == body, f'ожидали {len(body)} байт, получили {len(data)} — печатная форма чека обрезана'
+    assert data.endswith(b'\xff\xd9'), 'файл должен заканчиваться JPEG-маркером EOI, а не обрывом на первом чанке'

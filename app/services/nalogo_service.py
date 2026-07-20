@@ -627,12 +627,21 @@ async def _download_receipt_file(receipt_url: str) -> tuple[bytes, str] | None:
                 logger.warning('Печатная форма чека NaloGO слишком велика', content_length=resp.content_length)
                 return None
 
-            # Читаем с запасом в 1 байт, чтобы отличить «ровно лимит» от «больше лимита»
-            data = await resp.content.read(_RECEIPT_MAX_BYTES + 1)
+            # resp.content.read(n) отдаёт лишь то, что уже накопилось в буфере
+            # (до n байт), не дожидаясь конца ответа — печатная форма уходила
+            # клиенту обрезанной (пустой/серый низ картинки). Читаем тело
+            # целиком по чанкам, лимит применяем по фактически прочитанному.
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in resp.content.iter_chunked(64 * 1024):
+                total += len(chunk)
+                if total > _RECEIPT_MAX_BYTES:
+                    logger.warning('Печатная форма чека NaloGO превысила лимит при чтении')
+                    return None
+                chunks.append(chunk)
+
+            data = b''.join(chunks)
             if not data:
-                return None
-            if len(data) > _RECEIPT_MAX_BYTES:
-                logger.warning('Печатная форма чека NaloGO превысила лимит при чтении')
                 return None
 
             return data, content_type
