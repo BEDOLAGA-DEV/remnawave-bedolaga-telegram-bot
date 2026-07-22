@@ -78,7 +78,7 @@ def test_trial_deeplink_wired_in_start():
     assert 'pending_trial=True' in source
 
     coupon_drain = source.index('await _redeem_pending_coupon(db, state, user, message.answer)')
-    trial_drain = source.index('await _activate_pending_trial(db, state, user, message.answer)')
+    trial_drain = source.index('await _activate_pending_trial(db, state, user, message.answer, message.bot)')
     assert coupon_drain < trial_drain
 
     helper = source.index('async def _activate_pending_trial(')

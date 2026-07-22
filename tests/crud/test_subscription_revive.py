@@ -187,6 +187,8 @@ async def test_create_paid_subscription_does_not_revive_active(monkeypatch):
     monkeypatch.setattr(type(sub_crud.settings), 'is_multi_tariff_enabled', lambda self: True)
     active = _sub(id=5, user_id=7, tariff_id=3, is_trial=False, status=SubscriptionStatus.ACTIVE.value)
     monkeypatch.setattr(sub_crud, 'get_subscription_by_user_and_tariff', AsyncMock(return_value=active))
+    # Живого триала нет — иначе сработала бы конверсия триала на месте
+    monkeypatch.setattr(sub_crud, 'get_alive_trial_subscription', AsyncMock(return_value=None))
     revive = AsyncMock(return_value=active)
     monkeypatch.setattr(sub_crud, '_revive_paid_subscription', revive)
     # short-circuit тяжёлый путь создания сразу после guard

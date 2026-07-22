@@ -42,6 +42,10 @@ from app.keyboards.admin import (
     get_user_restrictions_keyboard,
 )
 from app.localization.texts import get_texts
+from app.services.grace_access_runtime import (
+    create_panel_user_grace_safe,
+    update_panel_user_grace_safe,
+)
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_service import UserService
@@ -3437,11 +3441,25 @@ async def confirm_subscription_deletion(callback: types.CallbackQuery, db_user: 
         await callback.answer('Подписка не найдена', show_alert=True)
         return
 
+    from app.services.grace_access_runtime import (
+        GraceAccessDeletionBlocked,
+        ensure_no_open_grace_for_subscriptions,
+    )
+
+    try:
+        await ensure_no_open_grace_for_subscriptions(db, (subscription.id,))
+    except GraceAccessDeletionBlocked:
+        await callback.answer(
+            'Сначала завершите или восстановите активный grace-доступ.',
+            show_alert=True,
+        )
+        return
+
     # Disable on Remnawave side first
     _uuid = getattr(subscription, 'remnawave_uuid', None)
     if _uuid:
         subscription_service = SubscriptionService()
-        await subscription_service.disable_remnawave_user(_uuid)
+        await subscription_service.disable_remnawave_user(_uuid, db=db)
 
     # Delete traffic purchases
     from sqlalchemy import delete as sql_delete
@@ -3807,7 +3825,9 @@ async def toggle_user_server(callback: types.CallbackQuery, db_user: User, db: A
             try:
                 remnawave_service = RemnaWaveService()
                 async with remnawave_service.get_api_client() as api:
-                    await api.update_user(
+                    await update_panel_user_grace_safe(
+                        api,
+                        subscription.id,
                         uuid=_uuid,
                         active_internal_squads=current_squads,
                         description=settings.format_remnawave_user_description(
@@ -4354,7 +4374,9 @@ async def _update_user_traffic(
 
                 remnawave_service = RemnaWaveService()
                 async with remnawave_service.get_api_client() as api:
-                    await api.update_user(
+                    await update_panel_user_grace_safe(
+                        api,
+                        subscription.id,
                         uuid=_uuid,
                         traffic_limit_bytes=traffic_gb * (1024**3) if traffic_gb > 0 else 0,
                         traffic_limit_strategy=get_traffic_reset_strategy(
@@ -4447,7 +4469,13 @@ async def _extend_subscription_by_days(
             logger.error('Подписка не найдена для пользователя', user_id=user_id)
             return False
 
-        await extend_subscription(db, subscription, days)
+        await extend_subscription(db, subscription, days, commit=False)
+        now = datetime.now(UTC)
+        if days < 0 and subscription.end_date <= now:
+            subscription.status = SubscriptionStatus.EXPIRED.value
+            subscription.grace_suppressed_until = now
+        await db.commit()
+        await db.refresh(subscription)
 
         subscription_service = SubscriptionService()
         await subscription_service.update_remnawave_user(db, subscription)
@@ -5113,7 +5141,11 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                         if ext_squad_uuid is not None:
                             update_kwargs['external_squad_uuid'] = ext_squad_uuid
 
-                        remnawave_user = await api.update_user(**update_kwargs)
+                        remnawave_user = await update_panel_user_grace_safe(
+                            api,
+                            subscription.id,
+                            **update_kwargs,
+                        )
                 else:
                     # При multi-tariff подписке username должен включать
                     # `_<remnawave_short_id>` (как и в трёх других create-path'ах:
@@ -5158,7 +5190,11 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                         if ext_squad_uuid is not None:
                             create_kwargs['external_squad_uuid'] = ext_squad_uuid
 
-                        remnawave_user = await api.create_user(**create_kwargs)
+                        remnawave_user = await create_panel_user_grace_safe(
+                            api,
+                            subscription.id,
+                            **create_kwargs,
+                        )
 
                     if remnawave_user and hasattr(remnawave_user, 'uuid'):
                         if settings.is_multi_tariff_enabled() and subscription:

@@ -277,6 +277,28 @@ async def _create_nalogo_receipt_for_purchase(
                     purchase_id=purchase.id,
                     receipt_uuid=receipt_uuid,
                 )
+
+            # Отправляем чек покупателю (если есть telegram_id) и дублируем в админ-топик
+            try:
+                from app.bot_factory import create_bot
+                from app.services.nalogo_service import send_nalogo_receipt_notifications
+
+                async with create_bot() as bot:
+                    await send_nalogo_receipt_notifications(
+                        bot=bot,
+                        nalogo_service=nalogo_service,
+                        receipt_uuid=receipt_uuid,
+                        amount_kopeks=purchase.amount_kopeks,
+                        telegram_user_id=user.telegram_id,
+                        context_label=f'Источник: гостевая покупка с лендинга (purchase_id={purchase.id})',
+                    )
+            except Exception as notify_error:
+                logger.warning(
+                    'Failed to send NaloGO receipt notifications for guest purchase',
+                    purchase_id=purchase.id,
+                    receipt_uuid=receipt_uuid,
+                    error=notify_error,
+                )
     except Exception as exc:
         from app.utils.proxy import sanitize_proxy_error
 

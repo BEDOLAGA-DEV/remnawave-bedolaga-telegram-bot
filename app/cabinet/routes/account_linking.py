@@ -1302,6 +1302,8 @@ async def execute_merge_endpoint(
     # can't be rolled back with the DB, so deleting before commit would (on a
     # failed merge) leave a deleted panel user while the DB merge is rolled back.
     deferred_deletions: list[str] = []
+    from app.services.grace_access_runtime import GraceAccessDeletionBlocked
+
     try:
         merged_user = await execute_merge(
             db=db,
@@ -1313,6 +1315,13 @@ async def execute_merge_endpoint(
             deferred_remnawave_deletions=deferred_deletions,
         )
         await db.commit()
+    except GraceAccessDeletionBlocked as exc:
+        await db.rollback()
+        await restore_merge_token(merge_token, consumed)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Account merge is temporarily blocked until grace access is finished.',
+        ) from exc
     except ValueError as exc:
         await db.rollback()
         await restore_merge_token(merge_token, consumed)

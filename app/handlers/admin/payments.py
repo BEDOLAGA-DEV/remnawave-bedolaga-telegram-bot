@@ -52,6 +52,8 @@ def _method_display(method: PaymentMethod) -> str:
         return settings.get_riopay_display_name()
     if method == PaymentMethod.FREEKASSA:
         return settings.get_freekassa_display_name()
+    if method == PaymentMethod.CISPAY:
+        return settings.get_cispay_display_name()
     return method.value
 
 

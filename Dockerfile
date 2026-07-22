@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.13-slim
 
-ARG VERSION="v3.64.0" # x-release-please-version
+ARG VERSION="v3.65.1" # x-release-please-version
 ARG BUILD_DATE
 ARG VCS_REF
 

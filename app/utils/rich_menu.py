@@ -165,8 +165,18 @@ def _looks_like_unsupported(error: Exception) -> bool:
     return 'unknown method' in text or 'method not found' in text or 'text is empty' in text
 
 
+# Telegram хранит даты 32-битным unix time: tg-time со значением вне диапазона
+# сервер отклоняет ошибкой RICH_MESSAGE_DATE_INVALID и меню не отправляется.
+# Реальный кейс — «вечные» подписки, импортированные из панели с датой окончания
+# после 19.01.2038; такие даты показываем fallback-текстом без tg-time.
+_TG_TIME_MAX_UNIX = 2**31 - 1
+
+
 def _tg_time(moment: datetime, time_format: str, fallback: str) -> str:
-    return f'<tg-time unix="{int(moment.timestamp())}" format="{time_format}">{html.escape(fallback)}</tg-time>'
+    unix_time = int(moment.timestamp())
+    if not 0 < unix_time <= _TG_TIME_MAX_UNIX:
+        return html.escape(fallback)
+    return f'<tg-time unix="{unix_time}" format="{time_format}">{html.escape(fallback)}</tg-time>'
 
 
 def _progress_bar(seconds_left: float, total_seconds: float) -> str:

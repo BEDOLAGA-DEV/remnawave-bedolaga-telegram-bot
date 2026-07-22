@@ -1317,6 +1317,12 @@ def get_promocode_type_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
                     callback_data='promo_type_discount',
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_PROMOCODE_TYPE_BALANCE_DAYS', '💰📅 Баланс + дни'),
+                    callback_data='promo_type_combo',
+                )
+            ],
             [InlineKeyboardButton(text=texts.BACK, callback_data='admin_promocodes')],
         ]
     )

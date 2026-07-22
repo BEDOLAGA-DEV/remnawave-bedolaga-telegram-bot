@@ -407,6 +407,152 @@ async def _revive_paid_subscription(
     return subscription
 
 
+async def _resolve_connected_squads(
+    db: AsyncSession,
+    connected_squads: list[str] | None,
+    *,
+    user_id: int,
+) -> list[str]:
+    """Fallback: если connected_squads пустой — берём первый доступный сквад.
+
+    Общий для вставки новой платной подписки и конверсии триала: без него
+    конверсия молча оставила бы юзера на триальных сквадах при пустом списке,
+    тогда как вставка подключала бы fallback-сквад.
+    """
+    final_squads = list(connected_squads or [])
+    if not final_squads:
+        try:
+            from app.database.crud.server_squad import get_available_server_squads
+
+            available = await get_available_server_squads(db)
+            if available:
+                final_squads = [available[0].squad_uuid]
+                logger.warning(
+                    '⚠️ connected_squads пустой при создании подписки, используем fallback сквад',
+                    user_id=user_id,
+                    fallback_squad=final_squads[0],
+                )
+        except Exception as error:
+            logger.error('❌ Не удалось получить fallback сквад', user_id=user_id, error=error)
+    return final_squads
+
+
+async def _convert_trial_subscription_to_paid(
+    db: AsyncSession,
+    trial_subscription: Subscription,
+    *,
+    tariff_id: int,
+    duration_days: int,
+    traffic_limit_gb: int,
+    device_limit: int | None,
+    connected_squads: list[str] | None,
+    commit: bool,
+) -> Subscription | None:
+    """Convert an alive trial subscription into the purchased paid tariff in place.
+
+    Multi-tariff used to INSERT a fresh subscription (→ a brand-new Remnawave
+    user) on the first paid purchase and merely disable the trial row, so the
+    user got a NEW link/panel user while the dead trial kept showing in the
+    cabinet (prod report 2026-07). Reusing the trial row keeps the SAME
+    Remnawave user/link the user already configured during the trial — the
+    callers' "update, don't create" panel sync kicks in automatically because
+    the row carries ``remnawave_uuid``. ``extend_subscription`` does the heavy
+    lifting: tariff change with TRIAL_ADD_REMAINING_DAYS_TO_PAID carry-over,
+    ``is_trial`` reset (+ the ``_converted_from_trial`` marker), traffic/device
+    limits, daily flags and deactivation of any other trials.
+
+    Server counters are deliberately NOT bumped here: the trial row already
+    incremented them at trial creation, and the old insert path's +1 was paired
+    with the killed trial's separate decrement — re-adding on an in-place
+    conversion would double-count the same subscription.
+
+    Returns ``None`` when, under the row lock, the candidate turns out to no
+    longer be an alive trial — a concurrent purchase already converted it.
+    Without this re-check two concurrent purchases of different tariffs would
+    both convert the SAME row and the second would silently overwrite the
+    first's tariff (money lost with no exception). The caller falls back to
+    the plain insert, which is exactly the pre-conversion behaviour.
+    """
+    try:
+        await _lock_subscription_row(db, trial_subscription)
+        await db.refresh(trial_subscription, ['is_trial', 'status', 'tariff_id', 'end_date'])
+    except Exception as lock_error:
+        logger.warning(
+            'Не удалось перечитать кандидата конверсии триала под локом — обычная вставка',
+            subscription_id=trial_subscription.id,
+            error=lock_error,
+        )
+        return None
+    if not trial_subscription.is_trial or trial_subscription.status not in _ALIVE_SUBSCRIPTION_STATUSES_TUPLE:
+        logger.info(
+            'Кандидат конверсии триала уже не живой триал (конкурентная покупка) — обычная вставка',
+            subscription_id=trial_subscription.id,
+            user_id=trial_subscription.user_id,
+        )
+        return None
+
+    final_squads = await _resolve_connected_squads(db, connected_squads, user_id=trial_subscription.user_id)
+    subscription = await extend_subscription(
+        db,
+        trial_subscription,
+        days=duration_days,
+        tariff_id=tariff_id,
+        traffic_limit_gb=traffic_limit_gb,
+        device_limit=device_limit if device_limit is not None else settings.DEFAULT_DEVICE_LIMIT,
+        connected_squads=final_squads or None,
+        commit=commit,
+    )
+
+    logger.info(
+        '🎓 Триал конвертирован в купленный тариф вместо создания новой подписки',
+        user_id=subscription.user_id,
+        subscription_id=subscription.id,
+        tariff_id=tariff_id,
+    )
+    return subscription
+
+
+async def _alive_trial_conversion_candidate(
+    db: AsyncSession,
+    user_id: int,
+    same_tariff_existing: Subscription | None,
+) -> Subscription | None:
+    """Единое правило выбора кандидата конверсии триала при платной покупке.
+
+    Живой триал ПОКУПАЕМОГО тарифа (переданный ``same_tariff_existing``)
+    приоритетнее любого другого: его конверсия гарантированно не столкнётся с
+    ``uq_subscriptions_user_tariff_active``. Иначе — самый живой триал юзера.
+    """
+    if (
+        same_tariff_existing is not None
+        and same_tariff_existing.is_trial
+        and same_tariff_existing.status in _ALIVE_SUBSCRIPTION_STATUSES_TUPLE
+    ):
+        return same_tariff_existing
+    return await get_alive_trial_subscription(db, user_id)
+
+
+async def resolve_trial_conversion_candidate(
+    db: AsyncSession,
+    user_id: int,
+    tariff_id: int,
+) -> Subscription | None:
+    """Кандидат конверсии триала, каким его увидит ``create_paid_subscription``.
+
+    Для вызывающих, которым кандидат нужен ДО ``create_paid_subscription``
+    (кабинет исключает его из раннего убийства триалов). Повторяет приоритеты
+    create_paid_subscription через тот же ``_alive_trial_conversion_candidate``:
+    если у юзера есть EXPIRED подписка ПОКУПАЕМОГО тарифа, создание уйдёт в
+    revive-ветку (#3004) и конверсии не будет — возвращаем None, чтобы
+    вызывающий обращался с триалом по-старому (kill + перенос остатка +
+    отключение панельного юзера).
+    """
+    existing = await get_subscription_by_user_and_tariff(db, user_id, tariff_id, include_inactive=True)
+    if existing is not None and existing.status == SubscriptionStatus.EXPIRED.value:
+        return None
+    return await _alive_trial_conversion_candidate(db, user_id, existing)
+
+
 async def create_paid_subscription(
     db: AsyncSession,
     user_id: int,
@@ -418,6 +564,7 @@ async def create_paid_subscription(
     is_trial: bool = False,
     tariff_id: int | None = None,
     commit: bool = True,
+    conversion_trial: Subscription | None = None,
 ) -> Subscription:
     # Multi-tariff invariant: at most ONE subscription per (user, tariff). If a
     # subscription for this tariff has EXPIRED, revive it in place instead of
@@ -444,27 +591,41 @@ async def create_paid_subscription(
                 commit=commit,
             )
 
+        # Paid purchase while an alive (active/trial/limited) TRIAL exists —
+        # usually of a DIFFERENT tariff: convert that trial row in place instead
+        # of inserting a new subscription. Otherwise the user gets a brand-new
+        # Remnawave user/link while the killed trial keeps hanging in the
+        # cabinet (prod report 2026-07: триал → покупка тарифа → «две подписки»,
+        # см. скрин #disabled + #created). Mirrors the classic-mode purchase,
+        # which has always converted the trial in place. ``conversion_trial``
+        # lets callers that pre-resolved the candidate (cabinet, via
+        # ``resolve_trial_conversion_candidate``) pass it through instead of a
+        # second lookup; the selection rule is shared either way.
+        _alive_trial = conversion_trial
+        if _alive_trial is None:
+            _alive_trial = await _alive_trial_conversion_candidate(db, user_id, _existing)
+        if _alive_trial is not None:
+            _converted = await _convert_trial_subscription_to_paid(
+                db,
+                _alive_trial,
+                tariff_id=tariff_id,
+                duration_days=duration_days,
+                traffic_limit_gb=traffic_limit_gb,
+                device_limit=device_limit,
+                connected_squads=connected_squads,
+                commit=commit,
+            )
+            if _converted is not None:
+                return _converted
+            # Гонка: кандидат уже конвертирован конкурентной покупкой — падаем
+            # в обычную вставку (две платные подписки, как до фикса).
+
     end_date = datetime.now(UTC) + timedelta(days=duration_days)
 
     if device_limit is None:
         device_limit = settings.DEFAULT_DEVICE_LIMIT
 
-    # Fallback: если connected_squads пустой — берём первый доступный сквад
-    final_squads = list(connected_squads or [])
-    if not final_squads:
-        try:
-            from app.database.crud.server_squad import get_available_server_squads
-
-            available = await get_available_server_squads(db)
-            if available:
-                final_squads = [available[0].squad_uuid]
-                logger.warning(
-                    '⚠️ connected_squads пустой при создании подписки, используем fallback сквад',
-                    user_id=user_id,
-                    fallback_squad=final_squads[0],
-                )
-        except Exception as error:
-            logger.error('❌ Не удалось получить fallback сквад', user_id=user_id, error=error)
+    final_squads = await _resolve_connected_squads(db, connected_squads, user_id=user_id)
 
     short_id = await generate_unique_short_id(db)
 
@@ -1029,6 +1190,9 @@ async def extend_subscription(
         # попадёт в авто-продление (баг #629889).
         if subscription.is_trial and convert_trial:
             subscription.is_trial = False
+            # Transient marker (not persisted): lets purchase handlers report the
+            # payment as a trial→paid conversion without a signature change.
+            subscription._converted_from_trial = True
             logger.info('🎓 Подписка конвертирована из триала в платную', subscription_id=subscription.id)
 
     if traffic_limit_gb is not None:
@@ -1746,10 +1910,20 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
     синк) — операция тяжёлая. Подписку, у которой удаление в панели не удалось (транзиент),
     в БД НЕ трогаем (иначе снова orphan + воскрешение) — её подхватит следующий запуск.
     Чистит устаревший single-tariff `user.remnawave_uuid`. НЕ коммитит — это делает
-    вызывающий. Возвращает число реально удалённых подписок.
+    вызывающий; исключение — когда НИ ОДНО панельное удаление не удалось: тогда в БД
+    мутировать нечего и транзакция откатывается, чтобы снять grace-локи pre-delete
+    guard'а (не вызывайте с несохранёнными изменениями в сессии). Возвращает число
+    реально удалённых подписок.
     """
     if not subscriptions:
         return 0
+
+    from app.services.grace_access_runtime import ensure_no_open_grace_for_subscriptions
+
+    await ensure_no_open_grace_for_subscriptions(
+        db,
+        tuple(int(subscription.id) for subscription in subscriptions),
+    )
 
     import asyncio
 
@@ -1800,6 +1974,9 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
         to_reset = list(subscriptions)
 
     if not to_reset:
+        # Release the pre-delete transaction lock when every external delete
+        # failed and there is intentionally nothing to mutate in the database.
+        await db.rollback()
         return 0
 
     for subscription in to_reset:
@@ -2789,6 +2966,34 @@ async def get_subscription_by_user_and_tariff(
     return result.scalar_one_or_none()
 
 
+async def get_alive_trial_subscription(db: AsyncSession, user_id: int) -> Subscription | None:
+    """Alive (active/trial/limited) trial subscription of the user, if any.
+
+    LIMITED is included on purpose: an exhausted-traffic trial is exactly the
+    «попробовал → покупаю» case and must convert on purchase, not hang around
+    next to the new paid subscription. But an ACTIVE/TRIAL trial always beats a
+    LIMITED one regardless of end_date — the non-limited trial carries the link
+    the user is actually using, and converting the wrong row would kill their
+    working link right after payment. Ties break by freshest ``end_date``.
+    """
+    result = await db.execute(
+        select(Subscription)
+        .options(selectinload(Subscription.tariff))
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.is_trial.is_(True),
+            Subscription.status.in_(_ALIVE_SUBSCRIPTION_STATUSES_TUPLE),
+        )
+        .order_by(
+            case((Subscription.status == SubscriptionStatus.LIMITED.value, 1), else_=0),
+            Subscription.end_date.desc(),
+            Subscription.created_at.desc(),
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def deactivate_user_trial_subscriptions(
     db: AsyncSession,
     user_id: int,
@@ -2799,7 +3004,10 @@ async def deactivate_user_trial_subscriptions(
 
     Called when user purchases a paid tariff — trial is a probe that must die on purchase.
     Returns remaining trial time in seconds (for TRIAL_ADD_REMAINING_DAYS_TO_PAID).
-    Handles both tariff-based and squad-based trials uniformly.
+    Handles both tariff-based and squad-based trials uniformly. LIMITED
+    (traffic-exhausted) trials are included: they are alive per the partial
+    unique index and used to survive every paid purchase, hanging in the
+    cabinet next to the new subscription.
     """
     result = await db.execute(
         select(Subscription).where(
@@ -2809,6 +3017,7 @@ async def deactivate_user_trial_subscriptions(
                 [
                     SubscriptionStatus.ACTIVE.value,
                     SubscriptionStatus.TRIAL.value,
+                    SubscriptionStatus.LIMITED.value,
                 ]
             ),
         )

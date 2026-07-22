@@ -648,6 +648,8 @@ async def _background_sync_squads(tariff_id: int, admin_id: int) -> None:
             new_squads = tariff.allowed_squads or []
             ext_squad_uuid = tariff.external_squad_uuid
 
+            from app.services.grace_access_runtime import update_panel_user_grace_safe
+
             service = RemnaWaveService()
             updated = 0
             failed = 0
@@ -666,7 +668,9 @@ async def _background_sync_squads(tariff_id: int, admin_id: int) -> None:
                         return
                     async with semaphore:
                         try:
-                            await api.update_user(
+                            await update_panel_user_grace_safe(
+                                api,
+                                sub.id,
                                 uuid=remnawave_uuid,
                                 active_internal_squads=new_squads,
                                 external_squad_uuid=ext_squad_uuid,
@@ -750,6 +754,7 @@ async def sync_tariff_squads(
     ext_squad_uuid = tariff.external_squad_uuid
 
     # Sync to Remnawave panel with concurrency limit and circuit breaker
+    from app.services.grace_access_runtime import update_panel_user_grace_safe
     from app.services.remnawave_service import RemnaWaveService
 
     service = RemnaWaveService()
@@ -787,7 +792,9 @@ async def sync_tariff_squads(
                     return 'skipped'
 
                 try:
-                    await api.update_user(
+                    await update_panel_user_grace_safe(
+                        api,
+                        sub.id,
                         uuid=remnawave_uuid,
                         active_internal_squads=new_squads,
                         external_squad_uuid=ext_squad_uuid,

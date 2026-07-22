@@ -148,7 +148,10 @@ class PromoCodeService:
                 raise
             balance_after_kopeks = user.balance_kopeks
 
-            if promocode.type == PromoCodeType.SUBSCRIPTION_DAYS.value and promocode.subscription_days > 0:
+            if (
+                promocode.type in (PromoCodeType.SUBSCRIPTION_DAYS.value, PromoCodeType.BALANCE_AND_DAYS.value)
+                and promocode.subscription_days > 0
+            ):
                 from app.utils.user_utils import mark_user_as_had_paid_subscription
 
                 await mark_user_as_had_paid_subscription(db, user)
@@ -303,13 +306,16 @@ class PromoCodeService:
                 code=promocode.code,
             )
 
-        if promocode.type == PromoCodeType.BALANCE.value and promocode.balance_bonus_kopeks > 0:
-            await add_user_balance(db, user, promocode.balance_bonus_kopeks, f'Бонус по промокоду {promocode.code}')
-
-            balance_bonus_rubles = promocode.balance_bonus_kopeks / 100
-            effects.append(f'💰 Баланс пополнен на {balance_bonus_rubles}₽')
-
-        if promocode.type == PromoCodeType.SUBSCRIPTION_DAYS.value and promocode.subscription_days > 0:
+        # Блок дней идёт ПЕРЕД балансом: дни могут прерваться исключением (нет
+        # подписки, выбор подписки в мульти-тарифе) с rollback'ом всей активации,
+        # а add_user_balance коммитит внутри себя. Для комбинированного
+        # BALANCE_AND_DAYS обратный порядок дарил бы баланс при откате записи
+        # использования — повторная активация задваивала бы бонус. Для одиночных
+        # типов порядок безразличен (типы взаимоисключающие).
+        if (
+            promocode.type in (PromoCodeType.SUBSCRIPTION_DAYS.value, PromoCodeType.BALANCE_AND_DAYS.value)
+            and promocode.subscription_days > 0
+        ):
             if settings.is_multi_tariff_enabled():
                 from app.database.crud.subscription import (
                     get_active_subscriptions_by_user_id,
@@ -387,6 +393,15 @@ class PromoCodeService:
                 subscription_days=promocode.subscription_days,
                 subscription_id=target_sub.id,
             )
+
+        if (
+            promocode.type in (PromoCodeType.BALANCE.value, PromoCodeType.BALANCE_AND_DAYS.value)
+            and promocode.balance_bonus_kopeks > 0
+        ):
+            await add_user_balance(db, user, promocode.balance_bonus_kopeks, f'Бонус по промокоду {promocode.code}')
+
+            balance_bonus_rubles = promocode.balance_bonus_kopeks / 100
+            effects.append(f'💰 Баланс пополнен на {balance_bonus_rubles}₽')
 
         if promocode.type == PromoCodeType.TRIAL_SUBSCRIPTION.value:
             from app.database.crud.subscription import create_trial_subscription

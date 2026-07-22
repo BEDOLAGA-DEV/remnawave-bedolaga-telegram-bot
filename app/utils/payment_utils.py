@@ -308,6 +308,42 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    if settings.is_cispay_sbp_enabled():
+        sbp_name = settings.get_cispay_sbp_display_name()
+        methods.append(
+            {
+                'id': 'cispay_sbp',
+                'name': sbp_name,
+                'icon': '📱',
+                'description': f'через {sbp_name}',
+                'callback': 'topup_cispay_sbp',
+            }
+        )
+
+    if settings.is_cispay_card_enabled():
+        card_name = settings.get_cispay_card_display_name()
+        methods.append(
+            {
+                'id': 'cispay_card',
+                'name': card_name,
+                'icon': '💳',
+                'description': f'через {card_name}',
+                'callback': 'topup_cispay_card',
+            }
+        )
+
+    if settings.is_cispay_enabled() and not settings.is_cispay_sbp_enabled() and not settings.is_cispay_card_enabled():
+        cispay_name = settings.get_cispay_display_name()
+        methods.append(
+            {
+                'id': 'cispay',
+                'name': cispay_name,
+                'icon': '💳',
+                'description': f'через {cispay_name}',
+                'callback': 'topup_cispay',
+            }
+        )
+
     if settings.is_etoplatezhi_sbp_enabled():
         sbp_name = settings.get_etoplatezhi_sbp_display_name()
         methods.append(
@@ -548,6 +584,12 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_lava_sbp_enabled()
     if method_id == 'lava_card':
         return settings.is_lava_card_enabled()
+    if method_id == 'cispay':
+        return settings.is_cispay_enabled()
+    if method_id == 'cispay_sbp':
+        return settings.is_cispay_sbp_enabled()
+    if method_id == 'cispay_card':
+        return settings.is_cispay_card_enabled()
     if method_id == 'etoplatezhi':
         return settings.is_etoplatezhi_enabled()
     if method_id == 'etoplatezhi_sbp':

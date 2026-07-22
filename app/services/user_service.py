@@ -70,6 +70,8 @@ class DeleteUserResult:
     bot_deleted: bool = False
     panel_deleted: bool = False
     panel_error: str | None = None
+    # Удаление отклонено guard'ом открытого grace-доступа (HTTP-слой мапит в 409)
+    grace_blocked: bool = False
 
 
 class UserService:
@@ -809,6 +811,23 @@ class UserService:
 
             # Collect all panel UUIDs to process
             subs = getattr(user, 'subscriptions', None) or []
+            from app.services.grace_access_runtime import (
+                GraceAccessDeletionBlocked,
+                ensure_no_open_grace_for_subscriptions,
+            )
+
+            try:
+                await ensure_no_open_grace_for_subscriptions(db, tuple(sub.id for sub in subs))
+            except GraceAccessDeletionBlocked as error:
+                result.panel_error = str(error)
+                result.grace_blocked = True
+                logger.warning(
+                    'User deletion blocked until grace access is restored',
+                    user_id=user_id,
+                    subscription_ids=error.subscription_ids,
+                )
+                return result
+
             if settings.is_multi_tariff_enabled():
                 panel_uuids = [sub.remnawave_uuid for sub in subs if sub.remnawave_uuid]
             else:
@@ -858,7 +877,7 @@ class UserService:
                                 from app.services.subscription_service import SubscriptionService
 
                                 subscription_service = SubscriptionService()
-                                disabled = await subscription_service.disable_remnawave_user(panel_uuid)
+                                disabled = await subscription_service.disable_remnawave_user(panel_uuid, db=db)
                                 result.panel_deleted = disabled
                                 if disabled:
                                     logger.info(
@@ -887,7 +906,7 @@ class UserService:
                                     from app.services.subscription_service import SubscriptionService
 
                                     subscription_service = SubscriptionService()
-                                    disabled = await subscription_service.disable_remnawave_user(panel_uuid)
+                                    disabled = await subscription_service.disable_remnawave_user(panel_uuid, db=db)
                                     if disabled:
                                         result.panel_deleted = True
                                         result.panel_error = 'Удаление не удалось, пользователь деактивирован'
@@ -1159,6 +1178,7 @@ class UserService:
                 AntilopayPayment,
                 AppleTransaction,
                 AuraPayPayment,
+                CisPayPayment,
                 DonutPayment,
                 EtoplatezhiPayment,
                 JupiterPayment,
@@ -1182,6 +1202,7 @@ class UserService:
                 JupiterPayment,
                 DonutPayment,
                 LavaPayment,
+                CisPayPayment,
             )
             for model in extra_payment_models:
                 try:

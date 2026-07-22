@@ -422,6 +422,26 @@ class BlockedUsersService:
 
         for i, user_result in enumerate(blocked_users):
             try:
+                if action in (
+                    BlockedUserAction.DELETE_FROM_REMNAWAVE,
+                    BlockedUserAction.DELETE_FROM_DB,
+                    BlockedUserAction.DELETE_BOTH,
+                ):
+                    from app.services.grace_access_runtime import (
+                        GraceAccessDeletionBlocked,
+                        ensure_no_open_grace_for_user,
+                    )
+
+                    try:
+                        await ensure_no_open_grace_for_user(db, user_result.user_id)
+                    except GraceAccessDeletionBlocked:
+                        result.errors.append(
+                            f'Удаление {user_result.telegram_id} пропущено: сначала завершите grace-доступ'
+                        )
+                        if progress_callback:
+                            await progress_callback(i + 1, total)
+                        continue
+
                 if action in (BlockedUserAction.DELETE_FROM_REMNAWAVE, BlockedUserAction.DELETE_BOTH):
                     uuids_to_delete = user_result.remnawave_uuids or (
                         [user_result.remnawave_uuid] if user_result.remnawave_uuid else []
@@ -436,6 +456,11 @@ class BlockedUsersService:
                             )
                         # Задержка для избежания rate limit
                         await asyncio.sleep(self.API_DELAY_SECONDS)
+
+                    if action == BlockedUserAction.DELETE_FROM_REMNAWAVE:
+                        # Release the pre-delete advisory/SQLite write guard;
+                        # this action intentionally makes no database changes.
+                        await db.rollback()
 
                 if action in (BlockedUserAction.DELETE_FROM_DB, BlockedUserAction.DELETE_BOTH):
                     success = await self.delete_user_from_db(db, user_result.user_id)

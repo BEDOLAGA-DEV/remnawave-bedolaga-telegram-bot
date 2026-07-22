@@ -304,6 +304,7 @@ async def _activate_pending_trial(
     state: FSMContext,
     user: 'User',
     answer_func: Callable[..., Any],
+    bot: 'Bot | None' = None,
 ) -> None:
     """Активирует БЕСПЛАТНЫЙ триал по диплинку /start trial (rich-меню).
 
@@ -384,6 +385,20 @@ async def _activate_pending_trial(
                 user_id=user.id,
                 subscription_id=subscription.id,
             )
+
+        # Админ-уведомление об активации (оно же пишет SubscriptionEvent для
+        # таймлайна активности) — как в activate_trial бота и cabinet POST /trial.
+        if bot is not None:
+            try:
+                from app.services.admin_notification_service import AdminNotificationService
+
+                await AdminNotificationService(bot).send_trial_activation_notification(db, user, subscription)
+            except Exception as notify_error:
+                logger.warning(
+                    'Не удалось отправить админ-уведомление об активации триала по диплинку',
+                    error=str(notify_error),
+                    user_id=user.id,
+                )
     except Exception:
         logger.exception('Не удалось активировать триал по диплинку', user_id=getattr(user, 'id', None))
         return
@@ -1282,7 +1297,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         if user:
             await _activate_pending_gift_after_registration(db, state, user, message.answer)
             await _redeem_pending_coupon(db, state, user, message.answer)
-            await _activate_pending_trial(db, state, user, message.answer)
+            await _activate_pending_trial(db, state, user, message.answer, message.bot)
             await _persist_pending_subid_after_registration(db, state, user)
             await state.update_data(
                 pending_gift_token=None, pending_coupon_token=None, pending_subid=None, pending_trial=None

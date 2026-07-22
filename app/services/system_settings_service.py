@@ -146,6 +146,7 @@ class BotConfigurationService:
         'ANTILOPAY': '🦌 Antilopay',
         'ETOPLATEZHI': '💳 Etoplatezhi',
         'JUPITER': '🪐 Jupiter',
+        'CISPAY': '💳 CisPay',
         'DONUT': '🍩 Donut',
         'LAVA': '🌋 Lava',
         'YOOKASSA': '🟣 YooKassa',
@@ -216,6 +217,7 @@ class BotConfigurationService:
         'ANTILOPAY': 'Antilopay: lk.antilopay.com, оплата картой, СБП и SberPay.',
         'ETOPLATEZHI': 'Etoplatezhi: paymentpage.etoplatezhi.ru, оплата картой и через СБП.',
         'JUPITER': 'Jupiter (FPGate P2P v2.1): app.juppiter.tech, эквайринг СБП с HMAC-SHA256.',
+        'CISPAY': 'cisPay: api.cispay.app, H2H-оплата картой и СБП на хостинговой странице, вебхуки с HMAC-SHA256.',
         'DONUT': 'Donut P2P: gw.donut.business, P2P-оплата картой, СБП по телефону и QR.',
         'LAVA': 'Lava Business: gate.lava.ru, оплата картой и СБП с HMAC-SHA256 и подтверждением через webhook.',
         'PLATEGA': '{platega_name}: merchant ID, секрет, ссылки возврата и методы оплаты.',
@@ -326,6 +328,7 @@ class BotConfigurationService:
         'SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS': 'SUPPORT',
         'SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES': 'SUPPORT',
         'ADMIN_NOTIFICATIONS_ENABLED': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_RICH_ENABLED': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_CHAT_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_TICKET_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
@@ -451,6 +454,7 @@ class BotConfigurationService:
         'ANTILOPAY_': 'ANTILOPAY',
         'ETOPLATEZHI_': 'ETOPLATEZHI',
         'JUPITER_': 'JUPITER',
+        'CISPAY_': 'CISPAY',
         'DONUT_': 'DONUT',
         'LAVA_': 'LAVA',
         'PLATEGA_': 'PLATEGA',
@@ -719,6 +723,20 @@ class BotConfigurationService:
                 'бот один раз повторит отправку без логотипа и отключит его до рестарта.'
             ),
             'dependencies': 'MAIN_MENU_RICH_ENABLED, WEBHOOK_URL, LOGO_FILE',
+        },
+        'ADMIN_NOTIFICATIONS_RICH_ENABLED': {
+            'description': (
+                'Rich-вид сообщений админ-чата (Bot API 10.1): заголовки и разделители у уведомлений, '
+                'таблица показателей в стартовом сообщении и отчётах, сворачиваемые трейсбеки '
+                'в error-отчётах (полный лог инлайн вместо .txt-файла).'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': (
+                'Требует telegram-bot-api с Bot API 10.1 (официальный сервер поддерживает). '
+                'При недоступности бот сам вернётся к классическому виду до рестарта.'
+            ),
+            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED',
         },
         'MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE': {
             'description': (

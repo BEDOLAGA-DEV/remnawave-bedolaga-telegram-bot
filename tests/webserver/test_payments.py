@@ -28,6 +28,7 @@ def reset_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'YOOKASSA_SHOP_ID', 'shop', raising=False)
     monkeypatch.setattr(settings, 'YOOKASSA_SECRET_KEY', 'key', raising=False)
     monkeypatch.setattr(settings, 'YOOKASSA_TRUSTED_PROXY_NETWORKS', '', raising=False)
+    monkeypatch.setattr(settings, 'YOOKASSA_SKIP_IP_CHECK', False, raising=False)
     monkeypatch.setattr(settings, 'WEBHOOK_URL', 'http://test', raising=False)
 
 
@@ -198,6 +199,39 @@ async def test_yookassa_forbidden_ip_ignores_spoofed_forwarded_chain(monkeypatch
     payload = json.loads(response.body.decode('utf-8'))
     assert payload['reason'] == 'forbidden_ip'
     service.process_yookassa_webhook.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_yookassa_skip_ip_check_bypasses_ip_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, 'YOOKASSA_ENABLED', True, raising=False)
+    monkeypatch.setattr(settings, 'YOOKASSA_SKIP_IP_CHECK', True, raising=False)
+
+    async def fake_get_db():
+        yield SimpleNamespace()
+
+    monkeypatch.setattr('app.webserver.payments.get_db', fake_get_db)
+
+    process_mock = AsyncMock(return_value=True)
+    service = SimpleNamespace(process_yookassa_webhook=process_mock)
+
+    router = create_payment_router(DummyBot(), service)
+    assert router is not None
+
+    route = _get_route(router, settings.YOOKASSA_WEBHOOK_PATH)
+    request = _build_request(
+        settings.YOOKASSA_WEBHOOK_PATH,
+        body=json.dumps({'event': 'payment.succeeded'}).encode('utf-8'),
+        headers={},
+        # IP, который без флага дал бы forbidden_ip — с флагом гейт пропускается.
+        client_ip='8.8.8.8',
+    )
+
+    response = await route.endpoint(request)
+
+    assert response.status_code == 200
+    payload = json.loads(response.body.decode('utf-8'))
+    assert payload['status'] == 'ok'
+    process_mock.assert_awaited_once()
 
 
 @pytest.mark.anyio

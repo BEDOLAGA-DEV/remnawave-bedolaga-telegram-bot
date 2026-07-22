@@ -899,3 +899,62 @@ async def test_collapsible_disabled_keeps_plain_table(monkeypatch):
 
 def test_collapsible_flag_default_is_enabled():
     assert Settings.model_fields['MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE'].default is True
+
+
+def test_tg_time_outside_int32_range_falls_back_to_text():
+    """Telegram хранит даты 32-битным unix time: tg-time с датой после 19.01.2038
+    или до эпохи сервер отклоняет ошибкой RICH_MESSAGE_DATE_INVALID — вместо тега
+    остаётся fallback-текст."""
+    valid = rich_menu._tg_time(datetime(2030, 1, 1, tzinfo=UTC), 'd', '01.01.2030')
+    assert valid.startswith('<tg-time unix="')
+
+    boundary = rich_menu._tg_time(datetime.fromtimestamp(2**31 - 1, UTC), 'd', 'граница')
+    assert boundary.startswith('<tg-time unix="2147483647"')
+
+    too_late = rich_menu._tg_time(datetime(2038, 1, 20, tzinfo=UTC), 'd', '20.01.2038')
+    assert too_late == '20.01.2038'
+
+    too_early = rich_menu._tg_time(datetime(1969, 12, 31, tzinfo=UTC), 'd', '31.12.1969')
+    assert too_early == '31.12.1969'
+
+    # Fallback-текст экранируется так же, как внутри tg-time
+    escaped = rich_menu._tg_time(datetime(2099, 1, 1, tzinfo=UTC), 'd', 'a<b>&c')
+    assert escaped == 'a&lt;b&gt;&amp;c'
+
+
+async def test_far_future_end_date_in_table_renders_without_tg_time(monkeypatch):
+    """«Вечная» подписка (например, импорт из панели с датой 2099) не роняет
+    rich-меню: дата в таблице — обычным текстом без tg-time."""
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+
+    now = datetime.now(UTC)
+    eternal = _make_subscription(now)
+    eternal.end_date = datetime(2099, 12, 31, 12, 0, tzinfo=UTC)
+
+    async def fake_get_all(db, user_id):
+        return [eternal]
+
+    monkeypatch.setattr(rich_menu, 'get_all_subscriptions_by_user_id', fake_get_all)
+
+    html_out = await rich_menu.build_main_menu_rich_html(_make_user(eternal), DummyTexts(), AsyncMock())
+
+    assert '<tg-time' not in html_out
+    assert '2099' in html_out
+    assert '🟢 Активна' in html_out
+
+
+async def test_far_future_end_date_in_single_block_renders_without_tg_time(monkeypatch):
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False)
+
+    now = datetime.now(UTC)
+    eternal = _make_subscription(now)
+    eternal.end_date = datetime(2099, 12, 31, 12, 0, tzinfo=UTC)
+
+    html_out = await rich_menu.build_main_menu_rich_html(_make_user(eternal), DummyTexts(), AsyncMock())
+
+    assert '<tg-time' not in html_out
+    # Строка «истекает …» осталась — с текстом остатка дней вместо tg-time
+    assert 'осталось' in html_out

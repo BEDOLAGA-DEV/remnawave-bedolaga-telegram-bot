@@ -208,32 +208,36 @@ class YooKassaWebhookHandler:
         try:
             logger.info('📥 Получен YooKassa webhook', method=request.method, path=request.path)
 
-            header_ip_candidates = collect_yookassa_ip_candidates(
-                request.headers.get('X-Forwarded-For'),
-                request.headers.get('X-Real-IP'),
-                request.headers.get('Cf-Connecting-Ip'),
-            )
-            client_ip = resolve_yookassa_ip(
-                header_ip_candidates,
-                remote=request.remote,
-            )
-
-            if client_ip is None:
-                logger.warning(
-                    '🚫 Не удалось определить IP-адрес отправителя YooKassa webhook. Кандидаты',
-                    header_ip_candidates=header_ip_candidates + ([request.remote] if request.remote else []),
+            # IP-гейт можно отключить (YOOKASSA_SKIP_IP_CHECK) для схем за Anti-DDoS/прокси,
+            # который не пробрасывает реальный IP отправителя. В этом режиме подлинность
+            # платежа гарантирует fail-closed API-проверка в process_yookassa_webhook.
+            if not settings.YOOKASSA_SKIP_IP_CHECK:
+                header_ip_candidates = collect_yookassa_ip_candidates(
+                    request.headers.get('X-Forwarded-For'),
+                    request.headers.get('X-Real-IP'),
+                    request.headers.get('Cf-Connecting-Ip'),
                 )
-                return web.Response(status=403, text='Forbidden')
-
-            if not is_yookassa_ip_allowed(client_ip):
-                logger.warning(
-                    '🚫 YooKassa webhook отклонён: IP %s не входит в доверенные диапазоны (%s)',
-                    client_ip,
-                    ', '.join(str(network) for network in YOOKASSA_ALLOWED_IP_NETWORKS),
+                client_ip = resolve_yookassa_ip(
+                    header_ip_candidates,
+                    remote=request.remote,
                 )
-                return web.Response(status=403, text='Forbidden')
 
-            logger.info('🌐 IP-адрес YooKassa подтверждён', client_ip=client_ip)
+                if client_ip is None:
+                    logger.warning(
+                        '🚫 Не удалось определить IP-адрес отправителя YooKassa webhook. Кандидаты',
+                        header_ip_candidates=header_ip_candidates + ([request.remote] if request.remote else []),
+                    )
+                    return web.Response(status=403, text='Forbidden')
+
+                if not is_yookassa_ip_allowed(client_ip):
+                    logger.warning(
+                        '🚫 YooKassa webhook отклонён: IP %s не входит в доверенные диапазоны (%s)',
+                        client_ip,
+                        ', '.join(str(network) for network in YOOKASSA_ALLOWED_IP_NETWORKS),
+                    )
+                    return web.Response(status=403, text='Forbidden')
+
+                logger.info('🌐 IP-адрес YooKassa подтверждён', client_ip=client_ip)
 
             body = await request.text()
 

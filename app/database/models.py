@@ -152,6 +152,7 @@ class PromoCodeType(Enum):
     TRIAL_SUBSCRIPTION = 'trial_subscription'
     PROMO_GROUP = 'promo_group'
     DISCOUNT = 'discount'  # Одноразовая процентная скидка (balance_bonus_kopeks = процент, subscription_days = часы)
+    BALANCE_AND_DAYS = 'balance_and_days'  # Комбинированный: и бонус на баланс, и дни подписки одним кодом
 
 
 class PaymentMethod(Enum):
@@ -177,6 +178,7 @@ class PaymentMethod(Enum):
     ETOPLATEZHI = 'etoplatezhi'
     ANTILOPAY = 'antilopay'
     JUPITER = 'jupiter'
+    CISPAY = 'cispay'
     DONUT = 'donut'
     LAVA = 'lava'
     MANUAL = 'manual'
@@ -1565,6 +1567,73 @@ class LavaPayment(Base):
         )
 
 
+class CisPayPayment(Base):
+    """Платежи через cisPay (api.cispay.app, H2H карта/СБП)."""
+
+    __tablename__ = 'cispay_payments'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+
+    # Идентификаторы
+    order_id = Column(String(64), unique=True, nullable=False, index=True)  # Наш order_id
+    cispay_payment_id = Column(String(64), unique=True, nullable=True, index=True)  # id (UUIDv7) от cisPay
+
+    # Суммы
+    amount_kopeks = Column(Integer, nullable=False)
+    # Сумма к оплате покупателем (может включать комиссию, если её платит покупатель)
+    charged_amount_kopeks = Column(Integer, nullable=True)
+    currency = Column(String(10), nullable=False, default='RUB')
+    description = Column(Text, nullable=True)
+
+    # Статусы
+    status = Column(String(32), nullable=False, default='pending')
+    is_paid = Column(Boolean, default=False)
+
+    # Данные платежа
+    payment_url = Column(Text, nullable=True)
+    payment_method = Column(String(32), nullable=True)  # 'CARD' / 'SBP'
+
+    # Метаданные
+    metadata_json = Column(JSON, nullable=True)
+    callback_payload = Column(JSON, nullable=True)
+
+    # Временные метки
+    paid_at = Column(AwareDateTime(), nullable=True)
+    expires_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    # Связь с транзакцией
+    transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+
+    # Relationships
+    user = relationship('User', backref='cispay_payments')
+    transaction = relationship('Transaction', backref='cispay_payment')
+
+    @property
+    def amount_rubles(self) -> float:
+        return self.amount_kopeks / 100
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == 'pending'
+
+    @property
+    def is_success(self) -> bool:
+        return self.status == 'success' and self.is_paid
+
+    @property
+    def is_failed(self) -> bool:
+        return self.status in ['failed', 'declined', 'expired', 'refunded', 'amount_mismatch', 'error']
+
+    def __repr__(self) -> str:  # pragma: no cover - debug helper
+        return (
+            f'<CisPayPayment(id={self.id}, order_id={self.order_id}, '
+            f'amount={self.amount_rubles}₽, status={self.status})>'
+        )
+
+
 class PromoGroup(Base):
     __tablename__ = 'promo_groups'
 
@@ -2098,6 +2167,8 @@ class Subscription(Base):
         Index('ix_subscriptions_user_id', 'user_id'),
         Index('ix_subscriptions_user_status', 'user_id', 'status'),
         Index('ix_subscriptions_user_tariff_status', 'user_id', 'tariff_id', 'status'),
+        Index('ix_subscriptions_grace_expiry_scan', 'status', 'is_trial', 'end_date'),
+        Index('ix_subscriptions_grace_candidate', 'grace_candidate_at', 'grace_candidate_reason'),
         Index(
             'uq_subscriptions_user_tariff_active',
             'user_id',
@@ -2142,6 +2213,15 @@ class Subscription(Base):
     last_webhook_update_at = Column(AwareDateTime(), nullable=True)
     last_revoke_at = Column(AwareDateTime(), nullable=True)
 
+    # Grace-access ingress marker.  Only trusted status transitions set the
+    # candidate timestamp; generic updated_at/webhooks must not resurrect old
+    # expired subscriptions when the feature is enabled.
+    grace_candidate_reason = Column(String(16), nullable=True)
+    grace_candidate_at = Column(AwareDateTime(), nullable=True)
+    # Administrative cancellation/shortening suppresses only the current
+    # incident. A later renewal has a newer end_date and becomes eligible again.
+    grace_suppressed_until = Column(AwareDateTime(), nullable=True)
+
     remnawave_short_uuid = Column(String(255), nullable=True)
     remnawave_uuid = Column(String(255), nullable=True)
     remnawave_short_id = Column(
@@ -2165,6 +2245,9 @@ class Subscription(Base):
     )
     traffic_purchases = relationship(
         'TrafficPurchase', back_populates='subscription', passive_deletes=True, cascade='all, delete-orphan'
+    )
+    grace_access_sessions = relationship(
+        'GraceAccessSessionModel', back_populates='subscription', passive_deletes=True, lazy='noload'
     )
 
     @property
@@ -2324,6 +2407,90 @@ class Subscription(Base):
         if self.status != SubscriptionStatus.ACTIVE.value:
             return False
         return True
+
+
+class GraceAccessSessionModel(Base):
+    """Persistent snapshot for one restricted grace-access incident."""
+
+    __tablename__ = 'grace_access_sessions'
+    __table_args__ = (
+        UniqueConstraint(
+            'subscription_id',
+            'incident_key',
+            name='uq_grace_access_sessions_incident',
+        ),
+        CheckConstraint(
+            "reason IN ('expired', 'limited')",
+            name='ck_grace_access_sessions_reason',
+        ),
+        CheckConstraint(
+            "state IN ('pending', 'active', 'restoring', 'completed')",
+            name='ck_grace_access_sessions_state',
+        ),
+        CheckConstraint(
+            """
+            (
+                state = 'completed'
+                AND completion_reason IS NOT NULL
+                AND completion_reason IN ('paid', 'timeout', 'drained', 'conflict', 'revoked')
+                AND completed_at IS NOT NULL
+            )
+            OR
+            (
+                state <> 'completed'
+                AND completion_reason IS NULL
+                AND completed_at IS NULL
+            )
+            """,
+            name='ck_grace_access_sessions_completion',
+        ),
+        CheckConstraint(
+            'grace_until > started_at',
+            name='ck_grace_access_sessions_dates',
+        ),
+        CheckConstraint(
+            'snapshot_version > 0',
+            name='ck_grace_access_sessions_snapshot_version',
+        ),
+        CheckConstraint(
+            'version > 0',
+            name='ck_grace_access_sessions_version',
+        ),
+        Index(
+            'uq_grace_access_sessions_one_open',
+            'subscription_id',
+            unique=True,
+            postgresql_where=text("state IN ('pending', 'active', 'restoring')"),
+            sqlite_where=text("state IN ('pending', 'active', 'restoring')"),
+        ),
+        Index(
+            'ix_grace_access_sessions_state_until',
+            'state',
+            'grace_until',
+        ),
+    )
+
+    id = Column(String(36), primary_key=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False)
+    remnawave_uuid = Column(String(255), nullable=False)
+    reason = Column(String(16), nullable=False)
+    incident_key = Column(String(255), nullable=False)
+    state = Column(String(16), nullable=False)
+
+    snapshot_version = Column(Integer, nullable=False, default=2, server_default='2')
+    version = Column(Integer, nullable=False, default=1, server_default='1')
+    billing_before = Column(JSON, nullable=False)
+    panel_before = Column(JSON, nullable=False)
+    overlay = Column(JSON, nullable=False)
+
+    started_at = Column(AwareDateTime(), nullable=False)
+    grace_until = Column(AwareDateTime(), nullable=False)
+    updated_at = Column(AwareDateTime(), nullable=False)
+    completion_reason = Column(String(16), nullable=True)
+    completed_at = Column(AwareDateTime(), nullable=True)
+    last_error = Column(Text, nullable=True)
+
+    subscription = relationship('Subscription', back_populates='grace_access_sessions')
 
 
 class TrafficPurchase(Base):

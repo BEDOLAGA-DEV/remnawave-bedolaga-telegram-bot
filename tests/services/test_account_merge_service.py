@@ -16,6 +16,17 @@ from app.services.account_merge_service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _stub_grace_delete_guard(monkeypatch):
+    """These merge-unit tests use a tiny DB double, not a real AsyncSession."""
+    guard = AsyncMock()
+    monkeypatch.setattr(
+        'app.services.grace_access_runtime.ensure_no_open_grace_for_users',
+        guard,
+    )
+    return guard
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

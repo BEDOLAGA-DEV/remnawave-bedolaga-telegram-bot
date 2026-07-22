@@ -32,6 +32,8 @@ METHOD_CONFIG_IDS = {
     'donut_sbp_qr': 'donut',
     'lava_card': 'lava',
     'lava_sbp': 'lava',
+    'cispay_card': 'cispay',
+    'cispay_sbp': 'cispay',
     'overpay_fps': 'overpay',
     'overpay_card': 'overpay',
     'overpay_int': 'overpay',

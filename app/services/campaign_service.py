@@ -56,6 +56,26 @@ class AdvertisingCampaignService:
         user: User,
         campaign: AdvertisingCampaign,
     ) -> CampaignBonusResult:
+        # Пользователь мог прийти с протухшими (expired) атрибутами: любой
+        # rollback выше по флоу регистрации (реферал, промокод, phantom-merge)
+        # экспайрит инстансы даже при expire_on_commit=False, а последующий
+        # sync-доступ к user.id здесь дёргает ленивую подгрузку вне greenlet →
+        # MissingGreenlet и бонус кампании не начисляется (прод-репорт
+        # 2026-07-13, регистрация по рекламной кампании). Перечитываем
+        # атрибуты асинхронно ДО первого sync-доступа.
+        try:
+            await db.refresh(user)
+        except Exception as refresh_error:
+            # user.id здесь читаем через __dict__: атрибут может быть expired,
+            # и обычный доступ сам бы дёрнул ленивую подгрузку → повторный
+            # MissingGreenlet уже внутри обработчика.
+            logger.warning(
+                '⚠️ Не удалось освежить пользователя перед бонусом кампании',
+                user_id=user.__dict__.get('id'),
+                campaign_id=campaign.id,
+                error=refresh_error,
+            )
+
         if not campaign.is_active:
             logger.warning('⚠️ Попытка выдать бонус по неактивной кампании', campaign_id=campaign.id)
             return CampaignBonusResult(success=False)

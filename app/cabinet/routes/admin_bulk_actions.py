@@ -175,6 +175,7 @@ async def _do_cancel_subscription(
 
     sub.status = SubscriptionStatus.EXPIRED.value
     sub.end_date = datetime.now(UTC)
+    sub.grace_suppressed_until = sub.end_date
     # For daily tariffs: mark as paused to prevent auto-resume by DailySubscriptionService
     if sub.tariff and getattr(sub.tariff, 'is_daily', False):
         sub.is_daily_paused = True
@@ -521,6 +522,25 @@ async def _do_delete_subscription(
             username=user.username,
         )
 
+    from app.services.grace_access_runtime import (
+        GraceAccessDeletionBlocked,
+        ensure_no_open_grace_for_subscriptions,
+    )
+
+    blocked_user_id = user.id
+    blocked_username = user.username
+    blocked_subscriptions = _build_subscription_info(getattr(user, 'subscriptions', None) or [])
+    try:
+        await ensure_no_open_grace_for_subscriptions(db, (sub.id,))
+    except GraceAccessDeletionBlocked:
+        return BulkUserResult(
+            user_id=blocked_user_id,
+            success=False,
+            message=f'Skipped: {tariff_name} has open grace access; drain/restore it first',
+            username=blocked_username,
+            subscriptions=blocked_subscriptions,
+        )
+
     # Deactivate in RemnaWave panel first
     _sub_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else getattr(user, 'remnawave_uuid', None)
     if _sub_uuid:
@@ -528,7 +548,7 @@ async def _do_delete_subscription(
             from app.services.subscription_service import SubscriptionService
 
             subscription_service = SubscriptionService()
-            await subscription_service.disable_remnawave_user(_sub_uuid)
+            await subscription_service.disable_remnawave_user(_sub_uuid, db=db)
         except Exception as e:
             logger.warning('Failed to disable user in RemnaWave during subscription delete', error=e)
 

@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     MINIAPP_SUPPORT_URL: str = ''  # Custom URL to redirect when tickets disabled (only for url type)
 
     ADMIN_NOTIFICATIONS_ENABLED: bool = False
+    # Rich-вид сообщений админ-чата (Bot API 10.1): заголовки, таблицы,
+    # сворачиваемые трейсбеки в error-отчётах. При недоступности сервера
+    # бот сам откатывается на классический вид до рестарта.
+    ADMIN_NOTIFICATIONS_RICH_ENABLED: bool = True
     ADMIN_NOTIFICATIONS_CHAT_ID: str | None = None
     ADMIN_NOTIFICATIONS_TOPIC_ID: int | None = None
     ADMIN_NOTIFICATIONS_TICKET_TOPIC_ID: int | None = None
@@ -167,6 +171,19 @@ class Settings(BaseSettings):
     # mem-DoS при компрометации webhook-секрета). См. RemnaWaveWebhookService.
     REMNAWAVE_WEBHOOK_NODE_COALESCE_WINDOW_SECONDS: float = 10.0
     REMNAWAVE_WEBHOOK_NODE_BUFFER_MAX: int = 500
+
+    # Ограниченный grace-доступ для продления истёкшей подписки.
+    # Режимы: false (выключено), observe (только журнал), true (активно),
+    # drain (не выдавать новые grace-сессии, но завершать уже открытые).
+    GRACE_ACCESS_MODE: Literal['false', 'observe', 'true', 'drain'] = 'false'
+    GRACE_ACCESS_DURATION_HOURS: int = 72
+    GRACE_ACCESS_EXPIRED_SQUAD_UUID: str = ''
+    GRACE_ACCESS_LIMITED_SQUAD_UUID: str = ''
+    GRACE_ACCESS_EXPIRED_TRAFFIC_GB: int = 1
+    GRACE_ACCESS_LIMITED_TRAFFIC_GB: int = 1
+    GRACE_ACCESS_RECONCILE_INTERVAL_SECONDS: int = 60
+    GRACE_ACCESS_RECONCILE_BATCH_SIZE: int = 200
+    GRACE_ACCESS_CANDIDATE_LOOKBACK_MINUTES: int = 30
 
     # Webhook user notification toggles (what Telegram messages users receive from webhook events)
     WEBHOOK_NOTIFY_USER_ENABLED: bool = True
@@ -490,6 +507,14 @@ class Settings(BaseSettings):
     YOOKASSA_WEBHOOK_HOST: str = '0.0.0.0'
     YOOKASSA_WEBHOOK_PORT: int = 8082
     YOOKASSA_TRUSTED_PROXY_NETWORKS: str = ''
+    # Отключает проверку IP-адреса отправителя вебхука (allowlist сетей YooKassa).
+    # Нужно для развёртываний за Anti-DDoS/прокси, который НЕ пробрасывает реальный
+    # IP клиента: до бота доходит только адрес прокси, и allowlist всегда отклоняет
+    # вебхук как forbidden_ip. Когда флаг включён, IP-гейт снимается, но подлинность
+    # платежа подтверждается обязательным (fail-closed) запросом статуса в API YooKassa
+    # внутри process_yookassa_webhook — без подтверждения баланс не начисляется.
+    # По умолчанию выключен: IP-проверка остаётся основным барьером.
+    YOOKASSA_SKIP_IP_CHECK: bool = False
     YOOKASSA_MIN_AMOUNT_KOPEKS: int = 5000
     YOOKASSA_MAX_AMOUNT_KOPEKS: int = 1000000
     YOOKASSA_RECURRENT_ENABLED: bool = False
@@ -888,6 +913,24 @@ class Settings(BaseSettings):
     DONUT_SBP_QR_ENABLED: bool = False
     DONUT_SBP_QR_DISPLAY_NAME: str = 'СБП QR (Donut)'
 
+    # cisPay (H2H merchant API, api.cispay.app)
+    CISPAY_ENABLED: bool = False
+    CISPAY_SHOP_ID: str | None = None  # X-Shop-ID — UUID магазина
+    CISPAY_API_KEY: str | None = None  # X-Api-Key — секретный ключ (cis_sec_...)
+    CISPAY_BASE_URL: str = 'https://api.cispay.app'
+    CISPAY_DISPLAY_NAME: str = 'CisPay'
+    CISPAY_CURRENCY: str = 'RUB'
+    CISPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
+    CISPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    CISPAY_WEBHOOK_PATH: str = '/cispay-webhook'
+    # Счёт cisPay живёт 30 минут, после чего переходит в EXPIRED на стороне провайдера
+    CISPAY_PAYMENT_LIFETIME_MINUTES: int = 30
+    # Sub-методы cisPay (payment_method в запросе создания платежа)
+    CISPAY_CARD_ENABLED: bool = False
+    CISPAY_CARD_DISPLAY_NAME: str = 'Карта (CisPay)'
+    CISPAY_SBP_ENABLED: bool = False
+    CISPAY_SBP_DISPLAY_NAME: str = 'СБП (CisPay)'
+
     # Lava (Lava Business API, api.lava.ru)
     LAVA_ENABLED: bool = False
     LAVA_BASE_URL: str = 'https://api.lava.ru'
@@ -1259,6 +1302,40 @@ class Settings(BaseSettings):
         if mode not in {'default', 'cabinet'}:
             raise ValueError('MAIN_MENU_MODE must be one of: default, cabinet')
         return mode
+
+    @field_validator('GRACE_ACCESS_MODE', mode='before')
+    @classmethod
+    def normalize_grace_access_mode(cls, value: str | None) -> str:
+        normalized = str(value or 'false').strip().lower()
+        if normalized not in {'false', 'observe', 'true', 'drain'}:
+            raise ValueError('GRACE_ACCESS_MODE must be one of: false, observe, true, drain')
+        return normalized
+
+    @field_validator(
+        'GRACE_ACCESS_DURATION_HOURS',
+        'GRACE_ACCESS_RECONCILE_INTERVAL_SECONDS',
+        'GRACE_ACCESS_RECONCILE_BATCH_SIZE',
+        'GRACE_ACCESS_CANDIDATE_LOOKBACK_MINUTES',
+        mode='before',
+    )
+    @classmethod
+    def ensure_positive_grace_access_value(cls, value: int | str) -> int:
+        parsed = int(value)
+        if parsed < 1:
+            raise ValueError('Grace access duration, intervals, batch size and lookback must be positive')
+        return parsed
+
+    @field_validator(
+        'GRACE_ACCESS_EXPIRED_TRAFFIC_GB',
+        'GRACE_ACCESS_LIMITED_TRAFFIC_GB',
+        mode='before',
+    )
+    @classmethod
+    def ensure_nonnegative_grace_access_traffic(cls, value: int | str) -> int:
+        parsed = int(value)
+        if parsed < 0:
+            raise ValueError('Grace access traffic must not be negative')
+        return parsed
 
     @field_validator('SERVER_STATUS_MODE', mode='before')
     @classmethod
@@ -2675,6 +2752,38 @@ class Settings(BaseSettings):
 
     def get_jupiter_sbp_display_name_html(self) -> str:
         return html.escape(self.get_jupiter_sbp_display_name())
+
+    def is_cispay_enabled(self) -> bool:
+        # Пустая строка так же непригодна, как None: с пустым ключом HMAC вебхука
+        # тривиально подделывается, поэтому включаем только при непустых значениях.
+        return bool(self.CISPAY_ENABLED and self.CISPAY_SHOP_ID and self.CISPAY_API_KEY)
+
+    def get_cispay_display_name(self) -> str:
+        name = (self.CISPAY_DISPLAY_NAME or '').strip()
+        return name or 'CisPay'
+
+    def get_cispay_display_name_html(self) -> str:
+        return html.escape(self.get_cispay_display_name())
+
+    def is_cispay_card_enabled(self) -> bool:
+        return self.CISPAY_CARD_ENABLED and self.is_cispay_enabled()
+
+    def get_cispay_card_display_name(self) -> str:
+        name = (self.CISPAY_CARD_DISPLAY_NAME or '').strip()
+        return name or 'Карта (CisPay)'
+
+    def get_cispay_card_display_name_html(self) -> str:
+        return html.escape(self.get_cispay_card_display_name())
+
+    def is_cispay_sbp_enabled(self) -> bool:
+        return self.CISPAY_SBP_ENABLED and self.is_cispay_enabled()
+
+    def get_cispay_sbp_display_name(self) -> str:
+        name = (self.CISPAY_SBP_DISPLAY_NAME or '').strip()
+        return name or 'СБП (CisPay)'
+
+    def get_cispay_sbp_display_name_html(self) -> str:
+        return html.escape(self.get_cispay_sbp_display_name())
 
     def is_donut_enabled(self) -> bool:
         return self.DONUT_ENABLED and self.DONUT_TOKEN is not None and self.DONUT_SECRET is not None

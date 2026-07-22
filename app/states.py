@@ -65,6 +65,7 @@ class AdminStates(StatesGroup):
     setting_promocode_uses = State()
     setting_promocode_expiry = State()
     setting_discount_hours = State()  # Для DISCOUNT: ввод срока действия скидки в часах
+    setting_promocode_combo_days = State()  # Для BALANCE_AND_DAYS: ввод дней подписки после суммы
     selecting_promo_group = State()
 
     creating_coupon_batch_days = State()

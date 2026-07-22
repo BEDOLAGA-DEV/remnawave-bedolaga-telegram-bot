@@ -36,6 +36,8 @@ from app.database.crud.user import get_user_by_id, get_user_by_remnawave_uuid, g
 from app.database.models import Subscription, SubscriptionServer, SubscriptionStatus, User
 from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService
+from app.services.grace_access_runtime import get_open_grace_subscription_ids, grace_access_runtime
+from app.services.grace_access_service import GraceReason
 from app.services.notification_delivery_service import NotificationType, notification_delivery_service
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 
@@ -365,6 +367,19 @@ class RemnaWaveWebhookService:
                 data_2=data.get('uuid'),
             )
             return False
+
+        if subscription and await grace_access_runtime.should_suppress_webhook(
+            subscription.id,
+            event_name,
+            data,
+            db=db,
+        ):
+            logger.info(
+                'RemnaWave webhook suppressed as a grace overlay echo',
+                event_name=event_name,
+                subscription_id=subscription.id,
+            )
+            return True
 
         user_id = user.id
         try:
@@ -1033,12 +1048,21 @@ class RemnaWaveWebhookService:
             await db.commit()
             return
 
+        candidate_at = datetime.now(UTC)
+        subscription.grace_candidate_reason = GraceReason.EXPIRED.value
+        subscription.grace_candidate_at = candidate_at
         self._stamp_webhook_update(subscription)
         if subscription.status != SubscriptionStatus.EXPIRED.value:
             await expire_subscription(db, subscription)
             logger.info('Webhook: subscription expired for user', subscription_id=subscription.id, user_id=user.id)
         else:
             await db.commit()
+
+        await grace_access_runtime.consider_candidate(
+            subscription.id,
+            GraceReason.EXPIRED,
+            source='webhook',
+        )
 
         await self._notify_user(
             user,
@@ -1084,6 +1108,8 @@ class RemnaWaveWebhookService:
             await db.commit()
             return
 
+        subscription.grace_candidate_reason = None
+        subscription.grace_candidate_at = None
         self._stamp_webhook_update(subscription)
         if subscription.status != SubscriptionStatus.DISABLED.value:
             await deactivate_subscription(db, subscription)
@@ -1120,6 +1146,9 @@ class RemnaWaveWebhookService:
             logger.info('Webhook user.limited: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
             return
 
+        candidate_at = datetime.now(UTC)
+        subscription.grace_candidate_reason = GraceReason.LIMITED.value
+        subscription.grace_candidate_at = candidate_at
         self._stamp_webhook_update(subscription)
         if subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value):
             subscription.status = SubscriptionStatus.LIMITED.value
@@ -1131,6 +1160,12 @@ class RemnaWaveWebhookService:
             )
         else:
             await db.commit()
+
+        await grace_access_runtime.consider_candidate(
+            subscription.id,
+            GraceReason.LIMITED,
+            source='webhook',
+        )
 
         await self._notify_user(
             user, 'WEBHOOK_SUB_LIMITED', reply_markup=self._get_traffic_keyboard(user), subscription=subscription
@@ -1165,10 +1200,11 @@ class RemnaWaveWebhookService:
             return
 
         changed = False
+        grace_open = subscription.id in await get_open_grace_subscription_ids(db)
 
         # Sync traffic limit
         traffic_limit_bytes = data.get('trafficLimitBytes')
-        if traffic_limit_bytes is not None:
+        if traffic_limit_bytes is not None and not grace_open:
             try:
                 new_limit_gb = int(traffic_limit_bytes) // (1024**3)
                 if subscription.traffic_limit_gb != new_limit_gb:
@@ -1203,7 +1239,7 @@ class RemnaWaveWebhookService:
         # отдельно синхронизируется ниже: при panel ACTIVE + future end_date подписка
         # всё равно может корректно реактивироваться через обычное продление/активацию.
         expire_at = data.get('expireAt')
-        if expire_at and subscription.status != SubscriptionStatus.DISABLED.value:
+        if expire_at and not grace_open and subscription.status != SubscriptionStatus.DISABLED.value:
             try:
                 parsed_dt = datetime.fromisoformat(expire_at.replace('Z', '+00:00'))
                 new_end_date = parsed_dt.astimezone(UTC)
@@ -1223,7 +1259,7 @@ class RemnaWaveWebhookService:
 
         # Sync status from panel
         panel_status = data.get('status')
-        if panel_status:
+        if panel_status and not grace_open:
             now = datetime.now(UTC)
             end_date = subscription.end_date
             if panel_status == 'ACTIVE' and end_date and end_date > now:
@@ -1262,6 +1298,11 @@ class RemnaWaveWebhookService:
 
         # Always stamp to protect from sync overwrite, even if no fields changed
         self._stamp_webhook_update(subscription)
+        if grace_open:
+            logger.debug(
+                'Webhook user.modified: grace-owned fields masked; usage/links still synchronized',
+                subscription_id=subscription.id,
+            )
         if changed:
             subscription.updated_at = datetime.now(UTC)
             logger.info(

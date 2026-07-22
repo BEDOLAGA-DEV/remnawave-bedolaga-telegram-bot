@@ -1,5 +1,59 @@
 # Changelog
 
+## [3.65.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.65.0...v3.65.1) (2026-07-19)
+
+
+### Bug Fixes
+
+* **nalogo:** не терять чек, если Telegram отверг файл, и не слать HTML как чек ([abde46c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/abde46cbe501c5d2712f2aaf2b2f61fc09085a5d))
+* **subscription:** NameError при продлении тарифа после списания денег ([82b7131](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/82b7131154e93f2bc4719cae4c64c171648e0f96))
+
+## [3.65.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.64.0...v3.65.0) (2026-07-19)
+
+
+### New Features
+
+* add crash-safe restricted grace access for expired and limited subscriptions ([67d45b6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/67d45b6ac39cd4203c870da42a3680c5068beb21))
+* **admin:** rich-вид сообщений админ-чата — уведомления, логи, статистика, старт ([3dbdc8e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3dbdc8e06d5124ce47bedd52eab73bf56a57629b))
+* **cabinet:** отправка прямого сообщения юзеру из карточки в кабинете ([c4130c1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c4130c18a6942c17127c6003a61e5ab83cbeb2b3))
+* **email:** deliver winback + lifecycle notifications to email-only users ([491f61f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/491f61ffb1b44737f9ce60511adc0b57493deea2))
+* **email:** email templates for all Remnawave WEBHOOK_* notifications ([a14389f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a14389f8f80a33c14fd18b6a4c4b1e70aac641a1))
+* **email:** recurrent autopay success/failure to email-only users ([ba9555c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ba9555c5cad8a15e9c372da2df659f55b0011f55))
+* **l10n:** локализовать флоу покупки/продления/смены тарифа ([0951c70](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0951c708ae7168e9802a22a7a7954f566865ffc9))
+* **nalogo:** имя и почта копируются по тапу + HTML-экранирование ([078493a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/078493a9ba7440b404a55010aef20c8b5418f64d))
+* **nalogo:** отправка чека пользователю + дублирование в админ-топик ([3229b5a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3229b5aaaecf8cda875a20fafdc1cb1d393d33ba))
+* **nalogo:** подробный блок получателя в админ-уведомлении о чеке ([0490ffb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0490ffbed7354c6bb8e1f26d9b6c25565e94caea))
+* **nalogo:** порядок полей в блоке получателя (ID, имя, username, почта) ([2ef6963](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2ef6963a70b266714440cd76749e7d757126b92b))
+* **payments:** интеграция платёжной системы cisPay ([392722f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/392722f9bf69c459844ea0c2bf4075026f8e2bbb))
+* **payments:** флаг YOOKASSA_SKIP_IP_CHECK с fail-closed проверкой платежа через API ([2ac5299](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2ac52992f04a004dc61227b14171935243f31963))
+* **promo-offers:** доставка промопредложений на email для юзеров без Telegram ([8913546](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8913546c3d7c634a35c4889214c175550374ab3d))
+* **promocodes:** комбинированные промокоды — баланс и дни подписки одним кодом ([d8f4b54](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d8f4b545879e3761f5c37d523c19f7021f58875b))
+* WEBHOOK_SUB_EXPIRING + переводы zh/ua для webhook-писем + тесты ([38771d3](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/38771d3e9fdb727aa5b5a5b25e09ae4ce655fd4e))
+* zh/ua для winback-писем, честный PAYMENT_RECEIVED для автосписания, тесты ([a37fad2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a37fad271a411e685e66f703dd33c5a987ed0008))
+
+
+### Bug Fixes
+
+* **admin:** не разрывать &lt;pre&gt;-блоки при конвертации уведомлений в rich ([bf00eda](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/bf00eda41f1539e21331d9d3568a64f42902b5c4))
+* **admin:** переносы строк в rich-уведомлениях + админ-уведомление о триале из диплинка ([53eda3e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/53eda3e8eb3bc5b6b922beed711c34e42ba16b3a))
+* **admin:** платёжные провайдеры в разделе «Платежные системы» ([a53f9ad](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a53f9ad2bc13f761a51a43b36bab5ffb5356781a))
+* **campaign:** MissingGreenlet при начислении бонуса кампании на регистрации ([6ec45f6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6ec45f690f370b97c79615f914e3e6b9d8f87109))
+* **email:** use notify_autopay_success wrapper so email shows the new expiry date ([973cc90](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/973cc90640cd9208487fe23c564d403396d0d9a0))
+* **l10n:** добавить недостающие ключи t() во все локали и защитить тестом ([3a0e54b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3a0e54bc4b9880726ae0ce20ec5e4d617ba7f44e))
+* **menu:** не строить tg-time для дат вне 32-битного unix-диапазона Telegram ([e3dfcf7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e3dfcf726b08acc7ae1a63aa4efddb42f7aee752))
+* **menu:** не строить tg-time для дат вне 32-битного unix-диапазона Telegram ([c0b932e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c0b932e71eeb4cfa6a31702f59d215ea934f35d6))
+* **nalogo:** print_url строил ссылку на чек без /v1 ([a472d11](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a472d11279f6fba23d7bdc771ced30a747aaa31f))
+* **nalogo:** ссылка на чек — добавлен /v1 (баг библиотечного print_url) ([a547f5c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a547f5cb5f6f83aa5f73ad24fec9df0b307f5a4d))
+* **remnawave:** пересоздавать удалённого из панели юзера при живой подписке ([9f31282](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9f31282785c34d2f5a840c9b429360bba232358b))
+* **subscription:** конверсия живого триала при покупке тарифа в мульти-режиме ([76aa67c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/76aa67cb5493e681515799ef3405618fa4c1c1c2))
+* **webhooks:** bound payment-callback concurrency to prevent DB pool exhaustion ([f72effc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f72effce7548b9a3419ee7002f0acebeff714762))
+* восстановление затёртых dev-фич и фиксы grace-подсистемы (PR [#3075](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/3075)) ([35206d7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/35206d7ba0bd9a2f5c17a42f49f3e919112d6773))
+
+
+### Documentation
+
+* актуализация комментария get_receipt_print_url после фикса библиотеки ([#3083](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/3083)) ([3b4f37f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3b4f37fa247dcbe53c3545a8296662df0400dc38))
+
 ## [3.64.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.63.0...v3.64.0) (2026-07-13)
 
 

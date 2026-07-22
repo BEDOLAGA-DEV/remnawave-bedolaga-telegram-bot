@@ -445,6 +445,20 @@ async def handle_subscription_delete_execute(
         await callback.answer('Можно удалить только истекшую или отключённую подписку', show_alert=True)
         return
 
+    from app.services.grace_access_runtime import (
+        GraceAccessDeletionBlocked,
+        ensure_no_open_grace_for_subscriptions,
+    )
+
+    try:
+        await ensure_no_open_grace_for_subscriptions(db, (subscription.id,))
+    except GraceAccessDeletionBlocked:
+        await callback.answer(
+            'Подписку нельзя удалить, пока действует временный доступ для продления.',
+            show_alert=True,
+        )
+        return
+
     # Delete from RemnaWave panel (stops webhooks / phantom notifications)
     if subscription.remnawave_uuid:
         try:

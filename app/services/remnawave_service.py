@@ -32,6 +32,7 @@ from app.external.remnawave_api import (
     RemnaWaveAPI,
     RemnaWaveAPIError,
     UserStatus,
+    is_user_not_found_error,
 )
 from app.services.subscription_service import get_traffic_reset_strategy
 from app.utils.subscription_utils import (
@@ -1118,6 +1119,8 @@ class RemnaWaveService:
     ) -> dict[str, Any]:
         """Переносит активных подписок с одного сквада на другой."""
 
+        from app.services.grace_access_runtime import update_panel_user_grace_safe
+
         if source_uuid == target_uuid:
             return {
                 'success': False,
@@ -1214,7 +1217,9 @@ class RemnaWaveService:
                         continue
 
                     try:
-                        await api.update_user(
+                        await update_panel_user_grace_safe(
+                            api,
+                            subscription.id,
                             uuid=_uuid,
                             active_internal_squads=new_squads,
                         )
@@ -1379,6 +1384,9 @@ class RemnaWaveService:
             from sqlalchemy.orm import selectinload
 
             from app.database.models import Subscription, User
+            from app.services.grace_access_runtime import get_open_grace_subscription_ids
+
+            open_grace_ids = await get_open_grace_subscription_ids(db)
 
             # Получаем всех пользователей с их подписками за один запрос
             bot_users_result = await db.execute(
@@ -1497,7 +1505,12 @@ class RemnaWaveService:
                             else:
                                 # Обновляем данные существующего пользователя
                                 # Но теперь мы уже загрузили подписку с пользователем, нет необходимости перезагружать
-                                await self._update_subscription_from_panel_data(db, db_user, panel_user)
+                                await self._update_subscription_from_panel_data(
+                                    db,
+                                    db_user,
+                                    panel_user,
+                                    open_grace_ids=open_grace_ids,
+                                )
                                 stats['updated'] += 1
                                 logger.info('♻️ Обновлена подписка существующего пользователя', telegram_id=telegram_id)
 
@@ -1538,7 +1551,12 @@ class RemnaWaveService:
 
                             existing_sub = await _get_sub(db, db_user.id)
                         if existing_sub:
-                            await self._update_subscription_from_panel_data(db, db_user, panel_user)
+                            await self._update_subscription_from_panel_data(
+                                db,
+                                db_user,
+                                panel_user,
+                                open_grace_ids=open_grace_ids,
+                            )
                         else:
                             await self._create_subscription_from_panel_data(db, db_user, panel_user)
 
@@ -1654,7 +1672,12 @@ class RemnaWaveService:
 
                                 existing_sub = await _get_sub_email(db, db_user.id)
                             if existing_sub:
-                                await self._update_subscription_from_panel_data(db, db_user, panel_user)
+                                await self._update_subscription_from_panel_data(
+                                    db,
+                                    db_user,
+                                    panel_user,
+                                    open_grace_ids=open_grace_ids,
+                                )
                             else:
                                 await self._create_subscription_from_panel_data(db, db_user, panel_user)
 
@@ -1938,6 +1961,10 @@ class RemnaWaveService:
             all_subs = subs_result.scalars().all()
             subs_by_uuid = {sub.remnawave_uuid: sub for sub in all_subs}
 
+            from app.services.grace_access_runtime import get_open_grace_subscription_ids
+
+            open_grace_ids = await get_open_grace_subscription_ids(db)
+
             # Fallback: build user-level UUID → user map for legacy migration
             from app.database.models import User
 
@@ -1990,6 +2017,13 @@ class RemnaWaveService:
                                     subscription_id=best.id,
                                     user_id=legacy_user.id,
                                 )
+
+                grace_open = bool(subscription and subscription.id in open_grace_ids)
+                if grace_open:
+                    logger.debug(
+                        'Panel-to-bot multi sync masks grace-owned fields',
+                        subscription_id=subscription.id,
+                    )
 
                 if not subscription:
                     # Try to match panel user to a bot user and create subscription
@@ -2107,6 +2141,47 @@ class RemnaWaveService:
                     if abs(subscription.traffic_used_gb - traffic_used_gb) > 0.01:
                         subscription.traffic_used_gb = traffic_used_gb
 
+                    # Persist only trusted status observations for the grace
+                    # worker. Generic updated_at must never resurrect old rows.
+                    # Полный проход по панели занимает минуты (cursor-пагинация
+                    # всего списка ДО применения) — снапшот статуса может быть
+                    # протухшим. Свежее webhook-обновление (оплата/продление во
+                    # время прохода) важнее снапшота, иначе только что оплаченная
+                    # подписка откатывается в LIMITED/EXPIRED и уезжает в grace.
+                    from app.database.crud.subscription import is_recently_updated_by_webhook
+
+                    if not grace_open and not is_recently_updated_by_webhook(subscription):
+                        panel_status = str(panel_user.get('status') or '').upper()
+                        now = self._now_utc()
+                        if panel_status == 'LIMITED':
+                            # Флип только когда bot-side данные согласны с панелью
+                            # (трафик действительно исчерпан) и подписка живая:
+                            # DISABLED — намеренное решение админа, не воскрешаем.
+                            traffic_exhausted = bool(subscription.traffic_limit_gb) and (
+                                subscription.traffic_used_gb >= subscription.traffic_limit_gb - 0.01
+                            )
+                            if traffic_exhausted and subscription.status in (
+                                SubscriptionStatus.ACTIVE.value,
+                                SubscriptionStatus.TRIAL.value,
+                            ):
+                                subscription.status = SubscriptionStatus.LIMITED.value
+                                subscription.grace_candidate_reason = 'limited'
+                                subscription.grace_candidate_at = now
+                        elif panel_status == 'EXPIRED' and subscription.end_date:
+                            local_end = self._local_to_utc(subscription.end_date)
+                            if local_end <= now and subscription.status in (
+                                SubscriptionStatus.ACTIVE.value,
+                                SubscriptionStatus.TRIAL.value,
+                                SubscriptionStatus.LIMITED.value,
+                            ):
+                                is_fresh = local_end >= now - timedelta(
+                                    minutes=settings.GRACE_ACCESS_CANDIDATE_LOOKBACK_MINUTES
+                                )
+                                subscription.status = SubscriptionStatus.EXPIRED.value
+                                if is_fresh:
+                                    subscription.grace_candidate_reason = 'expired'
+                                    subscription.grace_candidate_at = now
+
                     # traffic_limit_gb: bot is source of truth, do not overwrite from panel
 
                     # Update subscription URL
@@ -2127,7 +2202,11 @@ class RemnaWaveService:
                                 _squad_uuids.append(_sq['uuid'])
                             elif isinstance(_sq, str):
                                 _squad_uuids.append(_sq)
-                    if _squad_uuids and set(_squad_uuids) != set(subscription.connected_squads or []):
+                    if (
+                        not grace_open
+                        and _squad_uuids
+                        and set(_squad_uuids) != set(subscription.connected_squads or [])
+                    ):
                         subscription.connected_squads = _squad_uuids
 
                     stats['updated'] += 1
@@ -2230,7 +2309,14 @@ class RemnaWaveService:
             except Exception as basic_error:
                 logger.error('❌ Ошибка создания базовой подписки', basic_error=basic_error)
 
-    async def _update_subscription_from_panel_data(self, db: AsyncSession, user, panel_user):
+    async def _update_subscription_from_panel_data(
+        self,
+        db: AsyncSession,
+        user,
+        panel_user,
+        *,
+        open_grace_ids: set[int] | None = None,
+    ):
         try:
             from app.database.crud.subscription import get_subscription_by_user_id, is_recently_updated_by_webhook
             from app.database.models import SubscriptionStatus
@@ -2249,6 +2335,17 @@ class RemnaWaveService:
                 await self._create_subscription_from_panel_data(db, user, panel_user)
                 return
 
+            if open_grace_ids is None:
+                from app.services.grace_access_runtime import get_open_grace_subscription_ids
+
+                open_grace_ids = await get_open_grace_subscription_ids(db)
+            grace_open = subscription.id in open_grace_ids
+            if grace_open:
+                logger.debug(
+                    'Panel-to-bot sync masks grace-owned fields',
+                    subscription_id=subscription.id,
+                )
+
             # Skip if recently updated by webhook (prevent stale data overwrite)
             if is_recently_updated_by_webhook(subscription):
                 logger.debug(
@@ -2259,7 +2356,7 @@ class RemnaWaveService:
             panel_status = panel_user.get('status', 'ACTIVE')
             expire_at_str = panel_user.get('expireAt', '')
 
-            if expire_at_str:
+            if expire_at_str and not grace_open:
                 # expire_at приходит в UTC (naive) из _parse_remnawave_date
                 expire_at = self._parse_remnawave_date(expire_at_str)
 
@@ -2306,7 +2403,9 @@ class RemnaWaveService:
             # Конвертируем end_date в UTC для корректного сравнения с current_time
             end_date_utc = self._local_to_utc(subscription.end_date)
 
-            if panel_status == 'ACTIVE' and end_date_utc > current_time:
+            if grace_open:
+                new_status = subscription.status
+            elif panel_status == 'ACTIVE' and end_date_utc > current_time:
                 new_status = SubscriptionStatus.ACTIVE.value
             elif panel_status == 'LIMITED':
                 new_status = SubscriptionStatus.LIMITED.value
@@ -2332,6 +2431,12 @@ class RemnaWaveService:
 
             if subscription.status != new_status:
                 subscription.status = new_status
+                if new_status in (
+                    SubscriptionStatus.EXPIRED.value,
+                    SubscriptionStatus.LIMITED.value,
+                ):
+                    subscription.grace_candidate_reason = new_status
+                    subscription.grace_candidate_at = datetime.now(UTC)
                 logger.debug('Обновлен статус подписки', new_status=new_status)
 
             used_traffic_bytes = _get_user_traffic_bytes(panel_user)
@@ -2353,7 +2458,11 @@ class RemnaWaveService:
                     elif isinstance(squad, str):
                         panel_squad_uuids.append(squad)
 
-            if panel_squad_uuids and set(panel_squad_uuids) != set(subscription.connected_squads or []):
+            if (
+                not grace_open
+                and panel_squad_uuids
+                and set(panel_squad_uuids) != set(subscription.connected_squads or [])
+            ):
                 subscription.connected_squads = panel_squad_uuids
                 logger.info(
                     'Обновлены connected_squads из панели',
@@ -2395,6 +2504,7 @@ class RemnaWaveService:
 
     async def sync_users_to_panel(self, db: AsyncSession) -> dict[str, int]:
         from app.database.crud.subscription import get_subscriptions_batch
+        from app.services.grace_access_runtime import grace_sensitive_panel_update
 
         try:
             stats = {'created': 0, 'updated': 0, 'errors': 0}
@@ -2414,7 +2524,7 @@ class RemnaWaveService:
                         break
 
                     # Фильтруем подписки у которых есть пользователь
-                    valid_subscriptions = [s for s in subscriptions if s.user]
+                    valid_subscriptions = [subscription for subscription in subscriptions if subscription.user]
 
                     if not valid_subscriptions:
                         if len(subscriptions) < batch_size:
@@ -2424,7 +2534,18 @@ class RemnaWaveService:
 
                     # Подготавливаем задачи для параллельного выполнения
                     async def process_subscription(sub):
-                        async with semaphore:
+                        db_sub = sub
+                        async with semaphore, AsyncExitStack() as stack:
+                            lease = await stack.enter_async_context(grace_sensitive_panel_update(sub.id))
+                            if not lease.allowed:
+                                logger.debug(
+                                    'Bot-to-panel sync skipped missing subscription or active grace overlay',
+                                    subscription_id=sub.id,
+                                )
+                                return ('grace_skipped', db_sub, None)
+                            # Never build a canonical PATCH from the object loaded
+                            # before waiting for the grace/database lock.
+                            sub = lease.subscription
                             try:
                                 user = sub.user
                                 hwid_limit = resolve_hwid_device_limit_for_payload(sub)
@@ -2568,20 +2689,32 @@ class RemnaWaveService:
                                                 sub.remnawave_uuid = panel_uuid
                                         elif not user.remnawave_uuid:
                                             user.remnawave_uuid = panel_uuid
-                                        return ('updated', sub, None)
+                                        return ('updated', db_sub, None)
                                     except RemnaWaveAPIError as api_error:
-                                        # UUID в БД протух — панель-юзера уже нет. Разные версии
-                                        # RemnaWave сообщают это по-разному: A018 или A063, и не всегда
-                                        # со статусом 404. Пересоздаём по любому из этих признаков, чтобы
-                                        # синхронизация в панель чинила рассинхрон, а не падала в ошибку.
-                                        error_code = (api_error.response_data or {}).get('errorCode', '')
-                                        if api_error.status_code == 404 or error_code in ('A018', 'A063'):
+                                        # UUID в БД протух — панель-юзера уже нет. Пересоздаём,
+                                        # чтобы синхронизация в панель чинила рассинхрон,
+                                        # а не падала в ошибку.
+                                        if is_user_not_found_error(api_error):
                                             new_user = await api.create_user(**create_kwargs)
-                                            return ('created', sub, new_user)
+                                            if settings.is_multi_tariff_enabled():
+                                                sub.remnawave_uuid = new_user.uuid
+                                            else:
+                                                user.remnawave_uuid = new_user.uuid
+                                            sub.remnawave_short_uuid = new_user.short_uuid
+                                            sub.subscription_url = new_user.subscription_url
+                                            sub.subscription_crypto_link = new_user.happ_crypto_link
+                                            return ('created', db_sub, new_user)
                                         raise
                                 else:
                                     new_user = await api.create_user(**create_kwargs)
-                                    return ('created', sub, new_user)
+                                    if settings.is_multi_tariff_enabled():
+                                        sub.remnawave_uuid = new_user.uuid
+                                    else:
+                                        user.remnawave_uuid = new_user.uuid
+                                    sub.remnawave_short_uuid = new_user.short_uuid
+                                    sub.subscription_url = new_user.subscription_url
+                                    sub.subscription_crypto_link = new_user.happ_crypto_link
+                                    return ('created', db_sub, new_user)
 
                             except Exception as e:
                                 logger.error(
@@ -2589,7 +2722,7 @@ class RemnaWaveService:
                                     telegram_id=sub.user.telegram_id if sub.user else 'N/A',
                                     error=e,
                                 )
-                                return ('error', sub, None)
+                                return ('error', db_sub, None)
 
                     # Выполняем параллельно
                     tasks = [process_subscription(s) for s in valid_subscriptions]
@@ -2612,6 +2745,8 @@ class RemnaWaveService:
                             stats['created'] += 1
                         elif action == 'updated':
                             stats['updated'] += 1
+                        elif action == 'grace_skipped':
+                            continue
                         else:
                             stats['errors'] += 1
 
@@ -2644,6 +2779,7 @@ class RemnaWaveService:
             return stats
 
         except Exception as e:
+            await db.rollback()
             logger.error('Ошибка синхронизации пользователей в панель', error=e)
             return {'created': 0, 'updated': 0, 'errors': 1}
 
@@ -2829,20 +2965,36 @@ class RemnaWaveService:
 
     async def add_all_users_to_squad(self, squad_uuid: str) -> bool:
         try:
-            async with self.get_api_client() as api:
-                response = await api._make_request('POST', f'/api/internal-squads/{squad_uuid}/bulk-actions/add-users')
-                return response.get('response', {}).get('eventSent', False)
+            from app.services.grace_access_runtime import grace_sensitive_global_panel_update
+
+            async with grace_sensitive_global_panel_update() as allowed:
+                if not allowed:
+                    logger.warning('Bulk squad add blocked while grace sessions are open')
+                    return False
+                async with self.get_api_client() as api:
+                    response = await api._make_request(
+                        'POST',
+                        f'/api/internal-squads/{squad_uuid}/bulk-actions/add-users',
+                    )
+                    return response.get('response', {}).get('eventSent', False)
         except Exception as e:
             logger.error('Error adding users to squad', error=e)
             return False
 
     async def remove_all_users_from_squad(self, squad_uuid: str) -> bool:
         try:
-            async with self.get_api_client() as api:
-                response = await api._make_request(
-                    'DELETE', f'/api/internal-squads/{squad_uuid}/bulk-actions/remove-users'
-                )
-                return response.get('response', {}).get('eventSent', False)
+            from app.services.grace_access_runtime import grace_sensitive_global_panel_update
+
+            async with grace_sensitive_global_panel_update() as allowed:
+                if not allowed:
+                    logger.warning('Bulk squad removal blocked while grace sessions are open')
+                    return False
+                async with self.get_api_client() as api:
+                    response = await api._make_request(
+                        'DELETE',
+                        f'/api/internal-squads/{squad_uuid}/bulk-actions/remove-users',
+                    )
+                    return response.get('response', {}).get('eventSent', False)
         except Exception as e:
             logger.error('Error removing users from squad', error=e)
             return False

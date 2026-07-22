@@ -399,6 +399,21 @@ class UpdateUserStatusResponse(BaseModel):
     message: str
 
 
+class SendUserMessageRequest(BaseModel):
+    """Request to send a direct Telegram message to a user (parity with the
+    bot's «Отправить сообщение» action in the admin user card)."""
+
+    # 4096 — лимит Telegram на текст сообщения
+    text: str = Field(..., min_length=1, max_length=4096, description='Message text (HTML)')
+
+
+class SendUserMessageResponse(BaseModel):
+    """Response after sending a direct message."""
+
+    success: bool
+    message: str
+
+
 class UpdateRestrictionsRequest(BaseModel):
     """Request to update user restrictions."""
 

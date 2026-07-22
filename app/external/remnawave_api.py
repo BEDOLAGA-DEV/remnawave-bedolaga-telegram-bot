@@ -243,6 +243,17 @@ class RemnaWaveTransientError(RemnaWaveAPIError):
     surfaced by the monitoring service, not by per-request error logs."""
 
 
+def is_user_not_found_error(error: RemnaWaveAPIError) -> bool:
+    """Панель не нашла пользователя (удалён/протух UUID).
+
+    Разные версии RemnaWave сообщают это по-разному: A018 или A063, и не всегда
+    со статусом 404 — проверяем оба признака. Вызывающий код по этому признаку
+    пересоздаёт пользователя вместо падения в ошибку.
+    """
+    error_code = ((error.response_data or {}).get('errorCode') or '').strip()
+    return error.status_code == 404 or error_code in ('A018', 'A063')
+
+
 # Публичный RSA-ключ Happ для crypt4-ссылок — тот же, которым официальная страница
 # подписки Remnawave шифрует ссылку в браузере (@kastov/cryptohapp: JSEncrypt =
 # RSA PKCS#1 v1.5 + base64). Ключ публичный, расшифровать ссылку может только
@@ -715,7 +726,11 @@ class RemnaWaveAPI:
                 )
                 response = await self._make_request('PATCH', '/api/users', data)
             else:
-                logger.error('PATCH /api/users FAILED — full payload', payload=data)
+                # «User not found» — не error: как и 404 в _make_request, его
+                # обрабатывает вызывающий код (пересоздание пользователя), а
+                # error-логи буферизуются и сыплют отчётом в админ-чат.
+                log = logger.warning if is_user_not_found_error(e) else logger.error
+                log('PATCH /api/users FAILED — full payload', payload=data)
                 raise
         user = self._parse_user(response['response'])
         logger.info(

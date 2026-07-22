@@ -119,6 +119,27 @@ class NalogoQueueService:
         except Exception as error:
             logger.error('Ошибка отправки уведомления о чеках', error=error)
 
+    async def _send_receipt_to_user(
+        self,
+        telegram_user_id: int | None,
+        receipt_uuid: str,
+        amount: float,
+    ) -> None:
+        """Отправляет пользователю ссылку на чек из отложенной очереди и дублирует в админ-топик."""
+        if not self._bot or not self._nalogo_service:
+            return
+
+        from app.services.nalogo_service import send_nalogo_receipt_notifications
+
+        await send_nalogo_receipt_notifications(
+            bot=self._bot,
+            nalogo_service=self._nalogo_service,
+            receipt_uuid=receipt_uuid,
+            amount_kopeks=int(round(amount * 100)),
+            telegram_user_id=telegram_user_id,
+            context_label='Источник: отложенная очередь NaloGO',
+        )
+
     async def _process_queue_loop(self) -> None:
         """Основной цикл обработки очереди."""
         while self._running:
@@ -229,6 +250,14 @@ class NalogoQueueService:
                         payment_id=payment_id,
                         attempts=attempts + 1,
                     )
+
+                    # Отправляем чек пользователю (если есть telegram_id) и дублируем в админ-топик
+                    if self._bot:
+                        await self._send_receipt_to_user(
+                            telegram_user_id=telegram_user_id,
+                            receipt_uuid=receipt_uuid,
+                            amount=amount,
+                        )
                 else:
                     # Вернуть в очередь с увеличенным счетчиком попыток
                     await self._nalogo_service.requeue_receipt(receipt_data)
