@@ -6,10 +6,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix='AISUP_', env_file='.env', extra='ignore')
 
-    BOT_TOKEN: str
+    BOT_TOKEN: str = ''
     ADMIN_IDS: str = ''
 
-    OPENAI_API_KEY: str
+    OPENAI_API_KEY: str = ''
     OPENAI_BASE_URL: str = 'https://api.openai.com/v1'
     MODEL: str = 'gpt-4o-mini'
     EMBEDDING_MODEL: str = 'text-embedding-3-small'
