@@ -94,11 +94,26 @@ async def handle_message(message: Message) -> None:
         return
 
     answer = result['answer'] or 'Не удалось сформировать ответ.'
+
     if result['escalate']:
-        answer += '\n\nℹ️ Похоже, вопрос требует внимания оператора. Обратитесь в основную поддержку.'
+        logger.info('Escalating question to admins', telegram_id=telegram_id)
+        user_name = message.from_user.full_name or 'Пользователь'
+        username_str = f" (@{message.from_user.username})" if message.from_user.username else ""
+        notify_text = (
+            "⚠️ <b>Внимание: Обращение требует внимания оператора!</b>\n\n"
+            f"<b>Пользователь:</b> <a href='tg://user?id={telegram_id}'>{user_name}</a>{username_str} (ID: <code>{telegram_id}</code>)\n"
+            f"<b>Вопрос:</b> {question or '[изображение]'}\n\n"
+            f"<b>Сформированный проект ответа ИИ:</b>\n{answer}"
+        )
+        for admin_id in settings.admin_ids:
+            try:
+                await bot.send_message(admin_id, notify_text, parse_mode='HTML')
+            except Exception as err:
+                logger.warning('Failed to notify admin on escalation', admin_id=admin_id, error=str(err))
+        return
 
     try:
-        await message.answer(answer)
+        await message.answer(answer, parse_mode='HTML')
     except Exception:
         await message.answer(answer.replace('<', '&lt;').replace('>', '&gt;'))
 
