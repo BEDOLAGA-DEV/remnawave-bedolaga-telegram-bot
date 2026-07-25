@@ -63,10 +63,24 @@ class OpenAIClient:
         payload = {
             'model': model,
             'messages': messages,
-            'max_tokens': max_tokens,
+            'max_completion_tokens': max_tokens,
             'temperature': temperature,
         }
-        body = await self._post('/chat/completions', payload)
+        try:
+            body = await self._post('/chat/completions', payload)
+        except OpenAIError as error:
+            error_str = str(error)
+            if 'max_completion_tokens' in error_str:
+                payload.pop('max_completion_tokens', None)
+                payload['max_tokens'] = max_tokens
+                body = await self._post('/chat/completions', payload)
+            elif 'max_tokens' in error_str:
+                payload.pop('max_tokens', None)
+                payload['max_completion_tokens'] = max_tokens
+                body = await self._post('/chat/completions', payload)
+            else:
+                raise
+
         choices = body.get('choices', [])
         if not choices:
             raise OpenAIError('Empty response from model')

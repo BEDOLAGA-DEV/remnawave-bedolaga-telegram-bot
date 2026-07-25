@@ -14,12 +14,38 @@ from ai_support_bot.app.services.agent import support_agent
 from ai_support_bot.app.services.openai_client import OpenAIError
 
 
+import asyncio
+from contextlib import asynccontextmanager
+
+from aiogram.enums import ChatAction
+
 logger = structlog.get_logger(__name__)
 
 _WELCOME = (
     '🤖 <b>ИИ-поддержка</b>\n\n'
     'Опишите ваш вопрос или пришлите скриншот проблемы — я постараюсь помочь '
 )
+
+
+@asynccontextmanager
+async def typing_action(bot: Bot, chat_id: int):
+    async def loop():
+        try:
+            while True:
+                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            pass
+
+    task = asyncio.create_task(loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 async def _download_image_data_url(bot: Bot, file_id: str) -> str | None:
@@ -54,18 +80,17 @@ async def handle_message(message: Message) -> None:
         await message.answer('Пожалуйста, опишите вопрос текстом или пришлите скриншот.')
         return
 
-    thinking = await message.answer('🤖 Думаю над ответом...')
-
     try:
-        async with AsyncSessionLocal() as db:
-            result = await support_agent.generate_answer(db, telegram_id, question, image_url=image_url)
+        async with typing_action(bot, message.chat.id):
+            async with AsyncSessionLocal() as db:
+                result = await support_agent.generate_answer(db, telegram_id, question, image_url=image_url)
     except OpenAIError as error:
         logger.error('Generation failed', error=str(error), telegram_id=telegram_id)
-        await thinking.edit_text('⚠️ Не удалось получить ответ. Попробуйте позже.')
+        await message.answer('⚠️ Не удалось получить ответ. Попробуйте позже.')
         return
     except Exception as error:
         logger.error('Unexpected error', error=str(error), telegram_id=telegram_id)
-        await thinking.edit_text('⚠️ Произошла ошибка. Попробуйте позже.')
+        await message.answer('⚠️ Произошла ошибка. Попробуйте позже.')
         return
 
     answer = result['answer'] or 'Не удалось сформировать ответ.'
@@ -73,9 +98,9 @@ async def handle_message(message: Message) -> None:
         answer += '\n\nℹ️ Похоже, вопрос требует внимания оператора. Обратитесь в основную поддержку.'
 
     try:
-        await thinking.edit_text(answer)
+        await message.answer(answer)
     except Exception:
-        await thinking.edit_text(answer.replace('<', '&lt;').replace('>', '&gt;'))
+        await message.answer(answer.replace('<', '&lt;').replace('>', '&gt;'))
 
 
 def build_dispatcher() -> Dispatcher:
