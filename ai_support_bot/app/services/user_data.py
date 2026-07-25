@@ -46,8 +46,8 @@ async def build_user_context(telegram_id: int) -> str:
 
                 subs = await session.execute(
                     text(
-                        'SELECT status, is_trial, end_date, traffic_limit_gb, device_limit, autopay_enabled '
-                        'FROM subscriptions WHERE user_id = :uid ORDER BY created_at DESC LIMIT 3'
+                        'SELECT status, is_trial, end_date, traffic_limit_gb, device_limit, autopay_enabled, subscription_url '
+                        'FROM subscriptions WHERE user_id = :uid ORDER BY created_at DESC LIMIT 5'
                     ),
                     {'uid': user_row['id']},
                 )
@@ -59,12 +59,14 @@ async def build_user_context(telegram_id: int) -> str:
                         traffic = 'безлимит' if not limit_gb else f'{limit_gb} ГБ'
                         end_date = sub.get('end_date')
                         end_str = end_date.strftime('%d.%m.%Y') if hasattr(end_date, 'strftime') else str(end_date)
+                        sub_url = sub.get('subscription_url')
+                        url_str = f', ссылка={sub_url}' if sub_url else ''
                         lines.append(
                             f'  • статус={sub.get("status")}, '
                             f'триал={"да" if sub.get("is_trial") else "нет"}, '
                             f'до {end_str}, трафик={traffic}, '
                             f'устройств={sub.get("device_limit")}, '
-                            f'автоплатеж={"вкл" if sub.get("autopay_enabled") else "выкл"}'
+                            f'автоплатеж={"вкл" if sub.get("autopay_enabled") else "выкл"}{url_str}'
                         )
                 else:
                     lines.append('Подписки: отсутствуют')
