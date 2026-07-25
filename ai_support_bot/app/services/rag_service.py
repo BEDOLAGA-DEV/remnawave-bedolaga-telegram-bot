@@ -4,11 +4,11 @@ import time
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import crud
-from app.db.models import KnowledgeChunk
-from app.services import settings_store
-from app.services.knowledge_parser import build_chunks, compute_content_hash, parse_knowledge_file
-from app.services.openai_client import OpenAIError, openai_client
+from ai_support_bot.app.db import crud
+from ai_support_bot.app.db.models import KnowledgeChunk
+from ai_support_bot.app.services import settings_store
+from ai_support_bot.app.services.knowledge_parser import build_chunks, compute_content_hash, parse_knowledge_file
+from ai_support_bot.app.services.openai_client import OpenAIError, openai_client
 
 
 logger = structlog.get_logger(__name__)

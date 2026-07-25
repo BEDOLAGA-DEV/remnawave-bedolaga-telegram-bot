@@ -7,11 +7,11 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from app.core.config import settings
-from app.db.database import AsyncSessionLocal
-from app.services import settings_store
-from app.services.agent import support_agent
-from app.services.openai_client import OpenAIError
+from ai_support_bot.app.core.config import settings
+from ai_support_bot.app.db.database import AsyncSessionLocal
+from ai_support_bot.app.services import settings_store
+from ai_support_bot.app.services.agent import support_agent
+from ai_support_bot.app.services.openai_client import OpenAIError
 
 
 logger = structlog.get_logger(__name__)

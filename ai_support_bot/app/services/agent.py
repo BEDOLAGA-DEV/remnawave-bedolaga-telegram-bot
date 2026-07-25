@@ -3,12 +3,12 @@ import time
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import crud
-from app.services import settings_store
-from app.services.knowledge_parser import compute_content_hash
-from app.services.openai_client import OpenAIError, openai_client
-from app.services.rag_service import rag_service
-from app.services.user_data import build_user_context
+from ai_support_bot.app.db import crud
+from ai_support_bot.app.services import settings_store
+from ai_support_bot.app.services.knowledge_parser import compute_content_hash
+from ai_support_bot.app.services.openai_client import OpenAIError, openai_client
+from ai_support_bot.app.services.rag_service import rag_service
+from ai_support_bot.app.services.user_data import build_user_context
 
 
 logger = structlog.get_logger(__name__)

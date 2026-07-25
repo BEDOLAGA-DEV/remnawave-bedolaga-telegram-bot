@@ -2,9 +2,9 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.core.config import settings
-from app.db.database import AsyncSessionLocal
-from app.db.models import RuntimeSetting
+from ai_support_bot.app.core.config import settings
+from ai_support_bot.app.db.database import AsyncSessionLocal
+from ai_support_bot.app.db.models import RuntimeSetting
 
 
 _DEFAULTS: dict[str, Any] = {}

@@ -2,8 +2,8 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.config import settings
-from app.db.models import Base
+from ai_support_bot.app.core.config import settings
+from ai_support_bot.app.db.models import Base
 
 
 engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)

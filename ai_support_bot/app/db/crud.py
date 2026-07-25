@@ -4,7 +4,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Conversation, KnowledgeChunk, KnowledgeSource, Message
+from ai_support_bot.app.db.models import Conversation, KnowledgeChunk, KnowledgeSource, Message
 
 
 async def get_source_by_hash(db: AsyncSession, content_hash: str) -> KnowledgeSource | None:

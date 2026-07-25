@@ -1,7 +1,7 @@
 import aiohttp
 import structlog
 
-from app.core.config import settings
+from ai_support_bot.app.core.config import settings
 
 
 logger = structlog.get_logger(__name__)

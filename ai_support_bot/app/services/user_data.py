@@ -1,10 +1,10 @@
 import structlog
 from sqlalchemy import text
 
-from app.core.config import settings
-from app.db.database import get_main_session
-from app.services import settings_store
-from app.services.remnawave import get_remnawave_stats
+from ai_support_bot.app.core.config import settings
+from ai_support_bot.app.db.database import get_main_session
+from ai_support_bot.app.services import settings_store
+from ai_support_bot.app.services.remnawave import get_remnawave_stats
 
 
 logger = structlog.get_logger(__name__)

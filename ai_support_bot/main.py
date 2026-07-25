@@ -3,10 +3,10 @@ import logging
 
 import structlog
 
-from app.bot.bot import run_bot
-from app.core.config import settings
-from app.db.database import init_db
-from app.services import settings_store
+from ai_support_bot.app.bot.bot import run_bot
+from ai_support_bot.app.core.config import settings
+from ai_support_bot.app.db.database import init_db
+from ai_support_bot.app.services import settings_store
 
 
 structlog.configure(
